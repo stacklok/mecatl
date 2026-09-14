@@ -82,8 +82,7 @@ func TestADR_0325_DirectDCRStaleRegistrationLifecycle(t *testing.T) {
 		opts := fixture.options(t, store)
 		controller := authorizeDCRForProof(t, fixture, resource, opts)
 		_ = controller.Close()
-		identity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
-		key, _ := oauthDCRRegistrationKey(identity)
+		key, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 		record, _ := store.Get(context.Background(), key)
 		if err := store.Delete(context.Background(), key, record.Version); err != nil {
 			t.Fatal(err)
@@ -159,7 +158,7 @@ func TestADR_0325_DirectDCRStaleRegistrationLifecycle(t *testing.T) {
 		identity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer, ClientKind: oauthDCRClientKind, ClientID: fixture.clientID}
 		key, _ := oauthDCRCredentialKey(identity, controller.state.registration.generation)
 		record, _ := store.Get(context.Background(), key)
-		regKey, _ := oauthDCRRegistrationKey(oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer})
+		regKey, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 		regStored, _ := store.Get(context.Background(), regKey)
 		regRecord, _ := decodeOAuthDCRRecord(regStored.Value, oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer})
 		cfg := &oauth2.Config{ClientID: fixture.clientID, Endpoint: oauth2.Endpoint{TokenURL: fixture.server.URL + "/oauth/token", AuthStyle: oauth2.AuthStyleAutoDetect}, RedirectURL: regRecord.Registration.RegisteredRedirectURI, Scopes: []string{"openid"}}
@@ -264,8 +263,7 @@ func TestInvariant_direct_mcp_dcr_secret_redaction(t *testing.T) {
 	if err := controller.Authorize(context.Background(), req, resp); err != nil {
 		t.Fatal(err)
 	}
-	identity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
-	registrationKey, _ := oauthDCRRegistrationKey(identity)
+	registrationKey, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 	registration, _ := store.Get(context.Background(), registrationKey)
 	grantIdentity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer, ClientKind: oauthDCRClientKind, ClientID: clientID}
 	grantKey, _ := oauthDCRCredentialKey(grantIdentity, controller.state.registration.generation)
@@ -402,9 +400,7 @@ func TestDirectMCPDCR_Scenario2_ReauthorizationRedirectAndScopeBinding(t *testin
 	if registrations != 1 {
 		t.Fatalf("port rejection silently re-registered: %d", registrations)
 	}
-
-	identity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
-	key, _ := oauthDCRRegistrationKey(identity)
+	key, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 	record, _ := store.Get(context.Background(), key)
 	drifted := strings.Replace(string(record.Value), `"scopes":["openid"]`, `"scopes":["other"]`, 1)
 	if _, err := store.Put(context.Background(), key, []byte(drifted), &record.Version); err != nil {
@@ -556,7 +552,7 @@ func TestADR_0325_DirectDCRUnknownAttemptRecovery(t *testing.T) {
 		_ = winner.Close()
 
 		identity := latest.dcrTicket.record.Identity
-		key, _ := oauthDCRRegistrationKey(identity)
+		key, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 		stored, err := base.Get(context.Background(), key)
 		if err != nil {
 			t.Fatal(err)
@@ -597,7 +593,7 @@ func TestADR_0325_DirectDCRUnknownAttemptRecovery(t *testing.T) {
 		}()
 		<-started
 		identity := prepared.dcrTicket.record.Identity
-		key, _ := oauthDCRRegistrationKey(identity)
+		key, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 		pending, err := store.Get(context.Background(), key)
 		if err != nil {
 			t.Fatal(err)
@@ -665,7 +661,7 @@ func TestADR_0325_DirectDCRUnknownAttemptRecovery(t *testing.T) {
 				t.Fatalf("uncommitted ambiguity = controller=%v err=%v", controller, err)
 			}
 			identity := prepared.dcrTicket.record.Identity
-			key, _ := oauthDCRRegistrationKey(identity)
+			key, _ := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 			persisted, getErr := base.Get(context.Background(), key)
 			if getErr != nil {
 				t.Fatal(getErr)
@@ -707,10 +703,9 @@ func TestDirectMCPDCR_Scenario3_RestartIdentityMismatchFailsClosed(t *testing.T)
 			controller := authorizeDCRForProof(t, fixture, resource, opts)
 			generation, clientID := controller.state.registration.generation, controller.state.registration.clientID
 			_ = controller.Close()
-			identity := oauthDCRIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer}
 			var key []byte
 			if tc.name == "registration identity" {
-				key, _ = oauthDCRRegistrationKey(identity)
+				key, _ = oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 			} else {
 				grantIdentity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: resource, Issuer: opts.Issuer, ClientKind: oauthDCRClientKind, ClientID: clientID}
 				key, _ = oauthDCRCredentialKey(grantIdentity, generation)

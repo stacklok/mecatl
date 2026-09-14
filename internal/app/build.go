@@ -5726,7 +5726,11 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 	}
 
 	onError := func(sc mcp.ServerConfig, err error) {
-		if errors.Is(err, mcp.ErrOAuthLoginRequired) {
+		if mcp.OAuthDCRRecoveryCategoryOf(err) == mcp.OAuthDCRRecoveryResetRequired {
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth DCR registration reset required", "name", sc.Name, "remedy", mcpLoginRemedy(sc)+" --reset-dcr-registration")
+			return
+		}
+		if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth login required", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
 			return
 		}

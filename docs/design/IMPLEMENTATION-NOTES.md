@@ -8389,16 +8389,17 @@ Basic and form `client_secret` is rejected before dialing. The MCP resource clie
 separate exact-resource marker for its audience-bound bearer, remains no-proxy/DNS-pinned,
 and rejects cleartext except for an exact private-origin opt-in; an allowlist entry alone
 never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
-Direct/global DCR clients use a separate durable registration record in the same
-credential-store namespace, keyed by profile, principal, canonical resource, and exact
-issuer. `internal/adapter/mcp/oauth_dcr.go` (`PrepareOAuthDCRLogin`) discovers and validates
+Direct/global DCR clients use one private server-scoped durable lifecycle record in the same
+credential-store namespace; it carries and validates profile, principal, canonical resource,
+and exact issuer. `internal/adapter/mcp/oauth_dcr.go` (`PrepareOAuthDCRLogin`) discovers and validates
 protected-resource and authorization-server metadata through the hardened client, then
 creates or reuses a CAS-protected pending/ready registration. Preparation never registers
 or launches a browser; a one-use private ticket permits the subsequent login controller to
 POST exactly one public-client registration after the callback listener has supplied its
 actual variable-port URI. Reset replaces only a valid ready registration; retry replaces
 only a valid pending attempt. Corrupt, mismatched, or uncertain state fails with the
-redacted recovery-required category instead of being deleted or bypassed.
+redacted recovery-required category instead of being deleted or bypassed; reset/retry do not
+repair corrupt selected state.
 
 The DCR grant is a distinct generation-bound v2 envelope implemented by
 `internal/adapter/mcp/oauth_dcr_grant.go`. It stores only the access token required for the
@@ -8407,7 +8408,7 @@ exactly `openid`, and refresh-token grants. Expiry, grant reset, a registration-
 change, or an orphan grant returns login-required without refresh or browser side effects.
 Grant reset writes a generation-bound reset tombstone so a stale authorization writer cannot
 revive the old result. Explicit re-login reuses a valid registration. For this public-client
-path only, `internal/adapter/mcp/oauth_transport.go` rejects the official SDK's
+path only, `internal/adapter/mcp/oauth_http.go` rejects the official SDK's
 `AuthStyleAutoDetect` Basic probe before dial and admits only its exact parameter retry with
 the expected client ID and no secret/assertion; preregistered confidential clients retain
 the Basic-only policy.

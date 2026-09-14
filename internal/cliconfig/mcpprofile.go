@@ -390,7 +390,7 @@ func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOA
 		return nil
 	}
 	if decl.Client.DCR != nil {
-		opts.Client.DCR = &mcp.OAuthDCRConfig{}
+		opts.Client.DCR = &mcp.OAuthDCRConfig{ServerName: profile.Name}
 		return nil
 	}
 	if decl.Client.CIMD == nil {

@@ -132,9 +132,13 @@ expiry it returns login-required without attempting refresh. Run
 `mecated mcp login SERVER` explicitly to obtain a new access grant while reusing
 the valid registration. If registration itself was interrupted, use
 `--retry-dcr-registration`; to deliberately replace a valid ready registration
-and its grant, use `--reset-dcr-registration`. The flags are mutually exclusive,
-valid only for DCR, and fail closed on corrupt or mismatched persisted state.
-They do not revoke an upstream registration. Complete public-client refresh
+and its grant, use `--reset-dcr-registration`. The flags are mutually exclusive
+and valid only for DCR. A valid lifecycle record whose configured identity has
+drifted requires an explicit action: reset a ready record with
+`--reset-dcr-registration`, or retry a pending record with
+`--retry-dcr-registration`. Corrupt, noncanonical, unsupported, or
+grant-mismatched persisted state remains repair-only: neither flag mutates it.
+The flags do not revoke an upstream registration. Complete public-client refresh
 remains deferred to
 [issue #1355](https://github.com/stacklok/mecatl/issues/1355).
 
@@ -174,9 +178,10 @@ errors, headers, credential-store contents, and screenshots containing any of th
 
 If a valid ready DCR profile's intentional registration binding changes — for example its
 issuer, principal, scopes, or resource — run `mecated mcp login SERVER
---reset-dcr-registration`; plain login cannot replace that registration. Corrupt,
-unsupported, or identity-mismatched persisted registration or grant state is not bypassable
-with reset or retry and requires separate operator repair. For non-DCR profiles, run login
+--reset-dcr-registration`; plain login cannot replace that registration. A valid pending
+lifecycle record with that drift instead continues only with `--retry-dcr-registration`.
+Corrupt, noncanonical, unsupported, or grant-mismatched persisted registration state is not
+bypassable with reset or retry and requires separate operator repair. For non-DCR profiles, run login
 again after intentional identity changes. To roll back, replace the whole profile with
 `static_bearer` or `none` and restart.
 

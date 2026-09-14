@@ -188,7 +188,7 @@ func (f *loginFixture) newMCPHandler() http.Handler {
 }
 
 type loginFixtureCounts struct {
-	authorize, token, refresh, metadata, authenticated, toolCalls, unexpectedAuth, opened, closed int
+	authorize, token, refresh, metadata, authenticated, toolCalls, unexpectedAuth, registered, opened, closed int
 }
 
 func (f *loginFixture) snapshot() loginFixtureCounts {
@@ -196,7 +196,7 @@ func (f *loginFixture) snapshot() loginFixtureCounts {
 	defer f.mu.Unlock()
 	return loginFixtureCounts{
 		authorize: f.authorize, token: f.token, refresh: f.refresh, metadata: f.metadata,
-		authenticated: f.authorized, toolCalls: f.toolCalls, unexpectedAuth: f.unexpectedAuth,
+		authenticated: f.authorized, toolCalls: f.toolCalls, unexpectedAuth: f.unexpectedAuth, registered: f.register,
 		opened: f.sessionsOpened, closed: f.sessionsClosed,
 	}
 }

@@ -536,7 +536,7 @@ func (s *oauthCredentialState) resetDCRLocked(ctx context.Context) error {
 
 func (s *oauthCredentialState) validateDCRRegistrationLocked(ctx context.Context) error {
 	identity := oauthDCRIdentity{Profile: s.identity.Profile, Principal: s.identity.Principal, Resource: s.identity.Resource, Issuer: s.identity.Issuer}
-	key, err := oauthDCRRegistrationKey(identity)
+	key, err := oauthDCRLifecycleKey(s.registration.dcrServerName)
 	if err != nil {
 		return err
 	}

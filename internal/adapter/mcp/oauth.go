@@ -29,7 +29,11 @@ type OAuthSubject struct {
 }
 
 // OAuthDCRConfig selects durable Dynamic Client Registration for a direct MCP profile.
-type OAuthDCRConfig struct{}
+type OAuthDCRConfig struct {
+	// ServerName identifies the private lifecycle record. It is injected by the
+	// resolved profile loader and deliberately has no configuration serialization.
+	ServerName string
+}
 
 // OAuthDCRLoginAction selects the explicit registration operation performed by login.
 type OAuthDCRLoginAction uint8
@@ -120,13 +124,14 @@ func TrustOAuthCertificateForTest(t interface{ Helper() }, opts *OAuthOptions, c
 }
 
 type oauthRegistration struct {
-	kind         string
-	clientID     string
-	clientSecret string
-	generation   string
-	redirectPath string
-	sdk          *oauthex.ClientCredentials
-	cimd         string
+	kind          string
+	clientID      string
+	clientSecret  string
+	generation    string
+	redirectPath  string
+	dcrServerName string
+	sdk           *oauthex.ClientCredentials
+	cimd          string
 }
 
 func oauthPersistence(opts OAuthOptions) (credentialstore.Reader, credentialstore.ConditionalWriter, error) {
@@ -237,14 +242,14 @@ func resolvedOAuthRegistration(opts OAuthOptions) (oauthRegistration, error) {
 	if boolCount(opts.Client.Preregistered != nil, opts.Client.ClientIDMetadataDocumentURL != "", true) != 1 || opts.dcr == nil {
 		return oauthRegistration{}, errors.New("OAuth DCR client registration is unresolved")
 	}
-	if opts.dcr.issuer != opts.Issuer || opts.dcr.clientID == "" || !validDCRRandom(opts.dcr.generation) {
+	if opts.dcr.issuer != opts.Issuer || opts.dcr.clientID == "" || !validDCRRandom(opts.dcr.generation) || !validDCRServerName(opts.dcr.serverName) {
 		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
 	}
 	client := &oauthex.ClientCredentials{ClientID: opts.dcr.clientID, Issuer: opts.Issuer}
 	if err := client.Validate(); err != nil {
 		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
 	}
-	return oauthRegistration{kind: oauthDCRClientKind, clientID: opts.dcr.clientID, generation: opts.dcr.generation, redirectPath: opts.dcr.path, sdk: client}, nil
+	return oauthRegistration{kind: oauthDCRClientKind, clientID: opts.dcr.clientID, generation: opts.dcr.generation, redirectPath: opts.dcr.path, dcrServerName: opts.dcr.serverName, sdk: client}, nil
 }
 
 func validateOAuthOrigins(issuer *url.URL, network OAuthNetworkPolicy) (map[string]struct{}, error) {
@@ -459,6 +464,7 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 	}
 	if opts.dcr != nil {
 		transport.dcrPublicClientID = opts.dcr.clientID
+		transport.dcrIssuer = opts.Issuer
 	}
 	if _, _, err := validateOAuthOptions(opts); err != nil {
 		transport.base.CloseIdleConnections()

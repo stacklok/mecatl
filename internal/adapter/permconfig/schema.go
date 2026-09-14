@@ -438,9 +438,9 @@ type MCPOAuthProfile struct {
 	Upstream *MCPOAuthUpstreamProfile `yaml:"upstream"`
 	// Client selects exactly one preregistered, CIMD, or DCR client declaration.
 	Client MCPOAuthClientProfile `yaml:"client"`
-	// Scopes is the non-empty allowlist of OAuth scopes the client may request.
+	// Scopes is the non-empty OAuth scope allowlist, except direct/global DCR may omit it and uses exactly openid.
 	Scopes []string `yaml:"scopes"`
-	// RequestRefreshToken asks the authorization server for refresh capability.
+	// RequestRefreshToken asks the authorization server for refresh capability; direct/global DCR defaults false and rejects true.
 	RequestRefreshToken bool `yaml:"request_refresh_token"`
 	// Credentials selects one global-mode local or environment credential source and is forbidden in broker mode.
 	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
@@ -511,7 +511,7 @@ type MCPOAuthClientProfile struct {
 	Preregistered *MCPPreregisteredClientProfile `yaml:"preregistered"`
 	// CIMD declares an HTTPS client-id metadata document URL.
 	CIMD *MCPCIMDClientProfile `yaml:"cimd"`
-	// DCR declares an RFC 8414 metadata URL for RFC 7591 registration.
+	// DCR selects dynamic registration: direct/global profiles require an empty payload, discover from issuer, and use omitted scopes as openid; broker profiles require discovery_url and nonempty scopes. A valid direct-DCR identity drift requires --reset-dcr-registration for a ready lifecycle record or --retry-dcr-registration for a pending record. Corrupt direct-DCR state is not resettable: reset/retry do not repair it; preserve the credential-store records and contact support with only the redacted error and server name.
 	DCR *MCPDCRClientProfile `yaml:"dcr"`
 }
 
@@ -529,9 +529,9 @@ type MCPCIMDClientProfile struct {
 	DocumentURL string `yaml:"document_url"`
 }
 
-// MCPDCRClientProfile contains the HTTPS RFC 8414 discovery document URL.
+// MCPDCRClientProfile carries broker-only RFC 8414 discovery metadata; direct/global DCR requires an empty payload.
 type MCPDCRClientProfile struct {
-	// DiscoveryURL is the required HTTPS authorization-server metadata URL.
+	// DiscoveryURL is required for broker DCR and forbidden for direct/global DCR, which discovers from issuer instead.
 	DiscoveryURL string `yaml:"discovery_url"`
 }
 

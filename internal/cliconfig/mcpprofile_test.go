@@ -324,3 +324,24 @@ func namesOf(configs []mcp.ServerConfig) []string {
 	}
 	return out
 }
+
+func TestLoadMCPProfilesInjectsDCRLifecycleServerName(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	profile := permconfig.MCPServerProfile{
+		Name: "connector", URL: "https://connector.example/gw/mcp",
+		Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
+			Profile: "connector", Principal: "local-user", Issuer: "https://issuer.example",
+			Client:      permconfig.MCPOAuthClientProfile{Mode: "dcr", DCR: &permconfig.MCPDCRClientProfile{}},
+			Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: filepath.Join(t.TempDir(), "credentials"), KeyEnv: "MECATL_KEY"}},
+			Network:     &permconfig.MCPOAuthNetworkProfile{},
+		}},
+	}
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{profile}}, LookupEnv: func(string) (string, bool) { return key, true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profiles.Close()
+	if got := profiles.Servers[0].OAuth.Client.DCR.ServerName; got != "connector" {
+		t.Fatalf("DCR lifecycle server name = %q, want connector", got)
+	}
+}

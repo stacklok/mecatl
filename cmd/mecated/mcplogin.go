@@ -118,8 +118,10 @@ func mcpLoginRemedy(err error) error {
 			return errors.New("the OAuth provider returned a registration response that Mecatl could not safely use for DCR; use --retry-dcr-registration only if a possible orphan client is acceptable")
 		case mcp.OAuthDCRRecoveryReadyPersistence:
 			return errors.New("MCP OAuth DCR registration response was accepted but the ready record was not persisted; use --retry-dcr-registration only if a possible orphan client is acceptable")
+		case mcp.OAuthDCRRecoveryResetRequired:
+			return errors.New("MCP OAuth DCR registration identity differs from the configured profile; use --reset-dcr-registration to deliberately replace the valid ready registration and its grant")
 		default:
-			return errors.New("MCP OAuth DCR registration state requires separate operator repair; do not retry or reset registration")
+			return errors.New("MCP OAuth DCR registration state is corrupt or unreadable; do not retry or reset registration. Keep credential-store records unchanged and contact the deployment operator or support team with the redacted command error and server name; do not send credential-store contents. Reset/retry do not repair corrupt state or revoke an upstream client")
 		}
 	case errors.As(err, &provider) && errors.Is(err, app.ErrMCPLoginAuthorization):
 		return fmt.Errorf("MCP OAuth authorization server rejected login (%s); review the requested scopes and provider policy", provider.Sanitized())

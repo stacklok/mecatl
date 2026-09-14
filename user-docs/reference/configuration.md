@@ -318,10 +318,10 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.client.preregistered.secret_env` | `string` | `(empty)` | SecretEnv is a MECATL_* environment variable name containing the client secret. |
 | `mcp.servers[].auth.oauth.client.cimd` | `mcpcimdclientprofile` | `(absent)` | CIMD declares an HTTPS client-id metadata document URL. |
 | `mcp.servers[].auth.oauth.client.cimd.document_url` | `string` | `(empty)` | DocumentURL is the required HTTPS metadata-document URL. |
-| `mcp.servers[].auth.oauth.client.dcr` | `mcpdcrclientprofile` | `(absent)` | DCR declares an RFC 8414 metadata URL for RFC 7591 registration. |
-| `mcp.servers[].auth.oauth.client.dcr.discovery_url` | `string` | `(empty)` | DiscoveryURL is the required HTTPS authorization-server metadata URL. |
-| `mcp.servers[].auth.oauth.scopes` | `[]string` | `(absent)` | Scopes is the non-empty allowlist of OAuth scopes the client may request. |
-| `mcp.servers[].auth.oauth.request_refresh_token` | `bool` | `false` | RequestRefreshToken asks the authorization server for refresh capability. |
+| `mcp.servers[].auth.oauth.client.dcr` | `mcpdcrclientprofile` | `(absent)` | DCR selects dynamic registration: direct/global profiles require an empty payload, discover from issuer, and use omitted scopes as openid; broker profiles require discovery_url and nonempty scopes. A valid direct-DCR identity drift requires --reset-dcr-registration for a ready lifecycle record or --retry-dcr-registration for a pending record. Corrupt direct-DCR state is not resettable: reset/retry do not repair it; preserve the credential-store records and contact support with only the redacted error and server name. |
+| `mcp.servers[].auth.oauth.client.dcr.discovery_url` | `string` | `(empty)` | DiscoveryURL is required for broker DCR and forbidden for direct/global DCR, which discovers from issuer instead. |
+| `mcp.servers[].auth.oauth.scopes` | `[]string` | `(absent)` | Scopes is the non-empty OAuth scope allowlist, except direct/global DCR may omit it and uses exactly openid. |
+| `mcp.servers[].auth.oauth.request_refresh_token` | `bool` | `false` | RequestRefreshToken asks the authorization server for refresh capability; direct/global DCR defaults false and rejects true. |
 | `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects one global-mode local or environment credential source and is forbidden in broker mode. |
 | `mcp.servers[].auth.oauth.credentials.mode` | `string` | `(empty)` | Mode is exactly local or environment. |
 | `mcp.servers[].auth.oauth.credentials.local` | `mcplocalcredentialprofile` | `(absent)` | Local declares encrypted mutable credentials rooted at an absolute path. |

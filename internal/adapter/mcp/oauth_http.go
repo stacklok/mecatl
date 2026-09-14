@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime"
@@ -100,6 +102,7 @@ type oauthHTTPTransport struct {
 	requireClientBasic bool
 	dcrPublicClientID  string
 	dcrResource        string
+	dcrIssuer          string
 	lookup             oauthLookupFunc
 	dial               oauthDialFunc
 	allowLoopback      bool
@@ -292,7 +295,31 @@ func (t *oauthHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error
 		}
 		return nil, projectOAuthError(err)
 	}
+	if t.dcrIssuer != "" && (strings.Contains(req.URL.Path, "/.well-known/oauth-authorization-server") || strings.Contains(req.URL.Path, "/.well-known/openid-configuration")) {
+		if err := validateDCRRuntimeMetadataIssuer(resp, t.dcrIssuer); err != nil {
+			return nil, projectOAuthError(err)
+		}
+	}
 	return resp, nil
+}
+
+func validateDCRRuntimeMetadataIssuer(resp *http.Response, expected string) error {
+	if resp == nil || resp.Body == nil {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxOAuthRequestBody+1))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) > maxOAuthRequestBody {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	var metadata struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.Unmarshal(body, &metadata); err != nil || metadata.Issuer != expected {
+		return ErrOAuthDCRRecoveryRequired
+	}
+	return nil
 }
 
 func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
