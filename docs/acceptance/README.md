@@ -311,6 +311,10 @@ PR after verification. There is no cleanup or status-only PR.
   imports, a Deno-native `./deno` entry point, `Deno.Command` local ownership, and real-wire
   shared ConnectRPC gRPC coverage for Deno 2.9.3 through 2.x. Release scope: after v0.1.0, with no later
   version assigned. Status: in-progress.
+- [TypeScript SDK session lifecycle surface](sdk-session-lifecycle-surface.md) —
+  SDK-owned session snapshots and transcripts plus typed rename, mode, compaction,
+  clear, fork, retry, request-option, affinity, and lifecycle semantics over the
+  existing server operations. Status: proposed.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
