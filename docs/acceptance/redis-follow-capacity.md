@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — this changes exported engine and TypeScript SDK error contracts, operator CLI and Helm configuration, and ownership of process-lifetime Redis clients and follower goroutines.
-**Decision record:** [ADR 0328](../adr/0328-isolated-redis-follow-capacity.md)
+**Decision record:** [ADR 0330](../adr/0330-isolated-redis-follow-capacity.md)
 **Phase:** Cloud-native durable event watch
 **Status:** proposed, 2026-09-11. Decisions approved by the user while grilling the design for [issue #876](https://github.com/stacklok/mecatl/issues/876).
 **Delivery:** Split. The exported Go API, public error code, operator configuration, and shutdown resource boundary warrant independent Plan / Interface review before implementation.
@@ -24,7 +24,7 @@ client used by writes.
 - [x] Route `Follow:true` through the follow client under full-iterator admission, and `Follow:false` through the durability client. — Decision: every Redis operation made by one read follows the selected resource boundary.
 - [x] Default both follow-pool size and maximum followers to 32 and require `1 ≤ maxFollowers ≤ poolSize`. — Decision: expose the exact CLI and Helm names in the interface contract below.
 - [x] Distinguish storage admission exhaustion from slow transport consumption. — Decision: add `port.ErrEventFollowCapacity`, public code `watch_capacity`, gRPC `RESOURCE_EXHAUSTED`, and an HTTP watch terminal SSE error after its existing `200` response; the TypeScript durable-watch client resumes it from the last processed cursor.
-- [x] Make follower shutdown store-owned. — Decision: closing the store rejects new admissions, cancels active followers, joins them within the existing bounded close grace, and may force-close only follow clients; active iterators end cleanly. ADR 0328 narrowly supersedes ADR 0240's no-force-close rule for isolated follow clients only.
+- [x] Make follower shutdown store-owned. — Decision: closing the store rejects new admissions, cancels active followers, joins them within the existing bounded close grace, and may force-close only follow clients; active iterators end cleanly. ADR 0330 narrowly supersedes ADR 0240's no-force-close rule for isolated follow clients only.
 - [x] Preserve bounded one-second `XREAD` slices and add no telemetry. — Decision: the new hard bounds and typed failure are sufficient operator feedback for this change.
 - [x] Keep consumer groups, authoritative Pub/Sub, local watch hubs, and multi-stream sharding out of scope. — Decision: Redis Streams remain the authoritative full-feed source for every watcher.
 
@@ -36,13 +36,13 @@ client used by writes.
 - **CLI / config:** `mecak8s` adds `--redis-follow-pool-size` and `--redis-max-followers`, both defaulting to `32`. Helm adds `redis.follow.poolSize` and `redis.follow.maxFollowers`, also defaulting to `32`, and renders both flags. Effective startup configuration must satisfy `1 ≤ redis-max-followers ≤ redis-follow-pool-size`; CLI validation and Helm's schema-plus-template validation reject invalid values rather than clamp. The follow client's `redisconn.Config` sets both `PoolSize` and `MaxActiveConns` to the effective pool size; the durability client retains its existing defaults.
 - **Events / persistence:** None — no session event, watch envelope field, cursor encoding, Redis key, snapshot, migration, or other persisted state changes. Admission and follower lifecycle state reset on restart.
 - **Security / authority:** The store-owned admission/lifecycle registry is process-scoped and has no caller principal or authorization role. It bounds backend resource use only. Shutdown may force-close an isolated follow client after the first join wait, but never force-closes a durability client merely because a follower failed to exit. Existing credential-file, verified-TLS, secret-redaction, and caller ownership rules remain unchanged.
-- **Compatibility / migration:** Additive Go sentinel, stable server/TypeScript error code, CLI flags, and Helm values; existing deployments receive effective `32`/`32` defaults. `MECATL_ERROR_CODES` and therefore `ServerErrorCode` add `watch_capacity`; no new TypeScript error class is introduced. The internal adapter migrates from deprecated `toolhive-core/redis` to released `toolhive-core/redisconn` v0.0.46 without changing Redis wire data or credential semantics. ADR 0328 supersedes ADR 0250's shared-pool sizing deferral and ADR 0240's no-force-close rule only for the newly isolated follow clients; all durability and other leased Redis clients retain ADR 0240 behavior. `watch_lagging` remains distinct and continues to mean a client failed to consume its bounded delivery buffer.
+- **Compatibility / migration:** Additive Go sentinel, stable server/TypeScript error code, CLI flags, and Helm values; existing deployments receive effective `32`/`32` defaults. `MECATL_ERROR_CODES` and therefore `ServerErrorCode` add `watch_capacity`; no new TypeScript error class is introduced. The internal adapter migrates from deprecated `toolhive-core/redis` to released `toolhive-core/redisconn` v0.0.46 without changing Redis wire data or credential semantics. ADR 0330 supersedes ADR 0250's shared-pool sizing deferral and ADR 0240's no-force-close rule only for the newly isolated follow clients; all durability and other leased Redis clients retain ADR 0240 behavior. `watch_lagging` remains distinct and continues to mean a client failed to consume its bounded delivery buffer.
 
 ## In scope — 4 scenarios, in implementation order
 
 ### Scenario 1 — Credential generations isolate follow traffic from durability traffic
 
-The durable ownership decision is recorded in [ADR 0328](../adr/0328-isolated-redis-follow-capacity.md), while credential reload retains the atomic-generation behavior described by the [architecture](../architecture.md).
+The durable ownership decision is recorded in [ADR 0330](../adr/0330-isolated-redis-follow-capacity.md), while credential reload retains the atomic-generation behavior described by the [architecture](../architecture.md).
 
 **Acceptance:**
 - AC1.1: Each published Redis credential generation owns a usable durability client and a distinct follow client whose `PoolSize` and `MaxActiveConns` equal the configured follow-pool size.
@@ -52,7 +52,7 @@ The durable ownership decision is recorded in [ADR 0328](../adr/0328-isolated-re
 - AC1.3: Every Redis command in `Follow:true` uses a follow client, while every command in `Follow:false` and all non-follow storage operations use the durability client. The follower holds admission for its full iterator but acquires and releases the current credential generation around each bounded read cycle and before yielding, so an idle iterator never pins a retired pair.
   - verify: `TestRedisFollowCapacity_Scenario1_ReadRoutingIsComplete`
 - AC1.4: Followers parked at the admission maximum do not delay or consume connections from a concurrent `AppendEvent` or `Save`.
-  - verify: `TestADR_0328_FollowersDoNotStarveDurability`
+  - verify: `TestADR_0330_FollowersDoNotStarveDurability`
 
 ### Scenario 2 — Follower admission is bounded, fail-fast, and resumable
 
@@ -62,7 +62,7 @@ The admission error extends the typed watch contract from [ADR 0250](../adr/0250
 - AC2.1: `Follow:true` acquires one admission before its first Redis operation, holds it for the iterator's complete lifetime, and releases it on normal completion, error, context cancellation, or an early consumer break.
   - verify: `TestRedisFollowCapacity_Scenario2_AdmissionCoversIteratorLifetime`
 - AC2.2: When all follower admissions are held, the next `Follow:true` read immediately yields an error wrapping `port.ErrEventFollowCapacity`, performs no Redis operation, and does not wait for a pool timeout.
-  - verify: `TestADR_0328_CapacityFailsFast`
+  - verify: `TestADR_0330_CapacityFailsFast`
 - AC2.3: `Follow:false` bypasses follower admission even when the follow limit is saturated.
   - verify: `TestRedisFollowCapacity_Scenario2_ReplayBypassesAdmission`
 - AC2.4: Both watch transports classify the sentinel as public `watch_capacity`; gRPC returns `RESOURCE_EXHAUSTED`, while HTTP retains `200` and emits a terminal SSE error frame. `watch_lagging` behavior remains unchanged.
@@ -80,7 +80,7 @@ The lifecycle follows [ADR 0027](../adr/0027-cloud-native.md): the store rejects
 - AC3.2: Close cancels every cooperative active follower, joins it within the existing bounded close grace, and its iterator ends without yielding shutdown as an event-log fault or producing an outstanding-operation warning.
   - verify: `TestRedisFollowCapacity_Scenario3_CloseCancelsAndJoinsFollowers`
 - AC3.3: If cancellation alone does not release a follower before the first bounded wait, close asynchronously force-closes only its follow client; a read unblocked by that close is joined within the total close grace and its iterator still ends cleanly, while the paired durability client remains usable by an existing lease.
-  - verify: `TestADR_0328_ForceCloseIsFollowOnly`
+  - verify: `TestADR_0330_ForceCloseIsFollowOnly`
 - AC3.4: Store close returns by its fixed total grace even if an injected pathological follow read and client close ignore cancellation; the closed lifecycle retains ownership of late cleanup, admits no new work, and does not force-close a durability client.
   - verify: `TestRedisFollowCapacity_Scenario3_PathologicalCloseRemainsBounded`
 - AC3.5: A follower that remains attached across credential rotation releases the retired client pair after its current one-second read cycle and continues on the new follow client without releasing its process-wide admission; retired pairs close without waiting for iterator termination.
@@ -92,7 +92,7 @@ The exact flags and Helm values are part of the storage-free deployment surface 
 
 **Acceptance:**
 - AC4.1: Omitted configuration resolves to follow-pool size 32 and maximum followers 32; the two CLI flags reach redisstore unchanged.
-  - verify: `TestADR_0328_CLIConfigAndDefaults`
+  - verify: `TestADR_0330_CLIConfigAndDefaults`
 - AC4.2: CLI startup rejects zero, negative, or `maxFollowers > poolSize` effective values. Helm JSON schema rejects non-positive/non-integer fields, and a chart template helper rejects the cross-field `maxFollowers > poolSize` relationship; neither surface clamps.
   - verify: `TestRedisFollowCapacity_Scenario4_InvalidBoundsFailClosed`
 - AC4.3: Helm defaults `redis.follow.poolSize` and `redis.follow.maxFollowers` to 32 and renders the corresponding flags from valid overrides.

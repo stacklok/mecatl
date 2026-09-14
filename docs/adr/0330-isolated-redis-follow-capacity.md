@@ -1,4 +1,4 @@
-# ADR 0328 — Isolated bounded Redis follow capacity
+# ADR 0330 — Isolated bounded Redis follow capacity
 
 - Status: Proposed
 - Date: 2026-09-11
