@@ -146,6 +146,94 @@ func TestProviderReviewCustomPartialConsent(t *testing.T) {
 	}
 }
 
+func TestProviderReviewAPIKeyWriteOutcome(t *testing.T) {
+	for _, action := range []string{"login", "setup", "custom-setup", "add"} {
+		for _, outcome := range []struct {
+			name  string
+			state authfile.CommitState
+			err   error
+		}{
+			{"unknown", authfile.CommitReplacementAppliedDurabilityUnknown, errors.New("sync fault: review-secret")},
+			{"unknown-cancelled", authfile.CommitReplacementAppliedDurabilityUnknown, context.Canceled},
+			{"unknown-no-error", authfile.CommitReplacementAppliedDurabilityUnknown, nil},
+			{"not-applied", authfile.CommitNotApplied, errors.New("write not applied")},
+		} {
+			t.Run(action+"/"+outcome.name, func(t *testing.T) {
+				sp, ap := followupHome(t, "{}\n", "")
+				c := newProviderCommands()
+				provider := "openai"
+				answers := []string{"yes"}
+				custom := action == "custom-setup" || action == "add"
+				if custom {
+					provider = "custom"
+					answers = []string{"https://gateway.example", "1", "model-1", "1", "yes"}
+				}
+				c.terminal.readField = providerInput(t, answers...)
+				c.terminal.readAPIKey = func(context.Context, string) (string, error) { return "review-secret", nil }
+				c.backend.updateDefaults = func(context.Context, string, permconfig.DefaultUpdate) (authfile.CommitState, error) {
+					t.Fatal("key write failure proceeded to default mutation")
+					return authfile.CommitNotApplied, nil
+				}
+				writes := 0
+				c.backend.updateAPIKey = func(ctx context.Context, path string, update authfile.APIKeyUpdate) (authfile.CommitState, error) {
+					writes++
+					if writes != 1 || update.APIKey == nil {
+						t.Fatal("automatic key retry or deletion")
+					}
+					if outcome.state == authfile.CommitReplacementAppliedDurabilityUnknown {
+						if _, err := authfile.UpdateAPIKey(ctx, path, update); err != nil {
+							t.Fatal(err)
+						}
+					}
+					return outcome.state, outcome.err
+				}
+				var out bytes.Buffer
+				res := resolveInvocation([]string{"mecatui", "providers", action, provider})
+				var err error
+				switch action {
+				case "login":
+					err = c.runCredential(context.Background(), res, &out, &out)
+				case "setup":
+					err = c.runSetup(context.Background(), res, &out, &out)
+				case "custom-setup":
+					err = c.runSetup(context.Background(), resolveInvocation([]string{"mecatui", "providers", "setup", provider}), &out, &out)
+				case "add":
+					err = c.runAdd(context.Background(), res, &out, &out)
+				}
+				if err == nil || errors.Is(err, errProviderCredentialCancelled) || writes != 1 {
+					t.Fatalf("write outcome: err=%v writes=%d", err, writes)
+				}
+				text := out.String() + err.Error()
+				for _, forbidden := range []string{"review-secret", ap, "no changes made", "definition restored", "rollback", "default set"} {
+					if strings.Contains(text, forbidden) {
+						t.Fatalf("unsafe or untrue outcome contains %q", forbidden)
+					}
+				}
+				if outcome.state == authfile.CommitReplacementAppliedDurabilityUnknown {
+					for _, want := range []string{"replacement_applied_durability_unknown", "may already be active", "crash durability", "mecatui providers status " + provider, "configured credential file", "before a manual retry"} {
+						if !strings.Contains(text, want) {
+							t.Errorf("missing %q in outcome: %s", want, text)
+						}
+					}
+					if !strings.Contains(readProviderCredentialTestFile(t, ap), "review-secret") {
+						t.Fatal("possibly applied key was removed")
+					}
+				} else if strings.Contains(text, "may already be active") || strings.Contains(text, "replacement_applied_durability_unknown") {
+					t.Fatal("unapplied write reported as possibly active")
+				}
+				inspection, inspectErr := inspectLocalProviders()
+				if inspectErr != nil {
+					t.Fatal(inspectErr)
+				}
+				_, definitionRemains := inspection.definitions[provider]
+				if inspection.selectedProvider != "" || definitionRemains != custom || (!custom && readProviderCredentialTestFile(t, sp) != "{}\n") {
+					t.Fatal("definition removed or deployment default changed")
+				}
+			})
+		}
+	}
+}
+
 func TestProviderReviewOIDCAddCancellation(t *testing.T) {
 	followupHome(t, "{}\n", "")
 	c := newProviderCommands()
