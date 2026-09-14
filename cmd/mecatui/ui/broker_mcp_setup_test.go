@@ -29,15 +29,31 @@ func setupPanelView(m Model) string {
 	return ""
 }
 
-func TestBrokerMCPStatus_Scenario3_SetupEligibility(t *testing.T) {
-	for _, name := range []string{"fresh", "unknown", "used", "active", "snapshot-running", "resumed", "completed", "busy", "unwired"} {
-		t.Run(name, func(t *testing.T) {
+func TestIdleSessionBrokerRefresh_Scenario3_EligibilityAndRecoveryUX(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		eligible bool
+	}{
+		{name: "fresh", eligible: true},
+		{name: "connected", eligible: true},
+		{name: "terminal", eligible: true},
+		{name: "unavailable", eligible: true},
+		{name: "used", eligible: true},
+		{name: "active", eligible: false},
+		{name: "snapshot-running", eligible: false},
+		{name: "resumed", eligible: true},
+		{name: "busy", eligible: false},
+		{name: "unwired", eligible: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			m, control := setupPanelModel(t)
-			switch name {
-			case "unknown":
-				m.sessionState = ""
-			case "used":
-				m.conv.addUser("already sent")
+			switch tc.name {
+			case "connected":
+				m.enrollment.Status = client.WorkspaceEnrollmentConnected
+			case "terminal":
+				m.enrollment.Status = client.WorkspaceEnrollmentFailed
+			case "unavailable":
+				// Inventory is set after opening the panel, as the initial probe is asynchronous.
 			case "active":
 				m.phase = phaseRunning
 			case "snapshot-running":
@@ -52,28 +68,38 @@ func TestBrokerMCPStatus_Scenario3_SetupEligibility(t *testing.T) {
 				m.enrollment.busy = true
 			case "unwired":
 				m.deps.WorkspaceEnrollment = nil
+			case "used":
+				m.conv.addUser("already sent")
 			}
 			m = openOverlay(t, m, ctrlKey('o'))
-			if got := strings.Contains(setupPanelView(m), "c connect tools"); got != (name == "fresh") {
-				t.Fatalf("connect offered=%t: %s", got, setupPanelView(m))
+			if st := mcpActive(m); st != nil {
+				switch tc.name {
+				case "connected":
+					st.inventory = client.MCPConnectorInventory{Availability: "available", EnrollmentState: "completed"}
+				case "unavailable":
+					st.inventory = client.MCPConnectorInventory{Availability: unavailableText, EnrollmentState: "completed"}
+				}
+			}
+			if got := strings.Contains(setupPanelView(m), "c connect tools"); got != tc.eligible {
+				t.Fatalf("connect offered=%t, want %t: %s", got, tc.eligible, setupPanelView(m))
 			}
 			mm, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Text: "c"})
 			m = mm.(Model)
-			if cmd != nil && name != "fresh" && mcpActive(m) != nil {
+			if cmd != nil && !tc.eligible && mcpActive(m) != nil {
 				t.Fatal("ineligible key queued an action")
 			}
-			if cmd != nil && name == "fresh" {
+			if cmd != nil && tc.eligible {
 				mm, cmd = m.Update(cmd())
 				m = mm.(Model)
 				if cmd != nil {
 					_ = cmd()
 				}
 			}
-			if control.connectCalls != 0 && name != "fresh" {
+			if control.connectCalls != 0 && !tc.eligible {
 				t.Fatal("ineligible connect called controller")
 			}
-			if name == "fresh" && control.connectCalls != 1 {
-				t.Fatal("fresh connect did not reach controller")
+			if tc.eligible && control.connectCalls != 1 {
+				t.Fatal("eligible connect did not reach controller")
 			}
 		})
 	}
@@ -153,7 +179,7 @@ func TestBrokerMCPStatus_Scenario3_AliasCancelReopen(t *testing.T) {
 }
 
 func TestBrokerMCPStatus_Scenario3_StaleSetupActions(t *testing.T) {
-	for _, change := range []string{"session", "generation", "busy", "used"} {
+	for _, change := range []string{"session", "generation", "busy"} {
 		t.Run(change, func(t *testing.T) {
 			m, _ := setupPanelModel(t)
 			m = openOverlay(t, m, ctrlKey('o'))
@@ -167,8 +193,6 @@ func TestBrokerMCPStatus_Scenario3_StaleSetupActions(t *testing.T) {
 				m.enrollment.controlGen++
 			case "busy":
 				m.enrollment.busy = true
-			case "used":
-				m.conv.addUser("sent")
 			}
 			if _, cmd = m.Update(msg); cmd != nil {
 				t.Fatal("stale action reached controller")
@@ -239,13 +263,13 @@ func TestBrokerMCPStatus_Scenario3_SetupLiveState(t *testing.T) {
 	}
 	control.connect.Status = client.WorkspaceEnrollmentConnected
 	m = applyAll(m, poll())
-	if view := setupPanelView(m); strings.Contains(view, "c connect tools") || strings.Contains(view, "x cancel setup") || strings.Contains(view, "Setup in progress") {
+	if view := setupPanelView(m); !strings.Contains(view, "c connect tools") || strings.Contains(view, "x cancel setup") || strings.Contains(view, "Setup in progress") {
 		t.Fatalf("completed: %s", view)
 	}
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = openOverlay(t, mm.(Model), ctrlKey('o'))
-	if strings.Contains(setupPanelView(m), "c connect tools") {
-		t.Fatal("reopen offered completed connect")
+	if !strings.Contains(setupPanelView(m), "c connect tools") {
+		t.Fatal("reopen did not offer explicit recovery")
 	}
 	if _, cmd := m.Update(actionMsg); cmd != nil {
 		t.Fatal("old panel action admitted")

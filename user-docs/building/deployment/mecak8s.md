@@ -442,10 +442,32 @@ registration. A plain OAuth2 upstream uses explicit `authorizationEndpoint` and
 
 ### Inspect the broker catalogue in mecatui
 
-On a broker-only connection, `/mcp` shows the current session's enrollment,
-connectors, catalog state, and tool counts. It reads local state without probing
-upstreams or refreshing credentials. A fresh idle session can start setup with
-`c connect tools` or `/tools-connect`; cancel with `/tools-cancel`.
+On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
+broker catalogue: enrollment state, connector names, catalogue state, and tool
+counts. Opening and refresh read only that local state; they do not probe an
+upstream, refresh credentials, or enroll connectors. When the owner-authorized
+session is stably idle and the enrollment controller is wired, `/mcp` (or Ctrl+O)
+offers `c connect tools` after a fresh session, completed turns, a prior
+connection, a failed/terminal attempt, or a broker-process restart. A persisted
+name or inventory row never proves live connectivity: after restart the panel
+truthfully reports broker state unavailable and protected tools remain
+unavailable until the owner explicitly refreshes this same session.
+Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
+second refresh are blocked until the existing operation settles. The existing
+browser flow continues without a reopen-browser action. A running or awaiting
+session does not offer refresh. Setup is destructive and bundle-wide: starting
+it withdraws broker tools, and cancellation or failure leaves them unavailable;
+`/tools-connect` and `/tools-cancel` remain unchanged bare-command shortcuts.
+
+ToolHive remains the sole custodian of upstream OAuth presentation, callback
+state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only
+its opaque enrollment control. Broker OAuth mode remains constrained to one
+Helm replica (`replicaCount: 1`); this refresh path is explicit same-session
+recovery, not automatic recovery, high availability, or multi-replica routing.
+The panel still requires the existing authenticated verified principal and a
+matching owned session; broker-only and direct-MCP compositions remain
+mutually exclusive, so broker-only sessions do not offer direct resources,
+prompts, or groups.
 
 The panel is not an upstream health check. It requires the authenticated owner
 of the session. Broker-only sessions do not expose direct MCP resources,

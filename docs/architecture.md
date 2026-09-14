@@ -191,9 +191,10 @@ Authenticated discovery results remain staged until the opaque pre-prompt enroll
 Mecatl then admits every live definition through the shared protected-route validation boundary,
 collision-checks the complete result, and atomically replaces all static placeholders with that
 session's authenticated membership, descriptions, schemas, and read-only hints. A declared tool
-omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is
-frozen for the session, so later runs and token refreshes do not rediscover it; a fresh session
-performs a fresh discovery. A failure admits no mixed or partial catalogue. In a broker-only
+omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is frozen for the session, so later runs and token refreshes do not
+rediscover it. Initial enrollment performs a fresh discovery; an explicit owner-controlled
+refresh may perform the same whole-bundle discovery after a completed turn or after broker
+process loss. A failure admits no mixed or partial catalogue. In a broker-only
 session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
 same frozen route and authorization transaction, applies bounded in-memory jq before normal
 result rendering, and never opens a direct upstream connection or exposes the raw successful
@@ -203,16 +204,10 @@ session snapshot persists an opaque broker-incarnation binding and reload requir
 match. Ordinary `CloseSession` detaches locally, while permanent owner deletion and retention
 also delete broker transactions, grants, and replay state.
 
-This runtime retains a process-local mecatl session/attachment boundary. For the
-pre-prompt workspace seam only, a persisted binding from a prior process is replaced and its old
-pending correlation discarded so a fresh enrollment can begin; the old enrollment is not
-recovered. Live protected-call authorization controls never rebind and fail closed instead of
-silently creating replacement authority. ToolHive's configured Redis storage may preserve its
-inner authorization/token state, but mecatl cannot correlate a restarted outer enrollment to it.
-Durable/remote outer broker ownership and multi-replica routing remain later-stage concerns.
+This runtime retains a process-local mecatl session/attachment boundary. A persisted binding from a prior process is never inferred as live: ordinary rehydration leaves broker tools unavailable and does not attach, discover, refresh credentials, or open browser consent. An owner-authorized stable idle session may explicitly invoke the existing whole-bundle refresh control; it withdraws the old wrappers before replacement and admits them only after complete authenticated discovery and persistence. ToolHive's configured Redis storage may preserve its inner authorization/token state, but mecatl makes no grant-reuse guarantee and never exposes that material. Durable/remote outer broker ownership and multi-replica routing remain later-stage concerns.
 OAuth broker mode is therefore not safe behind mecak8s's default multi-replica Service until an
-affinity or durable-broker decision is made; the chart does not silently change its replica
-behavior.
+affinity or durable-broker decision is made; the chart enforces `replicaCount: 1` when broker
+callback mode is configured and does not silently change its replica behavior.
 
 The owner-scoped broker connector inventory is available to authenticated mecatui
 sessions through `/mcp` when the server advertises its broker-status capability. The

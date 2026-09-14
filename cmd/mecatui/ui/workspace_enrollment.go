@@ -172,6 +172,10 @@ func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
 		m.workspaceEnrollmentNotice = "cannot connect workspace services: no active session"
 		return m, nil
 	}
+	if m.phase != phaseIdle {
+		m.workspaceEnrollmentNotice = "workspace services connection is available only while the session is idle"
+		return m, nil
+	}
 	if m.enrollment.busy {
 		m.workspaceEnrollmentNotice = "workspace services connection is already in progress"
 		return m, nil
