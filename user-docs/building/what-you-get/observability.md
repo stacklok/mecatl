@@ -80,6 +80,10 @@ disables tracing without affecting Prometheus metrics.
 Concurrent runs that share one sink also share its root span. Mecatl does not
 yet provide independent root correlation for those runs.
 
+`EventSink.Emit` receives the run context so an embedder can parent telemetry to
+the originating request. Read trace data during the call, but do not retain the
+context or use its cancellation state to drop events.
+
 ## Model-call resilience
 
 Mecatl wraps every model provider with retry, circuit-breaker, establishment
@@ -99,8 +103,9 @@ begins.
 |`--llm-breaker-threshold`|`5`|Open the breaker after consecutive transient failures. `0` disables it.|
 |`--llm-breaker-cooldown`|`30s`|Wait before a half-open trial.|
 
-A successful call resets the breaker. Exhausted retries produce an
-`ExhaustedError`; an open breaker produces a `BreakerError`.
+A successful call resets the breaker. Permanent client errors other than 408 or
+429 and caller cancellations do not count toward the threshold. Exhausted
+retries produce an `ExhaustedError`; an open breaker produces a `BreakerError`.
 
 ### Timeouts
 
@@ -114,8 +119,8 @@ replaying a partially visible response could duplicate work.
 
 ### Prompt caching
 
-Provider-side prompt caching is enabled for the Anthropic, OpenAI, OpenRouter,
-and OpenAI Chat Completions adapters.
+Provider-side prompt caching is enabled for Anthropic, OpenAI Responses, and
+OpenRouter. The current OpenAI Chat Completions route uses no cache dialect.
 
 |Flag|Default|Purpose|
 |-|-|-|
@@ -139,7 +144,7 @@ server diagnostics.
 
 Session facts belong in the event stream. Diagnostics cover operational
 conditions that have no matching event, such as persistence failures, policy
-assembly failures, and degraded integrations.
+denials, instruction-fragment assembly failures, and degraded integrations.
 
 When caller ownership is enforced, session-load failures look like `NotFound` to
 the caller. Operators receive only `class=store|snapshot|unknown`; logs and
@@ -185,9 +190,10 @@ Disable product metrics with any of these controls:
 change the operator's choice. Use `--product-metrics-dry-run` to print the
 observations instead of sending them.
 
-The Helm chart stores `mecak8s`'s random installation ID in a ConfigMap so it
-survives pod restarts without a persistent volume. Delete the ConfigMap to reset
-the ID, or disable reporting with one of the controls above.
+The Helm chart stores `mecak8s`'s random installation ID in a ConfigMap and
+passes it as `MECATL_PRODUCT_METRICS_INSTALL_ID`, so it survives pod restarts
+without a persistent volume. Delete the ConfigMap to reset the ID, or disable
+reporting with one of the controls above.
 
 ## What's next
 

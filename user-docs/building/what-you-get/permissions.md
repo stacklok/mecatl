@@ -384,7 +384,8 @@ Guardrails use a separate, tool-less model to inspect matched tool content:
 |`advisory`|Logs and displays a finding without changing what the tool or model receives.|
 
 Use `sanitize` only with a checker you trust because its output replaces the
-original content.
+original content. A rewritten result includes the
+`[guardrail: redacted unsafe content]` marker.
 
 ### PostToolUse block rewrites, it does not veto
 

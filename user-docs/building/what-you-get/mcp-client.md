@@ -118,9 +118,10 @@ Mecatl enables two optional MCP capabilities by default:
 ## Typed tool results
 
 MCP results can contain text, images, audio, embedded resources, resource links,
-and structured JSON. Mecatl preserves those content types. The active provider
-and model determine whether image and audio blocks can reach the model; text,
-resource links, embedded resources, and structured content always can.
+and structured JSON. Mecatl preserves typed blocks in `ToolResult.Parts`; older
+string-only results leave `Parts` empty. The active provider and model determine
+whether image and audio blocks can reach the model; text, resource links,
+embedded resources, and structured content always can.
 
 An MCP server's `Audience` value is a display hint, not an access control.
 Mecatl still sends every block to the model because the remote server is not
@@ -137,6 +138,7 @@ Mecatl truncates oversized plain-text results before they enter context. It
 returns an error for oversized structured results because truncating JSON can
 make it invalid. A result is structured when the tool declares an
 `outputSchema`, returns `structuredContent`, or returns a JSON content block.
+Remote tool errors remain plain text and use normal bounded truncation.
 
 To reduce a structured result, use the remote tool's pagination or filtering
 arguments. You can also call the tool through `CallMcpWithQuery`, which applies

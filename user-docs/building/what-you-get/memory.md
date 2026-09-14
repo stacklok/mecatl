@@ -54,9 +54,11 @@ the index remain searchable.
 |`UndoMemory` / `UndoUserMemory`|Both|Restore the previous state with a new revision.|
 
 Versioned lifecycle tools appear only when the store supports complete history.
-`Forget` and `Undo` require the exact `expected_version` from a same-scope
-`Recall`, `Inspect`, or mutation result. Inspect first when the version might be
-stale. Treat the token as opaque.
+For `Remember`, omit `expected_version` to overwrite the current value or supply
+the current token for a compare-and-swap update. A stale token returns a
+conflict. `Forget` and `Undo` require the exact `expected_version` from a
+same-scope `Recall`, `Inspect`, or mutation result. Inspect first when the
+version might be stale. Treat the token as opaque.
 
 Mecatl provides BM25 keyword search. It does not require or support an embedding
 or vector database.

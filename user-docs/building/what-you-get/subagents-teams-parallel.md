@@ -20,9 +20,12 @@ A child's transcript stays out of the parent context. The parent receives a
 bounded result and status events. Use `InspectSubagent` for a Subagent or
 Parallel branch, and `InspectMember` for a team member.
 
+### Watch a delegation in `mecatui`
+
 In `mecatui`, press `ctrl+t` or use the `f6` agents overlay to inspect bounded
 child messages, tool arguments, and results. These previews do not enter the
-parent's model context. Child permission requests are not forwarded.
+parent's model context. Interactive clients can surface child permission
+requests with an attributed, bounded summary; raw child arguments are withheld.
 
 ## Subagent
 
@@ -115,7 +118,7 @@ report must answer. Other members should record each conclusion with
 Members are read-only by default. A mutating member gets a private writable copy
 of the workspace. Team workspaces are never merged or preserved, so the durable
 deliverable is the lead's consolidated report. Use `InspectMember` when you need
-one member's detail.
+one member's detail, passing the ID from the result's `Team id:` line.
 
 `--max-team-tokens` sets a cumulative team budget. A call can tighten that value
 with `max_team_tokens`. When the team crosses the limit, it stops scheduling

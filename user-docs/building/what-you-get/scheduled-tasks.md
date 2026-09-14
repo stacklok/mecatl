@@ -31,6 +31,11 @@ ownership enabled, the store must support atomic create-only publication.
 Current remote schedule-store drivers do not, so Mecatl rejects that combination
 at startup.
 
+The store keeps cron expressions as raw strings. Composition parses them,
+computes `NextFireAt`, and passes the next time to `Claim`. Implementations must
+make `Claim` atomic and pass the shared `engine/adapter/scheduleconformance`
+suite.
+
 Each schedule contains:
 
 - An immutable specification with the prompt, trigger, model selection,
@@ -72,15 +77,19 @@ and logs a warning.
 |`MisfireFireOnceNow`|Run once for missed slots, then resume the cadence. This is the default.|
 |`MisfireSkip`|Advance past the missed slot without running it.|
 
-Mecatl also prevents overlapping fires from the same schedule. Although the spec
-includes `Singleton`, creation currently coerces it to `true`.
+With `port.SessionLease` wired, Mecatl prevents overlapping fires from the same
+schedule. It trial-acquires the lease for `LastFireSessionID`: a held lease
+skips the slot, while a released or expired lease permits the next fire.
+Although the spec includes `Singleton`, creation currently coerces it to `true`.
+Custom multi-replica deployments must wire the lease for this check.
 
 ### One session per fire
 
-Every fire creates a new session through the normal session and run APIs. It
-uses bounded turn and tool limits, a read-leaning posture unless `Mutating` is
-true, and headless permission behavior. To carry information between fires,
-store it in project memory or a file and load it from the prompt.
+Every fire creates a new session through the normal session and run APIs. Its
+fire and session share one `sched--`-prefixed ID. The session uses bounded turn
+and tool limits, a read-leaning posture unless `Mutating` is true, and headless
+permission behavior. To carry information between fires, store it in project
+memory or a file and load it from the prompt.
 
 The session store retains the conversation, tool calls, and usage. The schedule
 store records the fire ID, session ID, start time, terminal stop reason, and
@@ -167,4 +176,4 @@ then reports its session, progress, deadline, and terminal result.
 - [Run `mecated`](/building/deployment/mecated.md) for scheduler flags and
   durable store configuration.
 - [Session store extension point](/building/extension-points/session-store.md)
-  to add schedule support to a custom backend.
+  for the session persistence used alongside a schedule store.

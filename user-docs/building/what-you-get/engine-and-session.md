@@ -79,7 +79,7 @@ cancels the run.
 
 |What|Type|What it does|
 |-|-|-|
-|**Environment**|`tool.Environment`|Binds a non-null workspace, an optional command runner, and the environment identity.|
+|**Environment**|`tool.Environment`|Binds a non-nil workspace, an optional command runner, and the environment identity.|
 |**Catalog**|`*tool.Catalog` on `Deps`|Registers built-in, MCP, and custom tools. `Specs(mode)` defines what the model can use.|
 |**LLM provider**|`port.LLMProvider` on `Deps`|Streams provider-neutral model output. Mecatl includes OpenAI and Anthropic adapters.|
 

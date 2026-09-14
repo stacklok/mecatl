@@ -53,9 +53,10 @@ accept images.
 `WebSearch` to find a page and `WebFetch` to read a known URL.
 
 It rejects private, loopback, link-local, metadata, and reserved destinations,
-and repeats those checks after redirects. It does not use browser cookies, proxy
-settings, custom headers, or credentials. Limits include five redirects, 5 MiB
-response bodies, and 25,000 bytes of model-visible output.
+pins the validated DNS result for the connection, and repeats those checks after
+redirects. It does not use browser cookies, proxy settings, custom headers, or
+credentials. Limits include five redirects, 5 MiB response bodies, and 25,000
+bytes of model-visible output.
 
 Mecatl removes active HTML, repairs invalid UTF-8, and marks fetched text as
 untrusted. The default model-backed guardrails inspect `WebFetch` results when
@@ -95,8 +96,8 @@ profile. See
 
 On Linux and macOS, Shell uses private managed temporary storage. Mecatl removes
 it after normal completion and later reclaims validated, abandoned leases. It
-never sweeps unrelated system files. Other platforms use system temporary
-storage.
+never sweeps unrelated system files. Other platforms must set
+`temporary_storage.mode: system` or Mecatl will not start.
 
 Set `temporary_storage.mode: system` in user-global settings to use system
 temporary storage. Existing managed leases remain for manual inspection or
@@ -107,10 +108,11 @@ cleanup settings.
 
 ### Background commands
 
-`Shell` with `background: true` returns a `bashcmd-<id>` job ID. Use
-`ShellStatus` to list jobs, inspect retained output, wait, collect a result
-once, or cancel a job. Background commands run in the real workspace, so their
-changes can overlap later tool calls. Mecatl cancels them when the run ends.
+`Shell` with `background: true` returns a `bashcmd-<id>` job ID. Call
+`ShellStatus` without arguments to list jobs, use `job_id` to inspect or collect
+one, use `wait_ms` to wait, or pass an ID to `cancel` to stop it. Background
+commands run in the real workspace, so their changes can overlap later tool
+calls. Mecatl cancels them when the run ends.
 
 ### The no-filesystem session profile
 

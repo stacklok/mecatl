@@ -210,10 +210,11 @@ A session that ends in any terminal state can be re-entered:
   A recovery warning appears before the first turn of the retried run.
 
 A persisted `running` snapshot can represent a crashed process. After acquiring
-the run lock and lease, the service closes incomplete tool calls before
-recovery. It does not reset a live run.
+the run lock and lease, the service calls `Abandon` to close incomplete tool
+calls before recovery. It does not reset a live run.
 
 An `awaiting` session requires an approval verdict before a new prompt.
+Resetting it to idle would discard the pending request.
 
 The service handles these recovery transitions when a client re-enters a
 session.
