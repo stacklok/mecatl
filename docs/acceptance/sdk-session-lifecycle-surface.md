@@ -8,7 +8,7 @@
 **Delivery:** Split. The public SDK additions, projection semantics, lifecycle behavior, and transport-parity contract merit approval before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [#1468](https://github.com/stacklok/mecatl/issues/1468)
-**Plan PR:** <added when opened>
+**Plan PR:** [#1501](https://github.com/stacklok/mecatl/pull/1501)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 SDK consumers can inspect a session, read its authoritative transcript, mutate its
