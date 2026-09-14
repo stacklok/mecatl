@@ -1,8 +1,6 @@
 ---
 title: TypeScript SDK core API
-description:
-  Look up the transport-neutral TypeScript SDK functions, methods, types, and
-  errors.
+description: Look up the transport-neutral TypeScript SDK functions, methods, types, and errors.
 sidebar_position: 2
 toc_max_heading_level: 2
 ---
@@ -11,171 +9,169 @@ import Heading from "@theme/Heading";
 
 # TypeScript SDK core API
 
-{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate
-with task sdk:docs. DO NOT EDIT. */}
+{/* Generated from API Extractor models and sdk/typescript/src TSDoc. Regenerate with task sdk:docs. DO NOT EDIT. */}
 
-This reference describes the declarations exported by
-`@stacklok-oss/mecatl-sdk`.
+This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`.
 
 ## Symbol index
 
-|Symbol|Kind|
-|-|-|
-|[`ActivityGapError`](#api-activitygaperror-class)|Class|
-|[`AgentEvent`](#api-agentevent-typealias)|Type alias|
-|[`Agents`](#api-agents-interface)|Interface|
-|[`ApprovalEventPayload`](#api-approvaleventpayload-interface)|Interface|
-|[`ArchivedConversationMessage`](#api-archivedconversationmessage-interface)|Interface|
-|[`AttachedRun`](#api-attachedrun-interface)|Interface|
-|[`AttachOptions`](#api-attachoptions-interface)|Interface|
-|[`audioPart`](#api-audiopart-function)|Function|
-|[`audioPartFromBlob`](#api-audiopartfromblob-function)|Function|
-|[`AudioPromptPart`](#api-audiopromptpart-interface)|Interface|
-|[`AuthenticationError`](#api-authenticationerror-class)|Class|
-|[`Client`](#api-client-interface)|Interface|
-|[`ClientDiagnosticsOptions`](#api-clientdiagnosticsoptions-interface)|Interface|
-|[`Commands`](#api-commands-interface)|Interface|
-|[`CompactionArchiveEventPayload`](#api-compactionarchiveeventpayload-interface)|Interface|
-|[`connect`](#api-connect-function)|Function|
-|[`ConnectionStatus`](#api-connectionstatus-typealias)|Type alias|
-|[`ConnectionStatusListener`](#api-connectionstatuslistener-typealias)|Type alias|
-|[`ConnectionStatusStore`](#api-connectionstatusstore-interface)|Interface|
-|[`ConnectOptions`](#api-connectoptions-typealias)|Type alias|
-|[`createHttpTransport`](#api-createhttptransport-function)|Function|
-|[`createRawClient`](#api-createrawclient-function)|Function|
-|[`CreateSessionOptions`](#api-createsessionoptions-interface)|Interface|
-|[`CreateTeamOptions`](#api-createteamoptions-interface)|Interface|
-|[`CredentialOptions`](#api-credentialoptions-interface)|Interface|
-|[`CredentialProvider`](#api-credentialprovider-typealias)|Type alias|
-|[`CursorExpiredError`](#api-cursorexpirederror-class)|Class|
-|[`CursorMalformedError`](#api-cursormalformederror-class)|Class|
-|[`CursorScopeError`](#api-cursorscopeerror-class)|Class|
-|[`DiagnosticFieldValue`](#api-diagnosticfieldvalue-typealias)|Type alias|
-|[`DiagnosticLevel`](#api-diagnosticlevel-typealias)|Type alias|
-|[`DiagnosticRecord`](#api-diagnosticrecord-interface)|Interface|
-|[`DiagnosticsSink`](#api-diagnosticssink-typealias)|Type alias|
-|[`DreamPlans`](#api-dreamplans-interface)|Interface|
-|[`ErrorOrigin`](#api-errororigin-typealias)|Type alias|
-|[`Event`](#api-event-typealias)|Type alias|
-|[`EventCommon`](#api-eventcommon-interface)|Interface|
-|[`EventContent`](#api-eventcontent-interface)|Interface|
-|[`EventContentBlock`](#api-eventcontentblock-interface)|Interface|
-|[`EventOf`](#api-eventof-typealias)|Type alias|
-|[`EventPayloads`](#api-eventpayloads-interface)|Interface|
-|[`EventUsage`](#api-eventusage-interface)|Interface|
-|[`ForkSessionOptions`](#api-forksessionoptions-interface)|Interface|
-|[`getRawJson`](#api-getrawjson-function)|Function|
-|[`HookEventPayload`](#api-hookeventpayload-interface)|Interface|
-|[`HttpTransportOptions`](#api-httptransportoptions-interface)|Interface|
-|[`imagePart`](#api-imagepart-function)|Function|
-|[`imagePartFromBlob`](#api-imagepartfromblob-function)|Function|
-|[`ImagePromptPart`](#api-imagepromptpart-interface)|Interface|
-|[`IncompatibleServerError`](#api-incompatibleservererror-class)|Class|
-|[`InjectedTransportOptions`](#api-injectedtransportoptions-interface)|Interface|
-|[`InvalidStateError`](#api-invalidstateerror-class)|Class|
-|[`KnownEvent`](#api-knownevent-typealias)|Type alias|
-|[`KnownEventKind`](#api-knowneventkind-typealias)|Type alias|
-|[`LearnedSkills`](#api-learnedskills-interface)|Interface|
-|[`LearningAttempts`](#api-learningattempts-interface)|Interface|
-|[`LearningProposals`](#api-learningproposals-interface)|Interface|
-|[`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable)|Variable|
-|[`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable)|Variable|
-|[`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable)|Variable|
-|[`McpInventory`](#api-mcpinventory-interface)|Interface|
-|[`MECATL_ATTACH_FILTERED_KINDS`](#api-mecatl-attach-filtered-kinds-variable)|Variable|
-|[`MECATL_ERROR_CODES`](#api-mecatl-error-codes-variable)|Variable|
-|[`MECATL_EVENT_KINDS`](#api-mecatl-event-kinds-variable)|Variable|
-|[`MECATL_WATCH_PHASES`](#api-mecatl-watch-phases-variable)|Variable|
-|[`MecatlError`](#api-mecatlerror-class)|Class|
-|[`MecatlErrorCode`](#api-mecatlerrorcode-typealias)|Type alias|
-|[`MecatlErrorOptions`](#api-mecatlerroroptions-interface)|Interface|
-|[`MediaPartOptions`](#api-mediapartoptions-interface)|Interface|
-|[`MediaPartSource`](#api-mediapartsource-interface)|Interface|
-|[`ModelRetryEventPayload`](#api-modelretryeventpayload-interface)|Interface|
-|[`Models`](#api-models-interface)|Interface|
-|[`NoRunsError`](#api-norunserror-class)|Class|
-|[`ParallelEventPayload`](#api-paralleleventpayload-interface)|Interface|
-|[`PermissionAskAlreadyResolvedError`](#api-permissionaskalreadyresolvederror-class)|Class|
-|[`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface)|Interface|
-|[`PermissionAskResponder`](#api-permissionaskresponder-typealias)|Type alias|
-|[`PermissionVerdict`](#api-permissionverdict-typealias)|Type alias|
-|[`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class)|Class|
-|[`PlanApprovalResponder`](#api-planapprovalresponder-typealias)|Type alias|
-|[`PlanApprovalVerdict`](#api-planapprovalverdict-typealias)|Type alias|
-|[`PlanContinuationStartError`](#api-plancontinuationstarterror-class)|Class|
-|[`PlanResolution`](#api-planresolution-interface)|Interface|
-|[`PlanResolutionResult`](#api-planresolutionresult-interface)|Interface|
-|[`PromptInput`](#api-promptinput-typealias)|Type alias|
-|[`PromptPart`](#api-promptpart-typealias)|Type alias|
-|[`PromptValidationError`](#api-promptvalidationerror-class)|Class|
-|[`PromptValidationReason`](#api-promptvalidationreason-typealias)|Type alias|
-|[`ProtocolError`](#api-protocolerror-class)|Class|
-|[`RawClient`](#api-rawclient-interface)|Interface|
-|[`RawClientOptions`](#api-rawclientoptions-interface)|Interface|
-|[`Reflection`](#api-reflection-interface)|Interface|
-|[`RequestOptions`](#api-requestoptions-typealias)|Type alias|
-|[`ResultEventPayload`](#api-resulteventpayload-interface)|Interface|
-|[`RetryDisposition`](#api-retrydisposition-typealias)|Type alias|
-|[`Run`](#api-run-interface)|Interface|
-|[`RunOptions`](#api-runoptions-interface)|Interface|
-|[`RunResult`](#api-runresult-interface)|Interface|
-|[`ScheduleEventPayload`](#api-scheduleeventpayload-interface)|Interface|
-|[`Schedules`](#api-schedules-interface)|Interface|
-|[`SdkCursor`](#api-sdkcursor-typealias)|Type alias|
-|[`SDKErrorCode`](#api-sdkerrorcode-typealias)|Type alias|
-|[`ServerError`](#api-servererror-class)|Class|
-|[`ServerErrorCode`](#api-servererrorcode-typealias)|Type alias|
-|[`Session`](#api-session-interface)|Interface|
-|[`SESSION_ID_HEADER_NAME`](#api-session-id-header-name-variable)|Variable|
-|[`SessionActivity`](#api-sessionactivity-interface)|Interface|
-|[`SessionBusyError`](#api-sessionbusyerror-class)|Class|
-|[`SessionLimits`](#api-sessionlimits-interface)|Interface|
-|[`SessionMcpServer`](#api-sessionmcpserver-interface)|Interface|
-|[`Sessions`](#api-sessions-interface)|Interface|
-|[`SessionTitleEventPayload`](#api-sessiontitleeventpayload-interface)|Interface|
-|[`Skills`](#api-skills-interface)|Interface|
-|[`Soul`](#api-soul-interface)|Interface|
-|[`SteerEventPayload`](#api-steereventpayload-interface)|Interface|
-|[`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface)|Interface|
-|[`Storage`](#api-storage-interface)|Interface|
-|[`StreamProgress`](#api-streamprogress-typealias)|Type alias|
-|[`SubagentEventPayload`](#api-subagenteventpayload-interface)|Interface|
-|[`SUPPORTED_API_MAJOR`](#api-supported-api-major-variable)|Variable|
-|[`Team`](#api-team-interface)|Interface|
-|[`TeamEvent`](#api-teamevent-typealias)|Type alias|
-|[`TeamEventPayload`](#api-teameventpayload-interface)|Interface|
-|[`TeamFindingEventPayload`](#api-teamfindingeventpayload-interface)|Interface|
-|[`TeamMemberDispositionEventPayload`](#api-teammemberdispositioneventpayload-interface)|Interface|
-|[`TeamMemberOptions`](#api-teammemberoptions-interface)|Interface|
-|[`TeamMemberRunEvent`](#api-teammemberrunevent-typealias)|Type alias|
-|[`TeamMemberSpecEventPayload`](#api-teammemberspeceventpayload-interface)|Interface|
-|[`TeamMessageOptions`](#api-teammessageoptions-interface)|Interface|
-|[`TeamOutcomeRunEvent`](#api-teamoutcomerunevent-interface)|Interface|
-|[`TeamRun`](#api-teamrun-interface)|Interface|
-|[`TeamRunEvent`](#api-teamrunevent-typealias)|Type alias|
-|[`Teams`](#api-teams-interface)|Interface|
-|[`TeamTaskEventPayload`](#api-teamtaskeventpayload-interface)|Interface|
-|[`textPart`](#api-textpart-function)|Function|
-|[`TextPromptPart`](#api-textpromptpart-interface)|Interface|
-|[`TitleAttemptEventPayload`](#api-titleattempteventpayload-interface)|Interface|
-|[`ToolCallEventPayload`](#api-toolcalleventpayload-interface)|Interface|
-|[`ToolResultEventPayload`](#api-toolresulteventpayload-interface)|Interface|
-|[`TransportError`](#api-transporterror-class)|Class|
-|[`TransportKind`](#api-transportkind-typealias)|Type alias|
-|[`TurnEndEventPayload`](#api-turnendeventpayload-interface)|Interface|
-|[`UnknownEvent`](#api-unknownevent-typealias)|Type alias|
-|[`UnknownGrpcEvent`](#api-unknowngrpcevent-interface)|Interface|
-|[`UnknownHttpEvent`](#api-unknownhttpevent-interface)|Interface|
-|[`UnknownWatchEnvelope`](#api-unknownwatchenvelope-interface)|Interface|
-|[`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class)|Class|
-|[`UserModel`](#api-usermodel-interface)|Interface|
-|[`UserPromptEventPayload`](#api-userprompteventpayload-interface)|Interface|
-|[`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface)|Interface|
-|[`WatchEnvelope`](#api-watchenvelope-typealias)|Type alias|
-|[`WatchEventEnvelope`](#api-watcheventenvelope-interface)|Interface|
-|[`WatchGapEnvelope`](#api-watchgapenvelope-interface)|Interface|
-|[`withSessionAffinity`](#api-withsessionaffinity-function)|Function|
-|[`Worktrees`](#api-worktrees-interface)|Interface|
+| Symbol | Kind |
+| --- | --- |
+| [`ActivityGapError`](#api-activitygaperror-class) | Class |
+| [`AgentEvent`](#api-agentevent-typealias) | Type alias |
+| [`Agents`](#api-agents-interface) | Interface |
+| [`ApprovalEventPayload`](#api-approvaleventpayload-interface) | Interface |
+| [`ArchivedConversationMessage`](#api-archivedconversationmessage-interface) | Interface |
+| [`AttachedRun`](#api-attachedrun-interface) | Interface |
+| [`AttachOptions`](#api-attachoptions-interface) | Interface |
+| [`audioPart`](#api-audiopart-function) | Function |
+| [`audioPartFromBlob`](#api-audiopartfromblob-function) | Function |
+| [`AudioPromptPart`](#api-audiopromptpart-interface) | Interface |
+| [`AuthenticationError`](#api-authenticationerror-class) | Class |
+| [`Client`](#api-client-interface) | Interface |
+| [`ClientDiagnosticsOptions`](#api-clientdiagnosticsoptions-interface) | Interface |
+| [`Commands`](#api-commands-interface) | Interface |
+| [`CompactionArchiveEventPayload`](#api-compactionarchiveeventpayload-interface) | Interface |
+| [`connect`](#api-connect-function) | Function |
+| [`ConnectionStatus`](#api-connectionstatus-typealias) | Type alias |
+| [`ConnectionStatusListener`](#api-connectionstatuslistener-typealias) | Type alias |
+| [`ConnectionStatusStore`](#api-connectionstatusstore-interface) | Interface |
+| [`ConnectOptions`](#api-connectoptions-typealias) | Type alias |
+| [`createHttpTransport`](#api-createhttptransport-function) | Function |
+| [`createRawClient`](#api-createrawclient-function) | Function |
+| [`CreateSessionOptions`](#api-createsessionoptions-interface) | Interface |
+| [`CreateTeamOptions`](#api-createteamoptions-interface) | Interface |
+| [`CredentialOptions`](#api-credentialoptions-interface) | Interface |
+| [`CredentialProvider`](#api-credentialprovider-typealias) | Type alias |
+| [`CursorExpiredError`](#api-cursorexpirederror-class) | Class |
+| [`CursorMalformedError`](#api-cursormalformederror-class) | Class |
+| [`CursorScopeError`](#api-cursorscopeerror-class) | Class |
+| [`DiagnosticFieldValue`](#api-diagnosticfieldvalue-typealias) | Type alias |
+| [`DiagnosticLevel`](#api-diagnosticlevel-typealias) | Type alias |
+| [`DiagnosticRecord`](#api-diagnosticrecord-interface) | Interface |
+| [`DiagnosticsSink`](#api-diagnosticssink-typealias) | Type alias |
+| [`DreamPlans`](#api-dreamplans-interface) | Interface |
+| [`ErrorOrigin`](#api-errororigin-typealias) | Type alias |
+| [`Event`](#api-event-typealias) | Type alias |
+| [`EventCommon`](#api-eventcommon-interface) | Interface |
+| [`EventContent`](#api-eventcontent-interface) | Interface |
+| [`EventContentBlock`](#api-eventcontentblock-interface) | Interface |
+| [`EventOf`](#api-eventof-typealias) | Type alias |
+| [`EventPayloads`](#api-eventpayloads-interface) | Interface |
+| [`EventUsage`](#api-eventusage-interface) | Interface |
+| [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
+| [`getRawJson`](#api-getrawjson-function) | Function |
+| [`HookEventPayload`](#api-hookeventpayload-interface) | Interface |
+| [`HttpTransportOptions`](#api-httptransportoptions-interface) | Interface |
+| [`imagePart`](#api-imagepart-function) | Function |
+| [`imagePartFromBlob`](#api-imagepartfromblob-function) | Function |
+| [`ImagePromptPart`](#api-imagepromptpart-interface) | Interface |
+| [`IncompatibleServerError`](#api-incompatibleservererror-class) | Class |
+| [`InjectedTransportOptions`](#api-injectedtransportoptions-interface) | Interface |
+| [`InvalidStateError`](#api-invalidstateerror-class) | Class |
+| [`KnownEvent`](#api-knownevent-typealias) | Type alias |
+| [`KnownEventKind`](#api-knowneventkind-typealias) | Type alias |
+| [`LearnedSkills`](#api-learnedskills-interface) | Interface |
+| [`LearningAttempts`](#api-learningattempts-interface) | Interface |
+| [`LearningProposals`](#api-learningproposals-interface) | Interface |
+| [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
+| [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
+| [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
+| [`McpInventory`](#api-mcpinventory-interface) | Interface |
+| [`MECATL_ATTACH_FILTERED_KINDS`](#api-mecatl-attach-filtered-kinds-variable) | Variable |
+| [`MECATL_ERROR_CODES`](#api-mecatl-error-codes-variable) | Variable |
+| [`MECATL_EVENT_KINDS`](#api-mecatl-event-kinds-variable) | Variable |
+| [`MECATL_WATCH_PHASES`](#api-mecatl-watch-phases-variable) | Variable |
+| [`MecatlError`](#api-mecatlerror-class) | Class |
+| [`MecatlErrorCode`](#api-mecatlerrorcode-typealias) | Type alias |
+| [`MecatlErrorOptions`](#api-mecatlerroroptions-interface) | Interface |
+| [`MediaPartOptions`](#api-mediapartoptions-interface) | Interface |
+| [`MediaPartSource`](#api-mediapartsource-interface) | Interface |
+| [`ModelRetryEventPayload`](#api-modelretryeventpayload-interface) | Interface |
+| [`Models`](#api-models-interface) | Interface |
+| [`NoRunsError`](#api-norunserror-class) | Class |
+| [`ParallelEventPayload`](#api-paralleleventpayload-interface) | Interface |
+| [`PermissionAskAlreadyResolvedError`](#api-permissionaskalreadyresolvederror-class) | Class |
+| [`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface) | Interface |
+| [`PermissionAskResponder`](#api-permissionaskresponder-typealias) | Type alias |
+| [`PermissionVerdict`](#api-permissionverdict-typealias) | Type alias |
+| [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
+| [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
+| [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
+| [`PlanContinuationStartError`](#api-plancontinuationstarterror-class) | Class |
+| [`PlanResolution`](#api-planresolution-interface) | Interface |
+| [`PlanResolutionResult`](#api-planresolutionresult-interface) | Interface |
+| [`PromptInput`](#api-promptinput-typealias) | Type alias |
+| [`PromptPart`](#api-promptpart-typealias) | Type alias |
+| [`PromptValidationError`](#api-promptvalidationerror-class) | Class |
+| [`PromptValidationReason`](#api-promptvalidationreason-typealias) | Type alias |
+| [`ProtocolError`](#api-protocolerror-class) | Class |
+| [`RawClient`](#api-rawclient-interface) | Interface |
+| [`RawClientOptions`](#api-rawclientoptions-interface) | Interface |
+| [`Reflection`](#api-reflection-interface) | Interface |
+| [`RequestOptions`](#api-requestoptions-typealias) | Type alias |
+| [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
+| [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
+| [`Run`](#api-run-interface) | Interface |
+| [`RunOptions`](#api-runoptions-interface) | Interface |
+| [`RunResult`](#api-runresult-interface) | Interface |
+| [`ScheduleEventPayload`](#api-scheduleeventpayload-interface) | Interface |
+| [`Schedules`](#api-schedules-interface) | Interface |
+| [`SdkCursor`](#api-sdkcursor-typealias) | Type alias |
+| [`SDKErrorCode`](#api-sdkerrorcode-typealias) | Type alias |
+| [`ServerError`](#api-servererror-class) | Class |
+| [`ServerErrorCode`](#api-servererrorcode-typealias) | Type alias |
+| [`Session`](#api-session-interface) | Interface |
+| [`SESSION_ID_HEADER_NAME`](#api-session-id-header-name-variable) | Variable |
+| [`SessionActivity`](#api-sessionactivity-interface) | Interface |
+| [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
+| [`SessionLimits`](#api-sessionlimits-interface) | Interface |
+| [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
+| [`Sessions`](#api-sessions-interface) | Interface |
+| [`SessionTitleEventPayload`](#api-sessiontitleeventpayload-interface) | Interface |
+| [`Skills`](#api-skills-interface) | Interface |
+| [`Soul`](#api-soul-interface) | Interface |
+| [`SteerEventPayload`](#api-steereventpayload-interface) | Interface |
+| [`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface) | Interface |
+| [`Storage`](#api-storage-interface) | Interface |
+| [`StreamProgress`](#api-streamprogress-typealias) | Type alias |
+| [`SubagentEventPayload`](#api-subagenteventpayload-interface) | Interface |
+| [`SUPPORTED_API_MAJOR`](#api-supported-api-major-variable) | Variable |
+| [`Team`](#api-team-interface) | Interface |
+| [`TeamEvent`](#api-teamevent-typealias) | Type alias |
+| [`TeamEventPayload`](#api-teameventpayload-interface) | Interface |
+| [`TeamFindingEventPayload`](#api-teamfindingeventpayload-interface) | Interface |
+| [`TeamMemberDispositionEventPayload`](#api-teammemberdispositioneventpayload-interface) | Interface |
+| [`TeamMemberOptions`](#api-teammemberoptions-interface) | Interface |
+| [`TeamMemberRunEvent`](#api-teammemberrunevent-typealias) | Type alias |
+| [`TeamMemberSpecEventPayload`](#api-teammemberspeceventpayload-interface) | Interface |
+| [`TeamMessageOptions`](#api-teammessageoptions-interface) | Interface |
+| [`TeamOutcomeRunEvent`](#api-teamoutcomerunevent-interface) | Interface |
+| [`TeamRun`](#api-teamrun-interface) | Interface |
+| [`TeamRunEvent`](#api-teamrunevent-typealias) | Type alias |
+| [`Teams`](#api-teams-interface) | Interface |
+| [`TeamTaskEventPayload`](#api-teamtaskeventpayload-interface) | Interface |
+| [`textPart`](#api-textpart-function) | Function |
+| [`TextPromptPart`](#api-textpromptpart-interface) | Interface |
+| [`TitleAttemptEventPayload`](#api-titleattempteventpayload-interface) | Interface |
+| [`ToolCallEventPayload`](#api-toolcalleventpayload-interface) | Interface |
+| [`ToolResultEventPayload`](#api-toolresulteventpayload-interface) | Interface |
+| [`TransportError`](#api-transporterror-class) | Class |
+| [`TransportKind`](#api-transportkind-typealias) | Type alias |
+| [`TurnEndEventPayload`](#api-turnendeventpayload-interface) | Interface |
+| [`UnknownEvent`](#api-unknownevent-typealias) | Type alias |
+| [`UnknownGrpcEvent`](#api-unknowngrpcevent-interface) | Interface |
+| [`UnknownHttpEvent`](#api-unknownhttpevent-interface) | Interface |
+| [`UnknownWatchEnvelope`](#api-unknownwatchenvelope-interface) | Interface |
+| [`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class) | Class |
+| [`UserModel`](#api-usermodel-interface) | Interface |
+| [`UserPromptEventPayload`](#api-userprompteventpayload-interface) | Interface |
+| [`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface) | Interface |
+| [`WatchEnvelope`](#api-watchenvelope-typealias) | Type alias |
+| [`WatchEventEnvelope`](#api-watcheventenvelope-interface) | Interface |
+| [`WatchGapEnvelope`](#api-watchgapenvelope-interface) | Interface |
+| [`withSessionAffinity`](#api-withsessionaffinity-function) | Function |
+| [`Worktrees`](#api-worktrees-interface) | Interface |
 
 ## Classes
 
@@ -210,8 +206,7 @@ Credential resolution or server authentication failed.
 export declare class AuthenticationError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-authenticationerror-constructor-constructor)
+Callable members: [`constructor`](#api-authenticationerror-constructor-constructor)
 
 <Heading as="h4" id="api-authenticationerror-constructor-constructor"><code>AuthenticationError.constructor</code></Heading>
 
@@ -234,8 +229,7 @@ The server cursor belongs to a superseded event-log generation.
 export declare class CursorExpiredError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-cursorexpirederror-constructor-constructor)
+Callable members: [`constructor`](#api-cursorexpirederror-constructor-constructor)
 
 <Heading as="h4" id="api-cursorexpirederror-constructor-constructor"><code>CursorExpiredError.constructor</code></Heading>
 
@@ -258,8 +252,7 @@ An SDK cursor is not a structurally valid `sdkcur/1` envelope.
 export declare class CursorMalformedError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-cursormalformederror-constructor-constructor)
+Callable members: [`constructor`](#api-cursormalformederror-constructor-constructor)
 
 <Heading as="h4" id="api-cursormalformederror-constructor-constructor"><code>CursorMalformedError.constructor</code></Heading>
 
@@ -276,8 +269,7 @@ Parameters:
 
 <Heading as="h3" id="api-cursorscopeerror-class"><code>CursorScopeError</code></Heading>
 
-An SDK cursor would widen the set of durable events delivered by its source
-view.
+An SDK cursor would widen the set of durable events delivered by its source view.
 
 ```ts
 export declare class CursorScopeError extends MecatlError
@@ -305,8 +297,7 @@ The connected server does not satisfy the SDK compatibility floor.
 export declare class IncompatibleServerError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-incompatibleservererror-constructor-constructor)
+Callable members: [`constructor`](#api-incompatibleservererror-constructor-constructor)
 
 <Heading as="h4" id="api-incompatibleservererror-constructor-constructor"><code>IncompatibleServerError.constructor</code></Heading>
 
@@ -329,8 +320,7 @@ An operation is invalid for the current local SDK lifecycle state.
 export declare class InvalidStateError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-invalidstateerror-constructor-constructor)
+Callable members: [`constructor`](#api-invalidstateerror-constructor-constructor)
 
 <Heading as="h4" id="api-invalidstateerror-constructor-constructor"><code>InvalidStateError.constructor</code></Heading>
 
@@ -353,8 +343,7 @@ Base class for every error authored by the SDK.
 export declare class MecatlError extends Error
 ```
 
-Callable members: [`constructor`](#api-mecatlerror-constructor-constructor),
-[`toJSON()`](#api-mecatlerror-tojson-method)
+Callable members: [`constructor`](#api-mecatlerror-constructor-constructor), [`toJSON()`](#api-mecatlerror-tojson-method)
 
 <Heading as="h4" id="api-mecatlerror-code-property"><code>MecatlError.code</code></Heading>
 
@@ -429,8 +418,7 @@ A permission ask is no longer pending on its originating run.
 export declare class PermissionAskAlreadyResolvedError extends InvalidStateError
 ```
 
-Callable members:
-[`constructor`](#api-permissionaskalreadyresolvederror-constructor-constructor)
+Callable members: [`constructor`](#api-permissionaskalreadyresolvederror-constructor-constructor)
 
 <Heading as="h4" id="api-permissionaskalreadyresolvederror-askid-property"><code>PermissionAskAlreadyResolvedError.askId</code></Heading>
 
@@ -459,8 +447,7 @@ query() plan mode was requested without its required plan-specific responder.
 export declare class PlanApprovalRequiredError extends InvalidStateError
 ```
 
-Callable members:
-[`constructor`](#api-planapprovalrequirederror-constructor-constructor)
+Callable members: [`constructor`](#api-planapprovalrequirederror-constructor-constructor)
 
 <Heading as="h4" id="api-planapprovalrequirederror-constructor-constructor"><code>PlanApprovalRequiredError.constructor</code></Heading>
 
@@ -472,15 +459,13 @@ constructor();
 
 <Heading as="h3" id="api-plancontinuationstarterror-class"><code>PlanContinuationStartError</code></Heading>
 
-The approved plan's continuation could not be admitted before it received a run
-ID.
+The approved plan's continuation could not be admitted before it received a run ID.
 
 ```ts
 export declare class PlanContinuationStartError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-plancontinuationstarterror-constructor-constructor)
+Callable members: [`constructor`](#api-plancontinuationstarterror-constructor-constructor)
 
 <Heading as="h4" id="api-plancontinuationstarterror-constructor-constructor"><code>PlanContinuationStartError.constructor</code></Heading>
 
@@ -503,8 +488,7 @@ A structured prompt failed local validation before any request was sent.
 export declare class PromptValidationError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-promptvalidationerror-constructor-constructor)
+Callable members: [`constructor`](#api-promptvalidationerror-constructor-constructor)
 
 <Heading as="h4" id="api-promptvalidationerror-constructor-constructor"><code>PromptValidationError.constructor</code></Heading>
 
@@ -618,8 +602,7 @@ The connected server does not advertise a required feature.
 export declare class UnsupportedFeatureError extends MecatlError
 ```
 
-Callable members:
-[`constructor`](#api-unsupportedfeatureerror-constructor-constructor)
+Callable members: [`constructor`](#api-unsupportedfeatureerror-constructor-constructor)
 
 <Heading as="h4" id="api-unsupportedfeatureerror-constructor-constructor"><code>UnsupportedFeatureError.constructor</code></Heading>
 
@@ -663,10 +646,7 @@ Throws: `PromptValidationError` when the source, MIME type, or size is invalid.
 Constructs an audio part from a browser Blob or File.
 
 ```ts
-export declare function audioPartFromBlob(
-  blob: Blob,
-  mimeType?: string
-): Promise<AudioPromptPart>;
+export declare function audioPartFromBlob(blob: Blob, mimeType?: string): Promise<AudioPromptPart>;
 ```
 
 Parameters:
@@ -674,8 +654,7 @@ Parameters:
 - `blob` (`Blob`): Browser media value to read.
 - `mimeType` (`string`, optional): Audio MIME type. Defaults to the Blob's type.
 
-Returns: `Promise<AudioPromptPart>`: A validated audio prompt part containing
-the Blob's bytes.
+Returns: `Promise<AudioPromptPart>`: A validated audio prompt part containing the Blob's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
 
@@ -689,33 +668,27 @@ export declare function connect(options: ConnectOptions): Client;
 
 Parameters:
 
-- `options` (`ConnectOptions`): HTTP transport settings or a caller-owned
-  transport.
+- `options` (`ConnectOptions`): HTTP transport settings or a caller-owned transport.
 
 Returns: `Client`: A high-level Mecatl client.
 
 <Heading as="h3" id="api-createhttptransport-function"><code>createHttpTransport</code></Heading>
 
-Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE
-API.
+Creates a browser-compatible Connect-ES transport over Mecatl's HTTP and SSE API.
 
 ```ts
-export declare function createHttpTransport(
-  options: HttpTransportOptions
-): Transport;
+export declare function createHttpTransport(options: HttpTransportOptions): Transport;
 ```
 
 Parameters:
 
-- `options` (`HttpTransportOptions`): HTTP endpoint, credentials, and fetch
-  implementation.
+- `options` (`HttpTransportOptions`): HTTP endpoint, credentials, and fetch implementation.
 
 Returns: `Transport`: A Connect-ES transport for Mecatl's HTTP and SSE routes.
 
 <Heading as="h3" id="api-createrawclient-function"><code>createRawClient</code></Heading>
 
-Creates a transport-neutral client for low-level RPC operations. Before the
-first requested operation, the client performs a stateless compatibility check.
+Creates a transport-neutral client for low-level RPC operations. Before the first requested operation, the client performs a stateless compatibility check.
 
 ```ts
 export declare function createRawClient(options: RawClientOptions): RawClient;
@@ -725,13 +698,11 @@ Parameters:
 
 - `options` (`RawClientOptions`): Caller-owned transport and its protocol kind.
 
-Returns: `RawClient`: A low-level client that enforces SDK compatibility before
-operations.
+Returns: `RawClient`: A low-level client that enforces SDK compatibility before operations.
 
 <Heading as="h3" id="api-getrawjson-function"><code>getRawJson</code></Heading>
 
-Returns the exact JSON value received by the HTTP transport, including unknown
-fields.
+Returns the exact JSON value received by the HTTP transport, including unknown fields.
 
 ```ts
 export declare function getRawJson(message: object): JsonValue | undefined;
@@ -741,8 +712,7 @@ Parameters:
 
 - `message` (`object`): Decoded protobuf message returned by the SDK.
 
-Returns: `JsonValue | undefined`: The original JSON value, or `undefined` when
-none was recorded.
+Returns: `JsonValue | undefined`: The original JSON value, or `undefined` when none was recorded.
 
 <Heading as="h3" id="api-imagepart-function"><code>imagePart</code></Heading>
 
@@ -765,10 +735,7 @@ Throws: `PromptValidationError` when the source, MIME type, or size is invalid.
 Constructs an image part from a browser Blob or File.
 
 ```ts
-export declare function imagePartFromBlob(
-  blob: Blob,
-  mimeType?: string
-): Promise<ImagePromptPart>;
+export declare function imagePartFromBlob(blob: Blob, mimeType?: string): Promise<ImagePromptPart>;
 ```
 
 Parameters:
@@ -776,8 +743,7 @@ Parameters:
 - `blob` (`Blob`): Browser media value to read.
 - `mimeType` (`string`, optional): Image MIME type. Defaults to the Blob's type.
 
-Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing
-the Blob's bytes.
+Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing the Blob's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
 
@@ -797,29 +763,20 @@ Returns: `TextPromptPart`: A text prompt part.
 
 <Heading as="h3" id="api-withsessionaffinity-function"><code>withSessionAffinity</code></Heading>
 
-Returns call options bound to one explicit session without replacing caller
-headers. Throws synchronously when sessionId cannot be represented byte-exactly
-as the affinity header. The binding is a routing hint only; authentication and
-authorization remain independent.
+Returns call options bound to one explicit session without replacing caller headers. Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header. The binding is a routing hint only; authentication and authorization remain independent.
 
 ```ts
-export declare function withSessionAffinity(
-  sessionId: string,
-  options?: CallOptions
-): CallOptions;
+export declare function withSessionAffinity(sessionId: string, options?: CallOptions): CallOptions;
 ```
 
 Parameters:
 
 - `sessionId` (`string`): Session ID to carry as the affinity header.
-- `options` (`CallOptions`, optional): Existing call options whose headers must
-  be preserved.
+- `options` (`CallOptions`, optional): Existing call options whose headers must be preserved.
 
-Returns: `CallOptions`: Call options containing exactly one session-affinity
-header.
+Returns: `CallOptions`: Call options containing exactly one session-affinity header.
 
-Throws: `RangeError` when the session ID is not printable ASCII or is otherwise
-invalid.
+Throws: `RangeError` when the session ID is not printable ASCII or is otherwise invalid.
 
 ## Interfaces
 
@@ -950,10 +907,7 @@ A durable activity stream bound to one run.
 export interface AttachedRun extends SessionActivity
 ```
 
-Callable members: [`approve()`](#api-attachedrun-approve-methodsignature),
-[`cancel()`](#api-attachedrun-cancel-methodsignature),
-[`resolveAsk()`](#api-attachedrun-resolveask-methodsignature),
-[`steer()`](#api-attachedrun-steer-methodsignature)
+Callable members: [`approve()`](#api-attachedrun-approve-methodsignature), [`cancel()`](#api-attachedrun-cancel-methodsignature), [`resolveAsk()`](#api-attachedrun-resolveask-methodsignature), [`steer()`](#api-attachedrun-steer-methodsignature)
 
 <Heading as="h4" id="api-attachedrun-approve-methodsignature"><code>AttachedRun.approve</code></Heading>
 
@@ -980,8 +934,7 @@ Cancels the attached run using its exact run ID.
 cancel(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after the cancellation request
-is accepted.
+Returns: `Promise<void>`: A promise that resolves after the cancellation request is accepted.
 
 <Heading as="h4" id="api-attachedrun-live-propertysignature"><code>AttachedRun.live</code></Heading>
 
@@ -1002,8 +955,7 @@ resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
 Parameters:
 
 - `askId` (`string`): Permission-ask ID, retained for parity with a live run.
-- `verdict` (`PermissionVerdict`): Permission verdict, retained for parity with
-  a live run.
+- `verdict` (`PermissionVerdict`): Permission verdict, retained for parity with a live run.
 
 Returns: `Promise<never>`: A rejected promise.
 
@@ -1041,8 +993,7 @@ export interface AttachOptions
 
 <Heading as="h4" id="api-attachoptions-from-propertysignature"><code>AttachOptions.from</code></Heading>
 
-Starts with events received after attachment, discarding the existing replay
-locally.
+Starts with events received after attachment, discarding the existing replay locally.
 
 ```ts
 from?: "now" | "start" | SdkCursor;
@@ -1104,9 +1055,7 @@ The high-level Mecatl client.
 export interface Client
 ```
 
-Callable members:
-[`[Symbol.asyncDispose]()`](#api-client-symbol-asyncdispose-methodsignature),
-[`close()`](#api-client-close-methodsignature)
+Callable members: [`[Symbol.asyncDispose]()`](#api-client-symbol-asyncdispose-methodsignature), [`close()`](#api-client-close-methodsignature)
 
 <Heading as="h4" id="api-client-symbol-asyncdispose-methodsignature"><code>Client[Symbol.asyncDispose]</code></Heading>
 
@@ -1238,8 +1187,7 @@ readonly worktrees: Worktrees;
 
 <Heading as="h3" id="api-clientdiagnosticsoptions-interface"><code>ClientDiagnosticsOptions</code></Heading>
 
-Client-construction option shared by SDK entry points that emit local
-diagnostics.
+Client-construction option shared by SDK entry points that emit local diagnostics.
 
 ```ts
 export interface ClientDiagnosticsOptions
@@ -1300,9 +1248,7 @@ A multicast view of the client's latest connection status.
 export interface ConnectionStatusStore
 ```
 
-Callable members:
-[`getSnapshot()`](#api-connectionstatusstore-getsnapshot-methodsignature),
-[`subscribe()`](#api-connectionstatusstore-subscribe-methodsignature)
+Callable members: [`getSnapshot()`](#api-connectionstatusstore-getsnapshot-methodsignature), [`subscribe()`](#api-connectionstatusstore-subscribe-methodsignature)
 
 <Heading as="h4" id="api-connectionstatusstore-getsnapshot-methodsignature"><code>ConnectionStatusStore.getSnapshot</code></Heading>
 
@@ -1426,8 +1372,7 @@ goal?: string;
 
 <Heading as="h4" id="api-createteamoptions-maxteamtokens-propertysignature"><code>CreateTeamOptions.maxTeamTokens</code></Heading>
 
-Optional team-wide token limit. The daemon applies the lower of this value and
-its configured cap. Omit it to use the daemon's cap.
+Optional team-wide token limit. The daemon applies the lower of this value and its configured cap. Omit it to use the daemon's cap.
 
 ```ts
 maxTeamTokens?: number;
@@ -1483,8 +1428,7 @@ headers?: HeadersInit;
 
 <Heading as="h3" id="api-diagnosticrecord-interface"><code>DiagnosticRecord</code></Heading>
 
-A structured SDK-local observation that is separate from the server event
-stream.
+A structured SDK-local observation that is separate from the server event stream.
 
 ```ts
 export interface DiagnosticRecord
@@ -1538,8 +1482,7 @@ Dream-plan generation and server-owned decision operations.
 export interface DreamPlans
 ```
 
-Callable members: [`decide()`](#api-dreamplans-decide-methodsignature),
-[`generate()`](#api-dreamplans-generate-methodsignature)
+Callable members: [`decide()`](#api-dreamplans-decide-methodsignature), [`generate()`](#api-dreamplans-generate-methodsignature)
 
 <Heading as="h4" id="api-dreamplans-decide-methodsignature"><code>DreamPlans.decide</code></Heading>
 
@@ -2165,14 +2108,7 @@ Learned-skill inventory and server-owned lifecycle operations.
 export interface LearnedSkills
 ```
 
-Callable members: [`activate()`](#api-learnedskills-activate-methodsignature),
-[`archive()`](#api-learnedskills-archive-methodsignature),
-[`diffVersions()`](#api-learnedskills-diffversions-methodsignature),
-[`get()`](#api-learnedskills-get-methodsignature),
-[`list()`](#api-learnedskills-list-methodsignature),
-[`listChanges()`](#api-learnedskills-listchanges-methodsignature),
-[`reject()`](#api-learnedskills-reject-methodsignature),
-[`rollback()`](#api-learnedskills-rollback-methodsignature)
+Callable members: [`activate()`](#api-learnedskills-activate-methodsignature), [`archive()`](#api-learnedskills-archive-methodsignature), [`diffVersions()`](#api-learnedskills-diffversions-methodsignature), [`get()`](#api-learnedskills-get-methodsignature), [`list()`](#api-learnedskills-list-methodsignature), [`listChanges()`](#api-learnedskills-listchanges-methodsignature), [`reject()`](#api-learnedskills-reject-methodsignature), [`rollback()`](#api-learnedskills-rollback-methodsignature)
 
 <Heading as="h4" id="api-learnedskills-activate-methodsignature"><code>LearnedSkills.activate</code></Heading>
 
@@ -2302,10 +2238,7 @@ Learning-attempt inventory and server-owned lifecycle operations.
 export interface LearningAttempts
 ```
 
-Callable members: [`abandon()`](#api-learningattempts-abandon-methodsignature),
-[`get()`](#api-learningattempts-get-methodsignature),
-[`list()`](#api-learningattempts-list-methodsignature),
-[`retry()`](#api-learningattempts-retry-methodsignature)
+Callable members: [`abandon()`](#api-learningattempts-abandon-methodsignature), [`get()`](#api-learningattempts-get-methodsignature), [`list()`](#api-learningattempts-list-methodsignature), [`retry()`](#api-learningattempts-retry-methodsignature)
 
 <Heading as="h4" id="api-learningattempts-abandon-methodsignature"><code>LearningAttempts.abandon</code></Heading>
 
@@ -2375,10 +2308,7 @@ Learning-proposal inventory and server-owned decision operations.
 export interface LearningProposals
 ```
 
-Callable members: [`decide()`](#api-learningproposals-decide-methodsignature),
-[`get()`](#api-learningproposals-get-methodsignature),
-[`list()`](#api-learningproposals-list-methodsignature),
-[`undoPromotion()`](#api-learningproposals-undopromotion-methodsignature)
+Callable members: [`decide()`](#api-learningproposals-decide-methodsignature), [`get()`](#api-learningproposals-get-methodsignature), [`list()`](#api-learningproposals-list-methodsignature), [`undoPromotion()`](#api-learningproposals-undopromotion-methodsignature)
 
 <Heading as="h4" id="api-learningproposals-decide-methodsignature"><code>LearningProposals.decide</code></Heading>
 
@@ -2448,12 +2378,7 @@ MCP resource, prompt, source, and ToolHive-group inventory operations.
 export interface McpInventory
 ```
 
-Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature),
-[`listPrompts()`](#api-mcpinventory-listprompts-methodsignature),
-[`listResources()`](#api-mcpinventory-listresources-methodsignature),
-[`listSources()`](#api-mcpinventory-listsources-methodsignature),
-[`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature),
-[`readResource()`](#api-mcpinventory-readresource-methodsignature)
+Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature), [`listPrompts()`](#api-mcpinventory-listprompts-methodsignature), [`listResources()`](#api-mcpinventory-listresources-methodsignature), [`listSources()`](#api-mcpinventory-listsources-methodsignature), [`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature), [`readResource()`](#api-mcpinventory-readresource-methodsignature)
 
 <Heading as="h4" id="api-mcpinventory-getprompt-methodsignature"><code>McpInventory.getPrompt</code></Heading>
 
@@ -2611,8 +2536,7 @@ mimeType: string;
 
 <Heading as="h3" id="api-mediapartsource-interface"><code>MediaPartSource</code></Heading>
 
-The source accepted by imagePart() and audioPart(). Exactly one field is
-required.
+The source accepted by imagePart() and audioPart(). Exactly one field is required.
 
 ```ts
 export interface MediaPartSource
@@ -2881,15 +2805,13 @@ Callable members: [`result()`](#api-planresolution-result-methodsignature)
 
 <Heading as="h4" id="api-planresolution-result-methodsignature"><code>PlanResolution.result</code></Heading>
 
-Drains the merged stream and returns the resumed and optional continuation
-outcomes.
+Drains the merged stream and returns the resumed and optional continuation outcomes.
 
 ```ts
 result(): Promise<PlanResolutionResult>;
 ```
 
-Returns: `Promise<PlanResolutionResult>`: The resumed run and any continuation
-run started by approval.
+Returns: `Promise<PlanResolutionResult>`: The resumed run and any continuation run started by approval.
 
 Throws: `InvalidStateError` when the resolution is already being consumed.
 
@@ -2923,9 +2845,7 @@ Transport-neutral, descriptor-driven operations beneath Client/Session/Run.
 export interface RawClient
 ```
 
-Callable members: [`features()`](#api-rawclient-features-methodsignature),
-[`stream()`](#api-rawclient-stream-methodsignature),
-[`unary()`](#api-rawclient-unary-methodsignature)
+Callable members: [`features()`](#api-rawclient-features-methodsignature), [`stream()`](#api-rawclient-stream-methodsignature), [`unary()`](#api-rawclient-unary-methodsignature)
 
 <Heading as="h4" id="api-rawclient-features-methodsignature"><code>RawClient.features</code></Heading>
 
@@ -3080,11 +3000,7 @@ One accepted server run and its single-consumption event stream.
 export interface Run extends AsyncIterable<Event>
 ```
 
-Callable members: [`approve()`](#api-run-approve-methodsignature),
-[`cancel()`](#api-run-cancel-methodsignature),
-[`resolveAsk()`](#api-run-resolveask-methodsignature),
-[`result()`](#api-run-result-methodsignature),
-[`steer()`](#api-run-steer-methodsignature)
+Callable members: [`approve()`](#api-run-approve-methodsignature), [`cancel()`](#api-run-cancel-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
 
 <Heading as="h4" id="api-run-approve-methodsignature"><code>Run.approve</code></Heading>
 
@@ -3105,15 +3021,13 @@ Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
 <Heading as="h4" id="api-run-cancel-methodsignature"><code>Run.cancel</code></Heading>
 
-Requests cancellation; consume the run normally to receive the cancelled
-outcome.
+Requests cancellation; consume the run normally to receive the cancelled outcome.
 
 ```ts
 cancel(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after the cancellation request
-is sent.
+Returns: `Promise<void>`: A promise that resolves after the cancellation request is sent.
 
 <Heading as="h4" id="api-run-id-propertysignature"><code>Run.id</code></Heading>
 
@@ -3123,8 +3037,7 @@ readonly id: string;
 
 <Heading as="h4" id="api-run-resolveask-methodsignature"><code>Run.resolveAsk</code></Heading>
 
-Resolves one pending ask on this run with the server's string verdict
-vocabulary.
+Resolves one pending ask on this run with the server's string verdict vocabulary.
 
 ```ts
 resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
@@ -3135,8 +3048,7 @@ Parameters:
 - `askId` (`string`): ID carried by the permission ask.
 - `verdict` (`PermissionVerdict`): Decision to apply to the pending ask.
 
-Returns: `Promise<void>`: A promise that resolves after the server accepts the
-verdict.
+Returns: `Promise<void>`: A promise that resolves after the server accepts the verdict.
 
 Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
@@ -3172,8 +3084,7 @@ Parameters:
 
 - `text` (`string`): Instruction to apply to the active run.
 
-Returns: `Promise<void>`: A promise that resolves after the steering request is
-sent.
+Returns: `Promise<void>`: A promise that resolves after the steering request is sent.
 
 <Heading as="h3" id="api-runoptions-interface"><code>RunOptions</code></Heading>
 
@@ -3201,8 +3112,7 @@ onPlanApproval?: PlanApprovalResponder;
 
 <Heading as="h3" id="api-runresult-interface"><code>RunResult</code></Heading>
 
-The terminal outcome of a consumed run. Server-declared stops are values, not
-errors.
+The terminal outcome of a consumed run. Server-declared stops are values, not errors.
 
 ```ts
 export interface RunResult
@@ -3306,16 +3216,7 @@ Schedule and fire inventory plus server-owned lifecycle operations.
 export interface Schedules
 ```
 
-Callable members: [`create()`](#api-schedules-create-methodsignature),
-[`delete()`](#api-schedules-delete-methodsignature),
-[`fireNow()`](#api-schedules-firenow-methodsignature),
-[`get()`](#api-schedules-get-methodsignature),
-[`getFire()`](#api-schedules-getfire-methodsignature),
-[`list()`](#api-schedules-list-methodsignature),
-[`listFires()`](#api-schedules-listfires-methodsignature),
-[`pause()`](#api-schedules-pause-methodsignature),
-[`resume()`](#api-schedules-resume-methodsignature),
-[`update()`](#api-schedules-update-methodsignature)
+Callable members: [`create()`](#api-schedules-create-methodsignature), [`delete()`](#api-schedules-delete-methodsignature), [`fireNow()`](#api-schedules-firenow-methodsignature), [`get()`](#api-schedules-get-methodsignature), [`getFire()`](#api-schedules-getfire-methodsignature), [`list()`](#api-schedules-list-methodsignature), [`listFires()`](#api-schedules-listfires-methodsignature), [`pause()`](#api-schedules-pause-methodsignature), [`resume()`](#api-schedules-resume-methodsignature), [`update()`](#api-schedules-update-methodsignature)
 
 <Heading as="h4" id="api-schedules-create-methodsignature"><code>Schedules.create</code></Heading>
 
@@ -3475,12 +3376,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature),
-[`attach()`](#api-session-attach-methodsignature),
-[`close()`](#api-session-close-methodsignature),
-[`delete()`](#api-session-delete-methodsignature),
-[`resolvePlan()`](#api-session-resolveplan-methodsignature),
-[`run()`](#api-session-run-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`close()`](#api-session-close-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`run()`](#api-session-run-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -3492,11 +3388,9 @@ activity(options?: AttachOptions): Promise<SessionActivity>;
 
 Parameters:
 
-- `options` (`AttachOptions`, optional): Replay position, event filtering, and
-  cancellation options.
+- `options` (`AttachOptions`, optional): Replay position, event filtering, and cancellation options.
 
-Returns: `Promise<SessionActivity>`: A single-consumption stream of session
-activity.
+Returns: `Promise<SessionActivity>`: A single-consumption stream of session activity.
 
 Throws: `CursorScopeError` when a cursor would widen its original filter.
 
@@ -3510,13 +3404,10 @@ attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
 
 Parameters:
 
-- `runId` (`string`, optional): Run ID to follow. Omit it to select the newest
-  run.
-- `options` (`AttachOptions`, optional): Replay position, event filtering, and
-  cancellation options.
+- `runId` (`string`, optional): Run ID to follow. Omit it to select the newest run.
+- `options` (`AttachOptions`, optional): Replay position, event filtering, and cancellation options.
 
-Returns: `Promise<AttachedRun>`: A single-consumption durable stream bound to
-the selected run.
+Returns: `Promise<AttachedRun>`: A single-consumption durable stream bound to the selected run.
 
 Throws: `NoRunsError` when no run can be selected.
 
@@ -3530,8 +3421,7 @@ Releases runtime resources without removing the durable session.
 close(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after local session resources
-are released.
+Returns: `Promise<void>`: A promise that resolves after local session resources are released.
 
 <Heading as="h4" id="api-session-delete-methodsignature"><code>Session.delete</code></Heading>
 
@@ -3541,8 +3431,7 @@ Permanently removes the durable session and its sidecars.
 delete(): Promise<void>;
 ```
 
-Returns: `Promise<void>`: A promise that resolves after the server removes the
-session.
+Returns: `Promise<void>`: A promise that resolves after the server removes the session.
 
 <Heading as="h4" id="api-session-id-propertysignature"><code>Session.id</code></Heading>
 
@@ -3552,8 +3441,7 @@ readonly id: string;
 
 <Heading as="h4" id="api-session-resolveplan-methodsignature"><code>Session.resolvePlan</code></Heading>
 
-Atomically resolves a durably parked plan and streams its resumed and
-continuation runs.
+Atomically resolves a durably parked plan and streams its resumed and continuation runs.
 
 ```ts
 resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
@@ -3561,8 +3449,7 @@ resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
 
 Parameters:
 
-- `verdict` (`PlanApprovalVerdict`, optional): Plan decision. Defaults to
-  `approve`.
+- `verdict` (`PlanApprovalVerdict`, optional): Plan decision. Defaults to `approve`.
 
 Returns: `PlanResolution`: A single-consumption plan-resolution stream.
 
@@ -3578,10 +3465,8 @@ run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
 
 Parameters:
 
-- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the
-  run.
-- `options` (`RunOptions`, optional): Automatic permission and plan-approval
-  responders.
+- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the run.
+- `options` (`RunOptions`, optional): Automatic permission and plan-approval responders.
 
 Returns: `Promise<Run>`: A single-consumption handle for the accepted run.
 
@@ -3703,10 +3588,7 @@ Session lifecycle operations exposed by a Client.
 export interface Sessions
 ```
 
-Callable members: [`create()`](#api-sessions-create-methodsignature),
-[`fork()`](#api-sessions-fork-methodsignature),
-[`get()`](#api-sessions-get-methodsignature),
-[`list()`](#api-sessions-list-methodsignature)
+Callable members: [`create()`](#api-sessions-create-methodsignature), [`fork()`](#api-sessions-fork-methodsignature), [`get()`](#api-sessions-get-methodsignature), [`list()`](#api-sessions-list-methodsignature)
 
 <Heading as="h4" id="api-sessions-create-methodsignature"><code>Sessions.create</code></Heading>
 
@@ -3920,16 +3802,7 @@ Storage health, migration, and cleanup operations owned by the server.
 export interface Storage
 ```
 
-Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature),
-[`applyMigration()`](#api-storage-applymigration-methodsignature),
-[`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature),
-[`cancelMigration()`](#api-storage-cancelmigration-methodsignature),
-[`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature),
-[`getHealth()`](#api-storage-gethealth-methodsignature),
-[`getMigrationJob()`](#api-storage-getmigrationjob-methodsignature),
-[`planCleanup()`](#api-storage-plancleanup-methodsignature),
-[`planMigration()`](#api-storage-planmigration-methodsignature),
-[`resumeMigration()`](#api-storage-resumemigration-methodsignature)
+Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature), [`applyMigration()`](#api-storage-applymigration-methodsignature), [`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature), [`cancelMigration()`](#api-storage-cancelmigration-methodsignature), [`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature), [`getHealth()`](#api-storage-gethealth-methodsignature), [`getMigrationJob()`](#api-storage-getmigrationjob-methodsignature), [`planCleanup()`](#api-storage-plancleanup-methodsignature), [`planMigration()`](#api-storage-planmigration-methodsignature), [`resumeMigration()`](#api-storage-resumemigration-methodsignature)
 
 <Heading as="h4" id="api-storage-applycleanup-methodsignature"><code>Storage.applyCleanup</code></Heading>
 
@@ -4205,12 +4078,7 @@ A handle for direct team operations.
 export interface Team
 ```
 
-Callable members: [`cancel()`](#api-team-cancel-methodsignature),
-[`cleanup()`](#api-team-cleanup-methodsignature),
-[`list()`](#api-team-list-methodsignature),
-[`message()`](#api-team-message-methodsignature),
-[`run()`](#api-team-run-methodsignature),
-[`spawn()`](#api-team-spawn-methodsignature)
+Callable members: [`cancel()`](#api-team-cancel-methodsignature), [`cleanup()`](#api-team-cleanup-methodsignature), [`list()`](#api-team-list-methodsignature), [`message()`](#api-team-message-methodsignature), [`run()`](#api-team-run-methodsignature), [`spawn()`](#api-team-spawn-methodsignature)
 
 <Heading as="h4" id="api-team-cancel-methodsignature"><code>Team.cancel</code></Heading>
 
@@ -4249,8 +4117,7 @@ readonly id: string;
 
 <Heading as="h4" id="api-team-initialmembers-propertysignature"><code>Team.initialMembers</code></Heading>
 
-The typed initial roster returned atomically by CreateTeam. This is not a live
-view.
+The typed initial roster returned atomically by CreateTeam. This is not a live view.
 
 ```ts
 readonly initialMembers: readonly TeamMember[];
@@ -5112,12 +4979,9 @@ Returns: `Promise<ListWorktreesResponse>`
 The agent-lifecycle portion of the known event union.
 
 ```ts
-export type AgentEvent = Exclude<
-  KnownEvent,
-  {
+export type AgentEvent = Exclude<KnownEvent, {
     readonly kind: `team.${string}`;
-  }
->;
+}>;
 ```
 
 <Heading as="h3" id="api-connectionstatus-typealias"><code>ConnectionStatus</code></Heading>
@@ -5125,13 +4989,7 @@ export type AgentEvent = Exclude<
 The complete connection-state vocabulary exposed by the SDK.
 
 ```ts
-export type ConnectionStatus =
-  | 'connecting'
-  | 'online'
-  | 'reconnecting'
-  | 'offline'
-  | 'unauthorized'
-  | 'incompatible';
+export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline" | "unauthorized" | "incompatible";
 ```
 
 <Heading as="h3" id="api-connectionstatuslistener-typealias"><code>ConnectionStatusListener</code></Heading>
@@ -5171,7 +5029,7 @@ export type DiagnosticFieldValue = boolean | number | string | null;
 Severity attached to one SDK-local diagnostic record.
 
 ```ts
-export type DiagnosticLevel = 'debug' | 'error' | 'info' | 'warn';
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
 ```
 
 <Heading as="h3" id="api-diagnosticssink-typealias"><code>DiagnosticsSink</code></Heading>
@@ -5184,11 +5042,10 @@ export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 
 <Heading as="h3" id="api-errororigin-typealias"><code>ErrorOrigin</code></Heading>
 
-The request transport, or `local` when validation failed before transport
-selection.
+The request transport, or `local` when validation failed before transport selection.
 
 ```ts
-export type ErrorOrigin = TransportKind | 'local';
+export type ErrorOrigin = TransportKind | "local";
 ```
 
 <Heading as="h3" id="api-event-typealias"><code>Event</code></Heading>
@@ -5204,12 +5061,9 @@ export type Event = KnownEvent | UnknownEvent;
 Selects one known event variant by its literal kind.
 
 ```ts
-export type EventOf<Kind extends KnownEventKind> = Extract<
-  KnownEvent,
-  {
+export type EventOf<Kind extends KnownEventKind> = Extract<KnownEvent, {
     readonly kind: Kind;
-  }
->;
+}>;
 ```
 
 <Heading as="h3" id="api-knownevent-typealias"><code>KnownEvent</code></Heading>
@@ -5218,10 +5072,10 @@ All currently known agent and team event variants.
 
 ```ts
 export type KnownEvent = {
-  [Kind in KnownEventKind]: EventCommon & {
-    readonly kind: Kind;
-    readonly payload: EventPayloads[Kind];
-  };
+    [Kind in KnownEventKind]: EventCommon & {
+        readonly kind: Kind;
+        readonly payload: EventPayloads[Kind];
+    };
 }[KnownEventKind];
 ```
 
@@ -5246,10 +5100,7 @@ export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
 An optional automatic responder invoked for each permission ask on a run.
 
 ```ts
-export type PermissionAskResponder = (
-  ask: PermissionAskEventPayload,
-  signal: AbortSignal
-) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
+export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
 ```
 
 <Heading as="h3" id="api-permissionverdict-typealias"><code>PermissionVerdict</code></Heading>
@@ -5257,7 +5108,7 @@ export type PermissionAskResponder = (
 A server permission verdict accepted by run.resolveAsk().
 
 ```ts
-export type PermissionVerdict = 'allow_once' | 'allow_always' | 'deny';
+export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
 ```
 
 <Heading as="h3" id="api-planapprovalresponder-typealias"><code>PlanApprovalResponder</code></Heading>
@@ -5265,19 +5116,15 @@ export type PermissionVerdict = 'allow_once' | 'allow_always' | 'deny';
 An automatic responder invoked only for a PresentPlan approval ask.
 
 ```ts
-export type PlanApprovalResponder = (
-  ask: PermissionAskEventPayload,
-  signal: AbortSignal
-) => PlanApprovalVerdict | undefined | Promise<PlanApprovalVerdict | undefined>;
+export type PlanApprovalResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PlanApprovalVerdict | undefined | Promise<PlanApprovalVerdict | undefined>;
 ```
 
 <Heading as="h3" id="api-planapprovalverdict-typealias"><code>PlanApprovalVerdict</code></Heading>
 
-The plan-specific decisions accepted by session.resolvePlan() and
-onPlanApproval.
+The plan-specific decisions accepted by session.resolvePlan() and onPlanApproval.
 
 ```ts
-export type PlanApprovalVerdict = 'approve' | 'accept_edits' | 'iterate';
+export type PlanApprovalVerdict = "approve" | "accept_edits" | "iterate";
 ```
 
 <Heading as="h3" id="api-promptinput-typealias"><code>PromptInput</code></Heading>
@@ -5301,8 +5148,7 @@ export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
 Stable reasons reported by PromptValidationError.
 
 ```ts
-export type PromptValidationReason =
-  'capability' | 'mime_type' | 'prompt' | 'size' | 'source_xor' | 'url';
+export type PromptValidationReason = "capability" | "mime_type" | "prompt" | "size" | "source_xor" | "url";
 ```
 
 <Heading as="h3" id="api-requestoptions-typealias"><code>RequestOptions</code></Heading>
@@ -5334,21 +5180,7 @@ export type SdkCursor = string;
 Error codes produced locally by the SDK.
 
 ```ts
-export type SDKErrorCode =
-  | 'authentication'
-  | 'cursor_scope'
-  | 'incompatible_server'
-  | 'invalid_prompt'
-  | 'invalid_state'
-  | 'no_runs'
-  | 'plan_continuation_start'
-  | 'protocol'
-  | 'readiness_timeout'
-  | 'spawn_failed'
-  | 'tool_registration'
-  | 'transport'
-  | 'unsupported_platform'
-  | 'unsupported_feature';
+export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "plan_continuation_start" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 ```
 
 <Heading as="h3" id="api-servererrorcode-typealias"><code>ServerErrorCode</code></Heading>
@@ -5356,7 +5188,7 @@ export type SDKErrorCode =
 Error codes returned by the Mecatl server, plus `unknown` for future codes.
 
 ```ts
-export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | 'unknown';
+export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 ```
 
 <Heading as="h3" id="api-streamprogress-typealias"><code>StreamProgress</code></Heading>
@@ -5372,12 +5204,9 @@ export type StreamProgress = 0 | 1 | 2 | 3 | 4;
 Team lifecycle events projected onto an agent run.
 
 ```ts
-export type TeamEvent = Extract<
-  KnownEvent,
-  {
+export type TeamEvent = Extract<KnownEvent, {
     readonly kind: `team.${string}`;
-  }
->;
+}>;
 ```
 
 <Heading as="h3" id="api-teammemberrunevent-typealias"><code>TeamMemberRunEvent</code></Heading>
@@ -5386,7 +5215,7 @@ A run event tagged with the team member that produced it.
 
 ```ts
 export type TeamMemberRunEvent = Event & {
-  readonly member: string;
+    readonly member: string;
 };
 ```
 
@@ -5403,7 +5232,7 @@ export type TeamRunEvent = TeamMemberRunEvent | TeamOutcomeRunEvent;
 Transport implementations supported by the SDK.
 
 ```ts
-export type TransportKind = 'grpc' | 'http';
+export type TransportKind = "grpc" | "http";
 ```
 
 <Heading as="h3" id="api-unknownevent-typealias"><code>UnknownEvent</code></Heading>
@@ -5419,11 +5248,7 @@ export type UnknownEvent = UnknownHttpEvent | UnknownGrpcEvent;
 One decoded durable-watch delivery envelope.
 
 ```ts
-export type WatchEnvelope =
-  | WatchEventEnvelope
-  | WatchBoundaryEnvelope
-  | WatchGapEnvelope
-  | UnknownWatchEnvelope;
+export type WatchEnvelope = WatchEventEnvelope | WatchBoundaryEnvelope | WatchGapEnvelope | UnknownWatchEnvelope;
 ```
 
 ## Variables
@@ -5433,7 +5258,7 @@ export type WatchEnvelope =
 Maximum inline bytes in one image or audio part.
 
 ```ts
-MAX_MEDIA_PART_BYTES: number;
+MAX_MEDIA_PART_BYTES: number
 ```
 
 <Heading as="h3" id="api-max-prompt-media-bytes-variable"><code>MAX_PROMPT_MEDIA_BYTES</code></Heading>
@@ -5441,7 +5266,7 @@ MAX_MEDIA_PART_BYTES: number;
 Maximum inline media bytes in one prompt.
 
 ```ts
-MAX_PROMPT_MEDIA_BYTES: number;
+MAX_PROMPT_MEDIA_BYTES: number
 ```
 
 <Heading as="h3" id="api-max-prompt-media-parts-variable"><code>MAX_PROMPT_MEDIA_PARTS</code></Heading>
@@ -5449,7 +5274,7 @@ MAX_PROMPT_MEDIA_BYTES: number;
 Maximum image and audio parts in one prompt.
 
 ```ts
-MAX_PROMPT_MEDIA_PARTS = 16;
+MAX_PROMPT_MEDIA_PARTS = 16
 ```
 
 <Heading as="h3" id="api-mecatl-attach-filtered-kinds-variable"><code>MECATL_ATTACH_FILTERED_KINDS</code></Heading>
@@ -5457,13 +5282,7 @@ MAX_PROMPT_MEDIA_PARTS = 16;
 Event kinds omitted by high-level attachment views unless requested.
 
 ```ts
-MECATL_ATTACH_FILTERED_KINDS: readonly[
-  ('approval',
-  'compaction.archive',
-  'network.attempt',
-  'request.manifest',
-  'user_prompt')
-];
+MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "network.attempt", "request.manifest", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-error-codes-variable"><code>MECATL_ERROR_CODES</code></Heading>
@@ -5471,86 +5290,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly[
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly[
-  ('activity_gap',
-  'attempt_live_claim_conflict',
-  'attempt_terminal_conflict',
-  'attempt_version_conflict',
-  'child_not_found',
-  'cleanup_backend',
-  'cleanup_plan_stale',
-  'cleanup_unsupported',
-  'client_mcp_unreachable',
-  'client_mcp_unsupported',
-  'conflict',
-  'cursor_expired',
-  'cursor_malformed',
-  'draining',
-  'dream_apply_failed',
-  'dream_capacity',
-  'dream_conflict',
-  'dream_deadline',
-  'dream_generate_failed',
-  'dream_in_progress',
-  'dream_not_found',
-  'dream_request_failed',
-  'dream_terminal_conflict',
-  'dream_unavailable',
-  'failed_precondition',
-  'failed_step_retry_ineligible',
-  'fire_now_overlap',
-  'internal',
-  'invalid_argument',
-  'learning_unavailable',
-  'management_unauthorized',
-  'mcp_connector_unavailable',
-  'migration_backend',
-  'migration_conflict',
-  'migration_unsupported',
-  'mcp_authorization_pending',
-  'no_active_run',
-  'no_event_log',
-  'no_mcp_provider',
-  'no_schedule_store',
-  'not_awaiting_plan',
-  'not_found',
-  'placement_binding_invalid',
-  'placement_changed',
-  'placement_selector_invalid',
-  'placement_selector_not_found',
-  'placement_selector_stale',
-  'placement_unavailable',
-  'proposal_conflict',
-  'reflection_cancelled',
-  'reflection_deadline',
-  'reflection_failed',
-  'reflection_queue_full',
-  'request_too_large',
-  'resource_exhausted',
-  'schedule_disabled',
-  'schedule_exhausted',
-  'schedule_not_found',
-  'schedule_not_leader',
-  'schedule_unsupported',
-  'scheduler_not_running',
-  'session_delete_unsupported',
-  'session_leased_elsewhere',
-  'session_metadata_cursor_restart',
-  'session_metadata_paging_unsupported',
-  'session_not_found',
-  'stale_run_control',
-  'storage_health_backend',
-  'team_not_found',
-  'team_not_running',
-  'team_running',
-  'teams_disabled',
-  'too_many_session_engines',
-  'too_many_teams',
-  'unauthenticated',
-  'unimplemented',
-  'watch_lagging',
-  'watch_unsupported')
-];
+MECATL_ERROR_CODES: readonly ["activity_gap", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -5558,49 +5298,7 @@ MECATL_ERROR_CODES: readonly[
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly[
-  ('approval',
-  'authorization.required',
-  'authorization.resolved',
-  'compaction',
-  'compaction.archive',
-  'hook',
-  'message.delta',
-  'model.retry',
-  'network.attempt',
-  'no_progress',
-  'parallel.branch',
-  'parallel.end',
-  'parallel.start',
-  'permission.ask',
-  'permission.retract',
-  'provider.route',
-  'reasoning.delta',
-  'recover_notice',
-  'request.manifest',
-  'result',
-  'schedule.failed',
-  'schedule.fired',
-  'schedule.skipped',
-  'session.init',
-  'session.title',
-  'steer',
-  'steer.outcome',
-  'subagent.end',
-  'subagent.start',
-  'subagent.tool',
-  'team.end',
-  'team.findings',
-  'team.member',
-  'team.start',
-  'team.tasks',
-  'tool.call',
-  'tool.progress',
-  'tool.result',
-  'turn.end',
-  'turn.start',
-  'user_prompt')
-];
+MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>
@@ -5608,16 +5306,15 @@ MECATL_EVENT_KINDS: readonly[
 Watch phases this SDK understands.
 
 ```ts
-MECATL_WATCH_PHASES: readonly[('gap', 'live', 'replay')];
+MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"]
 ```
 
 <Heading as="h3" id="api-session-id-header-name-variable"><code>SESSION_ID_HEADER_NAME</code></Heading>
 
-Canonical routing hint for session-bound Mecatl requests. It grants no
-authority.
+Canonical routing hint for session-bound Mecatl requests. It grants no authority.
 
 ```ts
-SESSION_ID_HEADER_NAME = 'X-Mecatl-Session-ID';
+SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID"
 ```
 
 <Heading as="h3" id="api-supported-api-major-variable"><code>SUPPORTED_API_MAJOR</code></Heading>
@@ -5625,5 +5322,5 @@ SESSION_ID_HEADER_NAME = 'X-Mecatl-Session-ID';
 The API major implemented by this SDK.
 
 ```ts
-SUPPORTED_API_MAJOR = 1;
+SUPPORTED_API_MAJOR = 1
 ```
