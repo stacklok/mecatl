@@ -1,4 +1,4 @@
-# ADR 0334 — Contextual investigative guardrails
+# ADR 0342 — Contextual investigative guardrails
 
 - Status: Proposed
 - Date: 2026-09-14

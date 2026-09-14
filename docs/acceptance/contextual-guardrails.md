@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — changes guardrail authority, dispatch ordering, public engine/wire surfaces, operator configuration, and main/worker invariants.
-**Decision record:** [ADR 0334](../adr/0334-contextual-investigative-guardrails.md)
+**Decision record:** [ADR 0342](../adr/0342-contextual-investigative-guardrails.md)
 **Phase:** live contextual action and inbound-content review; cross-process held-result recovery and wider cloud-native security state are deferred
 **Status:** proposed, 2026-09-14. Product choices are approved. Implementation must build and validate the quality-measurement and capacity-calibration deliverables before any production-readiness claim; neither requires results before implementation.
 **Delivery:** Split. Merge of a proposed Plan / Interface PR is the implementation authorization; that gate has not been waived.
@@ -321,84 +321,84 @@ The saved history, final result stream, recorder, and model view receive the sam
 This changes the hook-approval contract in [ADR 0062](../adr/0062-guardrails-approve-once.md) while preserving permission authority.
 
 - AC1.1: trusted mutation runs once; changed effective args are re-evaluated by permission, plan, and system-scope gates; unchanged calls do not receive a duplicate ask; execution receives byte-identical reviewed args.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_EffectiveCallOrder`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario1_EffectiveCallOrder`
 - AC1.2: Run once executes once; Don't ask again is offered only when implicated script/config/target dependencies are identified and version-bound, matches only the exact displayed session/environment/caller/tool/effective-call/target/dependency digest, and never reaches permission learning or permission replay. Grant creation and recomputation share one HMAC preimage helper that prepends exact ASCII `mecatl/guardrail-grant/v1` plus NUL before the canonical length-delimited scope; the prefix is mandatory even with a sibling key, a wrong-purpose MAC made with the same key and fields never validates, and neither key nor preimage is logged. A known script change misses; an incomplete dynamic dependency sets `repeat_available=false` with a precise human limitation while Run once remains available; complete safe direct actions retain repeat.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ExactRepeatGrant`, `TestADR_0334_ContextualGuardrails_Scenario1_GrantDomainSeparation`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario1_ExactRepeatGrant`, `TestADR_0342_ContextualGuardrails_Scenario1_GrantDomainSeparation`
 - AC1.3: permission, hook-guardrail, and plan approvals carry distinct explicit origins through live and awaiting paths; JSON event replay accepts only explicit permission origin, the `Approval.origin=6` proto projection preserves exact parity through mapper and `StreamSessionEvents`, and absent/unrecognized origins fail closed before learning/action.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ApprovalOriginReplay`, `TestADR_0334_ContextualGuardrails_Scenario1_ApprovalOriginProtoProjection`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario1_ApprovalOriginReplay`, `TestADR_0342_ContextualGuardrails_Scenario1_ApprovalOriginProtoProjection`
 - AC1.4: sanitize configuration and implementation paths are absent/rejected, with no legacy reviewer selector or replacement-action execution.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ReplacementRemoval`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario1_ReplacementRemoval`
 - AC1.5: requested/effective deterministic gates, trusted mutation, immutable request preparation, and repeat lookup remain serial on the dispatcher; independent action reviews for eligible read-only siblings enter concurrently into mutation-free private records, then decisions/action asks drain in original order with at most one live ask. After each wait authority/environment/dependencies are revalidated before approved read-only tools execute concurrently. Static `DispatchSerial`, call-specific `MutatesParent`, mutating, and unknown-tool barriers remain serial; cancellation joins reviews and produces complete ordered paired errors; no tool action is speculative and WebSearch/WebFetch/Subagent/Parallel incur no blanket serial-review regression.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario1_ConcurrentActionReviews`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario1_ConcurrentActionReviews`
 
 ### Scenario 2 — evidence, budget, and failure behavior
 
 Evidence remains narrower than the checker quarantine established by [ADR 0021](../adr/0021-guardrails.md).
 
 - AC2.1: only advertised bound handles can be read; wrong handle/version/review/owner/session/environment/route/capability fails before access, and tool/MCP/source labels grant no authority.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario2_EvidenceAuthority`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario2_EvidenceAuthority`
 - AC2.2: one 90-second deadline covers setup, evidence, provider recovery, and at most three complete recoverable attempts; genuine assessments are not retried; human wait is excluded and revalidation neither resets budget nor uses a fixed five-second context.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario2_TotalBudget`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario2_TotalBudget`
 - AC2.3: operational checker failure maps to job-appropriate interactive approval or unattended deny/withhold under `fail`, and only explicit `warn` continues with warning. A completed unresolved assessment caused by capacity exhaustion, incomplete trajectory, or named missing evidence follows the explicit mode/job matrix: enforcing asks action approval or holds result release interactively and denies/withholds headless; advisory leaves the original unchanged with unresolved/incomplete status, never an unsafe finding. Completed unresolved does not increment checker-DOWN state. Findings, deterministic denial, stale/forbidden evidence, and invalid authority fail closed in their owning path and never use the operational opt-out; missing-evidence refs are real rather than fabricated attacks.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario2_FailureMatrix`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario2_FailureMatrix`
 - AC2.4: revalidation narrows races using existing versions/context without claiming an exact universal filesystem snapshot or remote atomicity.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario2_RevalidationResidual`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario2_RevalidationResidual`
 - AC2.5: evidence uses finite handles and cumulative byte capacity; textual source previews reuse native Read's existing per-call line/byte shaping but reject before whole-source allocation when bounded backend access is unavailable. Existing incoming results are not capped/skipped, incomplete capacity cannot produce an acceptable decision, and the configured bound fields report their units.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario2_CapacityBeforeAllocation`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario2_CapacityBeforeAllocation`
 
 ### Scenario 3 — inbound hold/release
 
 Paired history and one effective payload preserve the [hooks and guardrails architecture](../architecture/hooks-and-guardrails.md).
 
 - AC3.1: every default post tool, including local Read/ListDir/Grep/Glob, Shell, Web/MCP, `FetchMcpResource`, and both phases of `CallMcpWithQuery`, follows enforcing hold semantics in main and workers.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario3_DefaultCoverage`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario3_DefaultCoverage`
 - AC3.2: flagged output remains absent from recorder/history/save/event/client/model and review sinks until release; Release once consumes and delivers the exact produced result once; action execution, policy/waiver mutation, reviewer, and pre/post hooks are not repeated.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario3_ExactResultRelease`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario3_ExactResultRelease`
 - AC3.3: cancel, timeout, client drop, headless enforcement, and restart destroy/unavailable held state, pair history with the same synthetic error sent to stream/model, and never re-execute.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario3_HeldResultCleanup`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario3_HeldResultCleanup`
 - AC3.4: result release cannot arm an action/permission grant; action approval cannot approve inbound content.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario3_ApprovalClassIsolation`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario3_ApprovalClassIsolation`
 - AC3.5: two read-batch siblings execute and review concurrently into private records, but their held-result decisions drain in original call order with only one live release ask. Release first/deny second yields one ordered complete result slice; cancellation after releasing the first synthesizes errors for every remainder; unknown pending IDs reject; no tool, hook, reviewer, or side effect reruns.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario3_ConcurrentInboundReleaseOrdering`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario3_ConcurrentInboundReleaseOrdering`
 
 ### Scenario 4 — trajectory, workers, and routing
 
 Worker isolation and routing remain composition-owned as described by the [agent-loop architecture](../architecture/agent-loop.md).
 
 - AC4.1: harness facts correlate read-to-send and alternate-tool/worker retry across one delegation-root run without copying worker transcripts into parent prompts; safer actions/new genuine approval are reassessed.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario4_RootTrajectory`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario4_RootTrajectory`
 - AC4.2: ledger lifetime/cleanup follows root Run conventions; implementation-calibrated private aggregate count/byte capacities are enforced before allocation, relevant facts are never silently dropped, any compaction is authorization-equivalent, and incomplete evidence fails unresolved rather than blindly acceptable.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario4_Retention`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario4_Retention`
 - AC4.3: the Build-captured guardrail route is stable across main/session/worker provider changes: a scalar slot (including current `cheap` fallback) uses `reg.Default()`, the proposed strict guardrail mapping uses its exact configured provider, both resolve aliases without model-ID provider inference/live-list startup calls, and slot precedence still wins the legacy gate.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario4_ExactRoute`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario4_ExactRoute`
 - AC4.4: worker reviewer evidence never exceeds that worker's authority; checker recursion is disabled.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario4_WorkerAuthority`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario4_WorkerAuthority`
 
 ### Scenario 5 — status, transient detail, and safe audit
 
 Transient detail extends, rather than misuses, the durable advisory projection from [ADR 0051](../adr/0051-guardrails-advisory-tui-visibility.md).
 
 - AC5.1: coverage/status reports configured provider/model, effective tool-phase-job-mode coverage, health/outage, finding versus inspection failure, disposition, and exact approval scope from the actual assembled session catalog/rules.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario5_CoverageTruth`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario5_CoverageTruth`
 - AC5.2: durable events/proto carry machine metadata only; transient detail is exact-owner/delegated-parent-reference authorized, live-only, bounded/neutralized, retained through root-run cleanup for post-event fetch, deleted on every cleanup path, and absent after restart.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario5_TransientDetail`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario5_TransientDetail`
 - AC5.3: checker prose never becomes trusted worker instructions; raw reviewed input/result/rationale is absent from logs, metrics, snapshots, and event-log replay.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario5_NoContentLeak`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario5_NoContentLeak`
 - AC5.4: old clients ignore additive fields; invalid approval kinds fail before execution, release, learning, or misleading audit.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario5_OldClientSafety`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario5_OldClientSafety`
 
 ### Scenario 6 — false-positive and attack discrimination
 
-The corpus tests the replacement decision recorded by [ADR 0334](../adr/0334-contextual-investigative-guardrails.md), not empirical efficacy through mocks.
+The corpus tests the replacement decision recorded by [ADR 0342](../adr/0342-contextual-investigative-guardrails.md), not empirical efficacy through mocks.
 
 - AC6.1: a versioned paired corpus covers ordinary GitHub issue tasks, genuinely admitted project instructions, quoted attack examples, assistant-directed prose, and matched adversarial authority-crossing variants.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario6_PairedCorpus`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario6_PairedCorpus`
 - AC6.2: fixed prompts require concrete attempted redirection plus named authority boundary/source; missing context alone and imperative words alone are insufficient; action and inbound jobs use distinct rubrics. A configured `rules[].prompt` is additive operator task-risk policy and cannot hide or replace authority, provenance, false-positive, evidence, protocol, or output contracts.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario6_RubricContract`, `TestADR_0334_ContextualGuardrails_Scenario6_AdditiveRulePrompt`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario6_RubricContract`, `TestADR_0342_ContextualGuardrails_Scenario6_AdditiveRulePrompt`
 - AC6.3: implementation builds a versioned measurement runner and report schema for false warnings, false blocks, misses, latency, investigation frequency, and spend; offline mocks prove protocol only and make no efficacy claim. Actual checker-model comparisons require separate operator route/spend authorization at release-validation time.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario6_QualityReportSchema`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario6_QualityReportSchema`
 - AC6.4: implementation-selected private evidence/trajectory count-and-byte capacities are finite, enforced before allocation, and aggregate exhaustion produces complete unresolved/incomplete behavior rather than acceptable.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario6_ImplementationCalibration`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario6_ImplementationCalibration`
 - AC6.5: implementation review inspects an evidence report that records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
   - verify: inspection — implementation capacity-calibration report contains selected constants, rationale, stress experiments/results, and proof artifact references
 
@@ -407,13 +407,13 @@ The corpus tests the replacement decision recorded by [ADR 0334](../adr/0334-con
 Factory tests and inventory follow the model-visible-affordance and resource rules in [AGENTS.md](../../AGENTS.md).
 
 - AC7.1: real factory-path tests assert evidence-tool use, terminal submission, no-unnecessary-tools, untrusted-data, release semantics, coverage, and anti-bypass instructions in their owning prompt layers for reviewer and worker.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario7_FactoryPrompts`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario7_FactoryPrompts`
 - AC7.2: malformed/blank/tool-only/timeout/cancellation paths terminate within inherited limits without automatically labeling content unsafe or permitting it.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario7_TerminalSafety`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario7_TerminalSafety`
 - AC7.3: cloud inventory rows document transient detail, held-result map, evidence handles/previews, trajectory ledger, and contextual repeat grants in both List 1 and List 2 with ownership, lifetime, cleanup, and reset-by-design behavior.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario7_ResourceInventory`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario7_ResourceInventory`
 - AC7.4: concrete protobuf review/approval fields preserve exact action-versus-inbound job, assessment (including unresolved), inspection state (complete or operational failure), disposition, approval kind, repeat availability, and explicit approval origin through mapper and stream projection; invalid approval-kind/origin combinations fail before execution, release, learning, waiver, or misleading audit.
-  - verify: `TestADR_0334_ContextualGuardrails_Scenario7_InterfaceProjectionSafety`
+  - verify: `TestADR_0342_ContextualGuardrails_Scenario7_InterfaceProjectionSafety`
 
 ## Out of scope
 
