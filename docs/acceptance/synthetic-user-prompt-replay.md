@@ -4,12 +4,12 @@
 **Work classification:** Architectural — this changes the exported engine event payload, durable event meaning, protobuf replay contract, and mecatui transcript projection.
 **Decision record:** [ADR 0337](../adr/0337-synthetic-user-prompt-origin.md)
 **Phase:** durable session replay fidelity
-**Status:** proposed, 2026-09-14. The issue records the intended origin flag and notice rendering; this contract awaits Plan / Interface review.
+**Status:** in-progress, 2026-09-14. Implementation is underway against the human-approved Plan / Interface baseline.
 **Delivery:** Split. The change crosses the engine API, event persistence, protobuf, and mecatui replay UI, so separate interface review is valuable.
 **Expected tasks:** 2
 **Issue:** [#1457](https://github.com/stacklok/mecatl/issues/1457)
 **Plan PR:** [#1478](https://github.com/stacklok/mecatl/pull/1478)
-**Approved baseline:** absent until the Plan / Interface PR merges
+**Approved baseline:** `95ad677fc0a7ab358ed8134e44b982f18a98e5b2`
 
 A durable `user_prompt` event must distinguish a principal-authored prompt from a user-role
 continuation authored by the harness. Mecatui replay uses that structured origin to preserve real
