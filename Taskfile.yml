@@ -790,19 +790,19 @@ tasks:
       # mid-scan govulncheck crash (after the JSON `config` preamble) would let
       # the gate see zero findings and pass green. pipefail propagates the
       # govulncheck failure, matching the CI job.
-      - cmd: set -o pipefail; go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run .github/scripts/govulncheck-gate.go # v1.1.4 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
+      - cmd: set -o pipefail; go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run .github/scripts/govulncheck-gate.go # v1.8.0 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
       # engine/ is a separate module — `./...` from the root does NOT cross the
       # module boundary, so its scan is a second invocation against engine/go.mod.
       # No allowlist: the engine library's closure is clean and must stay clean.
-      - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+      - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
       # Opt-in OIDC module: independently scan its security-sensitive closure.
-      - cmd: set -o pipefail; cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+      - cmd: set -o pipefail; cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
       # provider/ submodules (ADR 0093) — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
-      - cmd: set -o pipefail; cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
-      - cmd: set -o pipefail; cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
-      - cmd: set -o pipefail; cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
-      - cmd: set -o pipefail; cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+      - cmd: set -o pipefail; cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
+      - cmd: set -o pipefail; cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
+      - cmd: set -o pipefail; cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
+      - cmd: set -o pipefail; cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
 
   lint:fix:
     desc: Run pinned golangci-lint with autofix (parallel-safe) over the root, engine, authn/oidc, and provider modules

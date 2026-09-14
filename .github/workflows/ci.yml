@@ -1156,7 +1156,7 @@ jobs:
       # every module-scoped step below can just call `govulncheck`.
       - name: Install govulncheck (pinned, shared by every module below)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       # `./...` from the root does NOT cross the engine module boundary, so the
@@ -1166,21 +1166,21 @@ jobs:
         run: |
           set -o pipefail
           govulncheck -format json ./... \
-            | go run .github/scripts/govulncheck-gate.go # v1.1.4 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
+            | go run .github/scripts/govulncheck-gate.go # v1.8.0 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
 
       - name: govulncheck (engine module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
           cd engine && govulncheck -format json ./... \
-            | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
+            | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
 
       - name: govulncheck (OIDC authn module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
           cd authn/oidc && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
 
       # provider/ submodules (ADR 0093) — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
@@ -1189,13 +1189,13 @@ jobs:
         run: |
           set -o pipefail
           (cd provider/ssefilter && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
           (cd provider/anthropic && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
           (cd provider/openai && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
           (cd provider/openaichat && govulncheck -format json ./... \
-            | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
+            | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
 
   docs:
     name: Docs (matlatl)
