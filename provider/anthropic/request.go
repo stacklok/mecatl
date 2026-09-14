@@ -666,12 +666,17 @@ func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
 	return blocks, nil
 }
 
-// assistantBlocks expands an assistant message into its ordered content blocks:
-// the reconstructed thinking/redacted_thinking blocks (unpacked from
-// Message.Reasoning) FIRST, then a tool_use block per requested tool call, then
-// a text block when the assistant produced visible text. Thinking-before-
-// tool_use is the §extended-thinking sequence rule: omitting or misordering the
-// thinking blocks on a tool-bearing assistant turn 400s.
+// assistantBlocks expands an assistant message into its ordered content blocks,
+// reconstructing the model's OWN generation order: the reconstructed
+// thinking/redacted_thinking blocks (unpacked from Message.Reasoning) FIRST,
+// then a text block when the assistant produced visible text, then a tool_use
+// block per requested tool call LAST. tool_use must trail — Anthropic requires
+// it as the terminal content block of a tool-bearing assistant turn, especially
+// under extended thinking; a turn replayed with text AFTER its tool_use (the
+// order this function used to emit) 400s with a misleading
+// "assistant message prefill" error (issue #1465). Thinking-before-tool_use is
+// the §extended-thinking sequence rule: omitting or misordering the thinking
+// blocks on a tool-bearing assistant turn 400s too.
 func assistantBlocks(m session.Message) []sdk.ContentBlockParamUnion {
 	reasoning := unpackReasoning(m.Reasoning)
 	out := make([]sdk.ContentBlockParamUnion, 0, len(reasoning)+len(m.ToolCalls)+1)
@@ -683,11 +688,11 @@ func assistantBlocks(m session.Message) []sdk.ContentBlockParamUnion {
 			out = append(out, sdk.NewRedactedThinkingBlock(blk.Data))
 		}
 	}
-	for _, call := range m.ToolCalls {
-		out = append(out, sdk.NewToolUseBlock(string(call.ID), call.Args, call.Name))
-	}
 	if m.Text != "" {
 		out = append(out, sdk.NewTextBlock(m.Text))
+	}
+	for _, call := range m.ToolCalls {
+		out = append(out, sdk.NewToolUseBlock(string(call.ID), call.Args, call.Name))
 	}
 	if len(out) == 0 {
 		// A degenerate empty assistant turn (reachable via the no-progress-nudge
