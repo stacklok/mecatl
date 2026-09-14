@@ -389,7 +389,7 @@ type ToolCall struct{ID ToolCallID "json:\"ID\""; Name string "json:\"Name\""; A
 type ToolCallID string
 type ToolResult struct{CallID ToolCallID; Content string; IsError bool; Parts []Content "json:\"Parts,omitempty\""}
 type Turn struct{Index int; Assistant Message; Results []ToolResult; Usage Usage}
-type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64}
+type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64; Model string; Provider string}
 type Usage struct{InputTokens int; OutputTokens int; CacheReadTokens int; CacheWriteTokens int; ReasoningTokens int}
 type UsageKind string
 type UserPromptPayload struct{Text string; Parts []Content; Synthetic bool}

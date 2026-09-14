@@ -370,4 +370,3 @@ func TestTracingRunSpan_ErrorType(t *testing.T) {
 		t.Errorf("error.type = %q (ok=%v), want %q", got, ok, "error")
 	}
 }
-
