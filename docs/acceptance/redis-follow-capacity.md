@@ -9,7 +9,8 @@
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#876](https://github.com/stacklok/mecatl/issues/876).
 **Plan PR:** [stacklok/mecatl#1422](https://github.com/stacklok/mecatl/pull/1422)
-**Amendment PR:** [stacklok/mecatl#1462](https://github.com/stacklok/mecatl/pull/1462)
+**Amendment PR:** [stacklok/mecatl#1462](https://github.com/stacklok/mecatl/pull/1462), closed without merge after the directing user explicitly waived separate amendment ceremony in favor of one Implementation PR
+**Human waiver:** The Go 1.27 amendment is reviewed together with implementation; TDD, repository gates, panel review, and human merge remain mandatory.
 **Approved baseline:** `3ad4a689bb68db01a21c72995daef1854c295866` for the original plan; the amendment baseline is absent until approved
 
 Redis durable followers get their own bounded connection pool and fail-fast admission limit,
