@@ -39,7 +39,7 @@ type enrollmentAttachment struct {
 	releaseBegin  <-chan struct{}
 }
 
-func (a *enrollmentAttachment) ResetWorkspaceEnrollment(context.Context) error { return nil }
+func (*enrollmentAttachment) ResetWorkspaceEnrollment(context.Context) error { return nil }
 
 func (a *enrollmentAttachment) BeginWorkspaceEnrollment(context.Context) (brokercontract.WorkspaceEnrollmentPresentation, error) {
 	a.mu.Lock()
