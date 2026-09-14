@@ -66,7 +66,7 @@ slug renames, render correctly in GitHub's markdown preview, and are portable if
 ```markdown
 [The agent loop](/building/what-you-get/agent-loop.md)
 [Overview](/building/extension-points/index.md)
-[Cloud-native kit](/building/cloud-native-kit.md)
+[Cloud-native harness](/building/cloud-native-harness.md)
 ```
 
 The leading `/` resolves from the docs content root (`user-docs/`), not the site root.

@@ -30,7 +30,7 @@ To see the Kubernetes model locally, follow
 
 ## Operate and integrate
 
-- [Install Mecatl](/install.md)
+- [Run your first local session](/mecatui/getting-started.md)
 - [Configure a deployment](./settings.md)
 - [Operate local session storage](./session-storage-operations.md)
 - [Connect clients through gRPC or HTTP/SSE](./grpc-http.md)

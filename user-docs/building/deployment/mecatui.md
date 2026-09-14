@@ -88,5 +88,3 @@ without a version uses embedded VCS metadata when available, or `dev` otherwise.
 - [Connect with gRPC or HTTP](grpc-http.md) to understand the client transport.
 - [Permissions and guardrails](/building/what-you-get/permissions.md) to
   configure posture and workspace trust.
-- [Install Mecatl](/install.md) to use native executables instead of a
-  container.

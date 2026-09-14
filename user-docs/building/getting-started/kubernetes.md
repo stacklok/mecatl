@@ -22,8 +22,11 @@ You need a clone of the Mecatl repository and these commands on `PATH`:
 - [ko](https://ko.build/); and
 - Docker or Podman.
 
-You also need `mecatui`. Install it with Homebrew or follow
-[Install Mecatl](/install.md).
+You also need `mecatui`, available from the Stacklok Homebrew tap:
+
+```sh
+brew install stacklok/tap/mecatl
+```
 
 You do not need a model provider API key.
 

@@ -59,7 +59,6 @@ const config: Config = {
           excludeRoutes: ['/search'],
         },
         includeOrder: [
-          '/docs/install',
           '/docs/mecatui/**',
           '/docs/building/**',
           '/docs/features/**',
@@ -124,28 +123,33 @@ const config: Config = {
       style: 'dark',
       items: [
         {
-          to: '/docs',
+          to: '/docs/mecatui/getting-started',
           position: 'left',
-          label: 'Docs',
+          label: 'Get started',
         },
         {
-          to: '/docs/mecatui',
+          to: '/docs/building/cloud-native-harness',
           position: 'left',
-          label: 'mecatui',
+          label: 'Cloud-native harness',
         },
         {
           to: '/docs/building',
           position: 'left',
-          label: 'Building',
+          label: 'Build',
         },
         {
-          to: '/colophon',
-          label: 'Colophon',
-          position: 'right',
+          to: '/docs/building/deployment',
+          position: 'left',
+          label: 'Deploy',
         },
         {
           href: 'https://github.com/stacklok/mecatl',
           label: 'GitHub',
+          position: 'right',
+        },
+        {
+          href: 'https://discord.gg/stacklok',
+          label: 'Discord',
           position: 'right',
         },
       ],
@@ -156,9 +160,9 @@ const config: Config = {
         {
           title: 'Get started',
           items: [
-            {label: 'Install', to: '/docs/install'},
-            {label: 'Use mecatui', to: '/docs/mecatui'},
-            {label: 'Getting started', to: '/docs/building/getting-started/demo'},
+            {label: 'Use it now', to: '/docs/mecatui/getting-started'},
+            {label: 'Run on Kubernetes', to: '/docs/building/deployment/mecak8s'},
+            {label: 'What is a cloud-native harness?', to: '/docs/building/cloud-native-harness'},
           ],
         },
         {
@@ -174,6 +178,7 @@ const config: Config = {
           items: [
             {label: 'GitHub', href: 'https://github.com/stacklok/mecatl'},
             {label: 'Discord', href: 'https://discord.gg/stacklok'},
+            {label: 'Colophon', to: '/colophon'},
             {label: 'Stacklok', href: 'https://stacklok.com'},
           ],
         },

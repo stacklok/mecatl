@@ -8,8 +8,9 @@ description:
 
 # Install Mecatl
 
-Install the `mecatui` terminal client and `mecated` server using one of the
-following methods.
+Install and verify Mecatl release artifacts from this page. For the fastest path
+to a first local session, follow [Run your first local session](/mecatui/getting-started.md)
+after installing `mecatui`.
 
 ## Homebrew
 
@@ -68,26 +69,18 @@ gh attestation verify mecatl_<VERSION>_darwin_arm64.tar.gz --repo stacklok/mecat
 The Cosign command verifies that a GitHub Actions workflow in the
 `stacklok/mecatl` repository signed the archive.
 
-## Container images and Helm chart
+## Deployment artifacts
 
-Releases publish signed, multi-architecture container images to GHCR. Substitute
-the release number without its leading `v` for `<VERSION>`:
+Deployment-specific guides own the images, charts, and operational instructions:
 
-```sh
-docker pull ghcr.io/stacklok/mecatl:v<VERSION>
-docker pull ghcr.io/stacklok/mecatl/mecak8s:v<VERSION>
-docker pull ghcr.io/stacklok/mecatl/mecatui:v<VERSION>
-```
-
-The first image runs `mecated`. The `mecak8s` Helm chart pulls the second image
-automatically and is published as
-`oci://ghcr.io/stacklok/mecatl/charts/mecak8s`.
-
-See [the mecatui container image](/building/deployment/mecatui.md) for the
-importable client image and
-[Run mecated standalone](/building/deployment/mecated.md) for server operation.
-[Cloud-native Kubernetes with mecak8s](/building/deployment/mecak8s.md) covers
-the Kubernetes runtime, which is image-only and not part of the formula.
+- [Run mecated standalone](/building/deployment/mecated.md) for the general
+  server image and server operation.
+- [Run the mecatui container image](/building/deployment/mecatui.md) for the
+  importable terminal-client image.
+- [Deploy mecak8s](/building/deployment/mecak8s.md) for the Kubernetes image
+  and Helm chart.
+- [Use mecatequi in CI](/building/deployment/mecatequi.md) for the one-shot CI
+  runtime.
 
 ## Build from source
 

@@ -14,6 +14,9 @@ the flow that matches your client:
   session;
 - use the **API flow** when another client calls the server directly.
 
+For the rest of the interactive terminal workflow, see
+[Use mecatui](/mecatui/index.md).
+
 ## Availability
 
 Session creation and continuation are available in:
@@ -112,6 +115,6 @@ live run based only on a persisted snapshot.
 
 - [Session continuity](./session-continuity.md) for storage, recovery, and
   maintenance.
-- [Use mecatui](./use-mecatui.md) for the interactive terminal workflow.
+- [Use mecatui](/mecatui/index.md) for the interactive terminal workflow.
 - [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for client
   integrations.

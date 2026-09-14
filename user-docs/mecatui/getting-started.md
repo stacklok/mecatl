@@ -33,8 +33,7 @@ brew install stacklok/tap/mecatl
 mecatui --version
 ```
 
-The version command should print a release tag. For signed archives and source
-builds, see [Install Mecatl](/install.md).
+The version command should print a release tag.
 
 ## Set up a provider
 

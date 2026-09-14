@@ -99,16 +99,19 @@
   width: auto;
 }
 
-/* ─── Sidebar category labels ─────────────────────────────────────────────── */
+/* ─── Sidebar category headings ──────────────────────────────────────────── */
 
 .theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link {
+  color: var(--mec-text);
   font-family: 'Space Grotesk', sans-serif;
+  font-size: 1rem;
   font-weight: 600;
-  font-size: 0.68rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--mec-copper);
-  opacity: 0.9;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.theme-doc-sidebar-item-link > .menu__link {
+  font-size: 0.85rem;
 }
 
 /* ─── Headings ───────────────────────────────────────────────────────────── */

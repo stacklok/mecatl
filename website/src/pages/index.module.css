@@ -88,6 +88,20 @@
   line-height: 1.1;
 }
 
+.heroTitleLink {
+  color: var(--mec-teal-bright);
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.12em;
+}
+
+.heroTitleLink:hover { color: var(--mec-teal-bright); }
+
+.heroTitleLink:focus-visible {
+  outline: 2px solid var(--mec-teal-bright);
+  outline-offset: 0.12em;
+}
+
 .heroSubtitle {
   max-width: 560px;
   margin-bottom: 2rem;

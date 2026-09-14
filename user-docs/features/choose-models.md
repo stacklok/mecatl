@@ -24,6 +24,8 @@ Provider, model, and reasoning-effort selection is available in `mecated`,
 connected `mecatui` uses the remote server's providers, credentials, and model
 inventory.
 
+For the rest of the terminal workflow, see [Use mecatui](/mecatui/index.md).
+
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
@@ -371,7 +373,7 @@ session as authoritative.
 
 ## Next steps
 
-- [Use mecatui](./use-mecatui.md) for the interactive model and effort pickers.
+- [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
 - [Start and resume sessions](./start-and-resume-sessions.md) for session
   creation and continuation.
 - [Context windows](./context-windows.md) for context limits and fallback.

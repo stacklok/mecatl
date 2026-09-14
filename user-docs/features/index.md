@@ -16,8 +16,6 @@ between `mecated`, `mecak8s`, and `mecatui`.
 
 - [Capability and deployment matrix](./capability-matrix.md) explains the
   operational differences among server and terminal deployments.
-- [Use mecatui](./use-mecatui.md) covers the terminal UI, keymaps, panels, and
-  interactive workflows.
 
 ## Run and maintain sessions
 

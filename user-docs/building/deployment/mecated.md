@@ -90,8 +90,7 @@ for no-PVC pod deployments, with Redis-backed state when you configure
 
 ## Quick start
 
-Install with `brew install stacklok/tap/mecatl` or a signed release archive. See
-[Install Mecatl](/install.md). Then start the server:
+Install with `brew install stacklok/tap/mecatl`. Then start the server:
 
 ```sh
 mecated serve
