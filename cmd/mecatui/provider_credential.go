@@ -137,6 +137,9 @@ func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolutio
 		key = &entered
 	}
 	state, err := c.backend.updateAPIKey(ctx, authPath, authfile.APIKeyUpdate{Provider: res.providerName, APIKey: key})
+	if state == authfile.CommitReplacementAppliedDurabilityUnknown {
+		return fmt.Errorf("providers: replacement_applied_durability_unknown; the API key change may already be active; crash durability is uncertain. Inspect `mecatui providers status %s` and the configured credential file before a manual retry", providerDisplay(res.providerName))
+	}
 	if err != nil {
 		if state == authfile.CommitNotApplied && errors.Is(err, context.Canceled) {
 			return c.credentialCancellation(stderr)
