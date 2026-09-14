@@ -31,16 +31,34 @@ import (
 type transportMode string
 
 const (
-	modeLocal          transportMode = "local"
-	modeConnect        transportMode = "connect"
-	llmActionLogin                   = "login"
-	llmActionStatus                  = "status"
-	llmActionSetup                   = "setup"
-	llmActionLogout                  = "logout"
-	llmActionConfig                  = "config"
-	llmConfigActionSet               = "set"
-	toolHiveEndpointID               = "toolhive"
-	// modeLogin is the CLI-only `mecatui llm` lifecycle subcommand.
+	modeLocal                transportMode = "local"
+	modeConnect              transportMode = "connect"
+	providerActionLogin                    = "login"
+	providerActionStatus                   = "status"
+	providerActionLogout                   = "logout"
+	providerActionSetup                    = "setup"
+	providerActionAdd                      = "add"
+	providerActionSetDefault               = "set-default"
+	providerActionRemove                   = "remove"
+	// Legacy native-LLM runtime actions; command parsing accepts only providers.
+	llmActionLogin     = "login"
+	llmActionStatus    = "status"
+	llmActionLogout    = "logout"
+	toolHiveEndpointID = "toolhive"
+	// modeProviderSetup guides a newcomer through an existing provider setup flow.
+	modeProviderSetup transportMode = "provider-setup"
+	// modeProviderStatus is the passive local provider inventory. It deliberately
+	// does not construct an embedded server or a credential-store runtime.
+	modeProviderStatus transportMode = "provider-status"
+	// modeProviderCredential manages locally stored custom API-key and OIDC credentials.
+	modeProviderCredential transportMode = "provider-credential"
+	// modeProviderAdd interactively creates one custom provider definition.
+	modeProviderAdd transportMode = "provider-add"
+	// modeProviderRemove removes one custom provider definition and its locally managed credential.
+	modeProviderRemove transportMode = "provider-remove"
+	// modeProviderSetDefault updates the embedded server's operator deployment default.
+	modeProviderSetDefault transportMode = "provider-set-default"
+	// modeLogin is the CLI-only legacy lifecycle subcommand.
 	modeLogin transportMode = "llm-login"
 	// modeLLMConfig writes native endpoint configuration without starting lifecycle operations.
 	modeLLMConfig transportMode = "llm-config"
@@ -86,7 +104,7 @@ var topLevelCommands = []topLevelCommand{
 		resolve:  resolveConnectCommand,
 	},
 	{
-		name:     llmActionLogin,
+		name:     "login",
 		synopsis: "login ADDRESS",
 		purpose:  "log in to a remote mecated at ADDRESS using OIDC",
 		resolve:  resolveRemoteLoginCommand,
@@ -98,10 +116,10 @@ var topLevelCommands = []topLevelCommand{
 		resolve:  resolveRemoteLogoutCommand,
 	},
 	{
-		name:     "llm",
-		synopsis: "llm <config|setup|login|status|logout> [args]",
-		purpose:  "configure, inspect, and manage LLM providers; setup guides API-key custody while native and ToolHive lifecycles remain separate",
-		resolve:  resolveLLMCommand,
+		name:     "providers",
+		synopsis: "providers [command]",
+		purpose:  "inspect and manage embedded provider configuration and locally managed credentials",
+		resolve:  resolveProvidersCommand,
 	},
 }
 
@@ -118,10 +136,8 @@ type invocationResolution struct {
 	debugHelp          bool   // render dedicated debug help instead of transport flag help
 	helpIndex          bool   // render the top-level command index
 	remaining          []string
-	llmAction          string
-	llmEndpoint        string
-	llmAuthFile        string
-	llmAuthFileSet     bool
+	providerAction     string
+	providerName       string
 	llmDeprecatedAlias bool
 	err                error
 }
@@ -218,7 +234,7 @@ func hasUnexpectedHelpOperands(command string, args []string) bool {
 	if command == "connect" && len(args) > 2 && isHelpMetaFlag(args[1]) {
 		return true
 	}
-	if command == "llm" && len(args) == 2 && args[0] == llmActionLogin && isHelpMetaFlag(args[1]) {
+	if command == "providers" && len(args) == 2 && args[0] == providerActionLogin && isHelpMetaFlag(args[1]) {
 		return false
 	}
 	return len(args) > 1 && isHelpMetaFlag(args[0])
@@ -250,86 +266,106 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 	return invocationResolution{mode: modeRemoteLogout, address: args[0], remaining: args[1:]}
 }
 
-//nolint:gocyclo // Exact command grammar keeps each accepted form explicit.
-func resolveLLMCommand(args []string) invocationResolution {
-	const usage = "llm: usage: mecatui llm setup [--auth-file PATH] | mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [--auth-file PATH] [ENDPOINT] | mecatui llm logout ENDPOINT"
+func resolveProvidersCommand(args []string) invocationResolution {
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
-		return invocationResolution{mode: modeLogin, remaining: args}
+		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
 	if len(args) == 0 {
-		return invocationResolution{err: errors.New(usage)}
+		return invocationResolution{mode: modeProviderStatus, providerAction: providerActionStatus}
 	}
-	action := args[0]
-	switch action {
-	case llmActionConfig:
-		if len(args) == 2 && isHelpMetaFlag(args[1]) {
-			return invocationResolution{mode: modeLLMConfig, remaining: args[1:]}
-		}
-		if len(args) < 3 || args[1] != llmConfigActionSet || strings.HasPrefix(args[2], "-") {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLLMConfig, llmAction: llmConfigActionSet, llmEndpoint: args[2], remaining: args[3:]}
-	case llmActionLogin:
-		if len(args) == 1 {
-			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true}
-		}
-		if len(args) == 2 && args[1] == "--skip-browser" {
-			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: toolHiveEndpointID, llmDeprecatedAlias: true, remaining: args[1:]}
-		}
-		if len(args) >= 2 && args[1] == toolHiveEndpointID {
-			if len(args) > 3 || len(args) == 3 && args[2] != "--skip-browser" {
-				return invocationResolution{err: errors.New(usage)}
-			}
-			return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
-		}
-		if len(args) != 2 && len(args) != 3 || strings.HasPrefix(args[1], "-") || len(args) == 3 && args[2] != "--no-browser" {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1], remaining: args[2:]}
-	case llmActionSetup:
-		path, endpoint, set, ok := parseLLMAuthFileArgs(args[1:], false)
-		if !ok || endpoint != "" {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmAuthFile: path, llmAuthFileSet: set}
-	case llmActionStatus:
-		path, endpoint, set, ok := parseLLMAuthFileArgs(args[1:], true)
-		if !ok || endpoint != "" && set {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: endpoint, llmAuthFile: path, llmAuthFileSet: set}
-	case llmActionLogout:
-		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
-			return invocationResolution{err: errors.New(usage)}
-		}
-		return invocationResolution{mode: modeLogin, llmAction: action, llmEndpoint: args[1]}
-	default:
-		return invocationResolution{err: errors.New(usage)}
+	if len(args) == 2 && args[0] == providerActionStatus && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderStatus, providerAction: providerActionStatus, remaining: args[1:]}
 	}
+	if args[0] == providerActionStatus && len(args) <= 2 && (len(args) == 1 || !strings.HasPrefix(args[1], "-")) {
+		endpoint := ""
+		if len(args) == 2 {
+			endpoint = args[1]
+		}
+		return invocationResolution{mode: modeProviderStatus, providerAction: providerActionStatus, providerName: endpoint}
+	}
+	if res, ok := resolveProviderSetupCommand(args); ok {
+		return res
+	}
+	if res, ok := resolveProviderAddCommand(args); ok {
+		return res
+	}
+	if res, ok := resolveProviderRemoveCommand(args); ok {
+		return res
+	}
+	if res, ok := resolveProviderSetDefaultCommand(args); ok {
+		return res
+	}
+	if res, ok := resolveProviderCredentialCommand(args); ok {
+		return res
+	}
+	return invocationResolution{err: errors.New(usage)}
 }
 
-func parseLLMAuthFileArgs(args []string, allowEndpoint bool) (path, endpoint string, set, ok bool) {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--auth-file" {
-			next := i + 1
-			if set || next >= len(args) {
-				return "", "", false, false
-			}
-			candidate := args[next] // #nosec G602 -- next was bounds-checked above.
-			if candidate == "" || strings.HasPrefix(candidate, "-") {
-				return "", "", false, false
-			}
-			set, path = true, candidate
-			i++
-			continue
-		}
-		if strings.HasPrefix(arg, "-") || !allowEndpoint || endpoint != "" {
-			return "", "", false, false
-		}
-		endpoint = arg
+func resolveProviderSetupCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 1 && args[0] == providerActionSetup {
+		return invocationResolution{mode: modeProviderSetup, providerAction: providerActionSetup}, true
 	}
-	return path, endpoint, set, true
+	if len(args) == 2 && args[0] == providerActionSetup && !strings.HasPrefix(args[1], "-") {
+		return invocationResolution{mode: modeProviderSetup, providerAction: providerActionSetup, providerName: args[1]}, true
+	}
+	if len(args) == 2 && args[0] == providerActionSetup && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderSetup, providerAction: providerActionSetup, remaining: args[1:]}, true
+	}
+	return invocationResolution{}, false
+}
+
+func resolveProviderAddCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && args[0] == providerActionAdd && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, remaining: args[1:]}, true
+	}
+	if len(args) < 2 || args[0] != providerActionAdd || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	if len(args) == 2 || (len(args) == 3 && args[2] == "--no-login") {
+		return invocationResolution{mode: modeProviderAdd, providerAction: providerActionAdd, providerName: args[1], remaining: args[2:]}, true
+	}
+	return invocationResolution{}, false
+}
+
+func resolveProviderRemoveCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && args[0] == providerActionRemove && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderRemove, providerAction: providerActionRemove, remaining: args[1:]}, true
+	}
+	if len(args) != 2 || args[0] != providerActionRemove || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	return invocationResolution{mode: modeProviderRemove, providerAction: providerActionRemove, providerName: args[1]}, true
+}
+
+func resolveProviderSetDefaultCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && args[0] == providerActionSetDefault && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderSetDefault, providerAction: providerActionSetDefault, remaining: args[1:]}, true
+	}
+	if len(args) < 2 || len(args) > 3 || args[0] != providerActionSetDefault || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	return invocationResolution{mode: modeProviderSetDefault, providerAction: providerActionSetDefault, providerName: args[1], remaining: args[2:]}, true
+}
+
+func resolveProviderCredentialCommand(args []string) (invocationResolution, bool) {
+	if len(args) == 2 && (args[0] == providerActionLogin || args[0] == providerActionLogout) && isHelpMetaFlag(args[1]) {
+		return invocationResolution{mode: modeProviderCredential, providerAction: args[0], remaining: args[1:]}, true
+	}
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return invocationResolution{}, false
+	}
+	switch args[0] {
+	case providerActionLogin:
+		if len(args) == 2 || (len(args) == 3 && args[2] == "--no-browser") {
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:]}, true
+		}
+	case providerActionLogout:
+		if len(args) == 2 {
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1]}, true
+		}
+	}
+	return invocationResolution{}, false
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must
@@ -427,9 +463,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
-	_, _ = fmt.Fprintln(out, "\nProvider setup/status: mecatui llm setup [--auth-file PATH] | mecatui llm status [--auth-file PATH] [ENDPOINT]")
-	_, _ = fmt.Fprintln(out, "Native LLM configuration: mecatui llm config set ENDPOINT [flags]")
-	_, _ = fmt.Fprintln(out, "Native LLM lifecycle: mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+	_, _ = fmt.Fprintln(out, "Provider configuration and lifecycle: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]")
 	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
@@ -451,11 +485,10 @@ func writeDebugHelp(out io.Writer, connect bool) {
 	_, _ = fmt.Fprintln(out, "If inventory is unavailable or no handle matches, TARGET is sent unchanged for the server to authorize or reject as an exact ID.")
 }
 
-// unknownCommandError builds the error message for an unknown leading bare word.
+// unknownCommandError builds the concise error message for an unknown leading bare word.
+// main appends the command summary once for usageErrorTrailer errors.
 func unknownCommandError(arg string) error {
-	var commands strings.Builder
-	writeCommandSummary(&commands)
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n%s\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help-flags' for bare-mode common flags", arg, strings.TrimPrefix(commands.String(), "Commands:\n"))
+	return fmt.Errorf("unknown command %q", arg)
 }
 
 // connectUsageError builds the error message for a bare/flag-first `connect`

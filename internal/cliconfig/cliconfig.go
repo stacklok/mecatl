@@ -16,6 +16,7 @@
 package cliconfig
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"os"
@@ -87,10 +88,11 @@ type ProviderFlags struct {
 	authSnapshot      *authfile.File
 	authSnapshotReady bool
 	authSnapshotWarn  string
+	apiKeyFile        string
 }
 
 // RegisterProviderFlags registers --openai-base-url / --openrouter-base-url /
-// --anthropic-base-url / --auth-file on fs and returns the binding to pass to Apply
+// --anthropic-base-url / --api-key-file on fs and returns the binding to pass to Apply
 // later. The help text comes from help, falling back per-field to
 // DefaultProviderFlagHelp so a caller may pass a zero value (or override only the
 // fields it words differently).
@@ -107,7 +109,7 @@ func RegisterProviderFlags(fs *flag.FlagSet, help ProviderFlagHelp) *ProviderFla
 	fs.StringVar(pf.openRouterBaseURL, "openrouter-base-url", "", help.OpenRouterBaseURL)
 	fs.StringVar(pf.anthropicBaseURL, "anthropic-base-url", "", help.AnthropicBaseURL)
 	fs.StringVar(pf.openCodeBaseURL, "opencode-base-url", "", help.OpenCodeBaseURL)
-	fs.StringVar(pf.authFile, "auth-file", "", help.AuthFile)
+	fs.StringVar(pf.authFile, "api-key-file", "", help.AuthFile)
 	return pf
 }
 
@@ -130,25 +132,29 @@ func (pf *ProviderFlags) Resolve() ResolvedCredentials {
 }
 
 func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) ResolvedCredentials {
-	var keys ResolvedCredentials
+	keys := readProviderKeys(env.Getenv)
 
 	explicitPath := ""
 	if pf != nil {
 		explicitPath = value(pf.authFile)
 	}
 	path := explicitPath
+	if path == "" && pf != nil {
+		path = pf.apiKeyFile
+	}
 	if path == "" {
 		path = authfile.DefaultPath(env)
 	}
-	af, warning := authfile.Load(path, explicitPath != "", env, nil)
+	configuredPath := explicitPath != "" || (pf != nil && pf.apiKeyFile != "")
+	af, warning := authfile.Load(path, configuredPath, env, nil)
 	if pf != nil {
 		pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = af, true, warning
 	}
 	keys.AuthFileWarning = warning
-	keys.OpenAI = resolveBuiltinCredential("openai", af.APIKey("openai"), env.Getenv).value
-	keys.OpenRouter = resolveBuiltinCredential("openrouter", af.APIKey("openrouter"), env.Getenv).value
-	keys.Anthropic = resolveBuiltinCredential("anthropic", af.APIKey("anthropic"), env.Getenv).value
-	keys.OpenCode = resolveBuiltinCredential("opencode", af.APIKey("opencode"), env.Getenv).value
+	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
+	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
+	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
+	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
 	oauth := af.OAuth("openai-codex")
 	if oauth.AccessToken != "" {
 		credential, err := openaicodex.NewCredential(oauth.AccessToken, oauth.AccountID, oauth.ExpiresAt, now)
@@ -179,9 +185,14 @@ func HasOperatorProviderDefinitions(conventional, importClaude bool, files []str
 // auth.yaml; they deliberately have no environment fallback.
 func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.ProviderDefinitions, env xdgconfig.ResolveEnv) (ResolvedCredentials, error) {
 	var keys ResolvedCredentials
+	if pf != nil {
+		keys = readProviderKeys(env.Getenv)
+	}
 	path, explicit := authfile.DefaultPath(env), false
 	if pf != nil && value(pf.authFile) != "" {
 		path, explicit = value(pf.authFile), true
+	} else if pf != nil && pf.apiKeyFile != "" {
+		path, explicit = pf.apiKeyFile, true
 	}
 	known := append([]string{}, knownAuthProviders...)
 	for id := range definitions {
@@ -204,14 +215,10 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 			return ResolvedCredentials{}, err
 		}
 	}
-	getenv := func(string) string { return "" }
-	if pf != nil {
-		getenv = env.Getenv
-	}
-	keys.OpenAI = resolveBuiltinCredential("openai", file.APIKey("openai"), getenv).value
-	keys.OpenRouter = resolveBuiltinCredential("openrouter", file.APIKey("openrouter"), getenv).value
-	keys.Anthropic = resolveBuiltinCredential("anthropic", file.APIKey("anthropic"), getenv).value
-	keys.OpenCode = resolveBuiltinCredential("opencode", file.APIKey("opencode"), getenv).value
+	keys.OpenAI = cmp.Or(keys.OpenAI, file.APIKey("openai"))
+	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
+	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
+	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
 	for id, definition := range definitions {
@@ -223,13 +230,29 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	return keys, nil
 }
 
+// SetAPIKeyFile applies the operator-configured API-key file unless the command
+// line already selected one. It is called by composition after operator settings
+// are resolved and before the immutable credential snapshot is loaded.
+func (pf *ProviderFlags) SetAPIKeyFile(path string) {
+	if pf == nil || value(pf.authFile) != "" {
+		return
+	}
+	pf.apiKeyFile = path
+	pf.authSnapshot = nil
+	pf.authSnapshotReady = false
+	pf.authSnapshotWarn = ""
+}
+
 // AuthFilePath reports the path Resolve would inspect and whether it came from
-// --auth-file. It exposes path provenance without exposing credentials so a
+// --api-key-file. It exposes path provenance without exposing credentials so a
 // command-specific startup policy can decide how to present a conventional
 // missing-file result.
 func (pf *ProviderFlags) AuthFilePath() (path string, explicit bool) {
 	if pf != nil && value(pf.authFile) != "" {
 		return value(pf.authFile), true
+	}
+	if pf != nil && pf.apiKeyFile != "" {
+		return pf.apiKeyFile, true
 	}
 	return authfile.DefaultPath(xdgconfig.OSEnv), false
 }
@@ -272,62 +295,6 @@ func (pf *ProviderFlags) EndpointOverrides() permconfig.ProviderOverrides {
 	return overrides
 }
 
-// CredentialSource reports precedence metadata without exposing a credential.
-// It is the passive-status twin of ResolveProviderCredentials: built-ins use
-// their established environment/file order, OpenRouter keeps the
-// environment-only OPENAI_API_KEY compatibility fallback, and custom providers
-// remain file-only.
-type CredentialSource struct {
-	Source      string
-	FilePresent bool
-}
-
-type credentialResolution struct {
-	value       string
-	source      string
-	filePresent bool
-}
-
-func resolveBuiltinCredential(provider, fileValue string, getenv func(string) string) credentialResolution {
-	var own string
-	switch provider {
-	case "openai":
-		own = envOpenAIKey
-	case "openrouter":
-		own = envOpenRouterKey
-	case "anthropic":
-		own = envAnthropicKey
-	case "opencode":
-		own = envOpenCodeKey
-	}
-	filePresent := fileValue != ""
-	if own != "" {
-		if value := getenv(own); value != "" {
-			return credentialResolution{value: value, source: own, filePresent: filePresent}
-		}
-	}
-	if filePresent {
-		return credentialResolution{value: fileValue, source: "auth file", filePresent: true}
-	}
-	if provider == "openrouter" {
-		if value := getenv(envOpenAIKey); value != "" {
-			return credentialResolution{value: value, source: envOpenAIKey + " compatibility fallback"}
-		}
-	}
-	return credentialResolution{source: "missing"}
-}
-
-// ResolveCredentialSource resolves presence-only credential provenance through
-// the same scalar precedence fold used for startup credentials.
-func ResolveCredentialSource(provider string, filePresent bool, getenv func(string) string) CredentialSource {
-	fileValue := ""
-	if filePresent {
-		fileValue = "present"
-	}
-	resolved := resolveBuiltinCredential(provider, fileValue, getenv)
-	return CredentialSource{Source: resolved.source, FilePresent: resolved.filePresent}
-}
-
 // ReadProviderKeys reads provider credentials from the environment alone
 // (no auth.yaml). It is the SINGLE definition of which env vars hold which credential.
 // A caller that must account for auth.yaml should call ProviderFlags.Resolve instead.
@@ -362,7 +329,7 @@ type ResolvedCredentials struct {
 	customAPIKeys map[string]string
 	customMethods map[string]string
 	// AuthFileWarning is non-empty when the auth.yaml credentials file (the explicit
-	// --auth-file path, or the conventional default) could not be read or parsed
+	// --api-key-file path, or the conventional default) could not be read or parsed
 	// cleanly. It is set by Resolve/Apply (ReadProviderKeys alone never touches the file).
 	// Never fatal — Apply always falls back to whatever was resolved from the
 	// environment — but a caller should log it (cmd/ mains: slog.Warn) so a typo in

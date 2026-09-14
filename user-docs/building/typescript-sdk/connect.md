@@ -1,6 +1,8 @@
 ---
 title: Connect an application
-description: Connect Node.js, Bun, or browser applications to an operator-owned Mecatl daemon.
+description:
+  Connect Node.js, Bun, or browser applications to an operator-owned Mecatl
+  daemon.
 sidebar_position: 2
 ---
 
@@ -17,15 +19,17 @@ Import `connect()` from the Node.js and Bun entry point, then pass the gRPC
 listener's HTTP or HTTPS authority:
 
 ```ts
-import { connect } from "@stacklok-oss/mecatl-sdk/node";
+import { connect } from '@stacklok-oss/mecatl-sdk/node';
 
 const client = connect({
-  baseUrl: process.env.MECATL_URL ?? "http://127.0.0.1:8080",
+  baseUrl: process.env.MECATL_URL ?? 'http://127.0.0.1:8080',
 });
 
 try {
   const session = await client.sessions.create({});
-  const result = await (await session.run("Summarize this repository")).result();
+  const result = await (
+    await session.run('Summarize this repository')
+  ).result();
   console.log(result.text);
 } finally {
   await client.close();
@@ -36,16 +40,16 @@ Pass fixed request headers with `headers`:
 
 ```ts
 const token = process.env.MECATL_TOKEN;
-if (token === undefined) throw new Error("MECATL_TOKEN is required");
+if (token === undefined) throw new Error('MECATL_TOKEN is required');
 
 const client = connect({
-  baseUrl: "https://mecatl.example.com",
+  baseUrl: 'https://mecatl.example.com',
   headers: { authorization: `Bearer ${token}` },
 });
 ```
 
-Use `credentialProvider` instead when the application refreshes credentials.
-The SDK calls the provider for every request and does not persist its returned
+Use `credentialProvider` instead when the application refreshes credentials. The
+SDK calls the provider for every request and does not persist its returned
 headers.
 
 ## Connect from a browser
@@ -54,15 +58,15 @@ Import from the transport-neutral entry point and use the BFF's same-origin
 path:
 
 ```ts
-import { connect } from "@stacklok-oss/mecatl-sdk";
+import { connect } from '@stacklok-oss/mecatl-sdk';
 
 await using client = connect({
-  baseUrl: "/mecatl",
-  credentials: "include",
+  baseUrl: '/mecatl',
+  credentials: 'include',
 });
 
 const session = await client.sessions.create({});
-const result = await (await session.run("Explain the selected file")).result();
+const result = await (await session.run('Explain the selected file')).result();
 console.log(result.text);
 ```
 
@@ -70,9 +74,10 @@ The BFF must inject the daemon credential and enforce Origin and CSRF policy.
 Keep privileged daemon credentials out of browser JavaScript. The SDK supplies
 the browser-facing HTTP and SSE client; it does not include a BFF server.
 
-For local browser development, an operator can configure the daemon's exact
-CORS origins. See [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md)
-for listener and transport configuration.
+For local browser development, an operator can configure the daemon's exact CORS
+origins. See
+[Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md) for
+listener and transport configuration.
 
 ## Observe connection status
 
@@ -81,7 +86,7 @@ for listener and transport configuration.
 
 ```ts
 const unsubscribe = client.status.subscribe((status) => {
-  console.log("Mecatl connection:", status);
+  console.log('Mecatl connection:', status);
 });
 
 unsubscribe();

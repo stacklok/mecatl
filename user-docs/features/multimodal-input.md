@@ -1,15 +1,16 @@
 ---
 sidebar_position: 120
 title: Multimodal input
-description: Send supported images and content blocks to models through Mecatl clients.
+description:
+  Send supported images and content blocks to models through Mecatl clients.
 ---
 
 # Multimodal input
 
-Mecatl accepts a provider-neutral prompt made from text and typed media parts.
-The server computes whether the selected model and provider can handle each
-modality before the prompt is admitted. Unsupported media fails loudly; it is
-never silently dropped or downgraded to an empty text prompt.
+Mecatl accepts provider-neutral prompts containing text and typed media parts.
+Before admitting a prompt, the server checks whether the selected model and
+provider support each modality. The server rejects unsupported media instead of
+dropping it or sending an empty text prompt.
 
 ## Availability
 
@@ -31,11 +32,11 @@ unavailable unless the selected deployment explicitly advertises it.
 ## Send multimodal content
 
 The gRPC `Converse` prompt carries optional text plus repeated `Content` parts.
-A prompt must contain text, at least one part, or both. The same shape is supported
-by mid-run `Steer` frames and their committed echoes, so images/audio staged while
-a run is active reach the next turn boundary without becoming literal attachment
-markers. Each media part must name
-its kind and MIME type and must use exactly one source: inline bytes or a URL.
+A prompt must contain text, at least one part, or both. The same shape is
+supported by mid-run `Steer` frames and their committed echoes, so images/audio
+staged while a run is active reach the next turn boundary without becoming
+literal attachment markers. Each media part must name its kind and MIME type and
+must use exactly one source: inline bytes or a URL.
 
 Conceptually:
 
@@ -78,22 +79,21 @@ The server rejects a malformed part when:
 - the URL is invalid or violates the media URL safety policy; or
 - the prompt has neither text nor a media part.
 
-The same content validation path is reused by ACP and the wire adapters. A
-client receives an invalid-parameters error rather than a prompt that quietly
-lost an image or audio block. Inline bytes remain bytes; text repair rules do
-not rewrite binary media.
+ACP and the wire adapters use the same content validation. A client receives an
+invalid-parameters error when an image or audio block is invalid. Text repair
+rules do not rewrite inline binary media.
 
 URL-sourced media is fetched under the server's bounded public-URL policy. Do
 not use it as a way to reach private, loopback, link-local, metadata, or other
-reserved destinations. Prefer inline bytes when the client already controls
-the payload and the deployment's size limits permit them.
+reserved destinations. Prefer inline bytes when the client already controls the
+payload and the deployment's size limits permit them.
 
 ## Capability discovery
 
 Before sending media, inspect the model inventory or the session's advertised
 capabilities. Model metadata is live-first, so a catalog refresh can change the
-reported modality for a model without changing the shared provider adapter.
-For a session created with a provider/model selector, use the capability echo
+reported modality for a model without changing the shared provider adapter. For
+a session created with a provider/model selector, use the capability echo
 returned at creation rather than assuming that every model on that endpoint has
 the same input support.
 
@@ -131,8 +131,11 @@ or unresolved capability is fail-closed.
 - A no-filesystem session can still use provider-supported media; no local
   workspace is needed for the prompt itself.
 
-For the wire definitions and exact event flow, see [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
-and [the HTTP/SSE API guide](/reference/http-sse-api.md). For provider adapter capability requirements, see [LLM provider extension points](/building/extension-points/llm-provider.md).
+For the wire definitions and exact event flow, see
+[Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and
+[the HTTP/SSE API guide](/reference/http-sse-api.md). For provider adapter
+capability requirements, see
+[LLM provider extension points](/building/extension-points/llm-provider.md).
 
 ## Next steps
 

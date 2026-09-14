@@ -71,7 +71,7 @@ func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := parseFlags([]string{"--auth-file", path})
+	cfg, err := parseFlags([]string{"--api-key-file", path})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}

@@ -1,21 +1,21 @@
 ---
 sidebar_position: 130
 title: mecatui container image (brood-box)
-description: Run the signed mecatui container image as a brood-box agent or terminal client.
+description:
+  Run the signed mecatui container image as a brood-box agent or terminal
+  client.
 ---
 
 # mecatui container image (brood-box)
 
-`mecatui` ships as a container image on every release, alongside `mecated`:
+`mecatui` ships as a container image with every release, alongside `mecated`:
 `ghcr.io/stacklok/mecatl/mecatui` (tagged `<version>` and `latest`, multi-arch
-`linux/amd64` + `linux/arm64`). It is built with [ko](https://ko.build/) from
-`./cmd/mecatui` and carries a [brood-box](https://github.com/stacklok/brood-box)
-agent manifest, so it can be imported as a brood-box agent without a separate
-Dockerfile or wrapper.
+`linux/amd64` + `linux/arm64`). It includes a
+[brood-box](https://github.com/stacklok/brood-box) agent manifest, so you can
+import it without a separate Dockerfile or wrapper.
 
-It is signed with cosign (keyless, via the release workflow's OIDC identity),
-ships an SPDX SBOM as a signed attestation, and carries SLSA build provenance —
-the same supply-chain story as the `mecated` image. See
+It is signed with keyless cosign, includes an SPDX SBOM attestation, and carries
+SLSA build provenance. See
 [the release workflow docs](https://github.com/stacklok/mecatl/blob/main/.github/workflows/README.md)
 for how to verify a signed image.
 
@@ -50,30 +50,22 @@ provider or applies a stricter egress profile.
 Embedded mecatui can use provider `openai-codex` with a manual subscription
 token, but the shipped brood-box manifest does not mount that secret or allow
 `chatgpt.com` egress. Customize the manifest to mount owner-only `auth.yaml`,
-pass `--auth-file` and `--default-provider openai-codex`, and permit HTTPS to
+pass `--api-key-file` and `--default-provider openai-codex`, and permit HTTPS to
 `chatgpt.com`. This is not public OpenAI API credit: it uses an undocumented
 private backend, has no refresh flow, and requires relaunch after token
-replacement. Read the [operator setup and same-UID plaintext
-boundary](./settings.md#configure-provider-credentials)
+replacement. Read the
+[operator setup and same-UID plaintext boundary](./settings.md#configure-provider-credentials)
 before adding the mount.
-
-For an already-configured token, `mecatui llm status [--auth-file PATH]` reports only
-local missing, usable, or invalid/expired state, never the token, account ID, or expiry.
-Account/model entitlement remains unverified. On Linux, `mecatui llm setup` can select
-this distinct provider as the embedded default without rewriting credentials; see
-[local provider setup](/features/choose-models.md#set-up-a-local-embedded-provider).
-Interactive Codex sign-in, refresh, and credential import are not supported. Replace
-expired or rejected manual credentials in the same auth file and restart. Remote
-Mecatl login and native organization-gateway login do not enroll this subscription.
 
 ## Runtime and sensitive local administration
 
-Each embedded instance creates its own private runtime directory. With `--perf`, ordinary
-runtime administration uses an owner-private `admin.sock` in that directory, so multiple
-containers or local instances do not compete for a fixed port. `--perf-mcp` instead needs
-a streaming-HTTP URL: without an explicit loopback `--perf-addr`, it chooses ephemeral
-loopback TCP and logs the endpoint. No stdio transport exists. Keep all perf output private;
-it may contain prompts, paths, and runtime details.
+Each embedded instance creates its own private runtime directory. With `--perf`,
+ordinary runtime administration uses an owner-private `admin.sock` in that
+directory, so multiple containers or local instances do not compete for a fixed
+port. `--perf-mcp` instead needs a streaming-HTTP URL: without an explicit
+loopback `--perf-addr`, it chooses ephemeral loopback TCP and logs the endpoint.
+No stdio transport exists. Keep all perf output private; it may contain prompts,
+paths, and runtime details.
 
 ---
 
@@ -92,15 +84,20 @@ into the welcome splash via
 builds set it at build time from
 `git describe --tags --match 'v[0-9]*' --always --dirty` (for example,
 `v0.0.22-28-g40a6b3fc6-dirty`); `BUILD_ID` preserves an explicit stamp verbatim.
-A direct ko build may instead leave `VERSION` unset: its binary uses embedded VCS
-metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev`, without invoking git
-at runtime.
+A direct ko build may instead leave `VERSION` unset: its binary uses embedded
+VCS metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev`, without invoking
+git at runtime.
 
 ---
 
 ## What's next
 
-- [Run mecated standalone](mecated.md) — the server that a bare `mecatui` embeds in-process — or dials via `mecatui connect ADDRESS`.
-- [Drive via gRPC / HTTP](grpc-http.md) — the wire protocol `mecatui` speaks as a client.
-- [Permissions & guardrails](/building/what-you-get/permissions.md) — the posture ladder and workspace trust behave identically inside the container.
-- [Install Mecatl](/install.md) — the same release publishes native `mecatui` and `mecated` executables through Homebrew and signed archives, for when a container is not the right shape.
+- [Run mecated standalone](mecated.md) — the server that a bare `mecatui` embeds
+  in-process — or dials via `mecatui connect ADDRESS`.
+- [Drive via gRPC / HTTP](grpc-http.md) — the wire protocol `mecatui` speaks as
+  a client.
+- [Permissions & guardrails](/building/what-you-get/permissions.md) — the
+  posture ladder and workspace trust behave identically inside the container.
+- [Install Mecatl](/install.md) — the same release publishes native `mecatui`
+  and `mecated` executables through Homebrew and signed archives, for when a
+  container is not the right shape.

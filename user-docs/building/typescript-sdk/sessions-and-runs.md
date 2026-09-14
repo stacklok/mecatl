@@ -1,6 +1,8 @@
 ---
 title: Work with sessions and runs
-description: Create Mecatl sessions, consume run events or results, send controls, and attach media.
+description:
+  Create Mecatl sessions, consume run events or results, send controls, and
+  attach media.
 sidebar_position: 4
 ---
 
@@ -31,7 +33,7 @@ sidecars.
 Call `result()` when the application needs only the terminal outcome:
 
 ```ts
-const run = await session.run("Summarize this repository");
+const run = await session.run('Summarize this repository');
 const result = await run.result();
 
 console.log(result.text, result.stopReason, result.usage);
@@ -40,12 +42,12 @@ console.log(result.text, result.stopReason, result.usage);
 Iterate the run when the application needs intermediate events:
 
 ```ts
-const run = await session.run("Summarize this repository");
+const run = await session.run('Summarize this repository');
 
 for await (const event of run) {
-  if (event.kind === "message.delta") process.stdout.write(event.text);
-  if (event.kind === "result" && event.payload !== undefined) {
-    console.log("\nstop:", event.payload.stop);
+  if (event.kind === 'message.delta') process.stdout.write(event.text);
+  if (event.kind === 'result' && event.payload !== undefined) {
+    console.log('\nstop:', event.payload.stop);
   }
 }
 ```
@@ -75,13 +77,13 @@ Structured prompts combine text with image or audio parts. Node.js and Bun can
 read a local path through the `/node` entry point:
 
 ```ts
-import { imagePartFromPath, textPart } from "@stacklok-oss/mecatl-sdk/node";
+import { imagePartFromPath, textPart } from '@stacklok-oss/mecatl-sdk/node';
 
 const image = await imagePartFromPath(
-  new URL("./diagram.png", import.meta.url),
-  "image/png",
+  new URL('./diagram.png', import.meta.url),
+  'image/png'
 );
-const run = await session.run([textPart("Explain this diagram"), image]);
+const run = await session.run([textPart('Explain this diagram'), image]);
 
 console.log((await run.result()).text);
 ```

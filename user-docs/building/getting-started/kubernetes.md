@@ -70,8 +70,8 @@ The mock provider returns:
 Mock provider: no real model is configured. Set OPENAI_API_KEY for live use.
 ```
 
-The response is fixed. This tutorial tests the Kubernetes deployment rather
-than model behavior. Redis stores the message and response as session state.
+The response is fixed. This tutorial tests the Kubernetes deployment rather than
+model behavior. Redis stores the message and response as session state.
 
 ## Replace the session's pod
 

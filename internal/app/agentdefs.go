@@ -341,13 +341,6 @@ func lookupModelAlias(cfg Config, sel string) (id string, known bool) {
 	return "", false
 }
 
-// ResolveModelSelector applies the composition-owned model alias grammar without
-// constructing a provider registry. It is used by local operator setup before a
-// default is confirmed.
-func ResolveModelSelector(selector string, aliases map[string]string) (string, bool) {
-	return lookupModelAlias(Config{ModelAliases: aliases}, strings.TrimSpace(selector))
-}
-
 // resolvePermissionMode maps a def's frontmatter permissionMode string to a
 // domain session.PermissionMode, in the composition layer (the domain never sees
 // the raw string). "default"/empty/unknown => "" (the caller's default — for a team

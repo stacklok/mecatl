@@ -1,131 +1,116 @@
 # Mecatui local provider setup — acceptance plan
 
 **Contract:** human-reviewed/v2
-**Work classification:** Architectural — guided credential persistence establishes a durable operator-custody, partial-commit, and security contract across the CLI, `auth.yaml`, and provider defaults.
-**Decision record:** [ADR 0332](../adr/0332-mecatui-local-provider-enrollment.md)
-**Phase:** first usable local provider setup and passive status
-**Status:** in-progress, 2026-09-12. High-level direction, custody, and split sequencing were approved by the directing human; the exact contract below remains subject to Plan / Interface review.
-**Delivery:** Split. Credential-writing and partial-commit behavior require contract review before implementation.
+**Work classification:** Bounded — completes provider-command UX and repairs implementation gaps within the already merged provider, credential-custody, and portable-writer contract; no new durable architecture decision.
+**Decision record:** None — ADR 0333 and its merged acceptance plan already own the CLI, schema, custody, platform, and concurrency decisions. This follow-up reuses those boundaries rather than reviving the prototype.
+**Phase:** provider setup/status/default follow-up after PR #1448
+**Status:** proposed, 2026-09-14. The directing human authorized this reconciliation and stacked preparation before plan merge; PR #1440 remains the human Plan / Interface gate, not an already merged approval.
+**Delivery:** Split. Review the remaining behavior in existing Plan PR #1440; prepare it in existing draft Implementation PR #1441.
 **Expected tasks:** deferred to orchestration
+**Plan PR:** [stacklok/mecatl#1440](https://github.com/stacklok/mecatl/pull/1440)
 
-This slice makes a fresh local `mecatui` installation usable without hand-editing YAML. A
-line-oriented `mecatui llm setup` flow enrolls an already-supported keyed provider, can select
-its starting model and deployment default, and persists only operator-confirmed fields. The
-existing `mecatui llm status [ENDPOINT]` command becomes a passive aggregate when no endpoint
-is named while preserving endpoint-specific native and ToolHive behavior. The provider engine,
-adapters, and model-selection pipeline remain composition-owned as described by
-[provider architecture](../architecture/providers.md).
+[PR #1448](https://github.com/stacklok/mecatl/pull/1448), merged at
+`fdbd369c50c804ee391457a666d7471f53ec6069`, is the implementation baseline.
+[ADR 0333](../adr/0333-unified-provider-configuration-and-mecatui-provider-commands.md)
+and the [unified-provider contract](unified-provider-configuration-and-mecatui-provider-commands.md)
+supersede the unmerged ADR 0332/prototype. Their authority follows merged ancestry even where
+historical metadata still says proposed. This plan replaces its earlier proposal in full;
+it is not permission to port the old `setup.go`, Linux-only writers, or removal policy.
 
 ## Human decisions
 
-- [x] Use a guided, line-oriented local mecatui provider flow while retaining endpoint-specific native behavior and ToolHive compatibility. — Decision: add only `mecatui llm setup` and enrich the existing `mecatui llm status`; keep bare `mecatui llm login` as the ToolHive alias.
-- [x] Keep current credential custody and precedence. — Decision: API keys remain owner-only plaintext in `auth.yaml`, environment variables retain their exact current precedence (including OpenRouter's existing convention), custom providers remain file-only, and native OIDC records remain identity-bound and encrypted with no plaintext fallback.
-- [x] Incorporate Jakub's existing Codex support into discovery and default selection. — Decision: the directing human explicitly authorized this narrow amendment and continued stacked implementation before Plan PR #1440 merges on 2026-09-12. Distinguish public OpenAI API keys from existing manual `openai-codex` OAuth credentials; reuse only local validation and ordinary defaults/startup. No upstream browser/device login, refresh, import, token prompt, or credential mutation is added. This authorization is not a claim that the proposed plan has merged.
-- [x] Deliver the first usable local setup/status and safe-persistence slice before broader onboarding. — Decision: use Split delivery; defer first-run offers, OpenRouter OAuth, Gemini, and proprietary consumer sign-in until this plan is merged and implemented.
+- [x] Keep the unified provider architecture. — Decision: preserve the merged flat commands, schema, custody, Linux/macOS parity, and no-lock writer protocol; do not introduce another ADR or credential store.
+- [x] Complete the explicit local journey only. — Decision: enrich existing setup, passive status, and default selection with API-console/custody guidance, explicit credential reuse, bounded hidden entry, and separate save/default consent; shared login also receives the key-entry protections. No automatic startup, first-run invocation, or nested action menu.
+- [x] Reuse existing manual Codex credentials. — Decision: retain read-only local status/default reuse through the runtime loader; no login, refresh, import, token entry, removal, or entitlement claim for Codex.
+- [x] Preserve the new lifecycle rather than the prototype. — Decision: add normally chains login; logout removes only credentials; remove deletes a custom definition and its managed credentials after combined confirmation, may remove the selected default, and never automatically selects a replacement.
+- [x] Continue the two existing PRs without rewriting history. — Decision: the human explicitly permits stacking before plan merge for this work; that exception is not merged-plan approval or permission for an agent to merge either PR to main.
 
 ## Interface contract
 
-- **gRPC / protobuf:** None — setup and status are local operator CLI operations; no remote enrollment RPC, message, field, or wire status is added.
-- **Exported Go APIs / interfaces:** `internal/adapter/authfile` adds `type APIKeyUpdate struct { Provider string; APIKey *string }`, where non-nil sets/replaces and nil removes only the named provider's `api_key`; `type CommitState string` with stable values `CommitNoop = "no_op"`, `CommitNotApplied = "not_applied"`, `CommitDurable = "durable"`, and `CommitReplacementAppliedDurabilityUnknown = "replacement_applied_durability_unknown"`; and `func UpdateAPIKey(ctx context.Context, path string, update APIKeyUpdate) (CommitState, error)`. `CommitNoop` and `CommitDurable` return nil; every failure before successful rename, including cancellation, lock timeout, validation failure, or target re-read mismatch, returns `CommitNotApplied` with an error; a failure after successful rename returns `CommitReplacementAppliedDurabilityUnknown` with an error. The caller must stop on either error-bearing state. The settings writer adopts the same states. These are root-internal APIs, not engine compatibility surface; no `engine/`, provider-module, or public embedding API changes.
-- **Tool schemas:** None — setup is operator-driven CLI code and no model-facing tool or prompt affordance is introduced.
-- **CLI / config:** Add `mecatui llm setup [--auth-file PATH]`; enrich no-argument `mecatui llm status` with optional `--auth-file PATH`. `status --auth-file PATH ENDPOINT` parses the option before or after the single endpoint, but rejects it for endpoint-specific native or ToolHive status because those stores do not consume `auth.yaml`; duplicate options, unknown options, or excess positionals are usage errors. `setup` accepts no positional argument or remote target. It requires both terminal stdin and terminal stdout and offers `Add or replace provider`, `Choose default`, `Remove saved key`, or `Exit`. Key mutation is closed to `openai`, `anthropic`, `openrouter`, `opencode`, and already-configured `providers:` entries whose resolved `auth.method` is exactly `api_key`; the writer also validates provider-ID syntax. `auth.method: none`, configured native `llm.endpoints`, ToolHive, `openai-codex`, and all OAuth-shaped records are excluded from API-key mutation and preserved byte-for-byte outside the targeted scalar. A native selection is an explicit-consent handoff to the exact existing in-process host operation behind `mecatui llm login ENDPOINT`, not merely printed instructions and never a subprocess; an active `--auth-file` override rejects that handoff with a command to run native login separately, so the plaintext file cannot be mistaken for or carried into the encrypted store. ToolHive remains an instruction-only handoff to its existing lifecycle. A distinct OpenAI Codex (existing subscription token) row reuses `auth.yaml` and the runtime's local credential validator without constructing a provider or making requests. It reports missing, locally usable, or invalid/expired credentials without token, account ID, expiry, or fingerprints; verification and account/model entitlement remain not checked. Only locally usable Codex credentials enable default selection. Codex is never routed to native endpoint login or the API-key prompt/writer/removal; guidance links the existing manual credential guide and states interactive sign-in/refresh is unsupported.
-- **Events / persistence:** Add/replace orders credential first, then independently confirmed settings. Removal that would strand the selected default is the explicit exception: the confirmed replacement settings commit must be `CommitDurable` first, then key removal; direct removal is allowed when it does not strand the default. There is no portable two-file transaction. Reports name the sanitized provider and operation and project each operation's returned state: no-op; invocation did not commit; durable; or replacement applied with crash durability unknown. They never generalize one operation into “the default is unchanged,” claim observed post-error content, retry, or roll back. Any mismatch or durability ambiguity stops all subsequent mutation and optional startup. The remedy is passive `status`/re-read after the operator resolves the filesystem condition. If removal fails after a durable replacement-default commit, the report states that the default moved and the old key may remain; if removal is durability-unknown, it states that the replacement default is durable and key removal may have applied. Settings mutation changes only `models.default_provider` and `models.default`, preserving unrelated mappings.
-- **Security / authority:** Setup is local operator authority only and never drives remote enrollment. Before hidden entry it prints static provider-console guidance, states that an API/developer key—not a consumer subscription—is required, discloses owner-only plaintext readability by same-UID processes and agent Shell, and warns that API usage may incur charges; it never opens a browser for API-key setup. It uses the existing `golang.org/x/term.ReadPassword` terminal-state implementation, which restores echo on every return supported by that API. Acquisition itself is honestly library-bounded only by available memory; setup rejects an accepted key over 8 KiB immediately after the read and before confirmation or mutation. Key values never enter argv, output, diagnostics, prompts, temp names, or operator-visible/log error text; synthetic test sentinels may be retained only inside fixtures used to prove non-disclosure. Exit/menu cancellation and declined confirmations return success with no new mutation; no-TTY, EOF, signal cancellation, terminal read failure, oversized input, and usage errors return non-zero with no new mutation before confirmation.
-- **Compatibility / migration:** Startup credential precedence and alias/model resolution remain the existing `internal/cliconfig` and composition behavior; setup does not reimplement them. OpenRouter retains its own-key order and environment-only `OPENAI_API_KEY` fallback; custom IDs gain no environment inference. Bare `mecatui llm login` remains the ToolHive alias and existing `login/status/logout ENDPOINT` native lifecycle remains available. Missing conventional `auth.yaml` remains ordinary absence. An explicit missing `--auth-file` is distinguished in status and, in setup, may be created only after a path-specific confirmation when its existing parent passes the credential-directory gate; malformed or unreadable files never degrade to missing. Optional startup carries the selected auth path into the ordinary embedded startup, which re-reads normal composition state and resolves the saved default/aliases through the actual resolver; it does not reuse a stale wizard snapshot or silently fall back to the conventional auth path. Existing valid files are not rewritten by inspection. The startup no-provider error gains only `run mecatui llm setup`; it never invokes setup automatically.
+- **gRPC / protobuf:** None — local operator commands add no remote enrollment surface, message, field, or protocol.
+- **Exported Go APIs / interfaces:** None — preserve existing exported signatures, engine/provider-module APIs, and root-internal writer outcome types. Reuse `cliconfig.ResolveProviderCredentials`, `ProviderFlags` loading, `openaicodex.NewCredential`, `app.ResolveDeploymentDefault`, `authfile.UpdateAPIKey`, `permconfig.UpdateDefaults`, and the shared `privatefile` writer. Consolidate private credential validation/projection helpers where needed; do not create a second registry, credential loader, or CLI-only model validator. Any necessary exported signature change requires an explicit plan amendment first.
+- **Tool schemas:** None — this is operator-driven, not a model-facing tool or prompt affordance.
+- **CLI / config:** Keep exactly `mecatui providers`, `status [PROVIDER]`, `setup [PROVIDER]`, `add PROVIDER [flags] [--no-login]`, `login PROVIDER [--no-browser]`, `logout PROVIDER`, `set-default PROVIDER [MODEL]`, and `remove PROVIDER`. Setup retains numbered capability-labelled provider selection and existing custom-add/login composition; an available API credential offers explicit reuse or replacement, then a separately confirmed optional default action through the existing set-default path. Direct login is explicit credential replacement with save confirmation; direct set-default remains an explicit action, not a new wizard. Provider commands consume configured `credential_store.api_key.file`, not per-command file flags. Startup retains `--api-key-file`; `--auth-file` and every `llm` form stay removed. `providers.NAME.{base_url,default_model,api_flavor,auth}` and `provider_overrides` stay unchanged; custom OIDC is Responses-only under `auth.oidc`, using `credential_store.oidc.{home,key}`.
+- **Events / persistence:** None — no new persisted schema, event, store, or outcome vocabulary. Preserve targeted accepted YAML and unrelated credentials, including OAuth records, and current commit states (`no_op`, `not_applied`, `durable`, `replacement_applied_durability_unknown`). Separate key/default operations are not a transaction; a later decline/error must not erase or misreport an earlier committed operation. No automatic retry or rollback after an ambiguous write.
+- **Security / authority:** API-key entry is local-terminal-only, hidden, followed by explicit save consent, and rejected if empty or over 8 KiB before mutation. The limit is post-read acceptance, not a claim that `term.ReadPassword` bounds allocation. Explain API charges, consumer-versus-developer access, and owner-only plaintext readability by same-UID processes including permitted agent Shell. Never expose credentials in argv, output, diagnostics, errors, or filenames. Preserve encrypted identity-bound OIDC status/store inspection and ToolHive's external lifecycle. Repair demonstrated writer gaps only to meet ADR 0333's private ownership/mode, symlink/special-file rejection, same-directory replacement, changed-target detection, cancellation, and truthful durability requirements on Linux and macOS; do not reintroduce cooperative locks or universal POSIX CAS claims.
+- **Compatibility / migration:** Additive UX and corrective resolution within PR #1448's contract, not another migration. Reject legacy `llm:` input without rewriting it. Matching built-in environment keys beat their file entries; OpenRouter uses its own environment key, then its own file key, then the composition-owned environment-only `OPENAI_API_KEY` fallback. An OpenAI file key is not an OpenRouter fallback; custom keys remain file-only. OIDC, ToolHive, API keys, and manual Codex records never become fallbacks for one another. Startup remains ordinary composition, and remote connect remains remote-authoritative.
 
 ## In scope — 4 scenarios, in implementation order
 
-### Scenario 1 — status reports configuration and credential facts without pretending health
+### Scenario 1 — passive status reports effective local facts
 
-No-argument status combines existing operator provider definitions, effective credential sources,
-configured native endpoints, ToolHive detection, and model defaults without constructing the
-provider registry. It follows `internal/cliconfig/cliconfig.go` (`ProviderFlags.resolve`) rather
-than recreating precedence and follows the native passive-status rule in
-[ADR 0329](../adr/0329-native-llm-endpoint-gateway-credentials.md).
+Reuse `cmd/mecatui/provider_status.go` and `internal/cliconfig/cliconfig.go`, retaining the
+[provider architecture](../architecture/providers.md) authority boundary.
 
 **Acceptance:**
-- AC1.1: aggregate status is human-oriented and deterministic: sections are fixed, provider rows are provider-ID sorted, and each keyed row reports sanitized provider ID, configured/builtin state, effective credential source, shadowed file-source presence without values or fingerprints, selected-default state, model selector, and `verification: not checked`. `none required`, native enrollment, and ToolHive are separate classifications rather than writable credential rows; OpenRouter exposes its established source precedence without probing a mythical single-endpoint keyed status. OpenAI (API key) and OpenAI Codex (existing subscription token) are distinct; Codex projects local missing/usable/invalid-or-expired state using the existing validator, without credential metadata or network verification.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario1_PassiveAggregateStatus`, `TestMecatuiLocalProviderSetup_CodexPassiveStatus`
-- AC1.2: aggregate status performs zero network calls, refreshes, browser launches, `app.Build` calls, paid inference, or credential-store initialization; native rows direct the operator to endpoint-specific status for the existing local-store result.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario1_StatusHasNoActiveSideEffects`
-- AC1.3: endpoint-specific native and ToolHive status retain existing target semantics; `--auth-file` is rejected rather than ignored there. Missing explicit, missing conventional, malformed, and unreadable auth-file states remain distinct. Output contains no credential value and dynamic provider/path/model metadata uses existing sanitized, control-sequence-free projections.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario1_EndpointCompatibility`
+- AC1.1: bare providers and named status render deterministic provider-ID-sorted local facts: provider class/auth method, effective credential provenance, shadowed file presence without values, explicit selected-default marker and configured model selector, and `verification: not checked`. Missing, malformed, and unreadable credential input are not conflated. API-key presence and no-auth configuration never become health or entitlement claims; unavailable selected providers remain discoverable as recovery state.
+  - verify: `TestProviderSetupFollowup_Scenario1_StatusProvenance`
+- AC1.2: production loading, status, and default validation agree on built-in precedence, OpenRouter's environment-only fallback, custom file-only credentials, and the configured file path. Tests cover shadowing and an OpenAI file key that must not activate OpenRouter. Project configuration cannot redirect custody.
+  - verify: `TestProviderSetupFollowup_Scenario1_RuntimeCredentialParity`
+- AC1.3: status performs no network requests, refresh, enrollment, browser launch, paid inference, or `app.Build`; preserve the existing OIDC local-store inspection behavior, including unavailable/expired states, without creating a store. ToolHive reflects actual passive configuration intent and external ownership, not assumed authentication. Dynamic output is bounded and control-sequence-safe with no secrets or fingerprints.
+  - verify: `TestProviderSetupFollowup_Scenario1_PassiveBoundaries`
 
-### Scenario 2 — a newcomer confirms custody, credential, model, and start separately
+### Scenario 2 — guided API-key entry teaches custody and requires consent
 
-The flow reuses supported definitions and defaults rather than creating another registry. API-key
-custody follows [ADR 0332](../adr/0332-mecatui-local-provider-enrollment.md) and the documented
-same-UID boundary in [provider credential documentation](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
-
-**Acceptance:**
-- AC2.1: Add/replace presents only the four keyed built-ins and configured custom providers whose effective auth method is `api_key`. Native selection requires consent before calling the existing host login operation, ToolHive points to its lifecycle, and neither path can mutate `auth.yaml`; `none`, `openai-codex`, arbitrary custom creation, and proprietary consumer login are not key choices.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario2_ProviderChoicesAndLifecycleHandoffs`
-- AC2.2: both input and prompt output must be terminals. Before entry, setup prints the static console link and API-key/subscription/cost/custody disclosures. Hidden input is no-echo, accepted at no more than 8 KiB, echo-restored on every terminal outcome, and absent from every operator-visible/log projection; all pre-confirmation failure/cancellation paths leave files untouched.
-  - verify: `TestInvariant_mecatui_setup_secret_never_observable`
-- AC2.3: existing environment or matching file credentials are reusable with `CommitNoop`; custom providers never infer environment variables, replacing a shadowed built-in file key warns without values, and unrelated OAuth records survive targeted writes. Existing locally usable Codex credentials can be selected without rewriting the auth file; missing, invalid, or expired credentials are not offered as a working default. Codex add/removal requests provide manual guidance, never secret entry, native login, or credential mutation.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario2_ExistingCredentialPrecedence`, `TestMecatuiLocalProviderSetup_CodexReuseAndBoundaries`
-- AC2.4: built-ins show the existing default plus at most four stable-ID-sorted catalog suggestions with unchanged bounded friendly metadata. The manual non-empty selector is always available and labelled unverified, including when catalog suggestions exist or are stale. Native/custom defaults are not claimed tool-capable. Input aliases are resolved by the actual resolver before a default plan is confirmed. Credential/default confirmations remain separate, and explicit `y` startup re-reads the chosen auth file and normal settings through ordinary composition with no network verification. Codex has no static runtime default or offline entitlement inventory: setup offers no invented default/catalog suggestions, preserves a configured selector if present, and requires manual entry through normal deployment-default validation. That validator's catalog acceptance is not subscription entitlement. Optional startup preserves `--auth-file` and the existing Codex runtime validation; ordinary startup may perform its normal network activity, but passive status/setup adds no verification request.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario2_IndependentConfirmationsAndStart`, `TestMecatuiLocalProviderSetup_CodexReuseAndBoundaries`
-
-### Scenario 3 — API-key persistence is narrow, preserving, and fail-closed
-
-The writer sits beside the bounded strict reader in `internal/adapter/authfile/authfile.go` and
-borrows focused lock/AST/root-handle patterns already used by mecatl; it does not create a generic
-YAML-writing or filesystem-containment framework. This is the narrow writer and residual boundary
-proposed by [ADR 0332](../adr/0332-mecatui-local-provider-enrollment.md).
+Extend the existing `cmd/mecatui/provider_setup.go` and shared key-entry path in
+`cmd/mecatui/provider_credential.go`, not the superseded prototype command tree. Preserve
+[ADR 0333](../adr/0333-unified-provider-configuration-and-mecatui-provider-commands.md)'s
+local operator authority and credential-custody boundaries.
 
 **Acceptance:**
-- AC3.1: `UpdateAPIKey` accepts at most the reader's 16 KiB document, validates provider-ID syntax, preserves comments, unrelated accepted schema, and OAuth-shaped records, and changes only one eligible caller-selected provider's `api_key`; malformed YAML, duplicates, aliases/ambiguous anchors, unknown schema, ambiguous target mapping, or oversized output returns `CommitNotApplied` before rename.
-  - verify: `TestADR_0332_AuthFileTargetedPreservation`
-- AC3.2: canonicalization accepts a conventional home reached through a platform alias such as `/home` → `/var/home`; ordinary existing ancestors (including root-owned `/` and `/home`) need not be current-UID `0700`. The canonical credential parent itself must be a current-UID, non-link directory at `0700`, and auth/lock leaves must be current-UID, non-link regular files at `0600`. Operations are descriptor-anchored to that canonical parent with no-follow leaf opens. The conventional `mecatl` parent may be created at `0700` beneath the existing canonical user config directory; an explicit auth path may create only its missing leaf after confirmation and never recursively creates its parent. No existing mode is tightened and no backup is made. Platforms unable to prove these properties reject mutation.
-  - verify: `TestADR_0332_AuthFileOwnershipAndModeGate`
-- AC3.3: the context-cancelable cooperative lock has a five-second maximum wait. Under lock the writer re-reads latest bytes, records target identity/content, writes and syncs a same-directory `0600` temp, then immediately before rename re-reads and compares target identity/content. Mismatch or inability to compare returns `CommitNotApplied`; successful rename followed by successful directory sync returns `CommitDurable`; directory-sync/close failure after rename returns `CommitReplacementAppliedDurabilityUnknown`. The guard detects outside changes only through that comparison and is not CAS against arbitrary POSIX writers; a same-UID non-cooperator can still race after comparison and before rename. No universal race-free claim or API is introduced.
-  - verify: `TestADR_0332_AuthFileCommitProtocol`
-- AC3.4: preflight resolves auth and settings to canonical physical files and rejects equality before prompting. `CommitNoop` covers exact-value reuse and absent-key removal without rewriting. Every state/error pair is tested, errors contain operation/provider facts but no secret or unsanitized control sequence, and no backup exists.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario3_UnchangedAndSecretSafe`
+- AC2.1: before hidden entry, supported stock providers present static provider-specific console guidance, API/developer-versus-consumer subscription distinctions, billing and plaintext-custody disclosures. OpenCode identifies the configured Go integration and does not imply a Zen key/subscription or endpoint is interchangeable. Custom providers direct users to their operator/service documentation without guessing a console or changing transport. No browser opens for API-key entry.
+  - verify: `TestProviderSetupFollowup_Scenario2_ConsoleAndCustodyGuidance`
+- AC2.2: setup explicitly offers reuse of an effective existing credential versus replacement. Reuse never writes or copies an environment credential into the file. Replacement warns when an environment credential will still win, obtains hidden input, rejects blank or over-8-KiB values, and separately confirms saving before invoking the shared writer. Default selection is independently optional and confirmed; there is no launch step or automatic startup. OIDC/add/no-auth/ToolHive retain their current capability-specific direct actions, not an API-key prompt.
+  - verify: `TestProviderSetupFollowup_Scenario2_ReuseAndIndependentConsent`
+- AC2.3: real-terminal tests exercise production hidden input and signal cancellation, not only injected strings. Input and prompt output require terminals; echo is restored and the reader is stopped/joined before return on Ctrl-C, EOF, read failure, success, and declined save. Ctrl-C before any commit exits 130 with `Cancelled; no changes made.`; no subsequent mutation occurs. If an earlier step remains committed, report that fact instead of claiming whole-command rollback; retain add's existing cancellation cleanup when it can establish restoration. Secret sentinels never appear in captured output/errors/diagnostics, including oversized input and failure paths.
+  - verify: `TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety`
 
-### Scenario 4 — partial commits and removal remain truthful
+### Scenario 3 — Codex reuse and model defaults share runtime authority
 
-Settings retain the preserving writer and exact `models.default_provider` / `models.default`
-distinction in `internal/adapter/permconfig/schema.go` (`ModelsSection`). This slice adds the same
-outcome vocabulary and directory durability without replacing the models tree, consistent with
-[ADR 0332](../adr/0332-mecatui-local-provider-enrollment.md).
+Use `cmd/mecatui/provider_default.go`, `internal/app/default_selection.go`, and the existing
+manual credential validator described by [ADR 0215](../adr/0215-openai-subscription-manual-token.md).
 
 **Acceptance:**
-- AC4.1: add/replace preflights both documents, commits approved key first, and attempts settings only after `CommitDurable`/`CommitNoop`; every pre/post-rename injected fault produces the exact state/report, and ambiguity stops startup and later writes with passive status as the remedy.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario4_TruthfulPartialCommit`
-- AC4.2: default mutation preserves aliases, slots, router, allowlist, OpenRouter routes, comments, and unrelated root keys while changing only the two intended scalars coherently; target mismatch is not-applied and post-rename sync failure is replacement-applied/durability-unknown, never “unchanged.”
-  - verify: `TestMecatuiLocalProviderSetup_Scenario4_NarrowDefaultMutation`
-- AC4.3: removal explains delete-is-not-revoke and reports a remaining environment source. If removal would strand the active default, replacement settings must become durable before key deletion. Tests cover replacement failure/no write, replacement durable plus removal not-applied, and replacement durable plus removal durability-unknown without retry or rollback.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario4_RemoveWithoutSilentDefaultReset`
-- AC4.4: the no-provider startup error points to setup, but startup never invokes the interactive flow and connect mode remains remote-authoritative.
-  - verify: `TestMecatuiLocalProviderSetup_Scenario4_StartupPointerOnly`
+- AC3.1: a distinct OpenAI Codex manual-subscription row reports missing, locally usable, or invalid/expired state from the same configured-file loader and validator used by runtime. It discloses no token, account ID, expiry, or fingerprint. Existing locally usable credentials allow setup reuse/default selection without credential writes; other states offer manual guidance, never secret entry or OIDC login. No browser/device login, refresh, import, removal, or new environment alias is introduced.
+  - verify: `TestProviderSetupFollowup_Scenario3_CodexLoaderAndReuse`
+- AC3.2: setup and direct set-default use `app.ResolveDeploymentDefault` and ordinary startup validation. Resolve known aliases normally; a bare declared custom default must reach the shared model validator rather than fail prematurely as an unknown alias. Unknown/inherit/mismatched selectors still fail with no settings write. Codex has no invented static default or offline entitlement inventory: preserve an existing selector or require explicit model selection under the same validator. No model-health request is made.
+  - verify: `TestProviderSetupFollowup_Scenario3_SharedDefaultResolution`
+
+### Scenario 4 — preserve portable safe writes and lifecycle semantics
+
+Audit and fix the shared `internal/adapter/privatefile/update_unix.go` implementation against
+[the merged writer contract](unified-provider-configuration-and-mecatui-provider-commands.md)
+and [ADR 0333](../adr/0333-unified-provider-configuration-and-mecatui-provider-commands.md),
+not ADR 0332's superseded Linux/lock design.
+
+**Acceptance:**
+- AC4.1: Linux and macOS regressions cover unsafe symlink/special-file leaves (including FIFO substitution without blocking), canonical-parent replacement during mutation, private ownership/modes, same-directory temporary replacement, cancellation and final snapshot mismatch. Repair any demonstrated bypass of the existing checks at the shared writer; no write or cleanup may escape the validated parent via a substituted link. Conventional home aliases remain supported. No sidecar lock/retry protocol, recursive parent creation, or platform regression is introduced.
+  - verify: `TestProviderSetupFollowup_Scenario4_PortablePrivateFileBoundary`
+- AC4.2: injected pre/post-rename and parent-directory sync/close failures prove the existing outcome truthfulness, including durability of a newly created conventional parent. Preserve unrelated accepted settings/credential records and no-op bytes; errors disclose no secrets. An ambiguous replacement stops later mutation and directs the operator to passive inspection without claiming rollback or universally race-free CAS.
+  - verify: `TestProviderSetupFollowup_Scenario4_TruthfulWriteOutcomes`
+- AC4.3: integration guards keep add's default login handoff and `--no-login`, logout's credential-only action, remove's combined custom-definition/credential confirmation, and permitted selected-default removal without replacement. No old `llm` commands, per-command file flags, automatic setup/startup, or Linux-only prototype helpers survive in the implementation diff.
+  - verify: `TestProviderSetupFollowup_Scenario4_UnifiedLifecyclePreserved`
 
 ## Out of scope
 
 | Item | Defer-to | Decision |
 |---|---|---|
-| Automatic first-run setup offer | subsequent onboarding slice | Keep this slice explicit; startup gains only an error pointer. |
-| OpenRouter OAuth/key minting | provider-specific slice with its own PKCE, callback, and copy-code security gates | This slice supports the existing API-key convention only. |
-| Gemini novice choice or adapter changes | compatibility slice after Chat Completions thought-signature replay coverage | Separate from OpenRouter enrollment; do not advertise static model IDs before replay semantics are proven. |
-| Claude.ai, ChatGPT, or other proprietary consumer sign-in | not planned | Anthropic/API OpenAI use developer credentials; existing `openai-codex` support accepts manually configured OAuth tokens ([ADR 0215](../adr/0215-openai-subscription-manual-token.md)), not native login. Upstream browser/device enrollment, refresh, and other-app credential import remain out of scope. |
-| Creating arbitrary custom provider definitions | later guided advanced configuration slice | Setup activates only accepted `providers:` definitions; it does not invent protocol/auth choices. |
-| Active provider/model health or model-list checks | later optional verification slice | This slice reports local facts as unverified and performs no paid/network inference. |
-| Remote enrollment, TUI secret dialogs, or LLM-driven setup | separate decisions | Local line-oriented operator CLI only. |
-| Generic YAML transaction framework, arbitrary filesystem containment, or portable two-file atomicity | not planned | Two narrow writers, descriptor-anchored credential leaves, and truthful ordered partial commits are the contract. |
+| New provider schema, store, protocol, public engine API, or OIDC architecture | separate architectural proposal if needed | ADR 0333 remains authoritative. |
+| Consumer sign-in, OpenRouter OAuth/key minting, Codex enrollment/refresh/import, Gemini onboarding | provider-specific future work | This follow-up only reuses existing local credentials. |
+| Active health/model-list verification or paid inference | separately authorized verification work | Local facts stay explicitly unverified. |
+| First-run setup, automatic startup, nested action menus, remote enrollment | later onboarding design | Existing explicit local commands only. |
+| Cooperative locking, generic YAML transactions, arbitrary same-UID CAS | not planned | Retain the merged bounded writer protocol and documented residual race. |
 
 ## Definition of done
 
-1. `task lint`, `task test`, `task docs`, and `task api:check` pass for implementation.
-2. `task ac-trace-strict` resolves every named proof when the plan becomes `landed`.
-3. `go run ./cmd/mecademo` remains green.
-4. The owning canonical `user-docs/` provider/setup page is updated in the implementation PR and `task site:build` passes.
-5. The implementation PR links the merged Plan / Interface PR and approved commit and reports interface conformance.
-6. `/panel-review` reports no ship blockers or unwaived reviewer failures.
+1. Plan checker, checker regressions, and `task docs` pass for this amendment; no runtime changes in the plan PR.
+2. Implementation completes every new named proof through real command/factory paths; old prototype test names or prior review verdicts are not evidence for this contract.
+3. `task lint`, `task test`, `task docs`, `task api:check`, `task ac-trace-strict`, and the offline demo pass for implementation; Linux and macOS terminal/writer execution requires real platform coverage, not compile-only claims.
+4. Update the existing canonical provider/setup guidance in `user-docs/features/choose-models.md` and owning Mecatui pages; preserve current formatting and run `task site:build`.
+5. Independent review and PR CI have no untriaged blockers. Record exact proposed/merged baseline honestly; both existing PR identities and human merge gates remain intact.
 
 ## Deferred decisions and known risks
 
-- The cooperative lock and pre-rename comparison do not exclude arbitrary same-UID/POSIX writers; the final comparison-to-rename race is an inherited local-filesystem boundary accepted only when the Plan / Interface PR merges.
-- A successful rename with failed directory sync leaves replacement content possibly visible but crash durability unknown. The operator must inspect passive status rather than rely on a claimed re-read or automatic retry.
-- Status cannot prove a credential is accepted without network activity. `not checked` is intentional.
-- Provider model catalogs can be stale or unavailable; manual selection remains available and is a selector, not an authentication or tool-capability test.
+- No material behavior decision remains open for this bounded slice; expansion beyond these interfaces stops for amendment.
+- The final snapshot-to-rename race against arbitrary non-cooperating same-UID/POSIX writers remains; parent/leaf safety fixes must not advertise universal CAS.
+- Hidden input has a post-read acceptance limit, not a streaming memory cap. Passive credential validation cannot establish account entitlement or upstream acceptance.

@@ -7,5 +7,5 @@ type DefaultUpdate struct {
 }
 
 // PreflightDefaultsUpdateTarget validates an existing target with the same
-// descriptor and document checks used by UpdateDefaults, without creating files.
+// private-file and document checks used by UpdateDefaults, without creating files.
 func PreflightDefaultsUpdateTarget(path string) error { return preflightDefaultsUpdateTarget(path) }

@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,15 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
+
+// docWhitespaceRun normalizes runs of whitespace (including line breaks that
+// Prettier's proseWrap can introduce) to a single space, so a safety-contract
+// needle that happens to straddle a reflowed line break still matches.
+var docWhitespaceRun = regexp.MustCompile(`\s+`)
+
+func collapseDocWhitespace(s string) string {
+	return docWhitespaceRun.ReplaceAllString(s, " ")
+}
 
 func escapePress(repeat ...bool) tea.KeyPressMsg {
 	msg := tea.KeyPressMsg{Code: tea.KeyEscape}
@@ -312,9 +322,9 @@ func TestADR_0303_DoubleEscape_Scenario2_DocumentationNamesSafetyContract(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-		text := string(body)
+		text := collapseDocWhitespace(string(body))
 		for _, want := range []string{"500ms", "enhanced key-event support", "not remappable", "first press is silent", "key release", "key repeat", "staged attachments", "large-paste", "pending media", "owners take precedence", "ClearPrompt", "ctrl+u"} {
-			if !strings.Contains(text, want) {
+			if !strings.Contains(text, collapseDocWhitespace(want)) {
 				t.Errorf("%s missing safety-contract term %q", name, want)
 			}
 		}

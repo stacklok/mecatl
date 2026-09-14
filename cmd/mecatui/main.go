@@ -69,6 +69,9 @@ func main() {
 		return
 	}
 	if err := run(os.Args); err != nil {
+		if errors.Is(err, errProviderCredentialCancelled) {
+			os.Exit(130)
+		}
 		// --help / --help-all is a successful action: the Usage hook (or the
 		// --help-all renderer) already printed help; mirror mecated's
 		// errors.Is(err, flag.ErrHelp) handling and exit 0 without printing
@@ -427,8 +430,46 @@ func runTestSignalHandler() error {
 	return nil
 }
 
+func runProviderMode(res invocationResolution) (bool, error) {
+	var run func(context.Context, providerCommands) error
+	switch res.mode {
+	case modeProviderSetup:
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runSetup(ctx, res, os.Stdout, os.Stderr)
+		}
+	case modeProviderStatus:
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runStatus(ctx, res, os.Stdout, os.Stderr)
+		}
+	case modeProviderCredential:
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runCredential(ctx, res, os.Stdout, os.Stderr)
+		}
+	case modeProviderAdd:
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runAdd(ctx, res, os.Stdout, os.Stderr)
+		}
+	case modeProviderRemove:
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runRemove(ctx, res, os.Stdout, os.Stderr)
+		}
+	case modeProviderSetDefault:
+		run = func(ctx context.Context, commands providerCommands) error {
+			return commands.runSetDefault(ctx, res, os.Stdout, os.Stderr)
+		}
+	default:
+		return false, nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return true, run(ctx, newProviderCommands())
+}
+
 func runSpecialMode(res invocationResolution) (bool, error) {
 	// Login routes are intentionally separate from transport setup.
+	if handled, err := runProviderMode(res); handled {
+		return true, err
+	}
 	switch res.mode {
 	case modeLogin:
 		return true, runLLMCommand(res)

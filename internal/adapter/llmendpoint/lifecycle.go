@@ -26,7 +26,7 @@ const (
 )
 
 // ErrNotEnrolled reports absent, identity-drifted, corrupt, or unavailable protected state.
-var ErrNotEnrolled = errors.New("native LLM endpoint is not enrolled")
+var ErrNotEnrolled = errors.New("OIDC provider is not enrolled")
 
 // TrustIdentity binds one independently configured network trust policy.
 type TrustIdentity struct{ Policy, CADigest string }

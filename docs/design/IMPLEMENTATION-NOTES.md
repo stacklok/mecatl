@@ -85,43 +85,51 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 
 ---
 
-## Native LLM endpoint lifecycle
+## Provider OIDC lifecycle
 
-`internal/cliconfig.NativeEndpointRuntime` is the host-owned lifecycle for an
-operator-configured native LLM endpoint. It resolves the canonical endpoint identity
-and independently configured issuer and gateway trust clients before it opens protected
-storage. The encrypted record is in `mecatl/provider-oidc/v1` beneath
-the explicit `llm.credential_home`. Shared operator-only `llm.credential_key` defaults to
-`source: keyring`; explicit `source: environment` requires a valid `MECATL_*` `key_env`
-reference containing canonical padded base64 for exactly 32 bytes, reusing the MCP OAuth
-local encrypted-store decoder. The environment source never opens a keyring; no fallback,
-key generation, record migration, or re-encryption is implicit. Source/reference are not
-record identity. Invalid key material fails before storage mutation or OAuth, and enrollment
-checks existing ciphertext before authorization. The record identity binds endpoint, canonical gateway,
-exact issuer and client, optional resource audience, normalized scopes, redirect, and both trust
-policy/CA digests. A configured audience remains part of the exact identity and is requested
-and matched; omission skips both. No plaintext, environment fallback, migration, discovery, or
-credential material is persisted in sessions/events or exposed over RPC.
+`internal/cliconfig/native_endpoint.go` (`NativeEndpointRuntime`) is the host-owned
+lifecycle reused by an operator-defined OIDC provider. Composition derives its
+canonical provider identity and independently configured issuer and gateway trust
+clients from `providers.<name>.auth.oidc` before opening protected storage. The
+encrypted record is in `mecatl/provider-oidc/v1` beneath the shared
+`credential_store.oidc.home`. `credential_store.oidc.key` defaults to
+`source: keyring`; explicit `source: environment` requires a valid `MECATL_*`
+`key_env` reference containing canonical padded base64 for exactly 32 bytes, reusing
+the MCP OAuth local encrypted-store decoder. The environment source never opens a
+keyring; no fallback, key generation, record migration, or re-encryption is implicit.
+Source/reference are not record identity. Invalid key material fails before storage
+mutation or OAuth, and enrollment checks existing ciphertext before authorization.
+The record identity binds provider name, canonical gateway, exact issuer and client,
+optional resource audience, normalized scopes, redirect, and both trust policy/CA
+digests. A configured audience remains part of the exact identity and is requested and
+matched; omission skips both. No plaintext, environment fallback, migration,
+discovery, or credential material is persisted in sessions/events or exposed over
+RPC.
 
-Only embedded local mecatui supplies the bounded browser/loopback presenter. Native login's
-closed callback profile is the ToolHive-compatible registered redirect
+Only embedded local mecatui supplies the bounded browser/loopback presenter.
+`mecatui providers login PROVIDER` uses the ToolHive-compatible registered redirect
 `http://localhost:8666/callback`; it binds only that host, port, and path, while remote
 `mecatui login ADDRESS` retains `http://127.0.0.1:18473/oauth/callback`. Sharing the
-registered redirect does not share credentials: native storage remains isolated and no
-ToolHive credential is read or copied. Mecated's loader is browser-free and holds its opened source runtimes until Build close. Status
-uses existing local read-only state only, and logout makes exact local deletion
-authoritative before bounded best-effort revocation. The transaction locker is hashed,
-owner-only, context-aware, and holds the lifecycle through exchange and CAS commit; a
-crash after upstream rotation but before local commit may require login. The access
-token is the authorization-code exchange result only—not an ID token or a caller
-bearer—and gateway requests use one pre-stream 401 refresh/retry at most.
+registered redirect does not share credentials: Mecatl's provider storage remains
+isolated and no ToolHive credential is read or copied. Mecated's loader is browser-free
+and holds its opened source runtimes until Build close. Status uses existing local
+read-only state only, and logout makes exact local deletion authoritative before
+bounded best-effort revocation. The transaction locker is hashed, owner-only,
+context-aware, and holds the lifecycle through exchange and CAS commit; a crash after
+upstream rotation but before local commit may require login. The access token is the
+authorization-code exchange result only—not an ID token or a caller bearer—and gateway
+requests use one pre-stream 401 refresh/retry at most.
 
-The endpoint inventory is deployment-wide, not a caller entitlement. Mecated drops
+The provider inventory is deployment-wide, not a caller entitlement. Mecated drops
 inbound caller bearers after verification and retains only the principal for ownership.
 All admitted callers share the configured gateway identity, quota, gateway-side
 audit/retention posture, and model availability; deploy a dedicated service identity
 and separate deployments for mutually untrusted/per-user upstream authorization until
-an explicit forwarded-token or RFC 8693 exchange contract exists. See [ADR 0329](../adr/0329-native-llm-endpoint-gateway-credentials.md).
+an explicit forwarded-token or RFC 8693 exchange contract exists. ADR 0333 replaces
+ADR 0329's configuration façade while retaining that ADR's credential lifecycle and
+custody semantics. See
+[ADR 0333](../adr/0333-unified-provider-configuration-and-mecatui-provider-commands.md)
+and [ADR 0329](../adr/0329-native-llm-endpoint-gateway-credentials.md).
 
 ---
 
@@ -3643,9 +3651,10 @@ flag; ACP help excludes it. See ADR 0088.
 
 ### Remote mecatui OIDC client authentication (ADR 0277)
 
-The command taxonomy is deliberately explicit. `mecatui llm login` is the existing
-ToolHive gateway login and has no server/session meaning. `mecatui login ADDRESS` is
-remote enrollment: it requires `--issuer`, `--client-id`, and `--audience`; it defaults
+The command taxonomy is deliberately explicit. ToolHive owns its gateway credential
+lifecycle through `thv llm` tooling and has no server/session meaning.
+`mecatui login ADDRESS` is remote enrollment: it requires `--issuer`, `--client-id`,
+and `--audience`; it defaults
 to public issuer address admission with system roots, while optional `--tls-ca` replaces
 them. `--private-issuer` requires that CA and selects scoped private admission. The registry
 saves the issuer policy and CA path/reference, never CA contents, for
@@ -4987,8 +4996,8 @@ ToolHive proxy use (`llm.NewTokenSource`): system secrets provider →
 (`func(ctx) (token, error)`) is the ONE seam the registry holds; tests inject a fake.
 `DirectTokenSource` is the non-interactive variant (a genuine cache miss returns
 `llm.ErrTokenRequired` — surfaced with `toolhivellm.ErrTokenRequiredHint`; it NEVER
-silently launches a browser from a headless daemon); `RunInteractiveLogin` is the
-interactive variant (`mecatui llm login`). Errors are sanitised via
+silently launches a browser from a headless daemon). Operators establish the external
+ToolHive credential with `thv llm setup`. Errors are sanitised via
 `llm.SanitizeTokenError` (strips any bearer material an IdP echoes back) before they
 cross any boundary.
 
@@ -5025,18 +5034,14 @@ ALWAYS forces proxy (it is a loopback address; direct derives from the config's
 `--toolhive-llm-base-url` as contradictory. `direct` + `!IsConfigured()` is a loud
 Build-fail (never a silent proxy fallback): `validateToolhiveLLMMode` runs AFTER
 `validateToolhiveBaseURL` and BEFORE `buildProviderRegistry`, naming the missing
-fields and the remediation (`thv llm config set` + `thv llm setup` /
-`mecatui llm login`, or `--toolhive-llm-mode auto/proxy`).
+fields and the remediation (`thv llm config set` + `thv llm setup`, or
+`--toolhive-llm-mode auto/proxy`).
 
-`mecatui llm login` (`cmd/mecatui/login.go`) is the CLI-only ToolHive subcommand
-running the interactive OIDC browser flow in-process — NOT a session, NOT a remote-server
-transport. It writes
-the refresh-token reference to ToolHive's own config so a subsequent non-interactive
-direct-mode provider finds the credential without re-login. A `--skip-browser` flag
-prints the authorization URL for headless/SSH/CI. It runs in the normal buffer (no alt
-screen) over the default config path. A headless `mecated` cache-miss surfaces
-`toolhivellm.ErrTokenRequiredHint` (naming both `thv llm setup` and `mecatui llm login`
-plus the `--toolhive-llm-mode proxy` escape hatch), mirroring the existing
+ToolHive owns the interactive OIDC browser flow through `thv llm setup`. It writes the
+refresh-token reference to ToolHive's own config so a subsequent non-interactive
+direct-mode provider finds the credential without re-login. A headless `mecated` cache
+miss surfaces `toolhivellm.ErrTokenRequiredHint` (naming `thv llm setup` plus the
+`--toolhive-llm-mode proxy` escape hatch), mirroring the existing
 `errToolhiveNoModels` actionable-error pattern — never a silent browser popup from a
 daemon.
 

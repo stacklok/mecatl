@@ -46,8 +46,14 @@ func authoritativeKeys() []string {
 	collect("temporary_storage", permconfig.TemporaryStorageSection{})
 	collect("storage_management", permconfig.StorageManagementSection{})
 	collect("storage_management.principals", permconfig.StorageManagementPrincipal{})
-	collect("llm", permconfig.LLMSection{})
-	collect("llm.credential_key", permconfig.NativeCredentialKey{})
+	collect("credential_store", permconfig.CredentialStoreSection{})
+	collect("credential_store.oidc", permconfig.OIDCCredentialStore{})
+	collect("credential_store.oidc.key", permconfig.NativeCredentialKey{})
+	keys = append(keys,
+		"providers.team-gateway.base_url", "providers.team-gateway.default_model", "providers.team-gateway.api_flavor", "providers.team-gateway.auth.method",
+		"providers.team-gateway.auth.oidc.issuer", "providers.team-gateway.auth.oidc.client_id", "providers.team-gateway.auth.oidc.resource_audience", "providers.team-gateway.auth.oidc.scopes",
+		"providers.team-gateway.auth.oidc.issuer_trust", "providers.team-gateway.auth.oidc.gateway_trust",
+	)
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
@@ -139,6 +145,28 @@ func TestGeneratedArtifactsDescribeSchemaDefaults(t *testing.T) {
 	}
 	if !strings.Contains(reference, "](/building/deployment/settings.md)") {
 		t.Error("reference does not link to the rendered configuration-plane guide")
+	}
+}
+
+func TestProviderCredentialArtifactsRetainSafetyDetails(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	for name, artifact := range map[string]string{
+		"skeleton":  configgen.RenderSkeleton(model),
+		"reference": configgen.RenderReference(model),
+	} {
+		normalized := strings.Join(strings.Fields(strings.NewReplacer("#| ", "", "# ", "").Replace(artifact)), " ")
+		for _, want := range []string{
+			"Optional OAuth audience parameter and access-token audience binding. Empty omits both.",
+			"changing key custody does not automatically migrate them or fall back to another source",
+			"Closed choice: keyring or environment",
+			"omission uses the OS-keyring default",
+			"canonical padded base64 that decodes to exactly 32 bytes",
+			"Only the reference belongs in settings, never the key value",
+		} {
+			if !strings.Contains(normalized, want) {
+				t.Errorf("%s missing provider credential safety detail %q", name, want)
+			}
+		}
 	}
 }
 
@@ -309,7 +337,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"providers":              configgen.TierOperator, // operator-only: a project cannot choose LLM endpoints or auth posture
-		"llm":                    configgen.TierOperator, // operator-only: native endpoint identity and credential home are host authority
+		"credential_store":       configgen.TierOperator, // operator-only: OIDC credential custody is host authority
 		"provider_overrides":     configgen.TierOperator, // operator-only: a project cannot redirect built-in provider traffic
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup

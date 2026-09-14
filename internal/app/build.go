@@ -270,6 +270,9 @@ type Config struct {
 	NativeEndpointCredentialLifecycle interface{ Close() error }
 	// nativeEndpointTransport is the hermetic transport seam used by tests.
 	nativeEndpointTransport http.RoundTripper
+	// skipProviderNetworkDiscovery keeps offline validation on the same registry and
+	// default resolver without probing provider model endpoints.
+	skipProviderNetworkDiscovery bool
 	// ProviderOverrides is the effective built-in endpoint source. Command-root CLI
 	// overrides are merged over operator settings before registry construction.
 	ProviderOverrides permconfig.ProviderOverrides
@@ -1344,6 +1347,10 @@ func closeMCPProfileLifecycle(ctx context.Context, cfg Config) {
 	}
 }
 
+type providerCredentialFileSetter interface {
+	SetAPIKeyFile(string)
+}
+
 // ProviderCredentials is the immutable credential snapshot returned by a
 // ProviderCredentialLoader.
 type ProviderCredentials struct {
@@ -1353,19 +1360,6 @@ type ProviderCredentials struct {
 	OpenCodeKey           string
 	OpenAICodexCredential openaicodex.Credential
 	CustomProviderAPIKeys map[string]string
-}
-
-func legacyProviderDefinitions(definitions permconfig.ProviderDefinitions) permconfig.ProviderDefinitions {
-	if definitions == nil {
-		return nil
-	}
-	legacy := make(permconfig.ProviderDefinitions, len(definitions))
-	for id, definition := range definitions {
-		if definition.Native == nil {
-			legacy[id] = definition
-		}
-	}
-	return legacy
 }
 
 // Built is the result of Build: the assembled server.Service plus a Close func
@@ -1651,9 +1645,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		cfg.ProviderDefinitions = definitions
 		cfg.ProviderOverrides = mergeProviderOverrides(settingsOverrides, cfg.ProviderOverrides)
+		if store := resolver.OperatorCredentialStore(); store != nil && store.APIKey != nil {
+			if loader, ok := cfg.ProviderCredentialLoader.(providerCredentialFileSetter); ok {
+				loader.SetAPIKeyFile(store.APIKey.File)
+			}
+		}
 	}
 	if cfg.ProviderCredentialLoader != nil {
-		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(legacyProviderDefinitions(definitions))
+		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(definitions)
 		if err != nil {
 			return nil, err
 		}
@@ -2840,7 +2839,7 @@ func resolveProviderSelection(reg *providerRegistry, providerID string) (provide
 	}
 	if reg != nil {
 		if _, ok := reg.unavailableNative[providerID]; ok {
-			return providerEntry{}, fmt.Errorf("%w: %w: endpoint %q; run `mecatui llm login %s`", server.ErrInvalidArgument, llmendpoint.ErrNotEnrolled, providerID, providerID)
+			return providerEntry{}, fmt.Errorf("%w: %w: provider %q; run `mecatui providers login %s`", server.ErrInvalidArgument, llmendpoint.ErrNotEnrolled, providerID, providerID)
 		}
 	}
 	return providerEntry{}, fmt.Errorf("%w: unknown or unavailable provider %q", server.ErrInvalidArgument, providerID)
@@ -5080,7 +5079,7 @@ func validateToolhiveLLMMode(cfg Config) error {
 	}
 	if !toolhivellm.OIDCConfigured(path) {
 		return fmt.Errorf(
-			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup` (or `mecatui llm login toolhive`), or use --toolhive-llm-mode auto/proxy")
+			"--toolhive-llm-mode direct requires a ToolHive LLM gateway configured with the OIDC trio (gateway_url, oidc.issuer, oidc.client_id) — run `thv llm config set` and `thv llm setup`, or use --toolhive-llm-mode auto/proxy")
 	}
 	return nil
 }
@@ -5130,10 +5129,8 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
 		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
 	}
-	if cfg.DefaultModel != "" {
-		if err := ValidateDeploymentDefaultModel(reg.Default(), cfg.DefaultModel, reg.DefaultModelFor(reg.Default())); err != nil {
-			return fmt.Errorf("--default-model %q: %w", cfg.DefaultModel, err)
-		}
+	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
+		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())
 	}
 	if cfg.DefaultModel != "" && cfg.Model != "" {
 		// A configured default MODEL loses to the explicit --model (tier 1) —
@@ -5150,18 +5147,6 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 		"server-configured default model ACTIVE: every zero-selector session inherits it (a client-side selector still wins; the per-provider builtin is superseded)",
 		"provider", reg.Default(),
 		"model", reg.ResolvedDefaultModel())
-	return nil
-}
-
-// ValidateDeploymentDefaultModel applies the same passive known-good model gate
-// used by Build to a provider/default pair assembled by local setup.
-func ValidateDeploymentDefaultModel(providerID, modelID, providerDefault string) error {
-	if strings.TrimSpace(modelID) == "" {
-		return errors.New("deployment default model must not be empty")
-	}
-	if modelID != providerDefault && !modelCatalogued(providerID, modelID) {
-		return fmt.Errorf("model is not catalogued for provider %q and is not that provider's configured default; choose a listed or declared model", providerID)
-	}
 	return nil
 }
 

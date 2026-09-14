@@ -19,13 +19,11 @@ import (
 	"github.com/adrg/xdg"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
-	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/flaghelp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -56,8 +54,8 @@ type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, con
 
 // newSavedLoginContext owns the post-TUI login lifetime. It deliberately does
 // not inherit Bubble Tea's already-cancelled context.
-func newNativeLLMEnrollmentContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return newSavedLoginContext(timeout)
+func newNativeLLMEnrollmentContext() (context.Context, context.CancelFunc) {
+	return newSavedLoginContext(nativeLLMEnrollmentTimeout)
 }
 
 func newSavedLoginContext(timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -553,73 +551,29 @@ var (
 	openNativeLLMHost = newNativeLLMHost
 )
 
-type llmCommandDeps struct {
-	setup      setupDeps
-	openNative func(context.Context, bool, io.Writer) (nativeLLMHost, error)
-}
-
-func defaultLLMCommandDeps() llmCommandDeps {
-	return llmCommandDeps{setup: defaultSetupDeps(), openNative: openNativeLLMHost}
-}
-
 func runLLMCommand(res invocationResolution) error {
-	return runLLMCommandWith(res, os.Stdin, os.Stdout, os.Stderr, defaultLLMCommandDeps())
-}
-
-func runLLMCommandWith(res invocationResolution, stdin, stdout *os.File, stderr io.Writer, services llmCommandDeps) error {
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
-		_, _ = fmt.Fprintln(stderr, "Usage: mecatui llm setup [--auth-file PATH] | mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [--auth-file PATH] [ENDPOINT] | mecatui llm logout ENDPOINT")
-		_, _ = fmt.Fprintln(stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits at the fixed ToolHive-compatible callback http://localhost:8666/callback.")
-		_, _ = fmt.Fprintln(stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui llm config set ENDPOINT [flags] | mecatui llm login ENDPOINT [--no-browser] | mecatui llm status [ENDPOINT] | mecatui llm logout ENDPOINT")
+		fmt.Fprintln(os.Stderr, "Native endpoint login: --no-browser prints the authorization URL to stderr and waits at the fixed ToolHive-compatible callback http://localhost:8666/callback.")
+		fmt.Fprintln(os.Stderr, "ToolHive login: mecatui llm login toolhive [--skip-browser]")
 		return flag.ErrHelp
 	}
 	if res.llmDeprecatedAlias {
-		_, _ = fmt.Fprintln(stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
-	}
-	if res.llmAction == llmActionStatus && res.llmEndpoint == "" {
-		path := res.llmAuthFile
-		if !res.llmAuthFileSet {
-			path = authfile.DefaultPath(xdgconfig.OSEnv)
-		}
-		return runAggregateStatus(path, res.llmAuthFileSet, stdout, services.setup)
-	}
-	ctx, cancel := newNativeLLMEnrollmentContext(nativeLLMEnrollmentTimeout)
-	defer cancel()
-	if res.llmAction == llmActionSetup {
-		path := res.llmAuthFile
-		if !res.llmAuthFileSet {
-			path = authfile.DefaultPath(xdgconfig.OSEnv)
-		}
-		deps := services.setup
-		deps.nativeLogin = func(loginCtx context.Context, endpoint string) error {
-			host, err := services.openNative(loginCtx, false, stderr)
-			if err != nil {
-				return errors.New("native LLM endpoint lifecycle is unavailable")
-			}
-			defer func() { _ = host.Close() }()
-			return runNativeLLMCommand(loginCtx, llmActionLogin, endpoint, false, host, stdout, stderr)
-		}
-		deps.nativeUsable = func(statusCtx context.Context, endpoint string) (bool, error) {
-			host, err := services.openNative(statusCtx, false, stderr)
-			if err != nil {
-				return false, errors.New("native LLM endpoint lifecycle is unavailable")
-			}
-			defer func() { _ = host.Close() }()
-			return host.Status(statusCtx, endpoint) == llmendpoint.StatusUsable, nil
-		}
-		return runSetupCommand(ctx, path, res.llmAuthFileSet, stdin, stdout, deps)
+		fmt.Fprintln(os.Stderr, "WARNING: bare `mecatui llm login` is deprecated; use `mecatui llm login toolhive`")
 	}
 	skipBrowser := len(res.remaining) == 1 && res.remaining[0] == "--skip-browser"
 	noBrowser := len(res.remaining) == 1 && res.remaining[0] == "--no-browser"
-	if res.llmEndpoint == toolHiveEndpointID {
-		return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, skipBrowser, nil, stdout, stderr)
+	ctx, cancel := newNativeLLMEnrollmentContext()
+	defer cancel()
+	if res.providerName == toolHiveEndpointID {
+		return runNativeLLMCommand(ctx, res.providerAction, res.providerName, skipBrowser, nil, os.Stdout, os.Stderr)
 	}
-	host, err := services.openNative(ctx, noBrowser, stderr)
+	host, err := openNativeLLMHost(ctx, noBrowser, os.Stderr)
 	if err != nil {
 		return errors.New("native LLM endpoint lifecycle is unavailable")
 	}
 	defer func() { _ = host.Close() }()
-	return runNativeLLMCommand(ctx, res.llmAction, res.llmEndpoint, false, host, stdout, stderr)
+	return runNativeLLMCommand(ctx, res.providerAction, res.providerName, false, host, os.Stdout, os.Stderr)
 }
 
 func unknownNativeEndpointError(endpoint string, ids []string) error {

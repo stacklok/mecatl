@@ -57,7 +57,9 @@ func (f nativeRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) 
 func nativeDefinition(id string) permconfig.ProviderDefinition {
 	return permconfig.ProviderDefinition{
 		ID: id, BaseURL: "https://gateway.example.test/base/v1", DefaultModel: "native-model", APIFlavor: "openai-responses",
-		Native: &permconfig.NativeEndpointIdentity{CredentialHome: "/credentials"},
+		Auth: permconfig.ProviderAuth{Method: "oidc", OIDC: &permconfig.ProviderOIDC{
+			CredentialStore: &permconfig.OIDCCredentialStore{Home: "/credentials"},
+		}},
 	}
 }
 
@@ -209,6 +211,12 @@ func TestNativeLLMGatewayLogin_Scenario3_GlobalLiveInventory(t *testing.T) {
 }
 
 func TestNativeLLMGatewayLogin_Scenario3_MissingCredentialBehavior(t *testing.T) {
+	onlyOIDC := nativeRegistryConfig("native", nil, nil)
+	onlyOIDC.MockProvider = nil
+	if _, err := buildProviderRegistry(onlyOIDC, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "`mecatui providers login PROVIDER`") || strings.Contains(err.Error(), "mecatui llm") {
+		t.Fatalf("sole unavailable provider build error = %v", err)
+	}
+
 	cfg := nativeRegistryConfig("native", nil, nil)
 	cfg.MockProvider = nil
 	cfg.OpenAIKey = "fallback"
@@ -217,17 +225,20 @@ func TestNativeLLMGatewayLogin_Scenario3_MissingCredentialBehavior(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, ok := reg.Lookup("native"); ok {
-		t.Fatal("not-enrolled endpoint is usable")
+		t.Fatal("not-enrolled provider is usable")
 	}
 	statuses := providerStatusProto(reg)
 	if len(statuses) != 1 || statuses[0].GetProviderId() != "native" || statuses[0].GetState() != "not-enrolled" {
 		t.Fatalf("statuses = %#v", statuses)
 	}
-	if _, err := resolveProviderSelection(reg, "native"); !errors.Is(err, llmendpoint.ErrNotEnrolled) {
+	if want := "run `mecatui providers login native`"; statuses[0].GetHint() != want {
+		t.Fatalf("status hint = %q, want %q", statuses[0].GetHint(), want)
+	}
+	if _, err := resolveProviderSelection(reg, "native"); !errors.Is(err, llmendpoint.ErrNotEnrolled) || !strings.Contains(err.Error(), "`mecatui providers login native`") || strings.Contains(err.Error(), "mecatui llm") {
 		t.Fatalf("explicit selection = %v", err)
 	}
 	cfg.DefaultProvider = "native"
-	if _, err := buildProviderRegistry(cfg, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "not enrolled") {
+	if _, err := buildProviderRegistry(cfg, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "`mecatui providers login native`") || strings.Contains(err.Error(), "mecatui llm") {
 		t.Fatalf("default build error = %v", err)
 	}
 }

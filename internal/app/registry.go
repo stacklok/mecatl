@@ -80,10 +80,6 @@ var builtinDefaultModel = map[string]string{
 	providerOpenCode: "glm-5.2",
 }
 
-// BuiltinDefaultModel returns the existing static default for a keyed built-in.
-// Unknown and custom providers return empty rather than assuming capability.
-func BuiltinDefaultModel(provider string) string { return builtinDefaultModel[provider] }
-
 // openRouterDefaultBaseURL is the OpenRouter Responses-compatible API base URL.
 // OpenRouter rides the SAME stateless openai adapter (it speaks the Responses
 // API) with this base URL substituted — there is NO separate wire adapter in P0.
@@ -667,13 +663,13 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 	if len(entries) == 0 {
 		if len(unavailableNative) > 0 {
-			return nil, fmt.Errorf("native LLM endpoint is not enrolled: run `mecatui llm login ENDPOINT`")
+			return nil, fmt.Errorf("OIDC provider is not enrolled: run `mecatui providers` to inspect configured providers, then `mecatui providers login PROVIDER`")
 		}
 		return nil, errNoProvider
 	}
 	if cfg.DefaultProvider != "" {
 		if _, unavailable := unavailableNative[cfg.DefaultProvider]; unavailable {
-			return nil, fmt.Errorf("native LLM endpoint %q is not enrolled: run `mecatui llm login %s`", cfg.DefaultProvider, cfg.DefaultProvider)
+			return nil, fmt.Errorf("provider %q is not enrolled: run `mecatui providers login %s`", cfg.DefaultProvider, cfg.DefaultProvider)
 		}
 	}
 
@@ -690,7 +686,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 	outcomes := newLiveOutcomeStore()
 	for id := range unavailableNative {
-		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui llm login "+id+"`")
+		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui providers login "+id+"`")
 	}
 	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta, outcomes: outcomes}
 	reg.defaultID, reg.defaultModel = resolveDefaultModel(cfg, reg)
@@ -698,8 +694,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// provider — the t=0 floor every resolver reads before the background live swap.
 	meta.seedFromCatalog(reg.Available())
 	meta.seedCustomProviderFloors(reg)
-	if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
-		return nil, err
+	if !cfg.skipProviderNetworkDiscovery {
+		if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
+			return nil, err
+		}
 	}
 	// T7 post-assembly fixup: stamp each real adapter entry's shared .provider
 	// with the DEFAULT model's capability intersection (catalog ∩ adapter) and
@@ -727,8 +725,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// exists (a single map lookup otherwise). It NEVER gates registration
 	// (already done above) — it drives the startup diagnostic, the initial
 	// provider_status + last-known-good seed, and default-model eligibility.
-	if err := probeToolhive(reg, cfg); err != nil {
-		return nil, err
+	if !cfg.skipProviderNetworkDiscovery {
+		if err := probeToolhive(reg, cfg); err != nil {
+			return nil, err
+		}
 	}
 	return reg, nil
 }
@@ -787,7 +787,7 @@ func sortedProviderDefinitions(definitions permconfig.ProviderDefinitions) []per
 func addCustomProviderEntries(ctx context.Context, entries map[string]providerEntry, cfg Config, meta *liveMetaStore) (map[string]struct{}, error) {
 	unavailableNative := make(map[string]struct{})
 	for _, definition := range sortedProviderDefinitions(cfg.ProviderDefinitions) {
-		if definition.Native != nil {
+		if definition.Auth.Method == "oidc" {
 			if cfg.NativeEndpointCredentialLoader == nil {
 				unavailableNative[definition.ID] = struct{}{}
 				continue
@@ -822,7 +822,7 @@ func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 	}
 	client, err := llmendpoint.NewGatewayHTTPClient(definition.BaseURL, source, transport)
 	if err != nil {
-		return providerEntry{}, fmt.Errorf("configure native LLM endpoint %q: %w", definition.ID, err)
+		return providerEntry{}, fmt.Errorf("configure OIDC provider %q: %w", definition.ID, err)
 	}
 	entry := newOpenAICompatEntry(cfg, definition.ID, "transport-owned", definition.BaseURL,
 		openai.WithHTTPClient(client), openai.WithMaxRetries(0))
@@ -1509,19 +1509,6 @@ func directBaseURL(gatewayURL string) string {
 		return ""
 	}
 	return joined
-}
-
-// ToolhiveConfiguredPassive reports local ToolHive LLM configuration intent
-// without probing the gateway or opening its credential store. An empty path
-// resolves exactly as ToolHive auto-detection does.
-func ToolhiveConfiguredPassive(path string) bool {
-	if path == "" {
-		if dir, err := os.UserConfigDir(); err == nil && dir != "" {
-			path = filepath.Join(dir, toolhivellm.DefaultConfigRelPath)
-		}
-	}
-	_, ok := toolhivellm.DetectConfig(path)
-	return ok
 }
 
 // ToolhiveAvailable reports whether a ToolHive LLM gateway would be registered

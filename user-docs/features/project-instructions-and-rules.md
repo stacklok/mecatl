@@ -1,7 +1,8 @@
 ---
 sidebar_position: 220
 title: Project instructions and rules
-description: Control how trusted project instructions and .claude/rules guide Mecatl runs.
+description:
+  Control how trusted project instructions and .claude/rules guide Mecatl runs.
 ---
 
 # Project instructions and rules
@@ -24,9 +25,9 @@ when the workspace has an effective project-trust decision.
 
 ## Instruction files
 
-Place repository-wide instructions in `AGENTS.md` or `CLAUDE.md` at the workspace
-root or an applicable parent directory. Keep them focused on facts the model
-needs for work in that tree:
+Place repository-wide instructions in `AGENTS.md` or `CLAUDE.md` at the
+workspace root or an applicable parent directory. Keep them focused on facts the
+model needs for work in that tree:
 
 ```markdown
 # Project instructions
@@ -39,7 +40,7 @@ needs for work in that tree:
 The discovery layer follows the repository's instruction-file conventions and
 combines applicable files for the workspace. A more local instruction file can
 refine guidance for its subtree. Instructions are context, not a permission
-rule: a repository saying “always run this command” does not make the command
+rule: a repository saying "always run this command" does not make the command
 allowed, and a deny or ask rule still wins.
 
 Treat instructions as untrusted model input. Do not put credentials, bearer
@@ -62,7 +63,7 @@ A rule can be unconditional or use `paths:` frontmatter:
 ```markdown
 ---
 paths:
-  - "**/*_test.go"
+  - '**/*_test.go'
 ---
 
 # Testing rule
@@ -95,8 +96,8 @@ rule fragment rather than aborting a run.
 The project trust decision is one shared admission gate for the repository's
 authority set. It controls project permission `allow` rules, project rules,
 project soul, project agent definitions, project slash commands, project skills,
-and the read-only child shell. It does not suppress project `deny` or `ask` rules;
-those continue to tighten access even when the workspace is untrusted.
+and the read-only child shell. It does not suppress project `deny` or `ask`
+rules; those continue to tighten access even when the workspace is untrusted.
 
 Trust can come from:
 
@@ -106,9 +107,9 @@ Trust can come from:
 - an undrifted remembered trust entry created by mecatui; or
 - the posture floor on an interactive root, where applicable.
 
-A headless root does not infer trust from its posture. Pass an explicit trust
-source when an unattended job must admit project instructions and project
-authority. A malformed trust configuration fails safe to untrusted.
+A headless root does not infer trust from its posture. Configure an explicit
+trust source when an unattended job must admit project instructions and project
+authority. A malformed trust configuration leaves the workspace untrusted.
 
 In mecatui's embedded interactive server, the first encounter with a project
 authority set can prompt:
@@ -130,9 +131,9 @@ human-authored settings file; a repository cannot edit itself into trust.
 
 ## What untrusted means
 
-An untrusted workspace is still usable. The built-in tools, your user-tier soul,
-user-tier rules/skills/commands/agents, and every deny/ask rule remain active.
-The withheld project authority set includes:
+You can still use an untrusted workspace. The built-in tools, your user-tier
+soul, user-tier rules/skills/commands/agents, and every deny/ask rule remain
+active. The withheld project authority set includes:
 
 - project `allow` rules;
 - project soul;
@@ -148,13 +149,13 @@ never automatically permits a tool that the policy denies.
 
 ## Remote and deployment limitations
 
-- The local instruction and rule sources are filesystem discovery mechanisms.
-  A remote driver can supply some other content sources, but its trust and
-  lifecycle semantics are specific to that source; do not assume a remote
-  source is equivalent to a checked-out repository.
+- The local instruction and rule sources are filesystem discovery mechanisms. A
+  remote driver can supply some other content sources, but its trust and
+  lifecycle semantics are specific to that source; do not assume a remote source
+  is equivalent to a checked-out repository.
 - A remote agent, skill, soul, or command source is operator-configured and must
-  be authenticated and trusted. Project rules currently remain a local
-  workspace source.
+  be authenticated and trusted. Project rules currently remain a local workspace
+  source.
 - Project instructions are prompt guidance, not an isolation boundary. Use
   permissions, hooks, container boundaries, and workspace separation for
   enforcement.

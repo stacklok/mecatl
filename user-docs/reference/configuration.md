@@ -108,7 +108,7 @@ OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode s
 
 Tier: **operator**
 
-Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml.
+Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml or the shared OIDC credential store.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -116,36 +116,35 @@ Strict operator-defined LLM providers. Project-tier definitions are ignored. Pro
 | `providers.team-gateway.base_url` | `string` | `(required)` |  |
 | `providers.team-gateway.default_model` | `string` | `(required)` |  |
 | `providers.team-gateway.api_flavor` | `string` | `(required)` |  |
-| `providers.team-gateway.auth` | `providerauth` | `(absent)` |  |
-| `providers.team-gateway.auth.method` | `string` | `none` |  |
+| `providers.team-gateway.auth` | `providerauth` | `(required)` |  |
+| `providers.team-gateway.auth.method` | `string` | `(required)` |  |
+| `providers.team-gateway.auth.oidc` | `provideroidc` | `(required only for oidc)` |  |
+| `providers.team-gateway.auth.oidc.issuer` | `string` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.client_id` | `string` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.scopes` | `[]string` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.resource_audience` | `string` | `(optional)` | Optional OAuth audience parameter and access-token audience binding. Empty omits both. |
+| `providers.team-gateway.auth.oidc.issuer_trust` | `nativetrust` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.issuer_trust.policy` | `string` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.issuer_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
+| `providers.team-gateway.auth.oidc.gateway_trust` | `nativetrust` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.gateway_trust.policy` | `string` | `(required)` |  |
+| `providers.team-gateway.auth.oidc.gateway_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
 
-## `llm`
+## `credential_store`
 
 Tier: **operator**
 
-Strict operator-tier native LLM endpoints and their explicit protected credential home. Project values are ignored. Lifecycle commands use exact endpoint IDs and never change provider selection.
+API-key file input and shared protected credential home for OIDC providers. OIDC records always remain encrypted; changing key custody does not automatically migrate them or fall back to another source.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `llm.credential_home` | `string` | `(required with endpoints)` |  |
-| `llm.credential_key` | `nativecredentialkey` | `(keyring)` | Shared encryption-key source for all native endpoints; no automatic fallback or migration. Records always remain encrypted. |
-| `llm.credential_key.source` | `string` | `keyring` | Closed choice: keyring or environment. Omission of credential_key preserves the OS-keyring default. |
-| `llm.credential_key.key_env` | `string` | `(required for environment; forbidden for keyring)` | MECATL_* environment reference containing canonical padded base64 decoding to exactly 32 bytes. Only the reference belongs in settings, never the key value. |
-| `llm.endpoints` | `map[string]nativeendpoint` | `(absent)` |  |
-| `llm.endpoints.<key>.protocol` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.url` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.default_model` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.oidc` | `nativeoidc` | `(required)` |  |
-| `llm.endpoints.<key>.oidc.issuer` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.oidc.client_id` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.oidc.resource_audience` | `string` | `(empty)` | Optional OAuth audience parameter and access-token audience binding. Empty omits both. |
-| `llm.endpoints.<key>.oidc.scopes` | `[]string` | `(required)` |  |
-| `llm.endpoints.<key>.issuer_trust` | `nativetrust` | `(required)` |  |
-| `llm.endpoints.<key>.issuer_trust.policy` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.issuer_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
-| `llm.endpoints.<key>.gateway_trust` | `nativetrust` | `(required)` |  |
-| `llm.endpoints.<key>.gateway_trust.policy` | `string` | `(required)` |  |
-| `llm.endpoints.<key>.gateway_trust.ca_bundle` | `string` | `(forbidden for public)` |  |
+| `credential_store.api_key` | `apikeycredentialstore` | `(absent)` |  |
+| `credential_store.api_key.file` | `string` | `$XDG_CONFIG_HOME/mecatl/auth.yaml` |  |
+| `credential_store.oidc` | `oidccredentialstore` | `(absent)` |  |
+| `credential_store.oidc.home` | `string` | `(required)` | Shared protected home for all OIDC provider credentials. |
+| `credential_store.oidc.key` | `nativecredentialkey` | `(optional; default keyring)` | Shared encryption-key source for the OIDC credential home; omission uses the OS-keyring default, and changing it does not migrate existing records. |
+| `credential_store.oidc.key.source` | `string` | `(required)` | Closed choice: keyring or environment. Omitting the whole key mapping uses the OS-keyring default. |
+| `credential_store.oidc.key.key_env` | `string` | `(required for environment; forbidden for keyring)` | MECATL_* environment reference containing canonical padded base64 that decodes to exactly 32 bytes. Only the reference belongs in settings, never the key value. |
 
 ## `provider_overrides`
 
