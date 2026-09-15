@@ -20,7 +20,7 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 | Key | Action |
 | --- | --- |
 | `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
-| `shift+enter` or `ctrl+j` | Insert a newline. |
+| `shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter` | Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal). |
 | `↑` | With empty input, bring queued follow-ups back for editing. |
 | `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
 | physical `esc` twice within 500ms | While idle with a focused draft containing text, staged attachments, large-paste content, or pending media, clear it through `ClearPrompt`; attachment-only drafts qualify. This gesture requires enhanced key-event support, so it is unavailable in terminals that do not report it. The first press is silent and only arms; an `esc` key release must establish a distinct press before a second non-repeat press can clear. A key repeat or another press before release cannot complete it. Selection, palette, mention, approval, overlay, modal, and running-turn owners take precedence and disarm it, as do another key or expiry. This physical gesture is not remappable; use the universal remappable `ClearPrompt` / `ctrl+u` alternative. |
@@ -47,6 +47,64 @@ The double-`esc` gesture requires two separate key presses and releases; key
 repeat does not trigger it. A selection, palette, approval, overlay, modal,
 active run, or another key disarms the gesture. Use `ClearPrompt` (`ctrl+u`) in
 terminals without enhanced key-event support.
+
+## Newline chords and your terminal
+
+`Newline` answers to four chords because terminals differ in how much of a key
+press they can report. A terminal sends `enter` as a single carriage-return byte
+with no room for a modifier, so it can only distinguish `shift+enter` and
+`ctrl+enter` from a plain `enter` when it implements the Kitty keyboard protocol
+or xterm's `modifyOtherKeys`. `mecatui` requests both and uses whichever the
+terminal provides, so the prompt hint tells you which chord yours can deliver.
+
+Two chords reach `mecatui` without either protocol:
+
+- `ctrl+j` sends a line-feed byte, which every terminal can send. Use it when
+  you are unsure.
+- `alt+enter` sends an escape prefix followed by carriage return. It needs a
+  terminal that sends Option or Alt as a Meta key. On macOS Terminal.app, turn
+  on **Use Option as Meta Key** in your profile's Keyboard settings.
+
+The prompt hint names a chord your terminal can deliver. It reads `shift+enter`,
+and changes to `ctrl+j` when your terminal answers that it supports no keyboard
+enhancements or does not answer at all. Press `?` to see every bound newline
+chord at once.
+
+If you remap `Newline`, list your chords in preference order. The hint shows your
+first chord, and falls back to the first chord that survives a terminal without
+key disambiguation.
+
+### Make shift+enter work on a terminal that cannot encode it
+
+Bind `shift+enter` in the terminal itself to send an escape prefix followed by
+carriage return, which reaches `mecatui` as `alt+enter`. In Visual Studio Code,
+add this to `keybindings.json`:
+
+```json
+{
+  "key": "shift+enter",
+  "command": "workbench.action.terminal.sendSequence",
+  "args": { "text": "\u001b\r" },
+  "when": "terminalFocus"
+}
+```
+
+Zed uses `{ "context": "Terminal", "bindings": { "shift-enter": ["terminal::SendText", "\u001b\r"] } }`,
+and Alacritty takes a `[[keyboard.bindings]]` entry with `key = "Return"`,
+`mods = "Shift"`, and `chars = "\u001B\r"`. On macOS Terminal.app, turn on **Use
+Option as Meta Key** and press `option+enter`.
+
+Inside tmux, turn on extended keys so tmux passes a modified `enter` through
+instead of collapsing it to a plain `enter`:
+
+```tmux
+set -s extended-keys on
+set -as terminal-features 'xterm*:extkeys'
+```
+
+tmux answers the capability query on its own behalf, so the prompt hint can name
+`shift+enter` while tmux still collapses it. Use `ctrl+j` if a newline chord
+submits your prompt inside tmux.
 
 ## Approve or deny a request
 

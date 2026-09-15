@@ -164,8 +164,8 @@ for it to settle, then retry `/clear`.
 ## A short key reference
 
 Use `?` on an empty prompt for the live help overlay. The everyday defaults are
-`enter` to send or steer, `shift+enter` to insert a newline, `ctrl+t` to inspect
-details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
+`enter` to send or steer, `shift+enter` or `ctrl+j` to insert a newline, `ctrl+t`
+to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. If the server does
 not support steering, `enter` queues a follow-up while a run is active. See
 [Keybindings](./keybindings.md) for approval controls, remapping, and the
 complete reference.
