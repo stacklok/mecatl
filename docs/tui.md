@@ -986,11 +986,16 @@ effective model.
 by new/unseen workspaces; it is control-modified so a bare `g` stays typeable in the
 filter. The pick is persisted **client-side** to a state file:
 `$XDG_STATE_HOME/mecatui/models.yaml` (fallback `~/.local/state/mecatui/models.yaml`)
-— a per-workspace map (realpath-keyed) plus a global `default:` block. Read
-precedence on launch (highest → lowest): an in-session restart pick → the `--model`
-flag → the per-workspace entry → the client global default → the server's configured
-(`--default-provider`/`--default-model`) or built-in default. A workspace pick is
-scoped to its workspace only; an unseen/new repo falls
+— a per-workspace map (realpath-keyed) plus a global `default:` block. A workspace
+inside a git **linked worktree** keys on its MAIN checkout's root instead of its own
+path — a worktree switch is no more a model-relevant event than a branch switch in
+one checkout, so a pick made in any worktree of a repo lands on the same entry as
+every other worktree of that repo (resolved by reading git's on-disk worktree
+pointer files, no `git` subprocess). An ordinary (non-worktree) checkout keys on its
+own realpath, unchanged. Read precedence on launch (highest → lowest): an in-session
+restart pick → the `--model` flag → the per-workspace entry → the client global
+default → the server's configured (`--default-provider`/`--default-model`) or
+built-in default. A pick is scoped to its repo only; an unseen/new repo falls
 back to the global default (then the server default). On launch the selection is
 **reconciled** against `ListModels` BEFORE the first `CreateSession`: if the
 persisted model's provider is no longer available (its key was removed), the
