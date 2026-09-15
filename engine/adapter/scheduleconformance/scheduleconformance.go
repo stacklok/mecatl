@@ -74,6 +74,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 				Profile:        "no-fs",
 				EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "no-fs", Revision: "nofs-v1"},
 				PlacementScope: "tenant-a",
+				PlacementOwned: true,
 				MaxFires:       3,
 				Mutating:       true,
 				CreatedAt:      time.Unix(1_700_000_000, 0),
@@ -1629,6 +1630,108 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Fatalf("Load after concurrent Create: %v", err)
 		}
 	})
+
+	t.Run("atomic owned-placement deletion fences lifecycle and incarnation", func(t *testing.T) {
+		s := newStore(t)
+		deletions, ok := s.(port.ScheduleDeletionStore)
+		if !ok {
+			t.Skip("store does not implement ScheduleDeletionStore")
+		}
+		creator, hasCreator := s.(port.ScheduleCreator)
+		reArmer, hasReArmer := s.(port.ScheduleOneShotReArmer)
+		const name = "conf-sched-deleting"
+		now := time.Unix(1_700_000_000, 0)
+		original := port.Schedule{Spec: port.ScheduleSpec{Name: name, Prompt: "original", Trigger: port.TriggerSpec{OneShot: now.Add(time.Hour)}}, State: port.ScheduleState{NextFireAt: now.Add(time.Hour), Enabled: true}}
+		if err := s.Save(ctx, original); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := deletions.BeginDelete(ctx, name, ""); err == nil {
+			t.Fatal("BeginDelete accepted an empty deletion id")
+		}
+		unchanged, err := s.Load(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertScheduleEqual(t, "empty deletion id leaves record unchanged", unchanged, original)
+		marked, err := deletions.BeginDelete(ctx, name, "generation-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if marked.State.Enabled || marked.State.DeletionID != "generation-a" {
+			t.Fatalf("marked state = %+v", marked.State)
+		}
+		if err := s.Delete(ctx, name); !errors.Is(err, port.ErrScheduleDeleting) {
+			t.Fatalf("Delete during deletion = %v", err)
+		}
+		if got, err := s.Load(ctx, name); err != nil || got.State.DeletionID != "generation-a" {
+			t.Fatalf("Delete erased tombstone: %+v, %v", got.State, err)
+		}
+		if hasCreator {
+			if err := creator.Create(ctx, original); !errors.Is(err, port.ErrScheduleAlreadyExists) {
+				t.Fatalf("Create during deletion = %v", err)
+			}
+		}
+		if err := s.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: name, Prompt: "overwrite"}}); !errors.Is(err, port.ErrScheduleDeleting) {
+			t.Fatalf("Save during deletion = %v", err)
+		}
+		if _, err := s.ClaimNow(ctx, name, now, time.Time{}); !errors.Is(err, port.ErrScheduleNotFound) {
+			t.Fatalf("ClaimNow during deletion = %v", err)
+		}
+		if err := s.SetEnabled(ctx, name, true); !errors.Is(err, port.ErrScheduleDeleting) {
+			t.Fatalf("SetEnabled during deletion = %v", err)
+		}
+		if hasReArmer {
+			if err := reArmer.ReArmOneShot(ctx, name, now.Add(time.Minute)); !errors.Is(err, port.ErrScheduleDeleting) {
+				t.Fatalf("ReArm during deletion = %v", err)
+			}
+		}
+		resumed, err := deletions.BeginDelete(ctx, name, "generation-b")
+		if err != nil || resumed.State.DeletionID != "generation-a" {
+			t.Fatalf("resumed deletion = %+v, %v", resumed.State, err)
+		}
+		if err := deletions.CompleteDelete(ctx, name, "generation-b"); !errors.Is(err, port.ErrScheduleDeleting) {
+			t.Fatalf("mismatched completion = %v", err)
+		}
+		if err := deletions.CompleteDelete(ctx, name, "generation-a"); err != nil {
+			t.Fatal(err)
+		}
+		if hasCreator {
+			if err := creator.Create(ctx, original); err != nil {
+				t.Fatalf("create replacement: %v", err)
+			}
+		} else if err := s.Save(ctx, original); err != nil {
+			t.Fatalf("save replacement: %v", err)
+		}
+		if err := deletions.CompleteDelete(ctx, name, "generation-a"); !errors.Is(err, port.ErrScheduleDeleting) {
+			t.Fatalf("old completion deleted replacement: %v", err)
+		}
+		if got, err := s.Load(ctx, name); err != nil || got.Spec.Prompt != "original" {
+			t.Fatalf("replacement = %+v, %v", got, err)
+		}
+	})
+
+	t.Run("atomic deletion refuses an active fire without disabling", func(t *testing.T) {
+		s := newStore(t)
+		deletions, ok := s.(port.ScheduleDeletionStore)
+		if !ok {
+			t.Skip("store does not implement ScheduleDeletionStore")
+		}
+		const name = "conf-sched-delete-active"
+		now := time.Unix(1_700_000_000, 0)
+		if err := s.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: name, Trigger: port.TriggerSpec{Cron: sampleCron}}, State: port.ScheduleState{NextFireAt: now, Enabled: true}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Claim(ctx, name, now, now.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := deletions.BeginDelete(ctx, name, "generation-a"); !errors.Is(err, port.ErrScheduleActiveFire) {
+			t.Fatalf("BeginDelete active = %v", err)
+		}
+		got, err := s.Load(ctx, name)
+		if err != nil || !got.State.Enabled || got.State.DeletionID != "" {
+			t.Fatalf("active record mutated = %+v, %v", got.State, err)
+		}
+	})
 }
 
 // assertScheduleEqual compares the spec + state fields the suite cares about
@@ -1649,6 +1752,9 @@ func assertScheduleEqual(t *testing.T, label string, got, want port.Schedule) {
 	}
 	if got.Spec.PlacementScope != want.Spec.PlacementScope {
 		t.Errorf("%s: Spec.PlacementScope = %q, want %q", label, got.Spec.PlacementScope, want.Spec.PlacementScope)
+	}
+	if got.Spec.PlacementOwned != want.Spec.PlacementOwned {
+		t.Errorf("%s: Spec.PlacementOwned = %v, want %v", label, got.Spec.PlacementOwned, want.Spec.PlacementOwned)
 	}
 	if got.Spec.MaxFires != want.Spec.MaxFires {
 		t.Errorf("%s: Spec.MaxFires = %d, want %d", label, got.Spec.MaxFires, want.Spec.MaxFires)

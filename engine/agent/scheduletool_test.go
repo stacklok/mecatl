@@ -331,6 +331,36 @@ func TestScheduleTool_InspectRendersFires(t *testing.T) {
 	}
 }
 
+func TestScheduleQueryDeletionPendingIsDiscoverableWithoutTokenLeak(t *testing.T) {
+	t.Parallel()
+	const secretDeletionID = "secret-deletion-generation-token"
+	mgr := newStubScheduleManager()
+	mgr.scheds["cleanup"] = port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "cleanup", Trigger: port.TriggerSpec{Cron: "@daily"}},
+		State: port.ScheduleState{DeletionID: secretDeletionID},
+	}
+	tl := agent.NewScheduleQueryTool(mgr)
+	env := agent.EnvForWS(memfs.NewWorkspace("/ws"), nil)
+
+	for _, args := range []string{`{"verb":"list"}`, `{"verb":"inspect","name":"cleanup"}`} {
+		res, err := tl.Execute(context.Background(), scheduleCall(t, args), env)
+		if err != nil || res.IsError {
+			t.Fatalf("ScheduleQuery(%s) = (%q, %v), want success", args, res.Content, err)
+		}
+		for _, want := range []string{"deletion_pending=true", "retry delete"} {
+			if !strings.Contains(res.Content, want) {
+				t.Errorf("ScheduleQuery(%s) = %q, want %q", args, res.Content, want)
+			}
+		}
+		if strings.Contains(res.Content, secretDeletionID) {
+			t.Errorf("ScheduleQuery(%s) leaked opaque deletion token in %q", args, res.Content)
+		}
+		if strings.Contains(res.Content, "disabled") {
+			t.Errorf("ScheduleQuery(%s) mislabeled pending cleanup as disabled: %q", args, res.Content)
+		}
+	}
+}
+
 // TestScheduleTool_NilManagerPanics pins the constructor's non-nil contract (a
 // composition-root programming error must not silently mint a dead tool).
 func TestScheduleTool_NilManagerPanics(t *testing.T) {

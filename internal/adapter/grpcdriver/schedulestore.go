@@ -212,6 +212,24 @@ func (st *ScheduleStore) SetEnabled(ctx context.Context, name string, enabled bo
 	return nil
 }
 
+// BeginDelete starts or resumes the driver's atomic deletion transaction.
+func (st *ScheduleStore) BeginDelete(ctx context.Context, name, deletionID string) (port.Schedule, error) {
+	resp, err := st.store.BeginScheduleDelete(ctx, &driverv1.BeginScheduleDeleteRequest{Name: name, DeletionId: deletionID})
+	if err != nil {
+		return port.Schedule{}, scheduleStatusToErr(ctx, "begin schedule deletion", err)
+	}
+	return decodeScheduleEnvelope(name, resp.GetSchedule())
+}
+
+// CompleteDelete conditionally removes the exact deletion-marked incarnation.
+func (st *ScheduleStore) CompleteDelete(ctx context.Context, name, deletionID string) error {
+	_, err := st.store.CompleteScheduleDelete(ctx, &driverv1.CompleteScheduleDeleteRequest{Name: name, DeletionId: deletionID})
+	if err != nil {
+		return scheduleStatusToErr(ctx, "complete schedule deletion", err)
+	}
+	return nil
+}
+
 // RecordFire records the terminal outcome of a fire and clears the in-flight
 // state. It is IDEMPOTENT per fire id over the wire (the driver MUST NOT
 // duplicate a repeat record); a driver NOT_FOUND (the schedule was deleted
@@ -396,6 +414,10 @@ func scheduleStatusToErr(ctx context.Context, op string, err error) error {
 		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleNotFound, err)
 	case codes.Unimplemented:
 		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleUnsupported, err)
+	case codes.Aborted:
+		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleDeleting, err)
+	case codes.FailedPrecondition:
+		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleActiveFire, err)
 	default:
 		return rpcErr(ctx, op, err)
 	}
@@ -571,6 +593,39 @@ func (s *scheduleStoreServer) SetScheduleEnabled(ctx context.Context, req *drive
 	return &driverv1.SetScheduleEnabledResponse{}, nil
 }
 
+func (s *scheduleStoreServer) BeginScheduleDelete(ctx context.Context, req *driverv1.BeginScheduleDeleteRequest) (*driverv1.BeginScheduleDeleteResponse, error) {
+	if req.GetName() == "" || req.GetDeletionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name and deletion_id are required")
+	}
+	store, ok := s.store.(port.ScheduleDeletionStore)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "atomic schedule deletion is not supported")
+	}
+	sched, err := store.BeginDelete(ctx, req.GetName(), req.GetDeletionId())
+	if err != nil {
+		return nil, scheduleStoreStatus(err)
+	}
+	payload, err := json.Marshal(sched)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encode schedule: %v", err)
+	}
+	return &driverv1.BeginScheduleDeleteResponse{Schedule: &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload}}, nil
+}
+
+func (s *scheduleStoreServer) CompleteScheduleDelete(ctx context.Context, req *driverv1.CompleteScheduleDeleteRequest) (*driverv1.CompleteScheduleDeleteResponse, error) {
+	if req.GetName() == "" || req.GetDeletionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name and deletion_id are required")
+	}
+	store, ok := s.store.(port.ScheduleDeletionStore)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "atomic schedule deletion is not supported")
+	}
+	if err := store.CompleteDelete(ctx, req.GetName(), req.GetDeletionId()); err != nil {
+		return nil, scheduleStoreStatus(err)
+	}
+	return &driverv1.CompleteScheduleDeleteResponse{}, nil
+}
+
 // RecordFire records the terminal fire outcome in the wrapped store. It
 // validates the envelope (blank fire_id, nil envelope, wrong format, empty
 // payload, an id mismatch, an undecodable payload — all INVALID_ARGUMENT).
@@ -727,6 +782,10 @@ func scheduleStoreStatus(err error) error {
 	switch {
 	case isScheduleNotFound(err):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, port.ErrScheduleDeleting):
+		return status.Error(codes.Aborted, err.Error())
+	case errors.Is(err, port.ErrScheduleActiveFire):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case isScheduleUnsupported(err):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, context.Canceled):

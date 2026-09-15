@@ -38,6 +38,7 @@ func BuildModel(docs Docs) *Model {
 		retentionSubtree(docs),
 		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
+		executionSubtree(docs),
 		steerSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
@@ -250,6 +251,21 @@ func temporaryStorageSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{Key: "temporary_storage", Tier: TierOperator, CommentedOut: true,
 		Doc: "Managed command temporary-storage policy. Read only from user-global settings.yaml; project and explicit CLI config values are ignored. Managed mode is Linux-only; system preserves inherited temporary-directory behavior.", Fields: fields}
+}
+
+func executionSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("ExecutionSection", permconfig.ExecutionSection{}, docs)
+	microVM := fieldsOf("ExecutionMicroVMSection", permconfig.ExecutionMicroVMSection{}, docs)
+	guestEgress := fieldsOf("ExecutionGuestEgressSection", permconfig.ExecutionGuestEgressSection{}, docs)
+	fields[0].Default, fields[0].ExampleValue = "host-local", "host-local"
+	fields[1].Nested = microVM
+	microVM[0].Nested = guestEgress
+	guestEgress[0].Default, guestEgress[0].ExampleValue = "permissive", "permissive"
+	return &Subtree{
+		Key: "execution", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Server-owned execution placement and MicroVM guest-egress policy. Operator-tier only; project values are ignored. Bare mecatui and mecated resolve the same settings.",
+		Fields: fields,
+	}
 }
 
 func storageManagementSubtree(docs Docs) *Subtree {

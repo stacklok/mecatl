@@ -14,8 +14,14 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
@@ -34,6 +40,100 @@ func TestMain(m *testing.M) {
 		}
 		return m.Run()
 	}))
+}
+
+type inertMicroVMReadyManager struct{}
+
+func (inertMicroVMReadyManager) EnsureReady(context.Context, microvmmanager.ReadyRequest) (string, error) {
+	return "unused", nil
+}
+
+func writeIsolatedExecutionSettings(t *testing.T, placement string) {
+	t.Helper()
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	settingsDir := filepath.Join(configHome, "mecatl")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "execution:\n  default_placement: " + placement + "\n"
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBareEmbeddedRunDiscoversConventionalMicroVMPlacement(t *testing.T) {
+	writeIsolatedExecutionSettings(t, app.PlacementMicroVMLocal)
+	stop := errors.New("configuration inspected")
+	workspace := t.TempDir()
+	err := runWithOptions([]string{"mecatui", "--mock", "--quiet", "--workspace=" + workspace}, runOptions{
+		beforeEmbeddedStart: func(cfg app.Config) error {
+			if len(cfg.PermissionConfigs) != 0 {
+				t.Fatalf("PermissionConfigs = %v, want conventional discovery only", cfg.PermissionConfigs)
+			}
+			cfg.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
+				return inertMicroVMReadyManager{}, "unix:///unused", nil
+			}
+			resolved, err := app.ConfigureExecution(cfg)
+			if err != nil {
+				t.Fatalf("ConfigureExecution: %v", err)
+			}
+			if resolved.PlacementProvider == nil {
+				t.Fatal("bare embedded startup did not select the microvm-local placement provider")
+			}
+			return stop
+		},
+	})
+	if !errors.Is(err, stop) {
+		t.Fatalf("runWithOptions error = %v, want inspection stop", err)
+	}
+}
+
+func TestEmbeddedReadinessCallbacksReachFirstSessionModel(t *testing.T) {
+	writeIsolatedExecutionSettings(t, app.PlacementHostLocal)
+	workspace := t.TempDir()
+	var composition app.Config
+	err := runWithOptions([]string{"mecatui", "--mock", "--quiet", "--no-store", "--no-memory", "--no-user-model", "--no-soul", "--no-skills", "--no-commands", "--workspace=" + workspace}, runOptions{
+		beforeEmbeddedStart: func(cfg app.Config) error {
+			composition = cfg
+			return nil
+		},
+		runProgram: func(_ context.Context, model ui.Model) (tea.Model, error) {
+			const progress = "Preparing microVM first session"
+			composition.MicroVMReadinessObserver(microvmmanager.StagePrepare, progress)
+			batch, ok := model.Init()().(tea.BatchMsg)
+			if !ok {
+				t.Fatalf("Init message = %T, want tea.BatchMsg", model.Init()())
+			}
+			seen := false
+			for _, cmd := range batch {
+				msg := cmd()
+				updated, _ := model.Update(msg)
+				model = updated.(ui.Model)
+				if strings.Contains(model.View().Content, progress) {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				t.Fatalf("app readiness progress did not reach UI model:\n%s", model.View().Content)
+			}
+
+			composition.MicroVMReadinessFailed(microvmmanager.StagePrepare)
+			updated, _ := model.Update(client.ConnectErrMsg{Err: errors.New("placement unavailable: private detail")})
+			model = updated.(ui.Model)
+			view := model.View().Content
+			if !strings.Contains(view, "mecated microvm doctor") || strings.Contains(view, "private detail") {
+				t.Fatalf("app readiness failure did not reach redacted UI remediation:\n%s", view)
+			}
+			return model, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runWithOptions: %v", err)
+	}
 }
 
 // TestResolveThemeAutoDetect pins the light/dark auto-detect gate (ADR 0280):

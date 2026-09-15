@@ -23,27 +23,27 @@ func (s *Service) CreateACPSession(ctx context.Context, cwd string, mode session
 	if err != nil {
 		return nil, err
 	}
-	if err := assertACPPlacementCWD(cwd, binding.Environment); err != nil {
+	if err := assertACPPlacementCWD(cwd, binding); err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
 		return nil, err
 	}
 	id := s.cfg.NewID()
 	if overlay != nil {
 		binding.Environment, err = overlay(id, binding.Environment)
 		if err != nil {
+			rollbackUnpublishedPlacement(s, &binding)
 			return nil, fmt.Errorf("%w: editor filesystem overlay unavailable", ErrFailedPrecondition)
 		}
 		if err := validatePlacementBinding(binding); err != nil {
+			rollbackUnpublishedPlacement(s, &binding)
 			return nil, err
 		}
 	}
 	created, err := s.createSession(ctx, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{
-		id: id, idSet: true, placement: &binding,
+		id: id, idSet: true, placement: &binding, placementEnvironmentOverride: overlay != nil,
 	})
 	if err != nil {
 		return nil, err
-	}
-	if overlay != nil {
-		s.SetSessionEnvironment(created.ID, binding.Environment)
 	}
 	return created, nil
 }
@@ -59,37 +59,45 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 	if !persisted.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: session has no exact placement", ErrFailedPrecondition)
 	}
-	binding, err := s.ReattachPlacement(ctx, persisted.EnvironmentRef)
+	binding, err := s.sessionPlacement(ctx, persisted)
 	if err != nil {
 		return nil, err
 	}
-	if err := assertACPPlacementCWD(cwd, binding.Environment); err != nil {
+	if err := assertACPPlacementCWD(cwd, binding); err != nil {
+		discardPlacementBinding(binding)
 		return nil, err
 	}
 	if overlay != nil {
 		binding.Environment, err = overlay(id, binding.Environment)
 		if err != nil {
+			discardPlacementBinding(binding)
 			return nil, fmt.Errorf("%w: editor filesystem overlay unavailable", ErrFailedPrecondition)
 		}
 		binding.Ref = persisted.EnvironmentRef
 		if err := validatePlacementBinding(binding); err != nil {
+			discardPlacementBinding(binding)
 			return nil, err
 		}
 	}
 	sess, err := s.LoadSessionWithMCP(ctx, id, specs)
 	if err != nil {
+		discardPlacementBinding(binding)
 		return nil, err
 	}
 	if sess.EnvironmentRef != persisted.EnvironmentRef {
+		discardPlacementBinding(binding)
 		return nil, fmt.Errorf("%w: session placement changed while loading", ErrFailedPrecondition)
 	}
-	s.SetSessionEnvironment(id, binding.Environment)
+	if overlay != nil {
+		s.updateSessionEnvironment(id, binding.Environment)
+	}
 	return sess, nil
 }
 
-func assertACPPlacementCWD(cwd string, env tool.Environment) error {
+func assertACPPlacementCWD(cwd string, binding PlacementBinding) error {
+	compositionRoot, rootErr := PlacementCompositionRoot(binding)
 	resolved, err := filepath.EvalSymlinks(cwd)
-	if err != nil || !filepath.IsAbs(cwd) || filepath.Clean(resolved) != filepath.Clean(env.Workspace().Root()) {
+	if rootErr != nil || err != nil || compositionRoot == "" || !filepath.IsAbs(cwd) || filepath.Clean(resolved) != filepath.Clean(compositionRoot) {
 		return fmt.Errorf("%w: cwd does not match the configured session placement", ErrInvalidArgument)
 	}
 	return nil

@@ -81,6 +81,17 @@ func resolveCommand(argv []string) commandResolution {
 		return resolveMCPSubcommand(args)
 	}
 
+	// Local microVM administration is a handled one-shot. It runs before daemon
+	// configuration, provider construction, and listener setup.
+	if first == "microvm" {
+		return commandResolution{
+			handled: true,
+			run: subcommandAction(func(stdin io.Reader, stdout, _ io.Writer) error {
+				return runLocalMicroVMCommand(args[2:], stdin, stdout)
+			}),
+		}
+	}
+
 	// `mecated import` is an offline migration command. It never starts a
 	// listener or constructs an LLM provider.
 	if first == "import" {
@@ -234,6 +245,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
 	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize an operator-configured OAuth MCP server\n")
+	_, _ = fmt.Fprintf(out, "  microvm doctor|status|delete inspect and administer local microVM attachments\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing (--file, --learning-patch)\n")
@@ -247,7 +259,7 @@ func writeTopLevelHelp(out io.Writer) {
 
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  mcp      MCP OAuth login\n  import   import Codex or Claude Code data\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  mcp      MCP OAuth login\n  microvm local microVM administration\n  import   import Codex or Claude Code data\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
 }
 
 func resolveMCPSubcommand(args []string) commandResolution {

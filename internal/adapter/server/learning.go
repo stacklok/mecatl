@@ -82,11 +82,11 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
 	}
 	if s.placementBinder != nil {
-		binding, bindErr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
-		if bindErr != nil {
-			return nil, bindErr
+		workspace, workspaceErr := s.privateCompositionRoot(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
 		}
-		ctx = memory.WithWorkspace(ctx, binding.Environment.Workspace().Root())
+		ctx = memory.WithWorkspace(ctx, workspace)
 	}
 	r, err := s.cfg.ReflectSession(ctx, sess)
 	if err != nil {
@@ -570,11 +570,11 @@ func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) 
 	if s.placementBinder == nil {
 		return "", true
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	workspace, err := s.privateCompositionRoot(ctx, sess)
 	if err != nil {
 		return "", false
 	}
-	return binding.Environment.Workspace().Root(), true
+	return workspace, true
 }
 
 func sameEventSequence(a, b *int64) bool {

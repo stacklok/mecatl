@@ -13,8 +13,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
+- **Schedule placement ownership lifecycle** — adds `port.ScheduleSpec.PlacementOwned` as trusted durable host metadata, `ScheduleState.DeletionID`, the optional atomic `port.ScheduleDeletionStore`, and deletion lifecycle sentinels so schedule managers can distinguish exclusively provisioned placements from borrowed/legacy placements and safely retry exact cleanup without deleting a later same-name incarnation. Added (minor).
 
+- **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
 - **Event-follow capacity classification** — adds
   `port.ErrEventFollowCapacity`, allowing `CursorEventLog` backends to reject a
   follow iterator before storage work begins when follower capacity is full.

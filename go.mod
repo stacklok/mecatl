@@ -317,10 +317,10 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20251125145642-4e65d59e963e // indirect
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5 // indirect
-	modernc.org/libc v1.72.1 // indirect
+	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.49.1 // indirect
+	modernc.org/sqlite v1.54.0 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	sigs.k8s.io/controller-runtime v0.23.3 // indirect

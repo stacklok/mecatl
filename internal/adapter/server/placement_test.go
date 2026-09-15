@@ -3,8 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
@@ -25,6 +30,51 @@ type placementProviderFunc func(context.Context, PlacementBindRequest) (Placemen
 
 func (f placementProviderFunc) Bind(ctx context.Context, req PlacementBindRequest) (PlacementBinding, error) {
 	return f(ctx, req)
+}
+
+func TestPlacementReadinessFailureIsBoundedAcrossPublicTransports(t *testing.T) {
+	public := NewPlacementReadinessError(
+		"verify",
+		"artifact_verification",
+		"microVM artifact verification failed, do not use the downloaded artifacts",
+	)
+	binder, err := NewPlacementBinder(placementProviderFunc(func(context.Context, PlacementBindRequest) (PlacementBinding, error) {
+		return PlacementBinding{}, fmt.Errorf("private token SECRET at /private/runtime and exact-ref-123: %w", public)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, bindErr := binder.Bind(t.Context(), PlacementBindRequest{Selector: DefaultPlacement(), Operation: PlacementOperationCreate, Scope: "tenant-a"})
+	if bindErr == nil || !errors.Is(bindErr, ErrPlacementUnavailable) {
+		t.Fatalf("Bind error = %v, want placement unavailable", bindErr)
+	}
+
+	grpcDetail := status.Convert(toStatus(bindErr)).Message()
+	recorder := httptest.NewRecorder()
+	writeServiceError(recorder, bindErr)
+	httpDetail := recorder.Body.String()
+	for surface, detail := range map[string]string{"grpc": grpcDetail, "http": httpDetail} {
+		for _, want := range []string{"stage=verify", "category=artifact_verification", "cause=microVM artifact verification failed", "mecated microvm doctor", "diagnostics log"} {
+			if !strings.Contains(detail, want) {
+				t.Errorf("%s detail %q omitted %q", surface, detail, want)
+			}
+		}
+		for _, secret := range []string{"SECRET", "/private/runtime", "exact-ref-123"} {
+			if strings.Contains(detail, secret) {
+				t.Errorf("%s detail leaked %q: %q", surface, secret, detail)
+			}
+		}
+		if len(detail) > 1024 {
+			t.Errorf("%s detail is unbounded: %d bytes", surface, len(detail))
+		}
+	}
+
+	for _, cause := range []string{strings.Repeat("x", 300) + "/private", "credential SECRET must not cross"} {
+		unsafe := NewPlacementReadinessError("verify", "artifact_verification", cause)
+		if unsafe != ErrPlacementUnavailable {
+			t.Fatalf("unsafe public cause was retained: %v", unsafe)
+		}
+	}
 }
 
 func TestADR_0291_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.T) {
@@ -97,6 +147,37 @@ func TestInvariant_server_owned_placement_ids_fail_closed(t *testing.T) {
 	}
 	if providerCalls != 0 {
 		t.Fatalf("legacy placement ID reached provider %d time(s)", providerCalls)
+	}
+}
+
+func TestPlacementBinderTreatsRemoteKindsGenerically(t *testing.T) {
+	for _, kind := range []session.EnvironmentKind{"microvm", "another-remote-backend"} {
+		for _, root := range []string{"", "/host/source"} {
+			name := string(kind) + "/empty"
+			if root != "" {
+				name = string(kind) + "/explicit"
+			}
+			t.Run(name, func(t *testing.T) {
+				ref := session.EnvironmentRef{Kind: kind, ID: "opaque", Revision: "v1"}
+				binder, err := NewPlacementBinder(placementProviderFunc(func(context.Context, PlacementBindRequest) (PlacementBinding, error) {
+					return PlacementBinding{Ref: ref, Environment: placementTestEnvironment(ref), CompositionRoot: root}, nil
+				}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding, err := binder.Bind(t.Context(), PlacementBindRequest{Selector: DefaultPlacement(), Operation: PlacementOperationCreate, Scope: "tenant-a"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := PlacementCompositionRoot(binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got != root {
+					t.Fatalf("PlacementCompositionRoot = %q, want %q", got, root)
+				}
+			})
+		}
 	}
 }
 

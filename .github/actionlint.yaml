@@ -1,0 +1,6 @@
+self-hosted-runner:
+  labels:
+    - microvm-hvf
+    - microvm-kvm
+
+config-variables: null

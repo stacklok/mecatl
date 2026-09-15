@@ -9,6 +9,7 @@ release behavior. This page is only a stable index to operational guidance.
 - [Deslop advisory duplication analysis](deslop.yml) (not a required CI gate)
 - [Mecatequi CI adoption](https://mecatl.dev/docs/building/deployment/mecatequi) and its
   [design rationale](../../docs/adr/0028-mecatequi.md)
+- [microVM environment operations](../../docs/usage/microvm-environments.md)
 
 ## Cutting a root release
 

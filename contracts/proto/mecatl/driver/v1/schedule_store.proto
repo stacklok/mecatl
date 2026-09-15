@@ -113,6 +113,12 @@ service ScheduleStoreService {
   // any other State field (the pause/resume primitive).
   rpc SetScheduleEnabled(SetScheduleEnabledRequest) returns (SetScheduleEnabledResponse);
 
+  // BeginDelete atomically marks one exact schedule incarnation as deleting.
+  rpc BeginScheduleDelete(BeginScheduleDeleteRequest) returns (BeginScheduleDeleteResponse);
+
+  // CompleteDelete removes only the record carrying the matching deletion id.
+  rpc CompleteScheduleDelete(CompleteScheduleDeleteRequest) returns (CompleteScheduleDeleteResponse);
+
   // RecordFire records the terminal outcome of a fire, updating the
   // schedule's LastFireSessionID and clearing in-flight state. It is
   // IDEMPOTENT per fire id (a repeat for the same id is a no-op).
@@ -292,6 +298,17 @@ message SetScheduleEnabledRequest {
 
 // SetScheduleEnabledResponse is empty: a successful flag set has no payload.
 message SetScheduleEnabledResponse {}
+
+message BeginScheduleDeleteRequest {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  string deletion_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+message BeginScheduleDeleteResponse { ScheduleRecord schedule = 1 [(buf.validate.field).required = true]; }
+message CompleteScheduleDeleteRequest {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  string deletion_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+message CompleteScheduleDeleteResponse {}
 
 // RecordFireRequest records a fire's terminal outcome.
 message RecordFireRequest {

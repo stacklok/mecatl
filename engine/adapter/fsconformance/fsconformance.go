@@ -140,6 +140,33 @@ func Run(t *testing.T, newWS func(t *testing.T) tool.Workspace) {
 		}
 	})
 
+	t.Run("grep", func(t *testing.T) {
+		ws := newWS(t)
+		files := map[string]string{
+			"a/one.go":   "alpha\nneedle one\n",
+			"a/two.go":   "needle two\n",
+			"a/skip.txt": "needle excluded\n",
+		}
+		for path, content := range files {
+			if err := setFile(ctx, ws, path, []byte(content)); err != nil {
+				t.Fatalf("Write %s: %v", path, err)
+			}
+		}
+		got, err := ws.Grep(ctx, `needle`, "a/*.go")
+		if err != nil {
+			t.Fatalf("Grep: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("Grep returned %d matches (%v), want 2", len(got), got)
+		}
+		if got[0].Path != "a/one.go" || got[0].Line != 2 || got[0].Text != "needle one" {
+			t.Errorf("first Grep match = %+v", got[0])
+		}
+		if got[1].Path != "a/two.go" || got[1].Line != 1 || got[1].Text != "needle two" {
+			t.Errorf("second Grep match = %+v", got[1])
+		}
+	})
+
 	t.Run("path escape rejected", func(t *testing.T) {
 		ws := newWS(t)
 		escapes := []string{
@@ -710,4 +737,76 @@ func RunNamespace(t *testing.T, newWS func(t *testing.T) tool.Workspace) {
 			t.Fatalf("CopyFile(missing source) err = %v, want errors.Is(_, fs.ErrNotExist)", err)
 		}
 	})
+}
+
+// ExternalAccess models another actor in the same execution namespace, such as
+// the Environment's bound CommandRunner. It lets adapters prove Workspace and
+// runner affinity without duplicating the Workspace contract.
+type ExternalAccess struct {
+	Read  func(path string) ([]byte, error)
+	Write func(path string, data []byte) error
+}
+
+// RunMutationAffinity proves Workspace operations and an external actor observe
+// the same backing bytes in both directions.
+func RunMutationAffinity(t *testing.T, newFixture func(t *testing.T) (tool.Workspace, ExternalAccess)) {
+	t.Helper()
+	ctx := context.Background()
+
+	ws, external := newFixture(t)
+	if _, err := ws.CreateFile(ctx, "workspace.txt", []byte("from workspace")); err != nil {
+		t.Fatalf("Workspace CreateFile: %v", err)
+	}
+	got, err := external.Read("workspace.txt")
+	if err != nil {
+		t.Fatalf("external read after Workspace mutation: %v", err)
+	}
+	if string(got) != "from workspace" {
+		t.Fatalf("external read = %q, want Workspace bytes", got)
+	}
+
+	if err := external.Write("external.txt", []byte("from runner")); err != nil {
+		t.Fatalf("external mutation: %v", err)
+	}
+	got, err = ws.Read(ctx, "external.txt")
+	if err != nil {
+		t.Fatalf("Workspace read after external mutation: %v", err)
+	}
+	if string(got) != "from runner" {
+		t.Fatalf("Workspace read = %q, want external bytes", got)
+	}
+}
+
+// RunExternalMutationConflict proves a version read before an out-of-band
+// mutation cannot authorize overwriting the newer bytes.
+func RunExternalMutationConflict(t *testing.T, newFixture func(t *testing.T) (tool.Workspace, ExternalAccess)) {
+	t.Helper()
+	ctx := context.Background()
+	ws, external := newFixture(t)
+
+	if _, err := ws.CreateFile(ctx, "conflict.txt", []byte("original")); err != nil {
+		t.Fatalf("CreateFile: %v", err)
+	}
+	_, old, err := ws.ReadVersion(ctx, "conflict.txt")
+	if err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	}
+	if err := external.Write("conflict.txt", []byte("newer external bytes")); err != nil {
+		t.Fatalf("external mutation: %v", err)
+	}
+	if _, err := ws.ReplaceFile(ctx, "conflict.txt", old, []byte("stale overwrite")); err == nil {
+		t.Fatal("ReplaceFile after external mutation succeeded, want version conflict")
+	} else {
+		var mismatch *tool.VersionMismatchError
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("ReplaceFile error = %v, want *tool.VersionMismatchError", err)
+		}
+	}
+	got, err := external.Read("conflict.txt")
+	if err != nil {
+		t.Fatalf("external read after conflict: %v", err)
+	}
+	if string(got) != "newer external bytes" {
+		t.Fatalf("conflicting replace wrote %q, want newer external bytes preserved", got)
+	}
 }

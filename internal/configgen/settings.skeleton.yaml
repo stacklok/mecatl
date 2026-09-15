@@ -270,6 +270,22 @@
 #     - issuer: https://idp.example/realms/operators
 #       subject: storage-admin
 
+#| === execution === (tier: operator)
+#| Server-owned execution placement and MicroVM guest-egress policy. Operator-tier only;
+#| project values are ignored. Bare mecatui and mecated resolve the same settings.
+# execution:
+#   # The default_placement setting selects the server-owned default placement backend.
+#   default_placement: host-local
+#   # The microvm block configures local MicroVM execution without creating a public
+#   # profile.
+#   microvm:
+#     # The guest_egress block controls network destinations reachable from the guest.
+#     guest_egress:
+#       # mode accepts permissive, deny-all, or allowlist. Permissive is the default.
+#       mode: permissive
+#       # allow lists HOST:PORT/tcp|udp destinations and is valid only in allowlist mode.
+#       allow: []
+
 #| === steer === (tier: operator)
 #| OPERATOR-TIER mid-run steer knob (steer-while-running, issue #512): when true (the
 #| DEFAULT), a client may inject an operator instruction into an in-flight run, drained

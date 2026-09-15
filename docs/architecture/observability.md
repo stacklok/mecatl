@@ -126,6 +126,17 @@ coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. Se
   `mecatl_schedule_fire_duration_seconds` (the due→terminal wall-clock, recorded
   only for a fired/failed fire; a skipped fire has no run, duration 0). The
   duration histogram shares the `latencyInstruments` explicit-bucket ladder.
+- **MicroVM runtime operations** (`environment/microvm/operations.go`) — the opt-in
+  daemon runtime has a separate bounded `OperationsObserver`: fixed boot-latency
+  buckets; active/booting and aggregate vCPU/memory/disk gauges; and counters for
+  execs, guest-egress denials, artifact verification, cleanup, reconciliation, and
+  quota rejection. Dimensions are closed enums only. Commands and denied
+  destinations enter only as deliberately discarded producer arguments; session/
+  environment IDs, paths, credentials, and free text are never labels or diagnostics.
+  Operational failures have no client `session.Event`, so the observer uses the
+  injected `port.Diagnostics`; model-visible facts remain event-owned. `Doctor` runs
+  every hypervisor/artifact/control/network/profile/stale-resource probe and renders
+  stable actionable PASS/WARN/FAIL findings.
   > A broader performance-observability effort lands incrementally on a
   > separate unauthenticated admin listener: `mecated --metrics-addr` remains
   > loopback-only (default `127.0.0.1:9090`), while embedded `mecatui --perf`

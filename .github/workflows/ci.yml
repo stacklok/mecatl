@@ -431,7 +431,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Cold module downloads took over seven minutes in PR #580, leaving too
+    # little of the former ten-minute limit for the multi-module build.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -447,6 +449,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -487,6 +490,12 @@ jobs:
 
       - name: go build (OIDC authn module)
         run: cd authn/oidc && go build ./...
+
+      - name: go build (microVM module)
+        run: cd environment/microvm && go build ./...
+
+      - name: go vet (microVM module)
+        run: cd environment/microvm && go vet ./...
 
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each
       # its own module under the workspace — build them explicitly too.
@@ -596,6 +605,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -619,6 +629,7 @@ jobs:
           bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
           (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
           (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
+          (cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...)
           (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
           (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
           (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
@@ -741,6 +752,7 @@ jobs:
           go test -count=1 ./cmd/mecatui/ui
           (cd engine && go test ./...)
           (cd authn/oidc && go test ./...)
+          (cd environment/microvm && go test ./...)
           (cd provider/ssefilter && go test ./...)
           (cd provider/anthropic && go test ./...)
           (cd provider/openai && go test ./...)
@@ -802,6 +814,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -837,6 +850,9 @@ jobs:
 
       - name: golangci-lint (OIDC authn module)
         run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (microVM module)
+        run: cd environment/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
@@ -911,11 +927,16 @@ jobs:
       # branches). The action-wrappers test pins the composite action.yml env-mapping contract
       # (actionlint cannot lint a composite action). They are shell, not Go, so they ride here
       # rather than in `go test`.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # The publisher-format release fixture signs once, then verifies the exact
+      # bundles strict admission consumes and rejects statement tampering.
       - name: Test GitHub Actions scripts
         run: |
           bash .github/actions/mecatequi-extract-prompt/extract-prompt_test.sh
           bash .github/actions/mecatequi-publish/publish_test.sh
           bash .github/actions/action-wrappers_test.sh
+          bash .github/scripts/microvm-ci-release_test.sh
 
   # Preserve one stable required context while golangci-lint runs.
   # The aggregate validates the classifier and applicable analysis job, so failures
@@ -970,6 +991,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1034,6 +1056,33 @@ jobs:
         env:
           GOWORK: off
         run: cd engine && go test ./...
+
+  microvm-standalone:
+    name: MicroVM module (standalone, GOWORK=off)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+          cache: true
+          cache-dependency-path: |
+            engine/go.sum
+            environment/microvm/go.sum
+
+      - name: go build (microVM standalone)
+        env:
+          GOWORK: off
+        run: cd environment/microvm && go build ./...
+
+      - name: go test (microVM standalone)
+        env:
+          GOWORK: off
+        run: cd environment/microvm && go test ./...
 
   provider-standalone:
     name: Provider modules (standalone, GOWORK=off)
@@ -1137,6 +1186,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1183,6 +1233,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1265,6 +1316,7 @@ jobs:
             go.sum
             engine/go.sum
             authn/oidc/go.sum
+            environment/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
