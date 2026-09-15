@@ -461,6 +461,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	// race, never the client's guess). Buffered so a burst of steer frames
 	// never blocks the control reader behind a slow client.
 	steerAcks := make(chan *mecatlv1.SteerAck, 16)
+	controlNotices := make(chan *mecatlv1.Event, 16)
 
 	// The handoff mailbox: a too_late steer the Service PROMOTED to a fresh
 	// follow-up run is POSTED here by readControl, and after the original run's
@@ -477,7 +478,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	ct := &controlTarget{run: run}
 
 	controlErrors := make(chan error, 1)
-	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, controlErr: controlErrors, snd: snd}
+	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, notices: controlNotices, controlErr: controlErrors, snd: snd}
 	rl.recorder = NewRunEventRecorder(rl.logCtx, h.svc, id)
 
 	// Read subsequent control frames concurrently so an approval/cancel/steer
@@ -655,6 +656,7 @@ type runRelay struct {
 	logCtx     context.Context
 	id         session.SessionID
 	acks       chan *mecatlv1.SteerAck
+	notices    chan *mecatlv1.Event
 	controlErr chan error
 	snd        *streamSender
 	recorder   *RunEventRecorder
@@ -698,6 +700,7 @@ func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 	events := run.Events()
 	acks := rl.acks
+	notices := rl.notices
 	controlErr := rl.controlErr
 	for events != nil {
 		select {
@@ -715,6 +718,13 @@ func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 			h.sendEvent(rl, ev)
 			if rl.sendErr != nil {
 				run.Cancel() // first error: drain-to-discard from here
+			}
+		case notice := <-notices:
+			if rl.sendErr == nil {
+				if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: notice}); err != nil {
+					rl.sendErr = err
+					run.Cancel()
+				}
 			}
 		case ack, ok := <-acks:
 			if !ok {
@@ -864,6 +874,25 @@ func (h *steerHandoff) closeAndWait() {
 // after the active run drains, and its terminal outcome is reported back as
 // the steer ack. On exit readControl closes the mailbox so the relay loop
 // learns no more promotions can arrive.
+func (h *HarnessServer) handleResumeApprovalFrame(ctx context.Context, id session.SessionID, ct *controlTarget, rl *runRelay, ra *mecatlv1.ResumeApproval) {
+	if ra == nil || h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
+		return
+	}
+	verdict := verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow())
+	target := ct.active()
+	kind := guardrailApprovalKindFromProto(ra.GetGuardrailKind())
+	if err := target.ValidateRemoteApprovalIntent(ra.GetAskId(), ra.GetReviewId(), kind, verdict); err != nil {
+		select {
+		case rl.notices <- &mecatlv1.Event{Type: "control.refused", Text: valid(err.Error())}:
+		default:
+		}
+		return
+	}
+	if err := h.svc.approveLiveRun(id, target, ra.GetAskId(), verdict, ra.GetExpectedRunId()); err != nil {
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
+	}
+}
+
 func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, ct *controlTarget, rl *runRelay, ho *steerHandoff) {
 	defer ho.close()
 	stream := rl.snd.stream
@@ -879,15 +908,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 		}
 		switch k := frame.GetKind().(type) {
 		case *mecatlv1.ConverseRequest_ResumeApproval:
-			if k.ResumeApproval != nil {
-				ra := k.ResumeApproval
-				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
-					break
-				}
-				if err := h.svc.approveLiveRun(id, ct.active(), ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()), ra.GetExpectedRunId()); err != nil {
-					h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
-				}
-			}
+			h.handleResumeApprovalFrame(ctx, id, ct, rl, k.ResumeApproval)
 		case *mecatlv1.ConverseRequest_Cancel:
 			h.handleCancelFrame(ctx, id, ct, k.Cancel)
 		case *mecatlv1.ConverseRequest_CancelChild:

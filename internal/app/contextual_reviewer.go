@@ -75,10 +75,6 @@ type boundReviewEvidenceSource interface {
 	ValidateReviewBinding(agent.ToolReviewRequest, string, string) error
 }
 
-type closableReviewEvidenceSource interface {
-	CloseReviewEvidence()
-}
-
 // reviewEvidenceBinding is the complete private authority carried by each
 // review-local handle. Owner is intentionally absent from ToolReviewRequest: it
 // is supplied by the authorized root-run caller and checked here rather than
@@ -272,9 +268,6 @@ func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolRevie
 	}
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
-	if closable, ok := source.(closableReviewEvidenceSource); ok {
-		defer closable.CloseReviewEvidence()
-	}
 	if err := validateReviewRequest(req); err != nil {
 		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, fmt.Errorf("%w: %w", errReviewOperational, classifyReviewError(err))
 	}
@@ -446,6 +439,9 @@ func parseReviewAssessment(raw string, req agent.ToolReviewRequest, state *revie
 	trimmed := agent.StripLoneCodeFence(strings.TrimSpace(raw))
 	if trimmed == "" {
 		return agent.ToolReviewResult{}, errors.New("blank reviewer assessment")
+	}
+	if err := agent.RejectDuplicateJSONKeys([]byte(trimmed)); err != nil {
+		return agent.ToolReviewResult{}, fmt.Errorf("malformed reviewer assessment: %w", err)
 	}
 	dec := json.NewDecoder(strings.NewReader(trimmed))
 	dec.DisallowUnknownFields()
@@ -778,6 +774,9 @@ func revalidateReviewBinding(req agent.ToolReviewRequest, current session.Enviro
 }
 
 func strictToolArgs(raw json.RawMessage, dst any) error {
+	if err := agent.RejectDuplicateJSONKeys(raw); err != nil {
+		return fmt.Errorf("malformed tool arguments: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {

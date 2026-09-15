@@ -9,12 +9,30 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func TestPermissionAuthorizationBindingIsExact(t *testing.T) {
+	call := session.NewToolCall("call", "Read", []byte(`{"path":"a"}`))
+	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "workspace", Revision: "r1"}
+	auth := permissionAuthorization{call: call, env: env}
+	if !auth.matches(call, env) {
+		t.Fatal("exact permission binding did not match")
+	}
+	changedCall := session.NewToolCall("call", "Read", []byte(`{"path":"b"}`))
+	if auth.matches(changedCall, env) {
+		t.Fatal("changed call retained permission authorization")
+	}
+	changedEnv := env
+	changedEnv.Revision = "r2"
+	if auth.matches(call, changedEnv) {
+		t.Fatal("changed environment retained permission authorization")
+	}
+}
+
 func TestADR_0342_ContextualGuardrails_Scenario6_ImplementationCalibration(t *testing.T) {
 	if defaultReviewEvidenceHandles != 16 || defaultReviewEvidenceBytes != 400_000 || defaultReviewTrajectoryFacts != 256 || defaultReviewTrajectoryBytes != 128_000 || maxHeldResults != 32 || maxHeldResultBytes != 2*1024*1024 {
 		t.Fatalf("private capacities changed without calibration: evidence=%d/%d trajectory=%d/%d held=%d/%d", defaultReviewEvidenceHandles, defaultReviewEvidenceBytes, defaultReviewTrajectoryFacts, defaultReviewTrajectoryBytes, maxHeldResults, maxHeldResultBytes)
 	}
 
-	root := newReviewRoot(nil, nil)
+	root := newReviewRoot(nil, nil, nil)
 	for i := 0; i < defaultReviewTrajectoryFacts; i++ {
 		root.record(ReviewTrajectoryFact{Call: session.ToolCallID(fmt.Sprintf("call-%03d", i)), Ref: fmt.Sprintf("ref-%03d", i), Direction: "outbound", DataClass: "external_send", TargetID: strings.Repeat("t", 300), Decision: "acceptable"})
 	}
@@ -54,7 +72,7 @@ func BenchmarkContextualReviewPrivateCapacity(b *testing.B) {
 	b.Run("trajectory-exhaustion", func(b *testing.B) {
 		b.ReportAllocs()
 		for n := 0; n < b.N; n++ {
-			root := newReviewRoot(nil, nil)
+			root := newReviewRoot(nil, nil, nil)
 			for i := 0; i <= defaultReviewTrajectoryFacts; i++ {
 				root.record(ReviewTrajectoryFact{Call: session.ToolCallID(fmt.Sprintf("call-%03d", i)), Ref: fmt.Sprintf("ref-%03d", i), Direction: "outbound", DataClass: "external_send", TargetID: strings.Repeat("t", 300), Decision: "acceptable"})
 			}
@@ -67,7 +85,7 @@ func BenchmarkContextualReviewPrivateCapacity(b *testing.B) {
 		b.ReportAllocs()
 		payload := strings.Repeat("x", int(maxHeldResultBytes/maxHeldResults))
 		for n := 0; n < b.N; n++ {
-			root := newReviewRoot(nil, nil)
+			root := newReviewRoot(nil, nil, nil)
 			for i := 0; i < maxHeldResults; i++ {
 				id := session.ToolCallID(fmt.Sprintf("call-%02d", i))
 				if !root.holdResult(heldResultKey{reviewID: string(id), session: "s", call: id}, session.NewToolResult(id, payload)) {

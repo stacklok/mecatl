@@ -5,6 +5,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // ReviewJob identifies the contextual review direction.
@@ -92,7 +93,8 @@ type ToolReviewRequest struct {
 	Capacity               ReviewCapacity
 }
 
-// ToolReviewResult is one completed contextual assessment.
+// ToolReviewResult is one completed contextual assessment. Its zero value is
+// unresolved: a nil error never makes an empty Assessment acceptable.
 type ToolReviewResult struct {
 	Assessment ReviewAssessment
 	Concerns   []ReviewConcern
@@ -113,6 +115,50 @@ type ReviewEvidence struct {
 // ReviewEvidenceSource resolves review-local evidence capabilities.
 type ReviewEvidenceSource interface {
 	ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error)
+}
+
+// ReviewEvidencePreparation is the trusted, immutable input used to mint a
+// finite evidence inventory. Owner comes from the admitted Session, never from
+// reviewer or model output. Result is non-nil only for an inbound review.
+type ReviewEvidencePreparation struct {
+	Request     ToolReviewRequest
+	Environment tool.Environment
+	Owner       *session.Principal
+	Result      *session.ToolResult
+}
+
+// PreparedReviewEvidence owns one review-local finite capability set. Close is
+// called by the Engine after any immediate human wait and binding revalidation.
+type PreparedReviewEvidence struct {
+	Source   ReviewEvidenceSource
+	Evidence []ReviewEvidenceMeta
+	Complete bool
+	Close    func()
+}
+
+// ReviewEvidencePreparer mints finite evidence capabilities under the exact
+// admitted environment and caller authority. Implementations must reject an
+// unsupported backend rather than reading through Workspace.Root as a host path.
+type ReviewEvidencePreparer interface {
+	PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)
+}
+
+// ReviewPolicyProvider declares configured applicability and enforcement. A
+// ToolReviewer without this capability retains action-only enforcement.
+type ReviewPolicyProvider interface {
+	GuardrailReviewPolicy(string, ReviewJob, bool) (applies, enforce bool)
+}
+
+// ReviewMetadataProvider projects machine-safe rule and checker-route metadata.
+type ReviewMetadataProvider interface {
+	GuardrailReviewMetadata(string, ReviewJob) (ruleID, ruleOrigin, providerID, modelID string)
+}
+
+// ReviewGrantStore is the optional session-local exact-action repeat-grant seam.
+type ReviewGrantStore interface {
+	GrantDigest(ToolReviewRequest) (string, bool)
+	AllowsGrant(string) bool
+	ArmGrant(string, string)
 }
 
 // ToolReviewer performs one contextual tool review.

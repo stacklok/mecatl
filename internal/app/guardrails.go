@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -80,23 +81,17 @@ func foldOperatorGuardrails(cfg Config) Config {
 	return cfg
 }
 
-// guardrails.go is the COMPOSITION wiring for the issue #27 LLM-backed guardrails
-// (the modelhook adapter). It builds the engine-backed VerdictChecker, compiles the
-// operator-tier rule config into the adapter's compiled rules, and decorates the
-// MAIN engine's HookRunner with a modelhook.Runner. It is OFF-by-default and
-// byte-identical to "no guardrails" when unconfigured: buildGuardrailsHooks returns
-// inner UNCHANGED.
+// guardrails.go is the composition wiring for contextual action/inbound review.
+// It builds one engine-backed ToolReviewer, compiles operator-tier rules, and
+// injects the reviewer directly at the engine's exact call/result choke points.
+// Ordinary HookRunner behavior stays generic and unwrapped.
 //
-// Recursion guard (the #1 invariant): the modelhook.Runner is wired ONLY into the
-// MAIN engine's hooks (mainHooks in buildEngine + the per-session factory's
-// re-derivation), NEVER into buildCatalog's child hooks. The checker engine is built
-// via childEngineDepsForProvider (forced inert Hooks + nil ChildAskReviewer +
-// Interactive false + tool-less catalog), so a checker call fires no hooks and can
-// never re-trigger the runner.
+// The checker engine is built through childEngineDepsForProvider with inert hooks,
+// no nested reviewer, and only the two run-scoped review tools.
 
 // engineGuardrailsChecker adapts the contextual ToolReviewer only for the narrow
-// permission escape route, whose existing adapter-local seam still consumes a
-// VerdictChecker. The hook path receives the same ToolReviewer directly.
+// permission escape route, whose existing adapter-local seam consumes a
+// VerdictChecker.
 type engineGuardrailsChecker struct {
 	reviewer agent.ToolReviewer
 }
@@ -136,10 +131,8 @@ func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckR
 	return modelhook.Verdict{Safe: &safe, Reason: reason}, nil
 }
 
-// errGuardrailVerdictUnparseable is the sentinel for a checker reply that was not a
-// single unambiguous JSON verdict object. It is treated as a checker FAILURE by the
-// Runner (fail-open by default, fail-closed when the rule opts in) — never a
-// fabricated "safe".
+// errGuardrailVerdictUnparseable is the sentinel used by the narrow escape
+// checker when contextual review cannot produce a complete decision.
 var errGuardrailVerdictUnparseable = guardrailError("guardrail checker verdict unparseable or ambiguous")
 
 func guardrailFailClosed(value string) bool {
@@ -150,6 +143,36 @@ type guardrailError string
 
 func (e guardrailError) Error() string { return string(e) }
 
+type guardrailRouteHealth struct {
+	mu         sync.RWMutex
+	seen       bool
+	inspection string
+	assessment string
+}
+
+func (h *guardrailRouteHealth) record(result agent.ToolReviewResult, err error) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.seen = true
+	if err != nil {
+		h.inspection, h.assessment = "operational_failure", ""
+		return
+	}
+	h.inspection, h.assessment = "complete", string(result.Assessment)
+}
+
+func (h *guardrailRouteHealth) snapshot() (bool, string, string) {
+	if h == nil {
+		return false, "", ""
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.seen, h.inspection, h.assessment
+}
+
 type guardrailActionReviewer struct {
 	base                agent.ToolReviewer
 	rules               []modelhook.CompiledRule
@@ -157,11 +180,11 @@ type guardrailActionReviewer struct {
 	grants              *modelhook.WaiverHolder
 	providerID, modelID string
 	ruleOrigin          string
+	health              *guardrailRouteHealth
 }
 
-// GuardrailReviewPolicy is the private engine duck-type that keeps configured
-// rule matching and enforcement posture attached to the reviewer without
-// widening the public ToolReviewer protocol.
+// GuardrailReviewPolicy implements agent.ReviewPolicyProvider so configured
+// matching and enforcement remain explicit on the primary reviewer.
 func (r *guardrailActionReviewer) GuardrailReviewPolicy(toolName string, job agent.ReviewJob, operationalFailure bool) (applies, enforce bool) {
 	phase := modelhook.PhasePre
 	if job == agent.ReviewJobInbound {
@@ -205,7 +228,9 @@ func (r *guardrailActionReviewer) Review(ctx context.Context, req agent.ToolRevi
 	if prompt := strings.TrimSpace(rule.Prompt()); prompt != "" {
 		req.PrincipalFacts = append(req.PrincipalFacts, agent.ReviewPrincipalFact{Kind: "operator_task_risk_policy", Ref: "operator-policy", Statement: prompt})
 	}
-	return r.base.Review(ctx, req, source)
+	result, err := r.base.Review(ctx, req, source)
+	r.health.record(result, err)
+	return result, err
 }
 
 func (r *guardrailActionReviewer) GrantDigest(req agent.ToolReviewRequest) (string, bool) {
@@ -268,7 +293,15 @@ func buildGuardrailsActionReviewer(cfg Config, provReg *providerRegistry, provid
 	if routed, ok := base.(interface{ GuardrailCheckerRoute() (string, string) }); ok {
 		providerID, modelID = routed.GuardrailCheckerRoute()
 	}
-	return &guardrailActionReviewer{base: base, rules: rules, failClosed: guardrailFailClosed(cfg.GuardrailsOnCheckerDown), grants: grants, providerID: providerID, modelID: modelID, ruleOrigin: origin}
+	return &guardrailActionReviewer{base: base, rules: rules, failClosed: guardrailFailClosed(cfg.GuardrailsOnCheckerDown), grants: grants, providerID: providerID, modelID: modelID, ruleOrigin: origin, health: cfg.guardrailHealth}
+}
+
+func attachGuardrailReviewer(deps *agent.Deps, reviewer agent.ToolReviewer, details agent.ReviewDetailSink) {
+	deps.ToolReviewer = reviewer
+	if preparer, ok := reviewer.(agent.ReviewEvidencePreparer); ok {
+		deps.ReviewEvidencePreparer = preparer
+	}
+	deps.ReviewDetails = details
 }
 
 func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCoverage {
@@ -294,6 +327,7 @@ func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCov
 	if !bound {
 		return coverage
 	}
+	seen, inspection, assessment := cfg.guardrailHealth.snapshot()
 	tools := append([]string(nil), authority.CapabilitySet.Tools...)
 	sort.Strings(tools)
 	for _, toolName := range tools {
@@ -306,55 +340,20 @@ func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCov
 			if phase == modelhook.PhasePost {
 				job = string(agent.ReviewJobInbound)
 			}
+			statusReason := "checker route has not yet completed an inspection"
+			if seen && inspection == "operational_failure" {
+				statusReason = "the checker route's latest inspection attempt failed operationally; no unsafe finding was inferred"
+			} else if seen {
+				statusReason = "checker route operational; last completed assessment: " + assessment
+			}
 			coverage.Entries = append(coverage.Entries, server.GuardrailCoverageEntry{
 				Tool: toolName, Phase: string(phase), Job: job, Mode: string(rule.Mode()),
-				RuleID: rule.Match(), RuleOrigin: origin,
-				Reason: "not inspected: this row reports configured applicability; completed review health appears on review events",
+				RuleID: rule.Match(), RuleOrigin: origin, Inspection: inspection,
+				Reason: statusReason,
 			})
 		}
 	}
 	return coverage
-}
-
-// returns inner UNCHANGED when guardrails are unconfigured (OFF-by-default,
-// byte-identical to the pre-feature posture). It is called at BOTH main-engine hook
-// sites — buildEngine (the shared default-provider engine) and sessionEngineFactory
-// (each per-session engine, re-derived on the session's resolved provider/model) —
-// so a FRESH Runner is built per session.
-//
-// The checker engine is built over the supplied (provider, model, window) via the
-// child deps path (childEngineDepsForProvider), so it compacts/counts on the
-// session's provider and carries the recursion-guard posture (inert hooks, nil
-// reviewer, Interactive false, tool-less catalog).
-// waiver is the SHARED "Allow & don't ask again" holder (ADR 0062): the SAME instance
-// must reach every Runner site (the shared engine + each per-session engine) so a
-// verdict armed on a session id is visible to whichever Runner that session's engine
-// carries. It is armed by the engine via the Runner's port.HookApprovalLearner on a
-// human AllowAlways verdict — NOT from a prompt scan. nil is the byte-identical
-// no-waiver posture (Allows on nil → false).
-func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, inner port.HookRunner, waiver *modelhook.WaiverHolder) port.HookRunner {
-	if !guardrailsConfigured(cfg) {
-		return inner // OFF: byte-identical to no guardrails
-	}
-	specs, _ := effectiveGuardrailSpecs(cfg)
-	rules, ok := compileGuardrailRules(cfg, specs)
-	if !ok {
-		// No usable rule (every spec was invalid and logged): leave inner unchanged
-		// rather than wire a Runner that matches nothing.
-		return inner
-	}
-	reviewer := buildGuardrailsReviewer(cfg, provReg, provider, parentProviderID)
-	if reviewer == nil {
-		return inner
-	}
-	return modelhook.New(inner, modelhook.Options{
-		Rules:             rules,
-		ToolReviewer:      reviewer,
-		Diagnostics:       cfg.diag(),
-		MinContentBytes:   cfg.GuardrailsMinContentBytes,
-		FailOnCheckerDown: guardrailFailClosed(cfg.GuardrailsOnCheckerDown),
-		Waiver:            waiver,
-	})
 }
 
 // defaultGuardrailSpecs is the built-in BLOCK rule set applied when a guardrails

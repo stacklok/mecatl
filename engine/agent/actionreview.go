@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,10 +25,6 @@ const (
 	reviewClassGenuineApproval   = "genuine_approval"
 )
 
-type reviewRuleMetadataProvider interface {
-	GuardrailReviewMetadata(string, ReviewJob) (ruleID, ruleOrigin, providerID, modelID string)
-}
-
 func reviewMachinePayload(reviewer ToolReviewer, req ToolReviewRequest, result ToolReviewResult, reviewErr error, disposition string) *session.GuardrailReviewPayload {
 	payload := &session.GuardrailReviewPayload{ReviewID: req.ReviewID, Job: string(req.Job), Assessment: string(result.Assessment), Inspection: "complete", Disposition: disposition}
 	if reviewErr != nil {
@@ -39,7 +36,7 @@ func reviewMachinePayload(reviewer ToolReviewer, req ToolReviewRequest, result T
 	} else if result.Assessment == ReviewProhibited {
 		payload.ReasonCode = "authority_crossing"
 	}
-	if metadata, ok := reviewer.(reviewRuleMetadataProvider); ok {
+	if metadata, ok := reviewer.(ReviewMetadataProvider); ok {
 		payload.RuleID, payload.RuleOrigin, payload.CheckerProviderID, payload.CheckerModelID = metadata.GuardrailReviewMetadata(req.EffectiveCall.Name, req.Job)
 	}
 	for _, concern := range result.Concerns {
@@ -54,15 +51,6 @@ func reviewMachinePayload(reviewer ToolReviewer, req ToolReviewRequest, result T
 	return payload
 }
 
-// reviewGrantIssuer is an optional composition capability implemented by the
-// contextual reviewer. It keeps keyed repeat-grant state outside the engine while
-// leaving ToolReviewer as the public review protocol.
-type reviewGrantIssuer interface {
-	GrantDigest(ToolReviewRequest) (string, bool)
-	AllowsGrant(string) bool
-	ArmGrant(string, string)
-}
-
 type reviewRoot struct {
 	mu                sync.Mutex
 	facts             []ReviewTrajectoryFact
@@ -71,6 +59,7 @@ type reviewRoot struct {
 	maxFacts          int
 	maxBytes          int64
 	reviewer          ToolReviewer
+	preparer          ReviewEvidencePreparer
 	details           ReviewDetailSink
 	principal         []ReviewPrincipalFact
 	principalComplete bool
@@ -79,8 +68,8 @@ type reviewRoot struct {
 	rootSessionID     session.SessionID
 }
 
-func newReviewRoot(reviewer ToolReviewer, details ReviewDetailSink) *reviewRoot {
-	return &reviewRoot{complete: true, maxFacts: defaultReviewTrajectoryFacts, maxBytes: defaultReviewTrajectoryBytes, reviewer: reviewer, details: details}
+func newReviewRoot(reviewer ToolReviewer, preparer ReviewEvidencePreparer, details ReviewDetailSink) *reviewRoot {
+	return &reviewRoot{complete: true, maxFacts: defaultReviewTrajectoryFacts, maxBytes: defaultReviewTrajectoryBytes, reviewer: reviewer, preparer: preparer, details: details}
 }
 
 func (r *reviewRoot) snapshot() ([]ReviewTrajectoryFact, bool) {
@@ -146,6 +135,8 @@ type actionDependency struct {
 type actionReview struct {
 	request      ToolReviewRequest
 	dependencies []actionDependency
+	source       ReviewEvidenceSource
+	close        func()
 	digest       string
 	repeat       bool
 }
@@ -194,14 +185,39 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 		Event:         governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: call.Name, Input: eventInput, SessionID: string(sess.ID), CallID: string(call.ID)},
 		EffectiveCall: effectiveCall, PrincipalFacts: facts, PrincipalFactsComplete: complete,
 		Caller: reviewCaller(e, r), Environment: env.Ref(), Target: target,
-		EvidenceComplete: true, Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
+		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxEvidenceHandles: defaultReviewEvidenceHandles, MaxEvidenceBytes: defaultReviewEvidenceBytes, MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	out := actionReview{request: req, dependencies: deps}
-	if issuer, ok := r.reviewRoot.reviewer.(reviewGrantIssuer); ok {
+	prepared := prepareReviewEvidence(ctx, r, sess, env, req, nil)
+	req.Evidence, req.EvidenceComplete = prepared.Evidence, prepared.Complete
+	out := actionReview{request: req, dependencies: deps, source: prepared.Source, close: prepared.Close}
+	if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok {
 		out.digest, out.repeat = issuer.GrantDigest(req)
 	}
 	return out
+}
+
+func prepareReviewEvidence(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, req ToolReviewRequest, result *session.ToolResult) PreparedReviewEvidence {
+	if r.reviewRoot.preparer == nil {
+		return PreparedReviewEvidence{}
+	}
+	prepared, err := r.reviewRoot.preparer.PrepareReviewEvidence(ctx, ReviewEvidencePreparation{
+		Request: req, Environment: env, Owner: sess.Owner.Clone(), Result: result,
+	})
+	if err != nil {
+		if prepared.Close != nil {
+			prepared.Close()
+		}
+		return PreparedReviewEvidence{}
+	}
+	if prepared.Close == nil {
+		prepared.Close = func() {}
+	} else {
+		closeEvidence := prepared.Close
+		var once sync.Once
+		prepared.Close = func() { once.Do(closeEvidence) }
+	}
+	return prepared
 }
 
 func reviewCaller(e *Engine, r *Run) ReviewCaller {
@@ -317,6 +333,9 @@ func (r *Run) publishReviewDetail(ctx context.Context, detail ReviewDetail) {
 }
 
 func reviewConcernDisplay(concern ReviewConcern) string {
+	if rationale := strings.TrimSpace(concern.Rationale); rationale != "" {
+		return rationale
+	}
 	switch concern.Category {
 	case "authority_crossing":
 		return "The proposed action may cross the caller's established authority."
@@ -329,7 +348,35 @@ func reviewConcernDisplay(concern ReviewConcern) string {
 	}
 }
 
-func (r *Run) publishActionDetail(ctx context.Context, sessionID session.SessionID, reviewID string, result ToolReviewResult, reviewErr error) {
+func reviewSourceDisplay(req ToolReviewRequest, sourceRef string) string {
+	switch sourceRef {
+	case "call":
+		return fmt.Sprintf("effective call %s (%s)", req.EffectiveCall.ID, req.EffectiveCall.Name)
+	case "":
+		return ""
+	}
+	for _, meta := range req.Evidence {
+		if meta.Handle == sourceRef {
+			if meta.Display != "" {
+				return meta.Display
+			}
+			return "review evidence " + meta.Kind
+		}
+	}
+	for _, fact := range req.PrincipalFacts {
+		if fact.Ref == sourceRef {
+			return fmt.Sprintf("principal fact %s (%s)", fact.Kind, fact.Ref)
+		}
+	}
+	for _, fact := range req.Trajectory {
+		if fact.Ref == sourceRef {
+			return fmt.Sprintf("prior %s %s action (%s)", fact.Direction, fact.DataClass, fact.Ref)
+		}
+	}
+	return ""
+}
+
+func (r *Run) publishActionDetail(ctx context.Context, sessionID session.SessionID, reviewID string, req ToolReviewRequest, result ToolReviewResult, reviewErr error) {
 	if r.reviewRoot.details == nil {
 		return
 	}
@@ -346,7 +393,7 @@ func (r *Run) publishActionDetail(ctx context.Context, sessionID session.Session
 		next = "Run once or cancel; missing evidence is not itself an unsafe finding."
 	}
 	for _, concern := range result.Concerns {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: concern.SourceRef, NextAction: "Run once, approve this exact repeatable action for this session when available, or cancel."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: reviewSourceDisplay(req, concern.SourceRef), NextAction: "Run once, approve this exact repeatable action for this session when available, or cancel."})
 	}
 	for _, missing := range result.Missing {
 		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: next})
@@ -366,7 +413,7 @@ type actionReviewAssessment struct {
 func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReviewAssessment {
 	action := e.prepareActionReview(ctx, r, sess, env, call)
 	assessment := actionReviewAssessment{action: action}
-	if issuer, ok := r.reviewRoot.reviewer.(reviewGrantIssuer); ok && action.repeat {
+	if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok && action.repeat {
 		assessment.grantHit = issuer.AllowsGrant(action.digest)
 	}
 	return assessment
@@ -376,10 +423,17 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 	if assessment.grantHit {
 		return
 	}
-	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.action.request, nil)
+	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.action.request, assessment.action.source)
+	if assessment.err == nil && assessment.result.Assessment != ReviewAcceptable && assessment.result.Assessment != ReviewProhibited && assessment.result.Assessment != ReviewUnresolved {
+		assessment.result.Assessment = ReviewUnresolved
+		assessment.err = errors.New("tool reviewer returned an invalid or empty assessment")
+	}
 }
 
-func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
+func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
+	if assessment.action.close != nil {
+		defer assessment.action.close()
+	}
 	if assessment.grantHit {
 		r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "repeat_grant"))
 		return session.ToolResult{}, false, true, false
@@ -398,7 +452,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 		}
 	}
 	r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, decision))
-	r.publishActionDetail(ctx, sess.ID, assessment.action.request.ReviewID, result, assessment.err)
+	r.publishActionDetail(ctx, sess.ID, assessment.action.request.ReviewID, assessment.action.request, result, assessment.err)
 	disposition := "execute"
 	if result.Assessment != ReviewAcceptable && !enforce {
 		disposition = "pass_advisory"
@@ -422,10 +476,10 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
-	return e.resolveActionAsk(ctx, r, sess, env, turnIdx, call, assessment, reason)
+	return e.resolveActionAsk(ctx, r, sess, env, turnIdx, call, auth, assessment, reason)
 }
 
-func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, assessment actionReviewAssessment, reason string) (session.ToolResult, bool, bool, bool) {
+func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment, reason string) (session.ToolResult, bool, bool, bool) {
 	ask := session.PendingAsk{
 		AskID: newAskID(sess.ID, sess.Counters.ToolCalls, call.ID, r.askDiscriminator), Tool: call.Name, Args: call.Args,
 		Reason: reason, Call: call.ID, Origin: session.ApprovalOriginHookGuardrail,
@@ -445,10 +499,15 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 		r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "denied"))
 		return res, false, false, false
 	}
-	permission := e.permissionDecision(ctx, sess, env, call)
-	if env.Ref() != assessment.action.request.Environment || permission.Effect == governance.Deny ||
-		!revalidateActionDependencies(ctx, env.Workspace(), assessment.action.dependencies) {
-		res := session.NewToolError(call.ID, "contextual guardrail approval became stale before execution")
+	allowed, cancelled, staleReason := e.reauthorizeAction(ctx, r, sess, env, turnIdx, call, auth)
+	if cancelled {
+		return session.ToolResult{}, true, false, false
+	}
+	if !allowed || !revalidateActionDependencies(ctx, env.Workspace(), assessment.action.dependencies) {
+		if staleReason == "" {
+			staleReason = "contextual guardrail approval became stale before execution"
+		}
+		res := session.NewToolError(call.ID, staleReason)
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
@@ -456,7 +515,38 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 	return session.ToolResult{}, false, true, answer.verdict == session.VerdictAllowAlways
 }
 
-func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, t tool.Tool, enqueue time.Time) (session.ToolResult, *dispatchPark, bool, bool) {
+func (e *Engine) reauthorizeAction(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization) (allowed, cancelled bool, reason string) {
+	if auth == nil || !auth.matches(call, env.Ref()) {
+		return false, false, "contextual guardrail permission binding became stale before execution"
+	}
+	current := e.permissionDecision(ctx, sess, env, call)
+	if current == auth.decision {
+		return true, false, ""
+	}
+	if current.Effect == governance.Allow {
+		auth.decision = current
+		return true, false, ""
+	}
+	if current.Effect == governance.Deny {
+		return false, false, current.Reason
+	}
+
+	decision, cancelled := e.authorizeDecision(ctx, r, sess, turnIdx, call, current)
+	if cancelled {
+		return false, true, ""
+	}
+	if decision.Effect != governance.Allow {
+		return false, false, decision.Reason
+	}
+	postApproval := e.permissionDecision(ctx, sess, env, call)
+	if postApproval == current || postApproval.Effect == governance.Allow {
+		auth.decision = postApproval
+		return true, false, ""
+	}
+	return false, false, "permission policy changed while approval was pending"
+}
+
+func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, t tool.Tool, enqueue time.Time) (session.ToolResult, *dispatchPark, bool, bool) {
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 		return session.ToolResult{}, nil, false, true
 	}
@@ -466,25 +556,31 @@ func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session
 	assessment := e.prepareActionAssessment(ctx, r, sess, env, call)
 	assessAction(ctx, r, &assessment)
 	if ctx.Err() != nil {
+		if assessment.action.close != nil {
+			assessment.action.close()
+		}
 		return session.ToolResult{}, nil, true, false
 	}
-	res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, call, assessment)
+	res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, call, auth, assessment)
 	if cancelled || !proceed {
 		return res, nil, cancelled, false
 	}
 	res, park, cancelled := e.postPreToolUse(ctx, r, sess, env, turnIdx, call, t, enqueue)
-	issuer, hasIssuer := r.reviewRoot.reviewer.(reviewGrantIssuer)
+	issuer, hasIssuer := r.reviewRoot.reviewer.(ReviewGrantStore)
 	if armGrant {
 		e.armPostActionGrant(ctx, r, sess, env, call, session.VerdictAllowAlways, assessment.action.repeat, issuer, hasIssuer, res, park, cancelled)
 	}
 	return res, park, cancelled, false
 }
 
-func (e *Engine) armPostActionGrant(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, verdict session.ApprovalVerdict, repeat bool, issuer reviewGrantIssuer, hasIssuer bool, result session.ToolResult, park *dispatchPark, cancelled bool) {
+func (e *Engine) armPostActionGrant(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, verdict session.ApprovalVerdict, repeat bool, issuer ReviewGrantStore, hasIssuer bool, result session.ToolResult, park *dispatchPark, cancelled bool) {
 	if verdict != session.VerdictAllowAlways || !repeat || !hasIssuer || park != nil || cancelled || result.IsError {
 		return
 	}
 	post := e.prepareActionReview(ctx, r, sess, env, call)
+	if post.close != nil {
+		defer post.close()
+	}
 	if post.repeat {
 		issuer.ArmGrant(post.digest, post.request.Event.SessionID)
 	}

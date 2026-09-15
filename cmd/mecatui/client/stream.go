@@ -236,6 +236,26 @@ func resumeApproval(askID string, v Verdict) *mecatlv1.ResumeApproval {
 	return &mecatlv1.ResumeApproval{AskId: askID, Allow: allow, Verdict: verdict}
 }
 
+func resumeApprovalForScope(askID string, v Verdict, scope *GuardrailApprovalScope) *mecatlv1.ResumeApproval {
+	ra := resumeApproval(askID, v)
+	if scope == nil {
+		return ra
+	}
+	ra.ReviewId = scope.ReviewID
+	switch scope.Kind {
+	case "action":
+		ra.GuardrailKind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION
+	case "result_release":
+		ra.GuardrailKind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE
+	}
+	return ra
+}
+
+// SendGuardrailApproval resolves a contextual ask while acknowledging its displayed purpose.
+func (s *Stream) SendGuardrailApproval(askID string, v Verdict, scope *GuardrailApprovalScope) error {
+	return s.sendFrame(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(askID, v, scope)}})
+}
+
 // SendApproval resolves a paused permission.ask. The server prefers the
 // three-way verdict and retains the legacy allow bool as fallback.
 func (s *Stream) SendApproval(askID string, v Verdict) error {

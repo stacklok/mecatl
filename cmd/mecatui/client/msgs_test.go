@@ -588,6 +588,17 @@ func TestAskRoundTrip(t *testing.T) {
 			}
 		})
 	}
+
+	fs := newFakeStream()
+	st := NewStream(fs, fs)
+	scope := &GuardrailApprovalScope{ReviewID: "review-release-1", Kind: "result_release"}
+	if err := st.SendGuardrailApproval("ask-release-1", VerdictAllowOnce, scope); err != nil {
+		t.Fatalf("SendGuardrailApproval: %v", err)
+	}
+	ra := fs.sentFrames()[0].GetResumeApproval()
+	if ra.GetReviewId() != scope.ReviewID || ra.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE {
+		t.Fatalf("guardrail acknowledgement = %+v", ra)
+	}
 }
 
 // TestPromptAndCancelFrames asserts the prompt-first contract and the cancel

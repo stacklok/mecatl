@@ -1223,6 +1223,8 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 // the caller falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
+	case "control.refused":
+		return RecoverNoticeMsg{Text: ev.GetText()}
 	case "model.retry":
 		return ModelRetryMsg{Text: ev.GetText()}
 	case "compaction":

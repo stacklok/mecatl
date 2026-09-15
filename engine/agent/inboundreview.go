@@ -17,10 +17,6 @@ const (
 	withheldResultText = "tool result withheld by contextual guardrail; the already-produced content was destroyed and the tool was not re-executed"
 )
 
-type guardrailReviewPolicy interface {
-	GuardrailReviewPolicy(string, ReviewJob, bool) (applies, enforce bool)
-}
-
 type heldResultKey struct {
 	reviewID string
 	session  session.SessionID
@@ -38,13 +34,15 @@ type heldResult struct {
 type inboundAssessment struct {
 	request ToolReviewRequest
 	result  ToolReviewResult
+	source  ReviewEvidenceSource
+	close   func()
 	err     error
 	applies bool
 	enforce bool
 }
 
 func reviewPolicy(reviewer ToolReviewer, toolName string, job ReviewJob, operationalFailure bool) (bool, bool) {
-	if policy, ok := reviewer.(guardrailReviewPolicy); ok {
+	if policy, ok := reviewer.(ReviewPolicyProvider); ok {
 		return policy.GuardrailReviewPolicy(toolName, job, operationalFailure)
 	}
 	// ToolReviewer predated inbound escrow. Reviewers that do not explicitly
@@ -77,9 +75,12 @@ func (e *Engine) prepareInboundAssessment(r *Run, sess *session.Session, env too
 		EffectiveCall:  session.NewToolCall(call.ID, call.Name, append(json.RawMessage(nil), call.Args...)),
 		PrincipalFacts: principal, PrincipalFactsComplete: principalComplete,
 		Caller: reviewCaller(e, r), Environment: env.Ref(), Target: target,
-		EvidenceComplete: true, Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
+		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxEvidenceHandles: defaultReviewEvidenceHandles, MaxEvidenceBytes: defaultReviewEvidenceBytes, MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
+	prepared := prepareReviewEvidence(r.ctx, r, sess, env, assessment.request, &result)
+	assessment.request.Evidence, assessment.request.EvidenceComplete = prepared.Evidence, prepared.Complete
+	assessment.source, assessment.close = prepared.Source, prepared.Close
 	return assessment
 }
 
@@ -87,7 +88,11 @@ func assessInbound(ctx context.Context, r *Run, assessment *inboundAssessment) {
 	if assessment == nil || !assessment.applies {
 		return
 	}
-	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.request, nil)
+	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.request, assessment.source)
+	if assessment.err == nil && assessment.result.Assessment != ReviewAcceptable && assessment.result.Assessment != ReviewProhibited && assessment.result.Assessment != ReviewUnresolved {
+		assessment.result.Assessment = ReviewUnresolved
+		assessment.err = errors.New("tool reviewer returned an invalid or empty assessment")
+	}
 	if assessment.err != nil {
 		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
 		var terminal interface{ GuardrailReviewTerminalFailure() bool }
@@ -114,7 +119,7 @@ func (r *Run) publishInboundDetail(ctx context.Context, sessID session.SessionID
 		return
 	}
 	for _, concern := range assessment.result.Concerns {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: concern.SourceRef, NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: reviewSourceDisplay(assessment.request, concern.SourceRef), NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
 	}
 	for _, missing := range assessment.result.Missing {
 		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
@@ -179,15 +184,20 @@ func (root *reviewRoot) bindHeldAsk(key heldResultKey, askID string) bool {
 	return true
 }
 
-func (root *reviewRoot) isReleaseAsk(askID string) bool {
+func (root *reviewRoot) releaseReviewID(askID string) (string, bool) {
 	root.mu.Lock()
 	defer root.mu.Unlock()
 	for _, held := range root.held {
 		if held.askID == askID {
-			return true
+			return held.key.reviewID, true
 		}
 	}
-	return false
+	return "", false
+}
+
+func (root *reviewRoot) isReleaseAsk(askID string) bool {
+	_, ok := root.releaseReviewID(askID)
+	return ok
 }
 
 func (root *reviewRoot) consumeHeld(key heldResultKey, askID string) (session.ToolResult, bool) {
@@ -228,6 +238,9 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 }
 
 func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult, assessment inboundAssessment) (session.ToolResult, bool) {
+	if assessment.close != nil {
+		defer assessment.close()
+	}
 	if !assessment.applies {
 		return result, false
 	}

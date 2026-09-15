@@ -175,6 +175,9 @@ type Deps struct {
 	Hooks port.HookRunner
 	// ToolReviewer performs contextual action and inbound review when configured.
 	ToolReviewer ToolReviewer
+	// ReviewEvidencePreparer mints authority-bound finite evidence inventories for
+	// each contextual review. A nil preparer yields an explicitly incomplete inventory.
+	ReviewEvidencePreparer ReviewEvidencePreparer
 	// ReviewDetails receives bounded live-only human review detail.
 	ReviewDetails ReviewDetailSink
 	// Store persists session state (optional; nil disables persistence).
@@ -917,6 +920,26 @@ func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
 func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 
+// ValidateRemoteApprovalIntent verifies transport-level acknowledgement for a
+// contextual result release without consuming the pending ask. Ordinary permission
+// and action approvals retain their compatibility behavior.
+func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error {
+	if r == nil || r.reviewRoot == nil {
+		return nil
+	}
+	expected, release := r.reviewRoot.releaseReviewID(askID)
+	if !release {
+		return nil
+	}
+	if verdict == session.VerdictAllowAlways {
+		return errors.New("result release supports only release once or deny")
+	}
+	if reviewID != expected || kind != session.GuardrailApprovalResultRelease {
+		return errors.New("result release requires an exact review_id and result_release acknowledgement; upgrade the client and retry")
+	}
+	return nil
+}
+
 // Approve resolves the permission.ask identified by askID with the client's
 // verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
 // and VerdictAllowAlways permits it AND asks the policy to learn a per-session
@@ -1438,7 +1461,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		diag: e.bindRunDiag(sess.ID),
 	}
 	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
-		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewDetails)
+		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewEvidencePreparer, e.deps.ReviewDetails)
 		r.reviewRoot.rootSessionID = sess.ID
 		r.ownsReviewRoot = true
 	}

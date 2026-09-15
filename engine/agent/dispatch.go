@@ -172,16 +172,51 @@ func orderedDispatchResults(calls []session.ToolCall, results map[session.ToolCa
 	return ordered
 }
 
+// permissionAuthorization binds a completed ordinary authorization to the exact
+// call, environment revision, and policy decision that produced it. A later
+// contextual-review wait may reuse an approved Ask only while this binding still
+// compares equal; a newly required Ask must pass through authorizeDecision.
+type permissionAuthorization struct {
+	call     session.ToolCall
+	env      session.EnvironmentRef
+	decision governance.PermissionDecision
+}
+
+func (a permissionAuthorization) matches(call session.ToolCall, env session.EnvironmentRef) bool {
+	return a.call.ID == call.ID && a.call.Name == call.Name && string(a.call.Args) == string(call.Args) && a.env == env
+}
+
 type readBatchPending struct {
 	call       session.ToolCall
 	t          tool.Tool
+	auth       permissionAuthorization
 	assessment *actionReviewAssessment
 	record     executionRecord
 	armGrant   bool
 }
 
-func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, out map[session.ToolCallID]session.ToolResult) ([]readBatchPending, bool) {
-	var prepared []readBatchPending
+func closeActionAssessments(prepared []readBatchPending) {
+	for i := range prepared {
+		if prepared[i].assessment != nil && prepared[i].assessment.action.close != nil {
+			prepared[i].assessment.action.close()
+		}
+	}
+}
+
+func closePreparedOnCancel(prepared *[]readBatchPending, cancelled *bool) {
+	if *cancelled {
+		closeActionAssessments(*prepared)
+	}
+}
+
+func closeInboundAssessment(assessment inboundAssessment) {
+	if assessment.close != nil {
+		assessment.close()
+	}
+}
+
+func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, batch []session.ToolCall, out map[session.ToolCallID]session.ToolResult) (prepared []readBatchPending, cancelled bool) {
+	defer closePreparedOnCancel(&prepared, &cancelled)
 	for _, c := range batch {
 		c := c
 		t, _ := e.lookupTool(r, c.Name)
@@ -194,7 +229,7 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 			out[c.ID] = res
 			continue
 		}
-		decision, cancelled := e.authorize(ctx, r, sess, env, turnIdx, c)
+		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, turnIdx, c)
 		if cancelled {
 			return nil, true
 		}
@@ -221,7 +256,7 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 			continue
 		}
 		if string(pre.effective.Args) != string(c.Args) {
-			decision, cancelled = e.authorize(ctx, r, sess, env, turnIdx, pre.effective)
+			decision, auth, cancelled = e.authorizeBound(ctx, r, sess, env, turnIdx, pre.effective)
 			if cancelled {
 				return nil, true
 			}
@@ -238,7 +273,7 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 			e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			continue
 		}
-		p := readBatchPending{call: pre.effective, t: actualTool}
+		p := readBatchPending{call: pre.effective, t: actualTool, auth: auth}
 		if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
 			if applies, _ := reviewPolicy(r.reviewRoot.reviewer, pre.effective.Name, ReviewJobAction, false); applies {
 				assessment := e.prepareActionAssessment(ctx, r, sess, env, pre.effective)
@@ -259,6 +294,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	if cancelled {
 		return nil, true
 	}
+	defer closeActionAssessments(prepared)
 
 	// Only the independent reviewer invocation fans out. All permission, trusted
 	// mutation, immutable request preparation, grant lookup, and tool classification
@@ -284,7 +320,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	toRun := make([]readBatchPending, 0, len(prepared))
 	for _, p := range prepared {
 		if p.assessment != nil {
-			res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, p.call, *p.assessment)
+			res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, p.call, &p.auth, *p.assessment)
 			if cancelled {
 				return nil, true
 			}
@@ -300,10 +336,15 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	cleared := toRun[:0]
 	for _, p := range toRun {
 		if p.assessment != nil {
-			permission := e.permissionDecision(ctx, sess, env, p.call)
-			if env.Ref() != p.assessment.action.request.Environment || permission.Effect == governance.Deny ||
-				!revalidateActionDependencies(ctx, env.Workspace(), p.assessment.action.dependencies) {
-				res := session.NewToolError(p.call.ID, "contextual guardrail binding became stale before execution")
+			allowed, askCancelled, reason := e.reauthorizeAction(ctx, r, sess, env, turnIdx, p.call, &p.auth)
+			if askCancelled {
+				return nil, true
+			}
+			if !allowed || !revalidateActionDependencies(ctx, env.Workspace(), p.assessment.action.dependencies) {
+				if reason == "" {
+					reason = "contextual guardrail binding became stale before execution"
+				}
+				res := session.NewToolError(p.call.ID, reason)
 				out[p.call.ID] = res
 				e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 				continue
@@ -334,6 +375,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 		var result session.ToolResult
 		if cancelled || ctx.Err() != nil {
 			cancelled = true
+			closeInboundAssessment(p.record.assessment)
 			if p.record.assessment.request.ReviewID != "" {
 				key := heldResultKey{reviewID: p.record.assessment.request.ReviewID, session: sess.ID, call: p.call.ID, env: env.Ref()}
 				r.reviewRoot.dropHeld(key)
@@ -354,7 +396,7 @@ func (e *Engine) armReadBatchGrants(ctx context.Context, r *Run, sess *session.S
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 		return
 	}
-	issuer, hasIssuer := r.reviewRoot.reviewer.(reviewGrantIssuer)
+	issuer, hasIssuer := r.reviewRoot.reviewer.(ReviewGrantStore)
 	for _, p := range pending {
 		if p.armGrant && p.assessment != nil {
 			e.armPostActionGrant(ctx, r, sess, env, p.call, session.VerdictAllowAlways, p.assessment.action.repeat, issuer, hasIssuer, results[p.call.ID], nil, false)
@@ -729,8 +771,16 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}
+	decision := e.permissionDecision(ctx, sess, env, pendingCall)
+	auth := permissionAuthorization{call: pendingCall, env: env.Ref(), decision: decision}
+	if decision.Effect == governance.Deny {
+		res := denyResult(pendingCall, decision.Reason)
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, nil, false
+	}
 	if string(pre.effective.Args) != string(pendingCall.Args) {
-		decision := e.permissionDecision(ctx, sess, env, pre.effective)
+		decision = e.permissionDecision(ctx, sess, env, pre.effective)
+		auth = permissionAuthorization{call: pre.effective, env: env.Ref(), decision: decision}
 		if decision.Effect != governance.Allow {
 			reason := decision.Reason
 			if decision.Effect == governance.Ask {
@@ -745,7 +795,7 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 	if e.deps.Clock != nil {
 		enqueue = e.deps.Clock.Now()
 	}
-	if res, park, cancelled, proceed := e.reviewAction(ctx, r, sess, env, turnIdx, pre.effective, t, enqueue); !proceed {
+	if res, park, cancelled, proceed := e.reviewAction(ctx, r, sess, env, turnIdx, pre.effective, &auth, t, enqueue); !proceed {
 		return res, park, cancelled
 	}
 	return e.postPreToolUse(ctx, r, sess, env, turnIdx, pre.effective, t, enqueue)
@@ -784,7 +834,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 		return res, nil, cancelled
 	}
 
-	decision, cancelled := e.authorize(ctx, r, sess, env, turnIdx, c)
+	decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, turnIdx, c)
 	if cancelled {
 		return session.ToolResult{}, nil, true
 	}
@@ -813,7 +863,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 	// A trusted mutation runs once, then every deterministic gate is evaluated on
 	// the byte-exact effective call. Unchanged calls do not incur a duplicate ask.
 	if string(pre.effective.Args) != string(c.Args) {
-		decision, cancelled = e.authorize(ctx, r, sess, env, turnIdx, pre.effective)
+		decision, auth, cancelled = e.authorizeBound(ctx, r, sess, env, turnIdx, pre.effective)
 		if cancelled {
 			return session.ToolResult{}, nil, true
 		}
@@ -823,7 +873,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 			return res, nil, false
 		}
 	}
-	if res, park, cancelled, proceed := e.reviewAction(ctx, r, sess, env, turnIdx, pre.effective, t, enqueue); !proceed {
+	if res, park, cancelled, proceed := e.reviewAction(ctx, r, sess, env, turnIdx, pre.effective, &auth, t, enqueue); !proceed {
 		return res, park, cancelled
 	}
 	return e.postPreToolUse(ctx, r, sess, env, turnIdx, pre.effective, t, enqueue)
@@ -971,13 +1021,14 @@ func systemScopeApprovalArgs(c session.ToolCall) []byte {
 	return out
 }
 
-// authorize evaluates the permission policy for a call and, on Ask, pauses the
-// loop until the client approves or denies (or ctx cancels). It returns the
-// effective decision (Allow or Deny — an approved Ask becomes Allow, a denied or
-// cancelled Ask becomes Deny) and a cancelled flag set only when ctx was
-// cancelled while awaiting.
-func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall) (governance.PermissionDecision, bool) {
+func (e *Engine) authorizeBound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall) (governance.PermissionDecision, permissionAuthorization, bool) {
 	decision := e.permissionDecision(ctx, sess, env, c)
+	auth := permissionAuthorization{call: c, env: env.Ref(), decision: decision}
+	effective, cancelled := e.authorizeDecision(ctx, r, sess, turnIdx, c, decision)
+	return effective, auth, cancelled
+}
+
+func (e *Engine) authorizeDecision(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, decision governance.PermissionDecision) (governance.PermissionDecision, bool) {
 	if decision.Effect != governance.Ask {
 		// Operator visibility for a policy DENY: the deny reason otherwise reaches
 		// only the client event (via denyResult), never the operator channel. Emit

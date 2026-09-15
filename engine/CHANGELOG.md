@@ -13,10 +13,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Remote contextual-approval intent validation** — adds `agent.Run.ValidateRemoteApprovalIntent` so transport adapters can require an exact review/purpose acknowledgement before releasing a privately held tool result, without consuming the pending ask. Added (minor).
+
 - **Contextual guardrail foundation** — adds the consumer-local `agent.ToolReviewer`,
-  `ReviewEvidenceSource`, and `ReviewDetailSink` interfaces and their bounded request,
-  result, evidence, trajectory, and detail value types. Adds session-owned machine
-  projections for guardrail reviews and approval scopes, plus explicit
+  `ReviewEvidenceSource`, `ReviewEvidencePreparer`, explicit review policy/metadata/grant
+  extension interfaces, and `ReviewDetailSink`, with bounded request, result, evidence,
+  trajectory, preparation, and detail value types. Adds `tool.BoundedWorkspaceReader` so
+  evidence-capable workspaces can reject oversized reads before allocation. Adds
+  session-owned machine projections for guardrail reviews and approval scopes, plus explicit
   `session.ApprovalOrigin` on pending and durable approval records. Added (minor).
 
 - **Explicit approval origin** — replaces `session.PendingAsk.HookOriginated`,

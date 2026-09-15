@@ -78,6 +78,19 @@ func TestADR_0342_ContextualGuardrails_Scenario6_RubricContract(t *testing.T) {
 	}
 }
 
+func TestParseReviewAssessmentRejectsNestedDuplicateKeys(t *testing.T) {
+	req := reviewRequestWithoutEvidence()
+	state := newReviewToolState(req, nil)
+	for _, raw := range []string{
+		`{"assessment":"prohibited","assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`,
+		`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"unsafe","rationale":"benign","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`,
+	} {
+		if result, err := parseReviewAssessment(raw, req, state); err == nil {
+			t.Fatalf("duplicate-key assessment accepted as %+v", result)
+		}
+	}
+}
+
 func TestContextualReviewerFactoryPromptAndJobSeparation(t *testing.T) {
 	var got port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { got = req })},

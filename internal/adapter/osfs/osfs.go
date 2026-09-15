@@ -967,6 +967,35 @@ func (w *Workspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.
 	return data, osfsVersion(data), nil
 }
 
+// ReadVersionBounded reads through the confined os.Root and limits allocation
+// before content is materialized. A concurrent growth past maxBytes is detected
+// by the maxBytes+1 sentinel read and rejected.
+func (w *Workspace) ReadVersionBounded(_ context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	if maxBytes < 0 {
+		return nil, tool.FileVersion{}, errors.New("osfs: negative bounded read limit")
+	}
+	r, rel, err := w.fs.resolveRead(path)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	if info, statErr := r.Stat(rel); statErr == nil && info.Size() > maxBytes {
+		return nil, tool.FileVersion{}, fmt.Errorf("osfs: file %q is %d bytes, exceeds the %d-byte bounded read limit", path, info.Size(), maxBytes)
+	}
+	file, err := r.Open(rel)
+	if err != nil {
+		return nil, tool.FileVersion{}, mapEscape(path, err)
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, tool.FileVersion{}, fmt.Errorf("osfs: file %q exceeds the %d-byte bounded read limit", path, maxBytes)
+	}
+	return data, osfsVersion(data), nil
+}
+
 // osfsVersion mints a FileVersion from content bytes (sha256 via
 // hashutil.SHA256Hex, the shared adapter-layer fingerprint primitive). It is
 // the single osfs version primitive, shared by ReadVersion/CreateFile/

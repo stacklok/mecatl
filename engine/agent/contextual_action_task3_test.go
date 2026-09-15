@@ -73,6 +73,18 @@ func TestADR_0342_ContextualGuardrails_Scenario1_EffectiveCallOrder(t *testing.T
 	}
 }
 
+type noExternalEvidenceSource struct{}
+
+func (noExternalEvidenceSource) ReadReviewEvidence(context.Context, agent.ReviewEvidenceRequest) (agent.ReviewEvidence, error) {
+	return agent.ReviewEvidence{}, fmt.Errorf("no evidence handles were advertised")
+}
+
+type noExternalEvidencePreparer struct{}
+
+func (noExternalEvidencePreparer) PrepareReviewEvidence(context.Context, agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+	return agent.PreparedReviewEvidence{Source: noExternalEvidenceSource{}, Complete: true}, nil
+}
+
 type scenario1GrantReviewer struct {
 	mu      sync.Mutex
 	reviews int
@@ -123,7 +135,7 @@ func TestADR_0342_ContextualGuardrails_Scenario1_ExactRepeatGrant(t *testing.T) 
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("first", "Write", args)),
 		mockllm.ToolCallTurn(session.NewToolCall("second", "Write", args)),
-		mockllm.TextTurn("done")), Catalog: cat, Policy: policy, ToolReviewer: reviewer, Interactive: true})
+		mockllm.TextTurn("done")), Catalog: cat, Policy: policy, ToolReviewer: reviewer, ReviewEvidencePreparer: noExternalEvidencePreparer{}, Interactive: true})
 	run := eng.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "write it"})
 	asks := 0
 	for ev := range run.Events() {

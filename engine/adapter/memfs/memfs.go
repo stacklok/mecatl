@@ -287,6 +287,28 @@ func (w *Workspace) ReadVersion(_ context.Context, p string) ([]byte, tool.FileV
 	return out, versionOf(n.data), nil
 }
 
+// ReadVersionBounded returns one consistent snapshot without allocating beyond
+// the caller's byte limit.
+func (w *Workspace) ReadVersionBounded(_ context.Context, p string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	if maxBytes < 0 {
+		return nil, tool.FileVersion{}, errors.New("memfs: negative bounded read limit")
+	}
+	key, err := cleanPath(p)
+	if err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	w.fs.mu.RLock()
+	defer w.fs.mu.RUnlock()
+	n, ok := w.fs.files[key]
+	if !ok {
+		return nil, tool.FileVersion{}, fmt.Errorf("memfs: open %q: %w", p, ErrNotExist)
+	}
+	if int64(len(n.data)) > maxBytes {
+		return nil, tool.FileVersion{}, fmt.Errorf("memfs: file %q is %d bytes, exceeds the %d-byte bounded read limit", p, len(n.data), maxBytes)
+	}
+	return bytes.Clone(n.data), versionOf(n.data), nil
+}
+
 // Write is an adapter-public bootstrap operation, deliberately outside
 // tool.Workspace; tools use CreateFile/ReplaceFile instead.
 func (w *Workspace) Write(ctx context.Context, p string, data []byte) error {

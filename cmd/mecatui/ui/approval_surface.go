@@ -136,6 +136,9 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
 		if detail.Err == nil && s.ask.guardrail != nil && detail.Detail.ReviewID == s.ask.guardrail.ReviewID {
 			s.ask.reviewDetail = detail.Detail
+			s.ask.reviewDetailUnavailable = false
+		} else if detail.Err != nil && s.ask.guardrail != nil {
+			s.ask.reviewDetailUnavailable = true
 		}
 		return nil, true, false
 	}
@@ -189,11 +192,12 @@ func (s *approvalSurface) modalPlacement() modalPlacement {
 }
 
 type approvalResolvedIntent struct {
-	askID   string
-	verdict client.Verdict
-	notice  string
-	advance approvalAdvance
-	resume  phase
+	askID     string
+	verdict   client.Verdict
+	guardrail *client.GuardrailApprovalScope
+	notice    string
+	advance   approvalAdvance
+	resume    phase
 }
 
 func (approvalResolvedIntent) isSurfaceIntent() {}
@@ -347,7 +351,7 @@ func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
 		}
 	}
 	return approvalResolvedIntent{
-		askID: askID, verdict: v, notice: notice,
+		askID: askID, verdict: v, guardrail: s.ask.guardrail, notice: notice,
 		advance: s.advance(), resume: s.restoredPhase(),
 	}
 }
@@ -496,14 +500,15 @@ func (s *approvalSurface) approvalExpandToggle() (approval bool) {
 // a surfaced subagent ask (a child engine's permission policy has a nil learn
 // store, so always-allow would be a silent no-op there).
 type pendingAsk struct {
-	AskID          string
-	Tool           string
-	Args           string
-	Reason         string
-	focusedVerdict client.Verdict
-	offerAlways    bool
-	guardrail      *client.GuardrailApprovalScope
-	reviewDetail   client.GuardrailReviewDetail
+	AskID                   string
+	Tool                    string
+	Args                    string
+	Reason                  string
+	focusedVerdict          client.Verdict
+	offerAlways             bool
+	guardrail               *client.GuardrailApprovalScope
+	reviewDetail            client.GuardrailReviewDetail
+	reviewDetailUnavailable bool
 }
 
 // isPlanAsk reports whether a permission ask is a plan-approval gate (the model
@@ -865,6 +870,26 @@ func guardrailApprovalDescription(scope *client.GuardrailApprovalScope) string {
 	return "Action review: Run once or Cancel. Repeat approval is unavailable because the complete action scope could not be version-bound."
 }
 
+func writeGuardrailApprovalDetail(b *strings.Builder, th theme.Theme, ask pendingAsk, width int) {
+	contentWidth := askArgsCardContentWidth(th, width)
+	write := func(text string) {
+		b.WriteString(th.Style("muted").Render(wrapApprovalReason(text, contentWidth)) + "\n")
+	}
+	write(guardrailApprovalDescription(ask.guardrail))
+	if ask.reviewDetailUnavailable {
+		write("Detailed explanation unavailable or expired; the displayed guardrail purpose still applies.")
+	}
+	if ask.reviewDetail.Concern != "" {
+		write("Concern: " + ask.reviewDetail.Concern)
+	}
+	if ask.reviewDetail.SourceDisplay != "" {
+		write("Source: " + ask.reviewDetail.SourceDisplay)
+	}
+	if ask.reviewDetail.NextAction != "" {
+		write("Next: " + ask.reviewDetail.NextAction)
+	}
+}
+
 func (s *approvalSurface) permissionModalBodyParts(width, height int) (body string, buttonsRow int) {
 	th := s.deps.theme
 	ask := s.ask
@@ -894,17 +919,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	b.WriteString(title + "\n\n")
 	b.WriteString(th.Style("toolName").Render(sanitizeTerminal(ask.Tool)) + "\n")
 	if ask.guardrail != nil {
-		kind := guardrailApprovalDescription(ask.guardrail)
-		b.WriteString(th.Style("muted").Render(wrapApprovalReason(kind, askArgsCardContentWidth(th, width))) + "\n")
-		if ask.reviewDetail.Concern != "" {
-			b.WriteString(th.Style("muted").Render(wrapApprovalReason("Concern: "+ask.reviewDetail.Concern, askArgsCardContentWidth(th, width))) + "\n")
-			if ask.reviewDetail.SourceDisplay != "" {
-				b.WriteString(th.Style("muted").Render(wrapApprovalReason("Source: "+ask.reviewDetail.SourceDisplay, askArgsCardContentWidth(th, width))) + "\n")
-			}
-			if ask.reviewDetail.NextAction != "" {
-				b.WriteString(th.Style("muted").Render(wrapApprovalReason("Next: "+ask.reviewDetail.NextAction, askArgsCardContentWidth(th, width))) + "\n")
-			}
-		}
+		writeGuardrailApprovalDetail(&b, th, ask, width)
 	}
 	// Prefer a concrete diff for Edit/Write. It is always capped to the rows left
 	// above the pinned actions; ctrl+t opens the complete, scrollable diff in the

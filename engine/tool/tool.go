@@ -337,6 +337,14 @@ type WorkspaceReader interface {
 	Stat(ctx context.Context, path string) (FileInfo, error)
 }
 
+// BoundedWorkspaceReader is the optional evidence-safe versioned read seam.
+// ReadVersionBounded must reject content larger than maxBytes before allocating
+// more than maxBytes+1 bytes and must return content and version from one
+// consistent snapshot. Callers must fail closed when a Workspace lacks it.
+type BoundedWorkspaceReader interface {
+	ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
+}
+
 // AuthorityResourceResolver derives the physical, workspace-confined identity of a
 // local path for authority evaluation. Implementations must resolve symlinks using
 // the same rules as filesystem access and reject an escape or any ambiguous path.

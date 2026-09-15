@@ -69,7 +69,7 @@ func guardrailCoverageNotice(coverage client.GuardrailCoverage) string {
 			status = "checker outage (not an unsafe finding)"
 		}
 		if status == "" || status == "unknown" {
-			status = "health unavailable"
+			status = "not yet checked"
 		}
 		fmt.Fprintf(&b, "• %s %s (%s): %s · %s · rule %s/%s", sanitizeTerminal(entry.Tool), sanitizeTerminal(entry.Phase), sanitizeTerminal(entry.Job), sanitizeTerminal(entry.Mode), sanitizeTerminal(status), sanitizeTerminal(entry.RuleOrigin), sanitizeTerminal(entry.RuleID))
 		if entry.Reason != "" {

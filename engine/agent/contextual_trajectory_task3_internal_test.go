@@ -8,7 +8,7 @@ import (
 )
 
 func TestADR_0342_ContextualGuardrails_Scenario4_Retention(t *testing.T) {
-	root := newReviewRoot(nil, nil)
+	root := newReviewRoot(nil, nil, nil)
 	root.maxFacts = 2
 	root.maxBytes = 256
 	one := ReviewTrajectoryFact{Call: "one", Ref: "one", Direction: "local", DataClass: "sensitive_read", TargetID: "a", Decision: "acceptable"}

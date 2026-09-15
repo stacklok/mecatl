@@ -1291,6 +1291,17 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	}
 }
 
+func guardrailApprovalKindFromProto(kind mecatlv1.GuardrailApprovalKind) session.GuardrailApprovalKind {
+	switch kind {
+	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:
+		return session.GuardrailApprovalAction
+	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE:
+		return session.GuardrailApprovalResultRelease
+	default:
+		return ""
+	}
+}
+
 // verdictFromResumeApproval derives the session.ApprovalVerdict from a
 // ResumeApproval frame, preferring the explicit `verdict` enum and falling back
 // to the legacy `allow` bool for clients that predate it (BACK-COMPAT). The

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode"
@@ -123,11 +124,24 @@ func joinReviewDetail(left, right string) string {
 	return safeReviewDetail(left + "; " + right)
 }
 
+var reviewSecretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*\s*[:=]\s*)\S+`),
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]+\b`),
+}
+
+func redactReviewSecrets(value string) string {
+	for _, pattern := range reviewSecretPatterns {
+		value = pattern.ReplaceAllString(value, `${1}[REDACTED]`)
+	}
+	return value
+}
+
 func safeReviewDetail(value string) string {
 	if len(value) > maxReviewDetailInputBytes {
 		value = value[:maxReviewDetailInputBytes]
 	}
 	value = session.ToValidUTF8(value)
+	value = redactReviewSecrets(value)
 	value = governance.NeutraliseFraming(value)
 	value = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {

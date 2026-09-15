@@ -3,7 +3,13 @@
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
     ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
     ifacemethod func (ReviewDetailSink).PublishReviewDetail(context.Context, ReviewDetail)
+    ifacemethod func (ReviewEvidencePreparer).PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)
     ifacemethod func (ReviewEvidenceSource).ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error)
+    ifacemethod func (ReviewGrantStore).AllowsGrant(string) bool
+    ifacemethod func (ReviewGrantStore).ArmGrant(string, string)
+    ifacemethod func (ReviewGrantStore).GrantDigest(ToolReviewRequest) (string, bool)
+    ifacemethod func (ReviewMetadataProvider).GuardrailReviewMetadata(string, ReviewJob) (ruleID string, ruleOrigin string, providerID string, modelID string)
+    ifacemethod func (ReviewPolicyProvider).GuardrailReviewPolicy(string, ReviewJob, bool) (applies bool, enforce bool)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
     ifacemethod func (ToolReviewer).Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)
@@ -49,6 +55,7 @@
     method func (*Run).Outcome() RunOutcome
     method func (*Run).RetractPermissionAsk(askID string) bool
     method func (*Run).RunID() string
+    method func (*Run).ValidateRemoteApprovalIntent(askID string, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
     method func (*ScheduleQueryTool).Spec() tool.ToolSpec
@@ -155,6 +162,7 @@ func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
 func NewUserModelObserver(engine *Engine) *UserModelReviewer
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
 func ParseReflectionOutcome(in learning.Input, raw []byte, limits ReflectionLimits) (learning.Outcome, error)
+func RejectDuplicateJSONKeys(raw []byte) error
 func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool)
 func StripLoneCodeFence(s string) string
@@ -231,7 +239,7 @@ type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
 type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
 type DelegationTightening struct{Tools []string "json:\"tools,omitempty\""; RemainingDelegationDepth *int "json:\"remaining_delegation_depth,omitempty\""; FileSystem *bool "json:\"filesystem,omitempty\""; DirectWrite *bool "json:\"direct_write,omitempty\""}
-type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; AuthorityEvaluator port.AuthorityEvaluator; Hooks port.HookRunner; ToolReviewer ToolReviewer; ReviewDetails ReviewDetailSink; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; EnableDurableEvidence bool; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue; EnableSteer bool}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; AuthorityEvaluator port.AuthorityEvaluator; Hooks port.HookRunner; ToolReviewer ToolReviewer; ReviewEvidencePreparer ReviewEvidencePreparer; ReviewDetails ReviewDetailSink; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; EnableDurableEvidence bool; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue; EnableSteer bool}
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)
@@ -252,6 +260,7 @@ type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
+type PreparedReviewEvidence struct{Source ReviewEvidenceSource; Evidence []ReviewEvidenceMeta; Complete bool; Close func()}
 type PreparedRun struct{}
 type PreparedRunTransition string
 type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
@@ -265,11 +274,16 @@ type ReviewDetail struct{SessionID session.SessionID; ReviewID string; Concern s
 type ReviewDetailSink interface{PublishReviewDetail(context.Context, ReviewDetail)}
 type ReviewEvidence struct{Handle string; Kind string; Version string; Complete bool; Content string}
 type ReviewEvidenceMeta struct{Handle string; Kind string; Display string; Version string; Complete bool}
+type ReviewEvidencePreparation struct{Request ToolReviewRequest; Environment tool.Environment; Owner *session.Principal; Result *session.ToolResult}
+type ReviewEvidencePreparer interface{PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)}
 type ReviewEvidenceRequest struct{ReviewID string; Handle string; Version string}
 type ReviewEvidenceSource interface{ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error)}
 type ReviewEvidenceUse struct{Handle string; Version string; Supports []string}
+type ReviewGrantStore interface{AllowsGrant(string) bool; ArmGrant(string, string); GrantDigest(ToolReviewRequest) (string, bool)}
 type ReviewJob string
+type ReviewMetadataProvider interface{GuardrailReviewMetadata(string, ReviewJob) (ruleID string, ruleOrigin string, providerID string, modelID string)}
 type ReviewMissingEvidence struct{Ref string; Kind string; Handle string; Reason string}
+type ReviewPolicyProvider interface{GuardrailReviewPolicy(string, ReviewJob, bool) (applies bool, enforce bool)}
 type ReviewPrincipalFact struct{Kind string; Ref string; Statement string; PositiveVerdict bool}
 type ReviewTarget struct{Kind string; Display string; DestinationID string}
 type ReviewTrajectoryFact struct{Call session.ToolCallID; Ref string; Direction string; DataClass string; TargetID string; Decision string}

@@ -48,10 +48,18 @@ func approvalSurfaceFor(m *Model) *approvalSurface {
 // approvalSendCmd is the one approval transport command. The Model captures the
 // current stream before returning the command, preserving the existing resolved
 // correlation and nil-stream behavior without exposing transport to the surface.
-func (m *Model) approvalSendCmd(askID string, verdict client.Verdict) tea.Cmd {
+func (m *Model) approvalSendCmd(askID string, verdict client.Verdict, guardrail *client.GuardrailApprovalScope) tea.Cmd {
 	if authorizationStream := m.authorization.controlStream; authorizationStream != nil && m.authorization.runningControlGen == m.authorization.controlGen {
 		authorizationStream.MarkApprovalResolved(askID)
 		return func() tea.Msg {
+			if scoped, ok := any(authorizationStream).(interface {
+				SendGuardrailApproval(string, client.Verdict, *client.GuardrailApprovalScope) error
+			}); ok && guardrail != nil {
+				if err := scoped.SendGuardrailApproval(askID, verdict, guardrail); err != nil {
+					return client.StreamErrMsg{Err: err}
+				}
+				return nil
+			}
 			if err := authorizationStream.SendApproval(askID, verdict); err != nil {
 				return client.StreamErrMsg{Err: err}
 			}
@@ -64,7 +72,13 @@ func (m *Model) approvalSendCmd(askID string, verdict client.Verdict) tea.Cmd {
 	}
 	stream.MarkApprovalResolved(askID)
 	return func() tea.Msg {
-		if err := stream.SendApproval(askID, verdict); err != nil {
+		var err error
+		if guardrail != nil {
+			err = stream.SendGuardrailApproval(askID, verdict, guardrail)
+		} else {
+			err = stream.SendApproval(askID, verdict)
+		}
+		if err != nil {
 			return client.StreamErrMsg{Err: err}
 		}
 		return nil
@@ -77,7 +91,7 @@ func (m Model) applyApprovalSurfaceIntent(intent surfaceIntent) (model tea.Model
 	switch intent := intent.(type) {
 	case approvalResolvedIntent:
 		m.conv.addNotice(intent.notice)
-		cmd := (&m).approvalSendCmd(intent.askID, intent.verdict)
+		cmd := (&m).approvalSendCmd(intent.askID, intent.verdict, intent.guardrail)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, cmd)
 		return model, cmd, true, stopSurfaceDispatch
 	case approvalRetractedIntent:

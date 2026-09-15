@@ -804,6 +804,7 @@ type Config struct {
 	guardrailSource     guardrailSource
 	guardrailConfigured bool
 	guardrailDetails    *server.ReviewDetailRegistry
+	guardrailHealth     *guardrailRouteHealth
 
 	// Slash commands: directory of <name>.md templates; EnableCommands turns on the
 	// default directories when CommandsDir is empty.
@@ -1995,6 +1996,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		cfg.ToolHiveEnabled = false
 	}
 	cfg.guardrailDetails = server.NewReviewDetailRegistry()
+	cfg.guardrailHealth = &guardrailRouteHealth{}
 	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, engineStore, agentReg)
 	if err != nil {
 		childLiveness.Close()
@@ -3260,9 +3262,9 @@ func sessionEngineFactoryWithTools(
 		// The three utility engines pin utilityProvider (the OPERATOR-DEFAULT effort), NOT
 		// resolvedProvider — reasoning effort binds the agent, not the harness's internal
 		// classifier/one-turn calls (ADR 0055).
-		deps.ToolReviewer = buildGuardrailsActionReviewer(cfg, reg, utilityProvider, resolvedProviderID, guardrailWaiver)
-		deps.ReviewDetails = cfg.guardrailDetails
-		deps.Hooks = buildGuardrailsHooks(cfg, reg, utilityProvider, resolvedProviderID, resolvedModel, deps.Hooks, guardrailWaiver)
+		attachGuardrailReviewer(&deps, buildGuardrailsActionReviewer(cfg, reg, utilityProvider, resolvedProviderID, guardrailWaiver), cfg.guardrailDetails)
+		// Contextual review runs at the engine action/result choke points. Ordinary
+		// hooks remain the unwrapped generic chain; there is no legacy checker wrapper.
 		// The OPT-IN child-ask reviewer (issue #31), RE-DERIVED on this session's
 		// resolved (provider, model) through the same attachAskAdjudicator the shared
 		// engine uses — never a clone-and-swap of the build-time reviewer.
@@ -4073,21 +4075,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// volatile system-prompt suffix below.
 	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
 
-	// Guardrails decorate the ordinary hook chain. Completion learning has its own
-	// synchronous engine seam and no longer shares Stop-hook ownership.
+	// Contextual review runs at the engine's exact action/result choke points;
+	// preserve the ordinary generic hook chain without a legacy reviewer wrapper.
 	mainHooks := hooks
-	// Guardrails (issue #27): decorate the MAIN engine's hooks with the LLM-backed
-	// PreToolUse/PostToolUse content checker. modelhook wraps the userModelReview
-	// chain so the inner hooks run FIRST and the checker SECOND (decision 5). It is
-	// OFF-by-default (returns mainHooks UNCHANGED when unconfigured) and is wired ONLY
-	// here + in the per-session factory — NEVER into buildCatalog's child hooks (the
-	// recursion guard). The shared engine's checker rides the default provider/model.
-	// The Build-owned contextual repeat-grant holder is shared by the default and
-	// every per-session action reviewer. It owns the random HMAC key and live grants;
-	// Service receives only its session-clear callback below.
 	guardrailWaiver := modelhook.NewWaiverHolder()
 	assets.guardrailGrants = guardrailWaiver
-	mainHooks = buildGuardrailsHooks(cfg, reg, provider, reg.Default(), cfg.Model, mainHooks, guardrailWaiver)
 
 	// Path-escape posture (Scenarios 2+3): wrap the MAIN policy with the
 	// root-aware escape decision. The shared engine (below) AND every
@@ -4098,9 +4090,8 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the workspace factory relaxes the osfs workspace over the SAME root —
 	// the policy decision and the workspace serving can never disagree.
 	// ADR 0080 (auto + the operator-tier escape knob): arm the guardrail-routed
-	// escape pre-check on the MAIN policy ONLY. The checker is built over the
-	// SAME engine-backed VerdictChecker the modelhook hook path uses (the
-	// recursion guard and operator-tier-only config carry over); the option is a
+	// escape pre-check on the MAIN policy ONLY. The narrow escape adapter reuses
+	// the SAME contextual ToolReviewer route; the option is a
 	// no-op at any non-auto posture or with no checker, so yolo/strict/trusted
 	// and the un-knobbed auto stay byte-identical.
 	sharedPolicy := escapePolicyForConfig(cfg, reg, provider, policy)
@@ -4113,8 +4104,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	cfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 	cfg.learningSourceStore = store
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
-	deps.ToolReviewer = buildGuardrailsActionReviewer(cfg, reg, provider, reg.Default(), guardrailWaiver)
-	deps.ReviewDetails = cfg.guardrailDetails
+	attachGuardrailReviewer(&deps, buildGuardrailsActionReviewer(cfg, reg, provider, reg.Default(), guardrailWaiver), cfg.guardrailDetails)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
 	deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(cfg, provider, reg.ResolvedDefaultModel(), userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmission, buildProcedureProcessor(cfg, assets)), assets.reflectionLifecycle)
@@ -4913,8 +4903,8 @@ func normalizeGuardrailsModel(cfg Config) (string, error) {
 // buildGuardrailsChecker does, so the posture and the live checker cannot disagree.
 //
 // It branches on the RESOLVER's own `configured` return (resolveGuardrailsCheckerModel),
-// NOT on guardrailsConfigured. guardrailsConfigured is the bound-slot-OR-gate gate used
-// only to decide whether to WIRE the hooks (buildGuardrailsHooks); a slot that is BOUND
+// NOT on guardrailsConfigured. guardrailsConfigured is the bound-slot-OR-gate used
+// to inject the contextual reviewer; a slot that is BOUND
 // but UNRESOLVABLE passes that gate but makes resolveGuardrailsCheckerModel return
 // configured=false (and buildGuardrailsChecker returns nil). Branching the ON posture on
 // guardrailsConfigured there would emit a false "guardrails: ON" for that unresolvable

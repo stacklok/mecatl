@@ -421,6 +421,17 @@ func (w *escapeWorkspace) ReadVersion(ctx context.Context, path string) ([]byte,
 	return w.Workspace.ReadVersion(ctx, path)
 }
 
+func (w *escapeWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	if err := w.refusePath(path); err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceReader)
+	if !ok {
+		return nil, tool.FileVersion{}, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionBounded(ctx, path, maxBytes)
+}
+
 // Stat consults the escape classifier (pseudo-fs hard-deny) then delegates.
 func (w *escapeWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, error) {
 	if err := w.refusePath(path); err != nil {

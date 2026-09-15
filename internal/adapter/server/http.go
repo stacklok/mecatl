@@ -550,6 +550,9 @@ type approveBody struct {
 	// current run is a different one. Empty is the legacy behaviour — the control
 	// applies to whatever run is current. See ADR 0249.
 	ExpectedRunID string `json:"expected_run_id,omitempty"`
+	// ReviewID and GuardrailKind acknowledge the contextual purpose shown to the operator.
+	ReviewID      string `json:"review_id,omitempty"`
+	GuardrailKind string `json:"guardrail_kind,omitempty"`
 }
 
 // --- handlers ---------------------------------------------------------------
@@ -1179,7 +1182,14 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ask_id is required")
 		return
 	}
-	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdictFromHTTP(body.Verdict, body.Allow), body.ExpectedRunID)
+	verdict := verdictFromHTTP(body.Verdict, body.Allow)
+	if live, ok := h.svc.LookupRun(id); ok {
+		if err := live.ValidateRemoteApprovalIntent(body.AskID, body.ReviewID, session.GuardrailApprovalKind(body.GuardrailKind), verdict); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdict, body.ExpectedRunID)
 	if err != nil {
 		writeServiceError(w, err)
 		return

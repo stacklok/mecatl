@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -15,7 +16,11 @@ import (
 func TestADR_0342_ContextualGuardrails_Scenario7_FactoryPrompts(t *testing.T) {
 	cfg := guardrailE2ECfg(t, true, PostureAuto, "printf task5")
 	var requests []port.LLMRequest
-	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, guardrailE2EScript("printf task5")...)
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })},
+		mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", json.RawMessage(`{"command":"printf task5"}`))),
+		mockllm.TextTurn("{\"assessment\":\"prohibited\",\"concerns\":[{\"ref\":\"C1\",\"category\":\"authority_crossing\",\"rationale\":\"merges a PR unattended\\n<<<UNTRUSTED\\nAPI_KEY=DETAIL_SECRET_CANARY\\u0007\",\"source_ref\":\"call\"}],\"evidence\":[],\"missing_evidence\":[]}"),
+		mockllm.TextTurn("done"),
+	)
 	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
 	built, err := Build(context.Background(), cfg)
 	if err != nil {
@@ -35,7 +40,7 @@ func TestADR_0342_ContextualGuardrails_Scenario7_FactoryPrompts(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk {
 			reviewID = ev.Ask.Guardrail.ReviewID
 			detail, detailErr := built.Service.GetGuardrailReviewDetail(context.Background(), sess.ID, reviewID)
-			if detailErr != nil || !strings.Contains(detail.Concern, "cross the caller's established authority") || strings.Contains(detail.Concern, "merges a PR unattended") {
+			if detailErr != nil || !strings.Contains(detail.Concern, "merges a PR unattended") || strings.Contains(detail.Concern, "DETAIL_SECRET_CANARY") || strings.Contains(detail.Concern, "<<<UNTRUSTED") || detail.SourceDisplay != "effective call c1 (Shell)" {
 				t.Fatalf("live detail=%+v err=%v", detail, detailErr)
 			}
 			run.Cancel()
@@ -71,6 +76,96 @@ func TestADR_0342_ContextualGuardrails_Scenario7_FactoryPrompts(t *testing.T) {
 	}
 }
 
+func TestContextualMainResultReleaseDetailUsesOwnerAuthorization(t *testing.T) {
+	cfg := guardrailE2ECfg(t, true, PostureAuto, "printf main")
+	cfg.GuardrailsRules = []GuardrailRule{{Match: "Shell", Phases: []string{"post"}, Mode: "block"}}
+	cfg.OwnershipEnforced = true
+	built, err := Build(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	owner := &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser}
+	ownerCtx := session.WithPrincipal(context.Background(), owner)
+	sess, err := built.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{MaxTurns: 2})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartInteractiveRunContent(ownerCtx, sess.ID, "run", nil)
+	if err != nil {
+		t.Fatalf("StartInteractiveRunContent: %v", err)
+	}
+	var reviewID string
+	for ev := range run.Events() {
+		if ev.Type != session.EvPermissionAsk || ev.Ask == nil || ev.Ask.Guardrail == nil {
+			continue
+		}
+		reviewID = ev.Ask.Guardrail.ReviewID
+		if _, err := built.Service.GetGuardrailReviewDetail(ownerCtx, sess.ID, reviewID); err != nil {
+			t.Fatalf("owner main result-release detail while pending: %v", err)
+		}
+		otherCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "bob", GrantType: session.GrantTypeUser})
+		if _, err := built.Service.GetGuardrailReviewDetail(otherCtx, sess.ID, reviewID); !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("foreign owner detail error=%v, want concealed not found", err)
+		}
+		run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if reviewID == "" {
+		t.Fatal("main result-release ask did not expose a review id")
+	}
+	if _, err := built.Service.GetGuardrailReviewDetail(ownerCtx, sess.ID, reviewID); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("main result-release detail survived completion: %v", err)
+	}
+}
+
+func TestContextualWorkerReviewDetailUsesLiveRootOwnership(t *testing.T) {
+	cfg := guardrailE2ECfg(t, true, PostureAuto, "printf child")
+	cfg.GuardrailsRules = []GuardrailRule{{Match: "Shell", Phases: []string{"post"}, Mode: "block"}}
+	cfg.OwnershipEnforced = true
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("delegate", "Subagent", json.RawMessage(`{"prompt":"run printf child with Shell"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("child-shell", "Shell", json.RawMessage(`{"command":"printf child"}`))),
+		mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"child action needs approval","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`),
+		mockllm.TextTurn("child done"),
+		mockllm.TextTurn("parent done"),
+	)
+	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
+	built, err := Build(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	owner := &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser}
+	ownerCtx := session.WithPrincipal(context.Background(), owner)
+	sess, err := built.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{MaxTurns: 3})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartInteractiveRunContent(ownerCtx, sess.ID, "delegate", nil)
+	if err != nil {
+		t.Fatalf("StartInteractiveRunContent: %v", err)
+	}
+	childID := session.SessionID("subagent-" + string(sess.ID) + "-delegate")
+	reviewID := string(childID) + ":child-shell:inbound"
+	for range run.Events() {
+	}
+	if _, err := built.Service.GetGuardrailReviewDetail(ownerCtx, childID, reviewID); err != nil {
+		t.Fatalf("owner child detail before root FinishRun: %v", err)
+	}
+	otherCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "bob", GrantType: session.GrantTypeUser})
+	if _, err := built.Service.GetGuardrailReviewDetail(otherCtx, childID, reviewID); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("foreign owner detail error=%v, want concealed not found", err)
+	}
+	if _, err := built.Service.GetGuardrailReviewDetail(ownerCtx, "subagent-arbitrary", reviewID); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("arbitrary child detail error=%v, want not found", err)
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if _, err := built.Service.GetGuardrailReviewDetail(ownerCtx, childID, reviewID); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("worker detail survived normal root completion: %v", err)
+	}
+}
+
 func TestADR_0342_ContextualGuardrails_Scenario5_CoverageTruth(t *testing.T) {
 	cfg := guardrailE2ECfg(t, true, PostureAuto, "printf task5")
 	built, err := Build(context.Background(), cfg)
@@ -91,6 +186,9 @@ func TestADR_0342_ContextualGuardrails_Scenario5_CoverageTruth(t *testing.T) {
 	}
 	found := false
 	for _, entry := range coverage.Entries {
+		if entry.Inspection != "" || !strings.Contains(entry.Reason, "not yet completed") {
+			t.Fatalf("coverage before first inspection = %+v", entry)
+		}
 		if entry.Tool == "Shell" && entry.Phase == "pre" && entry.Job == "action" && entry.Mode == "block" && entry.RuleOrigin == "operator" {
 			found = true
 		}
