@@ -226,8 +226,9 @@ func TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth(t *testing.T) {
 
 	t.Run("models", func(t *testing.T) {
 		catalog := modelCatalog{models: []client.ModelInfo{{ProviderID: long, ID: long, DisplayName: long}}, statuses: []client.ProviderStatus{{ProviderID: long, State: "unreachable", Hint: long}}}
-		picker := modelsState{catalog: catalog, filtered: catalog.models}
-		assertFits(t, "models", renderModelsPanel(th, catalog, picker, client.Capabilities{ModelSelection: true}, long, hk, 3, width))
+		picker := modelsState{catalog: catalog, filtered: catalog.models, provenance: long, deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk, caps: client.Capabilities{ModelSelection: true}}}
+		out, _ := picker.Render(width, 30)
+		assertFits(t, "models", out)
 	})
 
 	t.Run("sessions and worktrees", func(t *testing.T) {

@@ -72,7 +72,7 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 	}
 	views := []view{
 		{name: "subagent roster", tab: tabSubagents, sub: subagentState{cursor: 1}, f: fleet},
-		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", scroll: 3}, f: fleet},
+		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", detail: boundedViewport{offset: 3}}, f: fleet},
 		{name: "subagent missing", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "missing"}},
 		{name: "subagent empty", tab: tabSubagents},
 		{name: "parallel roster", tab: tabParallel, par: parallelState{cursor: 1}, g: groups},
@@ -80,11 +80,11 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 		{name: "parallel missing", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "missing"}},
 		{name: "parallel empty", tab: tabParallel},
 		{name: "team roster", tab: tabTeams, team: teamState{cursor: 1}, b: teamBlock},
-		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", scroll: 4}, b: teamBlock},
+		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", detail: boundedViewport{offset: 4}}, b: teamBlock},
 		{name: "team missing", tab: tabTeams, team: teamState{view: teamFocus, member: "missing"}, b: teamBlock},
-		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, scroll: 2}, b: teamBlock},
+		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, detail: boundedViewport{offset: 2}}, b: teamBlock},
 		{name: "team tasks empty", tab: tabTeams, team: teamState{view: teamTasks}, b: &block{}},
-		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, scroll: 2}, b: teamBlock},
+		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, detail: boundedViewport{offset: 2}}, b: teamBlock},
 		{name: "team findings empty", tab: tabTeams, team: teamState{view: teamFindings}, b: &block{}},
 		{name: "team absent", tab: tabTeams},
 	}
@@ -108,10 +108,67 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 	}
 }
 
+func TestPreparedAgentsDetailRenderersKeepSourceViewportAcrossHeightProbes(t *testing.T) {
+	fleet, _, teamBlock := overlayPreparationFixtures()
+	th, hk := aztec(), defaultHelpKeys()
+	const width = 80
+	detail := boundedViewport{offset: 1 << 20}
+
+	tests := []struct {
+		name    string
+		prepare func() agentsBodyRenderer
+		last    string
+	}{
+		{
+			name: "subagent focus",
+			prepare: func() agentsBodyRenderer {
+				return prepareSubagentFocusAt(th, fleet, "selected", detail, hk, width)
+			},
+			last: "trace-19",
+		},
+		{
+			name: "team focus",
+			prepare: func() agentsBodyRenderer {
+				return prepareTeamFocusAt(th, teamBlock, "worker", detail, hk, width)
+			},
+			last: "trace-19",
+		},
+		{
+			name: "team tasks",
+			prepare: func() agentsBodyRenderer {
+				return prepareTeamTasksAt(th, teamBlock, detail, hk, width)
+			},
+			last: "task-19",
+		},
+		{
+			name: "team findings",
+			prepare: func() agentsBodyRenderer {
+				return prepareTeamFindingsAt(th, teamBlock, detail, hk, width)
+			},
+			last: "finding-19",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := tc.prepare()
+			_ = prepared(40)
+			got := prepared(16)
+			want := tc.prepare()(16)
+			if got != want {
+				t.Fatalf("prepared renderer retained state from an earlier height probe\nwant:\n%q\ngot:\n%q", want, got)
+			}
+			if !strings.Contains(stripANSIstr(got), tc.last) {
+				t.Fatalf("end-anchored renderer did not retain %q after height probes:\n%s", tc.last, stripANSIstr(got))
+			}
+		})
+	}
+}
+
 func BenchmarkAgentsOverlayPreparation(b *testing.B) {
 	fleet, _, _ := overlayPreparationFixtures()
 	th, hk := aztec(), defaultHelpKeys()
-	sub := subagentState{view: subagentFocus, child: "selected", scroll: 3}
+	sub := subagentState{view: subagentFocus, child: "selected", detail: boundedViewport{offset: 3}}
 	b.Run("repeated-preparation", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {

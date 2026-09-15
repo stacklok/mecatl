@@ -78,7 +78,6 @@ type subagentState struct {
 	view   subagentView
 	cursor int    // selected row in the fleet roster (index into the fleet order)
 	child  string // the focused child's ChildID (subagentFocus)
-	scroll int    // rendered-line offset in the focused trace
 	roster boundedList
 	detail boundedViewport
 }
@@ -160,11 +159,11 @@ func (m Model) switchAgentsTab() Model {
 	case tabParallel:
 		m.agentsTab = tabTeams
 		m.team.view = teamRoster
-		m.team.scroll = 0
+		m.team.detail.offset = 0
 	default:
 		m.agentsTab = tabSubagents
 		m.subagents.view = subagentRoster
-		m.subagents.scroll = 0
+		m.subagents.detail.offset = 0
 	}
 	return m
 }
@@ -185,11 +184,11 @@ func (m Model) onAgentsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 			if !m.atAgentsRoster() {
 				switch m.agentsTab {
 				case tabSubagents:
-					m.subagents.view, m.subagents.child, m.subagents.scroll = subagentRoster, "", 0
+					m.subagents.view, m.subagents.child, m.subagents.detail.offset = subagentRoster, "", 0
 				case tabParallel:
 					m.parallel.view, m.parallel.group = parallelRoster, ""
 				default:
-					m.team.view, m.team.member, m.team.scroll = teamRoster, "", 0
+					m.team.view, m.team.member, m.team.detail.offset = teamRoster, "", 0
 				}
 				return m, nil, true
 			}
@@ -233,15 +232,15 @@ func (m Model) atAgentsRoster() bool {
 // handled=true (the overlay owns the keyboard).
 func (m Model) onSubagentKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.subagents.view == subagentFocus {
-		if next, handled := m.navigateAgentsDetail(msg, m.subagents.scroll); handled {
-			m.subagents.scroll = next
+		if next, handled := m.navigateAgentsDetail(msg, m.subagents.detail); handled {
+			m.subagents.detail = next
 			return m, nil, true
 		}
 		switch {
 		case key.Matches(msg, m.keys.Close):
 			m.subagents.view = subagentRoster
 			m.subagents.child = ""
-			m.subagents.scroll = 0
+			m.subagents.detail.offset = 0
 		case key.Matches(msg, m.keys.CancelChild):
 			ln := findFleetLane(m.conv.subagentFleet, m.subagents.child)
 			mm, cmd := m.cancelSubagentLane(ln)
@@ -312,7 +311,7 @@ func (m Model) onSubagentRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.subagents.child = fleet[m.subagents.cursor].childID
 		m.subagents.view = subagentFocus
-		m.subagents.scroll = 0
+		m.subagents.detail.offset = 0
 		return m, nil
 	case key.Matches(msg, m.keys.CancelChild):
 		if m.subagents.cursor < 0 || m.subagents.cursor >= n {
@@ -456,7 +455,8 @@ func (m Model) onAgentsWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	th, hk, width, height := m.agentsListGeometry()
-	if height == 0 {
+	layout := newAgentsOverlayLayout(th, m.agentsTab, m.width, m.vp.Height())
+	if height == 0 || !m.agentsNormalBodyFits(layout, hk) {
 		return m, nil
 	}
 	move := boundedLineDown
@@ -471,9 +471,7 @@ func (m Model) onAgentsWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	switch m.agentsTab {
 	case tabSubagents:
 		if m.subagents.view == subagentFocus {
-			next, _ := m.navigateAgentsDetail(tea.KeyPressMsg{Code: map[bool]rune{true: tea.KeyUp, false: tea.KeyDown}[move == boundedLineUp]}, m.subagents.scroll)
-			m.subagents.scroll = next
-			m.subagents.detail.offset = next
+			m.subagents.detail, _ = m.moveAgentsDetail(m.subagents.detail, move)
 		} else {
 			m.subagents.roster = scrollList(subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width))
 			m.subagents.cursor = m.subagents.roster.cursor
@@ -495,31 +493,51 @@ func (m Model) onAgentsWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 				m.team.cursor = m.team.roster.cursor
 			}
 		} else {
-			next, _ := m.navigateAgentsDetail(tea.KeyPressMsg{Code: map[bool]rune{true: tea.KeyUp, false: tea.KeyDown}[move == boundedLineUp]}, m.team.scroll)
-			m.team.scroll = next
-			m.team.detail.offset = next
+			m.team.detail, _ = m.moveAgentsDetail(m.team.detail, move)
 		}
 	}
 	return m, nil
 }
 
-func (m Model) navigateAgentsDetail(msg tea.KeyPressMsg, scroll int) (int, bool) {
-	total, window := m.agentsDetailMetrics()
+func (m Model) agentsNormalBodyFits(layout agentsOverlayLayout, hk helpKeys) bool {
+	build := prepareAgentsTabBody(
+		m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team,
+		m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups,
+		hk, layout.bodyWidth,
+	)
+	_, ok := layout.renderBody(build, func() string {
+		return renderEssentialAgentsBody(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, hk, layout.bodyWidth)
+	})
+	return ok
+}
+
+func (m Model) navigateAgentsDetail(msg tea.KeyPressMsg, control boundedViewport) (boundedViewport, bool) {
+	var move boundedMove
 	switch {
 	case key.Matches(msg, m.keys.Up):
-		return clampScroll(scroll-1, total, window), true
+		move = boundedLineUp
 	case key.Matches(msg, m.keys.Down):
-		return clampScroll(scroll+1, total, window), true
+		move = boundedLineDown
 	case key.Matches(msg, m.keys.ScrollU):
-		return clampScroll(scroll-window, total, window), true
+		move = boundedPageUp
 	case key.Matches(msg, m.keys.ScrollD):
-		return clampScroll(scroll+window, total, window), true
+		move = boundedPageDown
 	case key.Matches(msg, m.keys.JumpTop):
-		return 0, true
+		move = boundedTop
 	case key.Matches(msg, m.keys.JumpEnd):
-		return maxScrollOffset(total, window), true
+		move = boundedEnd
+	default:
+		return control, false
 	}
-	return scroll, false
+	return m.moveAgentsDetail(control, move)
+}
+
+func (m Model) moveAgentsDetail(control boundedViewport, move boundedMove) (boundedViewport, bool) {
+	total, window := m.agentsDetailMetrics()
+	_, _, width, _ := m.agentsListGeometry()
+	control.setGeometry(width, window, 0, boundedClip)
+	control.move(move, total)
+	return control, true
 }
 
 func (m *Model) clampAgentsDetailScroll() {
@@ -527,14 +545,20 @@ func (m *Model) clampAgentsDetailScroll() {
 		return
 	}
 	total, window := m.agentsDetailMetrics()
+	_, _, width, _ := m.agentsListGeometry()
+	clamp := func(control boundedViewport) boundedViewport {
+		control.setGeometry(width, window, 0, boundedClip)
+		_ = control.window(total)
+		return control
+	}
 	switch m.agentsTab {
 	case tabSubagents:
 		if m.subagents.view == subagentFocus {
-			m.subagents.scroll = clampScroll(m.subagents.scroll, total, window)
+			m.subagents.detail = clamp(m.subagents.detail)
 		}
 	case tabTeams:
 		if m.team.view == teamFocus || m.team.view == teamTasks || m.team.view == teamFindings {
-			m.team.scroll = clampScroll(m.team.scroll, total, window)
+			m.team.detail = clamp(m.team.detail)
 		}
 	}
 }
@@ -558,9 +582,8 @@ func (m Model) agentsDetailMetrics() (int, int) {
 	case tabSubagents:
 		if ln := findFleetLane(m.conv.subagentFleet, m.subagents.child); ln != nil {
 			total := len(renderedTraceLines(th, hk, layout.bodyWidth, ln.trace))
-			return windowFor(total, teamFocusRows, func(height int) string {
-				return renderSubagentFocusAt(th, m.conv.subagentFleet, m.subagents.child, m.subagents.scroll, hk, layout.bodyWidth, height)
-			})
+			build := prepareSubagentFocusAt(th, m.conv.subagentFleet, m.subagents.child, m.subagents.detail, hk, layout.bodyWidth)
+			return windowFor(total, teamFocusRows, build)
 		}
 	case tabTeams:
 		if b := m.conv.latestTeamBlock(); b != nil {
@@ -568,20 +591,17 @@ func (m Model) agentsDetailMetrics() (int, int) {
 			case teamFocus:
 				if ln := teamFindLane(b, m.team.member); ln != nil {
 					total := len(renderedTraceLines(th, hk, layout.bodyWidth, ln.trace))
-					return windowFor(total, teamFocusRows, func(height int) string {
-						return renderTeamFocusAt(th, b, m.team.member, m.team.scroll, hk, layout.bodyWidth, height)
-					})
+					build := prepareTeamFocusAt(th, b, m.team.member, m.team.detail, hk, layout.bodyWidth)
+					return windowFor(total, teamFocusRows, build)
 				}
 			case teamTasks:
 				total := len(renderedTaskLines(th, b, layout.bodyWidth))
-				return windowFor(total, teamTasksRows, func(height int) string {
-					return renderTeamTasksAt(th, b, m.team.scroll, hk, height, layout.bodyWidth)
-				})
+				build := prepareTeamTasksAt(th, b, m.team.detail, hk, layout.bodyWidth)
+				return windowFor(total, teamTasksRows, build)
 			case teamFindings:
 				total := len(renderedFindingLines(th, b, layout.bodyWidth))
-				return windowFor(total, teamFindingsRows, func(height int) string {
-					return renderTeamFindingsAt(th, b, m.team.scroll, hk, height, layout.bodyWidth)
-				})
+				build := prepareTeamFindingsAt(th, b, m.team.detail, hk, layout.bodyWidth)
+				return windowFor(total, teamFindingsRows, build)
 			}
 		}
 	}
@@ -971,13 +991,13 @@ func prepareTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWi
 	}
 	switch st.view {
 	case teamFocus:
-		return prepareTeamFocusAt(th, b, st.member, st.scroll, hk, bodyWidth)
+		return prepareTeamFocusAt(th, b, st.member, st.detail, hk, bodyWidth)
 	case teamTasks:
-		return prepareTeamTasksAt(th, b, st.scroll, hk, bodyWidth)
+		return prepareTeamTasksAt(th, b, st.detail, hk, bodyWidth)
 	case teamFindings:
-		return prepareTeamFindingsAt(th, b, st.scroll, hk, bodyWidth)
+		return prepareTeamFindingsAt(th, b, st.detail, hk, bodyWidth)
 	default:
-		list := teamSelectableList(th, st, b, hk, bodyWidth).withRowHeights()
+		list := teamSelectableList(th, st, b, hk, bodyWidth)
 		return func(height int) string { return list.render(th, height) }
 	}
 }
@@ -991,13 +1011,13 @@ func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, h
 
 func prepareSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if st.view == subagentFocus {
-		return prepareSubagentFocusAt(th, fleet, st.child, st.scroll, hk, bodyWidth)
+		return prepareSubagentFocusAt(th, fleet, st.child, st.detail, hk, bodyWidth)
 	}
 	if len(fleet) == 0 {
 		body := renderSubagentRoster(th, st, fleet, hk, 0, bodyWidth)
 		return func(int) string { return body }
 	}
-	list := subagentSelectableList(th, st, fleet, hk, bodyWidth).withRowHeights()
+	list := subagentSelectableList(th, st, fleet, hk, bodyWidth)
 	return func(height int) string { return list.render(th, height) }
 }
 
@@ -1338,14 +1358,14 @@ const childIDHashLen = 6
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
 // child vanished — defensive) reads as a muted note. It mirrors renderTeamFocus.
 func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk helpKeys, bodyWidth, height int) string {
-	return renderSubagentFocusAt(th, fleet, child, 0, hk, bodyWidth, height)
+	return renderSubagentFocusAt(th, fleet, child, boundedViewport{}, hk, bodyWidth, height)
 }
 
-func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, scroll int, hk helpKeys, bodyWidth, height int) string {
-	return prepareSubagentFocusAt(th, fleet, child, scroll, hk, bodyWidth)(height)
+func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, detail boundedViewport, hk helpKeys, bodyWidth, height int) string {
+	return prepareSubagentFocusAt(th, fleet, child, detail, hk, bodyWidth)(height)
 }
 
-func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, detail boundedViewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
@@ -1389,23 +1409,22 @@ func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, 
 	out.WriteString("\n\n")
 	prefix := out.String()
 
-	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
-	var traceLines []string
-	if trace := r.renderTrace(ln.trace); trace != "" {
-		traceLines = strings.Split(trace, "\n")
-	}
+	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
 	lead := focusBackHint(hk)
 	if !ln.done {
 		lead = hk.cancelChild + " cancel · " + lead
 	}
 	return func(height int) string {
-		w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+		control := detail
+		control.setGeometry(bodyWidth, teamFocusRows(height), 0, boundedClip)
+		view := control.view(traceLines)
 		body := prefix
 		if len(traceLines) == 0 {
 			body += muted.Render("(no activity yet)")
 		} else {
-			body += strings.Join(traceLines[w.start:w.end], "\n")
+			body += strings.Join(view.rows, "\n")
 		}
+		w := boundedViewportBounds(view, control.height)
 		hint := agentsDetailHint(hk, w, lead)
 		return body + "\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth)
 	}
@@ -1452,7 +1471,7 @@ func prepareParallelTab(th theme.Theme, st parallelState, groups []parallelGroup
 		body := renderParallelRoster(th, st, groups, hk, 0, width)
 		return func(int) string { return body }
 	}
-	list := parallelSelectableList(th, st, groups, hk, width).withRowHeights()
+	list := parallelSelectableList(th, st, groups, hk, width)
 	return func(height int) string { return list.render(th, height) }
 }
 
@@ -1613,7 +1632,7 @@ func prepareParallelGroupFocus(th theme.Theme, st parallelState, groups []parall
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 		return func(int) string { return body }
 	}
-	list := parallelBranchSelectableList(th, st, g, hk, bodyWidth).withRowHeights()
+	list := parallelBranchSelectableList(th, st, g, hk, bodyWidth)
 	return func(height int) string { return list.render(th, height) }
 }
 
