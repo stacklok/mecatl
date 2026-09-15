@@ -174,7 +174,7 @@ func (c *apiClient) request(ctx context.Context, method, endpoint string, query 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if err != nil {
 		return err
