@@ -218,7 +218,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	}
 	themeAutoDetect := resolveThemeAutoDetect(cfg, term.IsTerminal(int(os.Stdout.Fd())))
 	if options.recoveryOnly {
-		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
+		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, cfg.terminalTitleOff, options)
 	}
 
 	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
@@ -385,7 +385,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		return err
 	}
 
-	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
+	prog := tea.NewProgram(ui.New(deps), teaProgramOptions(ctx, cfg.terminalTitleOff)...)
 	finalModel, runErr := prog.Run()
 	interrupted := ctx.Err() != nil
 
@@ -525,9 +525,24 @@ func resolveThemeAutoDetect(cfg config, stdoutIsTTY bool) bool {
 	return cfg.theme == "" && stdoutIsTTY
 }
 
-func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
+// teaProgramOptions assembles the Bubble Tea program options shared by both
+// composition sites (the main program and the disconnected-recovery screen).
+// Unless the dynamic title is off, the terminal output is wrapped in
+// ui.NewTitleMirror so every window-title write (OSC 2) is twinned with an
+// icon-name write (OSC 1) — the sequence iTerm2 labels tabs from (issue
+// #1460). Under --terminal-title=off the output is NOT wrapped, so "off"
+// leaves the icon name untouched: whatever the shell set survives.
+func teaProgramOptions(ctx context.Context, titleOff bool) []tea.ProgramOption {
+	opts := []tea.ProgramOption{tea.WithContext(ctx)}
+	if !titleOff {
+		opts = append(opts, tea.WithOutput(ui.NewTitleMirror(os.Stdout)))
+	}
+	return opts
+}
+
+func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, titleOff bool, options runOptions) error {
 	deps := ui.Deps{Ctx: ctx, Theme: th, ThemeAutoDetect: themeAutoDetect, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
-	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
+	prog := tea.NewProgram(ui.New(deps), teaProgramOptions(ctx, titleOff)...)
 	finalModel, runErr := prog.Run()
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, options.connectTransport)

@@ -532,7 +532,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--version` | – | print the build identity and exit before normal startup |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |
 | `--no-mouse` | off | keep the alt screen but disable mouse capture and in-app mouse gestures, preserving the terminal's **native** click-drag selection; keyboard prompt selection still works (or `MECATUI_NO_MOUSE=1`; see the selection section) |
-| `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> <handle> — <status word> mecatui` (the title is the first prompt, the fixed handle identifies the session, and the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
+| `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> <handle> — <status word> mecatui` (the title is the first prompt, the fixed handle identifies the session, and the status word reflects the phase); `off` collapses the window title to the bare `mecatui` and leaves the icon name untouched (escape hatch for terminals/multiplexers where a set title does more harm than good). Written as both `OSC 2` (window title) and `OSC 1` (icon name), which is what iTerm2 labels tabs from. Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
 | `--no-banner` | off | disable the first-run welcome **splash** (mascot + gradient wordmark); the plain prompt hint + affordance list still show. Auto-forced on under `--quiet` or a non-interactive stdin |
 | `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`; openai-codex → first entitled live model). Overridden per session by the `/models` picker |
 | `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`, experimental `openai-codex`); overrides automatic preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
@@ -685,12 +685,27 @@ The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prom
 can't embed an OSC title-injection), and newlines/tabs collapse to single spaces
 (a window title is one line).
 
-Pass `--terminal-title=off` (or `MECATUI_NO_TERMINAL_TITLE=1`) to suppress it and
-leave the title at the bare `mecatui` — the escape hatch for
-terminals/multiplexers where a set title does more harm than good. **tmux note:**
-by default tmux's `automatic-rename` overrides pane titles; to let `mecatui`'s
-title survive, set `set -g automatic-rename off` (or `set -g allow-set-title on`)
-in your `~/.tmux.conf`.
+The same composed string is written through **two** escape sequences, because
+xterm's convention splits them and terminals disagree about which one a tab
+shows: `OSC 2` sets the **window title** (the title bar) and `OSC 1` sets the
+**icon name** (what tab-strip-aware terminals label a tab with). Both carry
+byte-identical text, so no terminal shows two different labels for one session,
+and both are written only when the composed title actually changes.
+
+**iTerm2 note:** iTerm2 honours that split and labels tabs from the icon name, so
+without `OSC 1` every tab falls back to the job name — a uniform `mecatui` across
+every tab, with the real title landing only in the title bar that a maximized
+tabbed window hides. If tabs still show `mecatui`, check Settings → Profiles →
+General → Title and enable a name component. **tmux note:** by default tmux's
+`automatic-rename` overrides pane titles; to let `mecatui`'s title survive, set
+`set -g automatic-rename off` (or `set -g allow-set-title on`) in your
+`~/.tmux.conf`.
+
+Pass `--terminal-title=off` (or `MECATUI_NO_TERMINAL_TITLE=1`) to suppress it —
+the escape hatch for terminals/multiplexers where a set title does more harm than
+good. The window title collapses to the bare `mecatui` and the icon name is left
+**untouched**, so whatever your shell set survives rather than being overwritten
+with a static app name.
 
 **Skill discovery is ON by default**, via conventional discovery (the read-only
 `Skill` tool activates progressive-disclosure `<name>/SKILL.md` units from the
