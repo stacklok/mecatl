@@ -323,6 +323,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Unified provider configuration and Mecatui provider commands](unified-provider-configuration-and-mecatui-provider-commands.md) — replace the `llm.endpoints` facade and `mecatui llm` surface with one provider model, bounded OIDC configuration, portable local setup, and comprehensive provider help. Status: proposed.
 
+- [Claude prompt caching via native Messages routing](unified-prompt-cache-dialect.md) — route Claude-family models to a native Anthropic Messages surface on OpenRouter and the ToolHive gateway, so they land on the already-unconditional caching path by default instead of an OpenAI-Responses entry that emits no breakpoints, and salt the prompt-cache key. Status: draft.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.
