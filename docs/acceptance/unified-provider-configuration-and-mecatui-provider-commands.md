@@ -82,11 +82,11 @@ The CLI must teach the provider model rather than require users to infer it from
 - AC3.1: bare `mecatui providers` returns a passive aggregate status plus next steps, while `mecatui providers --help` and every documented child command return successful dedicated help explaining provider classes, auth/custody modes, embedded-versus-remote behavior, command-specific side effects, and the no-provider recovery path.
   - verify: `TestProviderUnification_Scenario3_ProviderHelpHierarchy`
 - AC3.2: bare `providers` and `status PROVIDER` report deterministic local provider/configuration/enrollment facts without network requests, browser launch, credential-store creation, paid inference, key values, or fingerprints.
-  - verify: `TestProviderUnification_Scenario3_PassiveProviderStatus`
+  - verify: `TestProviderUnification_Scenario3_AC32_StatusIsPassiveAndNeverPrintsSecrets`
 - AC3.3: `mecatui providers setup [PROVIDER]` is a convenience wizard rather than the only configuration mechanism; with no provider argument it offers a numbered, capability-labelled provider selection, uses structured whitespace/output, supports Ctrl-C during all prompts including secret entry, prints `Cancelled; no changes made.`, exits 130, and makes no mutation after cancellation.
-  - verify: `TestProviderUnification_Scenario3_GuidedSetupSelectionAndCancellation`
+  - verify: `TestProviderUnification_Scenario3_AC33_SetupMenuCancelsBeforeMutation`
 - AC3.4: starting embedded Mecatui with no configured usable provider reports both the direct setup recovery and remote-server alternative; it never launches setup automatically. Remote `mecatui connect ADDRESS` remains governed by the remote server and does not claim local provider configuration applies.
-  - verify: `TestProviderUnification_Scenario3_NoProviderRecoveryAndRemoteBoundary`
+  - verify: `TestProviderUnification_Scenario3_AC34_NoProviderRecoveryIsLocalOnly`
 
 ### Scenario 4 — provider defaults and credentials retain existing precedence
 
