@@ -150,3 +150,36 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+func TestSyntheticUserPromptReplay_Scenario2_ClientMapsStructuredOrigin(t *testing.T) {
+	parts := []*mecatlv1.Content{{Kind: mecatlv1.Content_KIND_IMAGE, MimeType: "image/png", Data: []byte("pixels")}}
+	for _, synthetic := range []bool{false, true} {
+		ev := &mecatlv1.Event{Type: "user_prompt", UserPrompt: &mecatlv1.UserPrompt{
+			Text: "Please continue working on the task.", Parts: parts, Synthetic: synthetic,
+		}}
+		got, ok := EventToMsg(ev).(UserPromptMsg)
+		if !ok {
+			t.Fatalf("synthetic=%v: EventToMsg = %T, want UserPromptMsg", synthetic, EventToMsg(ev))
+		}
+		if got.Text != ev.GetUserPrompt().GetText() || got.Synthetic != synthetic {
+			t.Fatalf("synthetic=%v: mapped prompt = %+v", synthetic, got)
+		}
+		if len(got.Parts) != 1 || got.Parts[0].MimeType != "image/png" {
+			t.Fatalf("synthetic=%v: mapped parts = %+v", synthetic, got.Parts)
+		}
+	}
+}
+
+func TestSyntheticUserPromptReplay_Scenario2_DeliveryProjectionTakesPrecedence(t *testing.T) {
+	text := fenceDelivery("[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nresult")
+	for _, synthetic := range []bool{false, true} {
+		got := EventToMsg(&mecatlv1.Event{Type: "user_prompt", UserPrompt: &mecatlv1.UserPrompt{Text: text, Synthetic: synthetic}})
+		delivery, ok := got.(DeliveryNoteMsg)
+		if !ok {
+			t.Fatalf("synthetic=%v: EventToMsg = %T, want DeliveryNoteMsg", synthetic, got)
+		}
+		if delivery.ScheduleName != "nightly-sync" || delivery.FireID != "sched--fire1" {
+			t.Fatalf("synthetic=%v: delivery = %+v", synthetic, delivery)
+		}
+	}
+}

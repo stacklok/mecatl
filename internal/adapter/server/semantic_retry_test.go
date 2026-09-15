@@ -98,6 +98,74 @@ func failedSession(t *testing.T, llm *mockllm.Provider, id string) (*server.Serv
 	return svc, sess.ID
 }
 
+func TestStartRunAwaitsContextWindowBeforePromptAndInference(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	entered := make(chan struct{})
+	release := make(chan struct{}, 1)
+	defer func() {
+		select {
+		case release <- struct{}{}:
+		default:
+		}
+	}()
+	var inference atomic.Int32
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) { inference.Add(1) })}, mockllm.TextTurn("done"))
+	eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "selected"})
+	svc, err := newPlacementTestService(server.Config{
+		Engine:               eng,
+		Store:                store,
+		DefaultResolvedModel: server.ResolvedModel{ProviderID: "provider", ModelID: "selected"},
+		AwaitContextWindow: func(context.Context, string, string) error {
+			close(entered)
+			<-release
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		run *agent.Run
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		run, runErr := svc.StartRun(ctx, sess.ID, "must wait")
+		resultCh <- result{run: run, err: runErr}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for admission callback")
+	}
+	blocked, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(blocked.Conversation.Messages); got != 0 || inference.Load() != 0 {
+		t.Fatalf("work started before admission release: messages=%d inference=%d", got, inference.Load())
+	}
+	release <- struct{}{}
+	var got result
+	select {
+	case got = <-resultCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for admitted run")
+	}
+	if got.err != nil {
+		t.Fatalf("StartRun: %v", got.err)
+	}
+	if text := drainServerRun(got.run); text != "done" {
+		t.Fatalf("run result = %q, want done", text)
+	}
+	svc.FinishRun(sess.ID, got.run)
+}
+
 func TestRetryFailedRunEligibility(t *testing.T) {
 	cases := []struct {
 		name string
@@ -177,7 +245,7 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 	factory := func(turn mockllm.Turn, seen *atomic.Value) server.SessionEngineFactory {
 		return func(_ context.Context, got server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 			seen.Store(got)
-			return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(turn), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: got.ModelID})}, nil
+			return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(turn), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: got.ModelID}), ProviderID: got.ProviderID, ModelID: got.ModelID}, nil
 		}
 	}
 	shared := func() *agent.Engine {
@@ -232,12 +300,36 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 				recoveredBeforeProvider.Store(pending && d == session.RetryDispositionRetryable && p == session.StreamProgressPrecommit)
 			}
 		})}, mockllm.TextTurn("same selector retried"))
-		return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: got.ModelID})}, nil
+		return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: got.ModelID}), ProviderID: got.ProviderID, ModelID: got.ModelID}, nil
 	}
-	svc2, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, SessionEngine: retryFactory})
+	admissionErr := errors.New("context window unavailable")
+	rejectAdmission := true
+	var admittedProvider, admittedModel string
+	awaitWindow := func(_ context.Context, providerID, modelID string) error {
+		admittedProvider, admittedModel = providerID, modelID
+		if rejectAdmission {
+			return admissionErr
+		}
+		return nil
+	}
+	svc2, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, SessionEngine: retryFactory, AwaitContextWindow: awaitWindow})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc2.RetryFailedRun(ctx, sess.ID); !errors.Is(err, admissionErr) {
+		t.Fatalf("RetryFailedRun admission failure = %v, want %v", err, admissionErr)
+	}
+	stillFailed, err = store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, p := stillFailed.FailureMetadata(); stillFailed.State != session.StateFailed || d != session.RetryDispositionRetryable || p != session.StreamProgressPrecommit {
+		t.Fatalf("admission failure consumed eligibility: state=%s disposition=%v progress=%v", stillFailed.State, d, p)
+	}
+	if admittedProvider != selector.ProviderID || admittedModel != selector.ModelID {
+		t.Fatalf("admission identity = %q/%q, want %q/%q", admittedProvider, admittedModel, selector.ProviderID, selector.ModelID)
+	}
+	rejectAdmission = false
 	run, err := svc2.RetryFailedRun(ctx, sess.ID)
 	if err != nil {
 		t.Fatalf("RetryFailedRun after restart: %v", err)

@@ -83,7 +83,7 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 [ADR 0218](../adr/0218-credential-store.md) and
 [ADR 0221](../adr/0221-read-only-credential-source.md).
 
-## Local microVM redesign contract (ADR 0342)
+## Local microVM redesign contract (ADR 0343)
 
 Tasks 59–65 complete ordinary `microvm-local` readiness, immutable Brood admission with
 in-process `toolhive-core/container/verifier`, the one-shot rootfs materializer,
@@ -165,7 +165,7 @@ signing, independent refresh channels, per-session fairness/quotas, dashboards, 
 exhaustive cache-poisoning controls. The historical subsection below records the superseded
 accumulator implementation only; it is not target architecture.
 
-### Local microVM development release activation (ADR 0342)
+### Local microVM development release activation (ADR 0343)
 
 The unsupported source workflow is compile-time absent unless both local roots are built with
 `microvm_dev`. Those tagged roots alone register the descriptor and acknowledgement flags;
@@ -6072,7 +6072,8 @@ construction. BOTH the per-session factory AND `baseEngineDeps` pass `reg.window
 provider, model)` (`internal/app/livemeta.go` (`windowResolver`)) — the ONE override→live→catalog→128k-floor
 precedence chain — so the compaction trigger AGREES byte-for-byte with the `ListModels`-advertised
 `context_limit` AND with the `resolved_model` echo (the service's `ResolveContextWindow` wraps the
-SAME `windowResolver`). Issue #63: the DEFAULT model gets its REAL window (e.g. 1,050,000 for
+sibling `reg.echoWindowResolver`; both share `resolveWindowCore`, differing only for a provisional
+unknown value while initial discovery is unsettled). Issue #63: the DEFAULT model gets its REAL window (e.g. 1,050,000 for
 `gpt-5.5`), flooring to 128k only when the model is genuinely uncatalogued. Issue #66: because the
 closure re-reads the live store, the SHARED engine — built once, before the live refresh — self-corrects
 to a live-only model's true window on the next compaction check with no rehydration, and the
@@ -6081,6 +6082,27 @@ both the engine and the echo). `baseEngineDeps`
 delegates for the default provider+model, so a per-session engine bound to a non-default provider
 re-derives EVERY provider-closing field rather than shallow-cloning + swapping only `LLM` (which
 would compact/count through the wrong model — cross-provider contamination).
+
+**Cold-window run admission (issue #1541 / ADR 0342).** Resolve-at-use remains the engine's
+backstop, but the service must not let its 128K unknown-model floor trigger persistent compaction
+while a live-listable effective model is still awaiting initial metadata. `liveMetaStore` therefore
+closes one settlement channel from `markRefreshCompleted`; shutdown cancellation leaves it open.
+After `engineAndEnvironmentFor` has selected the real shared/per-session and mode-routed identity,
+`Service` invokes its optional `AwaitContextWindow` callback before `Engine.Run`, before
+failed-step retry preparation, and before restart-restored `ResumeApproval`. Composition bypasses
+waiting for any positive override/exact-config/live/catalog value and for providers with no lister.
+It uses one caller-derived `liveModelRefreshTimeout` context for the initial wait and every
+provider in a recovery refresh. Genuine non-empty-listing evidence is stored in the same atomic
+`liveMetaStore` snapshot as the resolver metadata it admits, so `recordSuccess` cannot expose
+admission readiness ahead of `publishSnapshot`. Listing failure/empty yields retryable
+`context_window_unavailable` with no prompt/inference/compaction; a successful published listing
+that omitted a passthrough model or its window retains the settled 128K compatibility fallback.
+The first rejection does not duplicate startup discovery; a later run reuses `refreshStaleModels`
+and its shared mutex/cooldown/publish path, including operator-defined live-listable providers.
+Admission cleanup releases the provisional registry. The existing session-lifetime lease remains
+held until teardown or shutdown, including after a later launch step rejects. Terminal recovery
+already completed before this gate is intentionally not rolled back; it may close dangling tool
+calls but does not remove genuine user or assistant history.
 
 **Role-tagged child metrics (issue #47, `Config.MetricsRoleScoper` + `roleFamily`).** Child
 engines used to force `Deps.Sink`/`Deps.ToolCallRecorder` nil (the double-count guard); they are
@@ -6526,14 +6548,14 @@ the scoped WRITE path is deferred** (see below).
   constructs `AgentDef`s from wire metadata — `Memory` is **NOT** carried on the wire in v1 (no proto
   change); a driver-served def stays cold-start.
 
-### Historical environment placement implementation (superseded by ADR 0342 redesign)
+### Historical environment placement implementation (superseded by ADR 0343 redesign)
 
 This subsection describes the existing accumulator code and its test seams. Its
 session-per-VM lifecycle, derived image, deny-default networking, explicit init/recover,
 `--microvm`, external cosign, mode widening, and per-generation rootfs clone are removal
 inputs, not target decisions. The authoritative target is the redesign contract under
-[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0342), the living
-[architecture](../architecture/microvm-environments.md), and ADR 0342.
+[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0343), the living
+[architecture](../architecture/microvm-environments.md), and ADR 0343.
 
 `environment_profile` is independent from the existing tool-surface `profile`. The
 request carries only an alias resolved against `permconfig.Resolver`'s operator-only
@@ -8838,10 +8860,32 @@ Basic and form `client_secret` is rejected before dialing. The MCP resource clie
 separate exact-resource marker for its audience-bound bearer, remains no-proxy/DNS-pinned,
 and rejects cleartext except for an exact private-origin opt-in; an allowlist entry alone
 never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
-This controller supports preregistered confidential and CIMD clients only; DCR
-remains blocked here on ADR 0219's official-SDK hooks. The separately configured
-ToolHive MCP broker supports its own durable DCR resolver under ADR 0314. The
-root module pins `github.com/modelcontextprotocol/go-sdk` at
+Direct/global DCR clients use one private server-scoped durable lifecycle record in the same
+credential-store namespace; it carries and validates profile, principal, canonical resource,
+and exact issuer. `internal/adapter/mcp/oauth_dcr.go` (`PrepareOAuthDCRLogin`) discovers and validates
+protected-resource and authorization-server metadata through the hardened client, then
+creates or reuses a CAS-protected pending/ready registration. Preparation never registers
+or launches a browser; a one-use private ticket permits the subsequent login controller to
+POST exactly one public-client registration after the callback listener has supplied its
+actual variable-port URI. Reset replaces only a valid ready registration; retry replaces
+only a valid pending attempt. Corrupt, mismatched, or uncertain state fails with the
+redacted recovery-required category instead of being deleted or bypassed; reset/retry do not
+repair corrupt selected state.
+
+The DCR grant is a distinct generation-bound v2 envelope implemented by
+`internal/adapter/mcp/oauth_dcr_grant.go`. It stores only the access token required for the
+active generation; direct DCR rejects refresh tokens, `offline_access`, scopes other than
+exactly `openid`, and refresh-token grants. Expiry, grant reset, a registration-generation
+change, or an orphan grant returns login-required without refresh or browser side effects.
+Grant reset writes a generation-bound reset tombstone so a stale authorization writer cannot
+revive the old result. Explicit re-login reuses a valid registration. For this public-client
+path only, `internal/adapter/mcp/oauth_http.go` rejects the official SDK's
+`AuthStyleAutoDetect` Basic probe before dial and admits only its exact parameter retry with
+the expected client ID and no secret/assertion; preregistered confidential clients retain
+the Basic-only policy.
+
+The separately configured ToolHive MCP broker retains its own durable DCR resolver under
+ADR 0314. The root module pins `github.com/modelcontextprotocol/go-sdk` at
 `v1.7.1-0.20260825151509-2732839dbadd`; the controller enables the SDK's
 `AcceptUnadvertisedIss` compatibility path, leaving authorization-server discovery and
 metadata-conditioned RFC 9207 validation in the SDK. A missing callback `iss` is accepted
@@ -8885,12 +8929,16 @@ and controller close on every path while the injected store stays caller-owned. 
 project to context/runtime categories or fixed `ErrMCPLoginConfig`/`ErrMCPLoginFailed`
 without endpoint or credential-bearing causes.
 
-The shipped `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]`
-command is the sole runtime constructor. The repeatable permission-config option selects trusted
-operator settings only, never OAuth values. It uses the canonical operator profile loader, requires a mutable local Store,
-and emits an authorization URL to stdout only in explicit no-browser mode. Normal serving,
-ACP, mecatequi, and mecak8s keep the presenter nil. ADR 0219's metadata-profile blockers
-remain open.
+The shipped `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]
+[--reset-dcr-registration | --retry-dcr-registration]` command is the sole runtime
+constructor. The repeatable permission-config option selects trusted operator settings only,
+never OAuth values. The mutually exclusive DCR-only modifiers perform the explicit
+ready-registration reset or pending-attempt retry before continuing into login; they reject
+other client kinds and invalid/corrupt state without mutation. Grant-only reset remains an
+internal controller operation and has no CLI flag. The command uses the canonical operator
+profile loader, requires a mutable local Store, and emits an authorization URL to stdout only
+in explicit no-browser mode. Normal serving, ACP, mecatequi, and mecak8s keep the presenter
+nil. Complete public-client refresh remains deferred to issue #1355.
 
 ## Operator MCP profiles (ADR 0113)
 

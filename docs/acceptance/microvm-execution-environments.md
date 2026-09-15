@@ -4,7 +4,7 @@
 **Status:** landed; required Linux amd64 qualification manually verified
 **Evidence:** Tasks 59–65 and deterministic offline coverage are complete. `task e2e:microvm` is the automated Linux amd64 KVM gate and uses the deterministic in-process mock provider; it does not contact OpenRouter and is not the evidence for the live-provider claim. A separate manual qualification trace was executed on 2026-09-10 with Linux amd64 KVM and OpenRouter `openai/gpt-5-mini` through the public HTTP create and prompt APIs. Normal Write, Read, and Bash ran in the Wolfi guest as UID 65532; the proof marker existed only in the MicroVM logical worktree. The same session reattached after mecated restarted while microvmd remained alive, and `microvm doctor` and `microvm status` both reported healthy. This does not claim recovery after a microvmd restart. No credential, exact private placement ref, socket, or host path from that trace is retained in this document. All other live-platform claims remain deferred.
 **Issue:** [stacklok/mecatl#526](https://github.com/stacklok/mecatl/issues/526)
-**ADR:** [ADR 0342](../adr/0342-microvm-execution-environments.md)
+**ADR:** [ADR 0343](../adr/0343-microvm-execution-environments.md)
 **Accumulator branch:** `acc/microvm-execution-environments`
 
 The MVP uses one mutable microVM and one rootfs for one local operator and one canonical
@@ -23,7 +23,7 @@ all earlier superseded redesign tasks.
 ### Scenario 1 — ordinary deployment-default selection converges on a ready local backend
 
 This completed scenario follows
-[ADR 0342 — readiness](../adr/0342-microvm-execution-environments.md#5-make-readiness-part-of-ordinary-use).
+[ADR 0343 — readiness](../adr/0343-microvm-execution-environments.md#5-make-readiness-part-of-ordinary-use).
 
 **Acceptance:**
 
@@ -40,7 +40,7 @@ This completed scenario follows
 
 ### Scenario 2 — canonical repository identity owns one durable VM generation
 
-This follows [ADR 0342 — singleton lifecycle](../adr/0342-microvm-execution-environments.md#2-use-one-durable-vmrootfs-record-per-operator-and-canonical-git-repository).
+This follows [ADR 0343 — singleton lifecycle](../adr/0343-microvm-execution-environments.md#2-use-one-durable-vmrootfs-record-per-operator-and-canonical-git-repository).
 
 The daemon uses `(operator, canonical Git common directory)` as the only repository VM
 key. This scenario establishes lifecycle identity and the rootfs singleton; it does not add
@@ -75,7 +75,7 @@ repository guest. Filesystem and exec remain bound to one `EnvironmentRef` and o
 
 ### Scenario 4 — immutable Brood bytes and one explicit repository rootfs
 
-This follows [ADR 0342 — direct Brood consumption](../adr/0342-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
+This follows [ADR 0343 — direct Brood consumption](../adr/0343-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
 
 The artifact and static guest-contract work in tasks 60–61 remains complete. The remaining
 MVP step attaches that primitive to the repository generation.
@@ -117,7 +117,7 @@ cross-process merge coordinator or crash-durable merge journal is required.
 
 ### Scenario 6 — Linux ownership and useful networking are honest
 
-This follows [ADR 0342's Linux guest decision](../adr/0342-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
+This follows [ADR 0343's Linux guest decision](../adr/0343-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
 
 Linux amd64 is the only live target. The default network is useful rather than presented as
 containment; tightening remains optional and fail-closed when selected.

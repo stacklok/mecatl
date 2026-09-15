@@ -8,10 +8,9 @@ description:
 
 # Scheduled tasks
 
-Scheduled tasks run a saved prompt autonomously on a cron cadence or once at a
-future time. Each fire starts a fresh, bounded, headless session with its own
-workspace, provider/model selection, permission mode, limits, and explicit
-mutation setting.
+Schedule a saved prompt to run on a cron cadence or once at a future time. Each
+fire starts a fresh headless session with its configured workspace, model,
+permissions, limits, and mutation setting.
 
 For the storage, claiming, lease, firing, event, and recovery model, see
 [Scheduled tasks for builders](/building/what-you-get/scheduled-tasks.md).
@@ -31,10 +30,9 @@ durable schedules.
 
 ## Create and manage a schedule
 
-Manage schedules with the in-chat `Schedule` tool, gRPC, the REST API, or the
-`mecatui` `/schedule` overlay. You can create, list, inspect, pause, resume,
-delete, or fire a schedule immediately. There is no separate `mecated schedules`
-CLI.
+Use the in-chat `Schedule` tool, gRPC, REST API, or `mecatui` `/schedule`
+overlay to create, inspect, pause, resume, delete, or immediately fire a
+schedule. Mecatl has no separate schedules CLI.
 
 A schedule uses exactly one trigger: a cron expression or a one-shot timestamp.
 It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
@@ -69,7 +67,7 @@ curl -X POST http://localhost:8080/v1/schedules/nightly-report/fire
 curl http://localhost:8080/v1/schedules/nightly-report/fires/<fire-id>
 ```
 
-The REST routes are under `/v1/schedules`. The gRPC service is
+The REST routes are under `/v1/schedules`; the gRPC service is
 `mecatl.v1.ScheduleService`. See the
 [gRPC API reference](/reference/grpc-api.md) and the
 [schedule proto](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto)
@@ -97,10 +95,9 @@ Important operator settings include:
 
 ## Results and recovery
 
-Each fire creates a new top-level session. Its conversation, tool calls, usage,
-and terminal state are persisted when the session store is durable. The fire
-record points to that session and records its terminal result. Use `GetFire`,
-`ListFires`, the REST routes, or the mecatui `/schedule` overlay to inspect it.
+Each fire creates a top-level session. A durable store preserves its
+conversation, tool calls, usage, and terminal state. Inspect the result with
+`GetFire`, `ListFires`, the REST routes, or the `mecatui` overlay.
 
 Scheduled fires are headless: no person is available to approve a tool call. Use
 a read-leaning mode or explicitly configure the permissions and mutation posture
@@ -132,4 +129,3 @@ metrics, and shutdown details, see
 - [Session continuity](./session-continuity.md)
 - [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
 - [Scheduled task API reference](/reference/grpc-api.md)
-- [Capability and deployment matrix](./capability-matrix.md)

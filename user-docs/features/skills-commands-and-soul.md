@@ -7,7 +7,7 @@ description:
 
 # Skills, commands, and soul
 
-Use three types of reusable guidance to shape a Mecatl run:
+Choose the type of reusable guidance that fits your goal:
 
 - **Skills** are progressive-disclosure instruction bundles. Their metadata is
   always available, while the full `SKILL.md` body is loaded only when
@@ -17,9 +17,15 @@ Use three types of reusable guidance to shape a Mecatl run:
 - **Soul** is a user-scoped, read-only persona fragment that describes the
   agent's identity and style.
 
-These sources steer the model; they do not bypass the normal permission policy.
-Treat repository-provided content as untrusted until the workspace is admitted
-by project trust.
+All three steer the model without changing tool permissions. Mecatl withholds
+repository-provided guidance until you trust the project.
+
+## Availability
+
+`mecated` and `mecatui`'s embedded server support all three sources. `mecak8s`
+supports skills and soul but does not expose file-backed slash-command
+configuration. Engine embeddings can configure each source. A connected
+`mecatui` uses the remote server's sources.
 
 ## Skills
 
@@ -51,11 +57,9 @@ allowed-tools: 'Read Grep Shell'
 Explain the deployment procedure here.
 ```
 
-`name` is the activation key and `description` is the short trigger hint shown
-in the `Skill` tool's catalog. `license`, `compatibility`, `metadata`, and
-`allowed-tools` are advisory metadata. In particular, `allowed-tools` is **not**
-a permission grant: every tool call still passes through the deny-dominant
-policy.
+`name` is the activation key, and `description` helps the model choose the
+skill. The other fields are advisory metadata. `allowed-tools` does not grant
+permission; every tool call still follows the permission policy.
 
 ### Where skills are discovered
 
@@ -167,10 +171,10 @@ mecated serve \
   --command-source-url 127.0.0.1:7443
 ```
 
-A remote skill source replaces local skill discovery and is snapshotted at
-startup. A remote soul source occupies the user soul slot and is revalidated
-locally. A remote command source composes with local commands and is consulted
-live. Configure driver TLS and authentication as described in the
+A remote skill source replaces local discovery and is loaded at startup. A
+remote soul source fills the user soul slot. A remote command source works
+alongside local commands and is queried when used. Configure driver TLS and
+authentication as described in the
 [settings guide](/building/deployment/settings.md); use only drivers you trust.
 
 The legacy `SkillDraft`/`mecated skills promote` path is a quarantine workflow,
@@ -184,5 +188,3 @@ and separate from active skill directories.
 - [Project instructions and rules](./project-instructions-and-rules.md)
 - [Named agents](./named-agents.md)
 - [Permissions and posture](./permissions-and-posture.md)
-- [Memory and knowledge](/building/what-you-get/memory.md)
-- [Permissions and posture](./permissions-and-posture.md#project-trust)

@@ -49,6 +49,10 @@ var _ tool.Tool = (*writeAskTool)(nil)
 // Config.Store). The RESUMING service passes engineSaves=true so the completed
 // terminal is durable.
 func newAskingService(t *testing.T, store port.SessionStore, ps *permstore.Memory, ran *atomic.Int64, llm port.LLMProvider, engineSaves bool, placement ...server.PlacementProvider) *server.Service {
+	return newAskingServiceWithAwait(t, store, ps, ran, llm, engineSaves, nil, placement...)
+}
+
+func newAskingServiceWithAwait(t *testing.T, store port.SessionStore, ps *permstore.Memory, ran *atomic.Int64, llm port.LLMProvider, engineSaves bool, await func(context.Context, string, string) error, placement ...server.PlacementProvider) *server.Service {
 	t.Helper()
 	cat := tool.NewCatalog()
 	cat.MustRegister(&writeAskTool{ran: ran})
@@ -64,8 +68,9 @@ func newAskingService(t *testing.T, store port.SessionStore, ps *permstore.Memor
 		Store:   engineStore,
 	})
 	cfg := server.Config{
-		Engine: engine,
-		Store:  store,
+		Engine:             engine,
+		Store:              store,
+		AwaitContextWindow: await,
 
 		Now: func() time.Time { return time.Unix(0, 0) },
 	}
@@ -139,8 +144,37 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 	}
 	ps2 := permstore.New()
 	var ran2 atomic.Int64
-	svc2 := newAskingService(t, store2, ps2, &ran2, mockllm.New(mockllm.TextTurn("done after approval")), true)
+	admissionErr := errors.New("context window unavailable")
+	rejectAdmission := true
+	var callbackSawPending atomic.Bool
+	awaitWindow := func(context.Context, string, string) error {
+		parked, loadErr := store2.Load(context.Background(), sess.ID)
+		if loadErr == nil {
+			pending, ok := parked.PendingAsk()
+			callbackSawPending.Store(parked.State == session.StateAwaiting && ok && pending.AskID == askID)
+		}
+		if rejectAdmission {
+			return admissionErr
+		}
+		return nil
+	}
+	svc2 := newAskingServiceWithAwait(t, store2, ps2, &ran2, mockllm.New(mockllm.TextTurn("done after approval")), true, awaitWindow)
 
+	if run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, ""); !errors.Is(err, admissionErr) || run != nil {
+		t.Fatalf("ApproveRun admission failure = run %v, err %v; want nil, %v", run, err, admissionErr)
+	}
+	if !callbackSawPending.Load() || ran2.Load() != 0 {
+		t.Fatalf("admission callback ordering: pending=%t tool executions=%d", callbackSawPending.Load(), ran2.Load())
+	}
+	parked, err := store2.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, ok := parked.PendingAsk()
+	if parked.State != session.StateAwaiting || !ok || pending.AskID != askID {
+		t.Fatalf("failed admission consumed pending approval: state=%s pending=%+v present=%t", parked.State, pending, ok)
+	}
+	rejectAdmission = false
 	run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
 	if err != nil {
 		t.Fatalf("ApproveRun after restart: %v", err)

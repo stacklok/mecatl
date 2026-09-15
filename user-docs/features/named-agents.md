@@ -8,19 +8,15 @@ description:
 
 # Define named agents
 
-A named agent is a reusable specialist profile. It gives a delegated child a
-name, instructions, and optional execution settings instead of repeating the
-same setup for every call.
-
-Unlike a one-off `Subagent` call, a named agent is discovered and configured
-before the delegation runs. The caller then provides the specific task.
+A named agent packages reusable specialist instructions and execution settings.
+Define the profile once, then pass a specific task when you delegate to it.
 
 ## Availability
 
 Named agent definitions are available to:
 
 - `mecated` and `mecak8s` deployments;
-- mecatui's embedded server;
+- `mecatui`'s embedded server;
 - the `Subagent` tool; and
 - agent-team member roles.
 
@@ -52,23 +48,20 @@ Review the requested change against the repository's conventions. Identify
 concrete correctness risks and missing tests. Do not modify files.
 ```
 
-The most useful fields are:
+Common fields are:
 
 |Field|Purpose|
 |-|-|
 |`name`|Name passed to `Subagent(agent=...)` or a team member's `AgentType`.|
 |`description`|Short routing summary that is always available when choosing the specialist.|
 |`tools`|Allowlist of core tools for the specialist.|
-|`disallowedTools`|Removes tools after the allowlist/default set is applied.|
 |`model`|Model alias or ID; empty or `inherit` keeps the parent model.|
 |`provider`|Provider ID; empty inherits the session provider.|
 |`permissionMode`|Specialist mode such as `default`, `plan`, or `acceptEdits`.|
-|`maxTurns` / `maxToolCalls`|Per-run limits for this specialist.|
-|`skills`|Skills to preload into its instructions.|
-|`mcpServers`|Configured server references or inline streamable-HTTP servers.|
 |`memory`|Optional read-only `user` or `project` memory tier.|
-|`hooks`|Per-definition lifecycle hook commands.|
-|`color`|Display hint only; it does not affect execution.|
+
+See [Agent definitions](/building/extension-points/agent-definitions.md) for the
+complete field reference.
 
 A definition's body is instructions to the specialist. Keep it focused on the
 role, expected output, and boundaries. Do not put credentials in frontmatter,
@@ -135,16 +128,13 @@ The main model invokes the `Subagent` tool with the definition name:
 }
 ```
 
-The specialist receives its definition instructions plus this task. The
-`agentId` in the result identifies the child session for inspection or a later
-resume when child persistence is configured. A named specialist is still a child
-run: its workspace, shell, limits, and mutability follow the selected mode and
-deployment posture.
+The specialist receives its definition and the task. The result's `agentId`
+identifies the child session for inspection or later resume when child
+persistence is configured. Its workspace, shell, limits, and mutability follow
+the selected mode and deployment posture.
 
-A per-call `model` override can rebuild a named read-only specialist on another
-model when the deployment supports the agent model factory. A named `agent` and
-`model` combination is a scoped specialist override, not a change to the
-parent's session model.
+A per-call `model` override can run a named read-only specialist on another
+model when the deployment supports it. This does not change the parent's model.
 
 For a `mode: "read-write"` named specialist, omit the call's `model`. If the
 definition also omits its frontmatter `model:`, an enabled semantic router may
@@ -160,9 +150,6 @@ path. Explicit `read-write` + `agent` + `model` remains invalid.
 A team member can select the definition by its `AgentType`. This reuses the
 profile without copying the Markdown body. The team supplies the member's role
 briefing and task; the definition supplies its specialist configuration.
-
-The same definition can be used by a direct `Subagent` delegation and a team
-member. Each path keeps its own lifecycle, limits, and mutability rules.
 
 ## Named agents versus one-off subagents
 
@@ -199,4 +186,4 @@ subject to the server's permission and trust policy.
 - [Subagents, teams and parallel](/building/what-you-get/subagents-teams-parallel.md)
   for delegation behavior and child lifecycle.
 - [Project instructions and rules](./project-instructions-and-rules.md) for
-  workspace trust and other project-provided steering.
+  workspace trust.

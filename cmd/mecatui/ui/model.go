@@ -210,6 +210,10 @@ type Deps struct {
 	// main.go populates it with client.NewClipboard().
 	Clipboard client.Clipboard
 	Theme     theme.Theme
+
+	// homeDir is a package-private test seam for resolving the local process home
+	// used by @~/ attachments. Production leaves it nil and uses os.UserHomeDir.
+	homeDir func() (string, error)
 	// ThemeAutoDetect enables the terminal-background light/dark auto-detect
 	// (ADR 0280): composition sets it true only when no explicit --theme/
 	// MECATUI_THEME was supplied AND stdout is a real TTY (never on redirected
@@ -818,19 +822,6 @@ type Model struct {
 	// m.createModelSelection. Cleared the moment a session is (re)established
 	// (SessionReadyMsg) or a retry is fired.
 	restartFailed bool
-
-	// restartFailedForkID is the retry origin for the /effort FORK failure: the
-	// SOURCE session id the failed fork was attempted from (the fork failure leaves
-	// the source OPEN). While it is non-empty the armed enter-retry re-fires
-	// switchEffortCmd over THIS id — re-forking PRESERVES the transcript where the
-	// default restartOnModelCmd retry (create-fresh + resetSession) would wipe it,
-	// the exact thing the fork-resume switch exists to prevent. Set by the
-	// restartFailedMsg reducer from the msg's viaFork bit (m.sessionID is "" by
-	// then, so the source id must ride its own field); cleared by the same
-	// SessionReadyMsg/attempt-start paths that own restartFailed. Empty for the
-	// /models + /worktrees failures (their retry re-creates fresh — their old
-	// session is already gone).
-	restartFailedForkID string
 
 	// usage accumulates across the session for the footer.
 	usage client.Usage

@@ -53,8 +53,12 @@ func modeRecordingFactory(sessionModel, planModel string, modes *[]session.Permi
 // modeServiceOverStore builds a Service over store with the mode-aware factory and a
 // ModeNeedsEngine predicate (so a DEFAULT-FS session is PROMOTED on a plan switch).
 // needsEngine nil ⇒ the byte-identical (no-promotion) deployment.
-func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, needsEngine func(session.PermissionMode) bool) *server.Service {
+func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, needsEngine func(session.PermissionMode) bool, awaits ...func(context.Context, string, string) error) *server.Service {
 	t.Helper()
+	var await func(context.Context, string, string) error
+	if len(awaits) > 0 {
+		await = awaits[0]
+	}
 	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			// Script several identical turns so a multi-turn shared-engine session does
@@ -66,10 +70,11 @@ func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.Se
 		}),
 		Store: store,
 
-		DefaultLimits:   session.Limits{MaxTurns: 5},
-		Now:             func() time.Time { return time.Unix(0, 0) },
-		SessionEngine:   factory,
-		ModeNeedsEngine: needsEngine,
+		DefaultLimits:      session.Limits{MaxTurns: 5},
+		Now:                func() time.Time { return time.Unix(0, 0) },
+		SessionEngine:      factory,
+		ModeNeedsEngine:    needsEngine,
+		AwaitContextWindow: await,
 		DefaultResolvedModel: server.ResolvedModel{
 			ProviderID: "openai", ModelID: "shared-model",
 		},
@@ -94,7 +99,12 @@ func TestModeFlipRebuildsOnPlanSlot(t *testing.T) {
 		calls atomic.Int32
 	)
 	needsEngine := func(m session.PermissionMode) bool { return m == session.ModePlan }
-	svc := modeServiceOverStore(t, store, modeRecordingFactory(sessionModel, planModel, &modes, &calls), needsEngine)
+	var admittedProvider, admittedModel string
+	await := func(_ context.Context, providerID, modelID string) error {
+		admittedProvider, admittedModel = providerID, modelID
+		return nil
+	}
+	svc := modeServiceOverStore(t, store, modeRecordingFactory(sessionModel, planModel, &modes, &calls), needsEngine, await)
 
 	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
@@ -122,6 +132,9 @@ func TestModeFlipRebuildsOnPlanSlot(t *testing.T) {
 	}
 	if len(modes) != 1 || modes[0] != session.ModePlan {
 		t.Fatalf("factory saw modes %v, want exactly [plan]", modes)
+	}
+	if admittedProvider != "openai" || admittedModel != planModel {
+		t.Fatalf("plan admission identity = %q/%q, want openai/%s", admittedProvider, admittedModel, planModel)
 	}
 	// ResolvedModel re-emits the plan model after the rebuild (no recompute — it reads
 	// the freshly-registered per-session engine's ids).

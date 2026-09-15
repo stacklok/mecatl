@@ -113,13 +113,18 @@ unadvertised server may omit `iss`, while any supplied value must still match th
 issuer. The strict operator-tier
 `mcp.servers` schema and the single `internal/cliconfig` loader feed all three headless
 roots. Normal serve, ACP, mecatequi, and mecak8s install no presenter; only
-`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` authorizes a
+`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]
+[--reset-dcr-registration | --retry-dcr-registration]` authorizes a
 mutable local profile, selecting trusted operator settings through the same resolver and
 precedence as serve; the option never carries OAuth values. A hermetic cross-boundary gate
-proves login-process exit, a first warm serving process, lazy refresh with durable
-refresh-token rotation, a second warm process, and transparent MCP-session reconnect through
-the model-visible global catalog. No reauthorization occurs across either restart or
-reconnect. The global manager/controllers close before loader-owned Stores and Readers. ACP
+proves preregistered login-process exit, warm serving, lazy refresh with durable refresh-token
+rotation, and transparent MCP-session reconnect through the model-visible global catalog.
+Direct DCR profiles instead persist a separate public-client registration and a
+generation-bound no-refresh access grant. A valid registration is reused across explicit
+logins; expiry returns login-required without refresh or browser launch, while the two
+DCR-only login modifiers explicitly retry an identity-matching pending attempt or replace a ready registration. Ready identity drift is reset-required. Pending identity drift is the distinct pending-identity-mismatch category and cannot retry or reset; restore the matching profile, principal, canonical resource, and exact issuer first.
+No reauthorization occurs across restart or reconnect while the selected credential remains
+valid. The global manager/controllers close before loader-owned Stores and Readers. ACP
 cannot provide OAuth profiles or install/drive authorization, but after operator
 authorization ACP sessions may invoke the shared global OAuth-backed tools under ordinary
 permissions. OAuth is not available for per-session MCP, inline agent definitions, or
@@ -192,9 +197,10 @@ Authenticated discovery results remain staged until the opaque pre-prompt enroll
 Mecatl then admits every live definition through the shared protected-route validation boundary,
 collision-checks the complete result, and atomically replaces all static placeholders with that
 session's authenticated membership, descriptions, schemas, and read-only hints. A declared tool
-omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is
-frozen for the session, so later runs and token refreshes do not rediscover it; a fresh session
-performs a fresh discovery. A failure admits no mixed or partial catalogue. In a broker-only
+omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is frozen for the session, so later runs and token refreshes do not
+rediscover it. Initial enrollment performs a fresh discovery; an explicit owner-controlled
+refresh may perform the same whole-bundle discovery after a completed turn or after broker
+process loss. A failure admits no mixed or partial catalogue. In a broker-only
 session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
 same frozen route and authorization transaction, applies bounded in-memory jq before normal
 result rendering, and never opens a direct upstream connection or exposes the raw successful
@@ -204,16 +210,10 @@ session snapshot persists an opaque broker-incarnation binding and reload requir
 match. Ordinary `CloseSession` detaches locally, while permanent owner deletion and retention
 also delete broker transactions, grants, and replay state.
 
-This runtime retains a process-local mecatl session/attachment boundary. For the
-pre-prompt workspace seam only, a persisted binding from a prior process is replaced and its old
-pending correlation discarded so a fresh enrollment can begin; the old enrollment is not
-recovered. Live protected-call authorization controls never rebind and fail closed instead of
-silently creating replacement authority. ToolHive's configured Redis storage may preserve its
-inner authorization/token state, but mecatl cannot correlate a restarted outer enrollment to it.
-Durable/remote outer broker ownership and multi-replica routing remain later-stage concerns.
+This runtime retains a process-local mecatl session/attachment boundary. A persisted binding from a prior process is never inferred as live: ordinary rehydration leaves broker tools unavailable and does not attach, discover, refresh credentials, or open browser consent. An owner-authorized stable idle session may explicitly invoke the existing whole-bundle refresh control; it withdraws the old wrappers before replacement and admits them only after complete authenticated discovery and persistence. ToolHive's configured Redis storage may preserve its inner authorization/token state, but mecatl makes no grant-reuse guarantee and never exposes that material. Durable/remote outer broker ownership and multi-replica routing remain later-stage concerns.
 OAuth broker mode is therefore not safe behind mecak8s's default multi-replica Service until an
-affinity or durable-broker decision is made; the chart does not silently change its replica
-behavior.
+affinity or durable-broker decision is made; the chart enforces `replicaCount: 1` when broker
+callback mode is configured and does not silently change its replica behavior.
 
 The owner-scoped broker connector inventory is available to authenticated mecatui
 sessions through `/mcp` when the server advertises its broker-status capability. The
@@ -1243,7 +1243,7 @@ idempotent readiness immediately before each actual default MicroVM provision at
 startup and no-FS creation do not run readiness or allocate a validation attachment. The live
 `microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
 ordinary source builds have no authenticated release defaults and fail closed. For source
-development only, [ADR 0342](adr/0342-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
+development only, [ADR 0343](adr/0343-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
 separately tagged `microvm_dev` mecated and embedded-local mecatui binaries whose
 development activation requires explicit
 acknowledgement and a strict owner-only local release descriptor. Untagged and published

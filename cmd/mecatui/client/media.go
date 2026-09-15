@@ -1,10 +1,13 @@
 package client
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -68,7 +71,16 @@ func (r MediaResult) CheckAggregateCaps() error {
 	return nil
 }
 
-// ExpandMentions reads each @-mentioned path (the UI has already stat-filtered
+// MentionAttachment separates the local path read by mecatui from the original
+// mention spelling shown to the model as attachment provenance.
+type MentionAttachment struct {
+	// Path is the resolved local filesystem path used only for the client-side read.
+	Path string
+	// Label is the original path spelling after "@". An empty label falls back to Path.
+	Label string
+}
+
+// ExpandMentions reads each @-mentioned path (the UI has already lstat-filtered
 // these to EXISTING REGULAR FILES; a token that is not a real file stays literal
 // prose and never reaches here), sniffs its content type, and routes it to exactly
 // one of the three spec outcomes:
@@ -79,8 +91,8 @@ func (r MediaResult) CheckAggregateCaps() error {
 //     zip is NOT inlined as raw-byte garbage; the user gets a loud refusal).
 //
 // It is the SINGLE place proto Content is constructed from a file on the client
-// side — the ui passes only resolved path strings and the proto-free Capabilities,
-// keeping the ui free of proto + os.
+// side — the ui passes a resolved local read path plus the original mention label
+// and the proto-free Capabilities, keeping the ui free of proto construction.
 //
 // It is LOUD on any failure (unreadable file, an unsupported file type, a media
 // kind the server's provider cannot consume, an oversize part, too many parts, or
@@ -89,23 +101,27 @@ func (r MediaResult) CheckAggregateCaps() error {
 // it still errors if handed a path it cannot read — but the UI stat-filter is the
 // gate that decides attachment-vs-prose. Per-part and aggregate size caps mirror
 // the domain (see the const block); the server re-validates regardless.
-func ExpandMentions(paths []string, caps Capabilities) (MediaResult, error) {
+func ExpandMentions(mentions []MentionAttachment, caps Capabilities) (MediaResult, error) {
 	var res MediaResult
 	total := 0
-	for _, p := range paths {
-		data, err := os.ReadFile(p) //nolint:gosec // path is a user-typed @-mention resolved against the workspace; reading it is the feature.
+	for _, mention := range mentions {
+		label := mention.Label
+		if label == "" {
+			label = mention.Path
+		}
+		data, err := readMention(mention.Path, openMentionNoFollow)
 		if err != nil {
-			return MediaResult{}, fmt.Errorf("read %q: %w", p, err)
+			return MediaResult{}, fmt.Errorf("read %q: %w", label, err)
 		}
 		mime := http.DetectContentType(data[:min(sniffLen, len(data))])
 		if strings.HasPrefix(mime, "text/") {
 			// Not media: inline the text body (a delimited block) into the prompt.
-			res.InlineText = append(res.InlineText, inlineTextBlock(p, data))
+			res.InlineText = append(res.InlineText, inlineTextBlock(label, data))
 			continue
 		}
 		part, desc, err := buildMediaPart(mime, data, caps)
 		if err != nil {
-			return MediaResult{}, fmt.Errorf("%q: %w", p, err)
+			return MediaResult{}, fmt.Errorf("%q: %w", label, err)
 		}
 		total += len(data)
 		res.Parts = append(res.Parts, part)
@@ -118,6 +134,33 @@ func ExpandMentions(paths []string, caps Capabilities) (MediaResult, error) {
 		return MediaResult{}, fmt.Errorf("media attachments total %d bytes, over the %d-byte prompt limit", total, maxPromptMediaBytes)
 	}
 	return res, nil
+}
+
+func openMentionNoFollow(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // O_NOFOLLOW atomically rejects a raced-in final symlink; O_NONBLOCK avoids blocking on a raced-in FIFO/device.
+}
+
+func readMention(path string, open func(string) (*os.File, error)) (_ []byte, retErr error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	f, err := open(path) //nolint:gosec // path is a user-selected local attachment.
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, f.Close()) }()
+	after, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return nil, errors.New("file changed while opening")
+	}
+	return io.ReadAll(f)
 }
 
 // buildMediaPart is the SINGLE proto-construction choke point for a media (image

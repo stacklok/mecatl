@@ -536,6 +536,10 @@ func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
 	return out, nil
 }
 
+// SupportsSessionActivityProjection reports that the Redis metadata index
+// atomically reflects the latest snapshot's activity.
+func (*Store) SupportsSessionActivityProjection() bool { return true }
+
 // PageSessionMetadata reads one owner-filtered keyset page from the derivative
 // Redis metadata index. It never reads a snapshot blob or traverses rows before
 // the cursor; legacy stores without a complete index report unsupported.

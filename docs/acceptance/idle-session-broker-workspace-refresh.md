@@ -4,12 +4,12 @@
 **Work classification:** Architectural — changes durable session authority, broker-binding recovery, and supported mecak8s deployment behavior.
 **Decision record:** [ADR 0335](../adr/0335-idle-session-broker-workspace-refresh.md)
 **Phase:** Session-scoped protected-tool refresh and restart recovery
-**Status:** proposed, 2026-09-14. The directing human settled the product and implementation-contract decisions in this conversation; ready for Plan / Interface review.
+**Status:** in-progress, 2026-09-14. Plan / Interface PR #1464 is merged; implementation is in progress.
 **Delivery:** Split. The change alters session authority/persistence semantics, a public control's eligibility, restart behavior, and broker deployment documentation.
-**Expected tasks:** deferred to orchestration.
+**Expected tasks:** 3.
 **Issue:** [#1463](https://github.com/stacklok/mecatl/issues/1463)
 **Plan PR:** [#1464](https://github.com/stacklok/mecatl/pull/1464)
-**Approved baseline:** absent until the Plan / Interface PR merges.
+**Approved baseline:** `406ac5cd674dbc000d8854254837ff5f368dc3a8`.
 
 A caller who owns an idle broker-backed mecak8s session can run `/tools-connect` after any completed conversation turn. The existing `ConnectWorkspaceServices` gRPC/HTTP control starts, observes, retries, or cancels one ToolHive-owned whole-bundle operation. Starting refresh is an explicit destructive replacement: active broker wrappers become unavailable until a complete verified replacement succeeds. No connector selector, new command grammar, or new wire message is introduced.
 

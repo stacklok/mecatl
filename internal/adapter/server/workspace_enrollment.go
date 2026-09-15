@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
@@ -23,7 +24,15 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	if err := s.acquireLease(ctx, id); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
+	return s.connectWorkspaceServicesLocked(ctx, id)
+}
 
+// connectWorkspaceServicesLocked is ConnectWorkspaceServices' body. The caller
+// must already hold runEntryMu for id and have acquired the session lease.
+// RetryWorkspaceEnrollment composes this with cancelWorkspaceEnrollmentLocked
+// under ONE lock/lease acquisition so a prompt can never enter between the
+// cancellation and the replacement begin.
+func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session.SessionID) (WorkspaceEnrollmentProjection, error) {
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -35,6 +44,12 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 
 	pending, exists := sess.PendingWorkspaceEnrollment()
 	if !exists {
+		if len(sess.Conversation.Messages) != 0 {
+			if err := enroller.ResetWorkspaceEnrollment(ctx); err != nil {
+				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: reset workspace enrollment", ErrFailedPrecondition)
+			}
+			s.withdrawBrokerEngine(id)
+		}
 		presentation, beginErr := enroller.BeginWorkspaceEnrollment(ctx)
 		if beginErr != nil || !presentation.Valid() {
 			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
@@ -71,12 +86,15 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
+		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
+		s.withdrawBrokerEngine(sess.ID)
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
@@ -94,25 +112,37 @@ func (s *Service) recordObservedWorkspaceEnrollment(ctx context.Context, sess *s
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 }
 
-// RetryWorkspaceEnrollment cancels one exact bundle before beginning a replacement.
+// RetryWorkspaceEnrollment cancels one exact bundle before beginning a
+// replacement, holding runEntryMu continuously across both so no prompt can
+// enter between the cancellation and the replacement begin (a single
+// acquire-then-release pair per call, rather than composing the two public
+// methods, each of which independently acquires and releases the lock).
 func (s *Service) RetryWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
-	if _, err := s.cancelWorkspaceEnrollment(ctx, id, enrollmentID); err != nil {
-		return WorkspaceEnrollmentProjection{}, err
-	}
-	return s.ConnectWorkspaceServices(ctx, id)
-}
-
-// CancelWorkspaceEnrollment cancels one exact bundle and clears its prompt gate.
-func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
-	return s.cancelWorkspaceEnrollment(ctx, id, enrollmentID)
-}
-
-func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
 	if err := s.acquireLease(ctx, id); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
+	if _, err := s.cancelWorkspaceEnrollmentLocked(ctx, id, enrollmentID); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
+	return s.connectWorkspaceServicesLocked(ctx, id)
+}
+
+// CancelWorkspaceEnrollment cancels one exact bundle and clears its prompt gate.
+func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	if err := s.acquireLease(ctx, id); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
+	return s.cancelWorkspaceEnrollmentLocked(ctx, id, enrollmentID)
+}
+
+// cancelWorkspaceEnrollmentLocked is the shared cancel body for
+// RetryWorkspaceEnrollment and CancelWorkspaceEnrollment. The caller must
+// already hold runEntryMu for id and have acquired the session lease.
+func (s *Service) cancelWorkspaceEnrollmentLocked(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -177,8 +207,16 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return nil, nil, nil, ErrNotFound
 	}
-	if s.cfg.MCPBroker == nil || sess.State != session.StateIdle || sess.Conversation == nil || len(sess.Conversation.Messages) != 0 {
-		return nil, nil, nil, fmt.Errorf("%w: workspace enrollment must precede the first prompt", ErrFailedPrecondition)
+	if sess.State == session.StateCompleted {
+		if err := sess.Reopen(); err != nil {
+			return sess, nil, nil, fmt.Errorf("%w: reopen workspace enrollment session", ErrFailedPrecondition)
+		}
+		if err := s.saveSession(ctx, sess); err != nil {
+			return sess, nil, nil, fmt.Errorf("%w: persist workspace enrollment reopen", ErrInternal)
+		}
+	}
+	if s.cfg.MCPBroker == nil || sess.State != session.StateIdle || sess.Conversation == nil {
+		return nil, nil, nil, fmt.Errorf("%w: workspace enrollment requires an idle session", ErrFailedPrecondition)
 	}
 	if _, live := s.LookupRun(id); live {
 		return nil, nil, nil, fmt.Errorf("%w: session has an active run", ErrFailedPrecondition)
@@ -190,9 +228,11 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 			brokerUnlock()
 			return sess, nil, nil, err
 		}
-		// This seam is pre-prompt by construction, so a lost incarnation costs the
-		// session nothing durable: adopt the live one rather than strand it behind
-		// a binding no restarted process can ever match.
+		// This seam is reached only from an explicit refresh (ADR 0335 Scenario
+		// 2): a binding lost to broker-process restart can never match again, so
+		// adopt a fresh live attachment rather than strand the session behind it.
+		// Ordinary run rehydration never calls rebind — a restored session with a
+		// mismatched binding simply builds its engine without broker tools.
 		if local, err = s.rebindBrokerAttachment(ctx, sess); err != nil {
 			brokerUnlock()
 			return sess, nil, nil, err
@@ -206,6 +246,20 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	return sess, enroller, brokerUnlock, nil
 }
 
+// withdrawBrokerEngine removes only the broker-bearing session engine. It is
+// deliberately narrower than closeSessionLocal: the logical broker attachment,
+// session placement, and unrelated session state remain available for retry.
+func (s *Service) withdrawBrokerEngine(id session.SessionID) {
+	s.mu.Lock()
+	engine, ok := s.sessionEngines[id]
+	delete(s.sessionEngines, id)
+	s.mu.Unlock()
+	if ok && engine.close != nil {
+		if err := engine.close(); err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "broker session engine withdrawal failed")
+		}
+	}
+}
 func cancelWorkspaceEnrollmentDetached(ctx context.Context, enroller brokercontract.WorkspaceEnrollmentAttachment, ref brokercontract.WorkspaceEnrollmentRef) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 	defer cancel()

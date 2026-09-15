@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
@@ -112,6 +113,17 @@ func (f *fakeLister) ListModels(context.Context) ([]modelEntry, error) {
 		return nil, f.err
 	}
 	return f.models, nil
+}
+
+type deadlineLister struct {
+	deadlines chan time.Time
+}
+
+func (l *deadlineLister) ListModels(ctx context.Context) ([]modelEntry, error) {
+	deadline, _ := ctx.Deadline()
+	l.deadlines <- deadline
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 type principalLister struct {
@@ -875,7 +887,10 @@ func TestRefreshStaleModels_SkipsHealthyAndNonIntentDriven(t *testing.T) {
 		meta:     newLiveMetaStore(),
 		outcomes: newLiveOutcomeStore(),
 	}
-	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "already-ok"}}) // healthy, not stale
+	reg.outcomes.recordSuccess(reg.entries[providerToolhive], []modelEntry{{ID: "already-ok"}})
+	publishSnapshot(port.NopDiagnostics{}, reg, newFakeSwapper(),
+		map[string][]modelEntry{providerToolhive: {{ID: "already-ok"}}},
+		map[string]bool{providerToolhive: true}) // healthy only once the result is published
 	st := &refreshStaleModelsState{}
 
 	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st)
@@ -1083,5 +1098,164 @@ func TestRefreshStaleModelsConcurrentWithBackgroundRefresh(t *testing.T) {
 	}
 	if _, ok := reg.meta.lookup(providerToolhive, "th/live-a"); !ok {
 		t.Fatal("toolhive live model lost after concurrent publish/refresh")
+	}
+}
+
+func TestAwaitContextWindowRejectsCatalogFallbackAfterEmptyListingAndRecovers(t *testing.T) {
+	const selected = "openai/uncatalogued-selected"
+	lister := &fakeLister{}
+	reg := &providerRegistry{
+		entries:  map[string]providerEntry{providerOpenAI: {id: providerOpenAI, lister: lister, available: true, nativeEndpoint: true}},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.meta.seedFromCatalog([]string{providerOpenAI})
+	picker := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenAI)
+	if len(picker) == 0 {
+		t.Fatal("empty live response removed the embedded picker fallback")
+	}
+	reg.meta.markRefreshCompleted()
+	st := &refreshStaleModelsState{}
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st, providerOpenAI, selected, 0); !errors.Is(err, server.ErrContextWindowUnavailable) {
+		t.Fatalf("empty catalog-backed listing admission = %v, want ErrContextWindowUnavailable", err)
+	}
+	if got := lister.calls.Load(); got != 1 {
+		t.Fatalf("first rejection listing calls = %d, want startup call only", got)
+	}
+
+	// A genuine non-empty listing may omit an exact passthrough selection. The
+	// recovery refresh establishes that provenance and then admits the 128k floor.
+	lister.models = []modelEntry{{ID: "openai/other-live-model"}}
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st, providerOpenAI, selected, 0); err != nil {
+		t.Fatalf("healthy non-empty omission was not admitted: %v", err)
+	}
+	if got := lister.calls.Load(); got != 2 {
+		t.Fatalf("recovery listing calls = %d, want 2", got)
+	}
+}
+
+func TestAwaitContextWindowWaitCancellationAndInternalBound(t *testing.T) {
+	newRegistry := func() *providerRegistry {
+		return &providerRegistry{
+			entries:  map[string]providerEntry{providerToolhive: {id: providerToolhive, lister: &fakeLister{}, available: true, intentDriven: true}},
+			meta:     newLiveMetaStore(),
+			outcomes: newLiveOutcomeStore(),
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := awaitContextWindowWithin(ctx, port.NopDiagnostics{}, newRegistry(), newFakeSwapper(), &refreshStaleModelsState{}, providerToolhive, "unknown", time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("caller cancellation = %v, want context.Canceled", err)
+	}
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, newRegistry(), newFakeSwapper(), &refreshStaleModelsState{}, providerToolhive, "unknown", 0); !errors.Is(err, server.ErrContextWindowUnavailable) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("internal wait bound = %v, want only ErrContextWindowUnavailable", err)
+	}
+}
+
+func TestAwaitContextWindowDoesNotTrustSuccessBeforePublication(t *testing.T) {
+	const (
+		provider = "gateway"
+		model    = "large-model"
+	)
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{provider: {
+			id: provider, available: true, defaultModel: model,
+			lister: &fakeLister{models: []modelEntry{{ID: model, ContextLimit: 1_000_000}}},
+		}},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.meta.markRefreshCompleted()
+
+	// Fetch completion records last-known-good/status before publishSnapshot makes
+	// the corresponding resolver metadata visible. Admission in this deliberate
+	// pause must reject rather than infer with the unrelated 128k floor.
+	recorded := make(chan providerModelResult, 1)
+	releasePublish := make(chan struct{})
+	published := make(chan struct{})
+	go func() {
+		result := resolveProviderModelResult(context.Background(), port.NopDiagnostics{}, reg, provider)
+		recorded <- result
+		<-releasePublish
+		publishSnapshot(port.NopDiagnostics{}, reg, newFakeSwapper(),
+			map[string][]modelEntry{provider: result.models},
+			map[string]bool{provider: result.nonEmptyListing})
+		close(published)
+	}()
+	result := <-recorded
+	if !result.nonEmptyListing {
+		t.Fatal("fixture did not produce genuine listing evidence")
+	}
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), nil, provider, model, time.Second); !errors.Is(err, server.ErrContextWindowUnavailable) {
+		t.Fatalf("admission between fetch and publish = %v, want ErrContextWindowUnavailable", err)
+	}
+
+	close(releasePublish)
+	<-published
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), nil, provider, model, time.Second); err != nil {
+		t.Fatalf("admission after metadata publication: %v", err)
+	}
+	if got := reg.meta.contextWindowFor(provider, model); got != 1_000_000 {
+		t.Fatalf("published context window = %d, want 1000000", got)
+	}
+}
+
+func TestAwaitContextWindowBoundsEntireRecoveryAcrossProviders(t *testing.T) {
+	const selectedProvider = "gateway-a"
+	deadlines := make(chan time.Time, 2)
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			selectedProvider: {id: selectedProvider, available: true, defaultModel: "selected", lister: &deadlineLister{deadlines: deadlines}},
+			"gateway-b":      {id: "gateway-b", available: true, defaultModel: "other", lister: &deadlineLister{deadlines: deadlines}},
+		},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.meta.markRefreshCompleted()
+	st := &refreshStaleModelsState{}
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st, selectedProvider, "selected", 50*time.Millisecond); !errors.Is(err, server.ErrContextWindowUnavailable) {
+		t.Fatalf("first admission = %v, want ErrContextWindowUnavailable", err)
+	}
+
+	started := time.Now()
+	if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), st, selectedProvider, "selected", 50*time.Millisecond); !errors.Is(err, server.ErrContextWindowUnavailable) {
+		t.Fatalf("recovery admission = %v, want ErrContextWindowUnavailable", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("multi-provider recovery took %v, want one operation-wide bound", elapsed)
+	}
+	first, second := <-deadlines, <-deadlines
+	if delta := second.Sub(first); delta < -5*time.Millisecond || delta > 5*time.Millisecond {
+		t.Fatalf("provider deadlines differ by %v, want shared operation deadline", delta)
+	}
+}
+
+func TestAwaitContextWindowKnownAndNoListerBypasses(t *testing.T) {
+	const selected = "future/model"
+	tests := []struct {
+		name string
+		reg  *providerRegistry
+	}{
+		{name: "global override", reg: &providerRegistry{entries: map[string]providerEntry{providerToolhive: {id: providerToolhive, lister: &fakeLister{}, available: true}}, meta: newLiveMetaStore(), outcomes: newLiveOutcomeStore(), contextWindowOverride: 200_000}},
+		{name: "exact configured", reg: &providerRegistry{entries: map[string]providerEntry{providerToolhive: {id: providerToolhive, lister: &fakeLister{}, available: true}}, meta: newLiveMetaStore(), outcomes: newLiveOutcomeStore(), contextWindows: map[string]map[string]int{providerToolhive: {selected: 300_000}}}},
+		{name: "catalog", reg: func() *providerRegistry {
+			r := regWithLister(&fakeLister{})
+			r.meta = newLiveMetaStore()
+			r.meta.seedFromCatalog([]string{providerOpenRouter})
+			r.outcomes = newLiveOutcomeStore()
+			return r
+		}()},
+		{name: "no lister", reg: &providerRegistry{entries: map[string]providerEntry{providerToolhive: {id: providerToolhive, available: true}}, meta: newLiveMetaStore(), outcomes: newLiveOutcomeStore()}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := selected
+			if tc.name == "catalog" {
+				model = embeddedModels(providerOpenRouter)[0].ID
+			}
+			if err := awaitContextWindowWithin(context.Background(), port.NopDiagnostics{}, tc.reg, newFakeSwapper(), &refreshStaleModelsState{}, tc.reg.Available()[0], model, 0); err != nil {
+				t.Fatalf("bypass failed: %v", err)
+			}
+		})
 	}
 }

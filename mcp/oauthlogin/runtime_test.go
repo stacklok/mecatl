@@ -3,6 +3,7 @@ package oauthlogin
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -61,6 +62,53 @@ func runWithLauncher(t *testing.T, launcher BrowserLauncher, authorize Authorize
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return runtime.Authorize(ctx, testIssuer, authorize)
+}
+
+func TestADR_0325_RegistrationBoundCallbackPath(t *testing.T) {
+	path := callbackPrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, callbackBytes))
+	runtime, err := New(Options{Launcher: launcherFunc(func(context.Context, string) error { return nil })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AuthorizeWithCallbackPath(context.Background(), testIssuer, "/wrong", func(context.Context, string, func(context.Context, string) (Result, error)) error { return nil }); err == nil {
+		t.Fatal("invalid registration-bound path was accepted")
+	}
+
+	var redirects []string
+	for i := 0; i < 2; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err = runtime.AuthorizeWithCallbackPath(ctx, testIssuer, path, func(ctx context.Context, redirect string, present func(context.Context, string) (Result, error)) error {
+			redirects = append(redirects, redirect)
+			parsed, parseErr := url.Parse(redirect)
+			if parseErr != nil || parsed.Path != path || parsed.Hostname() != "127.0.0.1" {
+				return fmt.Errorf("bound redirect = %q: %v", redirect, parseErr)
+			}
+			go func() {
+				req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "code", fmt.Sprintf("state-%d", i), testIssuer), nil)
+				_ = request(t, req)
+			}()
+			result, presentErr := present(ctx, "https://as.example.test/authorize?state="+fmt.Sprintf("state-%d", i))
+			if presentErr == nil && result.State != fmt.Sprintf("state-%d", i) {
+				t.Fatalf("callback result = %#v", result)
+			}
+			return presentErr
+		})
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if redirects[0] == redirects[1] {
+		t.Fatalf("ephemeral callback port was reused: %q", redirects[0])
+	}
+
+	fixed, err := New(Options{RedirectURL: ExactRedirectURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixed.AuthorizeWithCallbackPath(context.Background(), testIssuer, path, func(context.Context, string, func(context.Context, string) (Result, error)) error { return nil }); err == nil {
+		t.Fatal("registration-bound path conflicted with fixed redirect but was accepted")
+	}
 }
 
 func TestAuthorizeRealLoopbackHappyPath(t *testing.T) {

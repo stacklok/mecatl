@@ -164,6 +164,9 @@ type SessionDiscoveryMeta struct {
 	EnvironmentRef  session.EnvironmentRef
 	Kind            session.SessionKind
 	Relationship    session.SessionRelationship
+	// Activity is the proven persisted-history projection. Unknown means unavailable,
+	// absent, corrupt, or unsupported metadata; it never implies a draft.
+	Activity session.ActivityState
 	// EstimatedBytes is a content-free backend estimate of bytes reclaimed by
 	// deleting this session family. Zero means unavailable, never a measured
 	// assertion that the family occupies no storage.
@@ -240,6 +243,22 @@ type SessionMetadataPage struct {
 // most request.Limit rows, and use strict keyset continuation after Cursor.
 type SessionMetadataPager interface {
 	PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
+}
+
+// SessionActivityProjectionPager proves that a metadata pager atomically
+// round-trips the activity projection with its snapshot writes.
+type SessionActivityProjectionPager interface {
+	SessionMetadataPager
+	SupportsSessionActivityProjection() bool
+}
+
+// SupportsActivityProjection reports whether store implements
+// SessionActivityProjectionPager AND that pager currently proves atomicity. It
+// is the ONE capability-probe rule callers use instead of each re-deriving the
+// same type-assertion-plus-check independently.
+func SupportsActivityProjection(store any) bool {
+	pager, ok := store.(SessionActivityProjectionPager)
+	return ok && pager.SupportsSessionActivityProjection()
 }
 
 // SessionStorageHealth is an aggregate, content-free measurement derived from

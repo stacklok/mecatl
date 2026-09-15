@@ -1374,8 +1374,9 @@ jobs:
     # `user-docs/` (the mecatl.dev site content) is excluded from the matlatl
     # corpus above — see .matlatlignore — because its Docusaurus content-root
     # links aren't matlatl-relative. Without this job nothing on the PR path
-    # checks it at all: `deploy-site.yml` only runs on push to main, AFTER
-    # merge. The SDK reference check fails when its committed declaration-based
+    # checks it at all. Vercel builds previews and production after the change
+    # reaches GitHub, so this required job remains the pre-merge content gate.
+    # The SDK reference check fails when its committed declaration-based
     # pages drift. `npm run build` is the SAME command the deploy workflow uses,
     # and Docusaurus's own `onBrokenLinks: 'throw'` (docusaurus.config.ts) fails
     # the build on a broken internal link or a page that isn't in any sidebar.

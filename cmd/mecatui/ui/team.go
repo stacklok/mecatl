@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -41,6 +42,7 @@ type teamState struct {
 	view   teamView
 	cursor int    // selected row in the roster (an index into the render order)
 	member string // the focused member's name (teamFocus)
+	scroll int    // rendered-line offset in focus/tasks/findings
 }
 
 // openTeam opens the roster overlay over the most-recent populated Team card.
@@ -100,6 +102,10 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	}
 	if m.team.view == teamFocus {
+		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
+			m.team.scroll = next
+			return m, nil, true
+		}
 		// Focus pane: esc returns to the roster; x cancels the focused member (live
 		// teams only — the key no-ops once the team ended or the member stopped). The
 		// trace is height-bounded (no live viewport), so no other key is consumed.
@@ -107,6 +113,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		case key.Matches(msg, m.keys.Close):
 			m.team.view = teamRoster
 			m.team.member = ""
+			m.team.scroll = 0
 		case key.Matches(msg, m.keys.CancelChild):
 			mm, cmd := m.cancelTeamLane(b, teamFindLane(b, m.team.member))
 			return mm, cmd, true
@@ -114,20 +121,30 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	if m.team.view == teamTasks {
+		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
+			m.team.scroll = next
+			return m, nil, true
+		}
 		// Subagent sub-view: BOTH esc and 't' return to the roster (t toggles, esc steps
 		// back). It is a calm read-only surface like the focus pane — no other key is
 		// consumed (the list is height-windowed, no live viewport).
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Tasks) {
 			m.team.view = teamRoster
+			m.team.scroll = 0
 		}
 		return m, nil, true
 	}
 	if m.team.view == teamFindings {
+		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
+			m.team.scroll = next
+			return m, nil, true
+		}
 		// Findings sub-view: BOTH esc and 'f' return to the roster (f toggles, esc
 		// steps back), mirroring the task sub-view. Read-only, height-windowed, no
 		// live viewport.
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Findings) {
 			m.team.view = teamRoster
+			m.team.scroll = 0
 		}
 		return m, nil, true
 	}
@@ -144,15 +161,18 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // that grows under the overlay never desyncs a stored scroll offset.
 func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cmd) {
 	n := len(b.teamLanes)
-	page := teamRosterRows(m.vp.Height())
+	th, hk, width, height := m.agentsListGeometry()
+	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, b, hk, width))
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m.closeTeam()
 	case key.Matches(msg, m.keys.Tasks):
 		m.team.view = teamTasks
+		m.team.scroll = 0
 		return m, nil
 	case key.Matches(msg, m.keys.Findings):
 		m.team.view = teamFindings
+		m.team.scroll = 0
 		return m, nil
 	}
 	if next, handled := navigateRosterCursor(msg, m.keys, m.team.cursor, n, page); handled {
@@ -167,6 +187,7 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		}
 		m.team.member = b.teamLanes[order[m.team.cursor]].name
 		m.team.view = teamFocus
+		m.team.scroll = 0
 		return m, nil
 	case key.Matches(msg, m.keys.CancelChild):
 		order := teamLaneOrder(b.teamLanes)
@@ -273,137 +294,110 @@ func teamFocusRows(height int) int {
 // builders below. The former standalone renderTeamOverlay (which framed the body in
 // its own centerCard) is gone — the unified container owns the framing now.
 
-// teamRosterChromeLines is the number of NON-lane lines the roster card always
-// spends on chrome: the title, the blank line under the header, the blank line
-// above the footer, and the footer hint (4). The optional resolved sub-header and
-// the +K above/below tails are accounted for separately by teamRosterRows.
-const teamRosterChromeLines = 4
-
-// teamMinRosterRows is the floor on visible lane rows, so even an absurdly short
-// terminal still shows a usable slice of the roster (the window just gets tight)
-// rather than collapsing to zero rows.
+// teamMinRosterRows is the minimum logical-row allowance used by the
+// non-selectable task and findings windows.
 const teamMinRosterRows = 3
-
-// teamRosterRows is how many lane rows fit in the roster window for a card of
-// the given OUTER height (the conversation region height passed to the overlay).
-// It subtracts the card border+padding (4) and the fixed chrome lines, reserving
-// two extra lines for the potential +K above / +K below tails so the footer hint
-// is NEVER pushed off-screen by the tails. Floors at teamMinRosterRows. A
-// non-positive height (size unknown) yields 0 → renderTeamRoster shows all rows
-// (the pre-windowing behaviour, safe when we can't measure).
-func teamRosterRows(height int) int {
-	if height <= 0 {
-		return 0
-	}
-	const cardChrome = 4 // border (2) + vertical padding (2)
-	const tailReserve = 2
-	rows := height - cardChrome - teamRosterChromeLines - tailReserve
-	if rows < teamMinRosterRows {
-		return teamMinRosterRows
-	}
-	return rows
-}
-
-// teamWindow computes the [start, end) slice of the render order to show so the
-// cursor stays visible, scrolling the window to follow it. rows is the visible
-// capacity (0 = show all). The window is anchored to keep the cursor in view with
-// a stable, minimal scroll: it only moves when the cursor would fall outside the
-// current span, and clamps to the ends so the last page is full. It returns the
-// slice bounds plus how many rows are hidden above/below (for the +K tails).
-func teamWindow(cursor, total, rows int) (start, end, above, below int) {
-	if rows <= 0 || total <= rows {
-		return 0, total, 0, 0
-	}
-	// Center-ish: place the cursor with a little context above where possible, then
-	// clamp so the window never runs past either end (a full last page).
-	start = cursor - rows/2
-	if start < 0 {
-		start = 0
-	}
-	if start > total-rows {
-		start = total - rows
-	}
-	end = start + rows
-	return start, end, start, total - end
-}
 
 // renderTeamRoster renders the member roster WINDOWED to the available height:
 // a header (member count + resolved round/stop summary), then the slice of lanes
-// that fits — lead first — with the selected row highlighted and the window
+// that fits — lead first — with the selected row marked with the unbordered ▶ treatment and the window
 // following the cursor, bracketed by "· +K above" / "· +K below" affordances when
 // rows are hidden, and a footer hint that is ALWAYS visible. This gives the
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
-func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
+func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
+	header := renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth)
+	if sub := teamRosterSubhead(b); sub != "" {
+		header += "\n" + renderDelegationRows(muted, "", sub, bodyWidth)
+	}
+	order := teamLaneOrder(b.teamLanes)
+	nameW := teamNameWidth(b.teamLanes, order)
+	cursor := clampCursor(st.cursor, len(order))
+	list := agentsSelectableList{
+		header: header,
+		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth),
+		cursor: cursor, muted: muted, noun: "rows",
+	}
+	for row, laneIndex := range order {
+		style, prefix := muted, "  "
+		if row == cursor {
+			style, prefix = th.Style("spinner"), "▶ "
+		}
+		list.rows = append(list.rows, renderTeamRosterRow(style, prefix, &b.teamLanes[laneIndex], nameW, b.teamDone, bodyWidth))
+	}
+	return list
+}
+
+func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	var out strings.Builder
-
-	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth))
-	out.WriteString("\n")
-	if sub := teamRosterSubhead(b); sub != "" {
-		out.WriteString(renderDelegationRows(muted, "", sub, bodyWidth) + "\n")
-	}
-	out.WriteString("\n")
-
-	order := teamLaneOrder(b.teamLanes)
-	nameW := teamNameWidth(b.teamLanes, order)
-	cursor := clampCursor(st.cursor, len(order))
-	start, end, above, below := teamWindow(cursor, len(order), teamRosterRows(height))
-
-	if above > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d above", above), bodyWidth) + "\n")
-	}
-	for row := start; row < end; row++ {
-		ln := &b.teamLanes[order[row]]
-		line := teamRosterLine(th, ln, nameW, b.teamDone)
-		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
-		} else {
-			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
-		}
-	}
-	if below > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d below", below), bodyWidth) + "\n")
-	}
-
-	// SHORTER than the old roster hint (the paging chords still work, unnamed): the
-	// added "x cancel" segment would otherwise push this card past a 100-col terminal
-	// — the hint is the card's widest line, so it directly sets the overlay width
-	// (centerCard does not wrap). Same discipline as the Subagents-tab hint. Every
-	// chord reads the LIVE keyMap markings (hk) so an override propagates (issue
-	// #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth))
-	return out.String()
+	return teamSelectableList(th, st, b, hk, bodyWidth).render(th, height)
 }
 
-// teamRosterLine is one roster row: the inline lane line (state glyph + mutating
-// cue + name + [lead] + current tool/state + usage), then the per-member context
-// meter band (only when the member's window is known), then the member's ROLE
-// appended as a dim suffix when present, then the opt-in model router's "routed:
-// <category> → <model>" cue when the member was routed — the detail the calm inline
-// card omits, surfaced here in the dedicated deep view. The context meter reuses the
-// footer's renderContextMeter so the band/percentage/⚠ vocabulary matches the main
-// meter exactly. It is GATED on a known window (ctxWindow>0): with no window there is
-// no denominator, so a bare "ctx <size>" with no band is suppressed entirely. The
-// role is sanitized (roster-derived) and truncated so a long role can't blow out the
-// row. The routed cue is bare metadata (a label + a model id), never member content.
-func teamRosterLine(th theme.Theme, ln *teamLane, nameW int, teamDone bool) string {
-	line := teamLaneLine(ln, nameW, teamDone)
-	if ln.ctxWindow > 0 {
-		line += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
+// renderTeamRosterRow uses three fixed physical lines: identity, work summary, and
+// runtime metadata. Each line is clipped to its own budget instead of allowing an
+// arbitrary wrap to split related fields across rows.
+func renderTeamRosterRow(style lipgloss.Style, prefix string, ln *teamLane, nameW int, teamDone bool, bodyWidth int) string {
+	title := teamRosterTitle(ln, nameW, teamDone)
+	work, runtime := teamRosterWork(ln, teamDone), teamRosterRuntime(ln)
+	if bodyWidth > 0 {
+		title = truncateDisplayWidth(title, max(1, bodyWidth-lipgloss.Width(prefix)))
+		work = truncateDisplayWidth(work, max(1, bodyWidth-4))
+		runtime = truncateDisplayWidth(runtime, max(1, bodyWidth-4))
 	}
+	return style.Render(prefix + title + "\n    " + work + "\n    " + runtime)
+}
+
+func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
+	name := truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)
+	if pad := nameW - len([]rune(name)); pad > 0 {
+		name += strings.Repeat(" ", pad)
+	}
+	if ln.lead {
+		name += " [lead]"
+	}
+	return teamGlyph(ln, teamDone) + " " + teamMutCue(ln) + " " + name
+}
+
+func teamRosterWork(ln *teamLane, teamDone bool) string {
+	parts := []string{teamLaneState(ln, teamDone)}
 	if ln.role != "" {
-		line += " · " + truncate(sanitizeTerminal(ln.role), maxTeamRoleLen)
+		parts = append(parts, truncate(sanitizeTerminal(ln.role), maxTeamRoleLen))
 	}
-	if r := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); r != "" {
-		line += " · " + r
+	return strings.Join(parts, " · ")
+}
+
+func teamRosterRuntime(ln *teamLane) string {
+	parts := []string{"↑" + humanizeTokens(ln.usage.InputTokens) + " ↓" + humanizeTokens(ln.usage.OutputTokens)}
+	if ln.ctxWindow > 0 {
+		parts = append(parts, renderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
 	}
-	return line
+	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
+		parts = append(parts, routed)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// teamRosterLine remains the compact, unstyled form used by the essential fallback.
+func teamRosterLine(_ theme.Theme, ln *teamLane, nameW int, teamDone bool) string {
+	return teamRosterTitle(ln, nameW, teamDone) + " · " + teamRosterWork(ln, teamDone) + " · " + teamRosterRuntime(ln)
+}
+
+// renderContextMeterPlain is the ANSI-free representation required before generic
+// roster wrapping; renderContextMeter's styled bar must not be sanitized as raw text.
+func renderContextMeterPlain(used, window int64) string {
+	if used < 0 {
+		used = 0
+	}
+	if window <= 0 {
+		return "ctx " + humanizeTokens(used)
+	}
+	frac := ctxFraction(used, window)
+	return "ctx " + ctxBar(frac) + " " + ctxLabel(frac) + " · " + humanizeTokens(used) + "/" + humanizeTokens(window)
 }
 
 // maxTeamRoleLen caps how many runes of a member's role show on a roster row so
@@ -443,6 +437,10 @@ func teamRosterSubhead(b *block) string {
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
 func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyWidth, height int) string {
+	return renderTeamFocusAt(th, b, member, 0, hk, bodyWidth, height)
+}
+
+func renderTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
@@ -474,7 +472,9 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyW
 		// source in renderTrace). It must NOT go through truncateLines, which
 		// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
 		// line count ANSI-safely instead, to the rows that fit the terminal height.
-		out.WriteString(capRenderedLines(th, trace, teamFocusRows(height)))
+		lines := strings.Split(trace, "\n")
+		w := renderedLineWindow(scroll, len(lines), teamFocusRows(height))
+		out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
 	}
 
 	// A benched-on-error member surfaces WHY its last failed round failed, mirroring
@@ -489,28 +489,15 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyW
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
 	// already stopped, and a known session id (the CancelChild handle). The chords
 	// read the LIVE CancelChild/Close markings (issue #457).
-	hint := focusBackHint(hk)
+	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
+	w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+	lead := focusBackHint(hk)
 	if !b.teamDone && !ln.stopped && ln.sessionID != "" {
-		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
+		lead = hk.cancelChild + " cancel · " + lead
 	}
+	hint := agentsDetailHint(hk, w, lead)
 	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
-}
-
-// capRenderedLines clamps an ALREADY-RENDERED (ANSI-carrying) string to maxLines,
-// appending a muted "+N more lines" tail when it overflows. Unlike truncateLines,
-// it does NOT sanitizeTerminal the input (that would strip the ESC bytes of the
-// embedded styling), so it is the right cap for content whose text was already
-// sanitized at render time (the team trace chips/messages). The tail does not
-// reference ctrl+t (the focus pane has no expand toggle).
-func capRenderedLines(th theme.Theme, s string, maxLines int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	extra := len(lines) - maxLines
-	kept := strings.Join(lines[:maxLines], "\n")
-	return kept + "\n" + th.Style("muted").Render(fmt.Sprintf("  … +%s", plural(extra, "more line")))
 }
 
 // teamFailureLine renders the focus pane's failure block for a team member that ended
@@ -564,7 +551,7 @@ const (
 const teamTasksChromeLines = 5
 
 // teamTasksRows is how many task rows fit in the task sub-view for a card of the
-// given OUTER height. It mirrors teamRosterRows: subtract the card border+padding
+// given OUTER height. It subtracts the card border+padding
 // and the fixed chrome, reserve one line for the "+N more" tail, floor at
 // teamMinRosterRows. A non-positive height (size unknown) shows all rows.
 func teamTasksRows(height int) int {
@@ -631,7 +618,31 @@ func teamSubViewHint(hk helpKeys, flip string) string {
 // task (glyph · id · state · assignee · deps). An empty list reads as a muted
 // "(no tasks)". All task-derived strings are terminal-sanitized. It mirrors the
 // roster's height-window math so a long task list never clips the footer.
+func renderedTaskLines(th theme.Theme, b *block, bodyWidth int) []string {
+	byID := make(map[string]string, len(b.teamTasks))
+	for _, task := range b.teamTasks {
+		byID[task.id] = task.state
+	}
+	var lines []string
+	for _, task := range b.teamTasks {
+		lines = append(lines, strings.Split(renderDynamicCardChromeLine(th.Style("muted"), "  ", taskRow(task, byID), bodyWidth), "\n")...)
+	}
+	return lines
+}
+
+func agentsDetailHint(hk helpKeys, w renderedLineWindowBounds, lead string) string {
+	hint := ""
+	if w.total > w.window {
+		hint = fmt.Sprintf("lines %d–%d of %d · ", w.start+1, w.end, w.total)
+	}
+	return hint + lead + " · " + hk.navUp + "/" + hk.navDown + " scroll · " + hk.scroll + " · " + hk.jumpTop + "/" + hk.jumpEnd
+}
+
 func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
+	return renderTeamTasksAt(th, b, 0, hk, height, widths...)
+}
+
+func renderTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
@@ -655,18 +666,10 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 		byID[t.id] = t.state
 	}
 
-	// Window the rows to the available height (cursor-free: the task sub-view has no
-	// selection, so it always anchors at the top, surfacing only a "+N more" tail).
-	rows := teamTasksRows(height)
-	start, end, _, below := teamWindow(0, len(b.teamTasks), rows)
-	for i := start; i < end; i++ {
-		out.WriteString(renderDelegationRows(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
-	}
-	if below > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
-	}
-
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
+	lines := renderedTaskLines(th, b, bodyWidth)
+	w := renderedLineWindow(scroll, len(lines), teamTasksRows(height))
+	out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.tasks)), bodyWidth))
 	return out.String()
 }
 
@@ -755,7 +758,19 @@ func teamFindingsRows(height int) int {
 // (member · body). An empty ledger reads as a muted "(no findings)". All
 // finding-derived strings are terminal-sanitized. It mirrors renderTeamTasks's
 // chrome and height-window math so a long ledger never clips the footer.
+func renderedFindingLines(th theme.Theme, b *block, bodyWidth int) []string {
+	var lines []string
+	for _, finding := range b.teamFindings {
+		lines = append(lines, strings.Split(renderDynamicCardChromeLine(th.Style("muted"), "  ", findingRow(finding), bodyWidth), "\n")...)
+	}
+	return lines
+}
+
 func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
+	return renderTeamFindingsAt(th, b, 0, hk, height, widths...)
+}
+
+func renderTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
@@ -774,18 +789,10 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 		return out.String()
 	}
 
-	// Window the rows to the available height (cursor-free: the findings sub-view has
-	// no selection, so it always anchors at the top, surfacing only a "+N more" tail).
-	rows := teamFindingsRows(height)
-	start, end, _, below := teamWindow(0, len(b.teamFindings), rows)
-	for i := start; i < end; i++ {
-		out.WriteString(renderDelegationRows(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
-	}
-	if below > 0 {
-		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
-	}
-
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
+	lines := renderedFindingLines(th, b, bodyWidth)
+	w := renderedLineWindow(scroll, len(lines), teamFindingsRows(height))
+	out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.findings)), bodyWidth))
 	return out.String()
 }
 

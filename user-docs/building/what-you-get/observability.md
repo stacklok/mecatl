@@ -1,339 +1,203 @@
 ---
 sidebar_position: 7
-title: Observability & resilience
+title: Observability and resilience
 description:
-  Monitor Mecatl runs with metrics, traces, diagnostics, and resilient model
-  calls.
+  Monitor Mecatl runs with metrics, traces, diagnostics, audit records, and
+  resilient model calls.
 ---
 
-# Observability & resilience
+# Observability and resilience
 
-Mecatl exposes three observability channels and wraps LLM provider calls with a
-resilience layer. This page describes their outputs, failure guarantees, and
-configuration.
+Mecatl exposes metrics, traces, structured logs, and tool audit records. Its
+model-provider wrapper also handles transient failures and stalled streams.
 
----
-
-## Overview
-
-|Channel|What it carries|
+|Channel|Purpose|
 |-|-|
-|**Prometheus metrics** (`/metrics`)|Domain counters, gauges, and latency histograms — composition-dependent|
-|**OTel traces** (OTLP)|Run/turn/tool spans — on when `--otlp-endpoint` is set|
-|**Structured diagnostics** (stderr/log file)|Lifecycle and degraded-mode warnings from the harness|
-|**Tool call audit** (`jsonlstore` sidecar)|One structured record per tool execution, with timing|
+|Prometheus metrics|Measure runs, turns, tools, tokens, and failures.|
+|OpenTelemetry traces|Follow run, turn, and tool spans.|
+|Structured diagnostics|Report lifecycle and degraded-mode conditions.|
+|Tool audit records|Record each tool call and its timing.|
 
-All four are injected at composition. Nothing reaches for a global logger or
-hardcoded sink.
-
----
+Embedders choose and inject the sinks. The engine does not use a global logger.
 
 ## Prometheus metrics
 
-The admin listener (`--metrics-addr`, default `127.0.0.1:9090` in `mecated`)
-serves `/metrics` via an OTel Prometheus exporter. It is **loopback-only and
-unauthenticated** — never bind it to a non-loopback address. `mecak8s` disables
-this endpoint by default; enable it explicitly with its metrics configuration
-when a local scrape endpoint is required.
+In `mecated`, the admin listener serves `/metrics` at `127.0.0.1:9090` by
+default. The endpoint is unauthenticated, so keep it on a loopback address.
+`mecak8s` disables it by default. Embedders must provide their own recorder and
+exporter.
 
-Metrics are enabled when the deployment exposes the admin listener. They are not
-part of the importable engine by themselves; embedders must wire their own
-recorder and exporter.
+Run metrics use a bounded `role` label: `main`, `subagent`, `member`,
+`parallel`, `usermodel`, or `child`. Session IDs and model names do not appear
+in labels.
 
-### Series emitted
-
-Engine- and run-derived series carry a bounded `role` label (`main`, `subagent`,
-`member`, `parallel`, `usermodel`, `child`) so you can split per-engine-family
-without free-text cardinality leaking session ids or model names. The
-target-free `mecatl_session_load_failures_total` counter is the deliberate
-exception: it is emitted by the service load boundary rather than an engine run
-and carries only `class`.
-
-|Series|Type|Labels|What it measures|
+|Series|Type|Labels|Measures|
 |-|-|-|-|
-|`mecatl_runs_total`|counter|`stop`, `role`|One per completed run, tagged by terminal stop reason|
-|`mecatl_turns_total`|counter|`role`|One per completed LLM turn (every model exchange that reached a turn boundary)|
-|`mecatl_turn_empty_total`|counter|`role`|Turns that produced neither a tool call nor text (the no-progress subset)|
-|`mecatl_events_total`|counter|`type`, `role`|One per emitted session event, by event type|
-|`mecatl_tool_calls_total`|counter|`tool`, `error`, `role`|One per tool execution|
-|`mecatl_tool_duration_seconds`|histogram|`tool`, `role`|Tool execution latency — explicit-bucket histogram (millisecond resolution up to 300s), so `promtool`/a plain scrape gets usable p50/p90/p99 with no extra config|
-|`mecatl_tokens_total`|counter|`kind`, `role`|Token consumption by kind (input, output, cache read, cache write)|
-|`mecatl_cache_hit_ratio`|gauge|`role`|Ratio of cache-read tokens to total input tokens|
-|`mecatl_active_runs`|gauge|`role`|Currently running Engine.Run goroutines|
-|`mecatl_permission_asks_total`|counter|`role`|Permission pause events|
-|`mecatl_session_load_failures_total`|counter|`class`|Ownership-concealed non-not-found session loads, classified as `store`, `snapshot`, or `unknown`|
+|`mecatl_runs_total`|Counter|`stop`, `role`|Completed runs by stop reason|
+|`mecatl_turns_total`|Counter|`role`|Completed model turns|
+|`mecatl_turn_empty_total`|Counter|`role`|No-progress events|
+|`mecatl_events_total`|Counter|`type`, `role`|Emitted session events|
+|`mecatl_tool_calls_total`|Counter|`tool`, `error`, `role`|Tool calls|
+|`mecatl_tool_duration_seconds`|Histogram|`tool`, `role`|Tool latency|
+|`mecatl_tokens_total`|Counter|`kind`, `role`|Input, output, and cache tokens|
+|`mecatl_cache_hit_ratio`|Gauge|`role`|Cache-read tokens divided by input tokens|
+|`mecatl_active_runs`|Gauge|`role`|Active runs|
+|`mecatl_permission_asks_total`|Counter|`role`|Permission requests|
+|`mecatl_session_load_failures_total`|Counter|`class`|Concealed store or snapshot load failures|
 
-`turn_empty_total` counts `EvNoProgress` emissions — the loop emits one per
-advisory nudge and once on give-up (up to `MaxNoProgressNudges + 1` per stuck
-sequence), so `turn_empty_total / turns_total` gives the empty-turn share, not a
-disjoint count.
+The admin listener also serves:
 
-The admin endpoint also serves runtime introspection paths:
-
-|Path|What it returns|
+|Path|Content|
 |-|-|
-|`/metrics`|Prometheus scrape endpoint|
-|`/debug/pprof/*`|Go pprof handlers (heap, goroutine, allocs, cpu, mutex, block)|
-|`/debug/vars`|Curated `runtime/metrics` snapshot|
-|`/debug/flightrecorder`|Snapshot of the in-memory execution-trace ring (8 MiB / 5s window)|
+|`/debug/pprof/*`|Go CPU, heap, goroutine, allocation, mutex, and block profiles|
+|`/debug/vars`|Selected `runtime/metrics` values|
+|`/debug/flightrecorder`|The in-memory execution trace ring|
 
-The flight recorder is armed at startup when `--flight-recorder=true` (default).
-The mutex and block pprof profiles are off by default; enable them with
-`--mutex-profile-fraction` and `--block-profile-rate` only while investigating
-contention, as they carry runtime overhead.
+The flight recorder is enabled by default with an 8 MiB, five-second window.
+Mutex and block profiling require explicit flags because they add overhead.
 
-### Embedded mecatui admin transport
+### `mecatui` performance endpoints
 
-`mecatui --perf` serves the same sensitive endpoints, but its default is an
-owner-private per-instance UNIX `admin.sock` beside the embedded gRPC socket.
-Concurrent mecatui instances therefore do not collide. `--perf-addr` explicitly
-selects TCP and accepts only loopback addresses.
+`mecatui --perf` exposes the same endpoints through an owner-private UNIX socket
+by default. `--perf-addr` selects a loopback TCP address. Raw admin data remains
+outside model context and the session debugger.
 
-`--perf-mcp` with no explicit address uses ephemeral loopback TCP and logs the
-resolved URL because the supported MCP transport is streaming HTTP. There is no
-stdio fallback. Raw admin data remains an operator surface and is not injected
-into mecatui's session debugger or any model context.
-
-### Perf MCP server (opt-in)
-
-`--perf-mcp` mounts a read-only MCP server at `/mcp` on the admin listener. It
-exposes the same runtime data as reduced numeric summaries (goroutine counts,
-latency percentiles, allocation rankings, slow-turn lists) so an agent can query
-performance state directly. Raw pprof blobs are offered as user-audience
-resource links, not injected into model context.
-
-`--perf-mcp` is refused at startup if `--metrics-addr` is not loopback.
-
----
+`--perf-mcp` adds a read-only MCP server at `/mcp`. It summarizes runtime data
+for agent analysis and exposes raw profiles only as user-audience resource
+links. Mecatl refuses this option when the admin listener is not loopback.
 
 ## OpenTelemetry traces
 
-Tracing is enabled when `--otlp-endpoint` is non-empty. With an empty endpoint,
-the tracer is a no-op and only metrics run.
+Set `--otlp-endpoint` to enable run, turn, and tool spans. An empty endpoint
+disables tracing without affecting Prometheus metrics.
 
-|Flag|Default|Description|
+|Flag|Default|Purpose|
 |-|-|-|
-|`--otlp-endpoint`|`""`|OTLP collector endpoint. Empty disables tracing.|
-|`--otlp-protocol`|`grpc`|Transport: `grpc` or `http`.|
-|`--otlp-insecure`|`false`|Skip TLS — useful for a local collector.|
+|`--otlp-endpoint`|Empty|Set the OTLP collector and enable tracing.|
+|`--otlp-protocol`|`grpc`|Use `grpc` or `http`.|
+|`--otlp-insecure`|`false`|Disable TLS for a local collector.|
 
-When tracing is active, Mecatl models a run/turn/tool span hierarchy. The
-`EventSink.Emit` call carries the run's context so telemetry can parent a run
-span to an inbound request span.
+Concurrent runs that share one sink also share its root span. Mecatl does not
+yet provide independent root correlation for those runs.
 
-:::note[Concurrent-run span correlation] The current span model has a single
-root per sink. Concurrent runs in the same process do not produce independently
-correlated spans — all runs on the same sink share the same root. This is a
-documented limitation; per-run correlation is the planned direction. :::
+`EventSink.Emit` receives the run context so an embedder can parent telemetry to
+the originating request. Read trace data during the call, but do not retain the
+context or use its cancellation state to drop events.
 
----
+## Model-call resilience
 
-## LLM resilience
+Mecatl wraps every model provider with retry, circuit-breaker, establishment
+timeout, and stream-idle controls.
 
-Every LLM provider is wrapped by a resilience decorator (`llmresilience`) that
-sits between the agent loop and the provider. The loop is unchanged; the
-decorator adds retry, a circuit breaker, and a stream-idle watchdog.
+### Retry and circuit breaker
 
-### Retry with exponential backoff
+Mecatl retries transient failures only before the first response content is
+committed. Retryable failures include rate limits, server errors, network
+errors, establishment timeouts, and malformed initial SSE frames. It does not
+retry other client errors, caller cancellations, or failures after streaming
+begins.
 
-Retries apply **only before the first committing chunk** (the first text, tool
-call, usage count, or done signal from the stream). Once streaming has begun,
-the decorator never re-issues the call.
-
-|Flag|Default|Description|
+|Flag|Default|Purpose|
 |-|-|-|
-|`--llm-max-attempts`|`3`|Total attempts (initial call plus retries).|
+|`--llm-max-attempts`|`3`|Limit the initial call plus retries.|
+|`--llm-breaker-threshold`|`5`|Open the breaker after consecutive transient failures. `0` disables it.|
+|`--llm-breaker-cooldown`|`30s`|Wait before a half-open trial.|
 
-What triggers a retry: transient establishment failures — rate limits (429),
-server errors (5xx), timeouts, network errors, and a truncated or malformed
-first SSE frame (a decode error before any chunk has committed). Permanent
-client errors (4xx other than 408/429) and caller cancellations do not trigger
-retries and do not count toward the breaker.
+A successful call resets the breaker. Permanent client errors other than 408 or
+429 and caller cancellations do not count toward the threshold. Exhausted
+retries produce an `ExhaustedError`; an open breaker produces a `BreakerError`.
 
-After retries are exhausted the call surfaces as an `ExhaustedError`, which
-reaches the caller as a terminal `result` event.
+### Timeouts
 
-### Circuit breaker
-
-The breaker tracks consecutive transient establishment failures across attempts.
-On reaching the threshold it opens and short-circuits subsequent calls with a
-`BreakerError` until the cooldown period ends, at which point it half-opens to
-admit a trial.
-
-|Flag|Default|Description|
+|Flag|Default|Purpose|
 |-|-|-|
-|`--llm-breaker-threshold`|`5`|Consecutive transient failures that open the breaker (0 disables).|
-|`--llm-breaker-cooldown`|`30s`|Duration the breaker stays open before admitting a half-open trial.|
+|`--llm-per-attempt-timeout`|`300s`|Limit connection and time to first committed content. `0` disables it.|
+|`--llm-stream-idle-timeout`|`180s`|Limit the gap between later stream chunks. `0` disables it.|
 
-A successful call resets the consecutive-failure counter. Permanent errors and
-cancellations are not counted.
+An establishment timeout is retryable. A stream-idle timeout is terminal because
+replaying a partially visible response could duplicate work.
 
-### Per-attempt timeout
+### Prompt caching
 
-`--llm-per-attempt-timeout` bounds **only establishment** — from the call start
-to the first committing chunk. It is enforced by a separate timer that is
-stopped as soon as the first committing chunk arrives, so it never cuts an
-actively-streaming turn.
+Provider-side prompt caching is enabled for Anthropic, OpenAI Responses, and
+OpenRouter. The current OpenAI Chat Completions route uses no cache dialect.
 
-|Flag|Default|Description|
+|Flag|Default|Purpose|
 |-|-|-|
-|`--llm-per-attempt-timeout`|`300s`|Establishment bound: connect + first committing chunk. 0 disables.|
+|`--no-prompt-cache`|`false`|Disable provider caching.|
+|`--anthropic-cache-ttl`|Provider default, usually `5m`|Set Anthropic cache breakpoints to `5m` or `1h`.|
 
-A timeout here is retryable (it counts as a transient failure toward the
-breaker). The default is deliberately generous to accommodate reasoning models
-that have long thinking phases before their first output token. If your model is
-reliably fast to first token you can lower this value.
+Use `mecatl_tokens_total` and `mecatl_cache_hit_ratio` to confirm cache use.
 
-### Stream-idle watchdog
+### Failure diagnostics
 
-The idle watchdog applies **after the first chunk** and governs the rest of the
-stream. It caps the gap between consecutive chunks. A stall beyond this limit is
-**terminal and not retried** — replaying a half-streamed turn to the model is
-unsafe.
-
-|Flag|Default|Description|
-|-|-|-|
-|`--llm-stream-idle-timeout`|`180s`|Max idle gap between stream chunks after the first chunk. 0 disables.|
-
-When the watchdog fires it synthesizes a terminal `StreamIdleError`. The LLM
-provider adapters deliberately suppress the context cancellation error on cancel
-and would otherwise yield nothing; the wrapper synthesizes the error explicitly
-so the caller always sees a clean terminal signal.
-
-Pre-first-chunk stalls (before any chunk is received) are governed by
-`--llm-per-attempt-timeout` and are retryable.
-
-### Provider-side prompt caching
-
-Caching is ON by default across all three provider adapters (Anthropic,
-OpenAI/OpenRouter, and the dormant openaichat path) — see
-[ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md).
-It caches the growing conversation, not just the system prompt.
-
-|Flag|Default|Description|
-|-|-|-|
-|`--no-prompt-cache`|`false`|Disable caching entirely: every adapter's cache dialect degrades to `None`, reproducing the pre-caching wire exactly.|
-|`--anthropic-cache-ttl`|`""` (API default, `5m`)|TTL stamped on every Anthropic ephemeral `cache_control` breakpoint. Accepts `5m` or `1h`; any other value is ignored with a WARN.|
-
-The token-accounting facets already surface cache activity per-turn:
-`mecatl_tokens_total{kind="cache read"}` / `{kind="cache write"}` and
-`mecatl_cache_hit_ratio` (both above) climb once caching is actually hitting. On
-OpenAI/OpenRouter, cache-write tokens are probed from the raw usage JSON (there
-is no typed SDK field for them yet) and clamped so they never exceed the turn's
-input tokens.
-
-### Resilience diagnostics
-
-The resilience decorator emits structured diagnostics through the injected
-diagnostics channel. Failed-attempt decision lines carry session/run/turn
-correlation when a model call belongs to a run:
-
-- **DEBUG** on each retry and per-attempt-timeout event
-- **INFO** on idle-stall terminal, breaker open/half-open/close transitions, and
-  retry exhaustion
-
-Decision metadata never includes a raw error. The same sanitized classification
-feeds a log-only `network.attempt` event emitted by the agent loop and persisted
-by the ordinary EventLog relay. A dedicated session debugger can read this
-target-correlated evidence through `InspectSession {"view":"network"}`; it
-includes bounded retry/terminal decisions and safe transport/provider
-classifications, not request/response content or credentials. The same single
-tool exposes `related`, `delegation`, `history`, and `manifest`: related
-retained sessions are addressed only with target-bound opaque handles,
-compaction archives remain pageable, team/task/finding and parent-result facts
-come only from typed events, and request manifests contain tool decisions and
-digests but no prompt bodies. Every view reports incomplete
-scan/projection/retention honestly; snapshot latest-run counters are distinct
-from EventLog lifetime totals. No session ID is added to metric labels.
-
----
+Retry decisions and breaker transitions go to structured diagnostics without raw
+errors or request content. The event log also receives sanitized
+`network.attempt` records. `InspectSession {"view":"network"}` returns bounded
+retry and terminal decisions without prompts, credentials, or response bodies.
 
 ## Structured diagnostics
 
-The harness routes operational logging through an injected `Diagnostics` port
-rather than a global logger. The `slogdiag` adapter is the only bridge to
-`log/slog`. The sink is chosen at composition:
+`mecated` writes diagnostics to stderr or journald. An embedded `mecatui` server
+writes to `$XDG_STATE_HOME/mecatl/mecatui.log`; a remote client discards local
+server diagnostics.
 
-- **mecated**: stderr (or journald, depending on environment)
-- **mecatui**: `$XDG_STATE_HOME/mecatl/mecatui.log` when hosting an embedded
-  server; `io.Discard` otherwise (the TUI owns the alt-screen)
+Session facts belong in the event stream. Diagnostics cover operational
+conditions that have no matching event, such as persistence failures, policy
+denials, instruction-fragment assembly failures, and degraded integrations.
 
-### What the agent loop logs
+When caller ownership is enforced, session-load failures look like `NotFound` to
+the caller. Operators receive only `class=store|snapshot|unknown`; logs and
+metrics omit the requested session, owner, storage key, path, raw error, and
+snapshot contents.
 
-The loop sends a small set of operator-only facts through diagnostics, including
-compaction failures, policy or authority outcomes, persistence failures,
-delivery queue problems, instruction-fragment assembly failures,
-observer/profile refresh failures, and ask-ID fallback warnings. The exact set
-can grow when a fact has no corresponding `session.Event`; the invariant is that
-events own session facts and are not duplicated as log lines. Build-time
-composition facts are logged once by `app.Build`, while per-run diagnostics are
-session-correlated.
+|Class|Operator response|
+|-|-|
+|`store`|Check backend health, credentials, TLS, connectivity, and timeouts.|
+|`snapshot`|Check storage-integrity alerts and follow the backend's repair process.|
+|`unknown`|Check the custom adapter's bounded diagnostics and add public failure classification.|
 
-Under caller-ownership enforcement, a storage or snapshot failure while loading
-a session is intentionally reported to the caller as the same NotFound outcome
-as a missing or foreign session. Operators receive one `session load failed`
-WARN carrying only `class=store|snapshot|unknown` and `ownership=enforced`; the
-companion counter is `mecatl_session_load_failures_total`. Neither signal
-includes the requested session, principal, storage key or path, raw error,
-snapshot content, or snapshot size. Genuine missing sessions and foreign-owner
-concealment remain silent.
-
-Use the bounded class to choose a target-free response:
-
-|Class|Meaning|Safe operator action|
-|-|-|-|
-|`store`|The store could not retrieve the snapshot, including transport failures.|Check backend health, connectivity, credentials, TLS, and timeouts; use backend-wide health signals rather than asking for or logging the requested session ID.|
-|`snapshot`|Bytes were retrieved but the snapshot format, decoding, persisted identity, or validation failed.|Check storage-integrity and mis-keying alerts, then follow the backend's documented backup or repair procedure without copying snapshot contents into logs.|
-|`unknown`|A custom store returned an untyped failure that Mecatl cannot classify safely.|Check the custom adapter's bounded health diagnostics and update it to wrap failures with the public `engine/port` classification contract; do not infer a class from error text.|
-
-The counter identifies a failure family, not a target. It deliberately cannot
-answer which session was requested; do not weaken ownership concealment to
-obtain that detail.
-
-`provider.route` is an event-stream fact rather than a diagnostic. When the
-serving provider is OpenRouter, it reports the downstream inference provider
-selected for a turn; it may be absent on a cache hit. Configure downstream
-routing in the operator-tier OpenRouter settings. See
-[Route OpenRouter models through preferred downstreams](/features/choose-models.md#route-openrouter-models-through-preferred-downstreams).
+OpenRouter's downstream `provider.route` is an event-stream fact, not a log
+entry. It can be absent on cache hits.
 
 ## Tool call audit
 
-`port.ToolCallRecorder` captures one structured record per tool execution with
-timing (queue wait + execution duration). It is a separate channel from
-diagnostics and the event stream.
+`port.ToolCallRecorder` receives one record per tool execution, including queue
+and execution time. With `--store-dir`, `jsonlstore` writes `.tools.jsonl`
+sidecars and feeds the tool count and duration metrics. See the
+[session store extension point](/building/extension-points/session-store.md) for
+record ownership and naming.
 
-The `jsonlstore` backend (selected with `--store-dir`) implements
-`ToolCallRecorder` alongside `SessionStore` and `EventLog`. It writes tool
-records to a `.tools.jsonl` sidecar in the session's family directory under
-`--store-dir` (the filename is derived from the session id but is not reversible
-— see [Session store](/building/extension-points/session-store.md)). The
-`telemetry` adapter additionally derives counters and a latency histogram from
-these records — those feed into `mecatl_tool_calls_total` and
-`mecatl_tool_duration_seconds` on the `/metrics` endpoint.
+## Anonymous product metrics
 
----
+Mecatl separately reports aggregate adoption metrics to Stacklok by default.
+These metrics include version, OS and architecture, a random installation ID,
+enabled feature families, provider family, binary name, and coarse counts and
+durations. Tool names are limited to built-ins or the category `mcp`.
 
-## Product / adoption metrics (opt-out)
+The report excludes prompts, file paths, MCP server and tool names, session and
+run IDs, model IDs, and other free text. A one-time stderr notice appears before
+the first report.
 
-The four channels above are all **operator-facing**: they help you observe your own deployment. Separately, Mecatl reports a small set of **anonymous, aggregate community-adoption metrics** to Stacklok, over its own independent pipeline (`internal/adapter/productmetrics`) — a distinct concern from everything above, sharing no import, `MeterProvider`, or destination with the operator observability pipeline. Disabling your own OTLP/Prometheus setup has zero effect on this, and disabling this has zero effect on your own OTLP/Prometheus setup.
+Disable product metrics with any of these controls:
 
-**What's collected:** version, OS/arch, an anonymous per-install identifier (a random UUID, unrelated to any user, machine, or organization identity), which major features you have enabled (`memory`, `guardrails`, `mcp`, `scheduling`), your configured LLM provider family (`anthropic`/`openai`/`openrouter`/`other` — never a model id or alias), which binary you're running, and coarse counts — sessions started, runs completed (by stop reason and whether the run made at least one successful tool call), tool calls executed (by bounded category — a built-in tool's own name, or `mcp` for anything MCP-server-provided, never a real MCP server/tool name — and outcome), token counts by kind, run duration, tool calls per run, a one-time-per-install "time to first value" duration, and whether the Subagent/Team delegation families were used at least once. Never a prompt, file path, raw MCP tool/server name, session/run/model identifier, or any other free text. The full catalog and the privacy-guard test discipline that enforces it are recorded in [ADR 0338](https://github.com/stacklok/mecatl/blob/main/docs/adr/0338-product-metrics.md).
+- `--product-metrics=false`
+- `MECATL_PRODUCT_METRICS=false`
+- A truthy `DO_NOT_TRACK` value
+- `telemetry.productMetrics.enabled: false` in user-global settings
 
-**It's on by default (opt-out).** The first time a run is actually about to send product metrics, Mecatl prints a one-time, non-blocking disclosure to stderr naming what's collected and how to turn it off. To disable it, use any of:
+`MECATL_PRODUCT_METRICS=true` overrides `DO_NOT_TRACK`. Project settings cannot
+change the operator's choice. Use `--product-metrics-dry-run` to print the
+observations instead of sending them.
 
-- `--product-metrics=false` on the command line (all four binaries).
-- The `MECATL_PRODUCT_METRICS` environment variable set to `false`/`0` — a mecatl-specific override, checked before `DO_NOT_TRACK` below, so it can also opt you back **in** even if you have `DO_NOT_TRACK` set globally for other tools.
-- The `DO_NOT_TRACK` environment variable set to a truthy value (`"0"`/`"false"` do not opt out) — the same convention other tools already respect.
-- `telemetry.productMetrics.enabled: false` in your **operator-tier** `~/.config/mecatl/settings.yaml`. This setting is operator-tier only: a project repo's `.mecatl/settings.yaml` cannot change your telemetry choice in either direction.
-
-**Self-verify before trusting it.** `--product-metrics-dry-run` prints every observation this pipeline would have sent to stderr instead of exporting it, so you can check the "no PII" claim yourself rather than take the docs' word for it.
-
-**On Kubernetes.** The reported install identifier is an anonymous random UUID. `mecated`, `mecatui`, and `mecatequi` keep it in a local state file, but `mecak8s` is storage-free (no PVC), so a per-pod file would produce a brand-new id on every restart. The Helm chart therefore provisions the id once, into a `<release>-mecak8s-install-id` ConfigMap that is reused across every `helm upgrade`, and mounts it into the container as `MECATL_PRODUCT_METRICS_INSTALL_ID`. Delete that ConfigMap to reset the id, or opt out entirely with any of the switches above — the env var only decides *which* id is used when reporting is on.
-
----
+The Helm chart stores `mecak8s`'s random installation ID in a ConfigMap and
+passes it as `MECATL_PRODUCT_METRICS_INSTALL_ID`, so it survives pod restarts
+without a persistent volume. Delete the ConfigMap to reset the ID, or disable
+reporting with one of the controls above.
 
 ## What's next
 
-To configure Mecatl for production, see the deployment guide for how to wire an
-OTLP collector, configure the admin listener, and set up session persistence
-with `jsonlstore`.
+- [Run `mecated`](/building/deployment/mecated.md) to configure the admin
+  listener, OTLP export, and durable storage.
+- [Session store extension point](/building/extension-points/session-store.md)
+  to provide custom persistence and audit recording.

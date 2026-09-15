@@ -4,12 +4,12 @@
 **Work classification:** Architectural — this adds exported engine and port contracts, durable discovery metadata, public and driver protobuf fields, and automatic continuation behavior.
 **Decision record:** [ADR 0336](../adr/0336-draft-aware-session-inventory.md)
 **Phase:** session continuity and inventory clarity
-**Status:** proposed, 2026-09-14. The operator selected a locally grouped Drafts tab; this proposed contract awaits Plan / Interface review.
+**Status:** landed, 2026-09-14. The operator selected a locally grouped Drafts tab; this approved contract is implemented.
 **Delivery:** Split. The change crosses engine, durable stores, remote driver, server, and mecatui boundaries, so separate interface review is valuable.
 **Expected tasks:** 3
 **Issue:** [#1458](https://github.com/stacklok/mecatl/issues/1458)
 **Plan PR:** [#1459](https://github.com/stacklok/mecatl/pull/1459)
-**Approved baseline:** absent until the Plan / Interface PR merges
+**Approved baseline:** `a8168878eb6627e970867e9edf7f22c683a99e84` (merged Plan / Interface PR baseline)
 
 A valid main session created before its first genuine user prompt is a durable draft, not a
 corrupt or disposable session. Mecatui keeps drafts discoverable and explicitly continuable,

@@ -89,6 +89,9 @@
     method func (Usage).CacheHitRate() float64
     method func (Usage).TotalTokens() int
     method func (WorkspaceEnrollmentID).Valid() bool
+const ActivityActive ActivityState = "active"
+const ActivityDraft ActivityState = "draft"
+const ActivityUnknown ActivityState = ""
 const AskOriginHook AskOrigin = 1
 const AskOriginNone AskOrigin = 0
 const AskOriginPlan AskOrigin = 2
@@ -167,6 +170,8 @@ const MediaImage MediaKind = "image"
 const ModeAccept PermissionMode = "acceptEdits"
 const ModeDefault PermissionMode = "default"
 const ModePlan PermissionMode = "plan"
+const NoProgressExtractiveNudgeText untyped string = "Stop investigating now and do not run any more commands or tools. Using only the information you have already gathered, write your best final answer to the original task as a direct message now, even if it is incomplete or uncertain — note any gaps briefly. Do not plan further steps; deliver what you have."
+const NoProgressNudgeText untyped string = "Please continue. Make concrete progress on the task using your tools, or — if you are blocked or believe the task is complete — say so explicitly in a short message."
 const ParallelBranchEnd ParallelEventKind = "branch_end"
 const ParallelBranchStart ParallelEventKind = "branch_start"
 const ParallelBranchTool ParallelEventKind = "branch_tool"
@@ -257,6 +262,7 @@ const VerdictDeny ApprovalVerdict = 0
 const VerdictStringAllowAlways untyped string = "allow_always"
 const VerdictStringAllowOnce untyped string = "allow_once"
 const VerdictStringDeny untyped string = "deny"
+func ActivityOf(messages []Message) ActivityState
 func CanonicalNetworkAttempt(in NetworkAttemptPayload, id SessionID, runSerial int64, turn int) (NetworkAttemptPayload, bool)
 func ClampTitle(s string) string
 func CloneMessages(msgs []Message) []Message
@@ -303,6 +309,7 @@ func RepairToolResult(r ToolResult) ToolResult
 func StripProviderState(messages []Message) []Message
 func ToValidUTF8(s string) string
 func ToolBlockText(b Content) string
+func ValidActivity(a ActivityState) ActivityState
 func ValidAuthorizationID(value string) bool
 func ValidWorkspaceEnrollmentToolNames(names []string) bool
 func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
@@ -314,6 +321,7 @@ func ValidateToolPairing(msgs []Message) error
 func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 func WithPrincipal(ctx context.Context, p *Principal) context.Context
+type ActivityState string
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
 type AskOrigin int
@@ -384,7 +392,7 @@ type Turn struct{Index int; Assistant Message; Results []ToolResult; Usage Usage
 type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64}
 type Usage struct{InputTokens int; OutputTokens int; CacheReadTokens int; CacheWriteTokens int; ReasoningTokens int}
 type UsageKind string
-type UserPromptPayload struct{Text string; Parts []Content}
+type UserPromptPayload struct{Text string; Parts []Content; Synthetic bool}
 type WorkspaceEnrollmentID string
 var ErrIllegalTransition error
 var ErrInvalidContent error

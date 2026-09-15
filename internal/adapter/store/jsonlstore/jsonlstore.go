@@ -573,7 +573,7 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 			return fmt.Errorf("jsonlstore: resolve snapshot modification time: %w", err)
 		}
 		data, err := json.Marshal(currentSnapshot{
-			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Snapshot: payload,
+			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Activity: session.ActivityOf(s.Conversation.Messages), Snapshot: payload,
 		})
 		if err != nil {
 			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
@@ -619,7 +619,7 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 
 		modifiedAt := time.Now().UTC()
 		data, err := json.Marshal(currentSnapshot{
-			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Snapshot: payload,
+			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Activity: session.ActivityOf(s.Conversation.Messages), Snapshot: payload,
 		})
 		if err != nil {
 			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)

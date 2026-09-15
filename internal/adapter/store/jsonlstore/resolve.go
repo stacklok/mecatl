@@ -239,11 +239,14 @@ func rootPathExists(root *os.Root, name string) (bool, error) {
 	return false, err
 }
 
+// currentSnapshot carries the derivative activity projection beside its canonical
+// snapshot payload. It is deliberately absent from sessnap.Snapshot.
 type currentSnapshot struct {
-	Format     string          `json:"v"`
-	ModifiedAt time.Time       `json:"modified_at"`
-	Metadata   metaSnapshot    `json:"metadata,omitzero"`
-	Snapshot   json.RawMessage `json:"snapshot"`
+	Format     string                `json:"v"`
+	ModifiedAt time.Time             `json:"modified_at"`
+	Metadata   metaSnapshot          `json:"metadata,omitzero"`
+	Activity   session.ActivityState `json:"activity,omitempty"`
+	Snapshot   json.RawMessage       `json:"snapshot"`
 }
 
 func decodeCurrentSnapshot(data []byte) (currentSnapshot, error) {
@@ -286,6 +289,7 @@ func readCurrentSnapshotHeader(root *os.Root, name string) (currentSnapshot, boo
 		return currentSnapshot{}, true, false, fmt.Errorf("jsonlstore: invalid current snapshot header")
 	}
 	var header currentSnapshot
+	hasMetadata := false
 	for decoder.More() {
 		token, err = decoder.Token()
 		if err != nil {
@@ -302,10 +306,16 @@ func readCurrentSnapshotHeader(root *os.Root, name string) (currentSnapshot, boo
 			err = decoder.Decode(&header.ModifiedAt)
 		case "metadata":
 			err = decoder.Decode(&header.Metadata)
-			if err == nil && header.Format == currentSnapshotFormat && !header.ModifiedAt.IsZero() && header.Metadata.ID != "" {
+			hasMetadata = err == nil && header.Format == currentSnapshotFormat && !header.ModifiedAt.IsZero() && header.Metadata.ID != ""
+		case "activity":
+			err = decoder.Decode(&header.Activity)
+			if err == nil && hasMetadata {
 				return header, true, true, nil
 			}
 		case "snapshot":
+			if hasMetadata {
+				return header, true, true, nil
+			}
 			return currentSnapshot{}, true, false, nil
 		default:
 			var ignored json.RawMessage
@@ -739,6 +749,7 @@ type snapshotFile struct {
 	id             session.SessionID
 	last           []byte
 	metadata       *metaSnapshot
+	activity       session.ActivityState
 	modified       time.Time
 	estimatedBytes int64
 	priority       int // legacy v1 < canonical v1 < current v2
@@ -840,7 +851,7 @@ func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFi
 				continue
 			}
 			m := header.Metadata
-			byID[id] = snapshotFile{id: id, metadata: &m, modified: header.ModifiedAt, estimatedBytes: info.Size(), priority: 2}
+			byID[id] = snapshotFile{id: id, metadata: &m, activity: header.Activity, modified: header.ModifiedAt, estimatedBytes: info.Size(), priority: 2}
 			continue
 		}
 
@@ -860,7 +871,7 @@ func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFi
 			m := current.Metadata
 			metadata = &m
 		}
-		byID[id] = snapshotFile{id: id, last: current.Snapshot, metadata: metadata, modified: current.ModifiedAt, estimatedBytes: info.Size(), priority: 2}
+		byID[id] = snapshotFile{id: id, last: current.Snapshot, metadata: metadata, activity: current.Activity, modified: current.ModifiedAt, estimatedBytes: info.Size(), priority: 2}
 	}
 	return nil
 }

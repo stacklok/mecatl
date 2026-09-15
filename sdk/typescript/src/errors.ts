@@ -14,6 +14,7 @@ export const MECATL_ERROR_CODES = [
   "client_mcp_unreachable",
   "client_mcp_unsupported",
   "conflict",
+  "context_window_unavailable",
   "cursor_expired",
   "cursor_malformed",
   "draining",

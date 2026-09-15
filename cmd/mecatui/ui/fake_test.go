@@ -219,6 +219,7 @@ type fakeConv struct {
 	getSessionResults []client.ResolvedModel
 	getSessionErr     error
 	getSessionCount   int
+	getSessionIDs     []string
 	getSessionTitle   string
 	// getSessionCaps, when non-zero, is returned as the snapshot's Capabilities
 	// (the caps-heal channel for /sessions continue + /effort fork, issue #348).
@@ -232,13 +233,14 @@ type fakeConv struct {
 	// forkErr forces the recoverable-failure path (the source is NOT closed).
 	// forked is closed on the first fork so a teatest can sequence on it
 	// (goroutine signal, output-independent).
-	forkedFrom   string
-	forkedEffort string
-	forkCount    int
-	forkedID     string
-	forkErr      error
-	forked       chan struct{}
-	forkedOnce   sync.Once
+	forkedFrom    string
+	forkedEffort  string
+	forkCount     int
+	forkedID      string
+	forkedTargets []string
+	forkErr       error
+	forked        chan struct{}
+	forkedOnce    sync.Once
 }
 
 func flattenBatch(cmd tea.Cmd) []tea.Msg {
@@ -275,19 +277,27 @@ func (c *fakeConv) ForkSession(_ context.Context, srcID, reasoningEffort string)
 		return "", c.forkErr
 	}
 	if c.forkedID != "" {
+		c.mu.Lock()
+		c.forkedTargets = append(c.forkedTargets, c.forkedID)
+		c.mu.Unlock()
 		return c.forkedID, nil
 	}
-	return "sess-fork-" + strconv.Itoa(n), nil
+	target := "sess-fork-" + strconv.Itoa(n)
+	c.mu.Lock()
+	c.forkedTargets = append(c.forkedTargets, target)
+	c.mu.Unlock()
+	return target, nil
 }
 
 // GetSession scripts the footer-heal refetch. Successive calls walk
 // getSessionResults (last entry repeats); empty falls back to the canned
 // resolvedModel. getSessionErr forces the benign-error path. mu guards the
 // recorders touched by the command goroutine + the test goroutine.
-func (c *fakeConv) GetSession(_ context.Context, _ string) (client.SessionSnapshot, error) {
+func (c *fakeConv) GetSession(_ context.Context, id string) (client.SessionSnapshot, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.getSessionCount++
+	c.getSessionIDs = append(c.getSessionIDs, id)
 	if c.getSessionErr != nil {
 		return client.SessionSnapshot{}, c.getSessionErr
 	}

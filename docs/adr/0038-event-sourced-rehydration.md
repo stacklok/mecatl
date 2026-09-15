@@ -4,7 +4,7 @@
 - Date: 2026-06-19
 - Scope: `engine/adapter/eventsource` (the reference fold), the `port.SessionStore`
   reconstruction contract, `engine/COMPATIBILITY.md`
-- Superseded by: [ADR 0337](./0337-synthetic-user-prompt-origin.md), proposed, for Decision 3's origin-opaque `EvUserPrompt` payload and absence from public replay projection only; all other decisions remain in force
+- Superseded by: [ADR 0337](./0337-synthetic-user-prompt-origin.md), accepted, for Decision 3's origin-opaque `EvUserPrompt` payload and absence from public replay projection only; all other decisions remain in force
 - Relates: [ADR 0027 — cloud-native](./0027-cloud-native.md) (closes the
   reconstruction half of List-2 row 11), [ADR 0036 — engine module](./0036-engine-module.md),
   [ADR 0037 — engine stability contract](./0037-engine-stability-contract.md)

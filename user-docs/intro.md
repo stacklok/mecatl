@@ -3,60 +3,42 @@ sidebar_position: 1
 slug: /
 title: Mecatl documentation
 description:
-  Run AI agents as cloud-native workloads on infrastructure you control.
+  Find the right guide for using, deploying, or building with Mecatl.
 ---
 
 # Mecatl documentation
 
-Mecatl is an open source, cloud-native agent harness for running AI agents as
-production workloads on infrastructure you control. It provides the agent loop,
-tools, permissions, and session state.
+Mecatl is a **cloud-native harness**: an agent loop with explicit boundaries for
+clients, tools, execution environments, and durable services.
 
-## Cloud-native by design
+## Start with one of these paths
 
-Mecatl keeps the agent loop independent of the client and execution environment.
-Run the same core locally, as a remote service, or across Kubernetes replicas
-without replacing the agent loop.
+### [Use it now](/mecatui/getting-started.md)
 
-With `mecak8s`, agent pods are disposable. Redis stores session state and event
-history, while Kubernetes Leases coordinate session ownership across replicas.
-Choose the model providers, clients, storage backends, and execution
-environments that fit your infrastructure.
+Install `mecatui`, configure a provider with an API key, and start a local
+session in your project.
 
-## Choose a component
+### [Run on Kubernetes](/building/deployment/mecak8s.md)
 
-|Component|Use it when you want to|
-|-|-|
-|[`mecatui`](/mecatui/index.md)|Work interactively in a terminal. It can start a private embedded server or connect to an existing one.|
-|[`mecated`](/building/deployment/mecated.md)|Run the general-purpose server for terminal clients or gRPC and HTTP/SSE integrations.|
-|[`mecak8s`](/building/deployment/mecak8s.md)|Run Mecatl on Kubernetes with session state in Redis and coordination through Kubernetes Leases.|
-|[`mecatequi`](/building/deployment/mecatequi.md)|Run one task in CI and return a patch, summary, and exit status.|
-|[Go engine](/building/deployment/embed-engine.md)|Embed the agent loop in your own Go application and supply its adapters.|
+Deploy `mecak8s` with the production Helm chart, Redis-backed session state, and
+Kubernetes coordination.
 
-Start with `mecatui` if you are new to Mecatl. You can use the same terminal
-client when you move the server into a separate process or Kubernetes.
+### [What is a cloud-native harness?](/building/cloud-native-harness.md)
 
-## How local and remote sessions differ
+Understand the architectural model, why it differs from lift-and-shift hosting,
+and where Mecatl is going.
 
-Bare `mecatui` starts a private `mecated` server in the same process. This
-embedded server uses your local workspace, provider credentials, storage, and
-permission settings.
+## Find the right guide
 
-`mecatui connect ADDRESS` connects to a separately running `mecated` or
-`mecak8s` server. That server controls the workspace, provider credentials,
-storage, and permissions. The client displays the session and sends your input.
-
-A **workspace** is the project directory in which the agent can inspect files
-and run tools. A **session** is an ongoing conversation and its working context.
-Keep each session focused on one project and task.
-
-## Start here
-
-1. [Install Mecatl](/install.md).
-1. [Run your first local session](/mecatui/getting-started.md).
-1. [Connect to a separate server](/mecatui/remote-servers.md).
-1. [Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md).
-
-To build an application on the Go engine or APIs, start with
-[Building on Mecatl](/building/index.md). For exact configuration and protocol
-details, use the [reference](/reference/index.md).
+- **Use Mecatl:** [the `mecatui` guides](/mecatui/index.md) cover local and
+  remote sessions, models, permissions, tools, and terminal controls.
+- **Configure Mecatl:** [feature guides](/features/index.md) cover shared
+  capabilities such as models, permissions, sessions, and agent behavior.
+- **Build with Mecatl:** [Building on Mecatl](/building/index.md) covers the Go
+  engine, TypeScript SDK, and extension points.
+- **Deploy Mecatl:** [deployment guides](/building/deployment/index.md) cover
+  `mecated`, `mecak8s`, CI, containers, and remote transport.
+- **Install or verify Mecatl:** [Install Mecatl](/install.md) covers release
+  archives, checksums, signatures, deployment artifacts, and source builds.
+- **Look up exact details:** [reference](/reference/index.md) covers
+  configuration and gRPC and HTTP/SSE contracts.

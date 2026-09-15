@@ -1,25 +1,25 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents    Parallel  ▸ Teams                                                            ┃
   ┃                                                                                              ┃
   ┃  agents · 4 members                                                                          ┃
   ┃                                                                                              ┃
-  ┃  ╭────────────────────────────────────────────────────────────╮                              ┃
-  ┃  │  › ◆ ✎ lead    [lead] · working… · ↑900 ↓40 · coordinator  │                              ┃
-  ┃  ╰────────────────────────────────────────────────────────────╯                              ┃
-  ┃    ◆ · scout   · Grep… · ↑1.2K ↓80 · researcher                                              ┃
-  ┃    ◆ ✎ builder · Edit… · ↑3.4K ↓220 · implementer                                            ┃
-  ┃    ◆ ✎ tester  · working… · ↑0 ↓0 · verifier                                                 ┃
+  ┃  ▶ ◆ ✎ lead    [lead]                                                                        ┃
+  ┃      working… · coordinator                                                                  ┃
+  ┃      ↑900 ↓40                                                                                ┃
+  ┃    ◆ · scout                                                                                 ┃
+  ┃      Grep… · researcher                                                                      ┃
+  ┃      ↑1.2K ↓80                                                                               ┃
+  ┃    ◆ ✎ builder                                                                               ┃
+  ┃      Edit… · implementer                                                                     ┃
+  ┃      ↑3.4K ↓220                                                                              ┃
+  ┃    · +1 rows below                                                                           ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

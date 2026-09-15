@@ -8,23 +8,28 @@ description:
 
 # Status line customization
 
-`mecatui` can generate optional header and footer status lines from templates or
-from one local executable. This is a **client-only** customization: configure it
-only in `$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally
-`~/.config/mecatui/settings.yaml`). It applies to both embedded and
-`mecatui connect` sessions. Project files, a remote server, prompts, and a
-session cannot select or alter it.
+Customize the optional header and footer with responsive templates or one local
+executable. Add `status_customization` to
+`$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally
+`~/.config/mecatui/settings.yaml`). The setting is client-only and applies to
+embedded and connected sessions. Project files, remote servers, prompts, and
+sessions cannot change it.
 
 With no `status_customization:` entry, `mecatui` uses its shipped responsive
 templates. Keyboard help, the header posture/scroll/changed-file indicators, and
-the footer activity lane remain mecatui-owned chrome; customization cannot
-remove them.
+the footer activity lane remain part of the client interface; customization
+cannot remove them.
 
-## Choose one source
+## Choose a source
 
 `status_customization` must contain exactly one of `templates` or `command`. Its
 optional `interval` must be at least one second. Without an interval, templates
 refresh when their input changes and commands are event-driven.
+
+|Source|Use it when|
+|-|-|
+|`templates`|The status line needs only data already provided by `mecatui`.|
+|`command`|The status line needs local data from another program.|
 
 ```yaml
 status_customization:
@@ -40,11 +45,10 @@ status_customization:
         <footer><text>ctx</text></footer>
 ```
 
-`header` and `footer` are independently optional. A supplied surface must
-provide all three variants: `full`, `compact`, and `minimal`. `mecatui` uses the
-remaining columns for each surface after reserving its mandatory chrome, then
-selects the richest variant that fits. Thus a compact header and a full footer
-may coexist; an omitted surface retains the matching shipped template.
+`header` and `footer` are optional. For each supplied surface, define `full`,
+`compact`, and `minimal`. `mecatui` independently selects the richest variant
+that fits each surface after reserving its required interface elements. An
+omitted surface keeps the shipped template.
 
 The interval also advances `.Clock.Now`, so the example above is a template-only
 clock and creates no subprocess. Restart `mecatui` after editing settings; v1
@@ -52,19 +56,37 @@ does not hot-reload this file.
 
 ## Template input and escaping
 
-Templates receive a private projection of the status input. Every string is
-first stripped of terminal control characters and then HTML-escaped for
-StatusML. A substituted title such as `</accent><error>forged</error>` therefore
-stays literal text; it cannot create tags, ANSI/OSC sequences, or links. Numeric
-fields remain numeric. Use StatusML tags in the template itself, not in values
-from the input.
+Templates receive a display-safe projection of the status input. `mecatui`
+removes terminal control characters and escapes every string for StatusML. A
+substituted value therefore stays literal text and cannot create tags, terminal
+sequences, or links. Use StatusML tags in the template itself.
 
 Template fields have the same shape as the command JSON below. `Clock.Now` is a
 time value and supports `{{.Clock.Now.Format "15:04"}}`. The `Human` members are
 preformatted display values; use each `Raw` member when a template needs an
 exact count.
 
-## Input reference
+### Context meter functions
+
+Templates provide three functions that render the current context use as
+StatusML. Use the function that matches the template variant:
+
+- `contextMeter .Context` for `full`
+- `contextMeterCompact .Context` for `compact`
+- `contextMeterMinimal .Context` for `minimal`
+
+For example, this footer uses the corresponding meter at each width:
+
+```yaml
+status_customization:
+  templates:
+    footer:
+      full: '<footer>{{contextMeter .Context}}</footer>'
+      compact: '<footer>{{contextMeterCompact .Context}}</footer>'
+      minimal: '<footer>{{contextMeterMinimal .Context}}</footer>'
+```
+
+## Status input reference
 
 Every source receives the same versioned, display-safe snapshot. A template gets
 the escaped projection described above. A command gets the raw JSON encoding on
@@ -92,7 +114,7 @@ refreshes it.
 |`Workspace.Name`|string|Provider-supplied workspace display metadata. It is not a directory basename or a usable path.|
 |`Workspace.Path`|string|Exact local root returned by the privileged local-context RPC. It is available to status templates through their StatusML-escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions.|
 |`Terminal.Rows`, `Terminal.Cols`|integers|Measured terminal dimensions.|
-|`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns remaining after mecatui reserves mandatory header and footer lanes.|
+|`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns remaining after the client reserves mandatory header and footer lanes.|
 |`MainAgent.State`|string|`connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`.|
 |`MainAgent.Activity`|string|Bounded display activity label.|
 |`MainAgent.Approval`|string|`none` or `awaiting`.|
@@ -101,22 +123,18 @@ refreshes it.
 |`Delegation.Team`|object|Live-team display summary: `ID`, `Working`, and `Total`; all fields are zero/empty once the team is no longer live.|
 |`Clock.Now`|RFC 3339 time|Source-owned current time; an interval refreshes it.|
 
-The input deliberately excludes prompts, transcript and tool content,
-credentials, authentication metadata, diagnostics, and command output.
-`Workspace.Path` is the single privileged exception: status templates receive it
-through their StatusML-escaped projection and a configured local direct
-executable receives it in raw input when the embedded local-context RPC
-successfully resolves the active eligible local session. Without that root, the
-command uses the configured helper executable's cleaned absolute parent
-directory, falling back to its launch directory only if the parent cannot be
-determined; it never implicitly selects `HOME`.
+The input excludes prompts, transcript and tool content, credentials,
+authentication metadata, diagnostics, and command output. `Workspace.Path` is
+the only privileged value. It is available only when the embedded client can
+resolve an eligible local session. Templates receive an escaped value; a local
+status command receives the raw path and uses it as its working directory.
 
 ## StatusML
 
-StatusML is semantic markup, not terminal output. A command emits one document
-with optional `header` and `footer` surfaces; a template variant emits its own
-surface fragment. The optional outer `<status>` wrapper is useful for a command
-that supplies both surfaces:
+StatusML is semantic markup rather than terminal output. A command emits one
+document with optional `header` and `footer` surfaces; a template variant emits
+its own surface fragment. The optional outer `<status>` wrapper is useful for a
+command that supplies both surfaces:
 
 ```text
 <status><header><accent>mecatui</accent><text> · GPT-5</text></header><footer><text>ctx 42%</text></footer></status>
@@ -129,8 +147,8 @@ these semantic tokens:
 `text`, `muted`, `primary`, `secondary`, `accent`, `success`, `warning`,
 `error`, and `info`.
 
-A link keeps its display text separate from its destination. `<link>` is a
-StatusML element, **not** the HTML `<a>` element. It must be a direct child of
+A link keeps its display text separate from its destination. Use the StatusML
+`<link>` element instead of the HTML `<a>` element. It must be a direct child of
 `<header>` or `<footer>` and its contents must be plain text; semantic-token and
 nested-link children are not supported:
 
@@ -147,7 +165,7 @@ These forms are invalid:
 
 ### Escaping dynamic command output
 
-Template substitutions are already escaped by mecatui. Do **not** escape a value
+Template substitutions are already escaped by `mecatui`. Do not escape a value
 again inside a settings template.
 
 A command instead receives raw JSON, so it must HTML-escape every dynamic value
@@ -183,7 +201,7 @@ ANSI, OSC, newline, tab, and Unicode line-separator controls, are removed from
 markup text, link metadata, and theme data before rendering. StatusML is always
 rendered as one terminal line.
 
-### Command failures and troubleshooting
+### Handle command failures
 
 A status command has a one-second invocation deadline and a combined 4 KiB
 `stdout`/`stderr` limit. Its complete combined output must be one valid StatusML
@@ -192,7 +210,7 @@ output to `stderr`: it is combined with `stdout`, so it makes the document
 invalid.
 
 If the executable cannot start, exits unsuccessfully, times out, exceeds the
-output limit, or emits malformed StatusML, mecatui keeps the most recently
+output limit, or emits malformed StatusML, `mecatui` keeps the most recently
 successful custom surface and marks it `[stale]`. If it has no successful custom
 surface yet, it instead uses the shipped default surface. The command does not
 receive a failure result or retry signal. `/diagnostics` reports safe current
@@ -202,69 +220,26 @@ command state: each header/footer is `default`, `custom`, or `stale`; `error` is
 text. `[stale]` remains the only in-client failure indication; it is not a
 machine-readable feedback channel for the command.
 
-Test a command independently with representative JSON input before configuring
-it. Have it write exactly one StatusML document to standard output, and send any
-command-specific diagnostics to a separate destination that is not its standard
-error stream. StatusML markup used directly in a template is safely literalized
-when malformed; malformed command output instead triggers the fallback behavior
-above.
+Test a command with representative JSON before configuring it. It must write
+exactly one StatusML document to standard output. Send command-specific
+diagnostics somewhere other than standard error. Malformed StatusML in a
+template renders as literal text; malformed command output triggers the fallback
+behavior above.
 
 The v1 token-to-palette mapping is a best effort, not a cross-widget
 compatibility promise.
 [Issue #799](https://github.com/stacklok/mecatl/issues/799) tracks the stable
 semantic theme-token contract.
 
-## Shipped template appendix
+## Use a direct executable
 
-The following is a copy/paste equivalent of the shipped full, compact, and
-minimal templates. The Go-template trim markers (`{{-` and `-}}`) remove
-source-line whitespace, so each rendered value remains one StatusML line.
-
-```yaml
-status_customization:
-  templates:
-    header:
-      full: |-
-        <header><primary>mecatui · session {{.Session.Handle}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{- if .Session.Mode -}}
-        <warning> · mode {{.Session.Mode}}</warning>{{- end -}}
-        {{- if .Server.DisplayTarget -}}
-        <text> · {{.Server.DisplayTarget}}</text>{{- end -}}</header>
-      compact: |-
-        <header><primary>mecatui · {{.Session.Handle}} · {{.Model.DisplayName}}</primary>{{- if .Session.Mode -}}
-        <warning> · {{.Session.Mode}}</warning>{{- end -}}</header>
-      minimal: |-
-        <header><primary>mecatui</primary></header>
-    footer:
-      full: |-
-        <footer>{{- if or .Delegation.Parallel.Running .Delegation.Parallel.Finished -}}
-        <accent>⑂ parallel {{.Delegation.Parallel.Running}}◐ {{.Delegation.Parallel.Finished}}✓</accent>{{"  "}}{{- end -}}
-        {{- if or .Delegation.Subagents.Running .Delegation.Subagents.Finished -}}
-        <accent>⛭ subagents {{.Delegation.Subagents.Running}}◐ {{.Delegation.Subagents.Finished}}✓</accent>{{"  "}}{{- end -}}
-        {{- if .Delegation.Team.Total -}}
-        <accent>⟳ team-{{.Delegation.Team.ID}} · {{.Delegation.Team.Working}}/{{.Delegation.Team.Total}} working</accent>{{"  "}}{{- end -}}
-        {{- contextMeter .Context -}}
-        <text> · ↑{{.Usage.Input.Human}} ↓{{.Usage.Output.Human}}{{- if .Usage.CacheWrite.Raw}} ⊕{{.Usage.CacheWrite.Human}}{{end}} cache {{.Usage.CacheReadPercent}}%</text></footer>
-      compact: |-
-        <footer>{{- if or .Delegation.Parallel.Running .Delegation.Parallel.Finished -}}
-        <accent>⑂ {{.Delegation.Parallel.Running}}◐ {{.Delegation.Parallel.Finished}}✓</accent>{{"  "}}{{- end -}}
-        {{- if or .Delegation.Subagents.Running .Delegation.Subagents.Finished -}}
-        <accent>⛭ {{.Delegation.Subagents.Running}}◐ {{.Delegation.Subagents.Finished}}✓</accent>{{"  "}}{{- end -}}
-        {{- if .Delegation.Team.Total -}}
-        <accent>⟳ {{.Delegation.Team.Working}}/{{.Delegation.Team.Total}}</accent>{{"  "}}{{- end -}}
-        {{- contextMeterCompact .Context -}}</footer>
-      minimal: |-
-        <footer>{{- contextMeterMinimal .Context -}}</footer>
-```
-
-## Direct executable command
-
-Use `command` when local information needs a program. `executable` must be an
-absolute path and `args` are literal arguments. The optional `passthrough_env`
-list is the only environment extension: each name must match
-`[A-Za-z_][A-Za-z0-9_]*` and must not be one of the reserved baseline or
-terminal-dimension names. The schema has no shell, `source`, command-string, or
-working-directory fields. To use `/bin/sh`, select it as `executable` and supply
-its literal arguments.
+Use `command` when the status line needs local information from a program.
+`executable` must be an absolute path and `args` are literal arguments. The
+optional `passthrough_env` list is the only environment extension: each name
+must match `[A-Za-z_][A-Za-z0-9_]*` and must not be one of the reserved baseline
+or terminal-dimension names. The schema has no shell, `source`, command-string,
+or working-directory fields. To use `/bin/sh`, select it as `executable` and
+supply its literal arguments.
 
 ```yaml
 status_customization:
@@ -275,8 +250,8 @@ status_customization:
     passthrough_env: [TMUX] # optional: selected parent variables only
 ```
 
-An inline shell command is therefore an explicit direct-executable opt-in, not a
-separate configuration mode:
+To run a shell command, select the shell as the executable and pass literal
+arguments:
 
 ```yaml
 status_customization:
@@ -308,24 +283,22 @@ chmod 0755 ~/.local/bin/mecatui-status
 
 A command that interpolates string data into StatusML must escape that data
 itself; commands do **not** receive the template escaping projection. They
-should emit only one bounded StatusML document. Before StatusML parsing, mecatui
-trims only leading and trailing ASCII space, tab, LF, CR, vertical tab, and form
-feed. This accepts the trailing newline from the Python `print` example above
-while preserving whitespace inside markup text. A supplied header or footer
-replaces that surface; an omitted surface continues to use its shipped default.
+should emit only one bounded StatusML document. Before StatusML parsing,
+`mecatui` trims only leading and trailing ASCII space, tab, LF, CR, vertical
+tab, and form feed. This accepts the trailing newline from the Python `print`
+example above while preserving whitespace inside markup text. A supplied header
+or footer replaces that surface; an omitted surface continues to use its shipped
+default.
 
-`mecatui` runs the executable in the eligible local root of the active session
-when its opt-in local session-context service can resolve one. It refreshes that
-private lookup after a session is created, adopted, cleared, forked, or
-switched, and ignores an older response after a newer session becomes active.
-The root is used only as `Workspace.Path` in raw command JSON and as the process
-CWD; templates receive it through their StatusML-escaped projection. If context
-is unavailable or ineligible, `Workspace.Path` is empty and mecatui uses the
-configured helper executable's cleaned absolute parent directory; the local
-launch directory is retained only when that parent cannot be determined. A
-remote path is never used as a local CWD. The process receives a fixed safe
-baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when
-available. `COLUMNS` and `LINES` come from the submitted terminal dimensions.
+For an eligible local session, `mecatui` runs the executable in the workspace
+root and includes that root as `Workspace.Path`. A remote path is never used as
+a local working directory. When no eligible root exists, `Workspace.Path` is
+empty and the executable runs from the configured executable's parent directory,
+or from the launch directory when the parent cannot be determined.
+
+The process receives `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and
+`LINES` when available. `COLUMNS` and `LINES` reflect the submitted terminal
+dimensions.
 
 `passthrough_env` may add only explicitly named parent variables. Each name must
 match `[A-Za-z_][A-Za-z0-9_]*`; reserved baseline and source-owned names are
@@ -333,15 +306,18 @@ rejected. Names are deduplicated, and unset variables are omitted. Do not list
 secrets. No other parent environment values are inherited. For example, `[TMUX]`
 makes an existing `TMUX` value available to a local tmux-aware integration.
 
-Input changes are debounced for 250 ms. At most one contained command process
-tree runs at a time; replacement, timeout, and shutdown cancel it. Each
-invocation has a one-second deadline. Standard output and standard error share a
-4 KiB streaming limit. Malformed output, output overflow, terminal controls, or
-a failed command never render raw output. A failed refresh preserves a bounded
-last-good supplied surface with a stale marker when it fits; otherwise that
-surface falls back to its shipped default. Command paths, arguments, input,
-output, and raw errors are not shown in the status line or diagnostics.
+Input changes are debounced for 250 ms, and only one command process tree runs
+at a time. Replacement, timeout, and shutdown cancel it. Each invocation has a
+one-second deadline, and standard output and standard error share a 4 KiB limit.
+Failures never render raw output. A failed refresh keeps the last successful
+surface with a stale marker when it fits, or falls back to the shipped default.
 
 For the lower-level client architecture and the complete source lifecycle, see
 the
 [status-line section in `docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#local-status-lines).
+
+## Next steps
+
+- [Choose a theme](./themes.md) for the rest of the interface.
+- [Find diagnostics](./troubleshooting.md#find-diagnostics) when a status
+  command stays stale.

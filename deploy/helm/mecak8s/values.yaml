@@ -128,8 +128,10 @@ security:
   # gateway/mesh-only plaintext backend reachability.
   tlsTerminatedUpstream: false
 
-# Full pod shutdown budget. This must exceed preStop (3s) plus the configured
-# mecak8s drain, gRPC, HTTP, resource-close, and telemetry bounds.
+# Full pod shutdown budget. The schema minimum of 44s is the first whole second
+# above preStop (3s) plus the default mecak8s drain, gRPC, HTTP, resource-close,
+# and telemetry bounds (43s total). Increase this when extraArgs raises any
+# runtime shutdown bound.
 terminationGracePeriodSeconds: 60
 
 # Optional Kubernetes scheduling controls. Empty values render no pod fields.

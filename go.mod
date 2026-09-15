@@ -10,7 +10,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/anthropics/anthropic-sdk-go v1.71.0
+	github.com/anthropics/anthropic-sdk-go v1.72.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/charmbracelet/colorprofile v0.4.3
@@ -28,7 +28,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.1-0.20260825151509-2732839dbadd
 	github.com/onsi/ginkgo/v2 v2.30.0
 	github.com/onsi/gomega v1.41.0
-	github.com/openai/openai-go/v3 v3.56.0
+	github.com/openai/openai-go/v3 v3.61.0
 	github.com/ory/fosite v0.49.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
@@ -321,7 +321,7 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.54.0 // indirect
-	mvdan.cc/sh/v3 v3.12.0 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	sigs.k8s.io/controller-runtime v0.23.3 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect

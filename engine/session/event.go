@@ -522,6 +522,9 @@ type UserPromptPayload struct {
 	// the user message; nil for a text-only prompt. It mirrors Message.Parts so the
 	// reconstructed user Message is faithful.
 	Parts []Content
+	// Synthetic reports that the harness, rather than the principal, authored this
+	// user-role continuation. False is genuine or legacy-unknown.
+	Synthetic bool
 }
 
 // ModelRetryPayload is the structured durable marker that a failed-step retry

@@ -1,7 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents    Parallel  ▸ Teams                                                            ┃
@@ -9,15 +8,16 @@
   ┃  agents · 2 members                                                                          ┃
   ┃  4 rounds · ↑5.2K ↓410 · stop:done · 1 stopped                                               ┃
   ┃                                                                                              ┃
-  ┃  ╭───────────────────────────────────────────────────╮                                       ┃
-  ┃  │  › ✓ ✎ lead  [lead] · done · ↑0 ↓0 · coordinator  │                                       ┃
-  ┃  ╰───────────────────────────────────────────────────╯                                       ┃
-  ┃    ✗ · scout · stopped — budget · ↑0 ↓0 · researcher                                         ┃
+  ┃  ▶ ✓ ✎ lead  [lead]                                                                          ┃
+  ┃      done · coordinator                                                                      ┃
+  ┃      ↑0 ↓0                                                                                   ┃
+  ┃    ✗ · scout                                                                                 ┃
+  ┃      stopped — budget · researcher                                                           ┃
+  ┃      ↑0 ↓0                                                                                   ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 
 
 

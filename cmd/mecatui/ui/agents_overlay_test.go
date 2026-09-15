@@ -9,6 +9,8 @@ package ui
 // subagent.* / team.* event projection — no child content (gauntlet #7).
 
 import (
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -659,6 +661,56 @@ func TestSubagentBudgetStopThroughWire(t *testing.T) {
 	}
 }
 
+func TestSubagentRosterRowSeparatesTitleAndDetails(t *testing.T) {
+	ln := &subagentLane{
+		childID:       "explorer-abcdef",
+		goal:          "inspect the subagent roster layout carefully while checking every visible presentation detail",
+		background:    true,
+		routedModel:   "gpt-5-mini",
+		routingReason: "fast investigation",
+		current:       "Grep",
+		toolCount:     2,
+		usage:         client.Usage{InputTokens: 1200, OutputTokens: 340},
+	}
+
+	selected := stripANSIstr(renderSubagentRosterRow(aztec().Style("spinner"), "▶ ", ln, 80))
+	unselected := stripANSIstr(renderSubagentRosterRow(aztec().Style("muted"), "  ", ln, 80))
+	selectedRows := strings.Split(selected, "\n")
+	unselectedRows := strings.Split(unselected, "\n")
+	if len(selectedRows) != 2 || len(unselectedRows) != 2 {
+		t.Fatalf("normal-width rows = %q / %q, want title plus one details line", selected, unselected)
+	}
+	if !strings.HasPrefix(selectedRows[0], "▶ ◐ ") || !strings.HasPrefix(unselectedRows[0], "  ◐ ") {
+		t.Fatalf("selection markers changed title semantics: %q / %q", selectedRows[0], unselectedRows[0])
+	}
+	if selectedRows[1] != unselectedRows[1] || !strings.HasPrefix(selectedRows[1], "    ") {
+		t.Fatalf("details should retain one shared four-column indent: %q / %q", selectedRows[1], unselectedRows[1])
+	}
+	if !strings.Contains(selectedRows[0], "…") || !strings.Contains(selectedRows[0], "#abcdef ⇢ bg") {
+		t.Fatalf("title was not explicitly clipped while retaining child identity: %q", selectedRows[0])
+	}
+	if !strings.Contains(selectedRows[1], "gpt-5-mini") || !strings.Contains(selectedRows[1], "Grep… · 2 tools · ↑1.2K ↓340") {
+		t.Fatalf("details omitted readable metadata: %q", selectedRows[1])
+	}
+
+	narrow := stripANSIstr(renderSubagentRosterRow(aztec().Style("spinner"), "▶ ", ln, 28))
+	for _, row := range strings.Split(narrow, "\n") {
+		if lipgloss.Width(row) > 28 {
+			t.Fatalf("narrow row overflows body width: %d: %q", lipgloss.Width(row), row)
+		}
+	}
+	if len(strings.Split(narrow, "\n")) < 3 || !strings.Contains(narrow, "\n    ") {
+		t.Fatalf("narrow details did not wrap with the required indent: %q", narrow)
+	}
+
+	wide := *ln
+	wide.goal = "調査🙂調査🙂調査🙂調査🙂"
+	wideRow := stripANSIstr(renderSubagentRosterRow(aztec().Style("spinner"), "▶ ", &wide, 24))
+	if title := strings.Split(wideRow, "\n")[0]; lipgloss.Width(title) > 24 || !strings.Contains(title, "…") {
+		t.Fatalf("wide-rune title should be clipped to one physical line: %q", title)
+	}
+}
+
 // TestSubagentRosterWindowed asserts a fleet larger than the available height windows
 // like the team roster: only the rows that fit render, the footer hint stays visible,
 // and hidden rows surface via "+K below".
@@ -678,7 +730,7 @@ func TestSubagentRosterWindowed(t *testing.T) {
 		t.Fatalf("expected Subagents tab, got %v", m.agentsTab)
 	}
 	out := stripANSIstr(m.View().Content)
-	rows := teamRosterRows(agentsBodyHeight(m.vp.Height()))
+	rows := m.subagentRosterPageSize(m.conv.subagentFleet)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be < fleet %d", rows, n)
 	}
@@ -821,7 +873,10 @@ func TestRosterRouteNavigation(t *testing.T) {
 			}
 			mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 			m = mm.(Model)
-			page := teamRosterRows(m.vp.Height())
+			page := m.subagentRosterPageSize(m.conv.subagentFleet)
+			if tc.name == "parallel" {
+				page = m.parallelRosterPageSize(m.conv.parallelGroups)
+			}
 			if page >= n {
 				t.Fatalf("test premise broken: page %d must be < roster %d", page, n)
 			}
@@ -1389,5 +1444,575 @@ func TestAgentsOverlayNothingRanHint(t *testing.T) {
 	}
 	if !strings.Contains(m.statusMsg, "no team, subagent, or parallel run has run yet") {
 		t.Errorf("expected the nothing-ran hint, got %q", m.statusMsg)
+	}
+}
+
+func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	assertRows := func(name, out, selected, unselected string) {
+		t.Helper()
+		accentOpen, _, _ := strings.Cut(th.Style("spinner").Render("x"), "x")
+		if !strings.Contains(out, accentOpen+"▶ "+selected) {
+			t.Errorf("%s selected row lacks unbordered accent treatment: %q", name, out)
+		}
+		plain := stripANSIstr(out)
+		if !strings.Contains(plain, "  "+unselected) {
+			t.Errorf("%s unselected row lost two-cell prefix: %q", name, plain)
+		}
+	}
+
+	assertRows("subagent", renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "one", goal: "selected"}, {childID: "two", goal: "unselected"}}, hk, 0, 120), "◐ selected", "◐ unselected")
+	assertRows("parallel group", renderParallelRoster(th, parallelState{}, []parallelGroup{{parentCallID: "one", branchCount: 1}, {parentCallID: "two", branchCount: 1}}, hk, 0, 120), "◐ all", "◐ all")
+	assertRows("team", renderTeamRoster(th, teamState{}, &block{teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}}, hk, 0, 120), "◆ · selected", "◆ · unselected")
+
+	branches := []parallelBranch{{index: 0, label: "selected"}, {index: 1, label: "unselected"}}
+	assertRows("parallel branch", renderParallelBranchRow(th, &branches[0], -1, true, 120)+renderParallelBranchRow(th, &branches[1], -1, false, 120), "◐ selected", "◐ unselected")
+
+	accentOpen, _, _ := strings.Cut(th.Style("spinner").Render("x"), "x")
+	finalViews := []struct {
+		name  string
+		setup func(Model) Model
+		want  string
+	}{
+		{"subagent", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.conv.subagentFleet = []subagentLane{{childID: "one", goal: "selected"}, {childID: "two", goal: "unselected"}}
+			return m
+		}, "▶ ◐ selected"},
+		{"parallel group", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "one", branchCount: 1}, {parentCallID: "two", branchCount: 1}}
+			return m
+		}, "▶ ◐ all"},
+		{"parallel branch", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.parallel = parallelState{view: parallelGroupView, group: "one"}
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "one", winner: -1, branches: branches}}
+			return m
+		}, "▶ ◐ selected"},
+		{"team", func(m Model) Model {
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
+			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}})
+			return m
+		}, "▶ ◆ · selected"},
+	}
+	for _, tc := range finalViews {
+		m := tc.setup(resize(newMCPModel(t, th, nil), 80, 40))
+		out := m.View().Content
+		plain := stripANSIstr(out)
+		if !strings.Contains(plain, tc.want) || !strings.Contains(out, accentOpen+"▶ ") {
+			t.Errorf("%s final View lacks selected unbordered accent row %q:\n%s", tc.name, tc.want, plain)
+		}
+	}
+}
+
+func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWrappedRowHasNoButtonChrome(t *testing.T) {
+	th := aztec()
+	branch := &parallelBranch{index: 0, label: strings.Repeat("long label ", 8)}
+	selected := stripANSIstr(renderParallelBranchRow(th, branch, -1, true, 20))
+	unselected := stripANSIstr(renderParallelBranchRow(th, branch, -1, false, 20))
+	if got, want := strings.Count(selected, "\n"), strings.Count(unselected, "\n"); got != want {
+		t.Fatalf("selected wrapped row has %d physical rows, want unselected row's %d: %q", got, want, selected)
+	}
+	if got, want := strings.Replace(selected, "▶ ", "  ", 1), unselected; got != want {
+		t.Fatalf("selected wrapped row differs from unselected beyond its marker (button chrome):\nselected: %q\nunselected: %q", selected, unselected)
+	}
+	m := resize(newMCPModel(t, th, nil), 32, 40)
+	m.team, m.agentsTab = teamState{view: teamRoster}, tabParallel
+	m.parallel = parallelState{view: parallelGroupView, group: "wrapped"}
+	m.conv.parallelGroups = []parallelGroup{{parentCallID: "wrapped", winner: -1, branches: []parallelBranch{*branch}}}
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "▶ ◐ long label") {
+		t.Fatalf("wrapped selected branch did not retain its selection in final View:\n%s", out)
+	}
+}
+
+func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWinnerRetainsBothMarkers(t *testing.T) {
+	th := aztec()
+	branch := &parallelBranch{index: 1, label: "winner"}
+	out := stripANSIstr(renderParallelBranchRow(th, branch, 1, true, 120))
+	if !strings.HasPrefix(out, "▶ ★ ") {
+		t.Fatalf("selected winning branch markers = %q, want both ▶ and ★", out)
+	}
+	bar := stripANSIstr(agentsTabBar(th, tabParallel))
+	if !strings.Contains(bar, "▸ Parallel") || strings.Contains(bar, "▶ Parallel") {
+		t.Fatalf("active tab marker changed or conflated: %q", bar)
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport pins the
+// short-terminal fallback: it is one unframed, selectable line rather than a clipped card.
+func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *testing.T) {
+	type compactCase struct {
+		name, want string
+		setup      func(Model) Model
+	}
+	teamBlock := func() block {
+		return block{
+			kind: blockTool, team: true,
+			teamLanes:    []teamLane{{name: "ann"}},
+			teamTasks:    []teamTask{{id: "task-focus", state: taskStatePending}},
+			teamFindings: []teamFinding{{member: "ann", body: "finding-focus"}},
+		}
+	}
+	cases := []compactCase{
+		{"subagent roster", "▶ Subagents · esc close", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.conv.subagentFleet = []subagentLane{{childID: "child-roster"}}
+			return m
+		}},
+		{"subagent empty", "▶ Subagents · esc close", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabSubagents; return m }},
+		{"subagent focus", "▶ subagent nt-kid · esc back", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-kid", scroll: 3}
+			m.conv.subagentFleet = []subagentLane{{childID: "subagent-kid"}}
+			return m
+		}},
+		{"subagent missing focus", "▶ subagent t-gone · esc back", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-gone", scroll: 3}
+			return m
+		}},
+		{"parallel roster", "▶ Parallel · esc close", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "group-roster"}}
+			return m
+		}},
+		{"parallel empty", "▶ Parallel · esc close", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabParallel; return m }},
+		{"parallel group focus", "▶ parallel group-a · esc back", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.parallel = parallelState{view: parallelGroupView, group: "group-a", branchCursor: 1}
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "group-a", branches: []parallelBranch{{label: "first"}, {label: "branch-focus"}}}}
+			return m
+		}},
+		{"parallel missing focus", "▶ parallel group-x · esc back", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.parallel = parallelState{view: parallelGroupView, group: "group-x"}
+			return m
+		}},
+		{"team roster", "▶ Teams · esc close", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
+			return m
+		}},
+		{"team empty", "▶ Teams · esc close", func(m Model) Model { m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams; return m }},
+		{"team focus", "▶ agent ann · esc back", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann", scroll: 3}, tabTeams
+			return m
+		}},
+		{"team missing focus", "▶ agent bob · esc back", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "bob", scroll: 3}, tabTeams
+			return m
+		}},
+		{"team tasks", "▶ Tasks · esc back", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamTasks, scroll: 3}, tabTeams
+			return m
+		}},
+		{"team tasks empty", "▶ Tasks · esc back", func(m Model) Model {
+			b := teamBlock()
+			b.teamTasks = nil
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
+			return m
+		}},
+		{"team findings", "▶ Findings · esc back", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFindings, scroll: 3}, tabTeams
+			return m
+		}},
+		{"team findings empty", "▶ Findings · esc back", func(m Model) Model {
+			b := teamBlock()
+			b.teamFindings = nil
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
+			return m
+		}},
+	}
+	for height := 1; height <= 23; height++ {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("h%d/%s", height, tc.name), func(t *testing.T) {
+				m := tc.setup(resize(newMCPModel(t, aztec(), nil), 32, height))
+				before := []int{m.subagents.cursor, m.subagents.scroll, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.scroll}
+				_ = m.View() // exercise the final view assembly before inspecting its overlay region.
+				body := stripANSIstr(m.renderBody())
+				if got := lipgloss.Height(body); got != 1 {
+					t.Fatalf("compact body height=%d, want 1: %q", got, body)
+				}
+				if got := lipgloss.Width(body); got > 32 {
+					t.Fatalf("compact body width=%d, want <=32: %q", got, body)
+				}
+				if !strings.Contains(body, tc.want) {
+					t.Fatalf("compact body=%q, want %q", body, tc.want)
+				}
+				mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				m = mm.(Model)
+				after := []int{m.subagents.cursor, m.subagents.scroll, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.scroll}
+				if !slices.Equal(before, after) {
+					t.Fatalf("compact navigation changed state: before=%v after=%v", before, after)
+				}
+			})
+		}
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport checks that normal
+// overlays budget their framed physical lines, including when the viewport is shorter
+// than the terminal that selected normal mode.
+func TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport(t *testing.T) {
+	type normalCase struct {
+		name, want, footer string
+		setup              func(Model) Model
+	}
+	trace := make([]teamTrace, 20)
+	tasks := make([]teamTask, 20)
+	findings := make([]teamFinding, 20)
+	for i := range trace {
+		text := fmt.Sprintf("detail-%02d %s", i, strings.Repeat("wrapped ", 8))
+		trace[i] = teamTrace{kind: teamTraceMessage, text: text}
+		tasks[i] = teamTask{id: fmt.Sprintf("task-%02d-%s", i, strings.Repeat("wide", 8)), state: taskStatePending}
+		findings[i] = teamFinding{member: "ann", body: fmt.Sprintf("finding-%02d-%s", i, strings.Repeat("wide", 8))}
+	}
+	teamBlock := func() block {
+		return block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "ann", role: strings.Repeat("role ", 12), trace: trace}}, teamTasks: tasks, teamFindings: findings}
+	}
+	cases := []normalCase{
+		{"subagent roster", "▶ ◐ selected", "esc close|↑/↓ select|lines 1", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.conv.subagentFleet = []subagentLane{{childID: "subagent-selected", goal: "selected-subagent " + strings.Repeat("goal ", 12)}, {childID: "other", goal: "other"}}
+			return m
+		}},
+		{"subagent focus", "selected", "esc back|lines 1", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-selected"}
+			m.conv.subagentFleet = []subagentLane{{childID: "subagent-selected", goal: "selected-subagent", trace: trace, done: true, stop: stopError, cause: strings.Repeat("failure ", 30), background: true}}
+			return m
+		}},
+		{"subagent missing focus", "subagent #issing", "esc back|lines 1", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabSubagents
+			m.subagents = subagentState{view: subagentFocus, child: "missing"}
+			return m
+		}},
+		{"subagent empty", "(no entries)|(no subagents)", "esc close|↑/↓ select|lines 1", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabSubagents; return m }},
+		{"parallel roster", "judge", "esc close|↑/↓ select|lines 1", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "p", join: "judge", branchCount: 2, branches: []parallelBranch{{index: 0, label: "selected-branch"}}}}
+			return m
+		}},
+		{"parallel focus", "selected-branch", "esc back|lines 1", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.parallel = parallelState{view: parallelGroupView, group: "p"}
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "p", join: "judge", branchCount: 2, branches: []parallelBranch{{index: 0, label: "selected-branch", goal: strings.Repeat("goal ", 12), trace: trace}}}}
+			return m
+		}},
+		{"parallel missing focus", "this parallel run", "esc back|lines 1", func(m Model) Model {
+			m.team.view, m.agentsTab = teamRoster, tabParallel
+			m.parallel = parallelState{view: parallelGroupView, group: "missing"}
+			return m
+		}},
+		{"parallel empty", "(no entries)|(no parallel runs)", "esc close|↑/↓ select|lines 1", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabParallel; return m }},
+		{"team roster", "ann", "esc close|↑/↓ select|lines 1", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
+			return m
+		}},
+		{"team focus", "ann", "esc back|lines 1", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann"}, tabTeams
+			return m
+		}},
+		{"team missing focus", "member missing", "esc back|lines 1", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "missing"}, tabTeams
+			return m
+		}},
+		{"team tasks", "task-00", "esc close|lines 1|t roster", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
+			return m
+		}},
+		{"team tasks empty", "(no entries)|(no tasks)", "esc close|↑/↓ select|lines 1", func(m Model) Model {
+			b := teamBlock()
+			b.teamTasks = nil
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
+			return m
+		}},
+		{"team findings", "finding-00", "esc close|lines 1|f roster", func(m Model) Model {
+			b := teamBlock()
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
+			return m
+		}},
+		{"team findings empty", "(no entries)|(no findings)", "esc close|↑/↓ select|lines 1", func(m Model) Model {
+			b := teamBlock()
+			b.teamFindings = nil
+			m.conv.blocks = append(m.conv.blocks, b)
+			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
+			return m
+		}},
+		{"team empty", "no team has run", "esc close|↑/↓ select|lines 1", func(m Model) Model { m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams; return m }},
+	}
+	containsAny := func(s, alternatives string) bool {
+		for _, alternative := range strings.Split(alternatives, "|") {
+			if strings.Contains(s, alternative) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, width := range []int{32, 80, 120} {
+		for height := 24; height <= 80; height++ {
+			for _, tc := range cases {
+				m := tc.setup(resize(newMCPModel(t, aztec(), nil), width, height))
+				view := stripANSIstr(m.View().Content)
+				body := stripANSIstr(m.renderBody())
+				if got := lipgloss.Height(body); got > m.vp.Height() {
+					t.Fatalf("%s %dx%d: body=%d exceeds offered viewport=%d", tc.name, width, height, got, m.vp.Height())
+				}
+				wantVisible := false
+				for _, want := range strings.Split(tc.want, "|") {
+					wantVisible = wantVisible || strings.Contains(view, want)
+				}
+				if !wantVisible || !containsAny(view, tc.footer) {
+					t.Fatalf("%s %dx%d: selected content/footer clipped from final View:\n%s", tc.name, width, height, view)
+				}
+				for i, line := range strings.Split(body, "\n") {
+					if got := lipgloss.Width(line); got > width {
+						t.Fatalf("%s %dx%d line %d width=%d: %q", tc.name, width, height, i, got, line)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow drives
+// every selectable Agents view through the real Model.Update/View path. Narrow,
+// variably wrapped rows make a logical-row page size observably wrong.
+func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *testing.T) {
+	const total = 12
+	type rosterCase struct {
+		name     string
+		labels   []string
+		seed     func(Model) Model
+		cursor   func(Model) int
+		cancelID func(int) string
+	}
+	labels := func(prefix string) []string {
+		out := make([]string, total)
+		for i := range out {
+			out[i] = fmt.Sprintf("%s%02d", prefix, i)
+		}
+		return out
+	}
+	cases := []rosterCase{
+		{name: "subagent roster", labels: labels("S"), seed: func(m Model) Model {
+			m.conv.subagentFleet = make([]subagentLane, total)
+			for i := range m.conv.subagentFleet {
+				m.conv.subagentFleet[i] = subagentLane{childID: fmt.Sprintf("child-%02d", i), goal: fmt.Sprintf("S%02d long wrapped goal", i), current: "very-long-tool-name"}
+			}
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabSubagents
+			return m
+		}, cursor: func(m Model) int { return m.subagents.cursor }, cancelID: func(i int) string { return fmt.Sprintf("child-%02d", i) }},
+		{name: "parallel group roster", labels: labels("G"), seed: func(m Model) Model {
+			m.conv.parallelGroups = make([]parallelGroup, total)
+			for i := range m.conv.parallelGroups {
+				m.conv.parallelGroups[i] = parallelGroup{parentCallID: fmt.Sprintf("group-%02d", i), done: true, winner: 0, branchCount: 1, branches: []parallelBranch{{index: 0, label: fmt.Sprintf("G%02d-long-winner-label", i), done: true}}}
+			}
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabParallel
+			return m
+		}, cursor: func(m Model) int { return m.parallel.cursor }},
+		{name: "team roster", labels: labels("T"), seed: func(m Model) Model {
+			m.conv.addTool("t1", "Team", `{}`)
+			members := make([]client.TeamMemberSpec, total)
+			for i := range members {
+				members[i] = client.TeamMemberSpec{Name: fmt.Sprintf("T%02d-long-member", i), Role: "long wrapped worker role"}
+			}
+			m.conv.setTeamStart("t1", "", members)
+			for i := range m.conv.blocks[0].teamLanes {
+				m.conv.blocks[0].teamLanes[i].sessionID = fmt.Sprintf("team-child-%02d", i)
+			}
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
+			return m
+		}, cursor: func(m Model) int { return m.team.cursor }, cancelID: func(i int) string { return fmt.Sprintf("team-child-%02d", i) }},
+		{name: "focused parallel branches", labels: labels("B"), seed: func(m Model) Model {
+			branches := make([]parallelBranch, total)
+			for i := range branches {
+				branches[i] = parallelBranch{index: i, childID: fmt.Sprintf("branch-child-%02d", i), label: fmt.Sprintf("B%02d-long-branch-label", i), goal: "long wrapped branch goal"}
+			}
+			m.conv.parallelGroups = []parallelGroup{{parentCallID: "focused", branchCount: total, branches: branches, winner: -1}}
+			m.team, m.agentsTab = teamState{view: teamRoster}, tabParallel
+			m.parallel = parallelState{view: parallelGroupView, group: "focused"}
+			return m
+		}, cursor: func(m Model) int { return m.parallel.branchCursor }, cancelID: func(i int) string { return fmt.Sprintf("branch-child-%02d", i) }},
+	}
+	press := func(t *testing.T, m Model, code rune) Model {
+		t.Helper()
+		mm, _ := m.Update(tea.KeyPressMsg{Code: code, Text: string(code)})
+		return mm.(Model)
+	}
+	visible := func(out string, labels []string) int {
+		n := 0
+		for _, label := range labels {
+			if strings.Contains(out, label) {
+				n++
+			}
+		}
+		return n
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := resize(newMCPModel(t, aztec(), nil), 32, 40)
+			send := &fakeSender{}
+			m.stream = client.NewStream(nil, send)
+			m = tc.seed(m)
+			m.keys = applyKeyOverrides(m.keys, map[string][]string{
+				"Up": {"u"}, "Down": {"d"}, "ScrollU": {"p"}, "ScrollD": {"n"},
+				"JumpTop": {"h"}, "JumpEnd": {"e"},
+			})
+			first := stripANSIstr(m.View().Content)
+			page := visible(first, tc.labels)
+			if page < 1 || page >= total {
+				t.Fatalf("test premise: initial physical window contains %d entries:\n%s", page, first)
+			}
+			m = press(t, m, 'n')
+			if got := tc.cursor(m); got != page {
+				t.Fatalf("custom Page Down cursor = %d, want exact rendered-window move %d; initial:\n%s", got, page, first)
+			}
+			paged := stripANSIstr(m.View().Content)
+			if !strings.Contains(paged, "▶") || !strings.Contains(paged, tc.labels[page]) {
+				t.Fatalf("paged selection is not wholly visible:\n%s", paged)
+			}
+			if tc.cancelID != nil {
+				mm, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+				m = mm.(Model)
+				runCmd(cmd)
+				if got, want := cancelChildFrames(send), tc.cancelID(page); len(got) != 1 || got[0] != want {
+					t.Fatalf("cancel after paging targeted %v, want [%s]", got, want)
+				}
+				m.statusMsg = ""
+			}
+			m = press(t, m, 'd')
+			if got := tc.cursor(m); got != page+1 {
+				t.Fatalf("custom Down cursor = %d, want %d", got, page+1)
+			}
+			m = press(t, m, 'u')
+			if got := tc.cursor(m); got != page {
+				t.Fatalf("custom Up cursor = %d, want %d", got, page)
+			}
+			m = press(t, m, 'e')
+			if got := tc.cursor(m); got != total-1 {
+				t.Fatalf("custom JumpEnd cursor = %d, want %d", got, total-1)
+			}
+			lastPage := visible(stripANSIstr(m.View().Content), tc.labels)
+			m = press(t, m, 'p')
+			if got, want := tc.cursor(m), total-1-lastPage; got != want {
+				t.Fatalf("custom Page Up cursor = %d, want exact rendered-window move to %d", got, want)
+			}
+			m = press(t, m, 'h')
+			if got := tc.cursor(m); got != 0 {
+				t.Fatalf("custom JumpTop cursor = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_OverflowContentReachable pins the existing
+// remappable navigation surface and live range indicator used for overflowed rosters.
+func TestMecatuiAgentsOverlayFit_Scenario2_OverflowContentReachable(t *testing.T) {
+	testAgentsDetailScrolling(t)
+}
+
+// TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport pins that
+// long dynamic roster metadata is charged before framing, leaving the footer visible.
+func TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport(t *testing.T) {
+	th := aztec()
+	lane := subagentLane{childID: "child", goal: strings.Repeat("unbreakable", 40), current: strings.Repeat("metadata", 40), done: true, stop: stopError, cause: strings.Repeat("failure ", 80), background: true}
+	out := stripANSIstr(renderAgentsOverlay(th, tabSubagents, subagentState{view: subagentFocus, child: "child"}, parallelState{}, teamState{}, nil, []subagentLane{lane}, nil, defaultHelpKeys(), 32, 20, 24))
+	if got := lipgloss.Height(out); got > 20 {
+		t.Fatalf("wrapped dynamic content is %d lines, want <= 20", got)
+	}
+	if !strings.Contains(out, "esc back") {
+		t.Fatalf("footer was hidden by wrapped dynamic content:\n%s", out)
+	}
+
+	m := resize(newMCPModel(t, th, nil), 32, 40)
+	m.conv.subagentFleet = make([]subagentLane, 8)
+	for i := range m.conv.subagentFleet {
+		m.conv.subagentFleet[i] = subagentLane{
+			childID: fmt.Sprintf("wrapped-%02d", i),
+			goal:    fmt.Sprintf("selected-%02d-%s", i, strings.Repeat("unbreakable", 8)),
+			current: strings.Repeat("metadata", 8),
+		}
+	}
+	m.team, m.agentsTab = teamState{view: teamRoster}, tabSubagents
+	m.subagents.cursor = 4
+	listTh, hk, width, height := m.agentsListGeometry()
+	list := subagentSelectableList(listTh, m.subagents, m.conv.subagentFleet, hk, width)
+	w := list.window(listTh, height)
+	if w.start > m.subagents.cursor || w.end <= m.subagents.cursor {
+		t.Fatalf("wrapped selected row %d is outside physical window [%d,%d)", m.subagents.cursor, w.start, w.end)
+	}
+	body := stripANSIstr(list.render(listTh, height))
+	selected := stripANSIstr(list.rows[m.subagents.cursor])
+	if !strings.Contains(body, selected) {
+		t.Fatalf("wrapped selected row was split or cropped:\nwant complete:\n%s\nbody:\n%s", selected, body)
+	}
+	if got := lipgloss.Height(m.renderBody()); got > m.vp.Height() {
+		t.Fatalf("real Model view body with wrapped selectable metadata is %d lines, want <= %d", got, m.vp.Height())
+	}
+}
+
+func TestAgentsOverlayLayoutBoundaryExactFitAndOneLineShort(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	const width = 80
+	// askCard costs four rows, the tab strip plus separator costs two, and the
+	// empty Teams body costs three complete rows.
+	exact := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 9, 24))
+	if !strings.Contains(exact, "┏") || !strings.Contains(exact, "no team has run this session") || !strings.Contains(exact, "esc close") {
+		t.Fatalf("exact-fit normal card lost its frame or essential body:\n%s", exact)
+	}
+
+	short := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 8, 24))
+	if strings.Contains(short, "┏") || !strings.Contains(short, "vp short") || !strings.Contains(short, "esc close") {
+		t.Fatalf("one-line-short viewport must use the unframed viewport fallback:\n%s", short)
+	}
+}
+
+func TestAgentsOverlayLayoutBoundaryChargesWrappedTabStrip(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	const width, height = 32, 12
+	out := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, height, 24))
+	if !strings.Contains(out, "┏") || !strings.Contains(out, "no team has run") || !strings.Contains(out, "esc close") {
+		t.Fatalf("wrapped fixed chrome was not charged as complete rows:\n%s", out)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", i, got, width, line)
+		}
+	}
+}
+
+func TestAgentsOverlayLayoutBoundaryTinyConversationViewportUsesDistinctFallback(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	out := stripANSIstr(renderAgentsOverlay(th, tabSubagents, subagentState{}, parallelState{}, teamState{}, nil,
+		[]subagentLane{{childID: "child", goal: "audit"}}, nil, hk, 32, 1, 24))
+	if strings.Contains(out, "┏") || strings.Contains(out, "▶") || !strings.Contains(out, "vp short") || !strings.Contains(out, "esc close") {
+		t.Fatalf("normal-mode tiny viewport fallback must be unframed and distinct from compact mode: %q", out)
+	}
+	if got := lipgloss.Height(out); got > 1 {
+		t.Fatalf("tiny viewport fallback height = %d, want <= 1", got)
 	}
 }

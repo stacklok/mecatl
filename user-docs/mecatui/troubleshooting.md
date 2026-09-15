@@ -12,6 +12,9 @@ Start by identifying whether you are running embedded `mecatui` or
 `mecatui connect ADDRESS`. The first owns a local server; the second only
 displays and controls the server it reaches.
 
+Expand an error card with your configured `ExpandTools` keybinding to see its
+complete sanitized message.
+
 ## Embedded startup says no provider is available
 
 Embedded mode detects provider credentials from its environment. Set one
@@ -28,43 +31,55 @@ server-side selection, use
 
 ## Provider is not configured or credentials are unavailable
 
+### Inspect local provider state
+
 For an embedded local server, run `mecatui providers` to inspect provider state
-without revealing credentials. Run `mecatui providers setup` for guided setup, or
-use `mecatui providers add PROVIDER` to define a custom provider and
+without revealing credentials. Run `mecatui providers setup` for guided setup,
+or use `mecatui providers add PROVIDER` to define a custom provider and
 `mecatui providers login PROVIDER` to add locally managed credentials. For an
 OIDC provider on a host that cannot open a browser, use
 `mecatui providers login PROVIDER --no-browser` and complete the displayed flow.
 
 If the command reports an unknown provider, run `mecatui providers` and use the
-exact configured name. Use `mecatui providers add NAME` to define a new provider.
+exact configured name. Use `mecatui providers add NAME` to define a new
+provider.
+
+### Recover OIDC credentials
 
 `credential_store.oidc` is shared OIDC credential custody. With an environment
-key, confirm that `credential_store.oidc.key.key_env` names a value provisioned to
-both the login process and the server; restoring the original value is required to
-read existing encrypted credentials. If it cannot be restored, use a new credential
-home and re-enroll providers rather than overwriting an unreadable record. For OIDC
-command errors, verify the provider configuration, credential-store home and key,
-issuer trust, and network/TLS settings. Callback conflicts use localhost port 8666;
-authorization failures require a new browser flow; token rejection requires checking
-audience and scopes. During logout, an unavailable enrollment calls for checking the
-provider configuration and `mecatui providers status PROVIDER`, not enrolling again.
+key, `credential_store.oidc.key.key_env` must name a value available to both the
+login process and the server. You need the original value to read existing
+encrypted credentials. If you cannot restore it, use a new credential home and
+enroll the providers again. Do not overwrite the unreadable record.
+
+For other OIDC failures, check the provider configuration, credential-store home
+and key, issuer trust, and network and TLS settings:
+
+- A callback conflict uses localhost port `8666`.
+- An authorization failure requires a new browser flow.
+- A rejected token requires checking its audience and scopes.
+- During logout, an unavailable enrollment requires checking the provider
+  configuration and `mecatui providers status PROVIDER`.
+
 The
 [provider configuration guide](/building/deployment/mecated.md#configure-providers)
-and [configuration reference](/reference/configuration.md#credential_store) describe
-the supported schema.
+and [credential store reference](/reference/configuration.md#credential_store)
+describe the supported schema.
+
+### Protect API keys
 
 API-key credentials can come from the environment or a provider-credentials YAML
 file selected by `--api-key-file`. Do not put provider secrets in command-line
 arguments, settings YAML, prompts, or logs.
 
-A connected client cannot enroll a remote server's providers. `mecatui login
-ADDRESS` authenticates the client to that remote server; ask its operator to
-configure the server's providers. ToolHive is separate and owns its LLM credential
-lifecycle, so use `thv llm` tooling for ToolHive setup.
+A connected client cannot enroll a remote server's providers.
+`mecatui login ADDRESS` authenticates the client to that server; ask its
+operator to configure provider credentials. ToolHive manages its own LLM
+credentials through the `thv llm` commands.
 
 ## Server connection or login fails
 
-These are distinct failures:
+Identify the failure before changing the client configuration:
 
 - **Connection failure:** confirm the address, network path, and that the
   operator started the server.
@@ -76,7 +91,7 @@ These are distinct failures:
   plaintext downgrade for controlled testing, not a verification fix. Do not use
   `--insecure` except in controlled testing.
 
-A bearer is allowed over plaintext loopback, but mecatui refuses it over
+A bearer token is allowed over plaintext loopback, but `mecatui` refuses it over
 explicit non-loopback plaintext. Saved OIDC authentication always uses verified
 TLS, even for loopback. See [Connect to a server](./remote-servers.md) and the
 operator
@@ -98,11 +113,10 @@ operator which paths are available. See
 
 ## A provider error says retrying will not help
 
-A permanent provider rejection or context-window overflow is unlikely to succeed
-if you retry the same request. Expand the error card with your configured
-`ExpandTools` keybinding to see its full sanitized error. Start a new session,
-or change the request or model as directed. Retry transient connection and
-service failures. For recovery details, see
+A permanent provider rejection or context-window overflow will not succeed when
+you retry the same request unchanged. Start a new session, or change the request
+or model as directed. Retry transient connection and service failures. For
+recovery details, see
 [Agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
 
 ## A session will not resume
@@ -124,37 +138,35 @@ and unauthorized targets are both reported as not found. Confirm the server,
 identity, and session ID. A stored debug session also fails if its target or
 debug support is unavailable after a restart.
 
-The activity, performance, network, delegation, history, and manifest views
-depend on retained event-log evidence. They report when evidence is unavailable
-or incomplete. Use the transcript for conclusions about the conversation.
-Network evidence reports sanitized failure categories and retry decisions
-without exposing raw errors, URLs, headers, bodies, prompts, tool arguments, or
-credentials.
+Debug views depend on retained event-log evidence and report when evidence is
+unavailable or incomplete. Use the transcript for conclusions about the
+conversation. Network evidence contains sanitized failure categories and retry
+decisions instead of raw errors, URLs, headers, bodies, prompts, tool arguments,
+or credentials.
 
 ## Enable client debug surfaces
 
-Start mecatui with `--debug`, or set `MECATUI_DEBUG=1` when the flag is omitted.
-Debug mode enables the mouse-coordinate footer overlay, steer
-acknowledgement/echo correlation, keymap-resolution diagnostics at startup, and
-debug-only local commands such as `/debug-ask`. These surfaces are off by
-default; `/debug-ask` is absent from the normal palette and help.
+Start `mecatui` with `--debug`, or set `MECATUI_DEBUG=1` when the flag is
+omitted. Debug mode enables the mouse-coordinate footer, steer correlation,
+keymap-resolution diagnostics at startup, and debug-only local commands such as
+`/debug-ask`. These surfaces are off by default.
 
-An explicit `--debug=false` wins over the environment. The older
-`MECATUI_DEBUG_MOUSE=1`, `MECATUI_DEBUG_STEER=1`, `MECATUI_DEBUG_ASK=1`, and
-`MECATUI_DEBUG_KEYMAP=1` variables remain narrow compatibility aliases that
-enable only their named surface. Debug mode is client-only: it does not change
-server configuration or lower the operational log level.
+An explicit `--debug=false` overrides the environment. The compatibility
+variables `MECATUI_DEBUG_MOUSE`, `MECATUI_DEBUG_STEER`, `MECATUI_DEBUG_ASK`, and
+`MECATUI_DEBUG_KEYMAP` enable only their named surface. Debug mode is
+client-only and does not change server configuration or the operational log
+level.
 
 ## Find diagnostics
 
-In embedded mode, operational diagnostics are written to
+In embedded mode, `mecatui` writes operational diagnostics to
 `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to
 `~/.local/state/mecatl/mecatui.log`. One process holds the default log lock; a
-second instance disables that shared sink instead of replacing an active log.
-Use `--diagnostics-log` to give concurrent instances separate files, or
-`--quiet` to disable the log. At startup, an oversized log is atomically reduced
-to its most recent 10 MiB. An unsafe path disables the sink without altering the
-existing file.
+second instance disables its own default log rather than sharing the file. Use
+`--diagnostics-log` to give concurrent instances separate files, or `--quiet` to
+disable the log. At startup, `mecatui` reduces an oversized log to its most
+recent 10 MiB. An unsafe path disables logging without changing the existing
+file.
 
 Use `/diagnostics` to send a concise, sanitized bug-report snapshot through the
 normal prompt path. It includes build identities and available display
@@ -165,3 +177,8 @@ server log; inspect the remote server's operator logs instead.
 
 For exhaustive flags and failure behavior, see
 [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).
+
+## Related information
+
+- [Connect to a server](./remote-servers.md) for authentication and TLS options.
+- [Manage sessions](./sessions.md) for resume and debug workflows.

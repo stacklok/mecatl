@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -75,6 +76,7 @@ type subagentState struct {
 	view   subagentView
 	cursor int    // selected row in the fleet roster (index into the fleet order)
 	child  string // the focused child's ChildID (subagentFocus)
+	scroll int    // rendered-line offset in the focused trace
 }
 
 // openAgents opens the unified f6 agents overlay. It picks the CONTEXT-SENSITIVE
@@ -150,12 +152,15 @@ func (m Model) switchAgentsTab() Model {
 	case tabSubagents:
 		m.agentsTab = tabParallel
 		m.parallel.view = parallelRoster
+		m.parallel.branchCursor = 0
 	case tabParallel:
 		m.agentsTab = tabTeams
 		m.team.view = teamRoster
+		m.team.scroll = 0
 	default:
 		m.agentsTab = tabSubagents
 		m.subagents.view = subagentRoster
+		m.subagents.scroll = 0
 	}
 	return m
 }
@@ -168,6 +173,26 @@ func (m Model) switchAgentsTab() Model {
 func (m Model) onAgentsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.team.view == teamNone {
 		return m, nil, false
+	}
+	if m.height > 0 && m.height < 24 {
+		// Compact mode intentionally exposes no normal-content navigation: only
+		// escape is meaningful, and it first returns a focus pane to its roster.
+		if key.Matches(msg, m.keys.Close) {
+			if !m.atAgentsRoster() {
+				switch m.agentsTab {
+				case tabSubagents:
+					m.subagents.view, m.subagents.child, m.subagents.scroll = subagentRoster, "", 0
+				case tabParallel:
+					m.parallel.view, m.parallel.group = parallelRoster, ""
+				default:
+					m.team.view, m.team.member, m.team.scroll = teamRoster, "", 0
+				}
+				return m, nil, true
+			}
+			mm, cmd := m.closeAgents()
+			return mm, cmd, true
+		}
+		return m, nil, true
 	}
 	// `tab` switches tabs from EITHER tab's roster (not mid-focus — a focus pane's esc
 	// steps back to its own roster first, matching the team overlay's esc semantics).
@@ -204,10 +229,15 @@ func (m Model) atAgentsRoster() bool {
 // handled=true (the overlay owns the keyboard).
 func (m Model) onSubagentKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.subagents.view == subagentFocus {
+		if next, handled := m.navigateAgentsDetail(msg, m.subagents.scroll); handled {
+			m.subagents.scroll = next
+			return m, nil, true
+		}
 		switch {
 		case key.Matches(msg, m.keys.Close):
 			m.subagents.view = subagentRoster
 			m.subagents.child = ""
+			m.subagents.scroll = 0
 		case key.Matches(msg, m.keys.CancelChild):
 			ln := findFleetLane(m.conv.subagentFleet, m.subagents.child)
 			mm, cmd := m.cancelSubagentLane(ln)
@@ -263,7 +293,7 @@ func (m Model) cancelChildByID(childID, what string) (tea.Model, tea.Cmd) {
 func (m Model) onSubagentRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	fleet := m.conv.subagentFleet
 	n := len(fleet)
-	page := teamRosterRows(m.vp.Height())
+	page := m.subagentRosterPageSize(fleet)
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeAgents()
 	}
@@ -278,6 +308,7 @@ func (m Model) onSubagentRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.subagents.child = fleet[m.subagents.cursor].childID
 		m.subagents.view = subagentFocus
+		m.subagents.scroll = 0
 		return m, nil
 	case key.Matches(msg, m.keys.CancelChild):
 		if m.subagents.cursor < 0 || m.subagents.cursor >= n {
@@ -312,16 +343,18 @@ func (m Model) onParallelGroupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if g != nil {
 		n = len(g.branches)
 	}
-	switch {
-	case key.Matches(msg, m.keys.Close):
+	if key.Matches(msg, m.keys.Close) {
 		m.parallel.view = parallelRoster
 		m.parallel.group = ""
 		m.parallel.branchCursor = 0
-	case key.Matches(msg, m.keys.Up):
-		m.parallel.branchCursor = clampCursor(m.parallel.branchCursor-1, n)
-	case key.Matches(msg, m.keys.Down):
-		m.parallel.branchCursor = clampCursor(m.parallel.branchCursor+1, n)
-	case key.Matches(msg, m.keys.CancelChild):
+		return m, nil
+	}
+	page := m.parallelBranchPageSize(g)
+	if next, handled := navigateRosterCursor(msg, m.keys, m.parallel.branchCursor, n, page); handled {
+		m.parallel.branchCursor = next
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.CancelChild) {
 		if g == nil {
 			return m, nil
 		}
@@ -345,7 +378,7 @@ func (m Model) onParallelGroupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	groups := m.conv.parallelGroups
 	n := len(groups)
-	page := teamRosterRows(m.vp.Height())
+	page := m.parallelRosterPageSize(groups)
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeAgents()
 	}
@@ -365,27 +398,398 @@ func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func agentsListPageSize(th theme.Theme, height int, list agentsSelectableList) int {
+	w := list.window(th, height)
+	return max(1, w.end-w.start)
+}
+
+func (m Model) agentsListGeometry() (theme.Theme, helpKeys, int, int) {
+	th := m.deps.Theme
+	layout := newAgentsOverlayLayout(th, m.agentsTab, m.width, m.vp.Height())
+	height := 0
+	if layout.bounded {
+		height = layout.bodyCapacity + layout.frameRows
+	}
+	return th, m.helpKeyMarkings(), layout.bodyWidth, height
+}
+
+func (m Model) subagentRosterPageSize(fleet []subagentLane) int {
+	th, hk, width, height := m.agentsListGeometry()
+	return agentsListPageSize(th, height, subagentSelectableList(th, m.subagents, fleet, hk, width))
+}
+
+func (m Model) parallelRosterPageSize(groups []parallelGroup) int {
+	th, hk, width, height := m.agentsListGeometry()
+	return agentsListPageSize(th, height, parallelSelectableList(th, m.parallel, groups, hk, width))
+}
+
+func (m Model) parallelBranchPageSize(g *parallelGroup) int {
+	if g == nil {
+		return 1
+	}
+	th, hk, width, height := m.agentsListGeometry()
+	return agentsListPageSize(th, height, parallelBranchSelectableList(th, m.parallel, g, hk, width))
+}
+
+func (m Model) navigateAgentsDetail(msg tea.KeyPressMsg, scroll int) (int, bool) {
+	total, window := m.agentsDetailMetrics()
+	switch {
+	case key.Matches(msg, m.keys.Up):
+		return clampScroll(scroll-1, total, window), true
+	case key.Matches(msg, m.keys.Down):
+		return clampScroll(scroll+1, total, window), true
+	case key.Matches(msg, m.keys.ScrollU):
+		return clampScroll(scroll-window, total, window), true
+	case key.Matches(msg, m.keys.ScrollD):
+		return clampScroll(scroll+window, total, window), true
+	case key.Matches(msg, m.keys.JumpTop):
+		return 0, true
+	case key.Matches(msg, m.keys.JumpEnd):
+		return maxScrollOffset(total, window), true
+	}
+	return scroll, false
+}
+
+func (m *Model) clampAgentsDetailScroll() {
+	if m.team.view == teamNone {
+		return
+	}
+	total, window := m.agentsDetailMetrics()
+	switch m.agentsTab {
+	case tabSubagents:
+		if m.subagents.view == subagentFocus {
+			m.subagents.scroll = clampScroll(m.subagents.scroll, total, window)
+		}
+	case tabTeams:
+		if m.team.view == teamFocus || m.team.view == teamTasks || m.team.view == teamFindings {
+			m.team.scroll = clampScroll(m.team.scroll, total, window)
+		}
+	}
+}
+
+func (m Model) agentsDetailMetrics() (int, int) {
+	th, hk := m.deps.Theme, m.helpKeyMarkings()
+	layout := newAgentsOverlayLayout(th, m.agentsTab, m.width, m.vp.Height())
+	windowFor := func(total int, rows func(int) int, build func(int) string) (int, int) {
+		if !layout.bounded {
+			return total, max(1, rows(0))
+		}
+		for capacity := layout.bodyCapacity; capacity > 0; capacity-- {
+			height := capacity + layout.frameRows
+			if lipgloss.Height(build(height)) <= layout.bodyCapacity {
+				return total, max(1, rows(height))
+			}
+		}
+		return total, 1
+	}
+	switch m.agentsTab {
+	case tabSubagents:
+		if ln := findFleetLane(m.conv.subagentFleet, m.subagents.child); ln != nil {
+			total := len(renderedTraceLines(th, hk, layout.bodyWidth, ln.trace))
+			return windowFor(total, teamFocusRows, func(height int) string {
+				return renderSubagentFocusAt(th, m.conv.subagentFleet, m.subagents.child, m.subagents.scroll, hk, layout.bodyWidth, height)
+			})
+		}
+	case tabTeams:
+		if b := m.conv.latestTeamBlock(); b != nil {
+			switch m.team.view {
+			case teamFocus:
+				if ln := teamFindLane(b, m.team.member); ln != nil {
+					total := len(renderedTraceLines(th, hk, layout.bodyWidth, ln.trace))
+					return windowFor(total, teamFocusRows, func(height int) string {
+						return renderTeamFocusAt(th, b, m.team.member, m.team.scroll, hk, layout.bodyWidth, height)
+					})
+				}
+			case teamTasks:
+				total := len(renderedTaskLines(th, b, layout.bodyWidth))
+				return windowFor(total, teamTasksRows, func(height int) string {
+					return renderTeamTasksAt(th, b, m.team.scroll, hk, height, layout.bodyWidth)
+				})
+			case teamFindings:
+				total := len(renderedFindingLines(th, b, layout.bodyWidth))
+				return windowFor(total, teamFindingsRows, func(height int) string {
+					return renderTeamFindingsAt(th, b, m.team.scroll, hk, height, layout.bodyWidth)
+				})
+			}
+		}
+	}
+	return 0, 1
+}
+
+func renderedTraceLines(th theme.Theme, hk helpKeys, width int, trace []teamTrace) []string {
+	r := &renderer{th: th, marks: hk, traceWidth: width}
+	if rendered := r.renderTrace(trace); rendered != "" {
+		return strings.Split(rendered, "\n")
+	}
+	return nil
+}
+
 // renderAgentsOverlay draws the active unified agents overlay centred over the
 // conversation region. It prepends a one-line tab bar (Subagents | Parallel | Teams,
 // active tab highlighted) above the active tab's body, then frames the whole thing in the
 // shared card. The team block may be nil (no team yet) — the Teams tab then shows an
 // honest empty note rather than borrowing another tab's body.
-func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int) string {
-	bar := agentsTabBar(th, tab)
-	_, outerWidth, bodyWidth := agentsCardLayout(th, width)
-	// The body gets the height MINUS the tab bar + its blank line (agentsTabBarLines),
-	// so the window math in the tab bodies still keeps the footer hint on-screen.
-	bodyHeight := agentsBodyHeight(height)
-	var body string
+func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int, terminalHeight ...int) string {
+	// The conversation viewport can be shorter than the terminal because of the
+	// surrounding chrome. Compact is a terminal-height fallback, not a viewport
+	// fallback: a 24-row terminal still receives the normal layout attempt.
+	terminal := height
+	if len(terminalHeight) > 0 {
+		terminal = terminalHeight[0]
+	}
+	if terminal > 0 && terminal < 24 {
+		return renderCompactAgentsOverlay(th, tab, sub, par, team, hk, width)
+	}
+
+	layout := newAgentsOverlayLayout(th, tab, width, height)
+	body, ok := layout.renderBody(func(bodyHeight int) string {
+		switch tab {
+		case tabSubagents:
+			return renderSubagentTab(th, sub, fleet, hk, layout.bodyWidth, bodyHeight)
+		case tabParallel:
+			return renderParallelTab(th, par, groups, hk, layout.bodyWidth, bodyHeight)
+		default:
+			return renderTeamsTab(th, team, b, hk, layout.bodyWidth, bodyHeight)
+		}
+	}, func() string {
+		return renderEssentialAgentsBody(th, tab, sub, par, team, b, fleet, groups, hk, layout.bodyWidth)
+	})
+	if !ok {
+		return renderViewportAgentsFallback(th, tab, sub, par, team, hk, width)
+	}
+	return centerAgentsCard(th, layout.tabStrip+"\n"+body, layout.outerWidth, width, height)
+}
+
+// agentsOverlayLayout is the overlay's single physical-line boundary. It derives
+// the usable body budget from askCard's actual frame and the already-rendered,
+// ANSI-safe tab strip. Tab bodies receive only that remaining budget; framing is
+// attempted only after their complete rendered rows fit it.
+type agentsOverlayLayout struct {
+	tabStrip                string
+	outerWidth, bodyWidth   int
+	bodyCapacity, frameRows int
+	bounded                 bool
+}
+
+func newAgentsOverlayLayout(th theme.Theme, tab agentsTab, width, height int) agentsOverlayLayout {
+	card, outerWidth, bodyWidth := agentsCardLayout(th, width)
+	tabStrip := agentsTabBar(th, tab)
+	if bodyWidth > 0 {
+		tabStrip = ansi.Hardwrap(tabStrip, bodyWidth, true)
+	}
+	layout := agentsOverlayLayout{
+		tabStrip:   tabStrip + "\n", // the blank separator is fixed tab chrome
+		outerWidth: outerWidth,
+		bodyWidth:  bodyWidth,
+		frameRows:  card.GetVerticalFrameSize(),
+		bounded:    height > 0,
+	}
+	if layout.bounded {
+		layout.bodyCapacity = height - layout.frameRows - lipgloss.Height(layout.tabStrip)
+	}
+	return layout
+}
+
+// renderBody lets the existing section renderers reduce their content window
+// against the real physical result. It never crops assembled output: a body is
+// accepted whole, or the normal card is declined. The added frameRows translate
+// the body-only capacity to the historical renderer-height convention while R2/R3
+// replace the current cursor windows.
+func (l agentsOverlayLayout) renderBody(build func(int) string, essential func() string) (string, bool) {
+	if !l.bounded {
+		return build(0), true
+	}
+	if l.bodyCapacity <= 0 {
+		return "", false
+	}
+	for capacity := l.bodyCapacity; capacity > 0; capacity-- {
+		body := build(capacity + l.frameRows)
+		if lipgloss.Height(body) <= l.bodyCapacity {
+			return body, true
+		}
+	}
+	body := essential()
+	if lipgloss.Height(body) <= l.bodyCapacity {
+		return body, true
+	}
+	return "", false
+}
+
+// renderEssentialAgentsBody is the normal card's smallest honest body. Each
+// section is rendered as a complete, width-bounded physical line before joining:
+// context, the selected/current row when one exists, and the live footer. It is
+// used only when optional metadata cannot fit the offered body capacity.
+type agentsEssentialBody struct {
+	title, selected, footer string
+	extra                   []string
+}
+
+type agentsEssentialLine func(lipgloss.Style, string, string) string
+
+func renderEssentialAgentsBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width int) string {
+	line := func(style lipgloss.Style, prefix, text string) string {
+		return renderDynamicCardChromeLine(style, prefix, text, width)
+	}
+	var body agentsEssentialBody
 	switch tab {
 	case tabSubagents:
-		body = renderSubagentTab(th, sub, fleet, hk, bodyWidth, bodyHeight)
+		body = essentialSubagentBody(th, sub, fleet, hk, line, width)
 	case tabParallel:
-		body = renderParallelTab(th, par, groups, hk, bodyWidth, bodyHeight)
+		body = essentialParallelBody(th, par, groups, hk, line)
 	default:
-		body = renderTeamsTab(th, team, b, hk, bodyWidth, bodyHeight)
+		body = essentialTeamBody(th, team, b, hk, line)
 	}
-	return centerAgentsCard(th, bar+"\n\n"+body, outerWidth, width, height)
+	if body.selected == "" {
+		body.selected = line(th.Style("muted"), "", "(no entries)")
+	}
+	lines := []string{body.title, body.selected}
+	lines = append(lines, body.extra...)
+	lines = append(lines, body.footer)
+	return strings.Join(lines, "\n")
+}
+
+func essentialSubagentBody(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, line agentsEssentialLine, bodyWidth int) agentsEssentialBody {
+	body := agentsEssentialBody{
+		title:  line(th.Style("askTitle"), "", "subagents"),
+		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
+	}
+	if st.view != subagentFocus {
+		if len(fleet) > 0 {
+			body.selected = renderSubagentRosterTitle(th.Style("spinner"), "▶ ", &fleet[clampCursor(st.cursor, len(fleet))], bodyWidth)
+		}
+		return body
+	}
+	body.footer = line(th.Style("muted"), "", focusBackHint(hk))
+	if lane := findFleetLane(fleet, st.child); lane != nil {
+		body.title = line(th.Style("askTitle"), "", "subagent")
+		body.selected = renderEssentialSubagentFocus(th.Style("muted"), lane, bodyWidth)
+		if len(lane.trace) > 0 {
+			body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
+		}
+	}
+	return body
+}
+
+func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+	body := agentsEssentialBody{
+		title:  line(th.Style("askTitle"), "", "parallel"),
+		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
+	}
+	if st.view != parallelGroupView {
+		if len(groups) > 0 {
+			body.selected = line(th.Style("spinner"), "▶ ", parallelRosterLine(&groups[clampCursor(st.cursor, len(groups))]))
+		}
+		return body
+	}
+	body.footer = line(th.Style("muted"), "", focusBackHint(hk))
+	group := findParallelGroup(groups, st.group)
+	if group == nil {
+		return body
+	}
+	body.title = line(th.Style("askTitle"), "", "parallel · join="+parallelJoinMode(group.join))
+	ordered := branchesByIndex(group.branches)
+	if len(ordered) > 0 {
+		body.selected = line(th.Style("spinner"), "▶ ", parallelBranchLine(&ordered[clampCursor(st.branchCursor, len(ordered))]))
+		body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("· +%d more branch(es)", max(0, len(ordered)-1))))
+	}
+	return body
+}
+
+func essentialTeamBody(th theme.Theme, st teamState, b *block, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+	body := agentsEssentialBody{
+		title:  line(th.Style("askTitle"), "", "agents"),
+		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
+	}
+	if b == nil {
+		body.selected = line(th.Style("muted"), "", "no team has run this session")
+		return body
+	}
+	switch st.view {
+	case teamFocus:
+		body.footer = line(th.Style("muted"), "", focusBackHint(hk))
+		if lane := teamFindLane(b, st.member); lane != nil {
+			body.title = line(th.Style("askTitle"), "", "agent · "+truncate(sanitizeTerminal(lane.name), maxTeamNameWidth))
+			body.selected = line(th.Style("muted"), "", teamLaneLine(lane, 0, b.teamDone))
+			if len(lane.trace) > 0 {
+				body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
+			}
+		}
+	case teamTasks:
+		body.title = line(th.Style("askTitle"), "", "tasks")
+		body.footer = line(th.Style("muted"), "", teamSubViewHint(hk, hk.tasks))
+		if len(b.teamTasks) > 0 {
+			byID := make(map[string]string, len(b.teamTasks))
+			for _, task := range b.teamTasks {
+				byID[task.id] = task.state
+			}
+			body.selected = line(th.Style("muted"), "  ", taskRow(b.teamTasks[0], byID))
+		}
+	case teamFindings:
+		body.title = line(th.Style("askTitle"), "", "findings")
+		body.footer = line(th.Style("muted"), "", teamSubViewHint(hk, hk.findings))
+		if len(b.teamFindings) > 0 {
+			body.selected = line(th.Style("muted"), "  ", findingRow(b.teamFindings[0]))
+		}
+	default:
+		order := teamLaneOrder(b.teamLanes)
+		if len(order) > 0 {
+			lane := &b.teamLanes[order[clampCursor(st.cursor, len(order))]]
+			body.selected = line(th.Style("spinner"), "▶ ", teamRosterLine(th, lane, teamNameWidth(b.teamLanes, order), b.teamDone))
+		}
+	}
+	return body
+}
+
+// renderViewportAgentsFallback is distinct from terminal-height compact mode: it
+// has no selection marker and explicitly says that the offered conversation area,
+// rather than the terminal, is too short for the normal frame and essential footer.
+func renderViewportAgentsFallback(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, hk helpKeys, width int) string {
+	label, focus := "Subagents", sub.view == subagentFocus
+	switch tab {
+	case tabParallel:
+		label, focus = "Parallel", par.view == parallelGroupView
+	case tabTeams:
+		label, focus = "Teams", team.view == teamFocus || team.view == teamTasks || team.view == teamFindings
+	}
+	hint := hk.closeOnly + " close"
+	if focus {
+		hint = focusBackHint(hk)
+	}
+	return renderDynamicCardChromeLine(th.Style("askTitle"), "", label+" · vp short · "+hint, width)
+}
+
+// renderCompactAgentsOverlay is deliberately unframed: on a short terminal a
+// card cannot honestly fit. It retains only the active context and escape action.
+func renderCompactAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, hk helpKeys, width int) string {
+	label := "Subagents"
+	focus := false
+	switch tab {
+	case tabParallel:
+		label, focus = "Parallel", par.view == parallelGroupView
+		if focus && par.group != "" {
+			label = "parallel " + sanitizeTerminal(par.group)
+		}
+	case tabTeams:
+		label, focus = "Teams", team.view != teamRoster
+		switch team.view {
+		case teamTasks:
+			label = "Tasks"
+		case teamFindings:
+			label = "Findings"
+		}
+	default:
+		focus = sub.view == subagentFocus
+	}
+	if focus {
+		if tab == tabSubagents && sub.child != "" {
+			label = "subagent " + shortChildID(sub.child)
+		}
+		if tab == tabTeams && team.member != "" {
+			label = "agent " + sanitizeTerminal(team.member)
+		}
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+focusBackHint(hk), width)
+	}
+	return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+hk.closeOnly+" close", width)
 }
 
 // agentsCardLayout derives the final card's outer and usable body widths from
@@ -419,23 +823,18 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 	if width <= 0 || height <= 0 {
 		return out
 	}
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, out)
-}
-
-// agentsTabBarLines is how many vertical lines the unified overlay's tab strip costs
-// (the tab bar itself + the blank line under it). The tab bodies are given the OUTER
-// height minus this so their height-window math (teamRosterRows/teamFocusRows/…) keeps
-// the footer hint on-screen under the tab bar.
-const agentsTabBarLines = 2
-
-// agentsBodyHeight is the height available to the active tab's body: the outer
-// overlay height minus the tab bar. A non-positive (unknown) height passes through so
-// the bodies' "size unknown → show all rows" path is preserved.
-func agentsBodyHeight(height int) int {
-	if height <= 0 {
-		return height
+	// Do not use lipgloss.Place here: Place silently clips an oversized child.
+	// The physical layout boundary guarantees height; this only adds centering whitespace.
+	rows := strings.Split(out, "\n")
+	for i, row := range rows {
+		pad := max(0, (width-lipgloss.Width(row))/2)
+		rows[i] = strings.Repeat(" ", pad) + row
 	}
-	return height - agentsTabBarLines
+	out = strings.Join(rows, "\n")
+	remaining := max(0, height-lipgloss.Height(out))
+	top := remaining / 2
+	bottom := remaining - top
+	return strings.Repeat("\n", top) + out + strings.Repeat("\n", bottom)
 }
 
 // agentsEmptyHint is the "tab switch · esc close" footer used by the empty
@@ -485,11 +884,11 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWid
 	}
 	switch st.view {
 	case teamFocus:
-		return renderTeamFocus(th, b, st.member, hk, bodyWidth, height)
+		return renderTeamFocusAt(th, b, st.member, st.scroll, hk, bodyWidth, height)
 	case teamTasks:
-		return renderTeamTasks(th, b, hk, height, bodyWidth)
+		return renderTeamTasksAt(th, b, st.scroll, hk, height, bodyWidth)
 	case teamFindings:
-		return renderTeamFindings(th, b, hk, height, bodyWidth)
+		return renderTeamFindingsAt(th, b, st.scroll, hk, height, bodyWidth)
 	default:
 		return renderTeamRoster(th, st, b, hk, height, bodyWidth)
 	}
@@ -500,54 +899,130 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWid
 // roster renderer beneath the already-framed overlay.
 func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth, height int) string {
 	if st.view == subagentFocus {
-		return renderSubagentFocus(th, fleet, st.child, hk, bodyWidth, height)
+		return renderSubagentFocusAt(th, fleet, st.child, st.scroll, hk, bodyWidth, height)
 	}
 	return renderSubagentRoster(th, st, fleet, hk, height, bodyWidth)
 }
 
 // renderSubagentRoster renders the flat fleet roster WINDOWED to the available height,
 // mirroring renderTeamRoster: a header (running/done counts), the slice of rows that
-// fits with the selected row highlighted, "+K above/below" tails, and an always-visible
+// fits with the selected row marked with the unbordered ▶ treatment, "+K above/below" tails, and an always-visible
 // footer hint. An empty fleet reads as a muted "(no subagents)". height<=0 shows all.
-func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, height int, widths ...int) string {
+type agentsCursorWindow struct {
+	start, end, above, below int
+}
+
+type agentsSelectableList struct {
+	header, footer string
+	rows           []string
+	cursor         int
+	muted          lipgloss.Style
+	noun           string
+}
+
+func (l agentsSelectableList) window(th theme.Theme, height int) agentsCursorWindow {
+	if len(l.rows) == 0 {
+		return agentsCursorWindow{}
+	}
+	if height <= 0 {
+		return agentsCursorWindow{end: len(l.rows)}
+	}
+	capacity := height - th.Style("askCard").GetVerticalFrameSize() -
+		lipgloss.Height(l.header) - lipgloss.Height(l.footer) - 2
+	return physicalCursorWindow(l.rows, clampCursor(l.cursor, len(l.rows)), capacity)
+}
+
+func (l agentsSelectableList) render(th theme.Theme, height int) string {
+	w := l.window(th, height)
+	var middle []string
+	if w.above > 0 {
+		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s above", w.above, l.noun), 0))
+	}
+	middle = append(middle, l.rows[w.start:w.end]...)
+	if w.below > 0 {
+		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s below", w.below, l.noun), 0))
+	}
+	return l.header + "\n\n" + strings.Join(middle, "\n") + "\n\n" + l.footer
+}
+
+// physicalCursorWindow finds the largest contiguous logical-row window that fits
+// the physical-line budget. Indicator rows are charged in the same calculation.
+func physicalCursorWindow(rows []string, cursor, capacity int) agentsCursorWindow {
+	total := len(rows)
+	if total == 0 {
+		return agentsCursorWindow{}
+	}
+	cursor = clampCursor(cursor, total)
+	if capacity <= 0 {
+		return agentsCursorWindow{start: cursor, end: cursor + 1, above: cursor, below: total - cursor - 1}
+	}
+	heights := make([]int, total+1)
+	for i, row := range rows {
+		heights[i+1] = heights[i] + lipgloss.Height(row)
+	}
+	best := agentsCursorWindow{start: cursor, end: cursor + 1, above: cursor, below: total - cursor - 1}
+	bestCount := 0
+	bestBalance := total * 2
+	for start := 0; start <= cursor; start++ {
+		for end := cursor + 1; end <= total; end++ {
+			cost := heights[end] - heights[start]
+			if start > 0 {
+				cost++
+			}
+			if end < total {
+				cost++
+			}
+			if cost > capacity {
+				break
+			}
+			count := end - start
+			balance := absInt((cursor-start)*2 - (count - 1))
+			if count > bestCount || count == bestCount && balance < bestBalance {
+				best = agentsCursorWindow{start: start, end: end, above: start, below: total - end}
+				bestCount, bestBalance = count, balance
+			}
+		}
+	}
+	return best
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func subagentSelectableList(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
+	running, done := fleetCounts(fleet)
+	list := agentsSelectableList{
+		header: renderDelegationRows(th.Style("askTitle"), "", subagentRosterHeader(running, done), bodyWidth),
+		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth),
+		cursor: clampCursor(st.cursor, len(fleet)), muted: muted, noun: "rows",
+	}
+	for row := range fleet {
+		style, prefix := muted, "  "
+		if row == list.cursor {
+			style, prefix = th.Style("spinner"), "▶ "
+		}
+		list.rows = append(list.rows, renderSubagentRosterRow(style, prefix, &fleet[row], bodyWidth))
+	}
+	return list
+}
+
+func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	var out strings.Builder
-
-	running, done := fleetCounts(fleet)
-	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", subagentRosterHeader(running, done), bodyWidth))
-	out.WriteString("\n\n")
-
 	if len(fleet) == 0 {
-		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no subagents)", bodyWidth))
-		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth))
-		return out.String()
+		muted := th.Style("muted")
+		return renderDelegationRows(th.Style("askTitle"), "", subagentRosterHeader(0, 0), bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "(no subagents)", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth)
 	}
-
-	cursor := clampCursor(st.cursor, len(fleet))
-	start, end, above, below := teamWindow(cursor, len(fleet), teamRosterRows(height))
-	if above > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d above", above)) + "\n")
-	}
-	for row := start; row < end; row++ {
-		line := subagentRosterLine(&fleet[row])
-		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
-		} else {
-			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
-		}
-	}
-	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
-	}
-
-	// This dynamic, live-key footer is deliberately a single truncated row: a rebound
-	// key label can otherwise wrap and widen the centred card.
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth))
-	return out.String()
+	return subagentSelectableList(th, st, fleet, hk, bodyWidth).render(th, height)
 }
 
 // subagentRosterHeader is the fleet roster title: "subagents · N running · M done".
@@ -561,34 +1036,80 @@ func fleetCounts(fleet []subagentLane) (running, done int) {
 	return countDone(fleet, func(ln subagentLane) bool { return ln.done })
 }
 
-// subagentRosterLine is one fleet row: a state glyph (◐ running / ✓ done / ✗ error),
-// the goal label, a short ChildID hash suffix (so two similar goals are unambiguous),
-// the background marker (detached children only), the current/last child tool, the
-// running tool count, and token usage. It is the Subagents analogue of
-// teamRosterLine, holding only redacted metadata.
+// subagentRosterLine returns the unstyled two-line fleet row. The roster and focus
+// callers supply their physical width through subagentRosterText; this form keeps the
+// metadata useful to narrow, unframed callers too.
 func subagentRosterLine(ln *subagentLane) string {
-	goal := truncate(sanitizeTerminal(ln.goal), maxSubagentGoalLen)
+	return subagentRosterText(ln, 0, 0)
+}
+
+// renderSubagentRosterRow applies a selection prefix only to the title. Details always
+// begin at four columns, so selected and unselected rows have the same readable shape.
+func renderSubagentRosterRow(style lipgloss.Style, prefix string, ln *subagentLane, bodyWidth int) string {
+	return style.Render(prefix + subagentRosterText(ln, bodyWidth, lipgloss.Width(prefix)))
+}
+
+func renderSubagentRosterTitle(style lipgloss.Style, prefix string, ln *subagentLane, bodyWidth int) string {
+	return style.Render(prefix + subagentRosterTitle(ln, bodyWidth, lipgloss.Width(prefix)))
+}
+
+func renderEssentialSubagentFocus(style lipgloss.Style, ln *subagentLane, bodyWidth int) string {
+	goal := sanitizeTerminal(ln.goal)
 	if goal == "" {
 		goal = "subagent"
 	}
+	if bodyWidth > 0 {
+		goal = truncateDisplayWidth(goal, max(1, bodyWidth-lipgloss.Width(subagentLaneGlyph(ln))-1))
+	} else {
+		goal = truncate(goal, maxSubagentGoalLen)
+	}
+	return style.Render(subagentLaneGlyph(ln) + " " + goal)
+}
+
+func subagentRosterText(ln *subagentLane, bodyWidth, titlePrefixWidth int) string {
+	return subagentRosterTitle(ln, bodyWidth, titlePrefixWidth) + "\n" +
+		hangingIndentWrap(subagentRosterDetails(ln), "    ", bodyWidth)
+}
+
+func subagentRosterTitle(ln *subagentLane, bodyWidth, titlePrefixWidth int) string {
 	marker := ""
 	if ln.background {
 		marker = " " + subagentBackgroundMarker
 	}
-	routed := ""
-	if r := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); r != "" {
-		routed = " · " + r
+	suffix := " #" + shortChildID(ln.childID) + marker
+	goal := sanitizeTerminal(ln.goal)
+	if goal == "" {
+		goal = "subagent"
 	}
-	return fmt.Sprintf("%s %s #%s%s%s · %s · %s · ↑%s ↓%s",
-		subagentLaneGlyph(ln),
-		goal,
-		shortChildID(ln.childID),
-		marker,
-		routed,
+	if bodyWidth > 0 {
+		goal = truncateDisplayWidth(goal, max(1, bodyWidth-titlePrefixWidth-lipgloss.Width(subagentLaneGlyph(ln)+suffix)-1))
+	} else {
+		goal = truncate(goal, maxSubagentGoalLen)
+	}
+
+	title := subagentLaneGlyph(ln) + " " + goal + suffix
+	if bodyWidth > 0 {
+		return truncateDisplayWidth(title, max(1, bodyWidth-titlePrefixWidth))
+	}
+	return title
+}
+
+func subagentRosterDetails(ln *subagentLane) string {
+	details := []string{}
+	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
+		details = append(details, routed)
+	}
+	details = append(details,
 		subagentLaneState(ln),
 		plural(ln.toolCount, "tool"),
-		humanizeTokens(ln.usage.InputTokens),
-		humanizeTokens(ln.usage.OutputTokens))
+		"↑"+humanizeTokens(ln.usage.InputTokens)+" ↓"+humanizeTokens(ln.usage.OutputTokens))
+	return strings.Join(details, " · ")
+}
+
+// truncateDisplayWidth clips a terminal-sanitized title without allowing a wide rune
+// to push the title line past the physical card width.
+func truncateDisplayWidth(s string, width int) string {
+	return ansi.Truncate(s, width, "…")
 }
 
 // maxSubagentCauseWidth caps how many RUNES of a child's failure cause the focus pane
@@ -707,6 +1228,10 @@ const childIDHashLen = 6
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
 // child vanished — defensive) reads as a muted note. It mirrors renderTeamFocus.
 func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk helpKeys, bodyWidth, height int) string {
+	return renderSubagentFocusAt(th, fleet, child, 0, hk, bodyWidth, height)
+}
+
+func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, scroll int, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
@@ -722,9 +1247,9 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	}
 	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("subagent · "+goal, bodyWidth)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subagentRosterLine(ln), bodyWidth)))
+	out.WriteString(muted.Render(subagentRosterText(ln, bodyWidth, 0)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", "    ", bodyWidth)))
+	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", bodyWidth)))
 	if fail := subagentFailureLineAtWidth(ln, bodyWidth); fail != "" {
 		// The ONE place the fleet answers "why did it fail". The inline Subagent card
 		// already carries the cause inside the tool result the agent received, but a
@@ -741,7 +1266,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 		if ln.done {
 			note = "background: done — result ready for the agent (SubagentStatus)"
 		}
-		for _, row := range strings.Split(hangingIndentWrap(note, "  ", "    ", bodyWidth), "\n") {
+		for _, row := range strings.Split(hangingIndentWrap(note, "  ", bodyWidth), "\n") {
 			out.WriteString("\n")
 			out.WriteString(muted.Render(row))
 		}
@@ -753,15 +1278,18 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
 	} else {
-		out.WriteString(capRenderedLines(th, trace, teamFocusRows(height)))
+		lines := strings.Split(trace, "\n")
+		w := renderedLineWindow(scroll, len(lines), teamFocusRows(height))
+		out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
 	}
 
-	// The cancel hint is shown only for a NON-terminal child (the key no-ops on a
-	// done lane). The chords read the LIVE CancelChild/Close markings (issue #457).
-	hint := focusBackHint(hk)
+	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
+	w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+	lead := focusBackHint(hk)
 	if !ln.done {
-		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
+		lead = hk.cancelChild + " cancel · " + lead
 	}
+	hint := agentsDetailHint(hk, w, lead)
 	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
 }
@@ -804,54 +1332,38 @@ func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup,
 
 // renderParallelRoster renders the Parallel group roster WINDOWED to the available height,
 // mirroring renderSubagentRoster: a header (running/done group counts), the slice of rows
-// that fits with the selected row highlighted, "+K above/below" tails, and a footer hint.
+// that fits with the selected row marked with the unbordered ▶ treatment, "+K above/below" tails, and a footer hint.
 // An empty group list reads as a muted "(no parallel runs)". height<=0 shows all.
-func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int, widths ...int) string {
+func parallelSelectableList(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
+	running, done := parallelCounts(groups)
+	list := agentsSelectableList{
+		header: renderDelegationRows(th.Style("askTitle"), "", fmt.Sprintf("parallel · %d running · %d done", running, done), bodyWidth),
+		footer: renderCardChromeSegments(muted, []string{hk.closeOnly + " close", hk.navUp + "/" + hk.navDown + " select", hk.choose + " focus", hk.nextTab + " switch", hk.scroll + " page", hk.jumpTopFull + "·" + hk.jumpEndFull + " first/last"}, bodyWidth),
+		cursor: clampCursor(st.cursor, len(groups)), muted: muted, noun: "rows",
+	}
+	for row := range groups {
+		style, prefix := muted, "  "
+		if row == list.cursor {
+			style, prefix = th.Style("spinner"), "▶ "
+		}
+		list.rows = append(list.rows, renderDelegationRows(style, prefix, parallelRosterLine(&groups[row]), bodyWidth))
+	}
+	return list
+}
+
+func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	var out strings.Builder
-
-	running, done := parallelCounts(groups)
-	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", fmt.Sprintf("parallel · %d running · %d done", running, done), bodyWidth))
-	out.WriteString("\n\n")
-
 	if len(groups) == 0 {
-		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no parallel runs)", bodyWidth))
-		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth))
-		return out.String()
+		muted := th.Style("muted")
+		return renderDelegationRows(th.Style("askTitle"), "", "parallel · 0 running · 0 done", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "(no parallel runs)", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth)
 	}
-
-	cursor := clampCursor(st.cursor, len(groups))
-	start, end, above, below := teamWindow(cursor, len(groups), teamRosterRows(height))
-	if above > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d above", above)) + "\n")
-	}
-	for row := start; row < end; row++ {
-		line := parallelRosterLine(&groups[row])
-		if row == cursor {
-			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
-		} else {
-			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
-		}
-	}
-	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
-	}
-
-	// Pack complete live-key actions by user-facing priority. Lower-priority navigation
-	// is omitted before any rebound key/action label can be split.
-	out.WriteString("\n" + renderCardChromeSegments(muted, []string{
-		hk.closeOnly + " close",
-		hk.navUp + "/" + hk.navDown + " select",
-		hk.choose + " focus",
-		hk.nextTab + " switch",
-		hk.scroll + " page",
-		hk.jumpTopFull + "·" + hk.jumpEndFull + " first/last",
-	}, bodyWidth))
-	return out.String()
+	return parallelSelectableList(th, st, groups, hk, bodyWidth).render(th, height)
 }
 
 // parallelCounts classifies the group slice into (running, done) — a group is done once
@@ -868,7 +1380,7 @@ func parallelRosterLine(g *parallelGroup) string {
 	if g.done {
 		glyph = "✓"
 	}
-	join := g.join
+	join := parallelJoinMode(g.join)
 	if join == "" {
 		join = "all"
 	}
@@ -913,114 +1425,141 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 // header (join + branch tally + run stop), the bounded-previews honesty note (the
 // previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about the
 // conversation, not the client), every branch inline (glyph + label + goal +
-// current/last tool + count + usage; the SELECTED row carries the "›" cursor the `x`
-// cancel key addresses, the WINNER row a "★") with its interleaved trace in the Team
-// focus format below its roster line. A focused ParentCallID with no matching
+// current/last tool + count + usage; the SELECTED row carries the "▶" cursor the `x`
+// cancel key addresses, the WINNER row a "★") with its interleaved trace in the same
+// physical cursor window. A focused ParentCallID with no matching
 // group reads as a muted note.
-func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, bodyWidth, height int) string {
+func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelGroup, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
-	g := findParallelGroup(groups, st.group)
-	if g == nil {
-		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "parallel", bodyWidth) + "\n\n" +
-			renderDynamicCardChromeLine(muted, "", "this parallel run is no longer tracked", bodyWidth) + "\n\n" +
-			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
-	}
-
-	var out strings.Builder
-	join := g.join
+	join := parallelJoinMode(g.join)
 	if join == "" {
 		join = "all"
 	}
-	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("parallel · join="+join, bodyWidth)))
-	out.WriteString("\n")
-	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(parallelRosterLine(g), bodyWidth)))
-	// Run-level stop, focus-only (NOT on the shared parallelRosterLine). Empty-guarded:
-	// a join=all run carries no winner-bearing stop by contract, so it renders no line.
+	header := th.Style("askTitle").Render(wrapFocusMetadataAtWidth("parallel · join="+join, bodyWidth)) + "\n" +
+		muted.Render(wrapFocusMetadataAtWidth(parallelRosterLine(g), bodyWidth))
 	if g.done && g.stop != "" {
-		out.WriteString("\n" + muted.Render(wrapFocusMetadataAtWidth("run stop: "+subagentStopLabel(g.stop), bodyWidth)))
+		header += "\n" + muted.Render(wrapFocusMetadataAtWidth("run stop: "+subagentStopLabel(g.stop), bodyWidth))
 	}
-	out.WriteString("\n")
-	out.WriteString(muted.Render(indentWrap(boundedPreviewsParNote, bodyWidth)))
-	out.WriteString("\n\n")
-
-	// Branch events arrive concurrently and OUT OF ORDER on the wire (branch-2's events can
-	// precede branch-0's), so g.branches is in first-seen order. Render BY INDEX so the
-	// roster reads branch-1, branch-2, branch-3 deterministically regardless of arrival.
+	header += "\n" + muted.Render(indentWrap(boundedPreviewsParNote, bodyWidth))
 	ordered := branchesByIndex(g.branches)
 	cursor := clampCursor(st.branchCursor, len(ordered))
-	rows := teamFocusRows(height)
-	used := 0
 	cancellable := false
-	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
+	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches"}
+	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter))}
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
 			cancellable = true
 		}
-		// The branch roster line + its trace block cost rows; a "+K more" tail costs one.
-		// Height-bounded so the header/footer are never pushed off.
-		remaining := rows - used
-		if rows > 0 && remaining < 1+1 { // the roster line itself + at least the tail
-			out.WriteString(muted.Render(fmt.Sprintf("  · +%d more branch(es)", len(ordered)-i)) + "\n")
-			break
+		row := strings.TrimSuffix(renderParallelBranchRow(th, br, g.winner, i == cursor, bodyWidth), "\n")
+		if trace := r.renderTrace(br.trace); trace != "" {
+			row += "\n" + indentParallelBranchTrace(trace, bodyWidth)
 		}
-		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor, bodyWidth))
-		used += 1 + renderParallelBranchTrace(&out, th, r, br, remaining)
+		list.rows = append(list.rows, row)
 	}
-	// The cancel hint shows only while some branch is still cancellable (running with a
-	// known child id); the selection arrows are always live on a populated list. The chords
-	// read the LIVE Up/Down/CancelChild/Close markings (issue #457).
-	hint := hk.navUp + "/" + hk.navDown + " select · " + focusBackHint(hk)
+	list.footer = hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last · " + focusBackHint(hk)
 	if cancellable {
-		hint = hk.navUp + "/" + hk.navDown + " select · " + hk.cancelChild + " cancel · " + focusBackHint(hk)
+		list.footer = hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last · " + hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
 	if len(ordered) == 0 {
-		hint = focusBackHint(hk)
+		list.footer = focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
-	return out.String()
+	list.footer = renderDynamicCardChromeLine(muted, "", list.footer, bodyWidth)
+	return list
 }
 
-// renderParallelBranchRow renders one branch's roster line within a focused group: the
-// "›" cursor on the SELECTED row (the one the `x` cancel key addresses), the "★" on the
-// WINNER row, else a muted plain row. It always ends with a newline.
+func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, bodyWidth, height int) string {
+	g := findParallelGroup(groups, st.group)
+	if g == nil {
+		muted := th.Style("muted")
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "parallel", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "this parallel run is no longer tracked", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
+	}
+	return parallelBranchSelectableList(th, st, g, hk, bodyWidth).render(th, height)
+}
+
+// renderParallelBranchRow renders a branch's two-level summary within a focused
+// group. The title owns the selectable/winner markers; the details and activity below
+// are visibly subordinate while retaining every existing trace line.
 func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool, width int) string {
-	line := parallelBranchLine(br)
+	style, prefix := th.Style("muted"), "  "
 	switch {
 	case selected:
-		return th.Style("askButtonActive").Render(wrapFocusMetadataAtWidth("› "+line, width)) + "\n"
+		style, prefix = th.Style("spinner"), "▶ "
+		if br.index == winner {
+			prefix += "★ "
+		}
 	case br.index == winner:
-		return th.Style("askButtonActive").Render(wrapFocusMetadataAtWidth("★ "+line, width)) + "\n"
-	default:
-		return th.Style("muted").Render(wrapFocusMetadataAtWidth("  "+line, width)) + "\n"
+		prefix = "★ "
 	}
+	return style.Render(prefix+parallelBranchText(br, width, lipgloss.Width(prefix))) + "\n"
 }
 
-// renderParallelBranchTrace appends a branch's interleaved trace (the Team focus format)
-// below its roster line, height-bounded to the rows that remain: when the budget leaves
-// no row (remaining-1 <= 0) the trace is omitted — a trace can never render in zero
-// lines; when bounded it is clamped ANSI-safely with a "+N more lines" tail
-// (capRenderedLines does not sanitizeTerminal the styling). It returns the number of
-// rows the trace consumed (0 when omitted / empty).
-func renderParallelBranchTrace(out *strings.Builder, th theme.Theme, r *renderer, br *parallelBranch, remaining int) int {
-	trace := r.renderTrace(br.trace)
-	if trace == "" {
-		return 0
+const parallelBranchTraceGutter = "  │ "
+
+func indentParallelBranchTrace(trace string, bodyWidth int) string {
+	if bodyWidth <= lipgloss.Width(parallelBranchTraceGutter) {
+		return trace
 	}
-	traceLines := strings.Count(trace, "\n") + 1
-	if remaining <= 0 { // height unbounded (rows<=0): render full
-		out.WriteString(trace + "\n")
-		return traceLines
+	lines := strings.Split(trace, "\n")
+	for i, line := range lines {
+		lines[i] = parallelBranchTraceGutter + line
 	}
-	if remaining-1 <= 0 { // no row left for the trace: omit it
-		return 0
+	return strings.Join(lines, "\n")
+}
+
+func parallelBranchText(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
+	return parallelBranchTitle(br, bodyWidth, titlePrefixWidth) + "\n" +
+		hangingIndentWrap(parallelBranchDetails(br), "    ", bodyWidth)
+}
+
+func parallelBranchTitle(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
+	label := br.label
+	if label == "" {
+		label = fmt.Sprintf("branch-%d", br.index+1)
 	}
-	if traceLines > remaining-1 {
-		trace = capRenderedLines(th, trace, remaining-1)
-		traceLines = remaining - 1
+	title := parallelBranchGlyph(br) + " " + sanitizeTerminal(label)
+	if goal := sanitizeTerminal(br.goal); goal != "" {
+		title += " · " + goal
 	}
-	out.WriteString(trace + "\n")
-	return traceLines
+	if bodyWidth > 0 {
+		return truncateDisplayWidth(title, max(1, bodyWidth-titlePrefixWidth))
+	}
+	return truncate(title, maxParallelBranchLabelLen+maxSubagentGoalLen)
+}
+
+func parallelBranchDetails(br *parallelBranch) string {
+	parts := []string{}
+	if routed := subagentModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model); routed != "" {
+		parts = append(parts, routed)
+	}
+	parts = append(parts, parallelBranchState(br), plural(br.toolCount, "tool"), "↑"+humanizeTokens(br.usage.InputTokens)+" ↓"+humanizeTokens(br.usage.OutputTokens))
+	return strings.Join(parts, " · ")
+}
+
+func parallelBranchGlyph(br *parallelBranch) string {
+	if !br.done {
+		return "◐"
+	}
+	if br.failed {
+		return "✗"
+	}
+	return "✓"
+}
+
+func parallelBranchState(br *parallelBranch) string {
+	if br.done {
+		state := parallelBranchStopLabel(br)
+		if br.durationMs > 0 {
+			state += " · " + humanizeDuration(br.durationMs)
+		}
+		return state
+	}
+	if br.current != "" {
+		return truncate(sanitizeTerminal(br.current), maxTraceToolNameLen) + "…"
+	}
+	return "working…"
 }
 
 // maxParallelBranchLabelLen caps a server-provided branch label in the focus row,

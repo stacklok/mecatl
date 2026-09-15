@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -68,6 +69,58 @@ func existingWorkspaceEnrollmentLocked(a *Attachment, logical *logicalSession) (
 		return contract.WorkspaceEnrollmentPresentation{}, true, errors.New("mcpbroker: authorization record capacity reached")
 	}
 	return contract.WorkspaceEnrollmentPresentation{}, false, nil
+}
+
+// ResetWorkspaceEnrollment withdraws the completed authenticated catalogue while
+// preserving the logical broker session and its grant custody. The next explicit
+// BeginWorkspaceEnrollment creates a fresh whole-bundle operation.
+func (a *Attachment) ResetWorkspaceEnrollment(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	opCtx, done, err := a.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := opCtx.Err(); err != nil {
+		return err
+	}
+	a.enrollmentMu.Lock()
+	defer a.enrollmentMu.Unlock()
+
+	// Lock order matches every other method that takes both mutexes (Commit,
+	// Abort, beginOperation, freezeAuthenticatedCatalogue,
+	// RefreshGrantedAuthorizationCatalogue): a.mu outer, logical.mu nested
+	// inside, never the reverse. The prior reversed order here could deadlock
+	// against a concurrent RefreshGrantedAuthorizationCatalogue call (a.mu then
+	// logical.mu) triggered by an in-flight protected-tool execution.
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.logical.mu.Lock()
+	if a.logical.deleted {
+		a.logical.mu.Unlock()
+		return contract.ErrStateUnavailable
+	}
+	a.logical.completedEnrollment = nil
+	a.logical.mu.Unlock()
+
+	// Withdraws ADR 0310's static declared protected-tool wrappers entirely
+	// (unlike a fresh AttachSession, which keeps them as protectedSessionTool
+	// placeholders): starting a refresh must leave no broker tool usable until
+	// replacement succeeds (ADR 0335, "Static declared-tool behavior during
+	// destructive replacement").
+	staticRoutes := make([]route, 0, len(a.runtime.catalogue.routes))
+	tools := make([]tool.Tool, 0, len(a.runtime.catalogue.routes))
+	for _, route := range a.runtime.catalogue.routes {
+		if route.oauth != nil {
+			continue
+		}
+		staticRoutes = append(staticRoutes, route)
+		tools = append(tools, &sessionTool{attachment: a, route: route})
+	}
+	a.catalogue = newAttachmentCatalogue(staticRoutes, tools, nil)
+	return nil
 }
 
 // BeginWorkspaceEnrollment starts, or idempotently re-presents, the one

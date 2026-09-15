@@ -18,7 +18,7 @@ start a separate service.
 You need:
 
 - macOS or Linux with [Homebrew](https://brew.sh/);
-- an API key for Anthropic, OpenAI, or OpenRouter; and
+- an API key from Anthropic, OpenAI, OpenRouter, or OpenCode; and
 - a local project directory that you trust.
 
 The project is your **workspace**. Mecatl limits its file tools and commands to
@@ -33,40 +33,37 @@ brew install stacklok/tap/mecatl
 mecatui --version
 ```
 
-The version command should print a release tag. For signed archives and source
-builds, see [Install Mecatl](/install.md).
+The version command should print a release tag.
+
+## Set up a provider
+
+Use an API key for this tutorial. Run the interactive setup and select your
+provider:
+
+```sh
+mecatui providers setup
+```
+
+Enter the API key when prompted. `mecatui` saves locally managed credentials
+without displaying them. You can check the configured provider later with
+`mecatui providers status`.
+
+For custom providers and gateways that use API keys or OIDC, see
+[Use mecatui](./index.md#choose-how-to-connect).
 
 ## Start mecatui
 
-Mecatl detects the provider from its environment variable. Set one of
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in the shell
-where you will run `mecatui`:
-
 ```sh
 cd <PROJECT_DIRECTORY>
-export <PROVIDER_API_KEY>="<API_KEY>"
-mecatui --workspace "$PWD"
+mecatui
 ```
 
-Replace `<PROVIDER_API_KEY>` with the variable for your provider.
-
-## Manage embedded providers
-
-`mecatui providers` displays local provider status without contacting a provider or
-revealing credentials. Use `mecatui providers setup` for guided first-time setup,
-or manage a named provider directly:
+To submit the first prompt at startup while keeping the session interactive,
+pass `--prompt`:
 
 ```sh
-mecatui providers add example --no-login
-mecatui providers login example
-mecatui providers set-default example MODEL
+mecatui --prompt "Summarize the failing tests in this repository"
 ```
-
-The API-key file is selected by `--api-key-file` (default `auth.yaml` under the
-Mecatl configuration directory); matching environment credentials take precedence.
-`logout` clears locally managed credentials but keeps the provider definition.
-`remove` is destructive and requires confirmation. Remote `mecatui connect ADDRESS`
-uses the remote server's provider configuration instead.
 
 The welcome screen shows your workspace and active model. To use a different
 model, enter `/models`, select one, and press `enter`. A small, low-cost model
@@ -93,7 +90,7 @@ and tool history that Mecatl keeps together. Exit with `ctrl+c` twice or
 `/quit`. To continue the newest stored session, run:
 
 ```sh
-mecatui --workspace "$PWD" --resume-latest
+mecatui --resume-latest
 ```
 
 ## Add tools from local MCP servers (optional)

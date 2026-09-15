@@ -1,24 +1,23 @@
 ---
 sidebar_position: 220
 title: Project instructions and rules
-description:
-  Control how trusted project instructions and .claude/rules guide Mecatl runs.
+description: Apply trusted project instructions and rules to Mecatl runs.
 ---
 
 # Project instructions and rules
 
-Mecatl can load repository guidance before a run so the model understands a
-project's conventions. The main instruction files are `AGENTS.md` and
-`CLAUDE.md`; `.claude/rules/` provides smaller, optionally path-scoped rules.
-These files are steering content, not executable configuration, but they can
-change what the model tries to do. Project content is therefore trust-gated.
+Add repository guidance so Mecatl follows your project's conventions.
+`AGENTS.md` and `CLAUDE.md` provide general instructions; `.mecatl/rules/` and
+`.claude/rules/` provide smaller rules. Mecatl loads project guidance only from
+a trusted workspace.
 
 ## Availability
 
-Project instructions and rules are available in `mecated`, `mecak8s`, mecatui's
-embedded server, and engine embeddings that wire the prompt discovery sources.
-The sources are discovered at run/build time and assembled into the model's
-prompt as fenced data. They do not add tools or bypass permissions.
+Project instructions and rules are available in `mecated`, `mecak8s`,
+`mecatui`'s embedded server, and engine embeddings that wire the prompt
+discovery sources. The sources are discovered at run/build time and assembled
+into the model's prompt as fenced data. They do not add tools or bypass
+permissions.
 
 User-tier guidance is always available. Project-tier guidance is admitted only
 when the workspace has an effective project-trust decision.
@@ -37,11 +36,9 @@ model needs for work in that tree:
 - Do not edit generated files by hand.
 ```
 
-The discovery layer follows the repository's instruction-file conventions and
-combines applicable files for the workspace. A more local instruction file can
-refine guidance for its subtree. Instructions are context, not a permission
-rule: a repository saying "always run this command" does not make the command
-allowed, and a deny or ask rule still wins.
+Mecatl combines the instruction files that apply to the workspace. A more local
+file can refine guidance for its subtree. Instructions do not grant permission:
+a tool call still follows the configured allow, ask, and deny rules.
 
 Treat instructions as untrusted model input. Do not put credentials, bearer
 values, or secrets in them. Do not use an instruction file as a substitute for
@@ -71,10 +68,9 @@ paths:
 Run the focused test and the full package test before reporting success.
 ```
 
-A rule without `paths:` applies unconditionally. A rule with paths is still
-loaded into context, but the model is told to apply it only when working on a
-matching path. The glob is a model-applied condition; it is not a filesystem
-permission boundary.
+A rule without `paths:` always applies. For a rule with paths, Mecatl tells the
+model to apply it only to matching files. The glob guides the model; it does not
+restrict filesystem access.
 
 Rules are discovered from these lanes, in descending precedence:
 
@@ -93,25 +89,23 @@ rule fragment rather than aborting a run.
 
 ## Project trust
 
-The project trust decision is one shared admission gate for the repository's
-authority set. It controls project permission `allow` rules, project rules,
-project soul, project agent definitions, project slash commands, project skills,
-and the read-only child shell. It does not suppress project `deny` or `ask`
-rules; those continue to tighten access even when the workspace is untrusted.
+Project trust controls project `allow` rules, instructions, rules, soul, named
+agents, slash commands, skills, and the read-only child shell. Project `deny`
+and `ask` rules still apply when the workspace is untrusted.
 
 Trust can come from:
 
 - `--trust-project` for the current invocation;
 - an exact absolute workspace entry in the user-global `trustedWorkspaces:`
   setting;
-- an undrifted remembered trust entry created by mecatui; or
+- an undrifted remembered trust entry created by `mecatui`; or
 - the posture floor on an interactive root, where applicable.
 
 A headless root does not infer trust from its posture. Configure an explicit
 trust source when an unattended job must admit project instructions and project
 authority. A malformed trust configuration leaves the workspace untrusted.
 
-In mecatui's embedded interactive server, the first encounter with a project
+In `mecatui`'s embedded interactive server, the first encounter with a project
 authority set can prompt:
 
 ```text
@@ -123,11 +117,10 @@ run, and `no` keeps the repository's project authority withheld. A non-terminal
 stdin cannot answer the prompt and remains untrusted unless trust was configured
 explicitly.
 
-Remembered trust is tied to the resolved workspace path and an identity anchor
-made from the project's soul, agents, commands, and skills. If that authority
-surface changes, remembered trust drifts and the workspace is re-gated until it
-is explicitly trusted again. The machine-written registry is separate from the
-human-authored settings file; a repository cannot edit itself into trust.
+Remembered trust is tied to the workspace path and its soul, agents, commands,
+and skills. Changes to that authority set require another trust decision. Mecatl
+stores remembered trust outside the repository, so a repository cannot grant
+itself trust.
 
 ## What untrusted means
 
@@ -159,9 +152,6 @@ never automatically permits a tool that the policy denies.
 - Project instructions are prompt guidance, not an isolation boundary. Use
   permissions, hooks, container boundaries, and workspace separation for
   enforcement.
-- A project can influence the model's plan only after the shared trust gate
-  admits it. The project cannot grant itself trust through `settings.yaml`, a
-  rule, or an instruction file.
 - Trust does not make a shared filesystem multi-tenant safe. Separate workspace
   namespaces when callers must not see one another's files.
 
@@ -173,4 +163,3 @@ examples, see [Workspace trust](/features/permissions-and-posture.md).
 - [Define named agents](./named-agents.md)
 - [Skills, commands, and soul](./skills-commands-and-soul.md)
 - [Permissions and posture](./permissions-and-posture.md)
-- [Capability and deployment matrix](./capability-matrix.md)

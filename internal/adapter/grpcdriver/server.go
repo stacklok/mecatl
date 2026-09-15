@@ -109,6 +109,9 @@ func (s *sessionStoreServer) Save(ctx context.Context, req *driverv1.SaveRequest
 			"session_id %q does not match the snapshot payload's session id %q (the top-level session_id is the storage key; the two must agree)",
 			req.GetSessionId(), sess.ID)
 	}
+	if req.GetActivityState() != "" && req.GetActivityState() != string(session.ActivityOf(sess.Conversation.Messages)) {
+		return nil, status.Error(codes.InvalidArgument, "activity_state does not match snapshot")
+	}
 	if err := s.store.Save(ctx, sess); err != nil {
 		return nil, storeStatus(err)
 	}
@@ -127,6 +130,9 @@ func (s *sessionStoreServer) Create(ctx context.Context, req *driverv1.SaveReque
 	sess, err := sessnap.Unmarshal(req.GetSnapshot().GetPayload())
 	if err != nil || string(sess.ID) != req.GetSessionId() {
 		return nil, status.Error(codes.InvalidArgument, "snapshot does not match session_id")
+	}
+	if req.GetActivityState() != "" && req.GetActivityState() != string(session.ActivityOf(sess.Conversation.Messages)) {
+		return nil, status.Error(codes.InvalidArgument, "activity_state does not match snapshot")
 	}
 	if err := creator.Create(ctx, sess); err != nil {
 		if errors.Is(err, port.ErrSessionAlreadyExists) {
@@ -165,8 +171,10 @@ func (s *sessionStoreServer) Capabilities(context.Context, *driverv1.SessionStor
 	}
 	_, lineage := s.store.(port.SessionLineageReader)
 	_, creator := s.store.(port.SessionCreator)
+	activityProjection := port.SupportsActivityProjection(s.store)
 	return &driverv1.SessionStoreCapabilitiesResponse{
 		List: prunable, MetadataPaging: pager, Delete: deleteSupported, Lineage: lineage, Create: creator,
+		ActivityProjection: activityProjection,
 	}, nil
 }
 
@@ -307,7 +315,8 @@ func metadataToProto(meta port.SessionDiscoveryMeta) (*driverv1.SessionMetadataE
 	}
 	entry := &driverv1.SessionMetadataEntry{
 		SessionId: string(meta.ID), State: string(meta.State), Turns: int32(meta.Turns),
-		ModelId: meta.ModelID, Title: meta.Title, TitleProvenance: string(meta.TitleProvenance),
+		ActivityState: string(meta.Activity),
+		ModelId:       meta.ModelID, Title: meta.Title, TitleProvenance: string(meta.TitleProvenance),
 		EnvironmentRef: &driverv1.StoredEnvironmentRef{Kind: string(meta.EnvironmentRef.Kind), Id: meta.EnvironmentRef.ID, Revision: meta.EnvironmentRef.Revision}, Kind: string(meta.Kind), EstimatedBytes: meta.EstimatedBytes,
 		ParentSessionId: string(meta.Relationship.ParentSessionID), ParentIncarnation: string(meta.Relationship.ParentIncarnation), CallId: string(meta.Relationship.CallID),
 		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID), OriginIncarnation: string(meta.Relationship.OriginIncarnation),

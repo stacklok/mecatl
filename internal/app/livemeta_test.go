@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"testing"
 )
 
@@ -331,6 +332,15 @@ const (
 	liveOnlyModel = "openai/gpt-99-future"
 	liveOnlyCtx   = 1_050_000 // below maxLiveContextLimit, so unclamped
 )
+
+func TestMarkRefreshCompletedClosesWaitersOnce(t *testing.T) {
+	s := newLiveMetaStore()
+	s.markRefreshCompleted()
+	s.markRefreshCompleted()
+	if err := s.awaitRefresh(context.Background()); err != nil {
+		t.Fatalf("await settled refresh: %v", err)
+	}
+}
 
 // TestEchoResolverProvisionalThenSettled: for an uncatalogued live-only model the ECHO
 // resolver returns a deliberate PROVISIONAL 0 pre-completion (the client's footer-heal

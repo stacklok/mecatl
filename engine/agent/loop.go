@@ -51,9 +51,10 @@ const defaultNoProgressNudges = 2
 // ("do not naively retry the same message array"; "avoid emitting text blocks right
 // after tool results") and never forces tool use (no tool_choice). The substring
 // "Make concrete progress on the task using your tools" is a stable test key — do not
-// change it.
-const noProgressNudgeText = "Please continue. Make concrete progress on the task using your tools, " +
-	"or — if you are blocked or believe the task is complete — say so explicitly in a short message."
+// change it. Promoted to session.NoProgressNudgeText (engine/session/title.go) so
+// IsGenuineUserPrompt can classify against it without engine/session importing this
+// package — keep the literal only there; this is a reference, not a second copy.
+const noProgressNudgeText = session.NoProgressNudgeText
 
 // noProgressExtractiveNudgeText is the FINAL no-progress nudge, injected on the LAST
 // attempt before give-up (the nudge where *noProgressNudges == nudgeCap-1; see
@@ -66,12 +67,9 @@ const noProgressNudgeText = "Please continue. Make concrete progress on the task
 // extractive nudge is structurally guaranteed one more model turn (it rides the same
 // return-false re-drive path), so a model that answers after it completes with
 // StopEndTurn, NOT StopNoProgress. The substring "Stop investigating now" is a stable
-// test key (extractiveNudgeMessagesIn) — do not change it.
-const noProgressExtractiveNudgeText = "Stop investigating now and do not run any " +
-	"more commands or tools. Using only the information you have already gathered, " +
-	"write your best final answer to the original task as a direct message now, even " +
-	"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
-	"steps; deliver what you have."
+// test key (extractiveNudgeMessagesIn) — do not change it. Promoted to
+// session.NoProgressExtractiveNudgeText for the same reason as noProgressNudgeText above.
+const noProgressExtractiveNudgeText = session.NoProgressExtractiveNudgeText
 
 // shellLessPostureNote is the SINGLE model-visible shell-less posture clause, appended
 // to the per-request system prompt's VOLATILE suffix by buildRequest when the LIVE
@@ -2302,7 +2300,7 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.
-	e.emitUserPrompt(r, 0, finalText, parts)
+	e.emitUserPrompt(r, 0, finalText, parts, false)
 	return true, "", nil
 }
 
@@ -2313,9 +2311,9 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 // nudge, background-completion notice) — so the durable log (and an event-sourced
 // fold) sees a COMPLETE user-turn sequence. The event is log-only: the relay appends
 // it and skips it on the live client wire (the client already holds the prompt).
-func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content) {
+func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content, synthetic bool) {
 	e.emit(r, session.Event{Type: session.EvUserPrompt, Turn: turnIdx,
-		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts}})
+		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts, Synthetic: synthetic}})
 }
 
 // recordContinuation records a harness-authored synthetic user-role continuation
@@ -2327,7 +2325,7 @@ func (e *Engine) recordContinuation(r *Run, sess *session.Session, turnIdx int, 
 	if err := sess.RecordUserPrompt(text, nil); err != nil {
 		return err
 	}
-	e.emitUserPrompt(r, turnIdx, text, nil)
+	e.emitUserPrompt(r, turnIdx, text, nil, true)
 	return nil
 }
 

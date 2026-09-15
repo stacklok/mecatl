@@ -525,7 +525,6 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.activeMode = client.ModeString(client.ModeFromString(msg.Mode))
 	}
 	m.restartFailed = false // a session is (re)established; any prior failure clears
-	m.restartFailedForkID = ""
 	m.phase = phaseIdle
 	// A model switch arms a transient "switched to <model> — conversation kept" note
 	// (chooseModel); surface it on the rebind instead of the bare "connected", then
@@ -648,6 +647,45 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// under the cyclomatic cap.
 		mm, cmd := m.updateReconnectMsg(msg)
 		return mm, cmd, true
+	case effortHandoffReadyMsg:
+		if msg.token != m.modelSwitchRequestToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
+			return m, m.closeSessionCmd(msg.targetID), true
+		}
+		caps := mergeSessionCapabilities(m.caps, msg.snapshot.Capabilities)
+		resolved := msg.snapshot.ResolvedModel
+		if resolved == (client.ResolvedModel{}) {
+			resolved = m.resolvedSessionModel
+		}
+		ready := client.SessionReadyMsg{SessionID: msg.targetID, Capabilities: caps,
+			ResolvedModel: resolved, Mode: msg.snapshot.Mode}
+		// The successor has a fresh aggregate, but its transcript is already present
+		// in the local projection. Reset only state derived from the old session.
+		m = m.resetSessionDerived()
+		mm, cmd, handled := m.applySessionReady(ready)
+		m = mm.(Model)
+		// setResolvedSessionModel's merge is model-ID-keyed: a same-model update only
+		// raises the known context window and leaves ReasoningEffort untouched, but an
+		// effort switch's whole point is a new ReasoningEffort at the SAME model — so
+		// the fork's resolved snapshot must be applied verbatim here, not merged.
+		m.resolvedSessionModel = resolved
+		m.sessionState = msg.snapshot.State
+		m.sessionCreatedAt = msg.snapshot.CreatedAt
+		m.activePlacement = msg.snapshot.Placement
+		m.sessionTitle = msg.snapshot.Title
+		m.sessionTitleProvenance = msg.snapshot.TitleProvenance
+		m.sessionTitleRevision = msg.snapshot.TitleRevision
+		m.refreshView()
+		return m, tea.Batch(cmd, m.closeSessionCmd(msg.sourceID)), handled
+	case effortHandoffFailedMsg:
+		if msg.token != m.modelSwitchRequestToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
+			return m, nil, true
+		}
+		m.phase = phaseIdle
+		m.statusMsg = m.deps.Theme.Style("errorText").Render(
+			"could not switch to effort " + effortLabel(msg.sel.ReasoningEffort) + ": " + sanitizeTerminal(msg.err.Error()))
+		focusCmd := m.prompt.Focus()
+		m.refreshView()
+		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
 	case modelSwitchReadyMsg:
 		// The target's authoritative transcript is already complete and correlated.
 		// Only now may we discard the source projection or arm target interaction.
@@ -825,31 +863,12 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		return m, nil, true
 	case restartFailedMsg:
-		// A /models restart-now re-create (or a /worktrees re-create, or an /effort
-		// fork) failed. Unlike ConnectErrMsg this is NOT terminal: we deliberately
-		// destroyed a working session (or attempted a fork), so leave the app
-		// RECOVERABLE (idle, no session) with a loud status naming the failed model and
-		// enter-to-retry armed (the selection still lives in m.createModelSelection). On the
-		// /models + /worktrees paths the transcript is gone, but the app stays usable;
-		// on the /effort path the source session (and transcript) SURVIVES — see
-		// restartFailedForkID.
+		// A restart-now re-create failed. Unlike ConnectErrMsg this is NOT terminal:
+		// leave the app recoverable (idle, no session) with enter-to-retry armed.
 		m.phase = phaseIdle
 		m = m.bindSessionID("")
 		m.restartFailed = true
-		// A carryover create's failure means enter-to-retry re-fires a FRESH
-		// (non-carryover) create (see onIdleSubmit), so the note armed by
-		// chooseModel for the ORIGINAL attempt would otherwise survive to falsely
-		// claim "conversation kept" on the retry's SessionReadyMsg.
 		m.pendingModelSwitchNote = ""
-		// Record the retry origin: an /effort fork failure (msg.viaFork) re-forks from
-		// the SURVIVING source session on retry — m.sessionID is "" by now, so the
-		// source id must ride its own field. A non-fork failure clears it so a stale
-		// origin from an earlier failed fork can't leak into a create retry.
-		if msg.viaFork {
-			m.restartFailedForkID = msg.sourceID
-		} else {
-			m.restartFailedForkID = ""
-		}
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
 			"could not switch to " + sanitizeTerminal(msg.model) + ": " +
 				sanitizeTerminal(msg.err.Error()) + " — press " + firstKey(m.keys.Submit, "enter") + " to retry")
@@ -982,6 +1001,29 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	}
 }
 
+// mergeSessionCapabilities preserves the known server-wide capability snapshot when
+// a compatible response contains only the selected session's media capabilities.
+func mergeSessionCapabilities(current, incoming client.Capabilities) client.Capabilities {
+	if incoming == (client.Capabilities{}) {
+		return current
+	}
+	mediaOnly := incoming.SessionMediaPresent
+	image, audio := incoming.Image, incoming.Audio
+	incoming.SessionMediaPresent = false
+	incoming.Image = false
+	incoming.Audio = false
+	if mediaOnly && incoming == (client.Capabilities{}) {
+		current.Image = image
+		current.Audio = audio
+		current.SessionMediaPresent = true
+		return current
+	}
+	incoming.Image = image
+	incoming.Audio = audio
+	incoming.SessionMediaPresent = mediaOnly
+	return incoming
+}
+
 // onResolvedModelMsg handles the ResolvedModelMsg from a GetSession refetch
 // (footer context-meter heal, issue #66) and the plan-approval mode+model
 // refresh (issue #206). Extracted from updateLifecycle to keep its cyclomatic
@@ -1004,22 +1046,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.Err != nil || msg.SessionID != m.sessionID {
 		return m, nil, true
 	}
-	// A present SessionCapabilities message is authoritative even when both media
-	// values are false. If it is the only populated wire capability, overlay just
-	// media so an older server's absent global feature snapshot does not erase the
-	// already-known global bits.
-	incomingCaps := msg.Capabilities
-	mediaOnly := incomingCaps.SessionMediaPresent
-	incomingCaps.SessionMediaPresent = false
-	incomingCaps.Image = false
-	incomingCaps.Audio = false
-	if mediaOnly && incomingCaps == (client.Capabilities{}) {
-		m.caps.Image = msg.Capabilities.Image
-		m.caps.Audio = msg.Capabilities.Audio
-		m.caps.SessionMediaPresent = true
-	} else if msg.Capabilities != (client.Capabilities{}) {
-		m.caps = msg.Capabilities
-	}
+	m.caps = mergeSessionCapabilities(m.caps, msg.Capabilities)
 	// The snapshot is authoritative after reconnect/session adoption, so unlike the
 	// old first-prompt seed it may replace a local title.
 	m, _ = m.adoptTitle(msg.Title, msg.TitleProvenance, msg.TitleRevision)
@@ -1772,6 +1799,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// the rendered regions in chrome().
 	m.relayout()
 	m.clampHelpScroll()
+	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
 		m.conversationView.observe(m.vp)
@@ -3076,12 +3104,6 @@ func (m Model) onIdleDoubleEscape(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 //     the resolving msg owns its lifecycle (SessionReadyMsg clears it on success;
 //     restartFailedMsg re-sets it on a re-failure). The in-flight phaseConnecting
 //     window swallows idle keys, so the un-cleared flag can't misfire meanwhile.
-//   - RETRY a failed /effort FORK (restartFailedForkID != ""): re-fire the FORK from
-//     the surviving source session (switchEffortCmd), NOT restartOnModelCmd — the
-//     source session is still open, and re-forking PRESERVES the transcript where a
-//     create-fresh retry would wipe it (the exact thing the fork-resume switch exists
-//     to prevent). The effort rides m.createModelSelection (the switch applied it
-//     synchronously before the fork failed).
 //   - RESUME a paused queue: enter on an EMPTY line fires the next staged prompt.
 //   - otherwise a normal submitPrompt (a no-op on an empty sessionID).
 func (m Model) onIdleSubmit() (tea.Model, tea.Cmd) {
@@ -3092,9 +3114,6 @@ func (m Model) onIdleSubmit() (tea.Model, tea.Cmd) {
 		m.refreshView()
 		// m.sp.Tick re-arms the spinner for the idle→connecting transition (the
 		// phase-gated TickMsg handler dropped the chain at idle).
-		if m.restartFailedForkID != "" {
-			return m, tea.Batch(m.switchEffortCmd(m.restartFailedForkID, m.createModelSelection), m.sp.Tick)
-		}
 		return m, tea.Batch(m.restartOnModelCmd("", m.createModelSelection), m.sp.Tick)
 	}
 	if m.queuePaused != "" && len(m.queued) > 0 && empty {
@@ -3230,7 +3249,7 @@ func (m Model) preparePromptContent(text string) (string, client.MediaResult, bo
 		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
 	}
 	var media client.MediaResult
-	if files := attachableMentions(m.deps.Workspace, text); len(files) > 0 {
+	if files := attachableMentions(m.deps.Workspace, text, mentionHomeDir(m.deps)); len(files) > 0 {
 		res, err := client.ExpandMentions(files, m.caps)
 		if err != nil {
 			return "", client.MediaResult{}, hadPastes, false, err

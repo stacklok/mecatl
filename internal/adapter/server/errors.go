@@ -138,6 +138,9 @@ var (
 	// map it to Unavailable / HTTP 503. The gate starts false (byte-identical
 	// default); Service.Drain arms it.
 	ErrUnavailable = errors.New("server: draining, not accepting new runs")
+	// ErrContextWindowUnavailable is a transient admission failure: running with
+	// the speculative floor could irreversibly compact valid persisted history.
+	ErrContextWindowUnavailable = errors.New("server: context window unavailable")
 	// ErrNotAwaitingPlan is returned by ApprovePlan when the session is not parked
 	// awaiting a PLAN-ORIGINATED permission ask (issue #206, Wave 4): either a run
 	// is LIVE for the session (an approve mid-run — use the Converse ResumeApproval

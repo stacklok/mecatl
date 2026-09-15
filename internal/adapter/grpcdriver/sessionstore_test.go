@@ -365,7 +365,7 @@ func TestADR_0291_DriverStorageCarriesExactPrivateEnvironmentRef(t *testing.T) {
 	if entry.GetEnvironmentRef() == nil || entry.GetEnvironmentRef().GetRevision() != want.Revision {
 		t.Fatalf("driver environment ref = %+v, want exact private ref %+v", entry.GetEnvironmentRef(), want)
 	}
-	got := metadataFromProto(entry)
+	got := metadataFromProto(entry, true)
 	if got.EnvironmentRef != want {
 		t.Fatalf("round-tripped environment ref = %+v, want %+v", got.EnvironmentRef, want)
 	}

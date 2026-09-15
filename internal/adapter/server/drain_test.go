@@ -55,10 +55,10 @@ func miniredisRun() (*miniredis.Miniredis, error) { return miniredis.Run() }
 // redisstoreNew wraps redisstore.New for the StorageReady tests.
 func redisstoreNew(addr string) (*redisstore.Store, error) { return redisstore.New(addr) }
 
-// newRedisTestService builds a Service backed by the given Redis store (for the
+// newStorageReadyTestService builds a Service backed by the given store (for the
 // StorageReady tests): the Service serves traffic through THIS store, so
 // StorageReady pings the same client /readyz would test in production.
-func newRedisTestService(t *testing.T, st *redisstore.Store) *server.Service {
+func newStorageReadyTestService(t *testing.T, st port.SessionStore) *server.Service {
 	t.Helper()
 	ps := permstore.New()
 	cat := tool.NewCatalog()
@@ -256,7 +256,7 @@ func TestStorageReadyRedis(t *testing.T) {
 		t.Fatalf("redisstore.New: %v", err)
 	}
 	defer st.Close()
-	svc := newRedisTestService(t, st)
+	svc := newStorageReadyTestService(t, st)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -277,6 +277,43 @@ func TestStorageReadyRedis(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Error("StorageReady on a closed miniredis stayed true, want false (Redis outage → /readyz not-ready)")
+}
+
+type slowPingingStore struct {
+	*memstore.Store
+	started chan struct{}
+}
+
+func (s *slowPingingStore) Ping(ctx context.Context) error {
+	close(s.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestStorageReadySlowStoreRespectsCallerDeadline proves a Redis-like backend
+// that does not answer promptly cannot wedge /readyz beyond the caller's bound.
+// The mecak8s HTTP edge supplies that bound; the Helm probe timeout is longer so
+// it receives the resulting 503 instead of abandoning the request first.
+func TestStorageReadySlowStoreRespectsCallerDeadline(t *testing.T) {
+	st := &slowPingingStore{Store: memstore.New(), started: make(chan struct{})}
+	svc := newStorageReadyTestService(t, st)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	if svc.StorageReady(ctx) {
+		t.Fatal("StorageReady on a deadline-blocked store = true, want false")
+	}
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("StorageReady context error = %v, want deadline exceeded", ctx.Err())
+	}
+	select {
+	case <-st.started:
+	default:
+		t.Fatal("StorageReady did not call the store pinger")
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("StorageReady exceeded the caller bound by too much: %v", elapsed)
+	}
 }
 
 type drainPersistBarrierStore struct {

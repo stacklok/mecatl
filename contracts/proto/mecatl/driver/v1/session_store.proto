@@ -121,6 +121,10 @@ message SaveRequest {
 
   // snapshot is the opaque envelope to store verbatim.
   SessionSnapshot snapshot = 2 [(buf.validate.field).required = true];
+
+  // activity_state is the content-free projection supplied by a capable harness
+  // alongside the opaque snapshot.
+  string activity_state = 3;
 }
 
 // SaveResponse is empty: a successful Save has no payload.
@@ -222,6 +226,7 @@ message SessionMetadataEntry {
   string parent_incarnation = 25;
   string origin_incarnation = 26;
   string debug_target_incarnation = 27;
+  string activity_state = 29;
 }
 
 message PageSessionMetadataResponse {
@@ -237,6 +242,7 @@ message SessionStoreCapabilitiesResponse {
   bool delete = 3;
   bool lineage = 4;
   bool create = 5;
+  bool activity_projection = 6;
 }
 
 message ReadSessionLineageRequest {

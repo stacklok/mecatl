@@ -285,7 +285,7 @@ go test -run '^TestMecatuiReleaseStampFeedsEmbeddedReadinessDefaults$' \
   -ldflags="-X main.version=${host_version} -X main.microVMReleaseDefaultsB64=${host_defaults} -X main.microVMReleaseStampRequired=release" \
   ./cmd/mecatui
 
-expected_status=$(printf '{"backend":"microvm-local","configured":false,"running":false,"state":"unconfigured","error":"","remediation":"Select microvm-local in operator settings; run '\''mecated microvm doctor'\'' first.","socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
+expected_status=$(printf '{"backend":"microvm-local","configured":false,"running":false,"state":"unconfigured","error":"","remediation":"Not configured; run '\''mecated microvm doctor'\'' to check host readiness.","socket":"/tmp/mv-%s/microvmd.sock","guest_egress":"","generations":[],"continuation":""}\n' "$(id -u)")
 test "$(cat "$host_scratch/mecated.json")" = "$expected_status"
 
 scratch="$repo_root/.scratch/microvm-release-test"

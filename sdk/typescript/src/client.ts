@@ -28,6 +28,7 @@ import {
   HarnessService,
   type ListSessionsRequest,
   type ListSessionsResponse,
+  type Session as ProtoSession,
   type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
@@ -63,6 +64,13 @@ import {
   sessionAffinityIfRepresentable,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
+import {
+  projectSessionSnapshot,
+  projectSessionTranscript,
+  type SessionMode,
+  type SessionSnapshot,
+  type SessionTranscript,
+} from "./session-projections.js";
 import { createTeams, type Teams } from "./team.js";
 import {
   type AttachedRun,
@@ -137,8 +145,8 @@ export interface CreateSessionOptions {
   limits?: SessionLimits;
   /** Client-provided streaming-HTTP MCP servers mounted for this session. */
   mcpServers?: SessionMcpServer[];
-  /** PermissionMode enum value from the generated `./gen` entry point. */
-  mode?: 0 | 1 | 2 | 3;
+  /** Permission posture for the new session. */
+  mode?: SessionMode;
   /** Model selector within `providerId`. */
   modelId?: string;
   /** Tool-surface profile, or the deployment default when omitted. */
@@ -151,10 +159,22 @@ export interface CreateSessionOptions {
 
 /** Optional overrides accepted when forking a session. @public */
 export interface ForkSessionOptions {
+  /** Model selector within `providerId`. */
+  modelId?: string;
+  /** Configured model-provider ID. */
+  providerId?: string;
   /** Requested reasoning-effort tier for the forked session. */
   reasoningEffort?: string;
   /** Human-readable title for the forked session. */
   title?: string;
+  /** Opaque source-scoped selector for an existing worktree. */
+  worktreeSelector?: string;
+}
+
+/** Optional overrides accepted when clearing a session. @public */
+export interface ClearSessionOptions {
+  /** Opaque source-scoped selector for an existing worktree. */
+  worktreeSelector?: string;
 }
 
 /** A durable Mecatl session handle. @public */
@@ -179,15 +199,72 @@ export interface Session {
    */
   activity(options?: AttachOptions): Promise<SessionActivity>;
   /**
+   * Reads the authoritative current session snapshot.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns A detached SDK-owned projection of the session aggregate.
+   * @throws `ProtocolError` when the server response is missing or mismatched.
+   */
+  snapshot(options?: RequestOptions): Promise<SessionSnapshot>;
+  /**
+   * Reads the authoritative model-visible conversation.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The ordered transcript without provider-private replay fields.
+   * @throws `ProtocolError` when the server response is missing or mismatched.
+   */
+  transcript(options?: RequestOptions): Promise<SessionTranscript>;
+  /**
+   * Replaces the title of an eligible session.
+   *
+   * @param title - New human-readable title.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The resulting authoritative snapshot.
+   */
+  rename(title: string, options?: RequestOptions): Promise<SessionSnapshot>;
+  /**
+   * Changes the permission posture of an eligible session.
+   *
+   * @param mode - New SDK permission mode.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The resulting authoritative snapshot.
+   */
+  setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot>;
+  /**
+   * Requests one out-of-band compaction pass.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns Whether the server reduced the model-visible history.
+   */
+  compact(options?: RequestOptions): Promise<boolean>;
+  /**
+   * Creates an empty-history successor without changing this handle.
+   *
+   * @param options - Optional opaque worktree selector.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns A distinct session handle for the successor.
+   */
+  clear(options?: ClearSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
+  /**
    * Starts a run and resolves once its first run-ID-bearing event arrives.
    *
    * @param prompt - Text or ordered text, image, and audio parts for the run.
    * @param options - Automatic permission and plan-approval responders.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
    * @returns A single-consumption handle for the accepted run.
    * @throws `PromptValidationError` when the prompt is invalid or unsupported.
    * @throws `SessionBusyError` when the session already has an active run.
    */
-  run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
+  run(prompt: PromptInput, options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
+  /**
+   * Retries the server-selected eligible failed model step.
+   *
+   * @param options - Automatic permission and plan-approval responders.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns The same single-consumption run lifecycle returned by run().
+   * @throws `SessionBusyError` when the session already has an active run.
+   */
+  retry(options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
   /**
    * Atomically resolves a durably parked plan and streams its resumed and continuation runs.
    *
@@ -199,25 +276,50 @@ export interface Session {
   /**
    * Releases runtime resources without removing the durable session.
    *
+   * @param options - Request headers, cancellation signal, and deadline.
    * @returns A promise that resolves after local session resources are released.
    */
-  close(): Promise<void>;
+  close(options?: RequestOptions): Promise<void>;
   /**
    * Permanently removes the durable session and its sidecars.
    *
+   * @param options - Request headers, cancellation signal, and deadline.
    * @returns A promise that resolves after the server removes the session.
    */
-  delete(): Promise<void>;
+  delete(options?: RequestOptions): Promise<void>;
 }
 
 /** Session lifecycle operations exposed by a Client. @public */
 export interface Sessions {
-  /** Creates a session and returns its handle. */
-  create(options: CreateSessionOptions): Promise<Session>;
-  /** Loads an existing session by ID. */
-  get(sessionId: string): Promise<Session>;
-  /** Forks an existing session into a new session. */
-  fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
+  /**
+   * Creates a session and returns its handle.
+   *
+   * @param options - Session configuration fields.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns A handle for the newly created session.
+   */
+  create(options: CreateSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
+  /**
+   * Loads an existing session by ID.
+   *
+   * @param sessionId - Durable session ID to load.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns A handle bound to the requested session.
+   */
+  get(sessionId: string, options?: RequestOptions): Promise<Session>;
+  /**
+   * Forks an existing session into a distinct successor.
+   *
+   * @param sourceSessionId - Session whose conversation will be copied.
+   * @param options - Optional title, model, reasoning, and worktree overrides.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns A handle for the forked successor session.
+   */
+  fork(
+    sourceSessionId: string,
+    options?: ForkSessionOptions,
+    requestOptions?: RequestOptions,
+  ): Promise<Session>;
   /** Lists the sessions visible to the authenticated caller. */
   list(request: ListSessionsRequest, options?: RequestOptions): Promise<ListSessionsResponse>;
 }
@@ -326,11 +428,22 @@ interface SessionOperations {
   ): AsyncIterable<WatchSessionEventsResponse>;
 }
 
-function createSessionAffinity(options: CreateSessionOptions): CallOptions | undefined {
+function createSessionAffinity(
+  options: CreateSessionOptions,
+  requestOptions?: RequestOptions,
+): CallOptions | undefined {
   const reference = options.debugTargetSessionId;
   return reference === undefined || reference === ""
-    ? undefined
-    : sessionAffinityIfRepresentable(reference);
+    ? requestOptions
+    : sessionAffinityIfRepresentable(reference, requestOptions);
+}
+
+function promptCapabilities(
+  sessionCapabilities: PromptCapabilities | undefined,
+  serverCapabilities?: PromptCapabilities,
+): PromptCapabilities | undefined {
+  const value = sessionCapabilities ?? serverCapabilities;
+  return value === undefined ? undefined : { audio: value.audio, image: value.image };
 }
 
 function sessionAffinityOperations(
@@ -378,8 +491,9 @@ const CONNECTION_STATUS_PRECEDENCE: readonly ConnectionStatus[] = [
 
 class SessionImpl implements Session {
   readonly id: string;
+  readonly #baseOperations: SessionOperations;
   readonly #operations: SessionOperations;
-  readonly #promptCapabilities: PromptCapabilities | undefined;
+  #promptCapabilities: PromptCapabilities | undefined;
   #busy = false;
 
   constructor(
@@ -388,6 +502,7 @@ class SessionImpl implements Session {
     promptCapabilities: PromptCapabilities | undefined,
   ) {
     this.id = id;
+    this.#baseOperations = operations;
     this.#operations = sessionAffinityOperations(this.id, operations);
     this.#promptCapabilities = promptCapabilities;
   }
@@ -412,16 +527,88 @@ class SessionImpl implements Session {
     return activity;
   }
 
-  async run(prompt: PromptInput, options: RunOptions = {}): Promise<Run> {
+  async snapshot(options?: RequestOptions): Promise<SessionSnapshot> {
     this.#operations.assertOpen();
-    if (this.#busy) {
-      throw new SessionBusyError("A run is already active on this Session", {
+    const response = await this.#operations.unary(
+      HarnessService.method.getSession,
+      { sessionId: this.id },
+      options,
+    );
+    return this.#snapshot(response.session, "GetSession");
+  }
+
+  async transcript(options?: RequestOptions): Promise<SessionTranscript> {
+    this.#operations.assertOpen();
+    const response = await this.#operations.unary(
+      HarnessService.method.getSessionTranscript,
+      { sessionId: this.id },
+      options,
+    );
+    const transcript = projectSessionTranscript(response, this.id);
+    if (transcript === undefined) {
+      throw new ProtocolError("GetSessionTranscript returned a missing or mismatched session", {
         transport: this.#operations.transportKind,
       });
     }
+    return transcript;
+  }
+
+  async rename(title: string, options?: RequestOptions): Promise<SessionSnapshot> {
+    this.#operations.assertOpen();
+    const response = await this.#operations.unary(
+      HarnessService.method.renameSession,
+      { sessionId: this.id, title },
+      options,
+    );
+    return this.#snapshot(response.session, "RenameSession");
+  }
+
+  async setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot> {
+    this.#operations.assertOpen();
+    const response = await this.#operations.unary(
+      HarnessService.method.setMode,
+      { mode, sessionId: this.id },
+      options,
+    );
+    return this.#snapshot(response.session, "SetMode");
+  }
+
+  async compact(options?: RequestOptions): Promise<boolean> {
+    this.#operations.assertOpen();
+    const response = await this.#operations.unary(
+      HarnessService.method.compactSession,
+      { sessionId: this.id },
+      options,
+    );
+    return response.compacted;
+  }
+
+  async clear(
+    options: ClearSessionOptions = {},
+    requestOptions?: RequestOptions,
+  ): Promise<Session> {
+    this.#operations.assertOpen();
+    const response = await this.#operations.unary(
+      HarnessService.method.clearSession,
+      { ...options, sourceSessionId: this.id },
+      requestOptions,
+    );
+    if (response.sessionId === "") {
+      throw new ProtocolError("ClearSession returned no session id", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    return new SessionImpl(response.sessionId, this.#baseOperations, undefined);
+  }
+
+  async run(
+    prompt: PromptInput,
+    options: RunOptions = {},
+    requestOptions?: RequestOptions,
+  ): Promise<Run> {
+    this.#assertRunAvailable();
     const encoded = encodePrompt(prompt, this.#promptCapabilities);
-    this.#busy = true;
-    const input = new ConverseInput(
+    return this.#startRun(
       {
         kind: {
           case: "prompt",
@@ -439,11 +626,43 @@ class SessionImpl implements Session {
           },
         },
       },
-      this.#operations.transportKind,
+      options,
+      requestOptions,
     );
+  }
+
+  async retry(options: RunOptions = {}, requestOptions?: RequestOptions): Promise<Run> {
+    this.#assertRunAvailable();
+    return this.#startRun(
+      { kind: { case: "retry", value: { sessionId: this.id } } },
+      options,
+      requestOptions,
+    );
+  }
+
+  #assertRunAvailable(): void {
+    this.#operations.assertOpen();
+    if (this.#busy) {
+      throw new SessionBusyError("A run is already active on this Session", {
+        transport: this.#operations.transportKind,
+      });
+    }
+  }
+
+  async #startRun(
+    start: ConverseFrame,
+    options: RunOptions,
+    requestOptions?: RequestOptions,
+  ): Promise<Run> {
+    this.#busy = true;
+    const input = new ConverseInput(start, this.#operations.transportKind);
     const runAbort = new AbortController();
+    const signal =
+      requestOptions?.signal === undefined
+        ? runAbort.signal
+        : AbortSignal.any([requestOptions.signal, runAbort.signal]);
     const responses = this.#operations
-      .stream(HarnessService.method.converse, input, { signal: runAbort.signal })
+      .stream(HarnessService.method.converse, input, { ...requestOptions, signal })
       [Symbol.asyncIterator]();
     let acceptedRunId = "";
     let released = false;
@@ -510,6 +729,18 @@ class SessionImpl implements Session {
     }
   }
 
+  #snapshot(value: ProtoSession | undefined, operation: string): SessionSnapshot {
+    const snapshot = value === undefined ? undefined : projectSessionSnapshot(value, this.id);
+    if (snapshot === undefined) {
+      throw new ProtocolError(`${operation} returned a missing or mismatched session`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    const refreshed = promptCapabilities(snapshot.sessionCapabilities, snapshot.capabilities);
+    if (refreshed !== undefined) this.#promptCapabilities = refreshed;
+    return snapshot;
+  }
+
   resolvePlan(verdict: PlanApprovalVerdict = "approve"): PlanResolution {
     this.#operations.assertOpen();
     if (this.#busy) {
@@ -528,14 +759,22 @@ class SessionImpl implements Session {
     }
   }
 
-  async close(): Promise<void> {
+  async close(options?: RequestOptions): Promise<void> {
     this.#operations.assertOpen();
-    await this.#operations.unary(HarnessService.method.closeSession, { sessionId: this.id });
+    await this.#operations.unary(
+      HarnessService.method.closeSession,
+      { sessionId: this.id },
+      options,
+    );
   }
 
-  async delete(): Promise<void> {
+  async delete(options?: RequestOptions): Promise<void> {
     this.#operations.assertOpen();
-    await this.#operations.unary(HarnessService.method.deleteSession, { sessionId: this.id });
+    await this.#operations.unary(
+      HarnessService.method.deleteSession,
+      { sessionId: this.id },
+      options,
+    );
   }
 }
 
@@ -644,7 +883,7 @@ class ClientImpl implements Client {
     });
     this.userModel = operational.userModel;
     this.sessions = {
-      create: async (input) => {
+      create: async (input, requestOptions) => {
         const lease = this.#toolHost?.beginSessionCreate?.();
         try {
           let request = input;
@@ -657,7 +896,11 @@ class ClientImpl implements Client {
                 transport: "local",
               });
             }
-            const inventory = await this.#unary(HarnessService.method.listMcpSources, {});
+            const inventory = await this.#unary(
+              HarnessService.method.listMcpSources,
+              {},
+              requestOptions,
+            );
             if (
               inventory.sources.some((source) =>
                 source.servers.some((server) => server.name === serverName),
@@ -676,38 +919,50 @@ class ClientImpl implements Client {
           const response = await this.#unary(
             HarnessService.method.createSession,
             request,
-            createSessionAffinity(input),
+            createSessionAffinity(input, requestOptions),
           );
           lease?.finish(true);
-          return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
+          return this.#session(
+            response.sessionId,
+            "CreateSession",
+            promptCapabilities(response.sessionCapabilities, response.capabilities),
+          );
         } catch (error) {
           lease?.finish(false);
           throw error;
         }
       },
-      fork: async (sourceSessionId, input = {}) => {
+      fork: async (sourceSessionId, input = {}, requestOptions) => {
         const response = await this.#unary(
           HarnessService.method.forkSession,
           {
             ...input,
             sourceSessionId,
           },
-          sessionAffinityIfRepresentable(sourceSessionId),
+          sessionAffinityIfRepresentable(sourceSessionId, requestOptions),
         );
         return this.#session(response.sessionId, "ForkSession", undefined);
       },
-      get: async (sessionId) => {
+      get: async (sessionId, options) => {
         const response = await this.#unary(
           HarnessService.method.getSession,
           { sessionId },
-          sessionAffinityIfRepresentable(sessionId),
+          sessionAffinityIfRepresentable(sessionId, options),
         );
-        if (response.session === undefined || response.session.sessionId === "") {
-          throw new ProtocolError("GetSession returned no session", {
+        const snapshot =
+          response.session === undefined
+            ? undefined
+            : projectSessionSnapshot(response.session, sessionId);
+        if (snapshot === undefined) {
+          throw new ProtocolError("GetSession returned a missing or mismatched session", {
             transport: this.#transportKind,
           });
         }
-        return new SessionImpl(response.session.sessionId, this.#operations, undefined);
+        return new SessionImpl(
+          snapshot.sessionId,
+          this.#operations,
+          promptCapabilities(snapshot.sessionCapabilities, snapshot.capabilities),
+        );
       },
       list: operational.sessionInventory.list,
     };

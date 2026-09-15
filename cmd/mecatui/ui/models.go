@@ -93,7 +93,6 @@ func (m Model) restartOnModel(sel client.ModelSelection) (tea.Model, tea.Cmd, bo
 	m.resolvedSessionModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false // a fresh attempt; clear any prior failure flag
-	m.restartFailedForkID = ""
 	m.phase = phaseConnecting
 	m.statusMsg = "switching model — reconnecting…"
 
@@ -142,7 +141,6 @@ func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model
 	m.pickedThisSession = sel
 	m.restartedThisRun = true
 	m.restartFailed = false
-	m.restartFailedForkID = ""
 	m.modelSwitchRequestToken++
 	m.disarmLiveFeed()
 	m.phase = phaseConnecting
@@ -165,7 +163,21 @@ type modelSwitchFailedMsg struct {
 	err      error
 }
 
-// carryoverCmd keeps the source open until the target transcript has been loaded
+type effortHandoffReadyMsg struct {
+	token    uint64
+	sourceID string
+	targetID string
+	snapshot client.SessionSnapshot
+}
+
+type effortHandoffFailedMsg struct {
+	token    uint64
+	sourceID string
+	targetID string
+	sel      client.ModelSelection
+	err      error
+}
+
 // and validated. The transcript is the server's post-carryover truth (including
 // cross-provider provider-state stripping), not the old local projection.
 func (m Model) carryoverCmd(oldID string, sel client.ModelSelection, token uint64) tea.Cmd {
@@ -233,20 +245,18 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 	// + footer heal re-derive the meter), and a queued/ask state belongs to the
 	// user's uninterrupted flow, not to the old session id.
 
-	// Rebind the rest of the per-session client state to "no session yet": the new
-	// values arrive on the fork's SessionReadyMsg.
-	m = m.bindSessionID("")
-	m.resolvedSessionModel = client.ResolvedModel{}
-	m.caps = client.Capabilities{}
-	m.restartFailed = false // a fresh attempt; clear any prior failure flag
-	m.restartFailedForkID = ""
+	// Keep the source binding and projection while the successor is hydrated. Only
+	// its live feed is disarmed; phaseConnecting blocks input until adoption.
+	m.disarmLiveFeed()
+	m.modelSwitchRequestToken++
+	token := m.modelSwitchRequestToken
 	m.phase = phaseConnecting
 	m.statusMsg = "switching effort — forking conversation…"
 
 	m.refreshView()
 	// m.sp.Tick re-arms the spinner for the transition into phaseConnecting (the
 	// phase-gated spinner.TickMsg handler dropped the chain in the prior phase).
-	return m, tea.Batch(m.switchEffortCmd(oldID, sel), m.saveSelectionCmd(sel), m.sp.Tick), true
+	return m, tea.Batch(m.switchEffortCmd(oldID, sel, token), m.saveSelectionCmd(sel), m.sp.Tick), true
 }
 
 // switchEffortCmd forks the OLD session at the new effort off the update goroutine.
@@ -258,44 +268,37 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 // /effort cursor ● and the header effort suffix (the fork's effort echo).
 // Capabilities come from the GetSession snapshot (snap.Capabilities), the
 // same authoritative source as the footer-heal RefetchSessionCmd path.
-// On FAILURE it returns the recoverable restartFailedMsg (NOT client.ConnectErrMsg)
-// and the source session is deliberately NOT closed — the old session is still the
-// user's live one, so a failed fork leaves it untouched (the recoverable reducer's
-// enter-to-retry re-fires the fork).
-func (m Model) switchEffortCmd(oldID string, sel client.ModelSelection) tea.Cmd {
+// On FAILURE it returns an effortHandoffFailedMsg and the source session is
+// deliberately NOT closed — the old session is still the user's live one, so a
+// failed fork leaves it untouched and the reducer restores its live feed.
+func (m Model) switchEffortCmd(oldID string, sel client.ModelSelection, token uint64) tea.Cmd {
 	deps := m.deps
+	mode := m.desiredMode()
 	return func() tea.Msg {
-		newID, err := deps.Session.ForkSession(deps.Ctx, oldID, sel.ReasoningEffort)
+		targetID, err := deps.Session.ForkSession(deps.Ctx, oldID, sel.ReasoningEffort)
 		if err != nil {
-			return restartFailedMsg{err: err, model: "effort " + effortLabel(sel.ReasoningEffort), viaFork: true, sourceID: oldID}
+			return effortHandoffFailedMsg{token: token, sourceID: oldID, sel: sel, err: err}
 		}
-		if oldID != "" {
-			_ = deps.Session.CloseSession(deps.Ctx, oldID)
-		}
-		snap, err := deps.Session.GetSession(deps.Ctx, newID)
+		snap, err := deps.Session.GetSession(deps.Ctx, targetID)
 		if err != nil {
-			return restartFailedMsg{err: err, model: "effort " + effortLabel(sel.ReasoningEffort), viaFork: true, sourceID: oldID}
+			_ = deps.Session.CloseSession(deps.Ctx, targetID)
+			return effortHandoffFailedMsg{token: token, sourceID: oldID, targetID: targetID, sel: sel, err: err}
 		}
-		return client.SessionReadyMsg{SessionID: newID, ResolvedModel: snap.ResolvedModel, Capabilities: snap.Capabilities, Mode: m.desiredMode()}
+		if snap.Mode == "" {
+			snap.Mode = mode
+		}
+		return effortHandoffReadyMsg{token: token, sourceID: oldID, targetID: targetID, snapshot: snap}
 	}
 }
 
-// restartFailedMsg reports that a /models restart-now re-create (or a /worktrees
-// re-create, or an /effort fork) FAILED. Distinct from client.ConnectErrMsg (which
-// is terminal): its reducer (updateLifecycle) leaves the app RECOVERABLE — idle with
-// no session, a loud error status naming the failed model, and enter-to-retry armed.
-// model is the human label of the model that failed (for the status); err is the
-// create error. viaFork + sourceID record the /effort fork origin (the fork's SOURCE
-// session — still open) so the enter-retry re-fires the FORK from that source,
-// preserving the transcript, instead of the create-fresh + resetSession restart path
-// (which would wipe it — the exact thing the fork-resume switch exists to prevent).
-// Zero for the /models + /worktrees failures, whose retry re-creates fresh (their
-// old session is already gone).
+// restartFailedMsg reports that a /models or /worktrees restart-now re-create
+// FAILED. Distinct from client.ConnectErrMsg (which is terminal): its reducer
+// leaves the app RECOVERABLE — idle with no session, a loud error status naming
+// the failed model, and enter-to-retry armed.
+// model is the human label for the status; err is the create error.
 type restartFailedMsg struct {
-	err      error
-	model    string
-	viaFork  bool   // the failure came from the /effort fork (retry must re-fork, not re-create)
-	sourceID string // viaFork only: the fork's SOURCE session id (still open; the retry re-forks from it)
+	err   error
+	model string
 }
 
 // modelSelLabel is the human label for a selection used in the restart-failure

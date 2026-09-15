@@ -2,22 +2,19 @@
 sidebar_position: 11
 title: API stability
 description:
-  Understand the engine API contract, versioning rules, and compatibility
-  checks.
+  See which Mecatl engine APIs are stable and how compatibility checks enforce
+  the contract.
 ---
 
 # API stability
 
-`github.com/stacklok/mecatl/engine` is the importable core of Mecatl (ADR 0036).
-It ships as its own Go module with a small dependency closure (`doublestar`,
-`robfig/cron/v3`, `github.com/goccy/go-yaml`, `x/net`, `x/sync`, and
-`mvdan.cc/sh/v3`; test-only `goleak`) so external consumers do not pull Mecatl's
-full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what
-the public surface covers, what is explicitly excluded, how changes are
-versioned, and how the three enforcement gates catch accidental breaks before
-they reach a consumer.
+Mecatl protects the exported API of its importable Go engine with committed API
+snapshots, a standalone module build, and architecture tests. These checks make
+surface changes visible before they reach an embedding application.
 
----
+The engine ships as the separate Go module
+`github.com/stacklok/mecatl/engine`. Importing it does not pull in provider SDKs,
+gRPC, the terminal UI, or Kubernetes dependencies.
 
 ## The stable surface
 
@@ -25,56 +22,40 @@ The contract covers the **exported identifiers** of eight core packages:
 
 |Package|Role|
 |-|-|
-|`engine/session`|the `Session` aggregate, value objects, the event taxonomy|
-|`engine/governance`|permission `Effect`/`Scope`/`Rule` + `Evaluator`, hook event types|
-|`engine/learning`|evidence-backed reflection and learned-skill lifecycle contracts|
-|`engine/tool`|`Tool`/`Catalog`, `FileSystem`/`Workspace`, source port interfaces|
-|`engine/prompt`|two-layer prompt assembly + discovery ports|
-|`engine/port`|the port interfaces the agent loop consumes|
-|`engine/team`|the agent-team domain|
-|`engine/agent`|the loop, dispatch, delegation tools, the team `Supervisor`|
+|`engine/session`|Sessions, value objects, and events|
+|`engine/governance`|Permission rules, evaluation, and hook event types|
+|`engine/learning`|Evidence reflection and learned-skill lifecycle contracts|
+|`engine/tool`|Tools, the catalog, workspaces, and source interfaces|
+|`engine/prompt`|Prompt assembly and discovery interfaces|
+|`engine/port`|Interfaces consumed by the agent loop|
+|`engine/team`|Agent-team domain types|
+|`engine/agent`|The loop, dispatch, delegation, and team supervision|
 
-Every exported identifier — const, var, func, type, exported method, exported
-struct field — in those packages is part of the contract. The authoritative list
-is `arch.CorePackages` in `engine/arch/surface.go`. The API gate derives its
-guarded set from that constant and asserts equality, so a new core package
-cannot escape the gate and a removed one does not silently linger.
+Every exported constant, variable, function, type, method, and struct field in
+these packages is part of the contract. The API check derives the guarded
+package set from `arch.CorePackages` in `engine/arch/surface.go`.
 
 ### What the snapshot captures
 
-The committed baselines under `engine/api/*.txt` are rendered from `go/types`
-object strings with two refinements:
+The committed baselines under `engine/api/*.txt` capture:
 
-- **Const VALUES are captured**, not just the type. A wire-protocol enum change
-  — an `EventType` string like `EvApproval = "approval"`, or a `StopReason` like
-  `StopBudget = "budget"` — is a real break for any consumer reading the value
-  off the wire. The baseline records the exact value so that change cannot pass
-  silently.
-- **Only exported struct fields are captured.** Unexported fields (mutexes,
-  maps, private sub-structs) are stripped before the snapshot is rendered.
-  Internal layout churn — adding a mutex, reorganizing private state — does not
-  force a baseline update or a CHANGELOG note.
-
-Exported methods and interface methods are enumerated in full.
-
----
+- Constant values as well as their types. This catches changes to wire values
+  such as event types and stop reasons.
+- Exported struct fields. Private fields and internal layout do not affect the
+  compatibility baseline.
+- Exported methods and complete interface method sets.
 
 ## What is explicitly excluded
 
 |Excluded|Reason|
 |-|-|
-|`engine/adapter/*`|Reference adapters: test doubles (`mockllm`, `memfs`, `memstore`, `permpolicy`) and sane defaults (`wallclock`, `nofs`, `sessnap`, `memlease`) plus the `*conformance` suites. These ship as offline test infrastructure and default wiring, not as a stable API. Note: the conformance suites' real contract is the port interfaces in `engine/port` and `engine/tool`, which ARE guarded — the suites merely exercise them.|
+|`engine/adapter/*`|Reference adapters, test doubles, and conformance suites. Their interfaces in `engine/port` and `engine/tool` are guarded, but adapter implementations can change in a minor release.|
 |`engine/arch`|Test-support only: the layering proofs and the `arch.CorePackages` list.|
 |Root module (`internal/`, `cmd/`, `contracts/`, `perf/`)|Outside the engine module boundary (ADR 0036). No external compatibility promise applies.|
 
-The `engine/adapter/*` exclusion matters in practice: if you embed Mecatl, you
-may use `engine/adapter/mockllm` and `engine/adapter/memfs` in your own tests,
-but you should treat them as a convenience, not a stable dependency. Their
-signatures can change in any minor release. The port interfaces those adapters
-implement — in `engine/port` and `engine/tool` — are what the contract actually
-guarantees.
-
----
+You can use reference adapters such as `mockllm` and `memfs` in tests, but treat
+them as conveniences rather than stable dependencies. Build production
+integrations against the guarded interfaces.
 
 ## Versioning discipline
 
@@ -86,25 +67,21 @@ container-image tags are separate.
 
 |Release type|Tag grammar|When used|
 |-|-|-|
-|Minor|`engine/v0.Y+1.0`|Additive changes (new exported identifiers) **and** breaking changes. Pre-v1 SemVer permits breaking changes in a minor bump; every break must be CHANGELOG-noted and classified.|
+|Minor|`engine/v0.Y+1.0`|Additive and breaking API changes. Every breaking change must be classified in the changelog.|
 |Patch|`engine/v0.Y.Z+1`|Bug fixes with no surface change.|
 
 ### v1.0.0 and beyond
 
-`engine/v1.0.0` is cut once the `engine/port` set settles and the external
-integration experience is stable. From that point, a breaking change requires a
-major bump per strict SemVer.
+After `engine/v1.0.0`, a breaking change requires a major version bump.
 
-:::note[Classification in the CHANGELOG]
+:::note[Changelog classification]
 
-`engine/CHANGELOG.md` uses Keep a Changelog conventions. Every entry is
-classified per `engine/COMPATIBILITY.md`: **Added** = minor bump; **Changed**,
-**Deprecated**, or **Removed** = breaking (which is still a minor bump while
-v0.x).
+`engine/CHANGELOG.md` follows Keep a Changelog. `engine/COMPATIBILITY.md`
+classifies **Added** as a minor change and **Changed**, **Deprecated**, or
+**Removed** as breaking. Breaking changes still use a minor release while the
+module is at v0.x.
 
 :::
-
----
 
 ## The three enforcement gates
 
@@ -125,151 +102,100 @@ flowchart LR
 
 ### 1. `api-compat` (`task api:check`)
 
-Loads the eight core packages with `go/packages`, renders each one's exported
-surface to the stable text format described above, and diffs against the
-committed baselines in `engine/api/*.txt`. Any drift — a new field, a renamed
-method, a changed const value, a removed type — fails with a human-readable
-diff. The check runs as a named `api-compat` CI job for a clear signal, and also
-as part of the normal `task test` sweep.
-
-The dumper lives in the root module (`internal/apicheck`) so the engine `go.mod`
-stays free of `go/tools` — importing `go/packages` would bloat the engine's
-dependency closure for every consumer.
+Compares the exported surface of all eight packages with the committed
+`engine/api/*.txt` baselines. A new field, renamed method, changed constant, or
+removed type fails with a readable diff. The check runs as the `api-compat` CI
+job and as part of `task test`.
 
 ### 2. Engine-standalone build (`task test:engine-standalone`)
 
-Runs `cd engine && GOWORK=off go build ./...` and `go test ./...` with the
-workspace disabled. With `GOWORK=off`, the engine resolves against its own
-`engine/go.mod` and `engine/go.sum` alone — exactly the view an external
-`go get github.com/stacklok/mecatl/engine` consumer would get.
-
-This gate catches two classes of problem: a stray engine → host-repo import
-(which the depguard allowlist and the DAG test also catch, but the module
-boundary provides a third enforcement layer), and a missing or inconsistent
-entry in `engine/go.sum`.
+Builds and tests `engine/` with `GOWORK=off`. This reproduces the view of an
+external application that imports the module. It catches imports from the host
+repository and missing or inconsistent module checksums.
 
 ### 3. `layering_test` (`engine/arch/layering_test.go`)
 
-Enforces the inward-only dependency rule across the whole import graph:
-transitive direction + cycle detection. This is the check that neither the
-per-file depguard allowlist (which does not understand transitivity) nor the
-module boundary alone can fully express. It also owns `arch.CorePackages` — the
-single source of truth for the guarded package set — and asserts that the
-`engine/api/*.txt` baseline set matches it exactly.
-
----
+Enforces inward-only dependencies, transitive direction, and cycle detection
+across the engine import graph. It also confirms that the guarded package set
+matches the API snapshots.
 
 ## Consumer workflow for an intentional break
 
 When you change a core package's exported API on purpose:
 
-1. Run `task api:check` locally (or let CI tell you). The gate fails with a
-   readable surface diff identifying exactly what changed.
-2. Run **`task api:update`** to regenerate the `engine/api/*.txt` baselines.
-3. **Commit** the changed `engine/api/*.txt` files alongside your code change.
-4. Add an entry to **`engine/CHANGELOG.md`** under `## [Unreleased]`, classified
-   per `engine/COMPATIBILITY.md` (Added = minor; Changed/Deprecated/Removed =
-   breaking).
-5. In the PR, the reviewer sees the readable `.txt` diff and the CHANGELOG
-   classification together. The break is deliberate, reviewed, and recorded —
-   never silent.
+1. Run `task api:check` and review the surface diff.
+1. Run `task api:update` to regenerate `engine/api/*.txt`.
+1. Commit the updated snapshots with the code change.
+1. Add an entry under `## [Unreleased]` in `engine/CHANGELOG.md`, classified
+   according to `engine/COMPATIBILITY.md`.
+1. Review the snapshot diff and changelog classification together in the pull
+   request.
 
 See
 [`engine/CHANGELOG.md`](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md)
-for the current state of the unreleased surface and the history of versioned
-changes. Recent examples: `v0.4.0` added `session.Usage.ReasoningTokens`;
-`v0.3.0` added the guardrail approve-once seam
-(`governance.HookOutcome.AskApproval`, `session.PendingAsk.HookOriginated`,
-`port.HookApprovalLearner`); `v0.1.0` **removed**
-`agent.WithWritableChildForker` and `agent.WithSubagentAutoMerge` (a breaking
-change, CHANGELOG-classified accordingly, once the writable Subagent moved to
-direct-write per ADR 0077).
+for the current unreleased changes and version history.
 
 :::note[Go minor-version toolchain bumps]
 
-The `go/types` object strings the gate renders are stable across Go **patch**
-versions. A Go **minor** version bump may reformat them. When that happens, a
-one-time `task api:update` reseeds the baselines — that regeneration is NOT an
-API change and does not require a CHANGELOG entry.
+The rendered object strings are stable across Go patch versions. A Go minor
+version can reformat them. If that happens, run `task api:update` once to reseed
+the baselines. A formatting-only regeneration does not require a changelog
+entry.
 
 :::
 
----
-
 ## Event-sourced `Load` contract
 
-Mecatl persists a session as a snapshot (`engine/adapter/sessnap`). A host whose
-system of record is an append-only event log may instead implement
-`port.SessionStore.Load` by folding its event stream into a `*session.Session`.
-The reference implementation is `engine/adapter/eventsource.Fold`; ADR 0038
-records the design decision.
+Mecatl normally persists a session as a snapshot. A host that uses an
+append-only event log as its system of record can implement
+`port.SessionStore.Load` by folding events into a `*session.Session`. The
+reference implementation is `engine/adapter/eventsource.Fold`.
 
-### What a fold MUST populate vs. what is safe to lose
+### Required reconstruction
 
 |Field|Round-trip obligation|Event source|
 |-|-|-|
-|`Conversation` (user prompts, assistant text, tool calls, tool results — tool-pairing-valid)|**MUST**|`EvUserPrompt` (user-role turns — genuine prompt + harness continuations), `EvMessageDelta` (assistant text), `EvToolCall`, `EvToolResult`; pre-compaction head from `EvCompactionArchive`|
-|`State` (idle / running / awaiting / completed / failed / cancelled)|**MUST**|Derived from the terminal `EvResult.Stop`; a trailing unanswered `EvPermissionAsk` → awaiting; no terminal → idle|
-|Recorded stop reason|**MUST**|`EvResult.Stop`|
-|`PendingAsk` (when awaiting)|**MUST**|The trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult`|
-|Cumulative `Usage`|**MUST**|The **sum** of every per-run `EvResult.Usage` (each is per-run; the token-budget brake reads the cumulative aggregate)|
-|Title, title provenance, title generation, and title revision|**MUST**|Authoritative values from `eventsource.SessionMeta`; an empty legacy title falls back to the first genuine `EvUserPrompt`|
-|Creation metadata: id, mode, limits, exact `EnvironmentRef`, placement metadata, profile, provider/model selector, reasoning effort, session kind and relationship, owner, authority, external binding, createdAt|**MUST** (supplied out-of-band)|**Not in any event** — provided by the caller via `eventsource.SessionMeta`|
-|`Counters` (turns / tool calls / consecutive failures)|Run-scoped — reflect the latest run segment (reset on `Reopen`)|`EvTurnStart` (turns), `EvToolResult` (tool calls, consecutive failures)|
-|Run plumbing: diagnostics binding, askID serials, context|Safe to lose — rebuilt fresh|n/a|
+|`Conversation` with valid tool-call pairing|Required|`EvUserPrompt`, `EvMessageDelta`, `EvToolCall`, `EvToolResult`, and the pre-compaction head from `EvCompactionArchive`|
+|`State`|Required|The terminal `EvResult.Stop`; an unanswered `EvPermissionAsk` means awaiting, and no terminal event means idle|
+|Recorded stop reason|Required|`EvResult.Stop`|
+|`PendingAsk` while awaiting approval|Required|The trailing `EvPermissionAsk` with no following `EvApproval` or `EvResult`|
+|Cumulative `Usage`|Required|The sum of every per-run `EvResult.Usage`|
+|Title metadata|Required|Authoritative values from `eventsource.SessionMeta`; an empty legacy title falls back to the first client `EvUserPrompt`|
+|Creation metadata|Required, supplied separately|`eventsource.SessionMeta`|
+|Run counters|Latest run segment only|`EvTurnStart` and `EvToolResult`|
+|Diagnostics binding, ask ID serials, and context|Rebuilt at runtime|Not event-backed|
 
-**Creation metadata is not in events.** No event carries the session id, limits,
-exact environment identity, placement metadata, profile, provider/model
-selector, reasoning effort, title metadata, identity labels, or creation
-timestamp. There is deliberately no `EvSessionCreated` event (ADR 0038 notes it
-as a possible future extension). The caller who created the session supplies
-this data alongside the stream via `eventsource.SessionMeta`.
+Events do not contain creation metadata such as the session ID, limits,
+environment identity, profile, provider, model, owner, or creation time. The
+caller must supply this data through `eventsource.SessionMeta`.
 
-User-role turns — both the genuine client prompt and harness-authored synthetic
-continuations (no-progress nudge, background-pending nudge,
-background-completion notice) — are event-carried via the log-only
-`EvUserPrompt` event. A fold therefore reconstructs the complete conversation in
-stream order.
+`EvUserPrompt` carries client prompts and harness-generated continuations, so a
+fold can reconstruct the conversation in stream order. Its `synthetic` field is
+server-authored origin metadata for replay clients only — `true` identifies a
+harness continuation, absent/false means genuine or legacy-unknown — and a
+fold does not consult it: the reconstructed conversation is the same either
+way.
 
 ### Replay-fidelity limitation
 
-The conversation a fold rebuilds is complete **except for provider-private
-opaque replay fields**. Three fields reach the conversation only via
-`session.Session.RecordAssistant` in the agent loop and are never emitted on the
-event stream:
+The event stream does not contain three provider-private replay fields:
 
-- `Message.Reasoning` — the provider reasoning replay blob (OpenAI encrypted
-  reasoning content; Anthropic `(thinking, signature)`)
-- `Message.ProviderPhase` — the OpenAI Responses phase marker
-- `ToolCall.ItemID` — the provider-assigned item id
+- `Message.Reasoning`, the provider reasoning replay blob
+- `Message.ProviderPhase`, the OpenAI Responses phase marker
+- `ToolCall.ItemID`, the provider-assigned item ID
 
-The `EvReasoningDelta` event carries a human-readable reasoning summary; the
-loop deliberately never places that on `Message.Reasoning`, and a fold must not
-either.
+`EvReasoningDelta` contains a readable summary, not the opaque replay value. A
+fold must not place it in `Message.Reasoning`.
 
-A session reconstructed by folding Mecatl's own event stream is therefore
-**byte-identical-replay faithful only for providers that do not use those
-fields**. It replays cleanly for plain-chat providers (e.g. the mock provider)
-but not for a reasoning provider whose `Reasoning`/`ProviderPhase`/`ItemID`
-would be empty where the snapshot carries them. This is why Mecatl's own resume
-uses the snapshot, which carries those fields. A fold is the right
-implementation for event-log-SoR hosts that accept this boundary or carry those
-fields in their own richer event schema. It is a documented contract limitation,
-not a bug.
+A folded session provides byte-identical replay only for providers that do not
+use these fields. Mecatl resumes its own sessions from snapshots, which retain
+them. Event-log systems that need reasoning-provider replay must store the
+opaque values in a richer event schema.
 
----
+## Next steps
 
-## What's next
-
-- [Embed the engine](/building/deployment/embed-engine.md) —
-  `go get github.com/stacklok/mecatl/engine`, its small dependency closure, and
-  what's importable.
-- [The agent loop](/building/what-you-get/agent-loop.md) — how the engine runs
-  turns, dispatches tools, and emits the event stream.
-- [Extension points](/building/extension-points/index.md) — implement a port
-  interface (`port.LLMProvider`, `port.SessionStore`, `port.PermissionPolicy`,
-  and others) to replace any capability.
-- [Deployment decision](/building/getting-started/deployment-decision.md) —
-  choosing between `mecated` and the embedded engine library.
-- [`engine/CHANGELOG.md`](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md)
-  — the full history of versioned API changes.
+- [Embed the engine](/building/deployment/embed-engine.md) in a Go service.
+- [Implement extension points](/building/extension-points/index.md) against the
+  guarded interfaces.
+- [Review the engine changelog](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md)
+  for versioned API changes.

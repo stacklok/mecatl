@@ -14,7 +14,7 @@
   ┃    ⊘ task-3 · review · pending · — · deps:task-2                                             ┃
   ┃    ○ task-4 · lint · pending · — · deps:—                                                    ┃
   ┃                                                                                              ┃
-  ┃  t roster · esc close                                                                        ┃
+  ┃  t roster · esc close · ↑/↓ scroll · pgup/pgdn · home/end                                    ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

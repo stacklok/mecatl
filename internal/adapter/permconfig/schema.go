@@ -522,9 +522,9 @@ type MCPOAuthProfile struct {
 	Upstream *MCPOAuthUpstreamProfile `yaml:"upstream"`
 	// Client selects exactly one preregistered, CIMD, or DCR client declaration.
 	Client MCPOAuthClientProfile `yaml:"client"`
-	// Scopes is the non-empty allowlist of OAuth scopes the client may request.
+	// Scopes is the non-empty OAuth scope allowlist, except direct/global DCR may omit it and uses exactly openid.
 	Scopes []string `yaml:"scopes"`
-	// RequestRefreshToken asks the authorization server for refresh capability.
+	// RequestRefreshToken asks the authorization server for refresh capability; direct/global DCR defaults false and rejects true.
 	RequestRefreshToken bool `yaml:"request_refresh_token"`
 	// Credentials selects one global-mode local or environment credential source and is forbidden in broker mode.
 	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
@@ -595,7 +595,7 @@ type MCPOAuthClientProfile struct {
 	Preregistered *MCPPreregisteredClientProfile `yaml:"preregistered"`
 	// CIMD declares an HTTPS client-id metadata document URL.
 	CIMD *MCPCIMDClientProfile `yaml:"cimd"`
-	// DCR declares an RFC 8414 metadata URL for RFC 7591 registration.
+	// DCR selects dynamic registration: direct/global profiles require an empty payload, discover from issuer, and use omitted scopes as openid; broker profiles require discovery_url and nonempty scopes. Ready direct-DCR identity drift is reset-required and uses --reset-dcr-registration; pending identity drift is pending-identity-mismatch and cannot reset or retry until the matching profile, principal, canonical resource, and exact issuer are restored. Corrupt direct-DCR state is not resettable: preserve its records and configuration without editing, deleting, or renaming them, then contact the deployment operator or support team with only the server name and redacted command error—never credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response.
 	DCR *MCPDCRClientProfile `yaml:"dcr"`
 }
 
@@ -613,9 +613,9 @@ type MCPCIMDClientProfile struct {
 	DocumentURL string `yaml:"document_url"`
 }
 
-// MCPDCRClientProfile contains the HTTPS RFC 8414 discovery document URL.
+// MCPDCRClientProfile carries broker-only RFC 8414 discovery metadata; direct/global DCR requires an empty payload.
 type MCPDCRClientProfile struct {
-	// DiscoveryURL is the required HTTPS authorization-server metadata URL.
+	// DiscoveryURL is required for broker DCR and forbidden for direct/global DCR, which discovers from issuer instead.
 	DiscoveryURL string `yaml:"discovery_url"`
 }
 
@@ -731,7 +731,7 @@ func (s *MCPServerProfile) UnmarshalYAML(node ast.Node) error {
 				return errors.New("mcp.servers[].auth.oauth.client.cimd.document_url origin must match the issuer or resource origin, or appear in mcp.servers[].auth.oauth.network.additional_origins")
 			}
 		}
-		if client := s.Auth.OAuth.Client.DCR; client != nil {
+		if client := s.Auth.OAuth.Client.DCR; client != nil && client.DiscoveryURL != "" {
 			discovery, _ := url.Parse(client.DiscoveryURL)
 			if _, ok := allowed[mcpURLOrigin(discovery)]; !ok {
 				return errors.New("mcp.servers[].auth.oauth.client.dcr.discovery_url origin must match the issuer or resource origin, or appear in mcp.servers[].auth.oauth.network.additional_origins")
@@ -802,8 +802,8 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 	if o.Upstream != nil && o.Upstream.Mode == mcpOAuth2Mode && mappingHasKey(node, "issuer") {
 		return errors.New("mcp.servers[].auth.oauth.issuer is forbidden for oauth2 upstream")
 	}
-	if err := o.validateDCRUpstream(node); err != nil {
-		return err
+	if len(o.Scopes) == 0 && o.Client.Mode != "dcr" {
+		return errors.New("mcp.servers[].auth.oauth.scopes is required")
 	}
 	if o.Profile != "" {
 		if err := validateMCPSafeValue("mcp.servers[].auth.oauth.profile", o.Profile); err != nil {
@@ -820,9 +820,6 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 			return err
 		}
 	}
-	if len(o.Scopes) == 0 {
-		return errors.New("mcp.servers[].auth.oauth.scopes is required")
-	}
 	for _, scope := range o.Scopes {
 		if err := validateMCPSafeValue("mcp.servers[].auth.oauth.scopes[]", scope); err != nil {
 			return err
@@ -830,19 +827,6 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 	}
 	if o.Network == nil {
 		return errors.New("mcp.servers[].auth.oauth.network is required")
-	}
-	return nil
-}
-
-func (o *MCPOAuthProfile) validateDCRUpstream(node ast.Node) error {
-	if o.Client.Mode != "dcr" {
-		return nil
-	}
-	if o.Upstream == nil || o.Upstream.Mode != mcpOAuth2Mode || o.Upstream.OAuth2 == nil {
-		return errors.New("mcp.servers[].auth.oauth.client.dcr requires an explicit oauth2 upstream")
-	}
-	if mappingHasKey(node, "issuer") {
-		return errors.New("mcp.servers[].auth.oauth.issuer is forbidden for dcr client")
 	}
 	return nil
 }
@@ -973,10 +957,14 @@ func (c *MCPDCRClientProfile) strictFields() map[string]any {
 	return map[string]any{"discovery_url": &c.DiscoveryURL}
 }
 
-// UnmarshalYAML strictly decodes an HTTPS RFC 8414 discovery document URL.
+// UnmarshalYAML strictly decodes the shared DCR payload. Direct authority uses
+// an empty mapping; broker authority requires and validates discovery_url later.
 func (c *MCPDCRClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client.dcr", c.strictFields()); err != nil {
 		return err
+	}
+	if !mappingHasKey(node, "discovery_url") {
+		return nil
 	}
 	u, err := validateMCPHTTPURL("mcp.servers[].auth.oauth.client.dcr.discovery_url", c.DiscoveryURL, true)
 	if err != nil {

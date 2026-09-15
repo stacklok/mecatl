@@ -13,7 +13,7 @@
   ┃    searching for the failing path                                                            ┃
   ┃    ✓ Grep — 3 matches in dispatch.go                                                         ┃
   ┃                                                                                              ┃
-  ┃  esc back                                                                                    ┃
+  ┃  esc back · ↑/↓ scroll · pgup/pgdn · home/end                                                ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

@@ -17,6 +17,20 @@ compaction, engine introspection, session echoes, model listings, per-session en
 and provider-bound children. The operator-owned exact-map decision is recorded in
 [ADR 0207](../adr/0207-context-window-overrides.md).
 
+The positive 128K engine fallback is not used speculatively while initial live
+metadata for the effective model is still unsettled. After the service resolves
+the actual shared/per-session and mode-routed engine, run admission invokes a
+composition callback before prompt recording, retry preparation, approval
+resumption, compaction, or inference. `internal/app/livemeta.go` owns a close-once
+settlement channel on the existing live metadata store; admission waits on that
+channel with the caller context and the existing ten-second refresh bound. A
+known override, exact configured value, live value, or catalog value bypasses the
+wait. Discovery failure or an honest empty inventory yields the retryable
+`context_window_unavailable` server error; a later run reuses the bounded stale
+refresh path. A successful listing that omits a passthrough model/window, and a
+provider with no lister, retain the settled unknown-model fallback. This
+pre-compaction safety decision is recorded in [ADR 0342](../adr/0342-context-window-admission.md).
+
 - **`TokenCounter`** (`engine/agent/tokencount.go`) estimates model-visible request
   cost. The default `HeuristicTokenCounter` (about chars/4) needs no dependencies;
   the offline **`tokenizer.Counter`** (`internal/adapter/tokenizer/tokenizer.go`,

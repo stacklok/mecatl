@@ -39,6 +39,26 @@ const (
 	Tier4SummaryMarker      = "[earlier turns summarised]"
 )
 
+// NoProgressNudgeText is the GENTLE continuation the loop injects as a new user
+// message on the early no-progress attempt(s) (see engine/agent/loop.go
+// finishTurnNoTools). NoProgressExtractiveNudgeText is the FINAL no-progress
+// nudge injected on the last attempt before give-up. Both are harness-authored
+// continuations, not real user instructions, so IsGenuineUserPrompt excludes
+// them. Promoted here for the same reason as CompactionSummaryMarker/
+// Tier4SummaryMarker: the domain leaf needs the literal to classify against,
+// and engine/agent (which emits them) can import engine/session but not the
+// reverse. engine/agent/loop.go references these exported names rather than
+// keeping its own copies — do not let the two fall out of sync.
+const (
+	NoProgressNudgeText = "Please continue. Make concrete progress on the task using your tools, " +
+		"or — if you are blocked or believe the task is complete — say so explicitly in a short message."
+	NoProgressExtractiveNudgeText = "Stop investigating now and do not run any " +
+		"more commands or tools. Using only the information you have already gathered, " +
+		"write your best final answer to the original task as a direct message now, even " +
+		"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
+		"steps; deliver what you have."
+)
+
 // TitleProvenance records who last authored a session title. The zero value is
 // legacy/unknown so snapshots written before provenance was introduced fail closed.
 type TitleProvenance string
@@ -113,8 +133,8 @@ func IsSynthesisedSummary(text string) bool {
 
 // IsGenuineUserPrompt reports whether m is a GENUINE user instruction — the thing
 // the title fallback and the event-sourced Fold anchor a session label on — as
-// opposed to a harness-authored RoleUser synthesised compaction summary. It is
-// m.Role == RoleUser && !IsSynthesisedSummary(m.Text).
+// opposed to a harness-authored RoleUser compaction summary, no-progress nudge,
+// or background notice. Empty-text and multimodal user messages remain genuine.
 //
 // It deliberately does NOT check prompt.IsInjectedTurn0Fragment: the domain leaf
 // cannot import engine/prompt, and as of ADR 0043 the turn-0 fragments are
@@ -125,7 +145,59 @@ func IsSynthesisedSummary(text string) bool {
 // defense-in-depth for legacy history; this domain predicate is for the persisted
 // read path and is correct without it.
 func IsGenuineUserPrompt(m Message) bool {
-	return m.Role == RoleUser && !IsSynthesisedSummary(m.Text)
+	if m.Role != RoleUser || IsSynthesisedSummary(m.Text) {
+		return false
+	}
+	if m.Text == NoProgressNudgeText || m.Text == NoProgressExtractiveNudgeText {
+		return false
+	}
+	return !isHarnessBackgroundNotice(m.Text)
+}
+
+func isHarnessBackgroundNotice(text string) bool {
+	if !strings.HasPrefix(text, "[harness note: ") || !strings.HasSuffix(text, "]") {
+		return false
+	}
+	return strings.Contains(text, " background subagent(s) finished: ") ||
+		strings.Contains(text, " background command(s) finished: ") ||
+		strings.Contains(text, " background subagent(s) still running: ") ||
+		strings.Contains(text, " background command(s) still running: ")
+}
+
+// ActivityState is the content-free activity classification of persisted history.
+type ActivityState string
+
+const (
+	// ActivityUnknown is reserved for unavailable or unproved discovery metadata.
+	ActivityUnknown ActivityState = ""
+	// ActivityDraft means the history has no genuine user prompt.
+	ActivityDraft ActivityState = "draft"
+	// ActivityActive means the history has at least one genuine user prompt.
+	ActivityActive ActivityState = "active"
+)
+
+// ActivityOf classifies successfully decoded conversation history. It is pure and
+// deliberately uses the persisted-history genuine-user predicate, so harness-authored
+// compaction summaries do not activate an otherwise empty draft.
+func ActivityOf(messages []Message) ActivityState {
+	for _, message := range messages {
+		if IsGenuineUserPrompt(message) {
+			return ActivityActive
+		}
+	}
+	return ActivityDraft
+}
+
+// ValidActivity clamps a decoded or wire-carried ActivityState to the closed
+// {draft, active} set, treating anything else (corrupt, legacy, or a future
+// value this build doesn't recognize) as Unknown. It is the ONE fail-closed
+// validity rule for the type — storage/driver adapters call it instead of each
+// re-deriving the same allow-list check independently.
+func ValidActivity(a ActivityState) ActivityState {
+	if a == ActivityDraft || a == ActivityActive {
+		return a
+	}
+	return ActivityUnknown
 }
 
 // ClampTitle trims and normalizes whitespace, then, if the rune count exceeds

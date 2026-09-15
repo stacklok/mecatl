@@ -257,6 +257,7 @@ spec:
               scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
               path: /readyz
               port: http
+            timeoutSeconds: 3
             periodSeconds: 5
             failureThreshold: 30
           readinessProbe:
@@ -264,13 +265,17 @@ spec:
               scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
               path: /readyz
               port: http
+            timeoutSeconds: 3
             periodSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
               path: /healthz
               port: http
+            timeoutSeconds: 1
             periodSeconds: 20
+            failureThreshold: 3
           lifecycle:
             preStop:
               httpGet:

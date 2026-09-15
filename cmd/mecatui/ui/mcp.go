@@ -129,8 +129,8 @@ func mcpActive(m Model) *mcpState {
 }
 
 // brokerMCPSetupState projects the existing controller after Model validation.
-// A resumed/rebound transcript is not positive proof of pre-prompt eligibility;
-// catalogue facts may exclude Connect but never establish that eligibility.
+// A stable owner-authorized idle session may explicitly refresh regardless of
+// inventory/catalogue state; those facts never prove live connectivity.
 type brokerMCPSetupState struct {
 	eligible bool
 	pending  bool
@@ -142,8 +142,7 @@ type brokerMCPSetupState struct {
 func (m Model) brokerMCPSetupState() brokerMCPSetupState {
 	return brokerMCPSetupState{
 		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "" &&
-			m.phase == phaseIdle && m.freshSessionBinding && m.conv.isEmpty() &&
-			m.sessionState == sessionStateIdle && m.enrollment.Status != client.WorkspaceEnrollmentConnected,
+			m.phase == phaseIdle && m.sessionState == sessionStateIdle,
 		pending: m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
 		busy:    m.enrollment.busy,
 		gen:     m.enrollment.controlGen,
@@ -152,8 +151,8 @@ func (m Model) brokerMCPSetupState() brokerMCPSetupState {
 }
 
 func (s *mcpState) canConnect() bool {
-	return s.brokerMode && !s.loading && !s.refreshing && s.errMsg == "" && s.setup.eligible &&
-		!s.setup.pending && !s.setup.busy && s.inventory.Availability == "available" && s.inventory.EnrollmentState == "not_started"
+	return s.brokerMode && !s.loading && !s.refreshing && s.setup.eligible &&
+		!s.setup.pending && !s.setup.busy
 }
 
 func (m Model) syncMCPSetup() {

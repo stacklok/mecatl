@@ -13,7 +13,7 @@
   ┃    scout · the cache key omits the tenant id                                                 ┃
   ┃    lead · fix applied; tests green                                                           ┃
   ┃                                                                                              ┃
-  ┃  f roster · esc close                                                                        ┃
+  ┃  f roster · esc close · ↑/↓ scroll · pgup/pgdn · home/end                                    ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

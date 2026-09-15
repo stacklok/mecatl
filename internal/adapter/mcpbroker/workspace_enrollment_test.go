@@ -231,6 +231,126 @@ func TestWorkspaceEnrollmentCancelClearsBundleState(t *testing.T) {
 	}
 }
 
+// TestResetWorkspaceEnrollmentWithdrawsCompletedCatalogue proves
+// ResetWorkspaceEnrollment against the REAL Attachment (not an interface
+// fake): it must clear the completed enrollment, withdraw the discovered
+// broker route AND the static declared protected route (ADR 0335's "Static
+// declared-tool behavior during destructive replacement"), and leave the
+// attachment able to mint a fresh enrollment afterward.
+func TestResetWorkspaceEnrollmentWithdrawsCompletedCatalogue(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"unused","token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"github": {Backend: "github", Tools: []ToolDefinition{
+			{Backend: "github", Name: "mcp__github__list_issues", Description: "list", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true},
+		}},
+	}}
+	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, queries, "github")
+	attached, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment := attached.(*Attachment)
+	enroller := attached.(contract.WorkspaceEnrollmentAttachment)
+
+	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(presentation.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.handleCallback(t.Context(), "auth-code", parsed.Query().Get("state")); err != nil {
+		t.Fatalf("handleCallback: %v", err)
+	}
+	connected, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+	if err != nil || connected.Status != contract.WorkspaceEnrollmentConnected {
+		t.Fatalf("observe after grant = (%+v, %v)", connected, err)
+	}
+	if got := toolNames(attachment.Tools()); len(got) != 2 {
+		t.Fatalf("tools before reset = %v, want anonymous + discovered", got)
+	}
+
+	if err := enroller.ResetWorkspaceEnrollment(t.Context()); err != nil {
+		t.Fatalf("ResetWorkspaceEnrollment = %v", err)
+	}
+
+	attachment.logical.mu.RLock()
+	completed := attachment.logical.completedEnrollment
+	attachment.logical.mu.RUnlock()
+	if completed != nil {
+		t.Fatalf("completedEnrollment survived reset: %+v", completed)
+	}
+	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status"}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("tools after reset = %v, want only the static declaration %v", got, want)
+	}
+
+	// A fresh Begin after reset mints a new transaction rather than rejecting on
+	// the withdrawn completed enrollment.
+	restarted, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	if err != nil || restarted.Ref.ID == presentation.Ref.ID {
+		t.Fatalf("restart after reset = (%+v, %v)", restarted, err)
+	}
+}
+
+// TestResetWorkspaceEnrollmentLockOrderMatchesRefreshPath is a regression test
+// for a lock-order inversion: ResetWorkspaceEnrollment used to take
+// logical.mu before a.mu, the reverse of every other method that holds both
+// (Commit, Abort, beginOperation, freezeAuthenticatedCatalogue, and
+// RefreshGrantedAuthorizationCatalogue, which all take a.mu outer and
+// logical.mu inner). Two goroutines racing the two orders deadlock; this test
+// reproduces that race directly against the real mutexes rather than the full
+// RefreshGrantedAuthorizationCatalogue call, which needs a live granted
+// non-bundle authorization to reach its lock.
+func TestResetWorkspaceEnrollmentLockOrderMatchesRefreshPath(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer tokenServer.Close()
+	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github")
+	attached, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment := attached.(*Attachment)
+	enroller := attached.(contract.WorkspaceEnrollmentAttachment)
+
+	// Hold a.mu the way RefreshGrantedAuthorizationCatalogue does while it
+	// still needs logical.mu.
+	attachment.mu.Lock()
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- enroller.ResetWorkspaceEnrollment(t.Context()) }()
+	time.Sleep(20 * time.Millisecond) // let Reset reach its first lock attempt
+
+	logicalLocked := make(chan struct{})
+	go func() {
+		attachment.logical.mu.Lock()
+		defer attachment.logical.mu.Unlock()
+		close(logicalLocked)
+	}()
+
+	select {
+	case <-logicalLocked:
+	case <-time.After(2 * time.Second):
+		attachment.mu.Unlock()
+		t.Fatal("logical.mu unavailable while holding a.mu: ResetWorkspaceEnrollment's lock order regressed to logical.mu-outer")
+	}
+
+	attachment.mu.Unlock()
+
+	select {
+	case err := <-resetDone:
+		if err != nil {
+			t.Fatalf("ResetWorkspaceEnrollment = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ResetWorkspaceEnrollment did not complete")
+	}
+}
+
 func TestWorkspaceEnrollmentUnsupportedWithoutDynamicBackend(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer tokenServer.Close()
