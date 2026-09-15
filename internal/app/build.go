@@ -5136,6 +5136,19 @@ func validToolhiveLLMMode(mode string) bool {
 	return false
 }
 
+// validateDefaultProvider keeps the deployment-wide provider fail-fast contract
+// shared by startup and providers set-default. Model catalog membership belongs
+// only to startup's --default-model validation.
+func validateDefaultProvider(cfg Config, reg *providerRegistry) error {
+	if cfg.UseMock || (cfg.DefaultProvider == "" && cfg.DefaultModel == "") {
+		return nil
+	}
+	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
+		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
+	}
+	return nil
+}
+
 // (Config.DefaultProvider/DefaultModel — --default-provider/--default-model,
 // issue #21) EXACTLY ONCE at build time (called only from Build, fail-fast as
 // early as possible after the registry exists — the build-once
@@ -5162,11 +5175,11 @@ func validToolhiveLLMMode(mode string) bool {
 // fact says so; otherwise it names the EFFECTIVE resolved pair (with
 // --default-provider only, the model is that provider's builtin).
 func validateDefaultModel(cfg Config, reg *providerRegistry) error {
+	if err := validateDefaultProvider(cfg, reg); err != nil {
+		return err
+	}
 	if cfg.UseMock || (cfg.DefaultProvider == "" && cfg.DefaultModel == "") {
 		return nil
-	}
-	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
-		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
 	}
 	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
 		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())

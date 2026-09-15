@@ -28,7 +28,7 @@ mecatui providers
 |`mecatui providers add NAME`|Define a custom HTTPS provider, API flavor, default model, and authentication.|
 |`mecatui providers login NAME`|Enter or replace the provider's credential.|
 |`mecatui providers logout NAME`|Remove its local OIDC enrollment.|
-|`mecatui providers set-default NAME [MODEL]`|Select the deployment default.|
+|`mecatui providers set-default NAME [MODEL]`|Select the deployment default. A supplied concrete model ID is saved without a live inventory check; availability is verified when the provider is used.|
 |`mecatui providers remove NAME`|Remove a custom provider.|
 |`mecatui providers` or `mecatui providers status`|Show configuration state without credentials.|
 
