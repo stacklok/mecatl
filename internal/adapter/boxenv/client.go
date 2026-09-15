@@ -119,11 +119,12 @@ func (c *apiClient) readFile(ctx context.Context, id, filePath string) ([]byte, 
 		} `json:"file"`
 	}
 	if err := c.request(ctx, http.MethodGet, "/boxes/"+url.PathEscape(id)+"/files", query, nil, &out); err != nil {
-		if isStatus(err, http.StatusNotFound) {
+		if isMissingFileError(err) {
 			return nil, &fs.PathError{Op: "read", Path: filePath, Err: fs.ErrNotExist}
 		}
 		return nil, err
 	}
+
 	var encoded string
 	switch {
 	case out.Content != nil:
@@ -138,6 +139,18 @@ func (c *apiClient) readFile(ctx context.Context, id, filePath string) ([]byte, 
 		return nil, fmt.Errorf("box API: decode file content: %w", err)
 	}
 	return data, nil
+}
+
+func isMissingFileError(err error) bool {
+	if isStatus(err, http.StatusNotFound) {
+		return true
+	}
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return strings.EqualFold(apiErr.code, "enoent") ||
+		strings.Contains(strings.ToLower(apiErr.message), "enoent")
 }
 
 func (c *apiClient) writeFile(ctx context.Context, id, filePath string, data []byte) error {

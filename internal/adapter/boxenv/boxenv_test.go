@@ -295,6 +295,23 @@ func TestReadMissingWrapsFSNotExist(t *testing.T) {
 	}
 }
 
+func TestReadMissingENOENTWrapsFSNotExist(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"code":    "box_direct_failed",
+			"message": "ENOENT: no such file or directory",
+		})
+	}))
+	defer testServer.Close()
+
+	provider := newTestProvider(t, testServer.URL)
+	ws := &Workspace{client: provider.client, boxID: "box-1"}
+	_, err := ws.Read(t.Context(), "missing.txt")
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Read missing = %v, want fs.ErrNotExist", err)
+	}
+}
+
 func sessionRef(id string) session.EnvironmentRef {
 	return session.EnvironmentRef{Kind: Kind, ID: id, Revision: providerVersion}
 }

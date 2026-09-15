@@ -172,5 +172,5 @@ func cleanDirPath(p string) (string, error) {
 }
 
 func isFileMissing(err error) bool {
-	return errors.Is(err, fs.ErrNotExist)
+	return errors.Is(err, fs.ErrNotExist) || isMissingFileError(err)
 }
