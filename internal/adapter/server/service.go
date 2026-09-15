@@ -1244,11 +1244,12 @@ type runState struct {
 	// engine so a delayed relay never snapshots a concurrently-resuming session.
 	// Backend calls admitted before invalidation may still complete.
 	persistMu sync.Mutex
-	// resolvedAskID and cancelSignaled are guarded by persistMu. They close the
+	// resolvedAskID, acceptedApproval, and cancelSignaled are guarded by persistMu. They close the
 	// event-delivery race where a control reaches a detached/background run after
 	// the engine emitted permission.ask but before its relay starts Persist.
-	resolvedAskID  string
-	cancelSignaled bool
+	resolvedAskID    string
+	acceptedApproval *agent.ApprovalResolution
+	cancelSignaled   bool
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
 	// overwriting the already-durable PendingAsk handoff point.
 	preserveDurable atomic.Bool
@@ -5485,6 +5486,12 @@ func (s *Service) resolveRunState(id session.SessionID, st *runState, target *ag
 	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
 		return err
 	}
+	if st.acceptedApproval != nil && st.acceptedApproval.AskID == resolution.AskID {
+		if *st.acceptedApproval == resolution {
+			return nil
+		}
+		return fmt.Errorf("%w: ask was already resolved", agent.ErrApprovalNotPending)
+	}
 	if err := target.ResolveApproval(resolution); err != nil {
 		return err
 	}
@@ -5676,7 +5683,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	}
 	pending, ok := sess.PendingAsk()
 	if !ok || pending.AskID != resolution.AskID {
-		return nil, errors.New("approval ask is unknown, stale, or already resolved")
+		return nil, fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
 	}
 	if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
 		return nil, err
@@ -5708,10 +5715,17 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	st.persistMu.Lock()
+	accepted := resolution
+	st.acceptedApproval = &accepted
+	st.persistMu.Unlock()
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.ResumeApproval(ctx, sess, env, resolution.AskID, resolution.Verdict)
 	})
 	if err != nil {
+		st.persistMu.Lock()
+		st.acceptedApproval = nil
+		st.persistMu.Unlock()
 		return nil, err
 	}
 	promoted = true

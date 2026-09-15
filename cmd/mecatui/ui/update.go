@@ -806,6 +806,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.restoreRefusedApproval(msg.Err) {
+			return m, nil, true
+		}
 		if m.phase == phaseAuthorizing && m.authorization.authorizationID != "" && client.IsMCPAuthorizationPending(msg.Err) {
 			// The parked authorization remains authoritative. The original Converse
 			// stream is done, but its card and automatic polling remain active.
@@ -1037,7 +1040,14 @@ func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
 // updateStreamEvent reduces the per-event stream msgs into the conversation. It
 // is the back half of Update, split out so the cyclomatic complexity of each
 // stays manageable. Unknown msgs are a no-op.
+//
+//nolint:gocyclo // the explicit event reducer preserves refusal-before-settlement ordering.
 func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if refused, ok := msg.(client.ControlRefusedMsg); ok {
+		(&m).restoreControlRefused(refused)
+		return m, nil
+	}
+	m.settleApprovalOnEvent(msg)
 	switch msg := msg.(type) {
 	case client.SessionInitMsg:
 		if m.startupFirstPromptPending {

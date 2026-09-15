@@ -147,11 +147,12 @@ type MCPAuthorizationMsg struct {
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
 // echoed back in ResumeApproval — never inferred from the tool name.
 type PermissionAskMsg struct {
-	AskID     string
-	Tool      string
-	Args      string // raw JSON
-	Reason    string
-	Guardrail *GuardrailApprovalScope
+	AskID         string
+	Tool          string
+	Args          string // raw JSON
+	Reason        string
+	ExpectedRunID string
+	Guardrail     *GuardrailApprovalScope
 }
 
 // GuardrailApprovalScope distinguishes an outbound action approval from release
@@ -517,6 +518,15 @@ type NoProgressMsg struct{ Text string }
 // a transient status line (like NoProgressMsg); it is ABSENT on a cache hit
 // (OpenRouter strips the metadata) — the footer simply doesn't move.
 type ProviderRouteMsg struct{ Text string }
+
+// ControlRefusedMsg identifies the exact submitted approval control the server
+// rejected. Category is a stable machine code; Text is display-only.
+type ControlRefusedMsg struct {
+	AskID    string
+	Category string
+	RunID    string
+	Text     string
+}
 
 // RecoverNoticeMsg is an advisory notice emitted at run start when a session that
 // failed on a PERMANENT provider error is recovered for re-entry. It is rendered as
@@ -1132,7 +1142,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "tool.progress":
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
-		return permissionAskMsg(ev.GetAsk())
+		return permissionAskMsg(ev)
 	case "permission.retract":
 		// The retraction payload rides the same ask field, carrying the AskID only
 		// (server-authored; no tool/args/reason).
@@ -1173,8 +1183,9 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	}
 }
 
-func permissionAskMsg(a *mecatlv1.PermissionAsk) PermissionAskMsg {
-	msg := PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+func permissionAskMsg(ev *mecatlv1.Event) PermissionAskMsg {
+	a := ev.GetAsk()
+	msg := PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason(), ExpectedRunID: ev.GetRunId()}
 	if scope := a.GetGuardrail(); scope != nil {
 		kind := string(SessionKindUnknown)
 		switch scope.GetKind() {
@@ -1224,7 +1235,8 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
 	case "control.refused":
-		return RecoverNoticeMsg{Text: ev.GetText()}
+		refused := ev.GetControlRefused()
+		return ControlRefusedMsg{AskID: refused.GetAskId(), Category: refused.GetCategory(), RunID: ev.GetRunId(), Text: ev.GetText()}
 	case "model.retry":
 		return ModelRetryMsg{Text: ev.GetText()}
 	case "compaction":

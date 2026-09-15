@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -52,7 +52,7 @@ func (r *askRegistry) registerAsk(ask session.PendingAsk) <-chan approval {
 // emits the permission.ask Event, so an Approve that races in immediately after
 // the event is observed cannot be lost. It returns the channel the loop awaits.
 func (r *askRegistry) register(askID string) <-chan approval {
-	return r.registerAsk(session.PendingAsk{AskID: askID})
+	return r.registerAsk(session.PendingAsk{AskID: askID, Origin: session.ApprovalOriginPermission})
 }
 
 // resolveWith delivers a full approval (verdict + optional accurate deny message) for
@@ -69,7 +69,7 @@ func (r *askRegistry) resolveChecked(askID string, a approval, check func(sessio
 	ask := r.scopes[askID]
 	if !ok {
 		r.mu.Unlock()
-		return errors.New("approval ask is unknown, stale, or already resolved")
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", ErrApprovalNotPending)
 	}
 	if check != nil {
 		if err := check(ask); err != nil {

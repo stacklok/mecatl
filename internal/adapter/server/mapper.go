@@ -1316,9 +1316,11 @@ func approvalResolutionFromProto(approval *mecatlv1.ResumeApproval) agent.Approv
 
 // verdictFromResumeApproval derives the session.ApprovalVerdict from a
 // ResumeApproval frame, preferring the explicit `verdict` enum and falling back
-// to the legacy `allow` bool for clients that predate it (BACK-COMPAT). The
-// mapping is fail-safe: an UNSPECIFIED verdict with allow=false, and any
-// unrecognized value, resolve to VerdictDeny.
+// to the legacy `allow` bool only for UNSPECIFIED clients that predate it
+// (BACK-COMPAT). Unknown explicit wire values map to a guaranteed-invalid domain
+// sentinel so the shared approval validator refuses them without consuming the
+// pending ask. Never cast the wire value: a value such as 257 could truncate to
+// a legitimate verdict if the domain representation ever narrows.
 func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict, allow bool) session.ApprovalVerdict {
 	switch verdict {
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
@@ -1334,6 +1336,8 @@ func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict, allow bool) ses
 		}
 		return session.VerdictDeny
 	default:
-		return session.VerdictDeny
+		return invalidTransportApprovalVerdict
 	}
 }
+
+const invalidTransportApprovalVerdict session.ApprovalVerdict = -1

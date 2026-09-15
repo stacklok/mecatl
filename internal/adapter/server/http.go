@@ -542,8 +542,8 @@ type approveBody struct {
 	// It is used only when Verdict is empty/unspecified.
 	Allow bool `json:"allow"`
 	// Verdict is the preferred three-way resolution: "deny", "allow_once", or
-	// "allow_always" (allow_always additionally learns a per-session rule). An
-	// empty/unknown value falls back to Allow.
+	// "allow_always" (allow_always additionally learns a per-session rule). Empty
+	// falls back to Allow; an unknown explicit value is rejected.
 	Verdict string `json:"verdict,omitempty"`
 	// ExpectedRunID, when set, scopes this control to ONE run: the request is
 	// refused with a 409 problem (code "stale_run_control") if the session's
@@ -1227,8 +1227,9 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 
 // verdictFromHTTP maps the HTTP approve body's string verdict to the domain
 // ApprovalVerdict, preferring an explicit verdict and falling back to the legacy
-// allow bool. It is fail-safe: an empty verdict with allow=false, and any
-// unrecognized string, resolve to VerdictDeny.
+// allow bool only when verdict is empty. Unknown explicit strings map to the same
+// guaranteed-invalid sentinel as unknown protobuf enums, so shared validation
+// refuses the control without consuming the pending ask.
 func verdictFromHTTP(verdict string, allow bool) session.ApprovalVerdict {
 	switch verdict {
 	case "allow_always":
@@ -1243,7 +1244,7 @@ func verdictFromHTTP(verdict string, allow bool) session.ApprovalVerdict {
 		}
 		return session.VerdictDeny
 	default:
-		return session.VerdictDeny
+		return invalidTransportApprovalVerdict
 	}
 }
 

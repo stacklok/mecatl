@@ -922,6 +922,19 @@ func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
 func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 
+// Approval resolution errors are stable categories for hosts. Callers should use
+// errors.Is rather than parse error text.
+var (
+	// ErrApprovalNotPending means the ask is stale, unknown, or already resolved.
+	ErrApprovalNotPending = errors.New("approval is not pending")
+	// ErrApprovalIntentMismatch means the reply does not match the pending ask's identity or scope.
+	ErrApprovalIntentMismatch = errors.New("approval intent does not match pending ask")
+	// ErrApprovalUnsupported means the registered ask has an unsupported origin or guardrail kind.
+	ErrApprovalUnsupported = errors.New("approval kind or origin is unsupported")
+	// ErrApprovalGrantIneligible means the requested verdict is invalid for this approval kind.
+	ErrApprovalGrantIneligible = errors.New("approval grant is ineligible")
+)
+
 // ApprovalResolution atomically identifies and resolves one registered approval.
 // ReviewID and Kind must exactly acknowledge a guardrail-scoped ask; ordinary
 // permission asks leave both empty. VerdictAllowAlways is ineligible for result
@@ -939,32 +952,50 @@ func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResol
 }
 
 func validateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution, requireGuardrailAck bool) error {
+	if !validApprovalVerdict(resolution.Verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, resolution.Verdict)
+	}
+	if err := validatePendingApproval(ask); err != nil {
+		return fmt.Errorf("%w: %v", ErrApprovalUnsupported, err)
+	}
 	if ask.AskID != resolution.AskID {
-		return errors.New("approval ask identity does not match the registered ask")
+		return fmt.Errorf("%w: approval ask identity does not match the registered ask", ErrApprovalIntentMismatch)
 	}
 	if ask.Guardrail == nil {
 		if resolution.ReviewID != "" || resolution.Kind != "" {
-			return errors.New("ordinary permission approval must not claim a guardrail review")
+			return fmt.Errorf("%w: ordinary permission approval must not claim a guardrail review", ErrApprovalIntentMismatch)
 		}
 		return nil
 	}
 	if ask.Guardrail.Kind == session.GuardrailApprovalResultRelease && resolution.Verdict == session.VerdictAllowAlways {
-		return errors.New("result release supports only release once or deny")
+		return fmt.Errorf("%w: result release supports only release once or deny", ErrApprovalGrantIneligible)
 	}
 	if requireGuardrailAck || resolution.ReviewID != "" || resolution.Kind != "" {
 		if resolution.ReviewID != ask.Guardrail.ReviewID || resolution.Kind != ask.Guardrail.Kind {
-			return errors.New("guardrail approval requires the exact review_id and approval kind from the pending ask")
+			return fmt.Errorf("%w: guardrail approval requires the exact review_id and approval kind from the pending ask", ErrApprovalIntentMismatch)
 		}
 	}
 	return nil
+}
+
+func validApprovalVerdict(verdict session.ApprovalVerdict) bool {
+	switch verdict {
+	case session.VerdictDeny, session.VerdictAllowOnce, session.VerdictAllowAlways:
+		return true
+	default:
+		return false
+	}
 }
 
 // ResolveApproval validates purpose, review identity, verdict eligibility, and
 // pending identity while holding the ask registry lock, then submits the verdict
 // exactly once. A failed validation leaves the ask registered and unresolved.
 func (r *Run) ResolveApproval(resolution ApprovalResolution) error {
+	if !validApprovalVerdict(resolution.Verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, resolution.Verdict)
+	}
 	if r == nil || resolution.AskID == "" {
-		return errors.New("approval requires a non-empty ask id")
+		return fmt.Errorf("%w: approval requires a non-empty ask id", ErrApprovalNotPending)
 	}
 	if r.childAsks != nil {
 		if owned, err := r.childAsks.routeResolution(resolution); owned {
@@ -979,14 +1010,17 @@ func (r *Run) ResolveApproval(resolution ApprovalResolution) error {
 // ValidateRemoteApprovalIntent is retained for source compatibility. Hosts must
 // use ResolveApproval for an atomic validate-and-submit operation.
 func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error {
+	if !validApprovalVerdict(verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, verdict)
+	}
 	if r == nil {
-		return errors.New("approval run is unavailable")
+		return fmt.Errorf("%w: approval run is unavailable", ErrApprovalNotPending)
 	}
 	r.asks.mu.Lock()
 	ask, ok := r.asks.scopes[askID]
 	r.asks.mu.Unlock()
 	if !ok {
-		return errors.New("approval ask is unknown, stale, or already resolved")
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", ErrApprovalNotPending)
 	}
 	return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, ReviewID: reviewID, Kind: kind, Verdict: verdict}, true)
 }
@@ -994,6 +1028,9 @@ func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.
 // Approve is the compatibility helper for ordinary permission and legacy action
 // approvals. Result release requires ResolveApproval's explicit review acknowledgement.
 func (r *Run) Approve(askID string, v session.ApprovalVerdict) error {
+	if !validApprovalVerdict(v) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, v)
+	}
 	if r == nil || askID == "" {
 		return errors.New("approval requires a non-empty ask id")
 	}
@@ -1258,6 +1295,16 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
 	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
+		// Reject malformed internal callers before inspecting the environment or
+		// clearing the pending ask. Wire mappers already fail unknown enum values to
+		// deny, but the public engine seam must not treat a future value as an allow.
+		if !validApprovalVerdict(verdict) {
+			err := fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, verdict)
+			e.emit(r, session.Event{Type: session.EvSessionInit})
+			r.setOutcome(RunOutcomeCompleted)
+			e.emitResult(r, sess, session.StopError, "", session.Usage{}, err.Error(), session.RetryDispositionPermanent, session.StreamProgressUnknown)
+			return
+		}
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}

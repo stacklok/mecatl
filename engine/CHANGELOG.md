@@ -17,7 +17,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `agent.ValidateApprovalResolution`, and `agent.Run.ResolveApproval` so hosts validate
   the exact pending review purpose and submit its verdict under one registry lock. Changes
   `Run.Approve` to return an actionable error and restricts it to ordinary/legacy action
-  approvals; result release requires the atomic operation. `ReviewEvidencePreparation`
+  approvals; result release requires the atomic operation. Stable
+  `ErrApprovalNotPending`, `ErrApprovalIntentMismatch`, `ErrApprovalUnsupported`, and
+  `ErrApprovalGrantIneligible` categories let hosts classify failures with `errors.Is`,
+  while `GuardrailReviewTerminalFailure` documents the fail-closed evidence-failure marker.
+  `ReviewEvidencePreparation`
   also gains a trusted originating-session `Authorize` callback that evidence preparers
   must consult before backend metadata or content reads. Changed (breaking, pre-v1 minor).
 

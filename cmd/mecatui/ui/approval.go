@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"errors"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -48,19 +50,11 @@ func approvalSurfaceFor(m *Model) *approvalSurface {
 // approvalSendCmd is the one approval transport command. The Model captures the
 // current stream before returning the command, preserving the existing resolved
 // correlation and nil-stream behavior without exposing transport to the surface.
-func (m *Model) approvalSendCmd(askID string, verdict client.Verdict, guardrail *client.GuardrailApprovalScope) tea.Cmd {
+func (m *Model) approvalSendCmd(askID string, verdict client.Verdict, guardrail *client.GuardrailApprovalScope, expectedRunID string) tea.Cmd {
 	if authorizationStream := m.authorization.controlStream; authorizationStream != nil && m.authorization.runningControlGen == m.authorization.controlGen {
 		authorizationStream.MarkApprovalResolved(askID)
 		return func() tea.Msg {
-			if scoped, ok := any(authorizationStream).(interface {
-				SendGuardrailApproval(string, client.Verdict, *client.GuardrailApprovalScope) error
-			}); ok && guardrail != nil {
-				if err := scoped.SendGuardrailApproval(askID, verdict, guardrail); err != nil {
-					return client.StreamErrMsg{Err: err}
-				}
-				return nil
-			}
-			if err := authorizationStream.SendApproval(askID, verdict); err != nil {
+			if err := authorizationStream.SendApprovalForScope(askID, verdict, guardrail, expectedRunID); err != nil {
 				return client.StreamErrMsg{Err: err}
 			}
 			return nil
@@ -72,17 +66,70 @@ func (m *Model) approvalSendCmd(askID string, verdict client.Verdict, guardrail 
 	}
 	stream.MarkApprovalResolved(askID)
 	return func() tea.Msg {
-		var err error
-		if guardrail != nil {
-			err = stream.SendGuardrailApproval(askID, verdict, guardrail)
-		} else {
-			err = stream.SendApproval(askID, verdict)
-		}
-		if err != nil {
+		if err := stream.SendApprovalForScope(askID, verdict, guardrail, expectedRunID); err != nil {
 			return client.StreamErrMsg{Err: err}
 		}
 		return nil
 	}
+}
+
+func (m *Model) settlePendingApproval() {
+	m.pendingApproval = nil
+}
+
+func (m *Model) settleApprovalOnEvent(msg tea.Msg) {
+	if m.pendingApproval == nil {
+		return
+	}
+	// A submitted approval remains correlatable until this run reaches a terminal
+	// boundary. Unrelated worker asks and progress do not acknowledge it.
+	if _, terminal := msg.(client.ResultMsg); terminal {
+		m.settlePendingApproval()
+	}
+}
+
+func (m *Model) restoreControlRefused(msg client.ControlRefusedMsg) bool {
+	intent := m.pendingApproval
+	if intent == nil || msg.AskID == "" || msg.AskID != intent.askID {
+		return false
+	}
+	return m.restoreApprovalIntent(intent, errors.New(msg.Text))
+}
+
+func (m *Model) restoreRefusedApproval(err error) bool {
+	intent := m.pendingApproval
+	if intent == nil {
+		return false
+	}
+	return m.restoreApprovalIntent(intent, err)
+}
+
+func (m *Model) restoreApprovalIntent(intent *approvalResolvedIntent, err error) bool {
+	m.pendingApproval = nil
+	m.conv.retractLatestNotice(intent.notice)
+	if m.stream != nil {
+		m.stream.ForgetApprovalResolved(intent.askID)
+	}
+	if m.authorization.controlStream != nil {
+		m.authorization.controlStream.ForgetApprovalResolved(intent.askID)
+	}
+	s := approvalSurfaceFor(m)
+	if s == nil {
+		s = openApprovalSurface(m)
+	} else if s.ask.AskID != "" && s.ask.AskID != intent.askID {
+		s.queue = append([]pendingAsk{s.ask}, s.queue...)
+	}
+	delete(s.resolvedAsks, intent.askID)
+	s.ask = intent.ask
+	s.resumePhase = intent.resume
+	m.phase = phaseAwaitingApproval
+	errText := "approval reply was rejected"
+	if err != nil {
+		errText = oneLine(sanitizeTerminal(err.Error()))
+	}
+	m.statusMsg = m.deps.Theme.Style("errorText").Render("approval was refused: " + errText)
+	m.refreshView()
+	return true
 }
 
 // applyApprovalSurfaceIntent handles the approval intent family while keeping
@@ -91,7 +138,8 @@ func (m Model) applyApprovalSurfaceIntent(intent surfaceIntent) (model tea.Model
 	switch intent := intent.(type) {
 	case approvalResolvedIntent:
 		m.conv.addNotice(intent.notice)
-		cmd := (&m).approvalSendCmd(intent.askID, intent.verdict, intent.guardrail)
+		m.pendingApproval = &intent
+		cmd := (&m).approvalSendCmd(intent.askID, intent.verdict, intent.guardrail, intent.expectedRunID)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, cmd)
 		return model, cmd, true, stopSurfaceDispatch
 	case approvalRetractedIntent:

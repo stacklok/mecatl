@@ -178,6 +178,13 @@ type ReviewGrantStore interface {
 	ArmGrant(digest, sessionID string)
 }
 
+// GuardrailReviewTerminalFailure classifies a review error as an authority-relevant
+// terminal evidence failure. Implementations return true only when enforcement
+// must fail closed; ordinary provider or transport failures must not use it.
+type GuardrailReviewTerminalFailure interface {
+	GuardrailReviewTerminalFailure() bool
+}
+
 // ToolReviewer performs one contextual tool review.
 type ToolReviewer interface {
 	Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)

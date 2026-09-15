@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -35,6 +37,96 @@ func newProhibitedActionReviewer() agent.ToolReviewer {
 	return toolReviewerFunc(func(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
 		return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, nil
 	})
+}
+
+func TestContextualActionApprovalReauthorizesDependencyReadsBeforeBackendAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		after         governance.Effect
+		wantReads     int
+		wantExecution int
+	}{
+		{"deny", governance.Deny, 1, 0},
+		{"ask", governance.Ask, 1, 0},
+		{"unchanged_allow", governance.Allow, 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			base := memfs.NewWorkspace("/ws")
+			if err := base.Write(ctx, "script.sh", []byte("echo safe")); err != nil {
+				t.Fatal(err)
+			}
+			workspace := &countingBoundedWorkspace{Workspace: base}
+			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, workspace, memledger.New(), nil)
+			policy := &perToolChangingPolicy{effects: map[string]governance.Effect{"Read": governance.Allow, tool.ShellToolName: governance.Allow}}
+			executions := 0
+			cat := tool.NewCatalog()
+			cat.MustRegister(&fakeTool{name: "Read", readOnly: true})
+			cat.MustRegister(&fakeTool{name: tool.ShellToolName, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+				executions++
+				return session.NewToolResult(call.ID, "unexpected"), nil
+			}})
+			eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("shell", tool.ShellToolName, []byte(`{"command":"./script.sh"}`))), mockllm.TextTurn("done")), Catalog: cat, Policy: policy, ToolReviewer: newProhibitedActionReviewer(), Interactive: true})
+			run := eng.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "run"})
+			ordinaryAsks := 0
+			for ev := range run.Events() {
+				if ev.Type != session.EvPermissionAsk || ev.Ask == nil {
+					continue
+				}
+				if ev.Ask.Guardrail != nil {
+					policy.set("Read", tc.after)
+				} else {
+					ordinaryAsks++
+				}
+				if err := run.ResolveApproval(agent.ApprovalResolution{AskID: ev.Ask.AskID, ReviewID: reviewID(ev.Ask), Kind: reviewKind(ev.Ask), Verdict: session.VerdictAllowOnce}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if workspace.bounded != tc.wantReads || executions != tc.wantExecution || ordinaryAsks != 0 {
+				t.Fatalf("bounded reads=%d want=%d executions=%d want=%d ordinary asks=%d", workspace.bounded, tc.wantReads, executions, tc.wantExecution, ordinaryAsks)
+			}
+		})
+	}
+}
+
+type countingBoundedWorkspace struct {
+	tool.Workspace
+	bounded int
+}
+
+func (w *countingBoundedWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	w.bounded++
+	return w.Workspace.(tool.BoundedWorkspaceReader).ReadVersionBounded(ctx, path, maxBytes)
+}
+
+type perToolChangingPolicy struct {
+	mu      sync.Mutex
+	effects map[string]governance.Effect
+}
+
+func (p *perToolChangingPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return governance.PermissionDecision{Effect: p.effects[call.Name], Reason: "test policy"}
+}
+func (*perToolChangingPolicy) Learn(session.SessionID, session.ToolCall) {}
+func (p *perToolChangingPolicy) set(name string, effect governance.Effect) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.effects[name] = effect
+}
+
+func reviewID(ask *session.PendingAsk) string {
+	if ask.Guardrail != nil {
+		return ask.Guardrail.ReviewID
+	}
+	return ""
+}
+func reviewKind(ask *session.PendingAsk) session.GuardrailApprovalKind {
+	if ask.Guardrail != nil {
+		return ask.Guardrail.Kind
+	}
+	return ""
 }
 
 func TestContextualActionApprovalReauthorizesNewPermissionAsk(t *testing.T) {

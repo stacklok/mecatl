@@ -618,7 +618,8 @@ type Model struct {
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
-	modal surface
+	modal           surface
+	pendingApproval *approvalResolvedIntent
 	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
 	// A stale result must not replace a session selected by a later lifecycle action.
 	modelSwitchRequestToken uint64

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -146,18 +148,43 @@ func TestGRPCHeldResultIsPrivateUntilExactRelease(t *testing.T) {
 			t.Fatalf("ask kind = %v", ask.GetGuardrail().GetKind())
 		}
 		assertNoHeldSentinel(t, secret, store, log, recorder, id, wire)
+		httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
+		invalidHTTP := `{"ask_id":"` + ask.GetAskId() + `","review_id":"` + ask.GetGuardrail().GetReviewId() + `","guardrail_kind":"result_release","verdict":"future_verdict","expected_run_id":"` + response.GetEvent().GetRunId() + `"}`
+		httpResponse, err := http.Post(httpServer.URL+"/v1/sessions/"+string(id)+"/approve", "application/json", strings.NewReader(invalidHTTP))
+		if err != nil {
+			t.Fatal(err)
+		}
+		httpBody, readErr := io.ReadAll(httpResponse.Body)
+		_ = httpResponse.Body.Close()
+		httpServer.Close()
+		if readErr != nil || httpResponse.StatusCode != http.StatusBadRequest || !strings.Contains(string(httpBody), `"code":"approval_grant_ineligible"`) {
+			t.Fatalf("unknown live HTTP verdict status=%d body=%s err=%v", httpResponse.StatusCode, httpBody, readErr)
+		}
+		assertNoHeldSentinel(t, secret, store, log, recorder, id, wire)
 		refused := []*mecatlv1.ResumeApproval{
 			{AskId: ask.GetAskId(), Allow: true},
 			{AskId: ask.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, ReviewId: ask.GetGuardrail().GetReviewId(), GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION},
 			{AskId: ask.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS, ReviewId: ask.GetGuardrail().GetReviewId(), GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE},
+			{AskId: ask.GetAskId(), Verdict: mecatlv1.ApprovalVerdict(257), ReviewId: ask.GetGuardrail().GetReviewId(), GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE, ExpectedRunId: response.GetEvent().GetRunId()},
+			{AskId: ask.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, ReviewId: ask.GetGuardrail().GetReviewId(), GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE, ExpectedRunId: "stale-run"},
 		}
 		for _, frame := range refused {
 			if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: frame}}); err != nil {
 				t.Fatal(err)
 			}
 			notice, err := stream.Recv()
-			if err != nil || notice.GetEvent().GetType() != "control.refused" || !strings.Contains(notice.GetEvent().GetText(), "result release") {
+			if err != nil || notice.GetEvent().GetType() != "control.refused" {
 				t.Fatalf("refusal=%+v err=%v", notice, err)
+			}
+			refusal := notice.GetEvent().GetControlRefused()
+			if refusal.GetAskId() != ask.GetAskId() || refusal.GetCategory() == "" || notice.GetEvent().GetRunId() == "" {
+				t.Fatalf("refusal metadata = %+v run=%q", refusal, notice.GetEvent().GetRunId())
+			}
+			if frame.GetVerdict() == mecatlv1.ApprovalVerdict(257) && refusal.GetCategory() != "approval_grant_ineligible" {
+				t.Fatalf("unknown wire verdict category = %q", refusal.GetCategory())
+			}
+			if frame.GetExpectedRunId() == "stale-run" && refusal.GetCategory() != "stale_run_control" {
+				t.Fatalf("stale wire approval category = %q", refusal.GetCategory())
 			}
 			wire = append(wire, notice)
 			assertNoHeldSentinel(t, secret, store, log, recorder, id, wire)
@@ -318,7 +345,8 @@ func TestServiceRestartCannotReleaseOrRerunLostHeldResult(t *testing.T) {
 	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(id), Text: "read"}}}); err != nil {
 		t.Fatal(err)
 	}
-	var askID string
+	var askID, reviewID string
+	var approvalKind session.GuardrailApprovalKind
 	for askID == "" {
 		response, recvErr := stream.Recv()
 		if recvErr != nil {
@@ -326,6 +354,8 @@ func TestServiceRestartCannotReleaseOrRerunLostHeldResult(t *testing.T) {
 		}
 		if ask := response.GetEvent().GetAsk(); ask != nil {
 			askID = ask.GetAskId()
+			reviewID = ask.GetGuardrail().GetReviewId()
+			approvalKind = session.GuardrailApprovalResultRelease
 		}
 	}
 	parked, err := store.Load(context.Background(), id)
@@ -358,20 +388,50 @@ func TestServiceRestartCannotReleaseOrRerunLostHeldResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	resumed, err := restarted.ApproveRun(context.Background(), id, askID, session.VerdictAllowOnce, "")
+	httpServer := httptest.NewServer(server.NewHTTPHandler(restarted))
+	defer httpServer.Close()
+	invalidBody := `{"ask_id":"` + askID + `","review_id":"` + reviewID + `","guardrail_kind":"` + string(approvalKind) + `","verdict":"future_verdict"}`
+	resp, err := http.Post(httpServer.URL+"/v1/sessions/"+string(id)+"/approve", "application/json", strings.NewReader(invalidBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseBody, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(responseBody), `"code":"approval_grant_ineligible"`) {
+		t.Fatalf("unknown HTTP verdict status=%d body=%s", resp.StatusCode, responseBody)
+	}
+	stillParked, err := restartedStore.Load(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, pendingOK := stillParked.PendingAsk()
+	if !pendingOK || pending.AskID != askID || stillParked.State != session.StateAwaiting || freshTool.runs() != 0 {
+		t.Fatalf("invalid restored approval consumed hold: state=%q pending=%+v ok=%v reruns=%d", stillParked.State, pending, pendingOK, freshTool.runs())
+	}
+	resumed, err := restarted.ResolveApprovalRun(context.Background(), id, agent.ApprovalResolution{
+		AskID: askID, ReviewID: reviewID, Kind: approvalKind, Verdict: session.VerdictAllowOnce,
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resumed == nil {
 		t.Fatal("restart approval did not produce a fail-closed continuation run")
 	}
-	var leaked bool
+	var leaked, syntheticError bool
+	var stop session.StopReason
 	for ev := range resumed.Events() {
 		leaked = leaked || (ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, secret))
+		syntheticError = syntheticError || (ev.ToolResult != nil && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "held result was lost across process restart"))
+		if ev.Result != nil {
+			stop = ev.Result.Stop
+		}
 	}
 	restarted.FinishRun(id, resumed)
-	if leaked || freshTool.runs() != 0 {
-		t.Fatalf("lost held result leaked=%v reruns=%d", leaked, freshTool.runs())
+	if leaked || freshTool.runs() != 0 || !syntheticError || stop != session.StopEndTurn {
+		t.Fatalf("lost held result leaked=%v reruns=%d syntheticError=%v stop=%q", leaked, freshTool.runs(), syntheticError, stop)
 	}
 	loaded, err := restartedStore.Load(context.Background(), id)
 	if err != nil {

@@ -874,15 +874,34 @@ func (h *steerHandoff) closeAndWait() {
 // after the active run drains, and its terminal outcome is reported back as
 // the steer ack. On exit readControl closes the mailbox so the relay loop
 // learns no more promotions can arrive.
+func controlRefusedEvent(err error, askID, runID string) *mecatlv1.Event {
+	return &mecatlv1.Event{
+		Type:  "control.refused",
+		Text:  valid(err.Error()),
+		RunId: valid(runID),
+		ControlRefused: &mecatlv1.ControlRefused{
+			AskId:    valid(askID),
+			Category: classifyError(err).Code,
+		},
+	}
+}
+
 func (h *HarnessServer) handleResumeApprovalFrame(ctx context.Context, id session.SessionID, ct *controlTarget, rl *runRelay, ra *mecatlv1.ResumeApproval) {
-	if ra == nil || h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
+	if ra == nil {
 		return
 	}
 	target := ct.active()
+	if err := h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), target); err != nil {
+		select {
+		case rl.notices <- controlRefusedEvent(err, ra.GetAskId(), target.RunID()):
+		default:
+		}
+		return
+	}
 	resolution := approvalResolutionFromProto(ra)
 	if err := h.svc.resolveLiveRun(id, target, resolution, ra.GetExpectedRunId()); err != nil {
 		select {
-		case rl.notices <- &mecatlv1.Event{Type: "control.refused", Text: valid(err.Error())}:
+		case rl.notices <- controlRefusedEvent(err, resolution.AskID, target.RunID()):
 		default:
 		}
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
@@ -949,7 +968,7 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 		return
 	}
 	target := ct.active()
-	if h.staleStreamControl(ctx, id, "cancel", frame.GetExpectedRunId(), target) {
+	if h.staleStreamControl(ctx, id, "cancel", frame.GetExpectedRunId(), target) != nil {
 		return
 	}
 	if err := h.svc.cancelLiveRun(id, target, frame.GetExpectedRunId()); err != nil {
@@ -957,31 +976,20 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 	}
 }
 
-// staleStreamControl reports whether a Converse control frame names a run that
-// is no longer the active one, refusing it if so (ADR 0249).
-//
-// The refusal is SILENT to the client, and that asymmetry is deliberate rather
-// than an oversight. Converse's approve and cancel frames are fire-and-forget:
-// the stream carries no per-control ack to put a typed error on, so the choices
-// are refuse-and-log or tear down the whole stream over one stale frame. Tearing
-// down would punish a client for a race it cannot avoid. A caller that needs the
-// typed ErrStaleRunControl uses the HTTP control endpoints, which return it; the
-// steer frame is the exception on this stream because it already HAS an ack
-// channel, so it reports too_late.
-//
-// The operator-visible half is the diagnostic below: nothing in the event
-// taxonomy reports a refused control, so without it a stale approve would vanish
-// without trace.
-func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) bool {
+// staleStreamControl reports a Converse control frame that names a run which is
+// no longer active (ADR 0249). Callers decide whether their control type has a
+// client-visible refusal lane; cancel remains fire-and-forget, while approval
+// emits control.refused correlated by ask id.
+func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) error {
 	if expected == "" || run == nil {
-		return false
+		return nil
 	}
 	if err := checkExpectedRun(expected, run.RunID()); err != nil {
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "stale control frame refused",
 			"session", string(id), "frame", frame, "expected_run", valid(expected), "active_run", valid(run.RunID()))
-		return true
+		return err
 	}
-	return false
+	return nil
 }
 
 // handleSteerFrame routes one steer frame through the Service (the single
@@ -1670,15 +1678,17 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				}
 				if frame.approval != nil {
 					ra := frame.approval
-					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
-						resolution := approvalResolutionFromProto(ra)
-						if err := h.svc.resolveLiveRun(id, result.Run, resolution, ra.GetExpectedRunId()); err != nil {
-							controlNotices <- &mecatlv1.Event{Type: "control.refused", Text: valid(err.Error())}
-							h.svc.Diagnostics().Log(ctx, port.LevelWarn, "authorization approval frame refused", "session", string(id), "err", err.Error())
-						}
+					if err := h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run); err != nil {
+						controlNotices <- controlRefusedEvent(err, ra.GetAskId(), result.Run.RunID())
+						continue
+					}
+					resolution := approvalResolutionFromProto(ra)
+					if err := h.svc.resolveLiveRun(id, result.Run, resolution, ra.GetExpectedRunId()); err != nil {
+						controlNotices <- controlRefusedEvent(err, resolution.AskID, result.Run.RunID())
+						h.svc.Diagnostics().Log(ctx, port.LevelWarn, "authorization approval frame refused", "session", string(id), "err", err.Error())
 					}
 				} else if frame.cancel != nil {
-					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
+					if h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) == nil {
 						result.Run.Cancel()
 					}
 				}

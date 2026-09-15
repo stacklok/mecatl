@@ -492,7 +492,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 	}
 	_, enforce := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobAction, assessment.err != nil)
 	if assessment.err != nil {
-		var terminal interface{ GuardrailReviewTerminalFailure() bool }
+		var terminal GuardrailReviewTerminalFailure
 		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
 			enforce = true
 		}
@@ -549,7 +549,7 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 	if cancelled {
 		return session.ToolResult{}, true, false, false
 	}
-	if !allowed || !revalidateActionDependencies(ctx, env.Workspace(), assessment.action.dependencies) {
+	if !allowed || !e.revalidateAuthorizedActionDependencies(ctx, r, sess, env, call.ID, assessment.action.dependencies) {
 		if staleReason == "" {
 			staleReason = "contextual guardrail approval became stale before execution"
 		}

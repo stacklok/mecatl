@@ -95,7 +95,7 @@ func assessInbound(ctx context.Context, r *Run, assessment *inboundAssessment) {
 	}
 	if assessment.err != nil {
 		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
-		var terminal interface{ GuardrailReviewTerminalFailure() bool }
+		var terminal GuardrailReviewTerminalFailure
 		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
 			assessment.enforce = true
 		}

@@ -23,9 +23,9 @@ func (f *fakeGuardrailClient) GetGuardrailReviewDetail(context.Context, *mecatlv
 }
 
 func TestADR_0342_ContextualGuardrails_Scenario7_InterfaceProjectionSafety(t *testing.T) {
-	event := &mecatlv1.Event{Type: "permission.ask", Ask: &mecatlv1.PermissionAsk{AskId: "a", Tool: "Shell", Guardrail: &mecatlv1.GuardrailApprovalScope{ReviewId: "r", Kind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE}}}
+	event := &mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "a", Tool: "Shell", Guardrail: &mecatlv1.GuardrailApprovalScope{ReviewId: "r", Kind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE}}}
 	ask, ok := EventToMsg(event).(PermissionAskMsg)
-	if !ok || ask.Guardrail == nil || ask.Guardrail.Kind != "result_release" || ask.Guardrail.RepeatAvailable {
+	if !ok || ask.ExpectedRunID != "run-1" || ask.Guardrail == nil || ask.Guardrail.Kind != "result_release" || ask.Guardrail.RepeatAvailable {
 		t.Fatalf("ask = %#v", ask)
 	}
 	hook, ok := EventToMsg(&mecatlv1.Event{Type: "hook", Hook: &mecatlv1.Hook{Guardrail: &mecatlv1.GuardrailReview{ReviewId: "r", Job: mecatlv1.GuardrailJob_GUARDRAIL_JOB_INBOUND, Assessment: mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNRESOLVED, Inspection: mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE}}}).(HookMsg)

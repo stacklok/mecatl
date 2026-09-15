@@ -1,6 +1,7 @@
     ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
     ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
+    ifacemethod func (GuardrailReviewTerminalFailure).GuardrailReviewTerminalFailure() bool
     ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
     ifacemethod func (ReviewDetailSink).PublishReviewDetail(context.Context, ReviewDetail)
     ifacemethod func (ReviewEvidencePreparer).PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)
@@ -247,6 +248,7 @@ type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)
 type EvidenceReflector struct{}
+type GuardrailReviewTerminalFailure interface{GuardrailReviewTerminalFailure() bool}
 type HeuristicCompactor struct{MaxToolBodyChars int; KeepLastTurns int}
 type HeuristicTokenCounter struct{CharsPerToken int}
 type InspectMemberTool struct{}
@@ -314,6 +316,10 @@ type ToolReviewRequest struct{ReviewID string; Job ReviewJob; Event governance.H
 type ToolReviewResult struct{Assessment ReviewAssessment; Concerns []ReviewConcern; Evidence []ReviewEvidenceUse; Missing []ReviewMissingEvidence}
 type ToolReviewer interface{Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)}
 type UserModelReviewer struct{}
+var ErrApprovalGrantIneligible error
+var ErrApprovalIntentMismatch error
+var ErrApprovalNotPending error
+var ErrApprovalUnsupported error
 var ErrCompactionWouldOrphan error
 var ErrForkWorkspace error
 var ErrMemberAlreadyAdded error

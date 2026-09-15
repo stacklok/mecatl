@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -154,6 +155,15 @@ func TestADR_0342_ContextualGuardrails_Scenario3_ExactResultRelease(t *testing.T
 			asks++
 			if ev.Ask.Guardrail == nil || ev.Ask.Guardrail.Kind != session.GuardrailApprovalResultRelease {
 				t.Fatalf("release scope = %+v", ev.Ask.Guardrail)
+			}
+			if err := resolveScoped(t, run, ev.Ask, session.ApprovalVerdict(99)); !errors.Is(err, agent.ErrApprovalGrantIneligible) {
+				t.Fatalf("unknown verdict = %v", err)
+			}
+			recorder.mu.Lock()
+			recordedBeforeRelease := len(recorder.results)
+			recorder.mu.Unlock()
+			if recordedBeforeRelease != 0 {
+				t.Fatalf("unknown verdict released held result to audit: count=%d", recordedBeforeRelease)
 			}
 			if err := resolveScoped(t, run, ev.Ask, session.VerdictAllowAlways); err == nil {
 				t.Fatal("allow-always released a held result")

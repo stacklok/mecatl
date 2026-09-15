@@ -197,6 +197,9 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"ActiveRuns",
 		"Approve",
 		"ApproveRun",
+		// HTTP approve and gRPC Converse controls call this contextual successor to
+		// ApproveRun inside the aggregate Converse catalog row.
+		"ResolveApprovalRun",
 		"BindPlacement",
 		"CanProcessSchedule",
 		"Cancel",

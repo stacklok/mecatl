@@ -1165,7 +1165,8 @@ func TestContentFromProtoRejectsMimeKindMismatch(t *testing.T) {
 // TestVerdictFromResumeApproval is the unit table for the verdict-derivation seam
 // every ResumeApproval frame rides: the explicit enum wins each of its arms, an
 // UNSPECIFIED verdict falls back to the legacy allow bool (BACK-COMPAT for clients
-// that predate the enum), and any unrecognized value fails safe to deny.
+// that predate the enum), and any unrecognized value stays invalid for shared
+// validation rather than being consumed as a denial.
 func TestVerdictFromResumeApproval(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -1183,8 +1184,9 @@ func TestVerdictFromResumeApproval(t *testing.T) {
 		// Legacy clients send only the bool (verdict UNSPECIFIED).
 		{"unspecified + allow=true is legacy allow once", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, true, session.VerdictAllowOnce},
 		{"unspecified + allow=false is legacy deny", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, false, session.VerdictDeny},
-		// An unknown future enum value fails safe to deny, regardless of the bool.
-		{"unknown enum value fails safe to deny", mecatlv1.ApprovalVerdict(99), true, session.VerdictDeny},
+		// Unknown future enum values must remain invalid regardless of the bool.
+		{"unknown enum value remains invalid", mecatlv1.ApprovalVerdict(99), true, invalidTransportApprovalVerdict},
+		{"large unknown enum cannot truncate to allow", mecatlv1.ApprovalVerdict(257), true, invalidTransportApprovalVerdict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

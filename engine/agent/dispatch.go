@@ -687,6 +687,9 @@ func (e *Engine) rejectUnresumableApproval(r *Run, turnIdx int, call session.Too
 //
 //nolint:gocyclo // Resume keeps origin validation, reauthorization, review, and exact-once execution in one auditable path.
 func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pendingCall session.ToolCall, ask session.PendingAsk, verdict session.ApprovalVerdict) (session.ToolResult, *dispatchPark, bool) {
+	if !validApprovalVerdict(verdict) {
+		return session.NewToolError(pendingCall.ID, "approval verdict is invalid; the protected tool was not executed"), nil, false
+	}
 	if res, rejected := e.rejectUnresumableApproval(r, turnIdx, pendingCall, ask); rejected {
 		return res, nil, false
 	}

@@ -192,12 +192,14 @@ func (s *approvalSurface) modalPlacement() modalPlacement {
 }
 
 type approvalResolvedIntent struct {
-	askID     string
-	verdict   client.Verdict
-	guardrail *client.GuardrailApprovalScope
-	notice    string
-	advance   approvalAdvance
-	resume    phase
+	ask           pendingAsk
+	askID         string
+	verdict       client.Verdict
+	guardrail     *client.GuardrailApprovalScope
+	expectedRunID string
+	notice        string
+	advance       approvalAdvance
+	resume        phase
 }
 
 func (approvalResolvedIntent) isSurfaceIntent() {}
@@ -270,7 +272,7 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 		offerAlways = msg.Guardrail.Kind == "action" && msg.Guardrail.RepeatAvailable
 	}
 	next := pendingAsk{
-		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason,
+		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason, expectedRunID: msg.ExpectedRunID,
 		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail,
 	}
 	if open {
@@ -324,7 +326,8 @@ func (s *approvalSurface) markAskResolved(id string) {
 // the surface. It never re-arms the stream reader: the ask event already armed
 // the run's single reader, which delivers the resumed events after the one send.
 func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
-	askID := s.ask.AskID
+	ask := s.ask
+	askID := ask.AskID
 	s.markAskResolved(askID)
 	s.clearPlanReview()
 	s.clearAskArgsView()
@@ -351,7 +354,7 @@ func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
 		}
 	}
 	return approvalResolvedIntent{
-		askID: askID, verdict: v, guardrail: s.ask.guardrail, notice: notice,
+		ask: ask, askID: askID, verdict: v, guardrail: ask.guardrail, expectedRunID: ask.expectedRunID, notice: notice,
 		advance: s.advance(), resume: s.restoredPhase(),
 	}
 }
@@ -507,6 +510,7 @@ type pendingAsk struct {
 	focusedVerdict          client.Verdict
 	offerAlways             bool
 	guardrail               *client.GuardrailApprovalScope
+	expectedRunID           string
 	reviewDetail            client.GuardrailReviewDetail
 	reviewDetailUnavailable bool
 }

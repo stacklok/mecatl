@@ -342,11 +342,33 @@ func (f *fakeStreamSessionEventsClient) StreamSessionLive(_ context.Context, in 
 
 type fakeAuthorizationClient struct {
 	mecatlv1.HarnessServiceClient
-	stream *fakeRecheckAuthorizationClient
+	stream       *fakeRecheckAuthorizationClient
+	cancelStream *fakeCancelAuthorizationClient
 }
 
 func (f *fakeAuthorizationClient) RecheckMcpAuthorization(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse], error) {
 	return f.stream, nil
+}
+
+func (f *fakeAuthorizationClient) CancelMcpAuthorization(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse], error) {
+	return f.cancelStream, nil
+}
+
+type fakeCancelAuthorizationClient struct {
+	grpc.BidiStreamingClient[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]
+	mu   sync.Mutex
+	sent []*mecatlv1.CancelMcpAuthorizationRequest
+}
+
+func (f *fakeCancelAuthorizationClient) Send(req *mecatlv1.CancelMcpAuthorizationRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, req)
+	return nil
+}
+
+func (*fakeCancelAuthorizationClient) Recv() (*mecatlv1.CancelMcpAuthorizationResponse, error) {
+	return nil, io.EOF
 }
 
 type fakeRecheckAuthorizationClient struct {
@@ -372,7 +394,8 @@ func TestMCPAuthorizationClientSendsInitialThenContinuationApproval(t *testing.T
 		t.Fatal(err)
 	}
 	stream.MarkApprovalResolved("ask-1")
-	if err := stream.SendApproval("ask-1", VerdictAllowOnce); err != nil {
+	scope := &GuardrailApprovalScope{ReviewID: "review-1", Kind: "action"}
+	if err := stream.SendApprovalForScope("ask-1", VerdictAllowOnce, scope, "run-1"); err != nil {
 		t.Fatal(err)
 	}
 	wire.mu.Lock()
@@ -380,11 +403,32 @@ func TestMCPAuthorizationClientSendsInitialThenContinuationApproval(t *testing.T
 	if len(wire.sent) != 2 || wire.sent[0].GetSessionId() != "session-1" || wire.sent[0].GetAuthorizationId() != "authorization:1" || wire.sent[0].GetControl() != nil {
 		t.Fatalf("initial authorization frame = %+v", wire.sent)
 	}
-	if got := wire.sent[1].GetResumeApproval(); got.GetAskId() != "ask-1" || got.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
+	if got := wire.sent[1].GetResumeApproval(); got.GetAskId() != "ask-1" || got.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE || got.GetReviewId() != "review-1" || got.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION || got.GetExpectedRunId() != "run-1" {
 		t.Fatalf("continuation approval = %+v", got)
 	}
 	if !stream.ApprovalResolved("ask-1") {
 		t.Fatal("authorization stream lost approval dedupe state")
+	}
+}
+
+func TestMCPAuthorizationCancelClientPreservesScopedApproval(t *testing.T) {
+	wire := &fakeCancelAuthorizationClient{}
+	stream, err := newFakeClient(&fakeAuthorizationClient{cancelStream: wire}).CancelMCPAuthorization(t.Context(), "session-1", "authorization:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := &GuardrailApprovalScope{ReviewID: "review-release", Kind: "result_release"}
+	if err := stream.SendApprovalForScope("ask-release", VerdictDeny, scope, "run-2"); err != nil {
+		t.Fatal(err)
+	}
+	wire.mu.Lock()
+	defer wire.mu.Unlock()
+	if len(wire.sent) != 2 || wire.sent[0].GetSessionId() != "session-1" || wire.sent[0].GetAuthorizationId() != "authorization:1" {
+		t.Fatalf("initial authorization frame = %+v", wire.sent)
+	}
+	got := wire.sent[1].GetResumeApproval()
+	if got.GetAskId() != "ask-release" || got.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY || got.GetReviewId() != scope.ReviewID || got.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE || got.GetExpectedRunId() != "run-2" {
+		t.Fatalf("continuation approval = %+v", got)
 	}
 }
 
