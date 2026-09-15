@@ -50,7 +50,13 @@ describe("run controls", () => {
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();
-          yield event("run-controls", "started");
+          yield {
+            event: {
+              ask: { args: "{}", askId: "ask-1", reason: "test", tool: "Bash" },
+              runId: "run-controls",
+              type: "permission.ask",
+            },
+          };
           for (let index = 0; index < 3; index += 1) {
             const next = await input.next();
             const kind = next.value?.kind;
