@@ -111,6 +111,10 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Native Kubernetes execution provider](native-kubernetes-execution.md) — separately deployed,
+  optional controller/executor service in this monorepo, with retained workspaces and kind
+  qualification. Status: draft; implementation is planned as a draft PR stacked on the plan PR.
+
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
