@@ -137,6 +137,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0259 — Cloud-native learning uses durable, authoritative attempts](./0259-cloud-native-learning.md) *(Accepted)*
 
 ### Core tools & shell
+- [0343 — Operator-configured command runners](./0343-operator-configured-command-runners.md) *(proposed)*
 - [0281 — Managed temporary command leases and deterministic reaping](./0281-managed-temporary-command-leases.md) *(proposed)*
 - [0282 — Managed workspace scratch cache](./0282-managed-workspace-scratch-cache.md) *(proposed; depends on 0281)*
 - [0201 — Background Bash commands](./0201-background-bash.md)

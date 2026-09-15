@@ -119,6 +119,10 @@ PR after verification. There is no cleanup or status-only PR.
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.
   Status: landed in this Combined candidate; authoritative on merge.
+- [Operator-configured command runners](operator-configured-command-runners.md) —
+  operator-global `command_runner` defaults for the Shell interpreter and a deliberately
+  constrained main-shell ambient credential grant, while managed temporary storage remains
+  a separate lifecycle policy. Status: proposed.
 - [Mecatui unified Agents overlay fit](mecatui-unified-agents-overlay-fit.md) — aligns every F6 selectable roster with the Sessions picker’s unbordered selection treatment and bounds every Agents-overlay subview to its offered viewport, with reachable overflow and compact short-terminal fallback. Status: proposed.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui effort-handoff recovery](mecatui-effort-handoff-recovery.md) — transactional `/effort` successor hydration that preserves the usable source until the target is validated, cleans failed or stale targets best-effort, and retires the source only after adoption. Status: proposed.
