@@ -3,6 +3,7 @@ package productmetrics
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -48,6 +49,14 @@ var (
 // NewProvider refuses to construct, so a non-release build can never
 // accidentally phone home with an invalid or absent key.
 var bakedKey = ""
+
+// exportInterval is the cadence at which the PeriodicReader flushes collected
+// metrics to the ingest endpoint. The OTel SDK's PeriodicReader defaults to
+// 60s (sdkmetric's own defaultInterval); this product-metrics pipeline has no
+// need for minute-granularity export, so it overrides that default to 30m
+// (via sdkmetric.WithInterval below) to cut export traffic to the vendor
+// destination by ~30x.
+const exportInterval = 30 * time.Minute
 
 // Available reports whether this build has an ingest key baked in — i.e.
 // whether NewProvider can ever construct a real pipeline. Composition MUST
@@ -204,7 +213,8 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 
 	mp := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(&allowlistExporter{next: exp})),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(&allowlistExporter{next: exp},
+			sdkmetric.WithInterval(exportInterval))),
 	)
 	return &Provider{meterProvider: mp}, nil
 }
