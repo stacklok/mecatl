@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -1409,21 +1410,29 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			reject("no longer permitted in plan mode", fmt.Sprintf("authorization continuation is no longer permitted: plan mode is active and %q now mutates the workspace; present a plan and exit plan mode first", pending.Call.Name))
 			return
 		}
-		decision := e.permissionDecision(ctx, sess, env, pending.Call)
-		auth := permissionAuthorization{call: pending.Call, env: env.Ref(), decision: decision}
-		auth.authority, auth.authorityBound = sess.BoundAuthority()
-		auth.authorityExempt = r.req.extraToolAuthorityExempt(pending.Call.Name)
-		if authorityResult, denied := e.authorizeExecution(ctx, r, sess, env, sess.Counters.Turns, pending.Call); denied {
-			results := []session.ToolResult{authorityResult}
-			if err := sess.RecordToolResults(results); err != nil {
-				e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
-				return
-			}
-			e.save(ctx, r, sess)
-			e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
+		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, sess.Counters.Turns, pending.Call)
+		if cancelled {
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
 			return
 		}
-		result, cancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, time.Time{})
+		var result session.ToolResult
+		if decision.Effect != governance.Allow {
+			result = denyResult(pending.Call, decision.Reason)
+			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(result)})
+		} else {
+			var enqueue time.Time
+			if e.deps.Clock != nil {
+				enqueue = e.deps.Clock.Now()
+			}
+			var proceed bool
+			result, _, cancelled, proceed = e.reviewActionWithTail(ctx, r, sess, env, sess.Counters.Turns, pending.Call, &auth, true, func() (session.ToolResult, *dispatchPark, bool) {
+				executed, wasCancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+				return executed, nil, wasCancelled
+			})
+			if proceed {
+				result, cancelled = e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+			}
+		}
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")

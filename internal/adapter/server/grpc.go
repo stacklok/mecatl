@@ -878,10 +878,8 @@ func (h *HarnessServer) handleResumeApprovalFrame(ctx context.Context, id sessio
 	if ra == nil || h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
 		return
 	}
-	verdict := verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow())
 	target := ct.active()
-	kind := guardrailApprovalKindFromProto(ra.GetGuardrailKind())
-	resolution := agent.ApprovalResolution{AskID: ra.GetAskId(), ReviewID: ra.GetReviewId(), Kind: kind, Verdict: verdict}
+	resolution := approvalResolutionFromProto(ra)
 	if err := h.svc.resolveLiveRun(id, target, resolution, ra.GetExpectedRunId()); err != nil {
 		select {
 		case rl.notices <- &mecatlv1.Event{Type: "control.refused", Text: valid(err.Error())}:
@@ -1660,6 +1658,7 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 	}
 
 	var controlDone chan error
+	controlNotices := make(chan *mecatlv1.Event, 1)
 	if sendErr == nil {
 		controlDone = make(chan error, 1)
 		go func() {
@@ -1672,7 +1671,9 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				if frame.approval != nil {
 					ra := frame.approval
 					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
-						if err := result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow())); err != nil {
+						resolution := approvalResolutionFromProto(ra)
+						if err := h.svc.resolveLiveRun(id, result.Run, resolution, ra.GetExpectedRunId()); err != nil {
+							controlNotices <- &mecatlv1.Event{Type: "control.refused", Text: valid(err.Error())}
 							h.svc.Diagnostics().Log(ctx, port.LevelWarn, "authorization approval frame refused", "session", string(id), "err", err.Error())
 						}
 					}
@@ -1695,6 +1696,13 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 					sendErr = err
 				}
 				strand()
+			}
+		case notice := <-controlNotices:
+			if sendErr == nil {
+				if err := send(notice); err != nil {
+					sendErr = err
+					strand()
+				}
 			}
 		case ev, ok := <-events:
 			if !ok {

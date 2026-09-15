@@ -163,6 +163,49 @@ func TestContextualActionApprovalDoesNotRepeatOriginalPermissionAsk(t *testing.T
 	}
 }
 
+type evidencePermissionPolicy struct{}
+
+func (evidencePermissionPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, call session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+	if call.Name == "Read" {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: "explicit Read deny"}
+	}
+	return governance.PermissionDecision{Effect: governance.Allow}
+}
+func (evidencePermissionPolicy) Learn(session.SessionID, session.ToolCall) {}
+
+type permissionCheckingEvidencePreparer struct {
+	authorizeErr error
+}
+
+func (p *permissionCheckingEvidencePreparer) PrepareReviewEvidence(ctx context.Context, prep agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+	p.authorizeErr = prep.Authorize(ctx, session.NewToolCall(prep.Request.EffectiveCall.ID, "Read", []byte(`{"path":"secret.sh"}`)))
+	return agent.PreparedReviewEvidence{Complete: p.authorizeErr == nil}, nil
+}
+
+func TestContextualEvidenceRequiresOrdinaryReadPermission(t *testing.T) {
+	executions := 0
+	act := &fakeTool{name: tool.ShellToolName, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		executions++
+		return session.NewToolResult(call.ID, "unexpected"), nil
+	}}
+	read := &fakeTool{name: "Read", readOnly: true}
+	cat := tool.NewCatalog()
+	cat.MustRegister(act)
+	cat.MustRegister(read)
+	preparer := &permissionCheckingEvidencePreparer{}
+	eng := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("call", tool.ShellToolName, []byte(`{"command":"./secret.sh"}`))), mockllm.TextTurn("done")),
+		Catalog: cat, Policy: evidencePermissionPolicy{}, ToolReviewer: toolReviewerFunc(func(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+			return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
+		}), ReviewEvidencePreparer: preparer,
+	})
+	for range eng.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "act"}).Events() {
+	}
+	if preparer.authorizeErr == nil || executions != 1 {
+		t.Fatalf("evidence authorization error=%v executions=%d", preparer.authorizeErr, executions)
+	}
+}
+
 func TestContextualReadBatchReauthorizationPreservesConcurrency(t *testing.T) {
 	policy := &changingPermissionPolicy{decision: governance.PermissionDecision{Effect: governance.Allow}}
 	execEntered := make(chan struct{}, 2)
@@ -175,12 +218,12 @@ func TestContextualReadBatchReauthorizationPreservesConcurrency(t *testing.T) {
 		}}
 	}
 	cat := tool.NewCatalog()
-	cat.MustRegister(mk("Read"))
-	cat.MustRegister(mk("Grep"))
+	cat.MustRegister(mk("LookupA"))
+	cat.MustRegister(mk("LookupB"))
 	eng := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.ToolCallTurn(
-			session.NewToolCall("one", "Read", []byte(`{"path":"a"}`)),
-			session.NewToolCall("two", "Grep", []byte(`{"path":"b","pattern":"x"}`)),
+			session.NewToolCall("one", "LookupA", []byte(`{"query":"a"}`)),
+			session.NewToolCall("two", "LookupB", []byte(`{"query":"b"}`)),
 		), mockllm.TextTurn("done")),
 		Catalog: cat, Policy: policy, ToolReviewer: newProhibitedActionReviewer(), Interactive: true,
 	})

@@ -71,7 +71,7 @@ func TestPagedWorkspaceEvidenceRejectsVersionChangeMidChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := workspaceReviewEvidenceBackend{reader: workspace, path: "script.sh", size: total, version: encoded}
+	backend := workspaceReviewEvidenceBackend{reader: workspace, path: "script.sh", size: total, version: encoded, authorize: func(context.Context) error { return nil }}
 	source, metas, complete := newFiniteReviewEvidenceSource(ctx, binding, []reviewEvidenceCandidate{{Kind: "text_file", Display: "script.sh", Version: encoded, Complete: true, Authorized: true, Binding: binding, Backend: backend}}, req.Capacity)
 	if !complete || len(metas) < 2 {
 		t.Fatalf("metas=%+v complete=%v", metas, complete)

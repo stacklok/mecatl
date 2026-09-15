@@ -16,10 +16,11 @@ import (
 )
 
 type workspaceReviewEvidenceBackend struct {
-	reader  tool.BoundedWorkspaceRangeReader
-	path    string
-	size    int64
-	version string
+	reader    tool.BoundedWorkspaceRangeReader
+	path      string
+	size      int64
+	version   string
+	authorize func(context.Context) error
 }
 
 func (b workspaceReviewEvidenceBackend) Size(context.Context) (int64, error) { return b.size, nil }
@@ -28,6 +29,9 @@ func (b workspaceReviewEvidenceBackend) EvidencePageRanges(ctx context.Context, 
 }
 
 func (b workspaceReviewEvidenceBackend) ReadAt(ctx context.Context, offset, size int64) (string, error) {
+	if b.authorize == nil || b.authorize(ctx) != nil {
+		return "", fmt.Errorf("%w: evidence read permission is unavailable", errEvidenceDenied)
+	}
 	content, version, total, err := b.reader.ReadVersionRangeBounded(ctx, b.path, offset, size, maxReviewEvidenceBytes)
 	if err != nil {
 		return "", err
@@ -101,7 +105,9 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 				readArgs, err := json.Marshal(struct {
 					Path string `json:"path"`
 				}{Path: path})
-				if err != nil || prep.Authorize(ctx, session.NewToolCall(req.EffectiveCall.ID, readToolName, readArgs)) != nil {
+				readCall := session.NewToolCall(req.EffectiveCall.ID, readToolName, readArgs)
+				authorize := func(authCtx context.Context) error { return prep.Authorize(authCtx, readCall) }
+				if err != nil || authorize(ctx) != nil {
 					complete = false
 					continue
 				}
@@ -119,7 +125,7 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 					continue
 				}
 				_ = content // The bounded first page establishes version and total size.
-				candidates = append(candidates, reviewEvidenceCandidate{Kind: "text_file", Display: path, Version: encoded, Complete: true, Authorized: true, Binding: binding, Backend: workspaceReviewEvidenceBackend{reader: reader, path: path, size: total, version: encoded}})
+				candidates = append(candidates, reviewEvidenceCandidate{Kind: "text_file", Display: path, Version: encoded, Complete: true, Authorized: true, Binding: binding, Backend: workspaceReviewEvidenceBackend{reader: reader, path: path, size: total, version: encoded, authorize: authorize}})
 			}
 		}
 	}

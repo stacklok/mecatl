@@ -226,6 +226,10 @@ func (e *Engine) authorizeReviewEvidenceRead(ctx context.Context, r *Run, sess *
 	if err != nil {
 		return err
 	}
+	decision := e.permissionDecision(ctx, sess, env, session.NewToolCall(callID, "Read", args))
+	if decision.Effect != governance.Allow {
+		return errors.New("review evidence Read is not allowed by the originating session permission policy")
+	}
 	if denied, checked := e.authorizeExecution(ctx, r, sess, env, sess.Counters.Turns-1, session.NewToolCall(callID, "Read", args)); checked {
 		return errors.New(denied.Content)
 	}
@@ -592,6 +596,12 @@ func (e *Engine) reauthorizeAction(ctx context.Context, r *Run, sess *session.Se
 }
 
 func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, t tool.Tool, enqueue time.Time) (session.ToolResult, *dispatchPark, bool, bool) {
+	return e.reviewActionWithTail(ctx, r, sess, env, turnIdx, call, auth, false, func() (session.ToolResult, *dispatchPark, bool) {
+		return e.postPreToolUse(ctx, r, sess, env, turnIdx, call, t, auth, enqueue)
+	})
+}
+
+func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, revalidate bool, tail func() (session.ToolResult, *dispatchPark, bool)) (session.ToolResult, *dispatchPark, bool, bool) {
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 		return session.ToolResult{}, nil, false, true
 	}
@@ -610,7 +620,21 @@ func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session
 	if cancelled || !proceed {
 		return res, nil, cancelled, false
 	}
-	res, park, cancelled := e.postPreToolUse(ctx, r, sess, env, turnIdx, call, t, auth, enqueue)
+	if revalidate {
+		allowed, reauthCancelled, reason := e.reauthorizeAction(ctx, r, sess, env, turnIdx, call, auth)
+		if reauthCancelled {
+			return session.ToolResult{}, nil, true, false
+		}
+		if !allowed || !e.revalidateAuthorizedActionDependencies(ctx, r, sess, env, call.ID, assessment.action.dependencies) {
+			if reason == "" {
+				reason = "contextual guardrail binding became stale before execution"
+			}
+			res = session.NewToolError(call.ID, reason)
+			e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+			return res, nil, false, false
+		}
+	}
+	res, park, cancelled := tail()
 	issuer, hasIssuer := r.reviewRoot.reviewer.(ReviewGrantStore)
 	if armGrant {
 		e.armPostActionGrant(ctx, r, sess, env, call, session.VerdictAllowAlways, assessment.action.repeat, issuer, hasIssuer, res, park, cancelled)

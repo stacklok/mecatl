@@ -72,7 +72,10 @@ func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthoriza
 		return s.sendErr
 	}
 	if s.approveOnAsk && response.GetEvent().GetType() == "permission.ask" {
-		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE}}}
+		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{
+			AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+			ReviewId: response.GetEvent().GetAsk().GetGuardrail().GetReviewId(), GuardrailKind: response.GetEvent().GetAsk().GetGuardrail().GetKind(),
+		}}}
 	}
 	return nil
 }
@@ -151,7 +154,7 @@ func TestMCPAuthorizationGRPCUsesAuthenticatedOwnerAndAuthoritativeStatus(t *tes
 	}
 }
 
-func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
+func TestMCPAuthorizationGRPCContinuationDeliversResult(t *testing.T) {
 	followup := session.NewToolCall("followup-call", "protected", nil)
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("continued after approval"))
@@ -178,20 +181,18 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); err != nil {
 		t.Fatal(err)
 	}
-	var asked, toolResult, terminal bool
+	var toolResult, terminal bool
 	for _, response := range stream.responses {
 		ev := response.GetEvent()
 		switch {
-		case ev.GetType() == "permission.ask" && ev.GetAsk().GetAskId() != "":
-			asked = true
 		case ev.GetType() == "tool.result" && ev.GetToolResult().GetCallId() == "followup-call":
 			toolResult = true
 		case ev.GetType() == "result":
 			terminal = true
 		}
 	}
-	if !asked || !toolResult || !terminal {
-		t.Fatalf("continuation events missing ask/approved result/terminal: asked=%t toolResult=%t terminal=%t", asked, toolResult, terminal)
+	if !toolResult || !terminal {
+		t.Fatalf("continuation events missing result/terminal: toolResult=%t terminal=%t", toolResult, terminal)
 	}
 	assertAuthorizationStatusLoggedOnce(t, log, "authorization-session", session.AuthorizationGranted)
 }

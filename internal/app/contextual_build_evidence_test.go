@@ -112,6 +112,40 @@ func (p *evidenceBuildProvider) submitChunks() []port.Chunk {
 	return toolCallChunks(session.NewToolCall("submit-review", submitReviewAssessmentToolName, args))
 }
 
+type deniedEvidenceBuildProvider struct {
+	mainCalls   int
+	reviewCalls int
+	reviewInput string
+}
+
+func (*deniedEvidenceBuildProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *deniedEvidenceBuildProvider) Stream(_ context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	var chunks []port.Chunk
+	if strings.Contains(req.System.Render(), contextualReviewerSystemPrompt) {
+		p.reviewCalls++
+		for _, message := range req.Messages {
+			p.reviewInput += message.Text
+		}
+		chunks = []port.Chunk{{Kind: port.ChunkText, Text: `{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+	} else if p.mainCalls == 0 {
+		p.mainCalls++
+		chunks = toolCallChunks(session.NewToolCall("shell-call", tool.ShellToolName, json.RawMessage(`{"command":"./secret-script.sh"}`)))
+	} else {
+		p.mainCalls++
+		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		for _, chunk := range chunks {
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}, nil
+}
+
 func toolCallChunks(call session.ToolCall) []port.Chunk {
 	return []port.Chunk{{Kind: port.ChunkToolCall, ToolCall: &call}, {Kind: port.ChunkUsage, Usage: &session.Usage{}}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
 }
@@ -148,6 +182,57 @@ func TestEvidenceAuthorizationPrecedesBackendMetadata(t *testing.T) {
 	defer prepared.Close()
 	if prepared.Complete || len(prepared.Evidence) != 0 || workspace.stats != 0 || workspace.reads != 0 {
 		t.Fatalf("prepared=%+v stats=%d reads=%d; denied candidate touched backend", prepared, workspace.stats, workspace.reads)
+	}
+}
+
+type countingRangeEvidenceWorkspace struct {
+	tool.Workspace
+	reads int
+}
+
+func (w *countingRangeEvidenceWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	w.reads++
+	return w.Workspace.(tool.BoundedWorkspaceRangeReader).ReadVersionRangeBounded(ctx, path, offset, maxBytes, totalLimit)
+}
+
+func TestWorkspaceEvidenceReauthorizesEveryBackendRead(t *testing.T) {
+	ctx := context.Background()
+	base := memfs.NewWorkspace("/review")
+	content := []byte(strings.Repeat("line\n", 8_000))
+	if err := base.Write(ctx, "script.sh", content); err != nil {
+		t.Fatal(err)
+	}
+	workspace := &countingRangeEvidenceWorkspace{Workspace: base}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review", Revision: "r1"}
+	env := tool.MustEnvironment(ref, workspace, reviewerReadLedger{}, nil)
+	req := agent.ToolReviewRequest{
+		ReviewID: "review-revoked", Job: agent.ReviewJobAction, Event: sessionHookEvent("review-revoked"),
+		EffectiveCall: session.NewToolCall("call", tool.ShellToolName, json.RawMessage(`{"command":"./script.sh"}`)),
+		Caller:        agent.ReviewCaller{Role: "main", Capabilities: []string{tool.ShellToolName, "Read"}}, Environment: ref,
+		Capacity: agent.ReviewCapacity{MaxEvidenceHandles: maxReviewEvidenceHandles, MaxEvidenceBytes: maxReviewEvidenceBytes},
+	}
+	allowed := true
+	prepared, err := (&guardrailActionReviewer{providerID: "provider", modelID: "model"}).PrepareReviewEvidence(ctx, agent.ReviewEvidencePreparation{
+		Request: req, Environment: env,
+		Authorize: func(context.Context, session.ToolCall) error {
+			if !allowed {
+				return errors.New("Read revoked")
+			}
+			return nil
+		},
+	})
+	if err != nil || !prepared.Complete || len(prepared.Evidence) < 2 {
+		t.Fatalf("prepare=%+v err=%v", prepared, err)
+	}
+	defer prepared.Close()
+	readsAfterInventory := workspace.reads
+	allowed = false
+	meta := prepared.Evidence[1]
+	if _, err := prepared.Source.ReadReviewEvidence(ctx, agent.ReviewEvidenceRequest{ReviewID: req.ReviewID, Handle: meta.Handle, Version: meta.Version}); err == nil {
+		t.Fatal("revoked evidence continuation remained readable")
+	}
+	if workspace.reads != readsAfterInventory {
+		t.Fatalf("backend reads after revocation=%d, want zero", workspace.reads-readsAfterInventory)
 	}
 }
 
@@ -281,6 +366,44 @@ func TestBuildBoundAuthorityPrecedesContextualReviewer(t *testing.T) {
 	}
 	if provider.mainCalls != 2 {
 		t.Fatalf("main calls = %d, want denied call followed by completion", provider.mainCalls)
+	}
+}
+
+func TestBuildDoesNotDiscloseEvidenceWithoutReadPermission(t *testing.T) {
+	for _, effect := range []string{"deny", "ask"} {
+		t.Run(effect, func(t *testing.T) {
+			cfg := guardrailE2ECfg(t, false, PostureYolo, "./secret-script.sh")
+			const secret = "SECRET_FILE_BODY_MUST_NOT_REACH_CHECKER"
+			if err := os.WriteFile(cfg.Workspace+"/secret-script.sh", []byte("#!/bin/sh\n# "+secret+"\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			settings := cfg.Workspace + "/operator-settings.yaml"
+			if err := os.WriteFile(settings, []byte("permissions:\n  "+effect+": [Read]\n  allow: [Shell, Write]\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg.PermissionConfigs = []string{settings}
+			provider := &deniedEvidenceBuildProvider{}
+			cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
+			built, err := Build(context.Background(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := built.Service.StartRunContent(context.Background(), sess.ID, "run the script", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range run.Events() {
+			}
+			built.Service.FinishRun(sess.ID, run)
+			if provider.reviewCalls != 1 || strings.Contains(provider.reviewInput, secret) {
+				t.Fatalf("review calls=%d secret disclosed=%t", provider.reviewCalls, strings.Contains(provider.reviewInput, secret))
+			}
+		})
 	}
 }
 

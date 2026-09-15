@@ -1302,6 +1302,18 @@ func guardrailApprovalKindFromProto(kind mecatlv1.GuardrailApprovalKind) session
 	}
 }
 
+func approvalResolutionFromProto(approval *mecatlv1.ResumeApproval) agent.ApprovalResolution {
+	if approval == nil {
+		return agent.ApprovalResolution{}
+	}
+	return agent.ApprovalResolution{
+		AskID:    approval.GetAskId(),
+		ReviewID: approval.GetReviewId(),
+		Kind:     guardrailApprovalKindFromProto(approval.GetGuardrailKind()),
+		Verdict:  verdictFromResumeApproval(approval.GetVerdict(), approval.GetAllow()),
+	}
+}
+
 // verdictFromResumeApproval derives the session.ApprovalVerdict from a
 // ResumeApproval frame, preferring the explicit `verdict` enum and falling back
 // to the legacy `allow` bool for clients that predate it (BACK-COMPAT). The

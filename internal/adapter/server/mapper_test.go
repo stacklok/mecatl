@@ -1195,6 +1195,17 @@ func TestVerdictFromResumeApproval(t *testing.T) {
 	}
 }
 
+func TestApprovalResolutionFromProtoPreservesGuardrailAcknowledgement(t *testing.T) {
+	got := approvalResolutionFromProto(&mecatlv1.ResumeApproval{
+		AskId: "ask-1", ReviewId: "review-1",
+		GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE,
+		Verdict:       mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
+	})
+	if got.AskID != "ask-1" || got.ReviewID != "review-1" || got.Kind != session.GuardrailApprovalResultRelease || got.Verdict != session.VerdictAllowAlways {
+		t.Fatalf("approval resolution lost contextual acknowledgement: %+v", got)
+	}
+}
+
 // TestToProtoToolResultWithBlocks maps a session.ToolResult carrying one of each
 // block kind to its proto form and back, asserting every ContentBlock field
 // round-trips and the structured_content field is derived from the structured
