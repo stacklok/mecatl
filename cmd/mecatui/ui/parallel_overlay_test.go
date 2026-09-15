@@ -469,12 +469,13 @@ func TestParallelBranchOrderByIndex(t *testing.T) {
 	i1 := strings.Index(out, "branch-1")
 	i2 := strings.Index(out, "branch-2")
 	i3 := strings.Index(out, "branch-3")
-	if i1 < 0 || i2 < 0 || i3 < 0 {
-		t.Fatalf("group focus missing a branch row:\n%s", out)
+	if i1 < 0 || i2 < 0 || i1 >= i2 || i3 >= 0 && i2 >= i3 {
+		t.Fatalf("visible branches are not ordered by index:\n%s", out)
 	}
-	if i1 >= i2 || i2 >= i3 {
-		t.Fatalf("branches not rendered BY INDEX (want branch-1<branch-2<branch-3 despite out-of-order events): "+
-			"i1=%d i2=%d i3=%d\n%s", i1, i2, i3, out)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	m = mm.(Model)
+	if end := stripANSIstr(m.View().Content); !strings.Contains(end, "branch-3") || !strings.Contains(end, "▶") {
+		t.Fatalf("last by-index branch is not reachable:\n%s", end)
 	}
 }
 

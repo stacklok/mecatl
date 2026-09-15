@@ -47,9 +47,11 @@ const (
 // conversation each render). Focus is keyed by ParentCallID (not index) so a group list
 // that grows under the overlay can't shift focus onto the wrong group.
 type parallelState struct {
-	view   parallelView
-	cursor int    // selected row in the group roster (index into the group order)
-	group  string // the focused group's ParentCallID (parallelGroupView)
+	view     parallelView
+	cursor   int    // selected row in the group roster (index into the group order)
+	group    string // the focused group's ParentCallID (parallelGroupView)
+	roster   boundedList
+	branches boundedList
 	// branchCursor is the selected BRANCH row inside the focused group (an index into
 	// the by-index render order, branchesByIndex) — the selection the `x` cancel key
 	// addresses. Reset on focus enter/exit.
@@ -77,6 +79,8 @@ type subagentState struct {
 	cursor int    // selected row in the fleet roster (index into the fleet order)
 	child  string // the focused child's ChildID (subagentFocus)
 	scroll int    // rendered-line offset in the focused trace
+	roster boundedList
+	detail boundedViewport
 }
 
 // openAgents opens the unified f6 agents overlay. It picks the CONTEXT-SENSITIVE
@@ -293,12 +297,12 @@ func (m Model) cancelChildByID(childID, what string) (tea.Model, tea.Cmd) {
 func (m Model) onSubagentRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	fleet := m.conv.subagentFleet
 	n := len(fleet)
-	page := m.subagentRosterPageSize(fleet)
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeAgents()
 	}
-	if next, handled := navigateRosterCursor(msg, m.keys, m.subagents.cursor, n, page); handled {
-		m.subagents.cursor = next
+	th, hk, width, _ := m.agentsListGeometry()
+	if next, control, handled := m.navigateAgentsList(msg, subagentSelectableList(th, m.subagents, fleet, hk, width)); handled {
+		m.subagents.cursor, m.subagents.roster = next, control
 		return m, nil
 	}
 	switch {
@@ -339,20 +343,18 @@ func (m Model) onParallelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // back to the group roster.
 func (m Model) onParallelGroupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	g := findParallelGroup(m.conv.parallelGroups, m.parallel.group)
-	n := 0
-	if g != nil {
-		n = len(g.branches)
-	}
 	if key.Matches(msg, m.keys.Close) {
 		m.parallel.view = parallelRoster
 		m.parallel.group = ""
 		m.parallel.branchCursor = 0
 		return m, nil
 	}
-	page := m.parallelBranchPageSize(g)
-	if next, handled := navigateRosterCursor(msg, m.keys, m.parallel.branchCursor, n, page); handled {
-		m.parallel.branchCursor = next
-		return m, nil
+	if g != nil {
+		th, hk, width, _ := m.agentsListGeometry()
+		if next, control, handled := m.navigateAgentsList(msg, parallelBranchSelectableList(th, m.parallel, g, hk, width)); handled {
+			m.parallel.branchCursor, m.parallel.branches = next, control
+			return m, nil
+		}
 	}
 	if key.Matches(msg, m.keys.CancelChild) {
 		if g == nil {
@@ -378,12 +380,12 @@ func (m Model) onParallelGroupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	groups := m.conv.parallelGroups
 	n := len(groups)
-	page := m.parallelRosterPageSize(groups)
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeAgents()
 	}
-	if next, handled := navigateRosterCursor(msg, m.keys, m.parallel.cursor, n, page); handled {
-		m.parallel.cursor = next
+	th, hk, width, _ := m.agentsListGeometry()
+	if next, control, handled := m.navigateAgentsList(msg, parallelSelectableList(th, m.parallel, groups, hk, width)); handled {
+		m.parallel.cursor, m.parallel.roster = next, control
 		return m, nil
 	}
 	if key.Matches(msg, m.keys.Choose) {
@@ -396,6 +398,30 @@ func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) navigateAgentsList(msg tea.KeyPressMsg, list agentsSelectableList) (int, boundedList, bool) {
+	var move boundedMove
+	switch {
+	case key.Matches(msg, m.keys.Up):
+		move = boundedLineUp
+	case key.Matches(msg, m.keys.Down):
+		move = boundedLineDown
+	case key.Matches(msg, m.keys.ScrollU):
+		move = boundedPageUp
+	case key.Matches(msg, m.keys.ScrollD):
+		move = boundedPageDown
+	case key.Matches(msg, m.keys.JumpTop):
+		move = boundedTop
+	case key.Matches(msg, m.keys.JumpEnd):
+		move = boundedEnd
+	default:
+		return list.cursor, list.control, false
+	}
+	th, _, _, height := m.agentsListGeometry()
+	control, _, _ := list.configuredControl(th, height)
+	control.move(move)
+	return control.cursor, control, true
 }
 
 func agentsListPageSize(th theme.Theme, height int, list agentsSelectableList) int {
@@ -423,12 +449,58 @@ func (m Model) parallelRosterPageSize(groups []parallelGroup) int {
 	return agentsListPageSize(th, height, parallelSelectableList(th, m.parallel, groups, hk, width))
 }
 
-func (m Model) parallelBranchPageSize(g *parallelGroup) int {
-	if g == nil {
-		return 1
+func (m Model) onAgentsWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	// Agents predates the modal surface lifecycle. Keep this narrow owner branch
+	// until that overlay migrates; it must run before conversation scrolling.
+	if m.height > 0 && m.height < 24 {
+		return m, nil
 	}
 	th, hk, width, height := m.agentsListGeometry()
-	return agentsListPageSize(th, height, parallelBranchSelectableList(th, m.parallel, g, hk, width))
+	if height == 0 {
+		return m, nil
+	}
+	move := boundedLineDown
+	if msg.Mouse().Button == tea.MouseWheelUp {
+		move = boundedLineUp
+	}
+	scrollList := func(list agentsSelectableList) boundedList {
+		control, _, _ := list.configuredControl(th, height)
+		control.scroll(move)
+		return control
+	}
+	switch m.agentsTab {
+	case tabSubagents:
+		if m.subagents.view == subagentFocus {
+			next, _ := m.navigateAgentsDetail(tea.KeyPressMsg{Code: map[bool]rune{true: tea.KeyUp, false: tea.KeyDown}[move == boundedLineUp]}, m.subagents.scroll)
+			m.subagents.scroll = next
+			m.subagents.detail.offset = next
+		} else {
+			m.subagents.roster = scrollList(subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width))
+			m.subagents.cursor = m.subagents.roster.cursor
+		}
+	case tabParallel:
+		if m.parallel.view == parallelGroupView {
+			if g := findParallelGroup(m.conv.parallelGroups, m.parallel.group); g != nil {
+				m.parallel.branches = scrollList(parallelBranchSelectableList(th, m.parallel, g, hk, width))
+				m.parallel.branchCursor = m.parallel.branches.cursor
+			}
+		} else {
+			m.parallel.roster = scrollList(parallelSelectableList(th, m.parallel, m.conv.parallelGroups, hk, width))
+			m.parallel.cursor = m.parallel.roster.cursor
+		}
+	case tabTeams:
+		if m.team.view == teamRoster {
+			if b := m.conv.latestTeamBlock(); b != nil {
+				m.team.roster = scrollList(teamSelectableList(th, m.team, b, hk, width))
+				m.team.cursor = m.team.roster.cursor
+			}
+		} else {
+			next, _ := m.navigateAgentsDetail(tea.KeyPressMsg{Code: map[bool]rune{true: tea.KeyUp, false: tea.KeyDown}[move == boundedLineUp]}, m.team.scroll)
+			m.team.scroll = next
+			m.team.detail.offset = next
+		}
+	}
+	return m, nil
 }
 
 func (m Model) navigateAgentsDetail(msg tea.KeyPressMsg, scroll int) (int, bool) {
@@ -585,7 +657,7 @@ func newAgentsOverlayLayout(th theme.Theme, tab agentsTab, width, height int) ag
 		bounded:    height > 0,
 	}
 	if layout.bounded {
-		layout.bodyCapacity = height - layout.frameRows - lipgloss.Height(layout.tabStrip)
+		layout.bodyCapacity = height - layout.frameRows - lipgloss.Height(layout.tabStrip) - 2
 	}
 	return layout
 }
@@ -666,6 +738,8 @@ func essentialSubagentBody(th theme.Theme, st subagentState, fleet []subagentLan
 		if len(lane.trace) > 0 {
 			body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
 		}
+	} else {
+		body.selected = line(th.Style("muted"), "", "subagent #"+shortChildID(st.child)+" is no longer in the fleet")
 	}
 	return body
 }
@@ -684,6 +758,7 @@ func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGr
 	body.footer = line(th.Style("muted"), "", focusBackHint(hk))
 	group := findParallelGroup(groups, st.group)
 	if group == nil {
+		body.selected = line(th.Style("muted"), "", "this parallel run is no longer tracked")
 		return body
 	}
 	body.title = line(th.Style("askTitle"), "", "parallel · join="+parallelJoinMode(group.join))
@@ -713,6 +788,8 @@ func essentialTeamBody(th theme.Theme, st teamState, b *block, hk helpKeys, line
 			if len(lane.trace) > 0 {
 				body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
 			}
+		} else {
+			body.selected = line(th.Style("muted"), "", "member "+sanitizeTerminal(st.member)+" is no longer in the roster")
 		}
 	case teamTasks:
 		body.title = line(th.Style("askTitle"), "", "tasks")
@@ -915,82 +992,97 @@ type agentsCursorWindow struct {
 type agentsSelectableList struct {
 	header, footer string
 	rows           []string
+	ids            []string
 	cursor         int
 	muted          lipgloss.Style
 	noun           string
+	bodyWidth      int
+	control        boundedList
+}
+
+func (l agentsSelectableList) configuredControl(th theme.Theme, height int) (boundedList, int, bool) {
+	capacity := 1 << 20
+	if height > 0 {
+		capacity = height - th.Style("askCard").GetVerticalFrameSize() -
+			lipgloss.Height(l.header) - lipgloss.Height(l.footer) - 2
+	}
+	items := make([]boundedListItem, len(l.rows))
+	for i := range l.rows {
+		id := fmt.Sprintf("row-%d", i)
+		if i < len(l.ids) && l.ids[i] != "" {
+			id = l.ids[i]
+		}
+		text := strings.ReplaceAll(l.rows[i], "\n    ", "\n  ")
+		items[i] = boundedListItem{id: id, text: text}
+	}
+	hadCursor := l.control.cursorID != ""
+	width := l.bodyWidth
+	if width <= 0 {
+		width = 1 << 20
+	}
+	l.control.setGeometry(width, max(0, capacity), 2, boundedWrap)
+	l.control.setItems(items)
+	reveal := !hadCursor || l.control.reveal
+	if !hadCursor {
+		l.control.setCursor(l.cursor)
+	}
+	return l.control, max(0, capacity), reveal
+}
+
+func (l agentsSelectableList) boundedView(th theme.Theme, height int) boundedListView {
+	if len(l.rows) == 0 {
+		return boundedListView{}
+	}
+	control, capacity, reveal := l.configuredControl(th, height)
+	return boundedListViewWithIndicators(&control, capacity, reveal)
 }
 
 func (l agentsSelectableList) window(th theme.Theme, height int) agentsCursorWindow {
-	if len(l.rows) == 0 {
+	view := l.boundedView(th, height)
+	if len(view.rows) == 0 {
 		return agentsCursorWindow{}
 	}
-	if height <= 0 {
-		return agentsCursorWindow{end: len(l.rows)}
-	}
-	capacity := height - th.Style("askCard").GetVerticalFrameSize() -
-		lipgloss.Height(l.header) - lipgloss.Height(l.footer) - 2
-	return physicalCursorWindow(l.rows, clampCursor(l.cursor, len(l.rows)), capacity)
+	start := view.rows[0].itemIndex
+	end := view.rows[len(view.rows)-1].itemIndex + 1
+	return agentsCursorWindow{start: start, end: end, above: start, below: len(l.rows) - end}
 }
 
 func (l agentsSelectableList) render(th theme.Theme, height int) string {
-	w := l.window(th, height)
+	view := l.boundedView(th, height)
 	var middle []string
-	if w.above > 0 {
-		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s above", w.above, l.noun), 0))
+	if len(view.rows) == 0 && len(l.rows) > 0 {
+		middle = append(middle, th.Style("spinner").Render("▶ "+l.rows[clampCursor(l.cursor, len(l.rows))]))
 	}
-	middle = append(middle, l.rows[w.start:w.end]...)
-	if w.below > 0 {
-		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s below", w.below, l.noun), 0))
+	if view.above > 0 {
+		count, noun := view.rows[0].itemIndex, l.noun
+		if count == 0 {
+			count, noun = view.above, "lines"
+		}
+		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s above", count, noun), 0))
+	}
+	middle = append(middle, func() []string {
+		rows := make([]string, 0, len(view.rows))
+		for _, row := range view.rows {
+			prefix := row.gutter
+			if row.cursorMarker {
+				prefix = "▶ "
+			}
+			style := l.muted
+			if row.selected {
+				style = th.Style("spinner")
+			}
+			rows = append(rows, style.Render(prefix+row.text))
+		}
+		return rows
+	}()...)
+	if view.below > 0 {
+		count, noun := len(l.rows)-view.rows[len(view.rows)-1].itemIndex-1, l.noun
+		if count == 0 {
+			count, noun = view.below, "lines"
+		}
+		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s below", count, noun), 0))
 	}
 	return l.header + "\n\n" + strings.Join(middle, "\n") + "\n\n" + l.footer
-}
-
-// physicalCursorWindow finds the largest contiguous logical-row window that fits
-// the physical-line budget. Indicator rows are charged in the same calculation.
-func physicalCursorWindow(rows []string, cursor, capacity int) agentsCursorWindow {
-	total := len(rows)
-	if total == 0 {
-		return agentsCursorWindow{}
-	}
-	cursor = clampCursor(cursor, total)
-	if capacity <= 0 {
-		return agentsCursorWindow{start: cursor, end: cursor + 1, above: cursor, below: total - cursor - 1}
-	}
-	heights := make([]int, total+1)
-	for i, row := range rows {
-		heights[i+1] = heights[i] + lipgloss.Height(row)
-	}
-	best := agentsCursorWindow{start: cursor, end: cursor + 1, above: cursor, below: total - cursor - 1}
-	bestCount := 0
-	bestBalance := total * 2
-	for start := 0; start <= cursor; start++ {
-		for end := cursor + 1; end <= total; end++ {
-			cost := heights[end] - heights[start]
-			if start > 0 {
-				cost++
-			}
-			if end < total {
-				cost++
-			}
-			if cost > capacity {
-				break
-			}
-			count := end - start
-			balance := absInt((cursor-start)*2 - (count - 1))
-			if count > bestCount || count == bestCount && balance < bestBalance {
-				best = agentsCursorWindow{start: start, end: end, above: start, below: total - end}
-				bestCount, bestBalance = count, balance
-			}
-		}
-	}
-	return best
-}
-
-func absInt(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
 }
 
 func subagentSelectableList(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth int) agentsSelectableList {
@@ -1000,13 +1092,11 @@ func subagentSelectableList(th theme.Theme, st subagentState, fleet []subagentLa
 		header: renderDelegationRows(th.Style("askTitle"), "", subagentRosterHeader(running, done), bodyWidth),
 		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth),
 		cursor: clampCursor(st.cursor, len(fleet)), muted: muted, noun: "rows",
+		bodyWidth: bodyWidth, control: st.roster,
 	}
 	for row := range fleet {
-		style, prefix := muted, "  "
-		if row == list.cursor {
-			style, prefix = th.Style("spinner"), "▶ "
-		}
-		list.rows = append(list.rows, renderSubagentRosterRow(style, prefix, &fleet[row], bodyWidth))
+		list.ids = append(list.ids, fleet[row].childID)
+		list.rows = append(list.rows, subagentRosterText(&fleet[row], bodyWidth, 2))
 	}
 	return list
 }
@@ -1341,13 +1431,11 @@ func parallelSelectableList(th theme.Theme, st parallelState, groups []parallelG
 		header: renderDelegationRows(th.Style("askTitle"), "", fmt.Sprintf("parallel · %d running · %d done", running, done), bodyWidth),
 		footer: renderCardChromeSegments(muted, []string{hk.closeOnly + " close", hk.navUp + "/" + hk.navDown + " select", hk.choose + " focus", hk.nextTab + " switch", hk.scroll + " page", hk.jumpTopFull + "·" + hk.jumpEndFull + " first/last"}, bodyWidth),
 		cursor: clampCursor(st.cursor, len(groups)), muted: muted, noun: "rows",
+		bodyWidth: bodyWidth, control: st.roster,
 	}
 	for row := range groups {
-		style, prefix := muted, "  "
-		if row == list.cursor {
-			style, prefix = th.Style("spinner"), "▶ "
-		}
-		list.rows = append(list.rows, renderDelegationRows(style, prefix, parallelRosterLine(&groups[row]), bodyWidth))
+		list.ids = append(list.ids, groups[row].parentCallID)
+		list.rows = append(list.rows, parallelRosterLine(&groups[row]))
 	}
 	return list
 }
@@ -1444,22 +1532,30 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 	ordered := branchesByIndex(g.branches)
 	cursor := clampCursor(st.branchCursor, len(ordered))
 	cancellable := false
-	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches"}
-	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter))}
+	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches", bodyWidth: bodyWidth, control: st.branches}
+	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter)-2)}
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
 			cancellable = true
 		}
-		row := strings.TrimSuffix(renderParallelBranchRow(th, br, g.winner, i == cursor, bodyWidth), "\n")
+		winner := ""
+		if br.index == g.winner {
+			winner = "★ "
+		}
+		row := winner + parallelBranchText(br, bodyWidth, 2+lipgloss.Width(winner))
 		if trace := r.renderTrace(br.trace); trace != "" {
 			row += "\n" + indentParallelBranchTrace(trace, bodyWidth)
 		}
+		list.ids = append(list.ids, br.childID)
+		if br.childID == "" {
+			list.ids[len(list.ids)-1] = fmt.Sprintf("branch-%d", br.index)
+		}
 		list.rows = append(list.rows, row)
 	}
-	list.footer = hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last · " + focusBackHint(hk)
+	list.footer = focusBackHint(hk) + " · " + hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last"
 	if cancellable {
-		list.footer = hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last · " + hk.cancelChild + " cancel · " + focusBackHint(hk)
+		list.footer = focusBackHint(hk) + " · " + hk.cancelChild + " cancel · " + hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last"
 	}
 	if len(ordered) == 0 {
 		list.footer = focusBackHint(hk)
