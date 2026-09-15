@@ -146,6 +146,7 @@ PR after verification. There is no cleanup or status-only PR.
   attributable Linux and macOS command/job temporary storage with a permission-visible
   system escape and deterministic crash-residue reaping. Status: landed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
+- [MCP source reconciliation](mcp-source-reconciliation.md) — one source-neutral Build-owned reconciler publishes immutable leased direct/global MCP generations, durably attenuates identity-bound grants, and exposes explicit owner-authorized `/mcp-refresh` for additions. Status: proposed.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
 - [Broker MCP status](broker-mcp-status.md) — approved owner-scoped broker connector
   inventory and enrollment/catalogue status behind `/mcp`, without probes or new
