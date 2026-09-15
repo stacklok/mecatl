@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -208,6 +209,17 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	if got := list.view(); len(got.rows) == 0 || got.rows[0].gutter != "" {
 		t.Fatalf("zero-gutter list geometry = %#v, want visible rows with no gutter", got)
 	}
+	list.viewport.offset = 3
+	list.setGeometry(12, 4, 0, boundedClip)
+	if list.viewport.offset != 1 || len(list.view().rows) != 4 {
+		t.Fatalf("valid geometry growth left a blank page: offset=%d rows=%d, want 1/4", list.viewport.offset, len(list.view().rows))
+	}
+	viewportType := reflect.TypeOf(boundedViewport{})
+	for _, name := range []string{"x", "xOffset", "horizontalOffset"} {
+		if _, ok := viewportType.FieldByName(name); ok {
+			t.Fatalf("boundedViewport exposes forbidden horizontal navigation state %q", name)
+		}
+	}
 	list.setGeometry(2, 2, 2, boundedWrap)
 	if got := list.view(); len(got.rows) != 0 || got.above != 0 || got.below != 0 {
 		t.Fatalf("width smaller than gutter+content rendered %#v", got)
@@ -229,6 +241,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t 
 		{id: "c", text: "c0"},
 	})
 	list.setCursor(1) // minimally reveals b with top anchor {a,1}
+	list.cursorLine = 2
 	if list.viewport.offset != 1 {
 		t.Fatalf("initial top offset = %d, want 1", list.viewport.offset)
 	}
@@ -239,8 +252,8 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t 
 		{id: "a", text: "a0\na1\na2"},
 		{id: "c", text: "c0"},
 	})
-	if list.cursorID != "b" || list.cursor != 1 {
-		t.Fatalf("refresh lost selected stable ID: cursor=(%d,%q)", list.cursor, list.cursorID)
+	if list.cursorID != "b" || list.cursor != 1 || list.cursorLine != 2 {
+		t.Fatalf("refresh lost selected stable ID/line: cursor=(%d,%q,%d), want (1,b,2)", list.cursor, list.cursorID, list.cursorLine)
 	}
 	if top := list.view().rows[0]; top.id != "a" || top.itemLine != 1 {
 		t.Fatalf("refresh top anchor = {%q,%d}, want {a,1}", top.id, top.itemLine)
@@ -278,5 +291,14 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t 
 	}
 	if list.cursorID != "d" {
 		t.Fatalf("missing top ID disturbed selected ID: %q", list.cursorID)
+	}
+
+	var lineClamp boundedList
+	lineClamp.setGeometry(20, 2, 2, boundedClip)
+	lineClamp.setItems([]boundedListItem{{id: "selected", text: "s0\ns1\ns2"}})
+	lineClamp.cursorLine = 2
+	lineClamp.setItems([]boundedListItem{{id: "selected", text: "short"}})
+	if lineClamp.cursorID != "selected" || lineClamp.cursorLine != 0 {
+		t.Fatalf("selected line did not clamp after height shrink: id=%q line=%d", lineClamp.cursorID, lineClamp.cursorLine)
 	}
 }

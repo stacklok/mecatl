@@ -92,6 +92,15 @@ func (v *boundedViewport) view(lines []string) boundedViewportView {
 	}
 }
 
+func boundedViewportBounds(view boundedViewportView, window int) renderedLineWindowBounds {
+	return renderedLineWindowBounds{
+		start:  view.above,
+		end:    view.above + len(view.rows),
+		total:  view.above + len(view.rows) + view.below,
+		window: max(0, window),
+	}
+}
+
 func (v *boundedViewport) move(move boundedMove, total int) {
 	if !v.valid() {
 		return
@@ -417,8 +426,8 @@ func clampBounded(value, count int) int {
 // pure function of (cursor, n, limit) — the window FOLLOWS the cursor (no stored
 // offset to drift), so the selected row stays in view when paging past the top or
 // bottom edge. Shared by the slash palette (renderPalette), the @-mention menu
-// (renderMention), and the /models picker (renderModelsPanel); lifted from
-// palette.go (was paletteWindow) so the call sites can't diverge.
+// (renderMention); retained for those fixed-row consumers while modelsState.Render
+// uses boundedList for item-aware geometry.
 func scrollWindow(cursor, n, limit int) (start, end int) {
 	if n <= limit {
 		return 0, n
