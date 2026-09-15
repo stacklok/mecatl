@@ -446,7 +446,7 @@ func (m *Model) reconcileAgentsLists() {
 		return
 	}
 	reconcile := func(list agentsSelectableList) boundedList {
-		control, _, _ := list.configuredControl(th, height)
+		control, _ := list.indicatorAdjustedControl(th, height)
 		return control
 	}
 	m.subagents.roster = reconcile(subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width))
@@ -479,8 +479,10 @@ func (m Model) onAgentsWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		move = boundedLineUp
 	}
 	scrollList := func(list agentsSelectableList) boundedList {
-		control, _, _ := list.configuredControl(th, height)
+		control, _ := list.indicatorAdjustedControl(th, height)
 		control.scroll(move)
+		list.control = control
+		control, _ = list.indicatorAdjustedControl(th, height)
 		return control
 	}
 	switch m.agentsTab {
@@ -1080,12 +1082,14 @@ func (l agentsSelectableList) configuredControl(th theme.Theme, height int) (bou
 	return l.control, max(0, capacity), reveal
 }
 
-func (l agentsSelectableList) boundedView(th theme.Theme, height int) boundedListView {
-	if len(l.rows) == 0 {
-		return boundedListView{}
-	}
+func (l agentsSelectableList) indicatorAdjustedControl(th theme.Theme, height int) (boundedList, boundedListView) {
 	control, capacity, reveal := l.configuredControl(th, height)
-	return boundedListViewWithIndicators(&control, capacity, reveal)
+	return control, boundedListViewWithIndicators(&control, capacity, reveal)
+}
+
+func (l agentsSelectableList) boundedView(th theme.Theme, height int) boundedListView {
+	_, view := l.indicatorAdjustedControl(th, height)
+	return view
 }
 
 func (l agentsSelectableList) render(th theme.Theme, height int) string {
@@ -1597,10 +1601,7 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 		if trace := r.renderTrace(br.trace); trace != "" {
 			row += "\n" + indentParallelBranchTrace(trace, bodyWidth)
 		}
-		list.ids = append(list.ids, br.childID)
-		if br.childID == "" {
-			list.ids[len(list.ids)-1] = fmt.Sprintf("branch-%d", br.index)
-		}
+		list.ids = append(list.ids, fmt.Sprintf("branch-%d", br.index))
 		list.rows = append(list.rows, row)
 	}
 	list.footer = focusBackHint(hk) + " · " + hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last"

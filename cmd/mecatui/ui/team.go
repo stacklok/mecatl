@@ -287,11 +287,8 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 		bodyWidth: bodyWidth, control: st.roster,
 	}
 	for _, laneIndex := range order {
-		list.ids = append(list.ids, b.teamLanes[laneIndex].sessionID)
-		if list.ids[len(list.ids)-1] == "" {
-			list.ids[len(list.ids)-1] = b.teamLanes[laneIndex].name
-		}
 		lane := &b.teamLanes[laneIndex]
+		list.ids = append(list.ids, lane.name)
 		list.rows = append(list.rows, teamRosterTitle(lane, nameW, b.teamDone)+"\n    "+teamRosterWork(lane, b.teamDone)+"\n    "+teamRosterRuntime(lane))
 	}
 	return list
