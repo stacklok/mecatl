@@ -54,8 +54,8 @@ terminals without enhanced key-event support.
 press they can report. A terminal sends `enter` as a single carriage-return byte
 with no room for a modifier, so it can only distinguish `shift+enter` and
 `ctrl+enter` from a plain `enter` when it implements the Kitty keyboard protocol
-or xterm's `modifyOtherKeys`. `mecatui` requests both and uses whichever the
-terminal provides, so the prompt hint tells you which chord yours can deliver.
+or xterm's `modifyOtherKeys`. `mecatui` requests both, and all four chords stay
+bound whatever your terminal reports.
 
 Two chords reach `mecatui` without either protocol:
 
@@ -65,14 +65,26 @@ Two chords reach `mecatui` without either protocol:
   terminal that sends Option or Alt as a Meta key. On macOS Terminal.app, turn
   on **Use Option as Meta Key** in your profile's Keyboard settings.
 
-The prompt hint names a chord your terminal can deliver. It reads `shift+enter`,
-and changes to `ctrl+j` when your terminal answers that it supports no keyboard
-enhancements or does not answer at all. Press `?` to see every bound newline
-chord at once.
+The prompt hint reads `shift+enter`, and changes to `ctrl+j` when a modified
+`enter` is unconfirmed: either your terminal answers that it supports no
+keyboard enhancements, or it does not answer the capability query at all.
+
+Silence is not proof. `mecatui` reads the Kitty protocol's reply, and a terminal
+that supports only `modifyOtherKeys` can deliver `shift+enter` while staying
+silent here. So read the switch to `ctrl+j` as "here is a chord that works",
+not as "`shift+enter` is broken". Try `shift+enter` anyway if you prefer it.
+Press `?` to see every bound newline chord at once.
 
 If you remap `Newline`, list your chords in preference order. The hint shows your
 first chord, and falls back to the first chord that survives a terminal without
-key disambiguation.
+key disambiguation. That fallback is conservative: a chord qualifies only when
+its encoding is unambiguous on a legacy terminal, which means an unmodified key,
+`ctrl` plus a letter other than `h`, `i`, or `m`, or either of those behind a
+single `alt`. A chord such as `ctrl+shift+x` does not qualify, because a legacy
+terminal encodes it as a plain `ctrl+x`.
+
+If none of your chords qualify, the hint keeps naming your first one. It has
+nothing better to offer, and naming no chord at all would be worse.
 
 ### Make shift+enter work on a terminal that cannot encode it
 

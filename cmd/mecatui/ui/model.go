@@ -228,10 +228,12 @@ type Deps struct {
 	// optimistic chord: composition sets it true only when stdout is a real TTY.
 	// Bubble Tea asks every terminal for its keyboard enhancements on the first
 	// render, but a terminal that does not implement them answers nothing at all,
-	// so silence is the only negative signal and it needs a deadline. There is
-	// nothing to answer on redirected output or in a test harness, so the deadline
-	// is not armed there and the hint keeps its optimistic chord. An explicit
-	// negative reply still corrects the hint immediately, armed or not.
+	// so an unanswered query is the only signal there is and it needs a deadline.
+	// There is nothing to answer on redirected output or in a test harness, so the
+	// deadline is not armed there and the hint keeps its optimistic chord. An
+	// explicit negative reply still corrects the hint immediately, armed or not.
+	// See keyboardProbeDeadline for why an unanswered query is treated as
+	// unconfirmed rather than as a proven negative.
 	ProbeKeyboardCapability bool
 
 	// StatusSource is composed outside ui. The UI only submits display facts and
@@ -691,14 +693,15 @@ type Model struct {
 	keyboardEventTypes bool
 	// newlineHintLegacyOnly drives WHICH newline chord the prompt hint advertises;
 	// it gates no behavior, because every chord stays bound either way. It starts
-	// false (advertise the preferred chord, normally shift+enter) and flips only
-	// once the terminal has proved it cannot deliver a modified Enter.
+	// false (advertise the preferred chord, normally shift+enter) and flips once
+	// the terminal's support for a modified Enter is unconfirmed.
 	//
 	// keyboardProbeSettled records that the question is decided, by either of the
 	// two signals that can decide it: an explicit KeyboardEnhancementsMsg, or the
 	// probe deadline passing with no reply at all (the only signal an unsupporting
 	// terminal gives is silence). It makes the deadline idempotent and stops a late
-	// reply from being second-guessed.
+	// reply from being second-guessed. Note what the pair does NOT claim: a true
+	// here means support was not confirmed, not that it was disproved.
 	newlineHintLegacyOnly bool
 	keyboardProbeSettled  bool
 	// keyboardProbeTimer is the deterministic scheduling test seam, mirroring
@@ -1297,7 +1300,7 @@ func (m Model) startupCmd() tea.Cmd {
 // names its chords, so the capability-dependent newline chord is chosen here and
 // nowhere else. (The welcome splash carries only a submit hint, which no terminal
 // capability affects.)
-func promptPlaceholder(km keyMap, disambiguated bool) string {
+func promptPlaceholder(km keyMap, legacyOnly bool) string {
 	return "Ask mecatl to do something…  (" + firstKey(km.Submit, "enter") + " to send · " +
-		newlineHintChord(km, disambiguated) + " for newline · " + firstKey(km.Help, "?") + " for help)"
+		newlineHintChord(km, legacyOnly) + " for newline · " + firstKey(km.Help, "?") + " for help)"
 }

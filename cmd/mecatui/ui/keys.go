@@ -12,8 +12,8 @@ import (
 // while the permission modal is open; the cancel key only while a run is active.
 //
 // Newline carries FOUR chords because Enter's legacy encoding has nowhere to put
-// a modifier bit: see chordNeedsKeyDisambiguation and newlineHintChord for which
-// of them a given terminal can actually deliver, and which one gets advertised.
+// a modifier bit: see chordSurvivesLegacyEncoding and newlineHintChord for which
+// of them every terminal can deliver, and which one gets advertised.
 type keyMap struct {
 	Submit  key.Binding
 	Newline key.Binding
@@ -191,9 +191,9 @@ func defaultKeys() keyMap {
 		// install into VS Code, Zed and Alacritty configs).
 		//
 		// Order is load-bearing: newlineHintChord advertises the FIRST chord, and
-		// falls back to the first chord that survives legacy encoding only once the
-		// terminal has proved it cannot disambiguate — so ctrl+j must precede
-		// alt+enter, which needs terminal-side setup mecatui cannot verify.
+		// falls back to the first chord that survives legacy encoding once the
+		// terminal's support for a modified Enter is unconfirmed — so ctrl+j must
+		// precede alt+enter, which needs terminal-side setup mecatui cannot verify.
 		Newline: key.NewBinding(
 			key.WithKeys("shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"),
 			key.WithHelp("shift+enter", "newline"),
@@ -513,51 +513,85 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 	return km
 }
 
-// chordNeedsKeyDisambiguation reports whether a chord can only reach mecatui from
-// a terminal that implements key disambiguation — the Kitty keyboard protocol's
-// first flag, or xterm's modifyOtherKeys. Bubble Tea requests both on every
-// frame, so where they exist mecatui sees the chord; where they do not, the
-// keypress is not merely unbound, it is INVISIBLE (nothing arrives to respond
-// to, which is why a dead keypress cannot produce a runtime hint).
+// chordSurvivesLegacyEncoding reports whether a chord is KNOWN to reach mecatui
+// from a terminal with no key disambiguation — neither the Kitty keyboard
+// protocol's first flag nor xterm's modifyOtherKeys. Bubble Tea requests both on
+// every frame, so where they exist mecatui sees the chord; where they do not, an
+// unencodable keypress is not merely unbound, it is INVISIBLE (nothing arrives to
+// respond to, which is why a dead keypress cannot produce a runtime hint).
 //
-// The rule is Enter's legacy encoding: Enter is a bare CR byte with no room for a
-// modifier bit, so shift+enter and ctrl+enter arrive as an ordinary Enter and
-// submit the prompt. Alt is the one modifier legacy encoding can carry — the
-// terminal prefixes ESC — so alt+enter survives, given a terminal configured to
-// send Option/Alt as Meta. Chords that are not Enter variants (ctrl+j, a plain
-// LF) are unaffected.
-func chordNeedsKeyDisambiguation(chord string) bool {
+// It is an ALLOWLIST, deliberately. Only the encodings a legacy terminal
+// demonstrably carries unambiguously answer true; every chord this function is
+// unsure about answers false. newlineHintChord offers the result as the chord to
+// fall back to, and a fallback that cannot be delivered is the bug this whole
+// path exists to fix — so the cost of being wrong is asymmetric.
+//
+// Legacy encoding carries, unambiguously:
+//
+//   - an unmodified key, which has nothing to encode;
+//   - ctrl + an ASCII letter, which is that letter's C0 control byte — except
+//     h/i/m, whose control bytes ARE backspace/tab/Enter, so a legacy terminal
+//     delivers them as those keys and the ctrl binding never matches;
+//   - alt + either of the above, which the terminal prefixes with ESC, given a
+//     terminal configured to send Option/Alt as Meta.
+//
+// Everything else is ambiguous or unencodable. Enter is the case that drove this
+// code: a bare CR byte with no room for a modifier, so shift+enter and
+// ctrl+enter arrive as an ordinary Enter and submit the prompt. It is not the
+// only one, which is why the rule is not "Enter variants": a legacy terminal
+// encodes ctrl+shift+x as the same control byte as ctrl+x, so a binding on
+// ctrl+shift+x is just as undeliverable there, and shift+letter is
+// indistinguishable from the bare uppercase letter.
+func chordSurvivesLegacyEncoding(chord string) bool {
 	parts := strings.Split(strings.ToLower(strings.TrimSpace(chord)), "+")
-	if len(parts) < 2 || parts[len(parts)-1] != "enter" {
+	if parts[0] == "" {
 		return false
 	}
-	// Alt is the one modifier legacy encoding can carry on Enter: the terminal
-	// prefixes ESC. Any other modifier, or alt combined with another, needs a
-	// protocol that can encode it.
-	mods := parts[:len(parts)-1]
-	if len(mods) == 1 && mods[0] == "alt" {
+	// Alt is the one modifier legacy encoding can carry on its own: ESC prefix.
+	if len(parts) > 1 && parts[0] == "alt" {
+		parts = parts[1:]
+	}
+	switch len(parts) {
+	case 1:
+		return parts[0] != ""
+	case 2:
+		return parts[0] == "ctrl" && isLegacyControlLetter(parts[1])
+	default:
 		return false
 	}
-	return true
+}
+
+// isLegacyControlLetter reports whether ctrl+<name> has a C0 control byte of its
+// own that decodes back to that same chord. h/i/m are excluded because their
+// control bytes are backspace/tab/CR: a legacy terminal delivers those as the
+// named key, not as the ctrl chord, so a binding on them would not match.
+func isLegacyControlLetter(name string) bool {
+	if len(name) != 1 {
+		return false
+	}
+	c := name[0]
+	return c >= 'a' && c <= 'z' && c != 'h' && c != 'i' && c != 'm'
 }
 
 // newlineHintChord picks the single Newline chord worth advertising in the
-// prompt hint. It names the binding's preferred chord until the terminal has
-// PROVED it cannot deliver that chord, and only then falls back to one that
-// survives legacy encoding.
+// prompt hint. It names the binding's preferred chord until the terminal's
+// support for a modified Enter is in doubt, and only then falls back to a chord
+// that survives legacy encoding.
 //
 // The default is optimistic because the overwhelming majority of terminals do
 // implement key disambiguation, and a hint that flickers through a fallback on
 // every start would be a worse trade than a hint that self-corrects on the few
-// terminals that need it. Absence of a reply is the only negative signal a
-// terminal gives, so "proved" means either an explicit reply reporting no
-// enhancements or the probe deadline passing unanswered (see
-// keyboardProbeDeadline).
+// terminals that need it. "In doubt" means either an explicit reply reporting no
+// enhancements or the probe deadline passing unanswered — silence is the only
+// negative signal a terminal gives, and it is not a proof: it leaves the question
+// unconfirmed, and the fallback is what mecatui advertises when it cannot confirm
+// (see keyboardProbeDeadline).
 //
 // The chords come from the live binding, so a --keymap rebind flows through to
 // the hint instead of the hint acquiring a second hardcoded chord. A binding with
-// no legacy-safe chord at all keeps the preferred one: there is nothing better to
-// offer, and naming no chord would be worse than naming an unreachable one.
+// no chord that survives legacy encoding keeps the preferred one: there is
+// nothing better to offer, and naming no chord would be worse than naming one
+// that may not arrive.
 func newlineHintChord(km keyMap, legacyOnly bool) string {
 	chords := km.Newline.Keys()
 	if len(chords) == 0 {
@@ -567,7 +601,7 @@ func newlineHintChord(km keyMap, legacyOnly bool) string {
 		return chords[0]
 	}
 	for _, c := range chords {
-		if !chordNeedsKeyDisambiguation(c) {
+		if chordSurvivesLegacyEncoding(c) {
 			return c
 		}
 	}

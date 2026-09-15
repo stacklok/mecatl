@@ -1,51 +1,68 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// TestChordNeedsKeyDisambiguation pins the rule that decides which newline chord
-// the prompt advertises: a modified Enter needs a terminal that can encode the
-// modifier, because Enter's legacy byte (CR) has nowhere to put one. Alt is the
-// exception — legacy encoding prefixes ESC.
-func TestChordNeedsKeyDisambiguation(t *testing.T) {
+// TestChordSurvivesLegacyEncoding pins the allowlist that decides which newline
+// chord the prompt can safely fall back to on a terminal with no key
+// disambiguation. Only encodings a legacy terminal carries unambiguously qualify:
+// a bare key, ctrl+<letter> (minus h/i/m, whose control bytes ARE
+// backspace/tab/Enter), and either of those behind a single alt (ESC prefix).
+//
+// The cases that matter are the false ones. A modified Enter has nowhere to put
+// its modifier in a CR byte, and — the reason this is an allowlist and not a list
+// of Enter variants — a legacy terminal encodes ctrl+shift+x as the same control
+// byte as ctrl+x, so a binding on ctrl+shift+x is equally undeliverable.
+func TestChordSurvivesLegacyEncoding(t *testing.T) {
 	for _, tc := range []struct {
 		chord string
 		want  bool
 	}{
-		{"shift+enter", true},
-		{"ctrl+enter", true},
-		{"shift+ctrl+enter", true},
-		{"alt+shift+enter", true}, // more than alt alone: legacy cannot carry it
-		{"alt+enter", false},      // ESC CR survives legacy encoding
-		{"ctrl+j", false},         // a plain LF byte
-		{"enter", false},          // unmodified; deliverable everywhere
-		{"ctrl+f2", false},        // not an Enter variant at all
-		{"SHIFT+ENTER", true},     // chords are matched case-insensitively
+		{"ctrl+j", true},    // a plain LF byte
+		{"alt+enter", true}, // ESC CR survives legacy encoding
+		{"enter", true},     // unmodified; deliverable everywhere
+		{"alt+b", true},     // ESC + a control byte
+		{"f2", true},        // an unmodified named key
+		{"shift+enter", false},
+		{"ctrl+enter", false},
+		{"shift+ctrl+enter", false},
+		{"alt+shift+enter", false}, // more than alt alone: legacy cannot carry it
+		{"ctrl+shift+x", false},    // collides with ctrl+x in legacy encoding
+		{"shift+a", false},         // indistinguishable from a bare uppercase A
+		{"ctrl+m", false},          // the CR byte: arrives as Enter, not as this chord
+		{"ctrl+i", false},          // the tab byte
+		{"ctrl+h", false},          // the backspace byte
+		{"ctrl+f2", false},         // ctrl on a non-letter has no legacy encoding
+		{"super+enter", false},
+		{"CTRL+J", true}, // chords are matched case-insensitively
 		{"", false},
 	} {
-		if got := chordNeedsKeyDisambiguation(tc.chord); got != tc.want {
-			t.Errorf("chordNeedsKeyDisambiguation(%q) = %v, want %v", tc.chord, got, tc.want)
+		if got := chordSurvivesLegacyEncoding(tc.chord); got != tc.want {
+			t.Errorf("chordSurvivesLegacyEncoding(%q) = %v, want %v", tc.chord, got, tc.want)
 		}
 	}
 }
 
-// TestNewlineHintChordNamesPreferredChordUntilProvedOtherwise pins the optimistic
-// default: the hint reads shift+enter, and only a terminal that has PROVED it
-// cannot deliver a modified Enter gets the fallback.
-func TestNewlineHintChordNamesPreferredChordUntilProvedOtherwise(t *testing.T) {
+// TestNewlineHintChordNamesPreferredChordUntilUnconfirmed pins the optimistic
+// default: the hint reads shift+enter, and falls back only once the terminal's
+// support for a modified Enter is unconfirmed. Unconfirmed, not disproved — see
+// keyboardProbeDeadline for why the two are treated alike.
+func TestNewlineHintChordNamesPreferredChordUntilUnconfirmed(t *testing.T) {
 	km := defaultKeys()
 	if got := newlineHintChord(km, false); got != "shift+enter" {
-		t.Errorf("hint before the terminal proves otherwise = %q, want shift+enter", got)
+		t.Errorf("hint while the terminal may still be capable = %q, want shift+enter", got)
 	}
 	if got := newlineHintChord(km, true); got != "ctrl+j" {
-		t.Errorf("hint on a terminal that cannot disambiguate = %q, want ctrl+j", got)
+		t.Errorf("hint once disambiguation is unconfirmed = %q, want ctrl+j", got)
 	}
 }
 
@@ -60,8 +77,14 @@ func TestNewlineHintChordHonoursKeymapRebind(t *testing.T) {
 		{"default order falls back past the disambiguation-only chord", []string{"shift+enter", "ctrl+j"}, "shift+enter", "ctrl+j"},
 		{"a single disambiguation-only chord has no fallback to offer", []string{"shift+enter"}, "shift+enter", "shift+enter"},
 		{"alt+enter survives legacy encoding", []string{"alt+enter"}, "alt+enter", "alt+enter"},
-		{"an unrelated chord is unaffected", []string{"ctrl+f2"}, "ctrl+f2", "ctrl+f2"},
 		{"the FIRST legacy-safe chord wins the fallback", []string{"ctrl+enter", "ctrl+j", "alt+enter"}, "ctrl+enter", "ctrl+j"},
+		// A modified Enter is not the only chord legacy encoding cannot carry: a
+		// preferred chord that COLLIDES with another in legacy encoding must lose the
+		// fallback to the configured ctrl+j just as shift+enter does, or the hint
+		// keeps advertising a chord that never arrives.
+		{"a colliding ctrl+shift chord yields to the configured fallback", []string{"ctrl+shift+x", "ctrl+j"}, "ctrl+shift+x", "ctrl+j"},
+		{"a colliding chord with no fallback configured keeps itself", []string{"ctrl+shift+x"}, "ctrl+shift+x", "ctrl+shift+x"},
+		{"ctrl on a non-letter has no legacy encoding either", []string{"ctrl+f2", "ctrl+j"}, "ctrl+f2", "ctrl+j"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			km := applyKeyOverrides(defaultKeys(), map[string][]string{"Newline": tc.chords})
@@ -110,7 +133,8 @@ func TestPromptHintKeepsPreferredChordWhenTerminalConfirms(t *testing.T) {
 
 // TestPromptHintFallsBackWhenTerminalStaysSilent is the issue-#1500 case: macOS
 // Terminal.app and friends never answer the query, so the deadline is the only
-// signal that the advertised chord is undeliverable.
+// signal there is — and the hint must then name a chord that works regardless of
+// how the silence is explained.
 func TestPromptHintFallsBackWhenTerminalStaysSilent(t *testing.T) {
 	m := newlineHintModel(t)
 
@@ -122,7 +146,7 @@ func TestPromptHintFallsBackWhenTerminalStaysSilent(t *testing.T) {
 		t.Errorf("placeholder after an unanswered probe = %q, want ctrl+j", got)
 	}
 	if strings.Contains(got, "shift+enter") {
-		t.Errorf("placeholder should stop advertising an undeliverable chord: %q", got)
+		t.Errorf("placeholder should stop advertising an unconfirmed chord: %q", got)
 	}
 }
 
@@ -215,7 +239,7 @@ func TestCorrectedHintIsActuallyPainted(t *testing.T) {
 		t.Errorf("rendered input did not repaint the corrected chord: %q", after)
 	}
 	if strings.Contains(after, "shift+enter") {
-		t.Errorf("rendered input still shows the undeliverable chord: %q", after)
+		t.Errorf("rendered input still shows the unconfirmed chord: %q", after)
 	}
 }
 
@@ -249,6 +273,41 @@ func TestEveryNewlineChordInsertsNewline(t *testing.T) {
 				t.Fatalf("prompt value = %q, want %q", got, "first\n")
 			}
 		})
+	}
+}
+
+// TestRemappedNewlineChordInsertsNewline closes the gap between what the hint
+// ADVERTISES under a --keymap rebind and what the key dispatcher actually
+// accepts. TestNewlineHintChordHonoursKeymapRebind proves the selection logic
+// names the rebound chord; this proves the rebound chord reaches the textarea
+// through the real Model.Update path, and that the default it replaced no longer
+// does. Without both, the hint could confidently name a chord nothing dispatches.
+func TestRemappedNewlineChordInsertsNewline(t *testing.T) {
+	m := newTestModelFromDeps(Deps{
+		Theme:        theme.New("aztec", theme.AztecPalette()),
+		Ctx:          context.Background(),
+		NoAltScreen:  true,
+		KeyOverrides: map[string][]string{"Newline": {"ctrl+b", "ctrl+j"}},
+	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001"})
+
+	// The hint names the rebound chord, and the rebound chord is what dispatches.
+	if got := m.prompt.Placeholder(); !strings.Contains(got, "ctrl+b for newline") {
+		t.Errorf("placeholder under a Newline rebind = %q, want ctrl+b", got)
+	}
+	m.prompt.Rewrite("first")
+	mm, _ := m.Update(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if got := m.prompt.Value(); got != "first\n" {
+		t.Fatalf("the rebound chord did not insert a newline: prompt value = %q", got)
+	}
+
+	// The default it replaced is inert, which is what makes the assertion above
+	// about the rebind rather than about the default still being bound.
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	m = mm.(Model)
+	if got := m.prompt.Value(); got != "first\n" {
+		t.Errorf("the replaced default chord still edited the prompt: %q", got)
 	}
 }
 
