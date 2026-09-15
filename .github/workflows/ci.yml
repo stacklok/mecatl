@@ -123,9 +123,12 @@ jobs:
               macos_sdk="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
             fi
           fi
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "macos_go=$macos_go" >> "$GITHUB_OUTPUT"
-          echo "macos_sdk=$macos_sdk" >> "$GITHUB_OUTPUT"
+          # One redirect group for all three outputs (shellcheck SC2129).
+          {
+            echo "docs_only=$docs_only"
+            echo "macos_go=$macos_go"
+            echo "macos_sdk=$macos_sdk"
+          } >> "$GITHUB_OUTPUT"
 
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})

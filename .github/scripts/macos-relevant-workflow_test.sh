@@ -30,8 +30,8 @@ require 'macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"' 'trusted mac
 require 'if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then' 'macOS classifier extraction must read the trusted base ref and stay fail-closed'
 require 'git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" go)" || macos_go=true' 'go relevance must use no-renames NUL-delimited paths and fail closed to RUN'
 require 'git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true' 'sdk relevance must use no-renames NUL-delimited paths and fail closed to RUN'
-require 'echo "macos_go=$macos_go" >> "$GITHUB_OUTPUT"' 'macos_go must be written to GITHUB_OUTPUT'
-require 'echo "macos_sdk=$macos_sdk" >> "$GITHUB_OUTPUT"' 'macos_sdk must be written to GITHUB_OUTPUT'
+require 'echo "macos_go=$macos_go"' 'macos_go must be written to GITHUB_OUTPUT'
+require 'echo "macos_sdk=$macos_sdk"' 'macos_sdk must be written to GITHUB_OUTPUT'
 
 # The candidate checkout's classifier must never run (a PR could tamper with it).
 if grep -Fq 'bash .github/scripts/macos-relevant-changes.sh' "$workflow" \
