@@ -3,32 +3,49 @@
 package guestexec
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 	"testing"
 )
 
 func TestInvariant_guest_workload_is_unprivileged(t *testing.T) {
-	identity := DefaultWorkloadIdentity()
-	if identity.UID == 0 || identity.GID == 0 {
-		t.Fatalf("production workload identity = %d:%d, must not be guest root", identity.UID, identity.GID)
+	defaultIdentity := DefaultWorkloadIdentity()
+	if defaultIdentity.UID == 0 || defaultIdentity.GID == 0 {
+		t.Fatalf("production workload identity = %d:%d, must not be guest root", defaultIdentity.UID, defaultIdentity.GID)
 	}
 
+	identity := WorkloadIdentity{UID: uint32(os.Getuid()) ^ 1, GID: uint32(os.Getgid()) ^ 1}
 	cmd := exec.Command("/bin/sh", "-c", "true")
 	configureProcessGroup(cmd, defaultCancelGrace)
 	configureWorkloadIdentity(cmd, identity)
 	attr := cmd.SysProcAttr
 	if attr == nil || attr.Credential == nil {
-		t.Fatal("guest workload has no kernel credential drop")
+		t.Fatal("different guest workload identity has no kernel credential drop")
 	}
-	if attr.Credential.Uid != identity.UID || attr.Credential.Gid != identity.GID || !attr.Credential.NoSetGroups {
-		t.Fatalf("guest workload credential = %#v, want dedicated %d:%d with no supplementary groups", attr.Credential, identity.UID, identity.GID)
+	if attr.Credential.Uid != identity.UID || attr.Credential.Gid != identity.GID || attr.Credential.NoSetGroups || attr.Credential.Groups == nil || len(attr.Credential.Groups) != 0 {
+		t.Fatalf("guest workload credential = %#v, want dedicated %d:%d with an explicit empty supplementary-group set", attr.Credential, identity.UID, identity.GID)
 	}
 	if len(attr.AmbientCaps) != 0 {
 		t.Fatalf("guest workload ambient capabilities = %v, want none", attr.AmbientCaps)
 	}
 	if attr.Setpgid != true {
 		t.Fatal("guest workload lost process-group cancellation")
+	}
+}
+
+func TestConfigureWorkloadIdentitySameIdentitySkipsCredential(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "true")
+	configureWorkloadIdentity(cmd, WorkloadIdentity{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
+
+	if cmd.SysProcAttr == nil {
+		t.Fatal("same-identity workload has no process attributes")
+	}
+	if cmd.SysProcAttr.Credential != nil {
+		t.Fatalf("same-identity workload credential = %#v, want nil", cmd.SysProcAttr.Credential)
+	}
+	if len(cmd.SysProcAttr.AmbientCaps) != 0 {
+		t.Fatalf("same-identity workload ambient capabilities = %v, want none", cmd.SysProcAttr.AmbientCaps)
 	}
 }
 

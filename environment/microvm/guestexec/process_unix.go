@@ -3,6 +3,7 @@
 package guestexec
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -24,8 +25,10 @@ func configureProcessGroup(cmd *exec.Cmd, grace time.Duration) {
 }
 
 func configureWorkloadIdentity(cmd *exec.Cmd, identity WorkloadIdentity) {
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	if identity.UID != uint32(os.Getuid()) || identity.GID != uint32(os.Getgid()) { //nolint:gosec // os.Getuid and os.Getgid return non-negative IDs.
+		if cmd.SysProcAttr == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{}
+		}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: identity.UID, Gid: identity.GID, Groups: []uint32{}}
 	}
-	cmd.SysProcAttr.Credential = &syscall.Credential{Uid: identity.UID, Gid: identity.GID, NoSetGroups: true}
 }

@@ -157,7 +157,7 @@ func TestMicroVMEnvironments_Scenario8_HostSecretAndSiblingIsolation(t *testing.
 	if err != nil || gitProbe.ExitCode != 0 || !strings.Contains(gitProbe.Stdout, "refs/heads/mecatl/e2e-") {
 		t.Fatalf("guest Git did not consume /workspace-local metadata: %+v err=%v", gitProbe, err)
 	}
-	workloadProbe, err := primary.Runner.Run(ctx, "test \"$(id -u)\" -ne 0 && grep -q '^CapEff:[[:space:]]*0000000000000000$' /proc/self/status && printf workload-ok > workload-probe && cat workload-probe")
+	workloadProbe, err := primary.Runner.Run(ctx, "test \"$(id -u)\" -ne 0 && grep -q '^Groups:[[:space:]]*$' /proc/self/status && grep -q '^CapEff:[[:space:]]*0000000000000000$' /proc/self/status && printf workload-ok > workload-probe && cat workload-probe")
 	if err != nil || workloadProbe.ExitCode != 0 || workloadProbe.Stdout != "workload-ok" {
 		t.Fatalf("unprivileged workload positive control failed: %+v err=%v", workloadProbe, err)
 	}

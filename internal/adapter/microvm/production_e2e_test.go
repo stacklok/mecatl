@@ -138,6 +138,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if !strings.HasPrefix(strings.TrimSpace(pwd), "/run/mecatl/repositories/") {
 		t.Fatalf("guest command ran outside its isolated repository worktree: %q", pwd)
 	}
+	mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "grep -q '^Groups:[[:space:]]*$' /proc/self/status")
 }
 
 func prepareManagedRelease(t *testing.T, ctx context.Context, root string) (microvmmanager.ReadyRequest, microvmmanager.Paths) {
