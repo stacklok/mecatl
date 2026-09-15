@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -38,6 +39,15 @@ func attrInt(s tracetest.SpanStub, key string) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func attrString(s tracetest.SpanStub, key string) (string, bool) {
+	for _, kv := range s.Attributes {
+		if string(kv.Key) == key {
+			return kv.Value.AsString(), true
+		}
+	}
+	return "", false
 }
 
 func TestTracingRunSpan(t *testing.T) {
@@ -232,5 +242,131 @@ func TestTracingConcurrentEmitParentsToOwnCtxSpan(t *testing.T) {
 	}
 	if !parentOfRun[parentB.SpanContext().SpanID()] {
 		t.Errorf("no run span parented to inbound.B (%v)", parentB.SpanContext().SpanID())
+	}
+}
+
+// TestTracingLLMCallSpan_FullTurn covers the OTel GenAI semantic-convention
+// attributes stamped on the additive mecatl.llm_call span: gen_ai.operation.name
+// (stamped at open, EvTurnStart), and gen_ai.request.model/.response.model/
+// .provider.name/.usage.*/.conversation.id (stamped at close, EvTurnEnd, from
+// the enriched TurnEndPayload). It also pins SpanKind CLIENT and that the span
+// is a child of mecatl.turn — additive, not a replacement of it.
+func TestTracingLLMCallSpan_FullTurn(t *testing.T) {
+	tr, exp := newTestTracing(t)
+
+	ctx := port.WithSessionID(context.Background(), session.SessionID("sess-123"))
+	tr.Emit(ctx, session.Event{Type: session.EvSessionInit})
+	tr.Emit(ctx, session.Event{Type: session.EvTurnStart, Turn: 0})
+	tr.Emit(ctx, session.Event{Type: session.EvTurnEnd, Turn: 0, TurnEnd: &session.TurnEndPayload{
+		Model:    "claude-sonnet-5",
+		Provider: "anthropic",
+		Usage: session.Usage{
+			InputTokens: 100, OutputTokens: 50, CacheReadTokens: 20, ReasoningTokens: 10,
+		},
+	}})
+	tr.Emit(ctx, session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	spans := exp.GetSpans()
+	llm, ok := spanByName(spans, "mecatl.llm_call")
+	if !ok {
+		t.Fatalf("no mecatl.llm_call span; got %d spans", len(spans))
+	}
+	turn, ok := spanByName(spans, "mecatl.turn")
+	if !ok {
+		t.Fatal("no mecatl.turn span")
+	}
+	if llm.Parent.SpanID() != turn.SpanContext.SpanID() {
+		t.Errorf("llm_call parent = %v, want turn span %v", llm.Parent.SpanID(), turn.SpanContext.SpanID())
+	}
+	if llm.SpanKind != trace.SpanKindClient {
+		t.Errorf("llm_call SpanKind = %v, want Client", llm.SpanKind)
+	}
+	if llm.Status.Code != codes.Ok {
+		t.Errorf("llm_call status = %v, want Ok", llm.Status.Code)
+	}
+	wantString := map[string]string{
+		"gen_ai.operation.name":  "chat",
+		"gen_ai.request.model":   "claude-sonnet-5",
+		"gen_ai.response.model":  "claude-sonnet-5",
+		"gen_ai.provider.name":   "anthropic",
+		"gen_ai.conversation.id": "sess-123",
+	}
+	for key, want := range wantString {
+		if got, ok := attrString(llm, key); !ok || got != want {
+			t.Errorf("%s = %q (ok=%v), want %q", key, got, ok, want)
+		}
+	}
+	wantInt := map[string]int64{
+		"gen_ai.usage.input_tokens":            100,
+		"gen_ai.usage.output_tokens":           50,
+		"gen_ai.usage.cache_read.input_tokens": 20,
+		"gen_ai.usage.reasoning.output_tokens": 10,
+	}
+	for key, want := range wantInt {
+		if got, ok := attrInt(llm, key); !ok || got != want {
+			t.Errorf("%s = %v (ok=%v), want %v", key, got, ok, want)
+		}
+	}
+}
+
+// TestTracingLLMCallSpan_DanglingClosedOnRunError covers the case where
+// runTurn's stream errors before EvTurnEnd is ever emitted (the real event
+// stream skips it entirely on that path): the llm_call span opened at
+// EvTurnStart must not be left open forever — endRun's dangling-span cleanup
+// (which already closes dangling tool spans) must also close it, with
+// codes.Error.
+func TestTracingLLMCallSpan_DanglingClosedOnRunError(t *testing.T) {
+	tr, exp := newTestTracing(t)
+
+	tr.Emit(context.Background(), session.Event{Type: session.EvSessionInit})
+	tr.Emit(context.Background(), session.Event{Type: session.EvTurnStart, Turn: 0})
+	// No EvTurnEnd — mirrors the stream-error early-return path in loop.go.
+	tr.Emit(context.Background(), session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopError}})
+
+	llm, ok := spanByName(exp.GetSpans(), "mecatl.llm_call")
+	if !ok {
+		t.Fatal("no mecatl.llm_call span — it must be closed defensively at run end, not left open")
+	}
+	if llm.Status.Code != codes.Error {
+		t.Errorf("dangling llm_call status = %v, want Error", llm.Status.Code)
+	}
+}
+
+// TestTracingRunSpan_ConversationID pins gen_ai.conversation.id on the run
+// span itself, resolved from the ctx's bound session id (port.WithSessionID)
+// — a GenAI-aware backend that filters purely on the run span, without
+// walking down to mecatl.llm_call, still finds the conversation identity.
+func TestTracingRunSpan_ConversationID(t *testing.T) {
+	tr, exp := newTestTracing(t)
+
+	ctx := port.WithSessionID(context.Background(), session.SessionID("sess-456"))
+	tr.Emit(ctx, session.Event{Type: session.EvSessionInit})
+	tr.Emit(ctx, session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+
+	run, ok := spanByName(exp.GetSpans(), "mecatl.run")
+	if !ok {
+		t.Fatal("no mecatl.run span")
+	}
+	if got, ok := attrString(run, "gen_ai.conversation.id"); !ok || got != "sess-456" {
+		t.Errorf("gen_ai.conversation.id = %q (ok=%v), want %q", got, ok, "sess-456")
+	}
+}
+
+// TestTracingRunSpan_ErrorType pins that error.type mirrors mecatl.run.stop on
+// a failing run outcome — the semconv-standard attribute alongside the
+// project's own mecatl.run.stop classification, same pairing ai-gateway's
+// stacklok.failure_class/error.type already establishes.
+func TestTracingRunSpan_ErrorType(t *testing.T) {
+	tr, exp := newTestTracing(t)
+
+	tr.Emit(context.Background(), session.Event{Type: session.EvSessionInit})
+	tr.Emit(context.Background(), session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopError}})
+
+	run, ok := spanByName(exp.GetSpans(), "mecatl.run")
+	if !ok {
+		t.Fatal("no mecatl.run span")
+	}
+	if got, ok := attrString(run, "error.type"); !ok || got != "error" {
+		t.Errorf("error.type = %q (ok=%v), want %q", got, ok, "error")
 	}
 }
