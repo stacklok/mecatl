@@ -412,7 +412,7 @@ func TestDirectMCPDCRLifecycleRecoveryAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := app.LoginMCP(context.Background(), server, driftRuntime); !errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {
+	if err := app.LoginMCP(context.Background(), server, driftRuntime); !errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) || mcp.OAuthDCRRecoveryCategoryOf(err) != mcp.OAuthDCRRecoveryResetRequired {
 		t.Fatalf("identity drift login error = %v, want reset-required recovery", err)
 	}
 	if err := profiles.Close(); err != nil {
@@ -428,7 +428,7 @@ func TestDirectMCPDCRLifecycleRecoveryAcceptance(t *testing.T) {
 	if driftBrowser.calls.Load() != 0 || afterDrift.registered != seeded.registered || afterDrift.authorize != seeded.authorize || afterDrift.token != seeded.token || afterDrift.toolCalls != seeded.toolCalls || afterDrift.authenticated != seeded.authenticated {
 		t.Fatalf("identity drift had OAuth or protected-tool side effects: before=%+v after=%+v", seeded, afterDrift)
 	}
-	if got := strings.Join(diagnosticSurfaces(diag), "\n"); !strings.Contains(got, "MCP OAuth DCR registration reset required") || !strings.Contains(got, "--reset-dcr-registration") {
+	if got := strings.Join(diagnosticSurfaces(diag), "\n"); !strings.Contains(got, "MCP OAuth DCR valid ready registration identity differs from current profile, principal, canonical resource, or exact issuer") || !strings.Contains(got, "--reset-dcr-registration") {
 		t.Fatalf("identity drift omitted reset-required diagnostic: %q", diagnosticSurfaces(diag))
 	}
 
@@ -458,6 +458,48 @@ func TestDirectMCPDCRLifecycleRecoveryAcceptance(t *testing.T) {
 		t.Fatalf("retry did not continue through registration and authorization: before=%+v after=%+v", beforeRetry, afterRetry)
 	}
 	verifyDCRAcceptanceRead(t, fixture, retrySettings, lookup)
+
+	pendingRoot := filepath.Join(t.TempDir(), "pending-credentials")
+	pendingSettings, pendingLookup, _ := writeDCRAcceptanceOAuthSettings(t, fixture, pendingRoot, "pending")
+	pendingResolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{pendingSettings}})
+	pendingProfiles, err := loadAcceptanceMCPProfiles(t, pendingResolver.OperatorMCP(), pendingLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingServer, ok := pendingProfiles.OAuthServer("protected")
+	if !ok {
+		t.Fatal("pending DCR server was not resolved")
+	}
+	mcp.TrustOAuthCertificateForTest(t, pendingServer.OAuth, fixture.server.Certificate())
+	if _, _, err := mcp.PrepareOAuthDCRLogin(context.Background(), pendingServer.URL, *pendingServer.OAuth, mcp.OAuthDCRLoginReuse); err != nil {
+		t.Fatal(err)
+	}
+	if err := pendingProfiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(pendingSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), `profile: "pending"`, `profile: "other-profile"`, 1))
+	if err := os.WriteFile(pendingSettings, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pendingDiag := &acceptanceDiag{}
+	pendingBuilt, err := buildDCRAcceptanceMCP(t, fixture, pendingSettings, pendingLookup, pendingDiag, mockllm.New(mockllm.TextTurn("unreached")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingBuilt.Close()
+	got := strings.Join(diagnosticSurfaces(pendingDiag), "\n")
+	for _, want := range []string{"MCP OAuth DCR pending registration identity mismatch", "restore the matching OAuth profile, principal, canonical resource, and exact issuer configuration", "--retry-dcr-registration"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pending identity mismatch diagnostic = %q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "--reset-dcr-registration") {
+		t.Fatalf("pending identity mismatch diagnostic suggested reset: %q", got)
+	}
 }
 
 func writeDCRAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root, profile string) (string, func(string) (string, bool), string) {
@@ -800,7 +842,16 @@ func TestADR_0325_DirectDCRConfigurationReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	section := string(reference)
-	for _, want := range []string{"--reset-dcr-registration for a ready lifecycle record", "--retry-dcr-registration for a pending record", "Corrupt direct-DCR state is not resettable"} {
+	for _, want := range []string{
+		"direct/global profiles require an empty payload, discover from issuer",
+		"broker profiles require discovery_url and nonempty scopes",
+		"DiscoveryURL is required for broker DCR and forbidden for direct/global DCR",
+		"direct/global DCR may omit it and uses exactly openid",
+		"direct/global DCR defaults false and rejects true",
+		"Ready direct-DCR identity drift is reset-required and uses --reset-dcr-registration",
+		"pending identity drift is pending-identity-mismatch and cannot reset or retry until the matching profile, principal, canonical resource, and exact issuer are restored",
+		"Corrupt direct-DCR state is not resettable",
+	} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("configuration reference omitted %q", want)
 		}

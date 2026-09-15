@@ -121,7 +121,7 @@ rotation, and transparent MCP-session reconnect through the model-visible global
 Direct DCR profiles instead persist a separate public-client registration and a
 generation-bound no-refresh access grant. A valid registration is reused across explicit
 logins; expiry returns login-required without refresh or browser launch, while the two
-DCR-only login modifiers explicitly retry a pending attempt or replace a ready registration.
+DCR-only login modifiers explicitly retry an identity-matching pending attempt or replace a ready registration. Ready identity drift is reset-required. Pending identity drift is the distinct pending-identity-mismatch category and cannot retry or reset; restore the matching profile, principal, canonical resource, and exact issuer first.
 No reauthorization occurs across restart or reconnect while the selected credential remains
 valid. The global manager/controllers close before loader-owned Stores and Readers. ACP
 cannot provide OAuth profiles or install/drive authorization, but after operator

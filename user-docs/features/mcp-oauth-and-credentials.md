@@ -133,13 +133,14 @@ expiry it returns login-required without attempting refresh. Run
 the valid registration. If registration itself was interrupted, use
 `--retry-dcr-registration`; to deliberately replace a valid ready registration
 and its grant, use `--reset-dcr-registration`. The flags are mutually exclusive
-and valid only for DCR. A valid lifecycle record whose configured identity has
-drifted requires an explicit action: reset a ready record with
-`--reset-dcr-registration`, or retry a pending record with
-`--retry-dcr-registration`. Corrupt, noncanonical, unsupported, or
-grant-mismatched persisted state remains repair-only: neither flag mutates it.
-The flags do not revoke an upstream registration. Complete public-client refresh
-remains deferred to
+and valid only for DCR. Ready identity drift is reset-required and may be
+replaced with `--reset-dcr-registration`. Pending identity drift is reported as
+pending-identity-mismatch; it cannot reset or retry until the matching profile,
+principal, canonical resource, and exact issuer configuration is restored,
+after which use `--retry-dcr-registration`. Corrupt, noncanonical, unsupported,
+or grant-mismatched persisted state remains repair-only: neither flag mutates
+it. The flags do not revoke an upstream registration. Complete public-client
+refresh remains deferred to
 [issue #1355](https://github.com/stacklok/mecatl/issues/1355).
 
 #### Manual local-mecatui qualification
@@ -178,12 +179,17 @@ errors, headers, credential-store contents, and screenshots containing any of th
 
 If a valid ready DCR profile's intentional registration binding changes — for example its
 issuer, principal, scopes, or resource — run `mecated mcp login SERVER
---reset-dcr-registration`; plain login cannot replace that registration. A valid pending
-lifecycle record with that drift instead continues only with `--retry-dcr-registration`.
-Corrupt, noncanonical, unsupported, or grant-mismatched persisted registration state is not
-bypassable with reset or retry and requires separate operator repair. For non-DCR profiles, run login
-again after intentional identity changes. To roll back, replace the whole profile with
-`static_bearer` or `none` and restart.
+--reset-dcr-registration`; plain login cannot replace that registration. Pending identity drift
+is reported as pending-identity-mismatch and cannot reset or retry: restore the matching profile,
+principal, canonical resource, and exact issuer before running `--retry-dcr-registration`.
+
+For corrupt, noncanonical, unsupported, or grant-mismatched persisted registration state,
+preserve the records and configuration: do not edit, delete, or rename them. Contact the
+deployment operator or support team with only the server name and redacted command error.
+Never send credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response. Reset
+and retry cannot bypass this state. For non-DCR profiles, run login again after intentional
+identity changes. To roll back, replace the whole profile with `static_bearer` or `none` and
+restart.
 
 ## Environment-backed credentials
 

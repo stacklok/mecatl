@@ -249,7 +249,7 @@ func TestDirectMCPDCR_Scenario2_ReauthorizationRedirectAndScopeBinding(t *testin
 	}
 }
 
-func TestDirectMCPDCR_Scenario2_HostOnlyAuthorizationPresentation(t *testing.T) {
+func TestDirectMCPDCR_Scenario2_RestartRestoresRegistrationGrantAndReadTool(t *testing.T) {
 	fixture := newDCRLoginFixture(t)
 	root := filepath.Join(t.TempDir(), "credentials")
 	settings, lookup := writeDCRSettings(t, fixture, root)

@@ -511,7 +511,7 @@ type MCPOAuthClientProfile struct {
 	Preregistered *MCPPreregisteredClientProfile `yaml:"preregistered"`
 	// CIMD declares an HTTPS client-id metadata document URL.
 	CIMD *MCPCIMDClientProfile `yaml:"cimd"`
-	// DCR selects dynamic registration: direct/global profiles require an empty payload, discover from issuer, and use omitted scopes as openid; broker profiles require discovery_url and nonempty scopes. A valid direct-DCR identity drift requires --reset-dcr-registration for a ready lifecycle record or --retry-dcr-registration for a pending record. Corrupt direct-DCR state is not resettable: reset/retry do not repair it; preserve the credential-store records and contact support with only the redacted error and server name.
+	// DCR selects dynamic registration: direct/global profiles require an empty payload, discover from issuer, and use omitted scopes as openid; broker profiles require discovery_url and nonempty scopes. Ready direct-DCR identity drift is reset-required and uses --reset-dcr-registration; pending identity drift is pending-identity-mismatch and cannot reset or retry until the matching profile, principal, canonical resource, and exact issuer are restored. Corrupt direct-DCR state is not resettable: preserve its records and configuration without editing, deleting, or renaming them, then contact the deployment operator or support team with only the server name and redacted command error—never credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response.
 	DCR *MCPDCRClientProfile `yaml:"dcr"`
 }
 

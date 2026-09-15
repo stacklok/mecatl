@@ -50,6 +50,8 @@ type dcrMetadataFixture struct {
 	registeredRedirect      string
 	registrationStarted     chan struct{}
 	registrationRelease     <-chan struct{}
+	metadataStarted         chan struct{}
+	metadataRelease         <-chan struct{}
 	registrationStatus      int
 	registrationScopes      []string
 }
@@ -71,6 +73,13 @@ func newDCRMetadataFixture(t *testing.T) *dcrMetadataFixture {
 		switch {
 		case strings.Contains(r.URL.Path, "oauth-protected-resource"):
 			f.metadataCount++
+			if f.metadataStarted != nil {
+				close(f.metadataStarted)
+				f.metadataStarted = nil
+			}
+			if f.metadataRelease != nil {
+				<-f.metadataRelease
+			}
 			resourceValue := issuer + "/gw/mcp"
 			if f.resourceValue != "" {
 				resourceValue = f.resourceValue
@@ -540,6 +549,9 @@ func newDCRMemoryStore(t *testing.T) credentialstore.Store {
 }
 
 func TestOAuthDCRRecoveryCategoriesAreSafeAndImmediate(t *testing.T) {
+	if OAuthDCRRecoveryResetRequired != 6 || OAuthDCRRecoveryPendingIdentityMismatch != 7 {
+		t.Fatalf("DCR recovery category values changed: reset=%d pending identity mismatch=%d", OAuthDCRRecoveryResetRequired, OAuthDCRRecoveryPendingIdentityMismatch)
+	}
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -552,6 +564,9 @@ func TestOAuthDCRRecoveryCategoriesAreSafeAndImmediate(t *testing.T) {
 	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryPending {
 		t.Fatalf("plain pending recovery = %v, category %v", err, OAuthDCRRecoveryCategoryOf(err))
 	}
+	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginResetRegistration); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryPending {
+		t.Fatalf("reset plain pending recovery = %v, category %v", err, OAuthDCRRecoveryCategoryOf(err))
+	}
 
 	fixture.registrationStatus = http.StatusServiceUnavailable
 	prepared.RedirectURL = "http://127.0.0.1:49152" + path
@@ -561,6 +576,9 @@ func TestOAuthDCRRecoveryCategoriesAreSafeAndImmediate(t *testing.T) {
 	}
 	if _, _, retryErr := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); OAuthDCRRecoveryCategoryOf(retryErr) != OAuthDCRRecoveryRegistrationOutcomeUnknown {
 		t.Fatalf("persisted transport recovery category = %v, want outcome unknown", OAuthDCRRecoveryCategoryOf(retryErr))
+	}
+	if _, _, resetErr := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginResetRegistration); OAuthDCRRecoveryCategoryOf(resetErr) != OAuthDCRRecoveryRegistrationOutcomeUnknown {
+		t.Fatalf("reset persisted transport recovery category = %v, want outcome unknown", OAuthDCRRecoveryCategoryOf(resetErr))
 	}
 
 	fixture = newDCRMetadataFixture(t)
@@ -1084,7 +1102,7 @@ func TestADR_0325_PublicNoneWireQualification(t *testing.T) {
 	}
 }
 
-func TestDirectMCPDCR_Scenario2_RestartRestoresRegistrationGrantAndReadTool(t *testing.T) {
+func TestOAuthDCRRestoresPersistedGrant(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource := fixture.server.URL + "/gw/mcp"
 	store := newDCRMemoryStore(t)
@@ -1246,9 +1264,90 @@ func TestADR_0325_DirectDCRGrantResetFencesStaleWriters(t *testing.T) {
 }
 
 func TestADR_0325_DirectDCRIdentityMismatchHasNoSideEffects(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*dcrMetadataFixture, *OAuthOptions, *string)
+	}{
+		{name: "profile", change: func(_ *dcrMetadataFixture, opts *OAuthOptions, _ *string) { opts.Subject.Profile = "other-profile" }},
+		{name: "principal", change: func(_ *dcrMetadataFixture, opts *OAuthOptions, _ *string) { opts.Subject.Principal = "other-user" }},
+		{name: "canonical resource", change: func(f *dcrMetadataFixture, _ *OAuthOptions, resource *string) {
+			*resource = f.server.URL + "/other/mcp"
+			f.resourceValue = *resource
+		}},
+		{name: "exact issuer", change: func(f *dcrMetadataFixture, opts *OAuthOptions, _ *string) {
+			opts.Issuer = f.server.URL + "/issuer"
+			f.authServers = []string{opts.Issuer}
+			f.issuerOverride = opts.Issuer
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+			opts := fixture.options(t, store)
+			prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared.RedirectURL = "http://127.0.0.1:49152" + path
+			controller, err := NewOAuthController(context.Background(), resource, prepared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := controller.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			changedResource, changed := resource, opts
+			tc.change(fixture, &changed, &changedResource)
+			fixture.mu.Lock()
+			beforeMetadata, beforeRegistrations, beforeTokens := fixture.metadataCount, fixture.registerCount, fixture.tokenCount
+			fixture.mu.Unlock()
+			if _, _, err := PrepareOAuthDCRLogin(context.Background(), changedResource, changed, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryResetRequired {
+				t.Fatalf("reuse with changed binding = %v, want reset-required recovery", err)
+			}
+			fixture.mu.Lock()
+			metadata, registrations, tokens := fixture.metadataCount, fixture.registerCount, fixture.tokenCount
+			fixture.mu.Unlock()
+			if metadata != beforeMetadata || registrations != beforeRegistrations || tokens != beforeTokens {
+				t.Fatalf("ordinary mismatch had metadata/registration/token side effects: %d/%d/%d, want %d/%d/%d", metadata, registrations, tokens, beforeMetadata, beforeRegistrations, beforeTokens)
+			}
+
+			changed.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+				u, _ := url.Parse(raw)
+				return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: changed.Issuer}, nil
+			})
+			reset, resetPath, err := PrepareOAuthDCRLogin(context.Background(), changedResource, changed, OAuthDCRLoginResetRegistration)
+			if err != nil {
+				t.Fatalf("explicit reset = %v", err)
+			}
+			reset.RedirectURL = "http://127.0.0.1:49153" + resetPath
+			resetController, err := NewOAuthController(context.Background(), changedResource, reset)
+			if err != nil {
+				t.Fatalf("continue reset registration = %v", err)
+			}
+			defer resetController.Close()
+			req, resp := dcrChallenge(t, changedResource)
+			if err := resetController.Authorize(context.Background(), req, resp); err != nil {
+				t.Fatalf("continue reset authorization = %v", err)
+			}
+			fixture.mu.Lock()
+			registrations, tokens = fixture.registerCount, fixture.tokenCount
+			fixture.mu.Unlock()
+			if registrations != beforeRegistrations+1 || tokens != beforeTokens+1 {
+				t.Fatalf("reset continuation register/token = %d/%d, want %d/%d", registrations, tokens, beforeRegistrations+1, beforeTokens+1)
+			}
+		})
+	}
+}
+
+func TestPrepareOAuthDCRLoginClassifiesFreshPendingIdentityMismatchAfterDiscovery(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
 	opts := fixture.options(t, store)
+	opts.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		u, _ := url.Parse(raw)
+		return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+	})
 	prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
 	if err != nil {
 		t.Fatal(err)
@@ -1258,32 +1357,155 @@ func TestADR_0325_DirectDCRIdentityMismatchHasNoSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	req, resp := dcrChallenge(t, resource)
+	if err := controller.Authorize(context.Background(), req, resp); err != nil {
+		t.Fatal(err)
+	}
 	if err := controller.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	changed := opts
-	changed.Subject.Principal = "other-user"
-	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, changed, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryResetRequired {
-		t.Fatalf("reuse with changed binding = %v, want reset-required recovery", err)
+	key, err := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := decodeOAuthDCRRecordRaw(ready.Value)
+	if err != nil {
+		t.Fatal(err)
 	}
 	fixture.mu.Lock()
-	registrations, tokens := fixture.registerCount, fixture.tokenCount
+	started, release := make(chan struct{}), make(chan struct{})
+	fixture.metadataStarted, fixture.metadataRelease = started, release
 	fixture.mu.Unlock()
-	if registrations != 1 || tokens != 0 {
-		t.Fatalf("ordinary mismatch had registration/token side effects: %d/%d", registrations, tokens)
-	}
-
-	reset, _, err := PrepareOAuthDCRLogin(context.Background(), resource, changed, OAuthDCRLoginResetRegistration)
+	result := make(chan error, 1)
+	go func() {
+		_, _, prepareErr := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+		result <- prepareErr
+	}()
+	<-started
+	defer func() {
+		if release != nil {
+			close(release)
+		}
+	}()
+	changedIdentity := stored.Identity
+	changedIdentity.Profile = "concurrent-profile"
+	pending, err := newOAuthDCRPending(changedIdentity, stored.Metadata, oauthDCRRecord{}, "")
 	if err != nil {
-		t.Fatalf("explicit reset = %v", err)
+		t.Fatal(err)
 	}
-	if reset.dcrTicket == nil || reset.dcrTicket.record.Identity.Principal != changed.Subject.Principal {
-		t.Fatalf("reset ticket = %#v", reset.dcrTicket)
+	value, err := encodeOAuthDCRRecord(pending, changedIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), key, value, &ready.Version); err != nil {
+		t.Fatalf("concurrent lifecycle reset: %v", err)
+	}
+	close(release)
+	release = nil
+	if err := <-result; !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryPendingIdentityMismatch {
+		t.Fatalf("reuse after concurrent pending identity change = %v, want pending-identity-mismatch recovery", err)
+	}
+	current, err := store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Version == ready.Version || !bytes.Equal(current.Value, value) {
+		t.Fatal("reuse adopted or changed the lifecycle record observed before discovery")
 	}
 }
 
-func TestOAuthDCRRejectsRuntimeMetadataIssuerMismatch(t *testing.T) {
+func TestPrepareOAuthDCRLoginFirstLifecycleReadFailureStopsBeforeDiscovery(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	base := newDCRMemoryStore(t)
+	getCalls, putCalls := 0, 0
+	store := &scriptedDCRStore{Store: base}
+	store.get = func(context.Context, []byte) (credentialstore.Record, error) {
+		getCalls++
+		return credentialstore.Record{}, credentialstore.ErrUnavailable
+	}
+	store.put = func(context.Context, []byte, []byte, *credentialstore.Version) (credentialstore.Record, error) {
+		putCalls++
+		return credentialstore.Record{}, errors.New("unexpected lifecycle write")
+	}
+
+	resource := fixture.server.URL + "/gw/mcp"
+	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, fixture.options(t, store), OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryCorrupt {
+		t.Fatalf("first lifecycle read failure = %v, want unreadable recovery", err)
+	}
+	fixture.mu.Lock()
+	metadata, registrations := fixture.metadataCount, fixture.registerCount
+	fixture.mu.Unlock()
+	if getCalls != 1 || putCalls != 0 || metadata != 0 || registrations != 0 {
+		t.Fatalf("side effects after first read failure: gets=%d puts=%d metadata=%d registrations=%d", getCalls, putCalls, metadata, registrations)
+	}
+}
+
+func TestPrepareOAuthDCRLoginDoesNotBootstrapLifecycleDeletedDuringDiscovery(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource, base := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+	opts := fixture.options(t, base)
+	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); err != nil {
+		t.Fatal(err)
+	}
+	key, err := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := base.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.mu.Lock()
+	beforeMetadata, beforeRegistrations := fixture.metadataCount, fixture.registerCount
+	started, release := make(chan struct{}), make(chan struct{})
+	fixture.metadataStarted, fixture.metadataRelease = started, release
+	fixture.mu.Unlock()
+
+	getCalls, putCalls := 0, 0
+	store := &scriptedDCRStore{Store: base}
+	store.get = func(ctx context.Context, key []byte) (credentialstore.Record, error) {
+		getCalls++
+		return base.Get(ctx, key)
+	}
+	store.put = func(ctx context.Context, key, value []byte, expected *credentialstore.Version) (credentialstore.Record, error) {
+		putCalls++
+		return base.Put(ctx, key, value, expected)
+	}
+	opts.CredentialStore = store
+	result := make(chan error, 1)
+	go func() {
+		_, _, prepareErr := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+		result <- prepareErr
+	}()
+	<-started
+	if err := base.Delete(context.Background(), key, record.Version); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+		t.Fatalf("deleted lifecycle preparation = %v, want recovery-required", err)
+	}
+	fixture.mu.Lock()
+	metadata, registrations := fixture.metadataCount, fixture.registerCount
+	fixture.mu.Unlock()
+	if getCalls != 2 || putCalls != 0 {
+		t.Fatalf("lifecycle store calls after concurrent delete: gets=%d puts=%d, want 2/0", getCalls, putCalls)
+	}
+	if metadata <= beforeMetadata || registrations != beforeRegistrations {
+		t.Fatalf("network calls after concurrent delete: metadata=%d (before %d), registrations=%d (before %d)", metadata, beforeMetadata, registrations, beforeRegistrations)
+	}
+	if _, err := base.Get(context.Background(), key); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("deleted lifecycle was recreated: %v", err)
+	}
+}
+
+func TestADR_0325_DirectDCRChallengeIssuerBinding(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
 	presented := 0
@@ -1314,25 +1536,56 @@ func TestOAuthDCRRejectsRuntimeMetadataIssuerMismatch(t *testing.T) {
 	}
 }
 
-func TestOAuthDCRPendingBindingMismatchRetriesExplicitly(t *testing.T) {
-	fixture := newDCRMetadataFixture(t)
-	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
-	opts := fixture.options(t, store)
-	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); err != nil {
-		t.Fatal(err)
-	}
+func TestOAuthDCRPendingBindingMismatchRequiresMatchingConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*OAuthOptions, *string)
+	}{
+		{name: "profile", change: func(opts *OAuthOptions, _ *string) { opts.Subject.Profile = "other-profile" }},
+		{name: "principal", change: func(opts *OAuthOptions, _ *string) { opts.Subject.Principal = "other-user" }},
+		{name: "canonical resource", change: func(_ *OAuthOptions, resource *string) { *resource += "/other" }},
+		{name: "exact issuer", change: func(opts *OAuthOptions, _ *string) { opts.Issuer += "/other" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDCRMetadataFixture(t)
+			resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+			opts := fixture.options(t, store)
+			if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse); err != nil {
+				t.Fatal(err)
+			}
+			key, err := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := store.Get(context.Background(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.mu.Lock()
+			beforeMetadata := fixture.metadataCount
+			fixture.mu.Unlock()
 
-	changed := opts
-	changed.Subject.Principal = "other-user"
-	if _, _, err := PrepareOAuthDCRLogin(context.Background(), resource, changed, OAuthDCRLoginReuse); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryResetRequired {
-		t.Fatalf("reuse with pending binding drift = %v, want reset-required recovery", err)
-	}
-	retry, _, err := PrepareOAuthDCRLogin(context.Background(), resource, changed, OAuthDCRLoginRetryRegistration)
-	if err != nil {
-		t.Fatalf("explicit retry after pending binding drift = %v", err)
-	}
-	if retry.dcrTicket == nil || retry.dcrTicket.record.Identity != (oauthDCRIdentity{Profile: changed.Subject.Profile, Principal: changed.Subject.Principal, Resource: resource, Issuer: changed.Issuer}) {
-		t.Fatalf("retry ticket = %#v", retry.dcrTicket)
+			changedResource, changed := resource, opts
+			tc.change(&changed, &changedResource)
+			for _, action := range []OAuthDCRLoginAction{OAuthDCRLoginReuse, OAuthDCRLoginResetRegistration, OAuthDCRLoginRetryRegistration} {
+				if _, _, err := PrepareOAuthDCRLogin(context.Background(), changedResource, changed, action); !errors.Is(err, ErrOAuthDCRRecoveryRequired) || OAuthDCRRecoveryCategoryOf(err) != OAuthDCRRecoveryPendingIdentityMismatch {
+					t.Fatalf("action %d with pending binding drift = %v, want pending-identity-mismatch recovery", action, err)
+				}
+				after, err := store.Get(context.Background(), key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if after.Version != before.Version || !bytes.Equal(after.Value, before.Value) {
+					t.Fatalf("action %d changed pending lifecycle record", action)
+				}
+			}
+			fixture.mu.Lock()
+			metadata, registrations, tokens := fixture.metadataCount, fixture.registerCount, fixture.tokenCount
+			fixture.mu.Unlock()
+			if metadata != beforeMetadata || registrations != 0 || tokens != 0 {
+				t.Fatalf("pending mismatch side effects metadata/register/token = %d/%d/%d, want %d/0/0", metadata, registrations, tokens, beforeMetadata)
+			}
+		})
 	}
 }
 

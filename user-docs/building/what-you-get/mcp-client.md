@@ -67,8 +67,11 @@ explicit-consent path: it requests only `openid`, persists the registration
 separately from its generation-bound access grant, and never requests or uses
 refresh. Restart reuses an unexpired grant. Expiry returns login-required
 without browser launch; an explicit `mecated mcp login SERVER` reuses the
-registration and obtains a new grant. For an interrupted registration use
-`--retry-dcr-registration`; to replace a valid ready registration and grant use
+registration and obtains a new grant. For an interrupted registration with the
+same profile, principal, canonical resource, and exact issuer, use
+`--retry-dcr-registration`; pending identity drift is reported as
+pending-identity-mismatch and requires restoring that matching configuration
+before retry. To replace a valid ready registration and grant use
 `--reset-dcr-registration`. These mutually exclusive flags fail closed on the
 wrong or corrupt state and never revoke the upstream client. See
 [MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md#direct-dynamic-client-registration)

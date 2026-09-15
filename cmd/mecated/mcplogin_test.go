@@ -109,11 +109,12 @@ func TestParseMCPLoginDCRResetAndRetryFlags(t *testing.T) {
 		avoid []string
 	}{
 		{name: "legacy pending", kind: mcp.OAuthDCRRecoveryPending, want: []string{"previous registration attempt did not complete", "safe failure stage was not recorded", "--retry-dcr-registration", "duplicate or orphan client"}, avoid: []string{"--reset-dcr-registration", secret}},
-		{name: "corrupt", kind: mcp.OAuthDCRRecoveryCorrupt, want: []string{"corrupt or unreadable", "Keep credential-store records unchanged", "deployment operator or support team", "do not send credential-store contents", "do not repair corrupt state or revoke an upstream client"}, avoid: []string{"--retry-dcr-registration", "--reset-dcr-registration", "delete", secret}},
+		{name: "corrupt", kind: mcp.OAuthDCRRecoveryCorrupt, want: []string{"corrupt or unreadable", "Preserve the records and configuration", "without editing, deleting, or renaming", "deployment operator or support team", "only the server name and redacted command error", "never send credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response", "do not repair corrupt state or revoke an upstream client"}, avoid: []string{"--retry-dcr-registration", "--reset-dcr-registration", secret}},
 		{name: "unknown outcome", kind: mcp.OAuthDCRRecoveryRegistrationOutcomeUnknown, want: []string{"request outcome is unknown", "--retry-dcr-registration", "orphan client"}, avoid: []string{secret}},
 		{name: "invalid response", kind: mcp.OAuthDCRRecoveryResponseInvalid, want: []string{"provider returned a registration response", "could not safely use", "--retry-dcr-registration", "orphan client"}, avoid: []string{"contract validation", secret}},
 		{name: "persistence", kind: mcp.OAuthDCRRecoveryReadyPersistence, want: []string{"ready record was not persisted", "--retry-dcr-registration", "orphan client"}, avoid: []string{secret}},
-		{name: "identity drift", kind: mcp.OAuthDCRRecoveryResetRequired, want: []string{"identity differs", "--reset-dcr-registration", "valid ready registration"}, avoid: []string{"--retry-dcr-registration", secret}},
+		{name: "ready reset", kind: mcp.OAuthDCRRecoveryResetRequired, want: []string{"valid ready registration", "current profile, principal, canonical resource, or exact issuer", "--reset-dcr-registration"}, avoid: []string{"restore the matching configuration", "--retry-dcr-registration", secret}},
+		{name: "pending identity mismatch", kind: mcp.OAuthDCRRecoveryPendingIdentityMismatch, want: []string{"pending registration identity", "restore the matching profile, principal, canonical resource, and exact issuer", "--retry-dcr-registration"}, avoid: []string{"--reset-dcr-registration", secret}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recovery := errors.Join(app.ErrMCPLoginAuthorization, mcp.NewOAuthDCRRecoveryError(tc.kind), errors.New(secret))
