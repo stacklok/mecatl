@@ -120,6 +120,81 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 	}
 }
 
+func TestMecatuiBoundedScrollCursor_Scenario2_AgentsPersistRenderedAnchor(t *testing.T) {
+	m := boundedScenarioAgentsModel(t, "subagent-roster")
+	m.conv.fleetIndex = make(map[string]int, len(m.conv.subagentFleet))
+	for i := range m.conv.subagentFleet {
+		m.conv.fleetIndex[m.conv.subagentFleet[i].childID] = i
+	}
+	th, hk, width, height := m.agentsListGeometry()
+	control, _, _ := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width).configuredControl(th, height)
+	control.setCursor(5)
+	m.subagents.cursor, m.subagents.roster = control.cursor, control
+
+	// A streamed update rebuilds the control. Its persisted top anchor must be the
+	// anchor the renderer uses after reserving indicator rows.
+	mm, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ChildID: "child-05", ToolName: strings.Repeat("streamed-tool-", 8), ToolCount: 1})
+	m = mm.(Model)
+	list := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width)
+	rendered := list.boundedView(th, height).rows[0]
+	persisted := m.subagents.roster.view().rows[0]
+	if persisted.id != rendered.id || persisted.itemLine != rendered.itemLine {
+		t.Fatalf("persisted top anchor = {%q,%d}, rendered = {%q,%d}", persisted.id, persisted.itemLine, rendered.id, rendered.itemLine)
+	}
+}
+
+func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+
+	t.Run("team member", func(t *testing.T) {
+		lanes := make([]teamLane, 8)
+		for i := range lanes {
+			lanes[i].name = fmt.Sprintf("member-%d", i)
+		}
+		b := &block{teamLanes: lanes}
+		before := teamSelectableList(th, teamState{}, b, hk, 80)
+		control, _, _ := before.configuredControl(th, 12)
+		control.setCursor(5)
+		top := control.view().rows[0]
+		for i := range b.teamLanes {
+			b.teamLanes[i].sessionID = fmt.Sprintf("team-t1-member-%d", i)
+		}
+		after := teamSelectableList(th, teamState{roster: control}, b, hk, 80)
+		control, _, _ = after.configuredControl(th, 12)
+		if got := control.cursorID; got != "member-5" {
+			t.Fatalf("late member session handle changed list identity to %q, want member-5", got)
+		}
+		gotTop := control.view().rows[0]
+		if gotTop.id != top.id || gotTop.itemLine != top.itemLine {
+			t.Fatalf("late member session handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.id, gotTop.itemLine, top.id, top.itemLine)
+		}
+	})
+
+	t.Run("parallel branch", func(t *testing.T) {
+		branches := make([]parallelBranch, 8)
+		for i := range branches {
+			branches[i] = parallelBranch{index: i, label: fmt.Sprintf("branch-%d", i+1)}
+		}
+		g := &parallelGroup{branches: branches}
+		before := parallelBranchSelectableList(th, parallelState{}, g, hk, 80)
+		control, _, _ := before.configuredControl(th, 12)
+		control.setCursor(5)
+		top := control.view().rows[0]
+		for i := range g.branches {
+			g.branches[i].childID = fmt.Sprintf("parallel-p1-%d", i)
+		}
+		after := parallelBranchSelectableList(th, parallelState{branches: control}, g, hk, 80)
+		control, _, _ = after.configuredControl(th, 12)
+		if got := control.cursorID; got != "branch-5" {
+			t.Fatalf("late branch child handle changed list identity to %q, want branch-5", got)
+		}
+		gotTop := control.view().rows[0]
+		if gotTop.id != top.id || gotTop.itemLine != top.itemLine {
+			t.Fatalf("late branch child handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.id, gotTop.itemLine, top.id, top.itemLine)
+		}
+	})
+}
+
 func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testing.T) {
 	for _, size := range []struct{ width, height int }{{1, 1}, {12, 5}, {32, 12}, {100, 30}} {
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
