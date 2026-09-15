@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -406,4 +407,95 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 	if named == 0 {
 		t.Fatal("no component names were checked; the cmd/ inventory lookup is broken, not satisfied")
 	}
+}
+
+// TestSelfKnowledgeBehaviouralClaimsMatchImplementation is the BEHAVIOURAL half of
+// the drift gate. TestSelfKnowledgePostureNamesLiveDocPages pins NAMES and PATHS:
+// that every axis value is spelled as the domain spells it and every /docs/ path
+// resolves. That is necessary and not sufficient, because the axes clause also
+// carries two claims about what the harness DOES, and those would survive a
+// behaviour change untouched:
+//
+//	"acceptEdits auto-allows Edit and Write only, leaving Shell and every other
+//	 mutating tool on the normal rules"
+//	"[posture] raises the project-trust floor on INTERACTIVE roots only"
+//
+// Both are read here from the real implementation rather than from a remembered
+// spelling: the first by evaluating the actual permpolicy under session.ModeAccept,
+// the second by running the actual applyPosture. Change either behaviour without
+// rewording the clause and this test fails.
+//
+// It deliberately does NOT pin prose. It asserts only that a claim the clause makes
+// about behaviour agrees with the behaviour, which is the part AGENTS.md's "do not
+// pin arbitrary documentation prose" rule leaves open. The alternative the review
+// floated — deriving the prose from a shared authoritative representation — would
+// mean exporting permission internals so a prompt string can read them, inverting
+// the dependency direction for no gain over this.
+func TestSelfKnowledgeBehaviouralClaimsMatchImplementation(t *testing.T) {
+	t.Run("accept-edits auto-allows exactly Edit and Write", func(t *testing.T) {
+		// The REAL main policy at the default posture, the same construction
+		// buildEngine uses (mainRules + mainEvaluatorOptions), so the floor this
+		// reads is the floor a session gets.
+		cfg := Config{}
+		policy := permpolicy.NewPolicy(mainRules(cfg), nil, mainEvaluatorOptions(cfg)...)
+
+		// Mutating tools the clause distinguishes between. Shell carries a plainly
+		// mutating command so the read-only classifier cannot allow it for an
+		// unrelated reason and mask a real regression.
+		calls := map[string]session.ToolCall{
+			"Edit":  {Name: "Edit", Args: []byte(`{"path":"a.go","old_string":"x","new_string":"y"}`)},
+			"Write": {Name: "Write", Args: []byte(`{"path":"a.go","content":"x"}`)},
+			"Shell": {Name: "Shell", Args: []byte(`{"command":"rm -rf ./build"}`)},
+		}
+
+		autoAllowed := map[string]bool{}
+		for name, call := range calls {
+			d := policy.Evaluate(context.Background(), session.SessionID("s1"), session.ModeAccept, call, nil)
+			autoAllowed[name] = d.Effect == governance.Allow
+		}
+
+		// The claim: Edit and Write auto-allow, Shell does not.
+		for _, name := range []string{"Edit", "Write"} {
+			if !autoAllowed[name] {
+				t.Errorf("the self-knowledge note tells the user acceptEdits auto-allows %s, but the real policy does not allow it under session.ModeAccept; fix the behaviour or reword selfKnowledgePostureAxes", name)
+			}
+			if !strings.Contains(selfKnowledgePostureAxes, name) {
+				t.Errorf("the policy auto-allows %s under acceptEdits but the axes clause never names it, so the note under-describes the mode", name)
+			}
+		}
+		if autoAllowed["Shell"] {
+			t.Error("the self-knowledge note tells the user acceptEdits leaves Shell on the normal rules, but the real policy auto-allows it under session.ModeAccept; this is a security-relevant claim, so reword selfKnowledgePostureAxes in the same change that widened the mode")
+		}
+		if !strings.Contains(selfKnowledgePostureAxes, "Shell") {
+			t.Error("the axes clause must name Shell as the tool acceptEdits does NOT auto-allow; without it the mode reads as a blanket auto-run mode")
+		}
+	})
+
+	t.Run("posture raises project trust on interactive roots only", func(t *testing.T) {
+		// applyPosture is the implementation of the claim. TestPostureResolutionTable
+		// already pins the behaviour itself; what is pinned HERE is that the note
+		// still describes that behaviour truthfully, which is the drift the review
+		// caught: the clause said posture "sets project trust" unqualified, which is
+		// false on a headless root and is exactly the deployment mecated runs.
+		for _, posture := range []Posture{PostureTrusted, PostureAuto, PostureYolo} {
+			headless := applyPosture(Config{Posture: posture, Headless: true})
+			interactive := applyPosture(Config{Posture: posture, Headless: false})
+
+			if headless.TrustProject {
+				t.Errorf("posture %s raises TrustProject on a HEADLESS root; the self-knowledge note tells the model it does not, so one of the two has to change", posture)
+			}
+			if !interactive.TrustProject {
+				t.Errorf("posture %s no longer raises TrustProject on an INTERACTIVE root; the self-knowledge note still claims it does", posture)
+			}
+		}
+
+		// The distinction has to actually be IN the clause. A note that names the
+		// tiers but omits which roots they trust is the inaccuracy this test exists
+		// to keep fixed.
+		for _, claim := range []string{"INTERACTIVE", "HEADLESS", "--trust-project"} {
+			if !strings.Contains(selfKnowledgePostureAxes, claim) {
+				t.Errorf("the axes clause does not mention %q: posture's trust behaviour differs by root, and a note that hides that gives a headless deployment a false account of its own permissions", claim)
+			}
+		}
+	})
 }

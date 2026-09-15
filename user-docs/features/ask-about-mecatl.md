@@ -20,10 +20,14 @@ naming a component is still a question about the agent itself.
 
 ## Availability
 
-Every session carries the account, on every deployment. It is part of the shared
-agent core rather than a client feature or an operator setting, so a session with
-no filesystem answers these questions the same way a local `mecatui` session
-does.
+Every session you talk to carries the account, on every deployment. It comes from
+the server that builds the session rather than from a client feature or an
+operator setting, so a session with no filesystem answers these questions the same
+way a local `mecatui` session does.
+
+Subagents are the exception. A delegated task worker is scoped to its own job and
+does not carry the account, so ask the session directly rather than through a
+subagent.
 
 ## What the agent knows on its own
 

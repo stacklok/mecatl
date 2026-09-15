@@ -8291,32 +8291,56 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 
 // memoryPostureLead is the opening clause of the memory self-description note. It
 // is always present when at least one memory family is registered, telling the
-// model to CALL the memory tools rather than guess. The "durable memory store"
-// substring is a stable test key.
-const memoryPostureLead = "You have a durable memory store. " +
-	"When asked what you remember or know about a topic, CALL the memory tools " +
-	"(Recall/RecallUser/SearchMemory/SearchUserModel) rather than guessing — " +
-	"read what was actually saved, then answer."
+// model to CALL the memory tools rather than guess.
+//
+// SCOPE: the trigger is deliberately SAVED FACTS, not "a topic". The broader
+// wording matched "what do you know about mecatl's permission modes?", which the
+// escalation clause below then routed into a workspace Grep — the exact failure
+// applySelfKnowledgePosture exists to prevent. The closing sentence names the
+// exemption rather than leaving the two notes to be reconciled by the reader.
+//
+// The tool names are NOT enumerated here: the catalog advertises exactly the
+// operations it registered, and a prose list goes stale against a base-only store
+// (the lifecycle trio is conditional on tool.MemoryLifecycleStore) or a
+// single-family deployment. The "durable memory store" substring is a stable test key.
+const memoryPostureLead = "You have a durable memory store holding facts saved about this project " +
+	"and this operator. When asked what you remember about either, CALL the memory retrieval tools " +
+	"rather than guessing — read what was actually saved, then answer. Saved facts only: a question " +
+	"about mecatl's own capabilities is answered from the mecatl self-knowledge account, never " +
+	"from a memory lookup or a workspace search."
 
 // memoryPostureProject is appended when the project-scoped family is registered.
-// The "Project memory (" substring is a stable test key.
-const memoryPostureProject = "Project memory (Remember/Recall/SearchMemory/InspectMemory/ForgetMemory/UndoMemory) " +
-	"persists project-scoped facts across sessions. Use it for workspace-specific " +
-	"findings, recurring tasks, and learned project conventions."
+//
+// The storage advice MUST agree with memorytools.rememberDescription, which is the
+// tool's own model-facing contract: "never store credentials, transient state,
+// instructions, or facts rediscoverable from the workspace". This clause used to
+// recommend "workspace-specific findings" and "learned project conventions", which
+// are the rediscoverable and instruction categories that description excludes —
+// two model-facing contracts telling the model opposite things.
+//
+// The tool names are NOT enumerated (see memoryPostureLead).
+// The "Project memory" substring is a stable test key.
+const memoryPostureProject = "Project memory persists project-scoped facts across sessions. Use it for " +
+	"durable facts about this project that are NOT rediscoverable from the workspace. Never store " +
+	"instructions or behavioural rules, credentials, transient state, or anything recoverable by " +
+	"reading the project itself."
 
-// memoryPostureUser is appended when the user-scoped family is registered.
-// The "User memory (" substring is a stable test key.
-const memoryPostureUser = "User memory (RememberUser/RecallUser/SearchUserModel/InspectUserMemory/ForgetUserMemory/UndoUserMemory) " +
-	"persists user-level preferences and cross-project facts. Use it for operator " +
-	"preferences that apply regardless of which project is open."
+// memoryPostureUser is appended when the user-scoped family is registered. Same
+// contract alignment as memoryPostureProject: the user-scope rememberDescription
+// excludes RULES and behavioural instructions explicitly ("those come from the
+// soul"), so this clause names that exclusion rather than inviting it.
+// The "User memory" substring is a stable test key.
+const memoryPostureUser = "User memory persists user-level preferences and cross-project facts. Use it " +
+	"for durable facts about the operator that hold regardless of which project is open. Never store " +
+	"behavioural rules (those come from the soul), credentials, or transient state."
 
 // memoryPostureEscalation is appended when both a memory family AND Grep exist.
 // Without Grep (the no-fs profile) the docs/repo rungs are unreachable and this
 // clause is withheld. The "escalate to workspace search" substring is a stable
 // test key.
-const memoryPostureEscalation = "When memory tools return nothing and you need more context, " +
-	"escalate to workspace search: use Grep to search project documentation, then " +
-	"the broader repository."
+const memoryPostureEscalation = "When a lookup about the OPEN PROJECT returns nothing and you need " +
+	"more context, escalate to workspace search: use Grep to search project documentation, then the " +
+	"broader repository."
 
 // applyMemoryPosture appends the memory self-description note to a prompt.Config
 // when at least one memory family (project or user) is wired into the catalog. It
@@ -8394,6 +8418,14 @@ const (
 	// mecatui sentence is here rather than in a client-specific clause because "what
 	// are the available modes in mecatui" is the question readers actually ask, and
 	// the answer is this axis plus how the client exposes it.
+	//
+	// The behaviour stays INLINE rather than deferring to a fetch: this is the clause
+	// selfKnowledgePostureDirect answers from, so moving it to the canonical page
+	// turns every mode question back into a WebFetch, which is the reflex this note
+	// was added to stop. The obligation that follows is accuracy, not omission, and
+	// the two claims here that carry BEHAVIOUR (accept-edits auto-allows Edit/Write
+	// only; posture raises trust on interactive roots only) are pinned against the
+	// real implementation by TestSelfKnowledgeBehaviouralClaimsMatchImplementation.
 	// The "Three SEPARATE safety axes" substring is a stable test key.
 	selfKnowledgePostureAxes = "Three SEPARATE safety axes, never conflated. (1) SESSION PERMISSION MODE: " +
 		"exactly three, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
@@ -8401,8 +8433,10 @@ const (
 		"(accept-edits in mecatui) auto-allows Edit and Write only, leaving Shell and every other mutating " +
 		"tool on the normal rules. mecatui shows the mode in its header, takes `--mode` at launch, and " +
 		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide via " +
-		"--posture, rising strict < trusted < auto < yolo, setting project trust and how much runs without " +
-		"asking, not what one call may do. (3) GUARDRAILS: an optional model-backed checker over selected " +
+		"--posture, rising strict < trusted < auto < yolo, widening how much runs without asking rather " +
+		"than what one call may do. It raises project trust on INTERACTIVE roots only: a HEADLESS " +
+		"deployment does NOT trust the checkout by posture alone, and without an explicit " +
+		"--trust-project gets no project ingestion and no read-only child shell. (3) GUARDRAILS: an optional model-backed checker over selected " +
 		"tool arguments and results, independent of permissions and inert until an operator configures a " +
 		"checker model. Under every mode and posture a matching deny wins and a configured ask is never " +
 		"suppressed."
