@@ -35,6 +35,29 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 			}
 		})
 	}
+
+	t.Run("wrap preserves styled wide graphemes", func(t *testing.T) {
+		const content = "a界🙂e\u0301Z"
+		var control boundedScrollCursor
+		control.setBounds(4, 10, boundedWrap) // marker leaves two display cells for text
+		control.setCursorItems([]boundedScrollItem{{
+			text: "\x1b[31m" + content + "\x1b[0m", cursorPrefix: "▶ ",
+		}}, 0)
+		var rebuilt strings.Builder
+		for i, row := range control.view().rows {
+			plain := ansi.Strip(row.text)
+			if got := ansi.StringWidth(plain); got > 4 {
+				t.Fatalf("row %d width = %d, want <= 4: %q", i, got, plain)
+			}
+			if !strings.Contains(row.text, "\x1b[31m") || !strings.HasSuffix(row.text, "\x1b[0m") {
+				t.Errorf("row %d did not preserve and close ANSI style: %q", i, row.text)
+			}
+			rebuilt.WriteString(strings.TrimPrefix(plain, "▶ "))
+		}
+		if got := rebuilt.String(); got != content {
+			t.Fatalf("wrapped content = %q, want byte-preserved graphemes %q", got, content)
+		}
+	})
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets(t *testing.T) {
@@ -127,6 +150,25 @@ func TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable(t *te
 	}
 	if plain := ansi.Strip(control.view().rows[0].text); plain != "▶ nex" {
 		t.Fatalf("style or content leaked into following item: %q", plain)
+	}
+
+	wantReversePages := []string{"mnopqr", "ghijkl", "abcdef"}
+	for page, want := range wantReversePages {
+		control.move(boundedPageUp)
+		if control.cursor != 0 {
+			t.Fatalf("reverse page %d selected cursor %d, want oversized predecessor 0", page, control.cursor)
+		}
+		var got strings.Builder
+		for _, row := range control.view().rows {
+			plain := ansi.Strip(row.text)
+			if !strings.HasPrefix(plain, "▶ ") {
+				t.Errorf("reverse page %d lost cursor marker: %q", page, plain)
+			}
+			got.WriteString(strings.TrimPrefix(plain, "▶ "))
+		}
+		if got.String() != want {
+			t.Fatalf("reverse page %d content = %q, want immediately preceding segment %q", page, got.String(), want)
+		}
 	}
 }
 
