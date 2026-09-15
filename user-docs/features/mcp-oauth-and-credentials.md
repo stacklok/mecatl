@@ -90,11 +90,106 @@ mecated mcp login github \
 
 After login, restart the server and verify that the namespaced `mcp__github__*`
 tools appear. Mecatl restores the encrypted credential and refreshes tokens when
-needed.
+needed. Preregistered and CIMD profiles persist refresh-token rotation in the
+local store so the next restart remains warm.
 
-If the profile's issuer, client, principal, scopes, or resource changes, run
-login again. To roll back, replace the whole profile with `static_bearer` or
-`none` and restart.
+### Direct dynamic client registration
+
+A named direct/global profile can use `client: {mode: dcr, dcr: {}}` when no
+client was preregistered. It requires exact `scopes: [openid]` (or omission),
+`request_refresh_token: false` (or omission), and a mutable local credential
+store:
+
+```yaml
+mcp:
+  mode: global
+  servers:
+    - name: connector
+      url: https://connector-gateway.stacklok.dev/gw/mcp
+      auth:
+        mode: oauth
+        oauth:
+          profile: connector
+          principal: local-user
+          issuer: https://connector-gateway.stacklok.dev
+          client: {mode: dcr, dcr: {}}
+          scopes: [openid]
+          request_refresh_token: false
+          credentials:
+            mode: local
+            local:
+              root: /absolute/owner-only/credentials
+              key_env: MECATL_MCP_CREDENTIAL_KEY
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+```
+
+Login dynamically registers a public client and then uses the same browser/PKCE
+flow. The durable registration and generation-bound access grant are separate;
+no client secret or refresh token is requested or accepted.
+
+Ordinary startup reuses the unexpired grant and never launches a browser. On
+expiry it returns login-required without attempting refresh. Run
+`mecated mcp login SERVER` explicitly to obtain a new access grant while reusing
+the valid registration. If registration itself was interrupted, use
+`--retry-dcr-registration`; to deliberately replace a valid ready registration
+and its grant, use `--reset-dcr-registration`. The flags are mutually exclusive
+and valid only for DCR. Ready identity drift is reset-required and may be
+replaced with `--reset-dcr-registration`. Pending identity drift is reported as
+pending-identity-mismatch; it cannot reset or retry until the matching profile,
+principal, canonical resource, and exact issuer configuration is restored,
+after which use `--retry-dcr-registration`. Corrupt, noncanonical, unsupported,
+or grant-mismatched persisted state remains repair-only: neither flag mutates
+it. The flags do not revoke an upstream registration. Complete public-client
+refresh remains deferred to
+[issue #1355](https://github.com/stacklok/mecatl/issues/1355).
+
+#### Manual local-mecatui qualification
+
+Run this live procedure only with explicit authorization and an isolated owner-only config
+and credential root. Do not paste command output into an issue or PR.
+
+1. Configure the DCR profile above and export its 32-byte padded-base64 credential key.
+2. Run `mecated mcp login connector`; record whether explicit consent appeared, but never
+   record the URL, code, state, registration response, client ID, or token.
+3. Start local `mecatui` with the same settings and key. Invoke only one harmless discovered
+   read-only tool and record its name and safe success category.
+4. Restart `mecatui` before access-token expiry and invoke the same tool without another login.
+5. After expiry, reconnect and confirm login-required, no refresh request, and no browser launch.
+6. Run `mecated mcp login connector` explicitly, confirm registration reuse, restart `mecatui`,
+   and invoke the same harmless tool once more.
+
+Record only:
+
+```text
+canonical_resource: <origin/path, no query>
+issuer_origin: <origin only>
+explicit_consent: true|false
+harmless_tool_name: <name only>
+initial_result: success|failure:<safe-category>
+restart_reuse_before_expiry: true|false
+expiry_result: login-required|failure:<safe-category>
+refresh_attempted: false
+browser_launched_on_startup_or_expiry: false
+explicit_relogin_reused_registration: true|false
+relogin_result: success|failure:<safe-category>
+```
+
+Exclude OAuth and registration secrets, authorization URLs, callback values, raw provider
+errors, headers, credential-store contents, and screenshots containing any of them.
+
+If a valid ready DCR profile's intentional registration binding changes — for example its
+issuer, principal, scopes, or resource — run `mecated mcp login SERVER
+--reset-dcr-registration`; plain login cannot replace that registration. Pending identity drift
+is reported as pending-identity-mismatch and cannot reset or retry: restore the matching profile,
+principal, canonical resource, and exact issuer before running `--retry-dcr-registration`.
+
+For corrupt, noncanonical, unsupported, or grant-mismatched persisted registration state,
+preserve the records and configuration: do not edit, delete, or rename them. Contact the
+deployment operator or support team with only the server name and redacted command error.
+Never send credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response. Reset
+and retry cannot bypass this state. For non-DCR profiles, run login again after intentional
+identity changes. To roll back, replace the whole profile with `static_bearer` or `none` and
+restart.
 
 ## Environment-backed credentials
 
@@ -171,8 +266,10 @@ environment-variable name.
   Authorize global profiles locally beforehand or provision an environment
   credential. A browser may instead complete an already-started ToolHive broker
   enrollment externally; `mecak8s` does not launch that browser.
-- ACP cannot install or authorize OAuth profiles. It can use a global profile
-  after an operator authorizes it.
+- Direct DCR and ACP cannot provide OAuth profiles or install or drive
+  authorization. An operator may configure and authorize a named global
+  direct-DCR profile; ACP sessions may then invoke its shared tools under
+  ordinary permissions.
 - Client-provided per-session MCP and inline agent MCP servers cannot provide
   OAuth profiles. The configured ToolHive broker is the exception: it owns its
   configured multi-upstream OAuth chain, while Mecatl exposes only the aggregate
@@ -183,9 +280,12 @@ environment-variable name.
   permission to call a tool: every namespaced MCP tool still passes through the
   ordinary permission policy and audit path.
 - OAuth supports RFC 9728 metadata with one exact resource and authorization
-  server, S256, and Basic-authenticated confidential clients. When RFC 9207
-  issuer validation is advertised, the callback must contain the matching `iss`;
-  any supplied issuer must match.
+  server, and S256. Preregistered confidential clients remain
+  Basic-authenticated; direct DCR clients use the public `none` method with no
+  refresh. RFC 9207 issuer validation follows authorization-server metadata: if
+  the server advertises `authorization_response_iss_parameter_supported`, its
+  callback must include the matching `iss`; otherwise `iss` may be omitted, but
+  any supplied issuer must still match.
 - A connection drop can trigger one bounded reconnect and retry. A
   server-declared tool failure is not replayed automatically because the call
   may have mutated remote state. The startup tool catalog is retained across

@@ -155,8 +155,8 @@ func TestEffortE2EForkFailureLeavesSourceOpen(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(scaleWait(3*time.Second)))
 
 	fm := tm.FinalModel(t).(Model)
-	if !fm.restartFailed {
-		t.Errorf("restartFailed = false, want true (recoverable fork failure armed, not the fatal screen)")
+	if fm.restartFailed {
+		t.Errorf("restartFailed = true, want false (effort failure keeps the source bound)")
 	}
 	if fm.phase != phaseIdle {
 		t.Errorf("phase = %s, want idle (recoverable, not fatal)", phaseName(fm.phase))

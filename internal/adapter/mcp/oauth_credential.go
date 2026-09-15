@@ -68,7 +68,7 @@ func canonicalOAuthResource(raw string) (string, error) {
 		hostname = ip.String()
 	}
 	port := u.Port()
-	if port == "" || scheme == "https" && port == "443" || scheme == "http" && port == "80" {
+	if port == "" || scheme == "https" && port == "443" || scheme == oauthHTTPURLScheme && port == "80" {
 		port = ""
 	}
 	if strings.Contains(hostname, ":") {
@@ -149,7 +149,7 @@ func validateOAuthIdentity(identity oauthCredentialIdentity) error {
 			return err
 		}
 	}
-	if identity.ClientKind != "preregistered" && identity.ClientKind != "cimd" {
+	if identity.ClientKind != "preregistered" && identity.ClientKind != "cimd" && identity.ClientKind != oauthDCRClientKind {
 		return errors.New("OAuth client kind is unsupported")
 	}
 	return nil
@@ -169,15 +169,19 @@ func OAuthCredentialRecordKey(resource string, opts OAuthOptions) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	registration, err := validateOAuthRegistration(opts.Client, opts.Issuer)
+	registration, err := resolvedOAuthRegistration(opts)
 	if err != nil {
 		return nil, err
 	}
-	return oauthCredentialKey(oauthCredentialIdentity{
+	identity := oauthCredentialIdentity{
 		Profile: opts.Subject.Profile, Principal: opts.Subject.Principal,
 		Resource: canonical, Issuer: opts.Issuer,
 		ClientKind: registration.kind, ClientID: registration.clientID,
-	})
+	}
+	if registration.kind == oauthDCRClientKind {
+		return oauthDCRCredentialKey(identity, registration.generation)
+	}
+	return oauthCredentialKey(identity)
 }
 
 func oauthCredentialKey(identity oauthCredentialIdentity) ([]byte, error) {

@@ -59,8 +59,22 @@ mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]
 
 Serving restores the encrypted record at startup and persists refresh-token
 rotation. It never opens a browser. Environment-backed profiles are read-only;
-update their Secret and restart the process to rotate them. See
-[MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md#configure-a-profile)
+update their Secret and restart the process to rotate them.
+
+A named direct/global profile may instead use `client: {mode: dcr, dcr: {}}`
+with a mutable local credential store. Direct DCR is a public-client,
+explicit-consent path: it requests only `openid`, persists the registration
+separately from its generation-bound access grant, and never requests or uses
+refresh. Restart reuses an unexpired grant. Expiry returns login-required
+without browser launch; an explicit `mecated mcp login SERVER` reuses the
+registration and obtains a new grant. For an interrupted registration with the
+same profile, principal, canonical resource, and exact issuer, use
+`--retry-dcr-registration`; pending identity drift is reported as
+pending-identity-mismatch and requires restoring that matching configuration
+before retry. To replace a valid ready registration and grant use
+`--reset-dcr-registration`. These mutually exclusive flags fail closed on the
+wrong or corrupt state and never revoke the upstream client. See
+[MCP OAuth and credentials](/features/mcp-oauth-and-credentials.md#direct-dynamic-client-registration)
 for profile configuration and recovery.
 
 ### ToolHive discovery

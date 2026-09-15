@@ -79,6 +79,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0339 - Deno uses the TypeScript SDK HTTP/SSE entry point](./0339-typescript-sdk-deno.md) *(supersedes ADR 0279 only for the supported-runtime set)*
 - [0340 - Deno owns local daemons through Deno.Command](./0340-typescript-sdk-deno-command.md) *(supersedes ADR 0339 for the Deno public entry-point and local-process decisions)*
 - [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
+- [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
@@ -206,7 +207,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md) *(static-tool admission superseded by 0310)*
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
-- [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md) *(proposed)*
+- [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
 
 ### Performance & diagnostics

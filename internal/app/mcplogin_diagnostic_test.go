@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
@@ -59,4 +60,12 @@ func TestMCPLoginDiagnosticPreservesCategoryAndSafeDetail(t *testing.T) {
 	if unknown != ErrMCPLoginAuthorization || strings.Contains(unknown.Error(), unknownCanary) {
 		t.Fatalf("unknown diagnostic was not collapsed: %v", unknown)
 	}
+
+	t.Run("DCR recovery category remains safe and available to the CLI", func(t *testing.T) {
+		err := loginDiagnostic(ErrMCPLoginAuthorization, mcp.NewOAuthDCRRecoveryError(mcp.OAuthDCRRecoveryResponseInvalid))
+		if !errors.Is(err, ErrMCPLoginAuthorization) || !errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) ||
+			mcp.OAuthDCRRecoveryCategoryOf(err) != mcp.OAuthDCRRecoveryResponseInvalid {
+			t.Fatalf("DCR recovery category was not preserved: %v, category %v", err, mcp.OAuthDCRRecoveryCategoryOf(err))
+		}
+	})
 }

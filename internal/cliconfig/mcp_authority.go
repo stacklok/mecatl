@@ -69,10 +69,51 @@ func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, err
 
 func validateGlobalOAuth(route permconfig.MCPServerProfile) error {
 	oauth := route.Auth.OAuth
-	if oauth.Profile == "" || oauth.Principal == "" || oauth.Issuer == "" || len(oauth.Scopes) == 0 || oauth.Network == nil || oauth.Credentials.Mode == "" {
-		return fmt.Errorf("%w: MCP server %q: global OAuth requires profile, principal, issuer, scopes, credentials, and network", ErrMCPProfileInvalid, route.Name)
+	if oauth.Profile == "" || oauth.Principal == "" || oauth.Issuer == "" || oauth.Network == nil || oauth.Credentials.Mode == "" {
+		return fmt.Errorf("%w: MCP server %q: global OAuth requires profile, principal, issuer, credentials, and network", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.Upstream != nil {
+		return fmt.Errorf("%w: MCP server %q: oauth upstream selection is broker-only", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.Client.Mode != "dcr" {
+		if len(oauth.Scopes) == 0 {
+			return fmt.Errorf("%w: MCP server %q: global OAuth requires scopes", ErrMCPProfileInvalid, route.Name)
+		}
+		return nil
+	}
+	if oauth.Client.DCR == nil || oauth.Client.DCR.DiscoveryURL != "" {
+		return fmt.Errorf("%w: MCP server %q: direct DCR requires an empty dcr payload", ErrMCPProfileInvalid, route.Name)
+	}
+	issuer, err := url.Parse(oauth.Issuer)
+	if err != nil || issuer.Scheme != "https" {
+		return fmt.Errorf("%w: MCP server %q: direct DCR requires an HTTPS issuer", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.Credentials.Mode != "local" || oauth.Credentials.Local == nil || oauth.Credentials.Environment != nil {
+		return fmt.Errorf("%w: MCP server %q: direct DCR requires mutable local credentials", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.RequestRefreshToken {
+		return fmt.Errorf("%w: MCP server %q: direct DCR does not support refresh tokens", ErrMCPProfileInvalid, route.Name)
+	}
+	if len(oauth.Scopes) != 0 && !sameStringSet(oauth.Scopes, []string{"openid"}) {
+		return fmt.Errorf("%w: MCP server %q: direct DCR scopes must contain only openid", ErrMCPProfileInvalid, route.Name)
 	}
 	return nil
+}
+
+func sameStringSet(got, want []string) bool {
+	set := make(map[string]struct{}, len(got))
+	for _, value := range got {
+		set[value] = struct{}{}
+	}
+	if len(set) != len(want) {
+		return false
+	}
+	for _, value := range want {
+		if _, ok := set[value]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Result, error) {
@@ -125,6 +166,12 @@ func validateBrokerOAuth(route permconfig.MCPServerProfile) error {
 }
 
 func validateBrokerOAuthUpstream(routeName string, oauth *permconfig.MCPOAuthProfile) error {
+	if oauth.Client.Mode == "dcr" {
+		if oauth.Client.DCR == nil || oauth.Client.DCR.DiscoveryURL == "" || oauth.Upstream == nil || oauth.Upstream.Mode != "oauth2" || oauth.Upstream.OAuth2 == nil || oauth.Issuer != "" {
+			return fmt.Errorf("%w: MCP server %q: broker DCR requires OAuth2 upstream, discovery_url, and no issuer", ErrMCPProfileInvalid, routeName)
+		}
+		return nil
+	}
 	if oauth.Upstream == nil || oauth.Upstream.Mode == "oidc" {
 		if oauth.Issuer == "" {
 			return fmt.Errorf("%w: MCP server %q: broker OIDC requires issuer", ErrMCPProfileInvalid, routeName)

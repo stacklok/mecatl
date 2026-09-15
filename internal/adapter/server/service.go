@@ -687,6 +687,9 @@ type Config struct {
 	// paths. Only the ContextWindow scalar is resolved; provider/model identity never
 	// recomputes.
 	ResolveContextWindow func(providerID, modelID string) int64
+	// AwaitContextWindow blocks run admission until composition can safely resolve
+	// the effective provider/model window. Nil preserves compatibility for embedders.
+	AwaitContextWindow func(context.Context, string, string) error
 
 	// SessionLease is the OPTIONAL cross-process single-writer seam (cloud-native
 	// Phase 4, ADR 0027). When wired, the run-entry funnel acquires a per-session
@@ -4392,6 +4395,9 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err != nil {
 		return nil, err
 	}
+	if err := s.awaitContextWindow(ctx, id); err != nil {
+		return nil, err
+	}
 	// Approval replay reads the still-failed conversation and must complete before
 	// preparation clears failed-state metadata.
 	s.maybeReplayApprovals(ctx, sess)
@@ -4630,6 +4636,9 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.awaitContextWindow(ctx, id); err != nil {
 		return nil, err
 	}
 	// Mint this run's identity and stamp it on the aggregate BEFORE launching, so
@@ -5448,6 +5457,14 @@ func (s *Service) ResolvedModel(id session.SessionID) ResolvedModel {
 	return rm
 }
 
+func (s *Service) awaitContextWindow(ctx context.Context, id session.SessionID) error {
+	if s.cfg.AwaitContextWindow == nil {
+		return nil
+	}
+	resolved := s.ResolvedModel(id)
+	return s.cfg.AwaitContextWindow(ctx, resolved.ProviderID, resolved.ModelID)
+}
+
 // LookupRun returns the in-flight run for a session and true, or false if no
 // run is currently registered for it.
 func (s *Service) LookupRun(id session.SessionID) (*agent.Run, bool) {
@@ -5753,6 +5770,9 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.awaitContextWindow(ctx, id); err != nil {
 		return nil, err
 	}
 	if !leaseHeld() {

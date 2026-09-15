@@ -30,6 +30,21 @@ Mecatl resolves the value when needed, so the next compaction check can use
 newer metadata from a catalog refresh. `mecatui` updates its context meter when
 that metadata arrives.
 
+For a live-listable model that has no configured, live, or embedded window yet,
+Mecatl waits for the bounded initial discovery before admitting a prompt, a
+failed-step retry, or a restart-restored approval. This prevents the 128K
+unknown-model floor from compacting a durable session before a larger gateway
+window arrives. If discovery is unreachable, unauthorized, or returns an empty
+inventory, admission returns `context_window_unavailable` (HTTP 503 / gRPC
+`Unavailable`) without recording the prompt or starting inference. Restore model
+discovery or configure an exact `models.context_windows` value for the final
+provider/model ID, then retry. The first rejection does not make a duplicate
+startup request; a later retry performs one bounded refresh.
+
+After a successful non-empty listing, a passthrough model omitted from that
+listing—or listed without a window—retains the settled 128K compatibility
+fallback. Providers with no live model lister also retain that fallback.
+
 ## Configure an override
 
 Use an override when a provider reports an incorrect limit or a proxy hides the

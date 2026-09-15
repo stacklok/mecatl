@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -42,11 +44,16 @@ import (
 // It is composition-only (held on providerRegistry); it never crosses into a port,
 // the domain, the agent, or the server adapter. Adapters receive CLOSURES over it
 // (e.g. the max-tokens / thinking resolvers), never the store itself.
+type liveMetaSnapshot struct {
+	models          map[string]map[string]modelEntry
+	nonEmptyListing map[string]bool
+}
+
 type liveMetaStore struct {
-	// models is map[providerID]map[modelID]modelEntry, behind an atomic.Pointer for
-	// the same lock-free swap the picker uses. Never mutated in place: a refresh
-	// builds a fresh map and Swaps the pointer.
-	models atomic.Pointer[map[string]map[string]modelEntry]
+	// snapshot keeps resolver metadata and admission evidence in one atomic value.
+	// Admission can therefore never observe a successful listing before the model
+	// metadata produced by that same publication is resolver-visible.
+	snapshot atomic.Pointer[liveMetaSnapshot]
 	// completed records whether the ONE-SHOT live-model refresh has SETTLED — set true
 	// in every settle path (sync swap, async success, async fetch-fail/empty fallback,
 	// and the no-lister no-op) but DELIBERATELY NOT on a shutdown-cancel (a shutdown is
@@ -58,16 +65,33 @@ type liveMetaStore struct {
 	// reg.meta store, set by the SAME already-inventoried one-shot refresh goroutine —
 	// NOT a new outlives-a-call resource (CLOUD-NATIVE.md List 1).
 	completed atomic.Bool
+	settled   chan struct{}
+	settle    sync.Once
 }
 
-// markRefreshCompleted flips the live-refresh-settled flag (idempotent, lock-free,
-// nil-safe). Called from EVERY settle path in startLiveModelRefresh — never on a
-// shutdown-cancel.
+// markRefreshCompleted publishes settlement to both lock-free resolvers and
+// request admission waiters. Shutdown cancellation deliberately never calls it.
 func (s *liveMetaStore) markRefreshCompleted() {
 	if s == nil {
 		return
 	}
 	s.completed.Store(true)
+	if s.settled != nil {
+		s.settle.Do(func() { close(s.settled) })
+	}
+}
+
+// awaitRefresh waits without polling or spawning a goroutine.
+func (s *liveMetaStore) awaitRefresh(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	select {
+	case <-s.settled:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // refreshCompleted reports whether the one-shot live refresh has settled (lock-free,
@@ -80,9 +104,11 @@ func (s *liveMetaStore) refreshCompleted() bool {
 // newLiveMetaStore returns an empty store. Callers seed it (seedFromCatalog) before
 // the first resolver read so a lookup is never a nil-map miss.
 func newLiveMetaStore() *liveMetaStore {
-	s := &liveMetaStore{}
-	empty := map[string]map[string]modelEntry{}
-	s.models.Store(&empty)
+	s := &liveMetaStore{settled: make(chan struct{})}
+	s.snapshot.Store(&liveMetaSnapshot{
+		models:          map[string]map[string]modelEntry{},
+		nonEmptyListing: map[string]bool{},
+	})
 	return s
 }
 
@@ -116,7 +142,12 @@ func (s *liveMetaStore) seedFromCatalog(pids []string) {
 		}
 		put(next, pid, embeddedModels(pid))
 	}
-	s.models.Store(&next)
+	current := s.snapshot.Load()
+	evidence := map[string]bool{}
+	if current != nil {
+		evidence = current.nonEmptyListing
+	}
+	s.snapshot.Store(&liveMetaSnapshot{models: next, nonEmptyListing: evidence})
 }
 
 // Swap atomically REPLACES the whole store with the per-provider model lists from a
@@ -136,7 +167,12 @@ func (s *liveMetaStore) Swap(byProvider map[string][]modelEntry) {
 		}
 		put(next, pid, list)
 	}
-	s.models.Store(&next)
+	current := s.snapshot.Load()
+	evidence := map[string]bool{}
+	if current != nil {
+		evidence = current.nonEmptyListing
+	}
+	s.snapshot.Store(&liveMetaSnapshot{models: next, nonEmptyListing: evidence})
 }
 
 // put indexes a provider's []modelEntry by model id into the destination map. A
@@ -164,16 +200,24 @@ func (s *liveMetaStore) lookup(providerID, modelID string) (modelEntry, bool) {
 	if s == nil || providerID == "" || modelID == "" {
 		return modelEntry{}, false
 	}
-	cur := s.models.Load()
+	cur := s.snapshot.Load()
 	if cur == nil {
 		return modelEntry{}, false
 	}
-	byID, ok := (*cur)[providerID]
+	byID, ok := cur.models[providerID]
 	if !ok {
 		return modelEntry{}, false
 	}
 	m, ok := byID[modelID]
 	return m, ok
+}
+
+func (s *liveMetaStore) hasPublishedNonEmptyListing(providerID string) bool {
+	if s == nil {
+		return false
+	}
+	cur := s.snapshot.Load()
+	return cur != nil && cur.nonEmptyListing[providerID]
 }
 
 // mergeSwap merges fresh (the just-refetched providers — the FULL available
@@ -197,15 +241,19 @@ func (s *liveMetaStore) lookup(providerID, modelID string) (modelEntry, bool) {
 // no persisted "current" snapshot to carry over, so the merge degrades to
 // projecting fresh alone (it still stores nothing — there is no store — but the
 // RETURNED view is never silently empty just because the store is absent).
-func (s *liveMetaStore) mergeSwap(fresh map[string][]modelEntry) map[string][]modelEntry {
+func (s *liveMetaStore) mergeSwap(fresh map[string][]modelEntry, publishedEvidence ...map[string]bool) map[string][]modelEntry {
 	next := make(map[string]map[string]modelEntry)
+	nextEvidence := make(map[string]bool)
 	if s != nil {
-		if cur := s.models.Load(); cur != nil {
-			for pid, byID := range *cur {
+		if cur := s.snapshot.Load(); cur != nil {
+			for pid, byID := range cur.models {
 				if _, ok := fresh[pid]; ok {
 					continue // present in fresh: replaced below, never carried over stale
 				}
 				next[pid] = byID
+			}
+			for pid, usable := range cur.nonEmptyListing {
+				nextEvidence[pid] = usable
 			}
 		}
 	}
@@ -215,8 +263,13 @@ func (s *liveMetaStore) mergeSwap(fresh map[string][]modelEntry) map[string][]mo
 		}
 		put(next, pid, list)
 	}
+	if len(publishedEvidence) > 0 {
+		for pid := range fresh {
+			nextEvidence[pid] = publishedEvidence[0][pid]
+		}
+	}
 	if s != nil {
-		s.models.Store(&next)
+		s.snapshot.Store(&liveMetaSnapshot{models: next, nonEmptyListing: nextEvidence})
 	}
 	out := make(map[string][]modelEntry, len(next))
 	for pid, byID := range next {

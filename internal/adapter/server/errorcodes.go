@@ -115,6 +115,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrNoActiveRun, Code: "no_active_run", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "No active run for session"},
 	{Sentinel: ErrNotAwaitingPlan, Code: "not_awaiting_plan", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Session is not awaiting a plan approval"},
 	{Sentinel: ErrSessionLeasedElsewhere, Code: "session_leased_elsewhere", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Session is leased by another process"},
+	{Sentinel: ErrContextWindowUnavailable, Code: "context_window_unavailable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Context window metadata is unavailable"},
 	{Sentinel: ErrUnavailable, Code: "draining", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Server is draining and not accepting new runs"},
 	{Sentinel: ErrNoMCPProvider, Code: "no_mcp_provider", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "No MCP provider configured"},
 	{Sentinel: ErrTeamsDisabled, Code: "teams_disabled", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Agent teams are not enabled"},

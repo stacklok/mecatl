@@ -96,12 +96,21 @@ for credential sources and deployment options.
 
 Define a named HTTPS gateway under `providers:` in the user-global
 `settings.yaml`, then select it with `models.default_provider`. API-key gateways
-use the matching provider ID in operator-local `auth.yaml`. Restart after
-changing either file.
+use the matching provider ID in operator-local `auth.yaml`; credentials are never
+read from a project file or supplied by `mecatui connect`. The server snapshots
+these settings and credentials once while it starts, so restart after changing
+either file.
 
-If live model listing fails or returns no models, `/models` keeps the configured
-default selectable and shows a safe status without endpoints, credentials, or
-raw errors. Built-in `--*-base-url` flags take precedence over settings. See the
+If live model listing is unreachable, unauthorized, or empty, `/models` keeps the
+configured default selectable and shows a safe provider status without endpoints,
+credentials, raw listing errors, or response bodies. Selecting that configured
+fallback does not make an unknown context window safe: before the first run,
+Mecatl waits for bounded live discovery. If discovery still fails or returns no
+models and no exact window is configured, the run returns
+`context_window_unavailable` without recording the prompt. Restore discovery or
+set `models.context_windows.<provider-id>.<final-model-id>`, then retry. Built-in
+`--*-base-url` flags take precedence over eligible built-in endpoint overrides.
+See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.
 

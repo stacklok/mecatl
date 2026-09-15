@@ -291,16 +291,11 @@ func TestEffortPickFailureLeavesSourceOpen(t *testing.T) {
 	m = mm.(Model)
 	m = feedCmd(t, m, cmd)
 	// The recoverable reducer fired (NOT the terminal fatal path).
-	if !m.restartFailed {
-		t.Error("restartFailed = false, want true (recoverable failure armed)")
+	if m.restartFailed {
+		t.Error("restartFailed = true, want false (the source remains bound after a failed fork)")
 	}
 	if m.phase != phaseIdle {
 		t.Errorf("phase = %v, want phaseIdle (recoverable, not fatal)", m.phase)
-	}
-	// The failure carried the fork origin + the SURVIVING source session id (so the
-	// enter-retry re-forks — preserving the transcript — instead of re-creating).
-	if m.restartFailedForkID != "sess-test-0001" {
-		t.Errorf("restartFailedForkID = %q, want the source session sess-test-0001", m.restartFailedForkID)
 	}
 	// The source session was NOT closed — a failed fork leaves the live session alone.
 	if got := conv.closed(); len(got) != 0 {
@@ -308,74 +303,27 @@ func TestEffortPickFailureLeavesSourceOpen(t *testing.T) {
 	}
 }
 
-// TestEffortPickFailureRetryReforks is the Finding-1 regression guard (ADR 0068):
-// after a failed fork, the armed enter-RETRY must re-fire the FORK from the
-// surviving source session — NOT the restartOnModelCmd create-fresh + resetSession
-// path, which would lose the transcript (the exact thing the fork-resume switch
-// exists to prevent). Drives a failed fork, then the enter-retry, and asserts the
-// fake records a SECOND ForkSession (from the same source id, at the picked effort)
-// and ZERO CreateSession calls.
-func TestEffortPickFailureRetryReforks(t *testing.T) {
+func TestEffortPickFailureRetryDoesNotDiscardSource(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	conv := m.deps.Session.(*fakeConv)
 	conv.forkErr = context.DeadlineExceeded
 
-	mm, _ := m.runEffort()
-	m = mm.(Model)
-	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // low
-	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = mm.(Model)
-	m = feedCmd(t, m, cmd) // the fork fails → the recoverable state is armed
-	if !m.restartFailed || m.restartFailedForkID != "sess-test-0001" {
-		t.Fatalf("precondition: restartFailed=%v forkID=%q, want armed over sess-test-0001", m.restartFailed, m.restartFailedForkID)
+	m, cmd := effortHandoffPick(t, m)
+	m = feedCmd(t, m, cmd)
+	if m.sessionID != "sess-test-0001" || m.phase != phaseIdle || m.restartFailed {
+		t.Fatalf("failed effort handoff did not restore source: id=%q phase=%v restartFailed=%v", m.sessionID, m.phase, m.restartFailed)
 	}
-	if conv.forkCount != 1 {
-		t.Fatalf("precondition: forkCount = %d, want 1 (the failed pick)", conv.forkCount)
-	}
-	// The failing pick applied the selection synchronously — the retry re-fires it.
-	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "low"}
-	if m.createModelSelection != want {
-		t.Fatalf("precondition: createModelSelection = %+v, want %+v", m.createModelSelection, want)
+	if conv.forkCount != 1 || len(conv.closed()) != 0 {
+		t.Fatalf("fork failure changed source lifecycle: forks=%d closed=%v", conv.forkCount, conv.closed())
 	}
 
-	// The fork succeeded in creating the peer session — only the fork RPC erred, so
-	// the RETRY's GetSession refetch must succeed (a permanent getSessionErr would
-	// re-fail the retried fork post-refetch, masking the create-vs-fork assertion).
-	mm2, retryCmd := m.onIdleSubmit()
-	m = mm2.(Model)
-	if m.phase != phaseConnecting {
-		t.Fatalf("phase = %v, want phaseConnecting (the retry is in flight)", m.phase)
+	mm, retryCmd := m.onIdleSubmit()
+	m = mm.(Model)
+	if retryCmd != nil {
+		t.Fatal("idle retry unexpectedly started a fresh restart after effort failure")
 	}
-	conv.forkErr = nil // the transient blip clears; the retry's fork now succeeds
-	m = feedCmd(t, m, retryCmd)
-
-	// THE PIN: the retry re-FORKED (from the surviving source, at the picked effort)
-	// — it did NOT create-fresh (no resetSession, no transcript loss).
-	if conv.forkCount != 2 {
-		t.Fatalf("forkCount = %d, want 2 (the retry re-fired the fork)", conv.forkCount)
-	}
-	if conv.forkedFrom != "sess-test-0001" {
-		t.Errorf("retry forkedFrom = %q, want the surviving source sess-test-0001", conv.forkedFrom)
-	}
-	if conv.forkedEffort != "low" {
-		t.Errorf("retry forkedEffort = %q, want low (the picked tier)", conv.forkedEffort)
-	}
-	if conv.createCount != 0 {
-		t.Errorf("createCount = %d, want 0 — the retry must NOT create-fresh (that would wipe the transcript)", conv.createCount)
-	}
-	// The retried fork succeeded: the session rebinds to the fork id, the app is idle,
-	// and the source is closed exactly once (by the successful retry only).
-	if m.sessionID != "sess-fork-2" {
-		t.Errorf("sessionID = %q, want the retry's fork id sess-fork-2", m.sessionID)
-	}
-	if m.restartFailed || m.restartFailedForkID != "" {
-		t.Errorf("restartFailed=%v forkID=%q after the successful retry, want cleared", m.restartFailed, m.restartFailedForkID)
-	}
-	if m.phase != phaseIdle {
-		t.Errorf("phase = %v, want phaseIdle (the retried fork's SessionReadyMsg rebinds idle)", m.phase)
-	}
-	if got := conv.closed(); len(got) != 1 || got[0] != "sess-test-0001" {
-		t.Errorf("closed = %v, want [sess-test-0001] (the failed attempt closes nothing; the successful retry closes the source once)", got)
+	if conv.forkCount != 1 || m.sessionID != "sess-test-0001" {
+		t.Fatalf("idle retry changed effort source: forks=%d id=%q", conv.forkCount, m.sessionID)
 	}
 }
 
@@ -403,27 +351,25 @@ func TestEffortPickRefetchFailureKeepsFork(t *testing.T) {
 	if conv.forkCount != 1 || conv.forkedFrom != "sess-test-0001" {
 		t.Fatalf("fork: count=%d from=%q, want 1 / sess-test-0001 (the fork succeeded)", conv.forkCount, conv.forkedFrom)
 	}
-	// … so the source session was closed (best-effort, after the successful fork) …
-	if got := conv.closed(); len(got) != 1 || got[0] != "sess-test-0001" {
-		t.Fatalf("closed = %v, want [sess-test-0001] (the fork succeeded — the source closes)", got)
+	// … so the source session remains open and only the exact failed target is cleaned up.
+	if got := conv.closed(); len(got) != 1 || got[0] != "sess-fork-1" {
+		t.Fatalf("closed = %v, want [sess-fork-1] (hydration failure cleans the target only)", got)
 	}
 	// … and NOTHING was created fresh (the fork path never calls CreateSession).
 	if conv.createCount != 0 {
 		t.Errorf("createCount = %d, want 0 (the fork path never re-creates)", conv.createCount)
 	}
-	// The app degraded to the RECOVERABLE state — armed with the fork origin (a
-	// re-fork retry, not a create), idle, NOT stuck in connecting, NOT fatal.
-	if !m.restartFailed {
-		t.Error("restartFailed = false, want true (the refetch failure stays recoverable)")
+	if m.restartFailed {
+		t.Error("restartFailed = true, want false (the source remains usable)")
 	}
-	if m.restartFailedForkID != "sess-test-0001" {
-		t.Errorf("restartFailedForkID = %q, want the fork origin sess-test-0001", m.restartFailedForkID)
+	if m.sessionID != "sess-test-0001" {
+		t.Errorf("sessionID = %q, want source session after hydration failure", m.sessionID)
 	}
 	if m.phase != phaseIdle {
 		t.Errorf("phase = %v, want phaseIdle (recoverable — NOT stuck connecting, NOT fatal)", m.phase)
 	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "press enter to retry") {
-		t.Errorf("statusMsg = %q, want the enter-to-retry notice", m.statusMsg)
+	if strings.Contains(stripANSIstr(m.statusMsg), "press enter to retry") {
+		t.Errorf("statusMsg = %q, must not arm obsolete effort retry", m.statusMsg)
 	}
 }
 

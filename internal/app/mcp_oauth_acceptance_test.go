@@ -2,8 +2,10 @@ package app_test
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -360,6 +362,185 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 	}
 }
 
+func TestDirectMCPDCRLifecycleRecoveryAcceptance(t *testing.T) {
+	fixture := newDCRLoginFixture(t)
+	credentialRoot := filepath.Join(t.TempDir(), "credentials")
+	settings, lookup, _ := writeDCRAcceptanceOAuthSettings(t, fixture, credentialRoot, "stable")
+
+	load := func(settings string) (*cliconfig.MCPProfiles, mcp.ServerConfig) {
+		resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{settings}})
+		profiles, err := loadAcceptanceMCPProfiles(t, resolver.OperatorMCP(), lookup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, ok := profiles.OAuthServer("protected")
+		if !ok {
+			profiles.Close()
+			t.Fatal("DCR server was not resolved")
+		}
+		mcp.TrustOAuthCertificateForTest(t, server.OAuth, fixture.server.Certificate())
+		return profiles, server
+	}
+	login := func(server mcp.ServerConfig, action mcp.OAuthDCRLoginAction) {
+		browser := &loginBrowser{client: fixture.server.Client()}
+		runtime, err := oauthlogin.New(oauthlogin.Options{Launcher: browser})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := app.LoginMCPWithOptions(context.Background(), server, runtime, app.MCPLoginOptions{DCRAction: action}); err != nil {
+			t.Fatal(err)
+		}
+		if browser.calls.Load() != 1 {
+			t.Fatalf("browser calls = %d, want 1", browser.calls.Load())
+		}
+	}
+
+	profiles, server := load(settings)
+	login(server, mcp.OAuthDCRLoginReuse)
+	if err := profiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	seeded := fixture.snapshot()
+	if seeded.registered != 1 || seeded.authorize != 1 || seeded.token != 1 || seeded.toolCalls != 0 {
+		t.Fatalf("initial DCR login did not complete registration/authorization: %+v", seeded)
+	}
+
+	drifted, _, _ := writeDCRAcceptanceOAuthSettings(t, fixture, credentialRoot, "drifted")
+	profiles, server = load(drifted)
+	driftBrowser := &loginBrowser{client: fixture.server.Client()}
+	driftRuntime, err := oauthlogin.New(oauthlogin.Options{Launcher: driftBrowser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.LoginMCP(context.Background(), server, driftRuntime); !errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) || mcp.OAuthDCRRecoveryCategoryOf(err) != mcp.OAuthDCRRecoveryResetRequired {
+		t.Fatalf("identity drift login error = %v, want reset-required recovery", err)
+	}
+	if err := profiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	diag := &acceptanceDiag{}
+	built, err := buildDCRAcceptanceMCP(t, fixture, drifted, lookup, diag, mockllm.New(mockllm.TextTurn("unreached")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	built.Close()
+	afterDrift := fixture.snapshot()
+	if driftBrowser.calls.Load() != 0 || afterDrift.registered != seeded.registered || afterDrift.authorize != seeded.authorize || afterDrift.token != seeded.token || afterDrift.toolCalls != seeded.toolCalls || afterDrift.authenticated != seeded.authenticated {
+		t.Fatalf("identity drift had OAuth or protected-tool side effects: before=%+v after=%+v", seeded, afterDrift)
+	}
+	if got := strings.Join(diagnosticSurfaces(diag), "\n"); !strings.Contains(got, "MCP OAuth DCR valid ready registration identity differs from current profile, principal, canonical resource, or exact issuer") || !strings.Contains(got, "--reset-dcr-registration") {
+		t.Fatalf("identity drift omitted reset-required diagnostic: %q", diagnosticSurfaces(diag))
+	}
+
+	profiles, server = load(drifted)
+	login(server, mcp.OAuthDCRLoginResetRegistration)
+	if err := profiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	afterReset := fixture.snapshot()
+	if afterReset.registered != seeded.registered+1 || afterReset.authorize != seeded.authorize+1 || afterReset.token != seeded.token+1 {
+		t.Fatalf("reset did not continue through registration and authorization: before=%+v after=%+v", seeded, afterReset)
+	}
+	verifyDCRAcceptanceRead(t, fixture, drifted, lookup)
+
+	retrySettings, _, _ := writeDCRAcceptanceOAuthSettings(t, fixture, filepath.Join(t.TempDir(), "retry-credentials"), "retry")
+	profiles, server = load(retrySettings)
+	if _, _, err := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, mcp.OAuthDCRLoginReuse); err != nil {
+		t.Fatal(err)
+	}
+	beforeRetry := fixture.snapshot()
+	login(server, mcp.OAuthDCRLoginRetryRegistration)
+	if err := profiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	afterRetry := fixture.snapshot()
+	if afterRetry.registered != beforeRetry.registered+1 || afterRetry.authorize != beforeRetry.authorize+1 || afterRetry.token != beforeRetry.token+1 {
+		t.Fatalf("retry did not continue through registration and authorization: before=%+v after=%+v", beforeRetry, afterRetry)
+	}
+	verifyDCRAcceptanceRead(t, fixture, retrySettings, lookup)
+
+	pendingRoot := filepath.Join(t.TempDir(), "pending-credentials")
+	pendingSettings, pendingLookup, _ := writeDCRAcceptanceOAuthSettings(t, fixture, pendingRoot, "pending")
+	pendingResolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{pendingSettings}})
+	pendingProfiles, err := loadAcceptanceMCPProfiles(t, pendingResolver.OperatorMCP(), pendingLookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingServer, ok := pendingProfiles.OAuthServer("protected")
+	if !ok {
+		t.Fatal("pending DCR server was not resolved")
+	}
+	mcp.TrustOAuthCertificateForTest(t, pendingServer.OAuth, fixture.server.Certificate())
+	if _, _, err := mcp.PrepareOAuthDCRLogin(context.Background(), pendingServer.URL, *pendingServer.OAuth, mcp.OAuthDCRLoginReuse); err != nil {
+		t.Fatal(err)
+	}
+	if err := pendingProfiles.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(pendingSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), `profile: "pending"`, `profile: "other-profile"`, 1))
+	if err := os.WriteFile(pendingSettings, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pendingDiag := &acceptanceDiag{}
+	pendingBuilt, err := buildDCRAcceptanceMCP(t, fixture, pendingSettings, pendingLookup, pendingDiag, mockllm.New(mockllm.TextTurn("unreached")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingBuilt.Close()
+	got := strings.Join(diagnosticSurfaces(pendingDiag), "\n")
+	for _, want := range []string{"MCP OAuth DCR pending registration identity mismatch", "restore the matching OAuth profile, principal, canonical resource, and exact issuer configuration", "--retry-dcr-registration"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pending identity mismatch diagnostic = %q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "--reset-dcr-registration") {
+		t.Fatalf("pending identity mismatch diagnostic suggested reset: %q", got)
+	}
+}
+
+func writeDCRAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root, profile string) (string, func(string) (string, bool), string) {
+	t.Helper()
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	body := fmt.Sprintf(`mcp:
+  servers:
+    - name: protected
+      url: %q
+      auth:
+        mode: oauth
+        oauth:
+          profile: %q
+          principal: operator
+          issuer: %q
+          client: {mode: dcr, dcr: {}}
+          credentials: {mode: local, local: {root: %q, key_env: MECATL_DCR_ACCEPTANCE_KEY}}
+          network: {additional_origins: [], private_origins: [%q], max_redirects: 0}
+`, fixture.resource(), profile, fixture.issuer(), root, fixture.origin())
+	if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return settings, func(name string) (string, bool) { return key, name == "MECATL_DCR_ACCEPTANCE_KEY" }, key
+}
+
+func verifyDCRAcceptanceRead(t *testing.T, fixture *loginFixture, settings string, lookup func(string) (string, bool)) {
+	t.Helper()
+	built, err := buildDCRAcceptanceMCP(t, fixture, settings, lookup, &acceptanceDiag{}, mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("read", "mcp__protected__ready", []byte(`{}`))), mockllm.TextTurn("read complete"),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	surfaces, err := runAcceptanceTool(built, "DCR read")
+	if err != nil || !strings.Contains(strings.Join(surfaces, "\n"), "fixture-ready") {
+		t.Fatalf("authenticated DCR MCP read = %q, %v", surfaces, err)
+	}
+}
+
 func loadAcceptanceMCPProfiles(t *testing.T, operator *permconfig.MCPSection, lookup func(string) (string, bool)) (*cliconfig.MCPProfiles, error) {
 	t.Helper()
 	profiles, err := cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{Operator: operator, LookupEnv: lookup})
@@ -377,6 +558,7 @@ func loadAcceptanceMCPProfiles(t *testing.T, operator *permconfig.MCPSection, lo
 type acceptanceLoopbackProfileResolver struct {
 	t      *testing.T
 	loader *cliconfig.MCPProfileResolver
+	cert   *x509.Certificate
 }
 
 func (r *acceptanceLoopbackProfileResolver) Load(operator *permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error) {
@@ -387,6 +569,7 @@ func (r *acceptanceLoopbackProfileResolver) Load(operator *permconfig.MCPSection
 	for i := range servers {
 		if servers[i].OAuth != nil {
 			mcp.AllowOAuthLoopbackForTest(r.t, servers[i].OAuth)
+			mcp.TrustOAuthCertificateForTest(r.t, servers[i].OAuth, r.cert)
 		}
 	}
 	return servers, lifecycle, nil
@@ -431,16 +614,26 @@ func writeAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root stri
 
 func buildAcceptanceMCP(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider) (*app.Built, error) {
 	t.Helper()
-	return buildAcceptanceMCPConfig(t, settings, lookup, diag, llm, false)
+	return buildAcceptanceMCPConfigWithCert(t, settings, lookup, diag, llm, false, nil)
+}
+
+func buildDCRAcceptanceMCP(t *testing.T, fixture *loginFixture, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider) (*app.Built, error) {
+	t.Helper()
+	return buildAcceptanceMCPConfigWithCert(t, settings, lookup, diag, llm, false, fixture.server.Certificate())
 }
 
 func buildAcceptanceMCPConfig(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider, headless bool) (*app.Built, error) {
+	t.Helper()
+	return buildAcceptanceMCPConfigWithCert(t, settings, lookup, diag, llm, headless, nil)
+}
+
+func buildAcceptanceMCPConfigWithCert(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider, headless bool, cert *x509.Certificate) (*app.Built, error) {
 	t.Helper()
 	return app.Build(context.Background(), app.Config{
 		Workspace: filepath.Dir(settings), UserModelDir: t.TempDir(), Model: "mock", MockProvider: llm, Headless: headless, Diagnostics: diag,
 		PermissionConfigs: []string{settings},
 		MCPProfileLoader: &acceptanceLoopbackProfileResolver{
-			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup),
+			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup), cert: cert,
 		},
 	})
 }
@@ -639,6 +832,28 @@ func assertNoAcceptanceSecrets(t *testing.T, surfaces []string, canaries map[str
 	for class, canary := range canaries {
 		if canary != "" && strings.Contains(joined, canary) {
 			t.Errorf("externally visible acceptance surface exposed the %s", class)
+		}
+	}
+}
+
+func TestADR_0325_DirectDCRConfigurationReference(t *testing.T) {
+	reference, err := os.ReadFile(filepath.Join("..", "..", "user-docs", "reference", "configuration.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := string(reference)
+	for _, want := range []string{
+		"direct/global profiles require an empty payload, discover from issuer",
+		"broker profiles require discovery_url and nonempty scopes",
+		"DiscoveryURL is required for broker DCR and forbidden for direct/global DCR",
+		"direct/global DCR may omit it and uses exactly openid",
+		"direct/global DCR defaults false and rejects true",
+		"Ready direct-DCR identity drift is reset-required and uses --reset-dcr-registration",
+		"pending identity drift is pending-identity-mismatch and cannot reset or retry until the matching profile, principal, canonical resource, and exact issuer are restored",
+		"Corrupt direct-DCR state is not resettable",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("configuration reference omitted %q", want)
 		}
 	}
 }

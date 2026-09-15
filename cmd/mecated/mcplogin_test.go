@@ -2,15 +2,25 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -32,7 +42,8 @@ func TestMCPLoginHelpAndUsageAreSideEffectFree(t *testing.T) {
 	if err := res.run(strings.NewReader(""), &out, io.Discard); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("help error = %v", err)
 	}
-	if !strings.Contains(out.String(), "mecated mcp login SERVER [--no-browser]") {
+	if !strings.Contains(out.String(), "mecated mcp login SERVER [--no-browser]") ||
+		!strings.Contains(out.String(), "--reset-dcr-registration | --retry-dcr-registration") {
 		t.Fatalf("help = %q", out.String())
 	}
 
@@ -63,6 +74,65 @@ func TestMCPLoginHelpAndUsageAreSideEffectFree(t *testing.T) {
 	}
 }
 
+func TestParseMCPLoginDCRResetAndRetryFlags(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		want mcp.OAuthDCRLoginAction
+	}{
+		{"--reset-dcr-registration", mcp.OAuthDCRLoginResetRegistration},
+		{"--retry-dcr-registration", mcp.OAuthDCRLoginRetryRegistration},
+	} {
+		parsed, err := parseMCPLoginArgs([]string{"gateway", tc.flag}, io.Discard)
+		if err != nil {
+			t.Fatalf("parse %s: %v", tc.flag, err)
+		}
+		if parsed.dcrAction != tc.want {
+			t.Fatalf("parse %s action = %v, want %v", tc.flag, parsed.dcrAction, tc.want)
+		}
+	}
+	for _, args := range [][]string{
+		{"gateway", "--reset-dcr-registration", "--retry-dcr-registration"},
+		{"gateway", "--retry-dcr-registration", "--reset-dcr-registration"},
+		{"gateway", "--reset-dcr-registration", "--reset-dcr-registration"},
+		{"gateway", "--retry-dcr-registration", "--retry-dcr-registration"},
+	} {
+		if _, err := parseMCPLoginArgs(args, io.Discard); !errors.Is(err, errMCPLoginUsage) {
+			t.Errorf("parseMCPLoginArgs(%q) error = %v", args, err)
+		}
+	}
+
+	const secret = "registration-client-id-secret-canary"
+	for _, tc := range []struct {
+		name  string
+		kind  mcp.OAuthDCRRecoveryCategory
+		want  []string
+		avoid []string
+	}{
+		{name: "legacy pending", kind: mcp.OAuthDCRRecoveryPending, want: []string{"previous registration attempt did not complete", "safe failure stage was not recorded", "--retry-dcr-registration", "duplicate or orphan client"}, avoid: []string{"--reset-dcr-registration", secret}},
+		{name: "corrupt", kind: mcp.OAuthDCRRecoveryCorrupt, want: []string{"corrupt or unreadable", "Preserve the records and configuration", "without editing, deleting, or renaming", "deployment operator or support team", "only the server name and redacted command error", "never send credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response", "do not repair corrupt state or revoke an upstream client"}, avoid: []string{"--retry-dcr-registration", "--reset-dcr-registration", secret}},
+		{name: "unknown outcome", kind: mcp.OAuthDCRRecoveryRegistrationOutcomeUnknown, want: []string{"request outcome is unknown", "--retry-dcr-registration", "orphan client"}, avoid: []string{secret}},
+		{name: "invalid response", kind: mcp.OAuthDCRRecoveryResponseInvalid, want: []string{"provider returned a registration response", "could not safely use", "--retry-dcr-registration", "orphan client"}, avoid: []string{"contract validation", secret}},
+		{name: "persistence", kind: mcp.OAuthDCRRecoveryReadyPersistence, want: []string{"ready record was not persisted", "--retry-dcr-registration", "orphan client"}, avoid: []string{secret}},
+		{name: "ready reset", kind: mcp.OAuthDCRRecoveryResetRequired, want: []string{"valid ready registration", "current profile, principal, canonical resource, or exact issuer", "--reset-dcr-registration"}, avoid: []string{"restore the matching configuration", "--retry-dcr-registration", secret}},
+		{name: "pending identity mismatch", kind: mcp.OAuthDCRRecoveryPendingIdentityMismatch, want: []string{"pending registration identity", "restore the matching profile, principal, canonical resource, and exact issuer", "--retry-dcr-registration"}, avoid: []string{"--reset-dcr-registration", secret}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recovery := errors.Join(app.ErrMCPLoginAuthorization, mcp.NewOAuthDCRRecoveryError(tc.kind), errors.New(secret))
+			got := mcpLoginRemedy(recovery).Error()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("recovery remedy = %q, want %q", got, want)
+				}
+			}
+			for _, forbidden := range tc.avoid {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("recovery remedy leaked or suggested forbidden %q: %q", forbidden, got)
+				}
+			}
+		})
+	}
+}
+
 func TestMCPGroupHelpActionHasNoRuntimeSideEffects(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
@@ -78,7 +148,7 @@ func TestMCPGroupHelpActionHasNoRuntimeSideEffects(t *testing.T) {
 	original := executeMCPLogin
 	t.Cleanup(func() { executeMCPLogin = original })
 	calls := 0
-	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options) error {
+	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options, app.MCPLoginOptions) error {
 		calls++
 		return errors.New("help must not execute login")
 	}
@@ -202,7 +272,7 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 	original := executeMCPLogin
 	t.Cleanup(func() { executeMCPLogin = original })
 	calls := 0
-	executeMCPLogin = func(_ context.Context, server mcp.ServerConfig, opts oauthlogin.Options) error {
+	executeMCPLogin = func(_ context.Context, server mcp.ServerConfig, opts oauthlogin.Options, loginOpts app.MCPLoginOptions) error {
 		calls++
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
@@ -210,10 +280,13 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != "" {
 			t.Fatalf("runtime options = %#v; no-browser or random-path default was not forwarded", opts)
 		}
+		if loginOpts.DCRAction != mcp.OAuthDCRLoginRetryRegistration {
+			t.Fatalf("login options = %#v", loginOpts)
+		}
 		return nil
 	}
 	var out strings.Builder
-	if err := runMCPLogin([]string{"github", "--permission-config", local, "--no-browser"}, &out); err != nil {
+	if err := runMCPLogin([]string{"github", "--permission-config", local, "--no-browser", "--retry-dcr-registration"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || !strings.Contains(out.String(), "succeeded for GitHub") {
@@ -286,4 +359,375 @@ func TestMCPLoginArgsAcceptServerInteractionAndConfigSelectionOnly(t *testing.T)
 			t.Errorf("parseMCPLoginArgs(%q) = %#v, %v", test.args, got, err)
 		}
 	}
+}
+
+func TestADR_0325_DCRResetAndRetryCLI(t *testing.T) {
+	fixture := newMCPLoginDCRFixture(t)
+	root := filepath.Join(t.TempDir(), "credentials")
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err := os.WriteFile(settings, []byte(mcpLoginDCRYAML(fixture, root)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = original })
+
+	seed := func(t *testing.T, ready, grant bool) {
+		t.Helper()
+		profiles, err := loadMCPLoginProfiles([]string{settings})
+		if err != nil {
+			t.Fatalf("load seed profile: %v", err)
+		}
+		defer profiles.Close()
+		server, ok := profiles.OAuthServer("connector")
+		if !ok {
+			t.Fatal("connector seed profile missing")
+		}
+		mcp.AllowOAuthLoopbackForTest(t, server.OAuth)
+		mcp.TrustOAuthCertificateForTest(t, server.OAuth, fixture.server.Certificate())
+		prepared, callbackPath, err := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, mcp.OAuthDCRLoginReuse)
+		if err != nil {
+			t.Fatalf("prepare seed: %v", err)
+		}
+		if !ready {
+			return
+		}
+		prepared.RedirectURL = "http://127.0.0.1:49152" + callbackPath
+		prepared.Presenter = mcp.OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+			u, parseErr := url.Parse(raw)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+		})
+		controller, err := mcp.NewOAuthController(context.Background(), fixture.resource(), prepared)
+		if err != nil {
+			t.Fatalf("register seed: %v", err)
+		}
+		defer controller.Close()
+		if grant {
+			req, reqErr := http.NewRequest(http.MethodGet, fixture.resource(), nil)
+			if reqErr != nil {
+				t.Fatal(reqErr)
+			}
+			resp := &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{"WWW-Authenticate": {`Bearer scope="openid"`}}, Body: io.NopCloser(strings.NewReader(""))}
+			if err := controller.Authorize(context.Background(), req, resp); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	registrationKey := dcrLoginRecordKey("mecatl/mcp/oauth-dcr-lifecycle-key/v1", "connector")
+	getRecord := func(t *testing.T, key []byte) credentialstore.Record {
+		t.Helper()
+		profiles, err := loadMCPLoginProfiles([]string{settings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer profiles.Close()
+		server, _ := profiles.OAuthServer("connector")
+		record, err := server.OAuth.CredentialStore.Get(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	assertUnchanged := func(t *testing.T, key []byte, before credentialstore.Record) {
+		t.Helper()
+		after := getRecord(t, key)
+		if string(after.Value) != string(before.Value) || !after.Version.Equal(before.Version) {
+			t.Fatal("rejected CLI action mutated the durable record")
+		}
+	}
+	runAction := func(t *testing.T, actionFlag string, operation func(mcp.ServerConfig, app.MCPLoginOptions) error) (int, error) {
+		t.Helper()
+		calls := 0
+		executeMCPLogin = func(_ context.Context, server mcp.ServerConfig, _ oauthlogin.Options, options app.MCPLoginOptions) error {
+			calls++
+			mcp.AllowOAuthLoopbackForTest(t, server.OAuth)
+			mcp.TrustOAuthCertificateForTest(t, server.OAuth, fixture.server.Certificate())
+			return operation(server, options)
+		}
+		args := []string{"connector", "--permission-config", settings}
+		if actionFlag != "" {
+			args = append(args, actionFlag)
+		}
+		return calls, runMCPLogin(args, io.Discard)
+	}
+
+	t.Run("missing registration rejects reset without bootstrap", func(t *testing.T) {
+		calls, err := runAction(t, "--reset-dcr-registration", func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+			_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, options.DCRAction)
+			return prepErr
+		})
+		if err == nil || calls != 1 {
+			t.Fatalf("missing reset calls=%d error=%v", calls, err)
+		}
+		profiles, loadErr := loadMCPLoginProfiles([]string{settings})
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		server, _ := profiles.OAuthServer("connector")
+		_, getErr := server.OAuth.CredentialStore.Get(context.Background(), registrationKey)
+		_ = profiles.Close()
+		if !errors.Is(getErr, credentialstore.ErrNotFound) {
+			t.Fatalf("rejected reset created registration state: %v", getErr)
+		}
+	})
+
+	t.Run("ready reset and pending retry reach login seam", func(t *testing.T) {
+		seed(t, true, true)
+		ready := getRecord(t, registrationKey)
+		var readyEnvelope struct {
+			Generation   string `json:"generation"`
+			Registration struct {
+				ClientID string `json:"client_id"`
+			} `json:"registration"`
+		}
+		if err := json.Unmarshal(ready.Value, &readyEnvelope); err != nil {
+			t.Fatal(err)
+		}
+		grantKey := dcrLoginRecordKey("mecatl/mcp/oauth-dcr-credential-key/v1", "work", "operator", fixture.resource(), fixture.server.URL, "dcr", readyEnvelope.Registration.ClientID, readyEnvelope.Generation)
+		grant := getRecord(t, grantKey)
+		profiles, err := loadMCPLoginProfiles([]string{settings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, _ := profiles.OAuthServer("connector")
+		corruptGrant, err := server.OAuth.CredentialStore.Put(context.Background(), grantKey, []byte(`{"schema":"corrupt"}`), &grant.Version)
+		_ = profiles.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls, err := runAction(t, "--reset-dcr-registration", func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+			_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, options.DCRAction)
+			return prepErr
+		})
+		if err == nil || calls != 1 {
+			t.Fatalf("corrupt grant reset calls=%d error=%v", calls, err)
+		}
+		assertUnchanged(t, registrationKey, ready)
+		assertUnchanged(t, grantKey, corruptGrant)
+		profiles, err = loadMCPLoginProfiles([]string{settings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, _ = profiles.OAuthServer("connector")
+		if _, err := server.OAuth.CredentialStore.Put(context.Background(), grantKey, grant.Value, &corruptGrant.Version); err != nil {
+			t.Fatal(err)
+		}
+		_ = profiles.Close()
+
+		for name, operation := range map[string]func(mcp.ServerConfig, app.MCPLoginOptions) error{
+			"retry ready": func(server mcp.ServerConfig, _ app.MCPLoginOptions) error {
+				_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, mcp.OAuthDCRLoginRetryRegistration)
+				return prepErr
+			},
+			"backend failure": func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+				unavailable := *server.OAuth
+				unavailable.CredentialStore = unavailableMCPLoginStore{Store: server.OAuth.CredentialStore}
+				_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, unavailable, options.DCRAction)
+				return prepErr
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				before := getRecord(t, registrationKey)
+				flag := "--reset-dcr-registration"
+				if name == "retry ready" {
+					flag = "--retry-dcr-registration"
+				}
+				calls, actionErr := runAction(t, flag, operation)
+				if actionErr == nil || calls != 1 {
+					t.Fatalf("calls=%d error=%v", calls, actionErr)
+				}
+				assertUnchanged(t, registrationKey, before)
+			})
+		}
+
+		beforeConflict := getRecord(t, registrationKey)
+		for name, args := range map[string][]string{
+			"conflicting flags": {"connector", "--permission-config", settings, "--reset-dcr-registration", "--retry-dcr-registration"},
+			"grant reset flag":  {"connector", "--permission-config", settings, "--reset-dcr-grant"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				seamCalls := 0
+				executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options, app.MCPLoginOptions) error {
+					seamCalls++
+					return nil
+				}
+				usageErr := runMCPLogin(args, io.Discard)
+				if !errors.Is(usageErr, errMCPLoginUsage) || seamCalls != 0 {
+					t.Fatalf("error=%v seam calls=%d", usageErr, seamCalls)
+				}
+				assertUnchanged(t, registrationKey, beforeConflict)
+			})
+		}
+
+		calls, err = runAction(t, "--reset-dcr-registration", func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+			_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, options.DCRAction)
+			return prepErr
+		})
+		if err != nil || calls != 1 {
+			t.Fatalf("ready reset calls=%d error=%v", calls, err)
+		}
+		pending := getRecord(t, registrationKey)
+		if pending.Version.Equal(ready.Version) || string(pending.Value) == string(ready.Value) {
+			t.Fatal("ready reset did not replace the registration attempt")
+		}
+		calls, err = runAction(t, "--retry-dcr-registration", func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+			_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, options.DCRAction)
+			return prepErr
+		})
+		if err != nil || calls != 1 {
+			t.Fatalf("pending retry calls=%d error=%v", calls, err)
+		}
+		retried := getRecord(t, registrationKey)
+		if retried.Version.Equal(pending.Version) || string(retried.Value) == string(pending.Value) {
+			t.Fatal("pending retry did not replace the registration attempt")
+		}
+	})
+
+	t.Run("invalid action state and plain pending preserve record", func(t *testing.T) {
+		for _, flag := range []string{"", "--reset-dcr-registration"} {
+			before := getRecord(t, registrationKey)
+			calls, err := runAction(t, flag, func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+				_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, options.DCRAction)
+				return prepErr
+			})
+			if err == nil || calls != 1 {
+				t.Fatalf("flag %q calls=%d error=%v", flag, calls, err)
+			}
+			assertUnchanged(t, registrationKey, before)
+		}
+	})
+
+	t.Run("corrupt registration cannot be reset or retried", func(t *testing.T) {
+		profiles, err := loadMCPLoginProfiles([]string{settings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, _ := profiles.OAuthServer("connector")
+		before := getRecord(t, registrationKey)
+		corrupt, err := server.OAuth.CredentialStore.Put(context.Background(), registrationKey, []byte(`{"schema":"corrupt"}`), &before.Version)
+		_ = profiles.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, flag := range []string{"--reset-dcr-registration", "--retry-dcr-registration"} {
+			calls, runErr := runAction(t, flag, func(server mcp.ServerConfig, options app.MCPLoginOptions) error {
+				_, _, prepErr := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, options.DCRAction)
+				return prepErr
+			})
+			if runErr == nil || calls != 1 {
+				t.Fatalf("flag %q calls=%d error=%v", flag, calls, runErr)
+			}
+			assertUnchanged(t, registrationKey, corrupt)
+		}
+	})
+
+	t.Run("non-DCR modifier reaches login seam and fails", func(t *testing.T) {
+		legacy := filepath.Join(t.TempDir(), "legacy.yaml")
+		if err := os.WriteFile(legacy, []byte(mcpLoginOAuthYAML("legacy", "local", filepath.Join(t.TempDir(), "legacy-credentials"))), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		executeMCPLogin = func(ctx context.Context, server mcp.ServerConfig, runtimeOptions oauthlogin.Options, options app.MCPLoginOptions) error {
+			calls++
+			runtime, err := oauthlogin.New(runtimeOptions)
+			if err != nil {
+				return err
+			}
+			return app.LoginMCPWithOptions(ctx, server, runtime, options)
+		}
+		err := runMCPLogin([]string{"legacy", "--permission-config", legacy, "--reset-dcr-registration"}, io.Discard)
+		if err == nil || calls != 1 {
+			t.Fatalf("non-DCR modifier calls=%d error=%v", calls, err)
+		}
+	})
+}
+
+type unavailableMCPLoginStore struct {
+	credentialstore.Store
+}
+
+func (unavailableMCPLoginStore) Get(context.Context, []byte) (credentialstore.Record, error) {
+	return credentialstore.Record{}, credentialstore.ErrUnavailable
+}
+
+type mcpLoginDCRFixture struct {
+	server        *httptest.Server
+	registerCount int
+	tokenCount    int
+}
+
+func newMCPLoginDCRFixture(t *testing.T) *mcpLoginDCRFixture {
+	t.Helper()
+	fixture := &mcpLoginDCRFixture{}
+	fixture.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issuer := fixture.server.URL
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "oauth-protected-resource"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"resource": fixture.resource(), "authorization_servers": []string{issuer}, "scopes_supported": []string{"openid"}})
+		case strings.Contains(r.URL.Path, ".well-known/oauth-authorization-server"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer": issuer, "authorization_endpoint": issuer + "/oauth/authorize", "token_endpoint": issuer + "/oauth/token", "registration_endpoint": issuer + "/oauth/register",
+				"scopes_supported": []string{"openid"}, "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code"},
+				"token_endpoint_auth_methods_supported": []string{"none"}, "code_challenge_methods_supported": []string{"S256"},
+			})
+		case r.URL.Path == "/oauth/register":
+			fixture.registerCount++
+			var request oauthex.ClientRegistrationMetadata
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"client_id": "public-client", "token_endpoint_auth_method": "none", "redirect_uris": request.RedirectURIs,
+				"grant_types": request.GrantTypes, "response_types": request.ResponseTypes, "scope": request.Scope,
+			})
+		case r.URL.Path == "/oauth/token":
+			fixture.tokenCount++
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access-token", "token_type": "Bearer", "expires_in": 3600, "scope": "openid"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fixture.server.Close)
+	return fixture
+}
+
+func (f *mcpLoginDCRFixture) resource() string { return f.server.URL + "/gw/mcp" }
+
+func mcpLoginDCRYAML(fixture *mcpLoginDCRFixture, root string) string {
+	return fmt.Sprintf(`mcp:
+  mode: global
+  servers:
+    - name: connector
+      url: %q
+      auth:
+        mode: oauth
+        oauth:
+          profile: work
+          principal: operator
+          issuer: %q
+          client: {mode: dcr, dcr: {}}
+          scopes: [openid]
+          request_refresh_token: false
+          credentials:
+            mode: local
+            local: {root: %q, key_env: MECATL_LOGIN_KEY}
+          network: {additional_origins: [], private_origins: [%q], max_redirects: 0}
+`, fixture.resource(), fixture.server.URL, root, fixture.server.URL)
+}
+
+func dcrLoginRecordKey(domain string, fields ...string) []byte {
+	framed := []byte(domain)
+	var size [4]byte
+	for _, field := range fields {
+		if len(field) > math.MaxUint32 {
+			panic("test fixture field too large")
+		}
+		binary.BigEndian.PutUint32(size[:], uint32(len(field))) // #nosec G115 -- test field is bounded above.
+		framed = append(framed, size[:]...)
+		framed = append(framed, field...)
+	}
+	digest := sha256.Sum256(framed)
+	return digest[:]
 }
