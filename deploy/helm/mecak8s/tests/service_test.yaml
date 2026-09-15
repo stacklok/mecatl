@@ -1,0 +1,44 @@
+suite: service contracts
+templates:
+  - templates/service.yaml
+release:
+  name: unit
+set:
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+tests:
+  - it: renders the default ClusterIP ports without node ports
+    asserts:
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - contains:
+          path: spec.ports
+          content:
+            name: grpc
+            port: 8080
+            targetPort: grpc
+            appProtocol: kubernetes.io/h2c
+      - notExists:
+          path: spec.ports[0].nodePort
+      - notExists:
+          path: spec.ports[1].nodePort
+
+  - it: renders configured NodePort values
+    set:
+      service.type: NodePort
+      service.nodePorts.grpc: 30080
+      service.nodePorts.http: 30081
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+      - equal:
+          path: spec.ports[0].nodePort
+          value: 30080
+      - equal:
+          path: spec.ports[1].nodePort
+          value: 30081

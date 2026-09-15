@@ -1,0 +1,29 @@
+suite: chart validation
+templates:
+  - templates/deployment.yaml
+set:
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+tests:
+  - it: rejects an unprotected real-provider profile
+    set:
+      mockProvider: false
+    asserts:
+      - failedTemplate:
+          errorPattern: /oidc/enabled
+
+  - it: rejects conflicting image selectors in the template
+    set:
+      image.tag: v1.0.0
+      image.digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - failedTemplate:
+          errorMessage: set at most one of image.digest or image.tag
+
+  - it: rejects a shutdown grace period below the schema minimum
+    set:
+      terminationGracePeriodSeconds: 43
+    asserts:
+      - failedTemplate:
+          errorPattern: terminationGracePeriodSeconds

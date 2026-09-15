@@ -1,0 +1,33 @@
+suite: disruption budget contracts
+templates:
+  - templates/pdb.yaml
+release:
+  name: unit
+set:
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+tests:
+  - it: limits voluntary disruption as replicas scale
+    set:
+      replicaCount: 4
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+
+  - it: omits the budget for one replica
+    set:
+      replicaCount: 1
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: allows an operator to disable the budget
+    set:
+      podDisruptionBudget.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

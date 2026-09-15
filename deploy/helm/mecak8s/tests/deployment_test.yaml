@@ -1,0 +1,58 @@
+suite: deployment defaults
+templates:
+  - templates/deployment.yaml
+release:
+  name: unit
+  namespace: test
+set:
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+tests:
+  - it: renders the hardened two-replica mock profile
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: unit-mecak8s
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable
+          value: ScheduleAnyway
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop[0]
+          value: ALL
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 3
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.httpGet.path
+          value: /drain
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --mock
+
+  - it: renders a valid secure production profile
+    set:
+      mockProvider: false
+      oidc.enabled: true
+      oidc.issuer: https://idp.example.com
+      oidc.audience: mecatl
+      tls.enabled: true
+      tls.secretName: mecak8s-tls
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer=https://idp.example.com
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS

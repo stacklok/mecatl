@@ -9,6 +9,9 @@
 #                               go install golang.org/x/tools/cmd/goimports@latest
 #   - buf           (only for `task generate`)
 #                               https://buf.build/docs/installation
+#   - helm unittest (only for `task deploy:helm-unittest`)
+#                               task deploy:helm-unittest installs the pinned
+#                               plugin when it is absent
 #
 # golangci-lint is invoked with --allow-parallel-runners everywhere so several
 # work packages can lint the same checkout concurrently without clobbering each
@@ -504,6 +507,23 @@ tasks:
     desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)
     cmds:
       - CONTAINER_ENGINE=podman task e2e:k8s
+
+  deploy:helm-unittest:
+    desc: Run the Helm-native mecak8s chart unit tests without a cluster
+    vars:
+      # Pinned version — bump deliberately. CI has no separate pin; the k8s-e2e
+      # workflow runs this task directly. v1.1.x requires newer Helm plugin
+      # manifest fields than the Helm 3.16 development floor supports.
+      HELM_UNITTEST_VERSION: v1.0.3
+    cmds:
+      # Match ToolHive's cross-Helm install path: Helm 4 verifies plugin
+      # signatures by default, while Helm 3 does not expose --verify.
+      - >-
+        helm plugin list | grep -q unittest ||
+        helm plugin install https://github.com/helm-unittest/helm-unittest
+        --version {{.HELM_UNITTEST_VERSION}}
+        $(helm plugin install --help | grep -qE '^[[:space:]]+--verify([=[:space:]]|$)' && echo --verify=false)
+      - helm unittest --strict deploy/helm/mecak8s
 
   deploy:check:
     desc: |

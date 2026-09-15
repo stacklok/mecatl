@@ -113,6 +113,9 @@ jobs:
       - name: Install deploy manifest validators
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
 
+      - name: Run Helm unit tests
+        run: task deploy:helm-unittest
+
       - name: task deploy:check
         run: task deploy:check
 
