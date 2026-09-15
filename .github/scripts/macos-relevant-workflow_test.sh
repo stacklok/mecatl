@@ -67,6 +67,14 @@ if [[ "$draft_gates" -lt 3 ]]; then
   fail "expected the draft gate on all 3 macos-14 jobs, found $draft_gates occurrence(s)"
 fi
 
+# --- closure drift guard wiring ------------------------------------------------
+# The terminal-dir allowlist is only sound while a Go-having job re-proves it.
+require 'bash .github/scripts/macos-closure-guard.sh' 'the macOS closure guard must run in a modules-resolved job'
+guard="$root/.github/scripts/macos-closure-guard.sh"
+if [[ ! -f "$guard" ]]; then
+  fail 'macos-closure-guard.sh must exist'
+fi
+
 if [[ "$failures" -ne 0 ]]; then
   exit 1
 fi

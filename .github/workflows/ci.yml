@@ -522,6 +522,13 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
+      # Prove the macOS-job cost gate stays sound: the terminal leaf directories
+      # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd
+      # build/test closure of those jobs. Fails if a new import drags one in. Runs
+      # here because it needs resolved modules (unlike the offline shell tests).
+      - name: Verify macOS-job closure allowlist
+        run: bash .github/scripts/macos-closure-guard.sh
+
   # Release archives are cross-compiled for darwin on an ubuntu runner, which
   # cannot execute them, so nothing else in CI ever RUNS a darwin binary. This
   # job is the native Apple Silicon smoke test: it proves the two executables the

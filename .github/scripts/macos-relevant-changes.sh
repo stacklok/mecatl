@@ -19,35 +19,45 @@
 # script prints "false" (SKIP) only when the input is well-formed, non-empty, and
 # EVERY path is irrelevant. It never evaluates a path as shell code.
 #
+# Beyond docs/site/SDK, the "irrelevant" set includes TERMINAL leaf directories —
+# other command binaries, examples, the perf harness, e2e, deploy, and the
+# docs-lint tool — proven OUTSIDE the darwin+freebsd build/test closure of every
+# macOS job (see .github/scripts/macos-closure-guard.sh, which fails CI if any of
+# them ever enters that closure, so this list cannot silently drift fail-open).
+#
 # Note on matching: POSIX `case` globs treat `*` as matching any string INCLUDING
 # `/`, so `docs/*.md` matches `docs/adr/nested.md` too (same convention as
 # docs-only-changes.sh). Suffix patterns keep non-Markdown assets under docs/
-# (e.g. docs/lint/*.go, docs/architecture/*.yaml) OUT of the irrelevant set.
+# (e.g. docs/architecture/*.yaml) OUT of the irrelevant set.
 set -euo pipefail
 
 category="${1:-}"
 
 irrelevant() {
+  # Unknown category: nothing is provably irrelevant, so fail closed to RUN.
   case "$category" in
-    go)
-      case "$1" in
-        README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|sdk/typescript/*)
-          return 0 ;;
-        *) return 1 ;;
-      esac
-      ;;
-    sdk)
-      case "$1" in
-        README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*)
-          return 0 ;;
-        *) return 1 ;;
-      esac
-      ;;
-    *)
-      # Unknown category: nothing is provably irrelevant, so fail closed to RUN.
-      return 1
-      ;;
+    go|sdk) ;;
+    *) return 1 ;;
   esac
+
+  # Common to both categories: documentation, the docs/user-facing site, and the
+  # terminal leaf packages that no macOS-job binary or test imports.
+  case "$1" in
+    README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*)
+      return 0 ;;
+    cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|examples/*|perf/*|e2e/*|deploy/*|docs/lint/*)
+      return 0 ;;
+  esac
+
+  # go-only: the TypeScript SDK frontend cannot affect a Go binary or Go test.
+  # (The sdk category omits this — sdk-macos-spawn spawns mecated from the SDK.)
+  if [[ "$category" == go ]]; then
+    case "$1" in
+      sdk/typescript/*) return 0 ;;
+    esac
+  fi
+
+  return 1
 }
 
 count=0
