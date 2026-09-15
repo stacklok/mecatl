@@ -411,7 +411,11 @@ var projectionCredential = regexp.MustCompile(`(?i)(?:(?:sk-|ghp_|github_pat_|xo
 
 func safeProjectionText(key, value string) string {
 	value = boundedCanonicalText(value, maxProjectionTextBytes)
-	value = projectionCredential.ReplaceAllString(value, "[redacted-secret]")
+	// Every credential alternative requires punctuation or ASCII A/a (AWS prefixes).
+	// Keep this necessary condition aligned with projectionCredential.
+	if strings.ContainsAny(value, "._-aA") {
+		value = projectionCredential.ReplaceAllString(value, "[redacted-secret]")
+	}
 	lines := strings.Split(value, "\n")
 	for i, line := range lines {
 		if tool.SecretShapedMemoryValue(key, line) {

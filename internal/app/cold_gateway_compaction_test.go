@@ -260,14 +260,14 @@ func primeColdGatewaySession(t *testing.T, fixture *coldGatewayModelServer, stor
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
 	var events []session.Event
-	// The huge turn is deliberately neither the first genuine user turn nor one of
-	// the recent turns that compaction must preserve verbatim. More than 20 messages
-	// are required so the default heuristic compactor has a summarizable head.
+	// With 11 prompts (22 persisted messages), keep=6 yields initial cut 16;
+	// snapping back over three recent user turns moves it to 10. The huge turn at
+	// message index 2 therefore remains in the summarizable head.
 	prompts := []string{
 		"small pinned first prompt",
 		strings.Repeat("0123456789abcdef", 37_500),
 	}
-	for i := 0; i < 14; i++ {
+	for i := 0; i < 9; i++ {
 		prompts = append(prompts, fmt.Sprintf("small follow-up %02d", i+1))
 	}
 	for _, prompt := range prompts {
