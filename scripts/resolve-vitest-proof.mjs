@@ -69,6 +69,12 @@ const source = ts.createSourceFile(
 let matches = 0;
 
 function isTestCallee(expression) {
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression)
+  ) {
+    return isTestCallee(expression.expression.expression);
+  }
   if (ts.isIdentifier(expression)) {
     return expression.text === "test" || expression.text === "it";
   }

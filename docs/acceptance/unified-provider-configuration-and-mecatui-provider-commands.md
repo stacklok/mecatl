@@ -110,7 +110,8 @@ The local writer must be portable for the two primary desktop Unix platforms wit
 - AC5.2: before replacing an existing credential/configuration file, the writer validates private ownership/mode and rejects symlink or special-file targets; new secret files are private; same-directory atomic replacement and cancellation/error handling prevent partial-file writes. It takes no cooperative sidecar lock; instead, it aborts before rename when the target's final identity/content check differs from its initial snapshot.
   - verify: `TestProviderUnification_Scenario5_PortableSafeWrite`
 - AC5.3: a changed-target abort says `Configuration changed while this command was running; no changes were made. Review the file and retry.` The writer reports only outcomes it can establish, preserves unrelated accepted configuration and credential records, and never logs or displays secrets. It does not claim universal concurrent-writer CAS or crash durability it cannot prove.
-  - verify: `TestProviderUnification_Scenario5_TruthfulWriteFailureAndSecretSafety`
+  - verify: `TestUpdateProviderMap_CreateOnlyConflict`, `TestUpdateProviderMap_RemoveExpectedDefinitionConflict`,
+    `TestUpdateProviderMap_RollbackStoreMismatch`, and `TestProviderCredentialLoginReplacesOnlyCustomAPIKey`
 
 ## Out of scope
 

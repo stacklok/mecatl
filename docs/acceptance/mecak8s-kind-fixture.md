@@ -82,7 +82,7 @@ arguments ([`user-docs/building/deployment/mecak8s.md`](https://mecatl.dev/docs/
 - AC2.2: With `OPENROUTER_API_KEY`, the rendered deployment omits `--mock` and
   includes exactly one `OPENROUTER_API_KEY` environment projection from the
   fixture-owned Secret.
-  - verify: `TestMecak8sHelmChart_KindFixtureRealProviderDisablesMock`
+  - verify: `TestMecak8sHelmChart_KindLiveProviderDisablesMock`
 - AC2.3: The fixture passes an OpenRouter credential to `kubectl` via standard
   input and `--from-file`; no fixture command, rendered manifest, pod argument,
   or diagnostic path prints the value or uses
@@ -134,7 +134,7 @@ and the bounded signing-key availability policy
   optional `mecak8s:access` scope adds `mecak8s` only to the requested access
   token's audience, never to an ID token or an access token that omits the
   scope.
-  - verify: `TestMecak8sKindFixture_Scenario3_ResourceAudience`
+  - verify: `TestMecak8sKindFixture_Scenario3_OptionalClientScopes`
 - AC3.4: A local client reaches the authenticated mecak8s service through the static
   loopback-only Kind mappings and certificate-covered hostname; the fixture
   NodePort overlay is separate from the shared ClusterIP values and there is no
