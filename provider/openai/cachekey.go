@@ -41,11 +41,30 @@ func (p *Provider) promptCacheKey(stablePrefix string, msgs []session.Message) s
 // prefixHash returns the hex sha256 of prefix, memoised on the Provider via a
 // single atomic.Pointer — compared by string equality (a memcmp, far cheaper
 // than re-hashing) rather than an unbounded map keyed on a 10-30KB string.
+//
+// When the Provider carries a cacheKeySalt (ADR 0343) the digest covers
+// salt ‖ 0x00 ‖ prefix. The NUL separator is a domain separator: without it a
+// (salt, prefix) pair could collide with a different split of the same bytes,
+// and a salt is exactly the sort of value an attacker would like to confuse
+// with prefix content. An EMPTY salt hashes the bare prefix, byte-identical to
+// ADR 0100.
+//
+// The memo still keys on prefix alone: the salt is fixed for the Provider's
+// lifetime, so it cannot vary between two hits on the same memo entry.
 func (p *Provider) prefixHash(prefix string) string {
 	if m := p.cacheMemo.Load(); m != nil && m.prefix == prefix {
 		return m.hash
 	}
-	sum := sha256.Sum256([]byte(prefix))
+	var sum [sha256.Size]byte
+	if p.cacheKeySalt == "" {
+		sum = sha256.Sum256([]byte(prefix))
+	} else {
+		h := sha256.New()
+		h.Write([]byte(p.cacheKeySalt))
+		h.Write([]byte{0})
+		h.Write([]byte(prefix))
+		h.Sum(sum[:0])
+	}
 	hash := hex.EncodeToString(sum[:])
 	p.cacheMemo.Store(&prefixMemo{prefix: prefix, hash: hash})
 	return hash
