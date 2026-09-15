@@ -724,7 +724,7 @@ The chart creates these resources:
 |Deployment|Runs two storage-free replicas by default; one replica is supported.|
 |ConfigMap|Stores the non-secret installation UUID for telemetry.|
 |ClusterIP Service|Exposes gRPC on 8080 and HTTP/SSE on 8081.|
-|PodDisruptionBudget|Uses `minAvailable: 1` for two or more replicas and is omitted for one.|
+|PodDisruptionBudget|Uses `maxUnavailable: 1` for two or more replicas and is omitted for one.|
 |Raw-driver NetworkPolicy|Created only with OIDC and limits raw-driver ingress to agent pods.|
 |Local Redis fixture|Created only by the disposable `values-kind.yaml` profile.|
 
@@ -734,6 +734,8 @@ for your provider, MCP, Redis, identity-provider, and Kubernetes API traffic.
 Deployment details:
 
 - Two replicas use `RollingUpdate`, `maxSurge: 1`, and `maxUnavailable: 0`.
+- Pods prefer separate nodes through a soft hostname topology-spread constraint;
+  single-node clusters remain schedulable.
 - `terminationGracePeriodSeconds` defaults to 60 seconds. The schema requires at
   least 44 seconds, the first whole second above the 43-second default shutdown
   budget.
@@ -1060,12 +1062,18 @@ or gRPC `FAILED_PRECONDITION`. Lease renewal defaults to one-third of
 Session affinity is optional. A client that reaches a pod without the lease
 receives 409 and retries another replica or waits for the current run.
 
-For two or more replicas, the PodDisruptionBudget (`minAvailable: 1`) prevents
-voluntary disruptions from taking all replicas offline simultaneously.
+For two or more replicas, the PodDisruptionBudget defaults to
+`maxUnavailable: 1`, so voluntary disruptions remove at most one replica as the
+Deployment scales. Set `podDisruptionBudget.maxUnavailable` to a non-negative
+integer or percentage, or set `podDisruptionBudget.enabled: false` when another
+operator owns disruption policy.
 
-When the cluster has multiple eligible nodes, use `topologySpreadConstraints` to
-spread replicas across `kubernetes.io/hostname`. The chart also supports
-`affinity`, `nodeSelector`, and `tolerations` values.
+The default `topologySpreadConstraints` softly prefer separate
+`kubernetes.io/hostname` values and therefore keep single-node clusters
+schedulable. Production deployments can replace `ScheduleAnyway` with
+`DoNotSchedule` and add a zone-level constraint when the cluster topology can
+satisfy them. The chart also supports `affinity`, `nodeSelector`, and
+`tolerations` values.
 
 Use Redis Sentinel, Redis Cluster, or a managed service for production high
 availability. The disposable in-cluster Redis fixture has one replica and no

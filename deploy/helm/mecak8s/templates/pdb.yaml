@@ -1,11 +1,11 @@
-{{- if gt (int .Values.replicaCount) 1 }}
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "mecak8s.fullname" . }}
   labels: {{- include "mecak8s.labels" . | nindent 4 }}
 spec:
-  minAvailable: 1
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
   selector:
     matchLabels: {{- include "mecak8s.selectorLabels" . | nindent 6 }}
 {{- end }}
