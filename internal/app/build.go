@@ -3230,12 +3230,17 @@ func sessionEngineFactoryWithTools(
 		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
-		// MODEL-VISIBLE memory self-description (ADR 0070): a session that carries
-		// project or user memory must tell the model the ladder exists so it CALLS
-		// the tools rather than improvising. Gated by catalog presence so a no-fs or
+		// MODEL-VISIBLE memory self-description: a session that carries project or
+		// user memory must tell the model the ladder exists so it CALLS the tools
+		// rather than improvising. Gated by catalog presence so a no-fs or
 		// store-less session is never told about a store it cannot reach; the Grep
 		// escalation rung is withheld when Grep itself is absent.
 		deps.PromptConfig = applyMemoryPosture(deps.PromptConfig, deps.Catalog)
+		// MODEL-VISIBLE self-knowledge: a question about mecatl itself is not a
+		// codebase search. Unconditional (every session can be asked) with the
+		// workspace-search and depth clauses gated on the catalog, so the note
+		// never claims a reach this session lacks.
+		deps.PromptConfig = applySelfKnowledgePosture(deps.PromptConfig, deps.Catalog)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
 		// front there is no filesystem — and stop the prompt <env> claiming the
 		// SERVER's cwd/shell/git state, none of which this session can touch. The
@@ -4134,11 +4139,15 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
-	// MODEL-VISIBLE memory self-description (ADR 0070): same gate as the
-	// per-session path — the shared engine must also carry the note so the
-	// commonest deployment (a plain mecatui launch hitting the shared engine)
-	// tells the model about its memory. Withheld when no memory family is wired.
+	// MODEL-VISIBLE memory self-description: same gate as the per-session path.
+	// The shared engine must also carry the note so the commonest deployment (a
+	// plain mecatui launch hitting the shared engine) tells the model about its
+	// memory. Withheld when no memory family is wired.
 	deps.PromptConfig = applyMemoryPosture(deps.PromptConfig, deps.Catalog)
+	// Same self-knowledge note on the SHARED engine: the plain mecatui launch
+	// never reaches the per-session factory, so without this second call the
+	// commonest deployment is the one that cannot describe itself.
+	deps.PromptConfig = applySelfKnowledgePosture(deps.PromptConfig, deps.Catalog)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
 	// engine/agent.buildRequest (issue #462 review). The shared engine's
@@ -8280,10 +8289,10 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 	return pc
 }
 
-// memoryPostureLead is the opening clause of the memory self-description note
-// (ADR 0070). It is always present when at least one memory family is registered,
-// telling the model to CALL the memory tools rather than guess. The "durable
-// memory store" substring is a stable test key.
+// memoryPostureLead is the opening clause of the memory self-description note. It
+// is always present when at least one memory family is registered, telling the
+// model to CALL the memory tools rather than guess. The "durable memory store"
+// substring is a stable test key.
 const memoryPostureLead = "You have a durable memory store. " +
 	"When asked what you remember or know about a topic, CALL the memory tools " +
 	"(Recall/RecallUser/SearchMemory/SearchUserModel) rather than guessing — " +
@@ -8310,10 +8319,9 @@ const memoryPostureEscalation = "When memory tools return nothing and you need m
 	"the broader repository."
 
 // applyMemoryPosture appends the memory self-description note to a prompt.Config
-// when at least one memory family (project or user) is wired into the catalog
-// (ADR 0070 affordance rule). It is a no-op when catalog is nil or carries no
-// memory tools, so a no-fs or store-less deployment never tells the model about
-// a store it cannot reach. The Grep-gated escalation clause is similarly withheld
+// when at least one memory family (project or user) is wired into the catalog. It
+// is a no-op when catalog is nil or carries no memory tools, so a no-fs or
+// store-less deployment never tells the model about a store it cannot reach. The Grep-gated escalation clause is similarly withheld
 // on the no-fs profile (DefaultRole fallback first — the applyNoFSPosture idiom).
 func applyMemoryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	if catalog == nil {
@@ -8336,6 +8344,140 @@ func applyMemoryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	}
 	if _, ok := catalog.Lookup("Grep"); ok {
 		note += "\n\n" + memoryPostureEscalation
+	}
+	pc.Role += "\n\n" + note
+	return pc
+}
+
+// The MODEL-VISIBLE self-knowledge note. A question about mecatl itself depends
+// on the model knowing three things it cannot derive from the workspace: that the
+// question is not a codebase search, what its own safety axes are, and where the
+// authoritative documentation lives. Without the note the model treats "what are
+// mecatl's permissions in each mode?" as a grep task against whatever repository
+// happens to be open, which is usually somebody else's project.
+//
+// SINGLE SOURCE OF TRUTH: the note carries only the STRUCTURAL facts (the axis
+// names, their value sets, and the doc-tree shape) and names
+// https://mecatl.dev/docs/ as authoritative for everything else. It is
+// deliberately NOT a prose copy of user-docs/, which would drift silently as the
+// documentation is reworded and pages move.
+// TestSelfKnowledgePostureNamesLiveDocPages is the drift gate: every /docs/ path
+// named here must resolve to a live page under user-docs/.
+//
+// COST: Role rides the cache-stable StablePrefix, so this is paid by every session
+// whether or not it is ever asked. That is the deliberate trade — the alternative
+// (an on-demand lookup channel) cannot fire, because a model that does not know it
+// has self-knowledge never reaches for it.
+const (
+	// selfKnowledgePostureLead frames the question TYPE and names the authority.
+	// The "MECATL SELF-KNOWLEDGE" substring is a stable test key.
+	selfKnowledgePostureLead = "MECATL SELF-KNOWLEDGE. A question about mecatl or any of its components " +
+		"(features, configuration, permissions, modes, flags, deployment, documentation) is about YOU, " +
+		"not the open workspace and not a research topic. https://mecatl.dev/docs/ is authoritative for " +
+		"whatever the facts below do not cover."
+
+	// selfKnowledgePostureComponents names the shipped components so a question
+	// saying "mecatui" or "mecak8s" rather than "mecatl" is still recognised as a
+	// question about the model itself. Without it only the project name matched, and
+	// a component-named question fell through to a search.
+	// The "you answer for every component" substring is a stable test key.
+	selfKnowledgePostureComponents = "You are the agent core of the mecatl project and you answer for every " +
+		"component, whichever one is running: mecatl is the project and its importable Go engine; mecatui " +
+		"the terminal client, which starts an embedded server by default or attaches to a remote one via " +
+		"`mecatui connect ADDRESS`; mecated the general-purpose gRPC and HTTP/SSE server; mecak8s the " +
+		"Kubernetes-native server keeping session state in Redis; mecatequi a one-shot CI task returning " +
+		"a patch."
+
+	// selfKnowledgePostureAxes is the load-bearing content clause: the three safety
+	// axes, kept distinct. Conflating the per-session permission mode with the
+	// deployment-wide posture ladder is the specific wrong answer this prevents. The
+	// mecatui sentence is here rather than in a client-specific clause because "what
+	// are the available modes in mecatui" is the question readers actually ask, and
+	// the answer is this axis plus how the client exposes it.
+	// The "Three SEPARATE safety axes" substring is a stable test key.
+	selfKnowledgePostureAxes = "Three SEPARATE safety axes, never conflated. (1) SESSION PERMISSION MODE: " +
+		"exactly three, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
+		"deny→ask→allow; `plan` denies mutations and expects a plan presented for approval; `acceptEdits` " +
+		"(accept-edits in mecatui) auto-allows Edit and Write only, leaving Shell and every other mutating " +
+		"tool on the normal rules. mecatui shows the mode in its header, takes `--mode` at launch, and " +
+		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide via " +
+		"--posture, rising strict < trusted < auto < yolo, setting project trust and how much runs without " +
+		"asking, not what one call may do. (3) GUARDRAILS: an optional model-backed checker over selected " +
+		"tool arguments and results, independent of permissions and inert until an operator configures a " +
+		"checker model. Under every mode and posture a matching deny wins and a configured ask is never " +
+		"suppressed."
+
+	// selfKnowledgePostureMap is the doc-tree shape, so a lookup lands on the right
+	// page instead of the site root. Every path here is pinned by the drift gate.
+	// The "/docs/features/permissions-and-posture" substring is a stable test key.
+	selfKnowledgePostureMap = "Documentation map: /docs/intro, /docs/features/ (running a server), " +
+		"/docs/mecatui/ (the terminal client), /docs/building/ (embed, deploy, extend), /docs/reference/ " +
+		"(configuration, gRPC/HTTP APIs). Modes, postures and permissions in full: " +
+		"/docs/features/permissions-and-posture. Settings file: /docs/reference/configuration."
+
+	// selfKnowledgePostureDirect stops a basic question turning into a research
+	// task. Observed failure: asked "what are the available modes in mecatui", the
+	// model ran a WEB SEARCH, when the answer is three words in the axes clause
+	// above. A search engine is also the wrong instrument for a question whose
+	// authoritative source is one known URL.
+	// The "answer directly with no tool call" substring is a stable test key.
+	selfKnowledgePostureDirect = "When the facts above answer the question, answer directly with no tool " +
+		"call. Never run a web SEARCH for your own product or documentation: it lives at one known " +
+		"address, so read that page instead."
+
+	// selfKnowledgePostureNoWorkspaceSearch is withheld when the session has no
+	// workspace search (the "no-fs" profile has no Grep), where it would describe a
+	// temptation the session cannot act on.
+	// The "Never search the open workspace" substring is a stable test key.
+	selfKnowledgePostureNoWorkspaceSearch = "Never search the open workspace for mecatl's own " +
+		"documentation: it is usually an unrelated project. Search it only when mecatl's own source is " +
+		"what is open."
+
+	// selfKnowledgePostureFetch is the depth path when the session can reach the
+	// web. The closing imperative is the point: a question answered with "see the
+	// documentation" is the failure mode, not the fallback.
+	// The "then ANSWER THE USER" substring is a stable test key.
+	selfKnowledgePostureFetch = "For anything deeper or more current than the facts above, WebFetch the " +
+		"relevant https://mecatl.dev/docs/ page, then ANSWER THE USER from what you read and cite the " +
+		"page. Referring the user to the documentation instead of answering is not an answer."
+
+	// selfKnowledgePostureOffline is the same contract for a session with no
+	// WebFetch: answer to the edge of what is known, mark the edge, cite the page
+	// that settles it, never improvise a flag or a default.
+	// The "cannot fetch web pages" substring is a stable test key.
+	selfKnowledgePostureOffline = "This session cannot fetch web pages: answer from the facts above, say " +
+		"which part you are not certain of, and name the https://mecatl.dev/docs/ page that settles it. " +
+		"Never invent a flag, default, or behaviour."
+)
+
+// applySelfKnowledgePosture appends the self-knowledge note to a prompt.Config.
+// The identity, component, axis, doc-map, and answer-directly clauses are
+// deployment-independent and always present — every session can be asked about
+// mecatl, including a no-fs one. The
+// two tool-dependent clauses are gated on catalog presence so the note never
+// describes a reach the session does not have: the workspace-search warning needs
+// Grep, and the depth path is the WebFetch variant when WebFetch is registered and
+// the offline variant when it is not. A nil catalog (no tool inventory to consult)
+// carries the deployment-independent clauses alone. DefaultRole fallback first —
+// the applyNoFSPosture idiom.
+func applySelfKnowledgePosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	note := selfKnowledgePostureLead +
+		"\n\n" + selfKnowledgePostureComponents +
+		"\n\n" + selfKnowledgePostureAxes +
+		"\n\n" + selfKnowledgePostureMap +
+		"\n\n" + selfKnowledgePostureDirect
+	if catalog != nil {
+		if _, ok := catalog.Lookup("Grep"); ok {
+			note += "\n\n" + selfKnowledgePostureNoWorkspaceSearch
+		}
+		if _, ok := catalog.Lookup("WebFetch"); ok {
+			note += "\n\n" + selfKnowledgePostureFetch
+		} else {
+			note += "\n\n" + selfKnowledgePostureOffline
+		}
 	}
 	pc.Role += "\n\n" + note
 	return pc

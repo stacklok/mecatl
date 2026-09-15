@@ -21,13 +21,14 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// memory_posture_test.go pins the memory self-description affordance (ADR 0070,
-// the model-visible-affordance rule in AGENTS.md): answering "what do you
-// remember about X?" depends on the model CALLING the memory tools, and the
+// memory_posture_test.go pins the memory self-description. Answering "what do
+// you remember about X?" depends on the model CALLING the memory tools, and the
 // memory→docs→repo escalation depends on it knowing the ladder exists. Both are
-// model behaviour, so both need a Role-layer instruction AND a test proving the
-// instruction lands in the BUILT engine's system prompt via the REAL factory
-// path — deleting the applyMemoryPosture wiring must fail CI.
+// model behaviour, and the rule for anything that depends on model behaviour is
+// that the instruction must be in the model's prompt AND a test must prove it
+// arrives there through the real factory path. A helper tested in isolation
+// proves nothing: the call site can be deleted and the helper stays green, so
+// deleting the applyMemoryPosture wiring has to fail CI instead.
 
 // memoryPostureCatalog builds a catalog carrying the requested families, using
 // the SAME registration entry points composition uses (registerMemoryFamilies).
@@ -126,7 +127,7 @@ func TestApplyMemoryPostureClauseGates(t *testing.T) {
 	}
 }
 
-// TestMemoryPostureLandsInBuiltEngineSystemPrompt is the ADR-0070 gate: the
+// TestMemoryPostureLandsInBuiltEngineSystemPrompt is the wiring gate: the
 // instruction must reach the model through the REAL sessionEngineFactory path,
 // not the helper in isolation. Asserted on the StablePrefix (the Role layer
 // applyMemoryPosture owns) rather than the combined Render(): the memory tools'
@@ -254,7 +255,7 @@ func TestMemoryPostureLandsOnSharedEngine(t *testing.T) {
 	}
 	for _, clause := range []string{memoryPostureLead, memoryPostureProject, memoryPostureEscalation} {
 		if !strings.Contains(captured.StablePrefix, clause) {
-			t.Errorf("the SHARED engine's StablePrefix is missing a memory posture clause — applyMemoryPosture must run on the shared engine's deps in buildEngine (ADR 0070)\nmissing=%q", clause)
+			t.Errorf("the SHARED engine's StablePrefix is missing a memory posture clause — applyMemoryPosture must run on the shared engine's deps in buildEngine\nmissing=%q", clause)
 		}
 	}
 	if strings.Contains(captured.StablePrefix, memoryPostureUser) {
