@@ -3,6 +3,7 @@ package worktree
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -24,6 +25,15 @@ const (
 	GuestWorkspace   = "/workspace"
 	GuestMetadata    = "/run/mecatl/git-metadata"
 	GuestObjectStore = "/run/mecatl/git-objects"
+
+	captureByteLimit   int64 = 256 << 20
+	captureEntryLimit        = 100_000
+	captureConcurrency       = 2
+)
+
+var (
+	errCaptureLimit = errors.New("source capture limit exceeded (maximum 256 MiB and 100000 entry records; reduce repository or dirty working-tree size)")
+	captureSlots    = make(chan struct{}, captureConcurrency)
 )
 
 // Request names the validated source and the new session-owned paths and branch.
@@ -60,10 +70,14 @@ type Prepared struct {
 type Preparer struct {
 	afterCapture  func() error
 	afterWorktree func(string) error
+	byteLimit     int64
+	entryLimit    int
 }
 
 // New returns a worktree preparer using hardened Git subprocesses.
-func New() *Preparer { return &Preparer{} }
+func New() *Preparer {
+	return &Preparer{byteLimit: captureByteLimit, entryLimit: captureEntryLimit}
+}
 
 // Prepare captures one source state, creates its branch/worktree, validates linked
 // metadata, and reconstructs the guest-local Git directory and mount plan.
@@ -85,15 +99,35 @@ func (p *Preparer) Prepare(ctx context.Context, req Request) (_ *Prepared, retEr
 	if req.Branch == "" {
 		return nil, errors.New("worktree: branch is required")
 	}
-	if _, err := git(ctx, source, nil, "check-ref-format", "--branch", req.Branch); err != nil {
+	if _, err := git(ctx, source, "check-ref-format", "--branch", req.Branch); err != nil {
 		return nil, fmt.Errorf("worktree: invalid branch: %w", err)
 	}
+	select {
+	case captureSlots <- struct{}{}:
+		defer func() { <-captureSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	captureDir, err := os.MkdirTemp(filepath.Dir(worktree), ".mecatl-source-capture-")
+	if err != nil {
+		return nil, fmt.Errorf("worktree: create private source capture: %w", err)
+	}
+	if err := os.Chmod(captureDir, 0o700); err != nil { // #nosec G302 -- source capture holds repository contents and must remain owner-only.
+		_ = os.RemoveAll(captureDir)
+		return nil, fmt.Errorf("worktree: make source capture private: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(captureDir); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("worktree: remove source capture: %w", err))
+		}
+	}()
+	budget := &captureBudget{bytesLeft: p.byteLimit, entriesLeft: p.entryLimit}
 
 	var capture sourceCapture
 	if req.BaseRevision == "" {
-		capture, err = p.captureSource(ctx, source)
+		capture, err = p.captureSource(ctx, source, captureDir, budget)
 	} else {
-		capture, err = captureRevision(ctx, source, req.BaseRevision)
+		capture, err = captureRevision(ctx, source, req.BaseRevision, captureDir, budget)
 	}
 	if err != nil {
 		return nil, err
@@ -148,11 +182,14 @@ func (p *Preparer) Prepare(ctx context.Context, req Request) (_ *Prepared, retEr
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyPreparedCapture(ctx, source, worktree, req.BaseRevision, capture); err != nil {
+	if err := p.verifyPreparedCapture(ctx, source, worktree, req.BaseRevision, captureDir, capture); err != nil {
 		return nil, err
 	}
 	if err := reconstructMetadata(ctx, worktree, gitDir, metadata, req.Branch, objectStore); err != nil {
 		return nil, fmt.Errorf("worktree: reconstruct guest metadata: %w", err)
+	}
+	if err := os.RemoveAll(captureDir); err != nil {
+		return nil, fmt.Errorf("worktree: remove source capture: %w", err)
 	}
 
 	return &Prepared{
@@ -180,49 +217,95 @@ func removeRootEntry(root *os.Root, name string) error {
 	return root.RemoveAll(name)
 }
 
-func verifyPreparedCapture(ctx context.Context, source, prepared, revision string, capture sourceCapture) error {
+func (p *Preparer) verifyPreparedCapture(ctx context.Context, source, prepared, revision, captureDir string, capture sourceCapture) error {
 	if revision != "" {
-		if _, err := git(ctx, prepared, nil, "diff", "--quiet", revision, "--"); err != nil {
+		if _, err := git(ctx, prepared, "diff", "--quiet", revision, "--"); err != nil {
 			return fmt.Errorf("worktree: prepared state does not match immutable base: %w", err)
 		}
 		return nil
 	}
-	after, err := captureState(ctx, source)
-	if err != nil {
-		return fmt.Errorf("worktree: recheck source state: %w", err)
-	}
-	if !bytes.Equal(capture.state.digest, after.digest) {
-		return errors.New("worktree: source changed during capture")
-	}
-	got, err := captureState(ctx, prepared)
-	if err != nil {
-		return fmt.Errorf("worktree: verify prepared state: %w", err)
-	}
-	if !bytes.Equal(capture.state.digest, got.digest) {
-		return errors.New("worktree: prepared state does not exactly match captured source")
+	for _, candidate := range []struct {
+		name string
+		root string
+		want []byte
+	}{
+		{name: "recheck source state", root: source, want: capture.state.digest},
+		{name: "verify prepared state", root: prepared, want: capture.state.digest},
+	} {
+		temp, err := os.MkdirTemp(captureDir, "verify-")
+		if err != nil {
+			return fmt.Errorf("worktree: %s: %w", candidate.name, err)
+		}
+		budget := &captureBudget{bytesLeft: p.byteLimit, entriesLeft: p.entryLimit}
+		got, err := captureStateBounded(ctx, candidate.root, temp, budget, false)
+		_ = os.RemoveAll(temp)
+		if err != nil {
+			return fmt.Errorf("worktree: %s: %w", candidate.name, err)
+		}
+		if !bytes.Equal(candidate.want, got.digest) {
+			if candidate.root == source {
+				return errors.New("worktree: source changed during capture")
+			}
+			return errors.New("worktree: prepared state does not exactly match captured source")
+		}
 	}
 	return nil
 }
 
 type sourceCapture struct {
-	state                state
-	staged, unstaged     []byte
-	committedTreeArchive []byte
-	baseRevision         string
+	state            state
+	staged, unstaged string
+	archive          string
+	baseRevision     string
+	extractEntries   int
 }
 
-func captureRevision(ctx context.Context, source, revision string) (sourceCapture, error) {
+type captureBudget struct {
+	bytesLeft   int64
+	entriesLeft int
+}
+
+func (b *captureBudget) entry() error {
+	if b.entriesLeft <= 0 {
+		return errCaptureLimit
+	}
+	b.entriesLeft--
+	return nil
+}
+
+type captureWriter struct {
+	budget   *captureBudget
+	writer   io.Writer
+	exceeded bool
+}
+
+func (w *captureWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.budget.bytesLeft {
+		w.exceeded = true
+		if w.budget.bytesLeft <= 0 {
+			return 0, errCaptureLimit
+		}
+		n, err := w.writer.Write(p[:w.budget.bytesLeft])
+		w.budget.bytesLeft -= int64(n)
+		return n, errors.Join(err, errCaptureLimit)
+	}
+	n, err := w.writer.Write(p)
+	w.budget.bytesLeft -= int64(n)
+	return n, err
+}
+
+func captureRevision(ctx context.Context, source, revision, captureDir string, budget *captureBudget) (sourceCapture, error) {
 	if !validObjectID(revision) {
 		return sourceCapture{}, errors.New("worktree: immutable base revision must be a full object id")
 	}
-	if _, err := git(ctx, source, nil, "cat-file", "-e", revision+"^{tree}"); err != nil {
+	if _, err := git(ctx, source, "cat-file", "-e", revision+"^{tree}"); err != nil {
 		return sourceCapture{}, fmt.Errorf("worktree: resolve immutable base revision: %w", err)
 	}
-	archive, err := git(ctx, source, nil, "archive", "--format=tar", revision)
-	if err != nil {
+	archive := filepath.Join(captureDir, "committed.tar")
+	if err := captureGitFile(ctx, source, archive, budget, "archive", "--format=tar", revision); err != nil {
 		return sourceCapture{}, fmt.Errorf("worktree: capture immutable base revision: %w", err)
 	}
-	return sourceCapture{committedTreeArchive: archive, baseRevision: revision}, nil
+	return sourceCapture{archive: archive, baseRevision: revision, extractEntries: budget.entriesLeft}, nil
 }
 
 func validObjectID(value string) bool {
@@ -237,21 +320,21 @@ func validObjectID(value string) bool {
 	return true
 }
 
-func (p *Preparer) captureSource(ctx context.Context, source string) (sourceCapture, error) {
-	captured, err := captureState(ctx, source)
+func (p *Preparer) captureSource(ctx context.Context, source, captureDir string, budget *captureBudget) (sourceCapture, error) {
+	captured, err := captureStateBounded(ctx, source, captureDir, budget, true)
 	if err != nil {
 		return sourceCapture{}, fmt.Errorf("worktree: capture source state: %w", err)
 	}
-	staged, err := git(ctx, source, nil, "diff", "--cached", "--binary", "--full-index", "--no-renames", "HEAD", "--")
-	if err != nil {
+	staged := filepath.Join(captureDir, "staged.diff")
+	if err := captureGitFile(ctx, source, staged, budget, "diff", "--cached", "--binary", "--full-index", "--no-renames", "HEAD", "--"); err != nil {
 		return sourceCapture{}, fmt.Errorf("worktree: capture staged changes: %w", err)
 	}
-	unstaged, err := git(ctx, source, nil, "diff", "--binary", "--full-index", "--no-renames", "--")
-	if err != nil {
+	unstaged := filepath.Join(captureDir, "unstaged.diff")
+	if err := captureGitFile(ctx, source, unstaged, budget, "diff", "--binary", "--full-index", "--no-renames", "--"); err != nil {
 		return sourceCapture{}, fmt.Errorf("worktree: capture unstaged changes: %w", err)
 	}
-	archive, err := git(ctx, source, nil, "archive", "--format=tar", "HEAD")
-	if err != nil {
+	archive := filepath.Join(captureDir, "committed.tar")
+	if err := captureGitFile(ctx, source, archive, budget, "archive", "--format=tar", "HEAD"); err != nil {
 		return sourceCapture{}, fmt.Errorf("worktree: capture committed tree: %w", err)
 	}
 	if p.afterCapture != nil {
@@ -259,11 +342,27 @@ func (p *Preparer) captureSource(ctx context.Context, source string) (sourceCapt
 			return sourceCapture{}, fmt.Errorf("worktree: capture hook: %w", err)
 		}
 	}
-	return sourceCapture{state: captured, staged: staged, unstaged: unstaged, committedTreeArchive: archive}, nil
+	return sourceCapture{state: captured, staged: staged, unstaged: unstaged, archive: archive, extractEntries: budget.entriesLeft}, nil
+}
+
+func captureGitFile(ctx context.Context, root, path string, budget *captureBudget, args ...string) (retErr error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, file.Close()) }()
+	writer := &captureWriter{budget: budget, writer: file}
+	if err := gitexec.RunStream(ctx, root, nil, writer, args...); err != nil {
+		if writer.exceeded || errors.Is(err, errCaptureLimit) {
+			return errCaptureLimit
+		}
+		return err
+	}
+	return nil
 }
 
 func createCapturedWorktree(ctx context.Context, source, worktree, branch string, capture sourceCapture) (retErr error) {
-	if _, err := git(ctx, source, nil, "worktree", "add", "--no-checkout", "-b", branch, worktree, "HEAD"); err != nil {
+	if _, err := git(ctx, source, "worktree", "add", "--no-checkout", "-b", branch, worktree, "HEAD"); err != nil {
 		return fmt.Errorf("worktree: create linked worktree: %w", err)
 	}
 	if err := os.Chmod(worktree, 0o700); err != nil { // #nosec G302 -- the worktree root is deliberately owner-only.
@@ -274,30 +373,47 @@ func createCapturedWorktree(ctx context.Context, source, worktree, branch string
 			_ = removeWorktree(context.Background(), source, worktree, branch)
 		}
 	}()
-	if err := extractArchive(capture.committedTreeArchive, worktree); err != nil {
+	if err := extractArchive(capture.archive, worktree, capture.extractEntries); err != nil {
 		return fmt.Errorf("worktree: extract committed tree: %w", err)
 	}
 	revision := capture.baseRevision
 	if revision == "" {
 		revision = "HEAD"
 	}
-	if _, err := git(ctx, worktree, nil, "read-tree", revision); err != nil {
+	if _, err := git(ctx, worktree, "read-tree", revision); err != nil {
 		return fmt.Errorf("worktree: initialize index: %w", err)
 	}
-	if len(capture.staged) != 0 {
-		if _, err := git(ctx, worktree, capture.staged, "apply", "--index", "--binary", "--whitespace=nowarn", "-"); err != nil {
-			return fmt.Errorf("worktree: apply staged changes: %w", err)
-		}
+	if err := applyGitFile(ctx, worktree, capture.staged, "--index"); err != nil {
+		return fmt.Errorf("worktree: apply staged changes: %w", err)
 	}
-	if len(capture.unstaged) != 0 {
-		if _, err := git(ctx, worktree, capture.unstaged, "apply", "--binary", "--whitespace=nowarn", "-"); err != nil {
-			return fmt.Errorf("worktree: apply unstaged changes: %w", err)
-		}
+	if err := applyGitFile(ctx, worktree, capture.unstaged); err != nil {
+		return fmt.Errorf("worktree: apply unstaged changes: %w", err)
 	}
 	if err := materializeUntracked(worktree, capture.state.untracked); err != nil {
 		return fmt.Errorf("worktree: materialize untracked files: %w", err)
 	}
 	return nil
+}
+
+func applyGitFile(ctx context.Context, worktree, path string, extra ...string) error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	args := append([]string{"apply"}, extra...)
+	args = append(args, "--binary", "--whitespace=nowarn", "-")
+	return gitexec.RunStream(ctx, worktree, file, io.Discard, args...)
 }
 
 // Cleanup removes a successfully prepared worktree through the Preparer seam.
@@ -492,11 +608,11 @@ func removeWorktree(ctx context.Context, source, worktree, branch string) error 
 	if err := validateRemovalTarget(ctx, source, worktree, branch); err != nil {
 		return err
 	}
-	if _, err := git(ctx, source, nil, "worktree", "remove", "--force", worktree); err != nil {
+	if _, err := git(ctx, source, "worktree", "remove", "--force", worktree); err != nil {
 		return err
 	}
-	_, pruneErr := git(ctx, source, nil, "worktree", "prune")
-	_, branchErr := git(ctx, source, nil, "branch", "-D", branch)
+	_, pruneErr := git(ctx, source, "worktree", "prune")
+	_, branchErr := git(ctx, source, "branch", "-D", branch)
 	return errors.Join(pruneErr, branchErr)
 }
 
@@ -512,7 +628,7 @@ func validateRemovalTarget(ctx context.Context, source, worktree, branch string)
 	if _, _, err := validateLinkedMetadata(validatedWorktree, common); err != nil {
 		return fmt.Errorf("worktree: cleanup target ownership: %w", err)
 	}
-	branchOut, err := git(ctx, validatedWorktree, nil, "symbolic-ref", "--quiet", "--short", "HEAD")
+	branchOut, err := git(ctx, validatedWorktree, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil || strings.TrimSpace(string(branchOut)) != branch {
 		return errors.New("worktree: cleanup target does not belong to the prepared branch")
 	}
@@ -527,7 +643,7 @@ func cleanupCommonDirectory(ctx context.Context, source string) (string, error) 
 	if root, common, err := validateSource(ctx, source); err == nil && root == source {
 		return common, nil
 	}
-	commonOut, err := git(ctx, source, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	commonOut, err := git(ctx, source, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return "", err
 	}
@@ -546,9 +662,10 @@ func cleanupCommonDirectory(ctx context.Context, source string) (string, error) 
 }
 
 type capturedFile struct {
-	path string
-	mode fs.FileMode
-	data []byte
+	path     string
+	mode     fs.FileMode
+	data     []byte
+	dataPath string
 }
 
 type state struct {
@@ -557,83 +674,172 @@ type state struct {
 }
 
 func captureState(ctx context.Context, root string) (state, error) {
-	staged, err := git(ctx, root, nil, "ls-files", "--stage", "-z")
+	temp, err := os.MkdirTemp(filepath.Dir(root), ".mecatl-state-capture-")
 	if err != nil {
 		return state{}, err
 	}
-	untrackedOut, err := git(ctx, root, nil, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil {
+	defer func() { _ = os.RemoveAll(temp) }()
+	return captureStateBounded(ctx, root, temp, &captureBudget{bytesLeft: captureByteLimit, entriesLeft: captureEntryLimit}, false)
+}
+
+func captureStateBounded(ctx context.Context, root, captureDir string, budget *captureBudget, retainUntracked bool) (state, error) {
+	stagedPath := filepath.Join(captureDir, "tracked.list")
+	if err := captureGitFile(ctx, root, stagedPath, budget, "ls-files", "--stage", "-z"); err != nil {
+		return state{}, err
+	}
+	untrackedPath := filepath.Join(captureDir, "untracked.list")
+	if err := captureGitFile(ctx, root, untrackedPath, budget, "ls-files", "--others", "--exclude-standard", "-z"); err != nil {
 		return state{}, err
 	}
 	h := sha256.New()
 	paths := make([]string, 0)
-	for _, record := range splitZero(staged) {
+	if err := forEachZeroRecord(stagedPath, func(record []byte) error {
+		if err := budget.entry(); err != nil {
+			return err
+		}
 		tab := bytes.IndexByte(record, '\t')
 		if tab < 0 {
-			return state{}, errors.New("malformed staged entry")
+			return errors.New("malformed staged entry")
 		}
 		fields := strings.Fields(string(record[:tab]))
 		if len(fields) != 3 || fields[2] != "0" {
-			return state{}, fmt.Errorf("unsupported unmerged index entry %q", record)
+			return fmt.Errorf("unsupported unmerged index entry %q", record)
 		}
 		if fields[0] == "160000" {
-			return state{}, errors.New("submodules are unsupported for exact source capture")
+			return errors.New("submodules are unsupported for exact source capture")
 		}
 		if strings.Trim(fields[1], "0") == "" {
-			return state{}, errors.New("intent-to-add entries are unsupported for exact source capture")
+			return errors.New("intent-to-add entries are unsupported for exact source capture")
 		}
 		path := string(record[tab+1:])
 		if err := validRelative(path); err != nil {
-			return state{}, err
+			return err
 		}
 		writeDigest(h, record)
 		paths = append(paths, path)
+		return nil
+	}); err != nil {
+		return state{}, err
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		file, err := readCaptured(root, path, true)
-		if err != nil {
+		if _, err := readCaptured(root, path, true, "", budget, h); err != nil {
 			return state{}, err
 		}
-		writeCapturedDigest(h, file)
 	}
 
-	var untracked []capturedFile
-	for _, raw := range splitZero(untrackedOut) {
+	var untrackedPaths []string
+	if err := forEachZeroRecord(untrackedPath, func(raw []byte) error {
+		if err := budget.entry(); err != nil {
+			return err
+		}
 		path := string(raw)
 		if err := validRelative(path); err != nil {
-			return state{}, err
+			return err
 		}
-		file, err := readCaptured(root, path, false)
+		untrackedPaths = append(untrackedPaths, path)
+		return nil
+	}); err != nil {
+		return state{}, err
+	}
+	sort.Strings(untrackedPaths)
+	untracked := make([]capturedFile, 0, len(untrackedPaths))
+	for _, path := range untrackedPaths {
+		payload := ""
+		if retainUntracked {
+			payload = filepath.Join(captureDir, fmt.Sprintf("untracked-%d", len(untracked)))
+		}
+		file, err := readCaptured(root, path, false, payload, budget, h)
 		if err != nil {
 			return state{}, err
 		}
 		untracked = append(untracked, file)
 	}
-	sort.Slice(untracked, func(i, j int) bool { return untracked[i].path < untracked[j].path })
-	for _, file := range untracked {
-		writeCapturedDigest(h, file)
-	}
 	return state{digest: h.Sum(nil), untracked: untracked}, nil
 }
 
-func readCaptured(root, path string, tracked bool) (capturedFile, error) {
+func forEachZeroRecord(path string, visit func([]byte) error) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	reader := bufio.NewReaderSize(file, 64<<10)
+	for {
+		record, err := reader.ReadSlice(0)
+		if errors.Is(err, io.EOF) && len(record) == 0 {
+			return nil
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return errCaptureLimit
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if len(record) == 0 || record[len(record)-1] != 0 {
+			return errors.New("unterminated Git path record")
+		}
+		if err := visit(record[:len(record)-1]); err != nil {
+			return err
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+	}
+}
+
+func readCaptured(root, path string, tracked bool, payload string, budget *captureBudget, digest io.Writer) (capturedFile, error) {
 	full := filepath.Join(root, filepath.FromSlash(path))
 	info, err := os.Lstat(full)
 	if errors.Is(err, os.ErrNotExist) && tracked {
-		return capturedFile{path: path}, nil
+		file := capturedFile{path: path}
+		writeCapturedMetadata(digest, file)
+		writeDigest(digest, nil)
+		return file, nil
 	}
 	if err != nil {
 		return capturedFile{}, fmt.Errorf("inspect %q: %w", path, err)
 	}
-	file := capturedFile{path: path, mode: info.Mode()}
+	file := capturedFile{path: path, mode: info.Mode(), dataPath: payload}
+	writeCapturedMetadata(digest, file)
 	switch {
 	case info.Mode().IsRegular():
-		file.data, err = os.ReadFile(full)
+		if info.Size() < 0 || info.Size() > budget.bytesLeft {
+			return capturedFile{}, errCaptureLimit
+		}
+		input, openErr := os.Open(full)
+		if openErr != nil {
+			err = openErr
+			break
+		}
+		defer func() { _ = input.Close() }()
+		writeDigestSize(digest, info.Size())
+		writer := digest
+		var output *os.File
+		if payload != "" {
+			output, err = os.OpenFile(payload, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err != nil {
+				break
+			}
+			defer func() { _ = output.Close() }()
+			writer = io.MultiWriter(digest, output)
+		}
+		written, copyErr := io.CopyN(&captureWriter{budget: budget, writer: writer}, input, info.Size())
+		if copyErr != nil || written != info.Size() {
+			if errors.Is(copyErr, errCaptureLimit) {
+				return capturedFile{}, errCaptureLimit
+			}
+			err = errors.Join(copyErr, io.ErrUnexpectedEOF)
+		}
 	case info.Mode()&os.ModeSymlink != 0:
 		var target string
 		target, err = os.Readlink(full)
+		if int64(len(target)) > budget.bytesLeft {
+			return capturedFile{}, errCaptureLimit
+		}
+		budget.bytesLeft -= int64(len(target))
 		file.data = []byte(target)
+		writeDigest(digest, file.data)
 	default:
 		return capturedFile{}, fmt.Errorf("unsupported file type at %q", path)
 	}
@@ -655,11 +861,27 @@ func materializeUntracked(root string, files []capturedFile) error {
 			}
 			continue
 		}
-		if err := os.WriteFile(path, file.data, file.mode.Perm()); err != nil {
+		input, err := os.Open(file.dataPath)
+		if err != nil {
+			return err
+		}
+		output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, file.mode.Perm())
+		if err == nil {
+			_, err = io.Copy(output, input)
+		}
+		err = errors.Join(err, outputClose(output), input.Close())
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func outputClose(file *os.File) error {
+	if file == nil {
+		return nil
+	}
+	return file.Close()
 }
 
 func validateSource(ctx context.Context, source string) (string, string, error) {
@@ -667,7 +889,7 @@ func validateSource(ctx context.Context, source string) (string, string, error) 
 	if err != nil {
 		return "", "", fmt.Errorf("worktree: source: %w", err)
 	}
-	topOut, err := git(ctx, root, nil, "rev-parse", "--path-format=absolute", "--show-toplevel")
+	topOut, err := git(ctx, root, "rev-parse", "--path-format=absolute", "--show-toplevel")
 	if err != nil {
 		return "", "", fmt.Errorf("worktree: source is not a Git worktree: %w", err)
 	}
@@ -675,11 +897,11 @@ func validateSource(ctx context.Context, source string) (string, string, error) 
 	if err != nil || top != root {
 		return "", "", errors.New("worktree: source must be the registered worktree root")
 	}
-	list, err := git(ctx, root, nil, "worktree", "list", "--porcelain", "-z")
+	list, err := git(ctx, root, "worktree", "list", "--porcelain", "-z")
 	if err != nil || !listedWorktree(list, root) {
 		return "", "", errors.New("worktree: source is not registered in its repository")
 	}
-	commonOut, err := git(ctx, root, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	commonOut, err := git(ctx, root, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return "", "", fmt.Errorf("worktree: resolve common Git directory: %w", err)
 	}
@@ -789,7 +1011,7 @@ func reconstructMetadata(ctx context.Context, worktree, gitDir, metadata, branch
 	if err := os.Mkdir(metadata, 0o700); err != nil {
 		return err
 	}
-	formatOut, err := git(ctx, worktree, nil, "rev-parse", "--show-object-format")
+	formatOut, err := git(ctx, worktree, "rev-parse", "--show-object-format")
 	if err != nil {
 		return err
 	}
@@ -797,7 +1019,7 @@ func reconstructMetadata(ctx context.Context, worktree, gitDir, metadata, branch
 	if format != "sha1" && format != "sha256" {
 		return fmt.Errorf("unsupported object format %q", format)
 	}
-	headOut, err := git(ctx, worktree, nil, "rev-parse", "HEAD")
+	headOut, err := git(ctx, worktree, "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
@@ -822,12 +1044,8 @@ func reconstructMetadata(ctx context.Context, worktree, gitDir, metadata, branch
 	if err := os.WriteFile(refPath, []byte(head+"\n"), 0o600); err != nil {
 		return err
 	}
-	index, err := os.ReadFile(filepath.Join(gitDir, "index"))
-	if err != nil {
-		return err
-	}
-	// #nosec G703 -- metadata is a canonical new path under a prevalidated parent.
-	if err := os.WriteFile(filepath.Join(metadata, "index"), index, 0o600); err != nil {
+	// #nosec G703 -- gitDir and metadata are confined above.
+	if err := copyRegularFile(filepath.Join(gitDir, "index"), filepath.Join(metadata, "index"), captureByteLimit); err != nil {
 		return err
 	}
 	infoDir := filepath.Join(metadata, "objects", "info")
@@ -841,6 +1059,34 @@ func reconstructMetadata(ctx context.Context, worktree, gitDir, metadata, branch
 		return err
 	}
 	return makeGuestMetadataReadable(metadata)
+}
+
+func copyRegularFile(source, destination string, limit int64) (retErr error) {
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("source is not a regular file")
+	}
+	if info.Size() < 0 || info.Size() > limit {
+		return errCaptureLimit
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, input.Close()) }()
+	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, output.Close()) }()
+	written, err := io.CopyN(output, input, info.Size())
+	if err != nil || written != info.Size() {
+		return errors.Join(err, io.ErrUnexpectedEOF)
+	}
+	return nil
 }
 
 func makeGuestMetadataReadable(metadata string) error {
@@ -866,8 +1112,13 @@ func makeGuestMetadataReadable(metadata string) error {
 	})
 }
 
-func extractArchive(data []byte, root string) error {
-	tr := tar.NewReader(bytes.NewReader(data))
+func extractArchive(archivePath, root string, entriesLeft int) error {
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = archive.Close() }()
+	tr := tar.NewReader(archive)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -876,48 +1127,77 @@ func extractArchive(data []byte, root string) error {
 		if err != nil {
 			return err
 		}
-		name := filepath.ToSlash(hdr.Name)
-		if hdr.Typeflag == tar.TypeDir {
-			name = strings.TrimSuffix(name, "/")
+		if entriesLeft <= 0 {
+			return errCaptureLimit
 		}
-		if err := validRelative(name); err != nil {
+		entriesLeft--
+		if err := extractArchiveEntry(tr, hdr, root); err != nil {
 			return err
 		}
-		mode, err := safeArchiveMode(hdr.Mode)
-		if err != nil {
-			return fmt.Errorf("archive entry %q: %w", name, err)
-		}
-		path := filepath.Join(root, filepath.FromSlash(name))
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(path, mode); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return err
-			}
-			content, err := io.ReadAll(tr)
-			if err != nil {
-				return err
-			}
-			if err := os.WriteFile(path, content, mode); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(hdr.Linkname, path); err != nil {
-				return err
-			}
-		case tar.TypeXGlobalHeader, tar.TypeXHeader:
-			// Metadata-only PAX records emitted by Git's built-in tar writer.
-			continue
-		default:
-			return fmt.Errorf("unsupported archive entry type for %q", name)
-		}
 	}
+}
+
+func extractArchiveEntry(tr *tar.Reader, hdr *tar.Header, root string) error {
+	name := filepath.ToSlash(hdr.Name)
+	if hdr.Typeflag == tar.TypeDir {
+		name = strings.TrimSuffix(name, "/")
+	}
+	if err := validRelative(name); err != nil {
+		return err
+	}
+	mode, err := safeArchiveMode(hdr.Mode)
+	if err != nil {
+		return fmt.Errorf("archive entry %q: %w", name, err)
+	}
+	path := filepath.Join(root, filepath.FromSlash(name))
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		return extractArchiveDirectory(hdr, path, mode, name)
+	case tar.TypeReg:
+		return extractArchiveRegular(tr, hdr, path, mode)
+	case tar.TypeSymlink:
+		return extractArchiveSymlink(hdr, path, name)
+	case tar.TypeXGlobalHeader, tar.TypeXHeader:
+		return nil
+	default:
+		return fmt.Errorf("unsupported archive entry type for %q", name)
+	}
+}
+
+func extractArchiveDirectory(hdr *tar.Header, path string, mode fs.FileMode, name string) error {
+	if hdr.Size != 0 {
+		return fmt.Errorf("archive directory %q has content", name)
+	}
+	return os.MkdirAll(path, mode)
+}
+
+func extractArchiveRegular(tr *tar.Reader, hdr *tar.Header, path string, mode fs.FileMode) error {
+	if hdr.Size < 0 || hdr.Size > captureByteLimit {
+		return errCaptureLimit
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	output, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	written, copyErr := io.CopyN(output, tr, hdr.Size)
+	closeErr := output.Close()
+	if copyErr != nil || written != hdr.Size {
+		return errors.Join(copyErr, closeErr, io.ErrUnexpectedEOF)
+	}
+	return closeErr
+}
+
+func extractArchiveSymlink(hdr *tar.Header, path, name string) error {
+	if hdr.Size != 0 {
+		return fmt.Errorf("archive symlink %q has content", name)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.Symlink(hdr.Linkname, path)
 }
 
 func safeArchiveMode(raw int64) (fs.FileMode, error) {
@@ -928,8 +1208,8 @@ func safeArchiveMode(raw int64) (fs.FileMode, error) {
 	return fs.FileMode(uint32(raw)), nil
 }
 
-func git(ctx context.Context, dir string, stdin []byte, args ...string) ([]byte, error) {
-	return gitexec.Run(ctx, dir, stdin, args...)
+func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return gitexec.Run(ctx, dir, nil, args...)
 }
 
 func newPath(path, kind string) (string, *os.Root, string, error) {
@@ -1019,14 +1299,18 @@ func splitZero(data []byte) [][]byte {
 }
 
 func writeDigest(w io.Writer, data []byte) {
-	var size [8]byte
-	binary.BigEndian.PutUint64(size[:], uint64(len(data)))
-	_, _ = w.Write(size[:])
+	writeDigestSize(w, int64(len(data)))
 	_, _ = w.Write(data)
 }
 
-func writeCapturedDigest(w io.Writer, file capturedFile) {
+func writeDigestSize(w io.Writer, length int64) {
+	var size [8]byte
+	// #nosec G115 -- callers reject negative lengths.
+	binary.BigEndian.PutUint64(size[:], uint64(length))
+	_, _ = w.Write(size[:])
+}
+
+func writeCapturedMetadata(w io.Writer, file capturedFile) {
 	writeDigest(w, []byte(file.path))
 	writeDigest(w, []byte(file.mode.String()))
-	writeDigest(w, file.data)
 }

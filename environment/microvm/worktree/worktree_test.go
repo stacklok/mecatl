@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestPrepareExtractsCommittedDirectories(t *testing.T) {
@@ -231,6 +234,207 @@ func TestMicroVMEnvironments_Scenario3_SourceStateCaptureIsExactOrFails(t *testi
 	for _, path := range []string{racyWorktree, racyMetadata} {
 		if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("failed capture left provisional path %q: %v", path, statErr)
+		}
+	}
+}
+
+func TestSourceCaptureLimitsAndCleanup(t *testing.T) {
+	requireGit(t)
+	tests := []struct {
+		name       string
+		byteLimit  int64
+		entryLimit int
+		prepare    func(*testing.T, string)
+		wantStage  string
+	}{
+		{
+			name: "oversized archive", byteLimit: 100 << 10, entryLimit: captureEntryLimit,
+			prepare: func(t *testing.T, source string) {
+				writeTestFile(t, filepath.Join(source, "archive.bin"), bytes.Repeat([]byte("a"), 64<<10), 0o644)
+				gitTest(t, source, nil, "add", "archive.bin")
+				gitTest(t, source, nil, "commit", "-qm", "large archive")
+			},
+			wantStage: "capture committed tree",
+		},
+		{
+			name: "oversized diff", byteLimit: 32 << 10, entryLimit: captureEntryLimit,
+			prepare: func(t *testing.T, source string) {
+				writeTestFile(t, filepath.Join(source, "deleted.bin"), bytes.Repeat([]byte{0xa5}, 64<<10), 0o644)
+				gitTest(t, source, nil, "add", "deleted.bin")
+				gitTest(t, source, nil, "commit", "-qm", "large deleted file")
+				if err := os.Remove(filepath.Join(source, "deleted.bin")); err != nil {
+					t.Fatal(err)
+				}
+				gitTest(t, source, nil, "add", "-u")
+			},
+			wantStage: "capture staged changes",
+		},
+		{
+			name: "oversized untracked file", byteLimit: 8 << 10, entryLimit: captureEntryLimit,
+			prepare: func(t *testing.T, source string) {
+				writeTestFile(t, filepath.Join(source, "untracked.bin"), bytes.Repeat([]byte{1}, 16<<10), 0o600)
+			},
+			wantStage: "capture source state",
+		},
+		{
+			name: "oversized tracked file", byteLimit: 8 << 10, entryLimit: captureEntryLimit,
+			prepare: func(t *testing.T, source string) {
+				writeTestFile(t, filepath.Join(source, "tracked.txt"), bytes.Repeat([]byte{2}, 16<<10), 0o644)
+			},
+			wantStage: "capture source state",
+		},
+		{
+			name: "entry limit", byteLimit: captureByteLimit, entryLimit: 1,
+			prepare:   func(*testing.T, string) {},
+			wantStage: "extract committed tree",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			source := newRepository(t)
+			tc.prepare(t, source)
+			root := t.TempDir()
+			p := New()
+			p.byteLimit = tc.byteLimit
+			p.entryLimit = tc.entryLimit
+			worktreePath := filepath.Join(root, "worktree")
+			metadataPath := filepath.Join(root, "metadata")
+			_, err := p.Prepare(t.Context(), Request{
+				Source: source, WorktreePath: worktreePath, MetadataPath: metadataPath,
+				Branch: "mecatl/limit-" + strings.ReplaceAll(tc.name, " ", "-"),
+			})
+			if err == nil || !strings.Contains(err.Error(), errCaptureLimit.Error()) || !strings.Contains(err.Error(), tc.wantStage) {
+				t.Fatalf("Prepare error = %v, want %q at %q", err, errCaptureLimit, tc.wantStage)
+			}
+			assertCaptureClean(t, root, worktreePath, metadataPath)
+		})
+	}
+}
+
+func TestSourceCaptureVerificationLimitCleansProvisionalWorktree(t *testing.T) {
+	requireGit(t)
+	source := newRepository(t)
+	root := t.TempDir()
+	p := New()
+	p.byteLimit = 24 << 10
+	p.afterCapture = func() error {
+		return os.WriteFile(filepath.Join(source, "tracked.txt"), bytes.Repeat([]byte{3}, 32<<10), 0o644)
+	}
+	worktreePath := filepath.Join(root, "worktree")
+	metadataPath := filepath.Join(root, "metadata")
+	_, err := p.Prepare(t.Context(), Request{
+		Source: source, WorktreePath: worktreePath, MetadataPath: metadataPath,
+		Branch: "mecatl/verification-limit",
+	})
+	if err == nil || !strings.Contains(err.Error(), "recheck source state") || !strings.Contains(err.Error(), errCaptureLimit.Error()) {
+		t.Fatalf("Prepare error = %v, want bounded verification failure", err)
+	}
+	assertCaptureClean(t, root, worktreePath, metadataPath)
+}
+
+func TestSourceCaptureCancellationCleansTemporaryState(t *testing.T) {
+	requireGit(t)
+	source := newRepository(t)
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	p := New()
+	p.afterCapture = func() error {
+		cancel()
+		return nil
+	}
+	worktreePath := filepath.Join(root, "worktree")
+	metadataPath := filepath.Join(root, "metadata")
+	_, err := p.Prepare(ctx, Request{
+		Source: source, WorktreePath: worktreePath, MetadataPath: metadataPath,
+		Branch: "mecatl/cancelled-capture",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Prepare error = %v, want context cancellation", err)
+	}
+	assertCaptureClean(t, root, worktreePath, metadataPath)
+}
+
+func TestSourceCaptureConcurrencyIsProcessBounded(t *testing.T) {
+	requireGit(t)
+	started := make(chan struct{}, captureConcurrency+1)
+	release := make(chan struct{})
+	p := New()
+	var active atomic.Int32
+	var peak atomic.Int32
+	p.afterCapture = func() error {
+		now := active.Add(1)
+		for old := peak.Load(); now > old && !peak.CompareAndSwap(old, now); old = peak.Load() {
+		}
+		started <- struct{}{}
+		<-release
+		active.Add(-1)
+		return nil
+	}
+	type result struct {
+		prepared *Prepared
+		err      error
+	}
+	results := make(chan result, captureConcurrency+1)
+	for i := 0; i < captureConcurrency+1; i++ {
+		source := newRepository(t)
+		root := t.TempDir()
+		go func(i int) {
+			prepared, err := p.Prepare(context.Background(), Request{
+				Source: source, WorktreePath: filepath.Join(root, "worktree"),
+				MetadataPath: filepath.Join(root, "metadata"), Branch: fmt.Sprintf("mecatl/concurrency-%d", i),
+			})
+			results <- result{prepared: prepared, err: err}
+		}(i)
+	}
+	for i := 0; i < captureConcurrency; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("capture did not start")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("capture concurrency exceeded process-wide bound")
+	case <-time.After(100 * time.Millisecond):
+	}
+	for i := 0; i < captureConcurrency; i++ {
+		release <- struct{}{}
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued capture did not start")
+	}
+	release <- struct{}{}
+	for i := 0; i < captureConcurrency+1; i++ {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("Prepare: %v", got.err)
+		}
+		if err := got.prepared.Cleanup(context.Background()); err != nil {
+			t.Fatalf("Cleanup: %v", err)
+		}
+	}
+	if got := peak.Load(); got > captureConcurrency {
+		t.Fatalf("peak captures = %d, want <= %d", got, captureConcurrency)
+	}
+}
+
+func assertCaptureClean(t *testing.T, root string, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed capture retained %q: %v", path, err)
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".mecatl-source-capture-") {
+			t.Fatalf("failed capture retained temporary directory %q", entry.Name())
 		}
 	}
 }

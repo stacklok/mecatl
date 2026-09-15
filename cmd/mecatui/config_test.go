@@ -80,8 +80,6 @@ func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	progress := make(chan string, 16)
-	stateHome := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", stateHome)
 	cfg := embeddedConfig(config{workspace: t.TempDir(), model: "m", mock: true, microVMProgress: progress}, port.NopDiagnostics{})
 	cfg.PermissionConfigs = []string{settings}
 	cfg.MicroVMReadyRequest = func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
@@ -107,8 +105,8 @@ func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
 		if manager.calls != 1 {
 			t.Fatalf("bare embedded session failed before selected MicroVM readiness: calls=%d err=%v", manager.calls, err)
 		}
-		if !strings.Contains(err.Error(), "placement unavailable") {
-			t.Fatalf("embedded server did not preserve placement error redaction: %v", err)
+		if !strings.Contains(err.Error(), "category=artifact_download") || strings.Contains(err.Error(), "/home/operator/secret") {
+			t.Fatalf("embedded server did not preserve safe readiness detail: %v", err)
 		}
 	}
 	var updates []string
@@ -121,10 +119,13 @@ func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
 			t.Fatalf("embedded progress %q omitted %q", updates, want)
 		}
 	}
-	for _, want := range []string{"mecated microvm doctor", filepath.Join(stateHome, "mecatl", "mecatui.log")} {
+	for _, want := range []string{"mecated microvm doctor", "mecatui diagnostics log"} {
 		if !strings.Contains(microVMFailureHint(config{}), want) {
 			t.Fatalf("embedded failure hint omitted %q", want)
 		}
+	}
+	if strings.ContainsAny(microVMFailureHint(config{}), `/\\`) {
+		t.Fatalf("embedded failure hint exposed a host path: %q", microVMFailureHint(config{}))
 	}
 }
 

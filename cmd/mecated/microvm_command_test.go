@@ -64,6 +64,18 @@ func TestMecatedMicroVMHelpAllMatchesAdvertisedTopLevelGuidance(t *testing.T) {
 	if strings.Contains(out.String(), "mecatui microvm") {
 		t.Fatalf("help advertised noncanonical frontend: %q", out.String())
 	}
+	for _, command := range []string{"init", "recover"} {
+		if strings.Contains(out.String(), command) {
+			t.Fatalf("help advertised obsolete command %q: %q", command, out.String())
+		}
+		obsolete := resolveCommand([]string{"mecated", "microvm", command})
+		if obsolete.err != nil || !obsolete.handled || obsolete.run == nil {
+			t.Fatalf("obsolete command %q resolution = %+v", command, obsolete)
+		}
+		if err := obsolete.run(strings.NewReader(""), io.Discard, io.Discard); err == nil {
+			t.Fatalf("obsolete command %q was accepted", command)
+		}
+	}
 	if manager.doctorCalls != 0 || manager.statusCalls != 0 || manager.deleteCalls != 0 {
 		t.Fatalf("help called manager: doctor=%d status=%d delete=%d", manager.doctorCalls, manager.statusCalls, manager.deleteCalls)
 	}

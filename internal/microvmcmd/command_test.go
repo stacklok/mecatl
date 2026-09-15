@@ -89,7 +89,7 @@ func TestStatusEmptyStateIsExplicitAndActionable(t *testing.T) {
 	if err := Run(t.Context(), []string{"status"}, strings.NewReader(""), &out, &fakeManager{}, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"backend state: ready to configure on first use", "status is read-only", "default_placement: microvm-local", "guest IPv4 egress defaults to permissive", `mecated serve --headless --default-placement microvm-local`} {
+	for _, want := range []string{"backend state: not configured; run mecated microvm doctor to check host readiness", "status is read-only", "default_placement: microvm-local", "guest IPv4 egress defaults to permissive", `mecated serve --headless --default-placement microvm-local`} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("fresh status omitted %q:\n%s", want, out.String())
 		}

@@ -309,6 +309,8 @@ jobs:
         platform: [linux-amd64, linux-arm64, darwin-arm64]
     env:
       VERSION: ${{ inputs.tag || github.ref_name }}
+      SIGNING_REF: ${{ needs.validate-release-ref.outputs.signing_ref }}
+      SOURCE_DATE_EPOCH: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -438,13 +440,26 @@ jobs:
         run: |
           set -euo pipefail
           assets=()
+          manifest=
+          completion=
           for asset in dist/"${PLATFORM}"/*; do
-            if [ "${PLATFORM}" != linux-amd64 ] && [ "$(basename "${asset}")" = install-microvm-release.sh ]; then
+            name="$(basename "${asset}")"
+            if [ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-release.sh ]; then
               continue
             fi
-            assets+=("${asset}")
+            case "${name}" in
+              microvm-release-*.json) manifest="${asset}" ;;
+              microvm-default-*.json) completion="${asset}" ;;
+              *) assets+=("${asset}") ;;
+            esac
           done
+          # Payloads and their signed evidence land first. The release manifest is
+          # published only after those assets, and the bootstrap defaults are the
+          # final completion marker. A rerun can therefore resume an interrupted
+          # payload upload without an incomplete set claiming completion.
           .github/scripts/upload-release-assets.sh "${VERSION}" "${assets[@]}"
+          .github/scripts/upload-release-assets.sh "${VERSION}" "${manifest}"
+          .github/scripts/upload-release-assets.sh "${VERSION}" "${completion}"
 
   resolve-brood-base:
     name: Resolve and freeze Brood Box platform bytes
@@ -987,7 +1002,7 @@ jobs:
   # ../sdk/typescript/examples/slack-bot/README.md); only this container
   # image is released, from the same v* tag as mecated/mecatui/mecak8s.
   publish-slack-bot:
-    needs: guard
+    needs: validate-release-ref
     name: Build, publish, sign, attest Slack bot example image
     runs-on: ubuntu-24.04
     timeout-minutes: 20

@@ -195,7 +195,8 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 	if response.Binding != claim {
 		return server.PlacementBinding{}, errors.New("microvmd resolved a different environment generation")
 	}
-	return c.placementBinding(request.Ref, claim, nil), nil
+	closePlacement := func() error { return c.operate(context.WithoutCancel(ctx), "detach", claim) }
+	return c.placementBinding(request.Ref, claim, closePlacement, nil), nil
 }
 
 func noFSBinding() (server.PlacementBinding, error) {
@@ -221,20 +222,46 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 	if err != nil {
 		return server.PlacementBinding{}, err
 	}
+	rollbackResponse := func() {
+		if response.Binding.Owner == owner && response.Binding.SessionID == placementID && response.Binding.EnvironmentID != "" && response.Binding.Ref != "" && response.Binding.Generation != 0 {
+			_ = c.rollbackPlacement(context.WithoutCancel(ctx), response.Binding)
+		}
+	}
 	if response.Created == nil || response.Created.Profile != c.profile || response.Created.GuestEgress == "" || response.Created.HostEgress == "" {
+		rollbackResponse()
 		return server.PlacementBinding{}, errors.New("microvmd create returned incomplete placement metadata")
 	}
 	if response.Binding.Owner != owner || response.Binding.SessionID != placementID || response.Binding.EnvironmentID == "" || response.Binding.Generation == 0 {
+		rollbackResponse()
 		return server.PlacementBinding{}, errors.New("microvmd create binding mismatch")
 	}
 	ref := refForBinding(response.Binding)
 	closePlacement := func() error { return c.operate(context.WithoutCancel(ctx), "detach", response.Binding) }
-	return c.placementBinding(ref, response.Binding, closePlacement), nil
+	rollbackPlacement := func() error { return c.rollbackPlacement(context.WithoutCancel(ctx), response.Binding) }
+	return c.placementBinding(ref, response.Binding, closePlacement, rollbackPlacement), nil
 }
 
-func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, closePlacement func() error) server.PlacementBinding {
+func (c *Client) rollbackPlacement(ctx context.Context, claim binding) error {
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "delete", Binding: claim})
+	if err != nil {
+		return err
+	}
+	var result DeleteResult
+	if len(response.Payload) == 0 {
+		return errors.New("microvmd rollback omitted cleanup result")
+	}
+	if err := json.Unmarshal(response.Payload, &result); err != nil {
+		return fmt.Errorf("decode microvmd rollback result: %w", err)
+	}
+	if result.WorktreeRetained {
+		return errors.New("microvmd retained dirty unpublished placement for recovery")
+	}
+	return nil
+}
+
+func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, closePlacement, rollbackPlacement func() error) server.PlacementBinding {
 	return server.PlacementBinding{
-		Ref: ref, Environment: c.environment(ref, claim), Close: closePlacement,
+		Ref: ref, Environment: c.environment(ref, claim), Close: closePlacement, Rollback: rollbackPlacement,
 		CompositionRoot: c.sourceCheckout,
 		Metadata:        server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
 	}

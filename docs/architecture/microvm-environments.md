@@ -75,6 +75,17 @@ Read/Edit/Bash continue to use guest `/workspace`. The composition root is not s
 public metadata, or model-visible content. Missing MicroVM composition context fails closed,
 and no-FS deliberately supplies none.
 
+Two source-capture transactions may run concurrently in one daemon process. Each initial
+capture has a cumulative 256 MiB I/O accounting budget across tracked and untracked working
+content, staged and unstaged binary patches, Git path listings, and the committed-tree tar,
+plus 100,000 cumulative tracked/untracked/archive entry records. Each exact-state verification
+scan is independently subject to the same 256 MiB and 100,000-entry ceilings. Git output and
+untracked payloads stream through owner-private temporary files, which are removed before
+placement registration. Exceeding either ceiling fails before registration with
+`source capture limit exceeded`; reduce the repository or dirty working-tree size and retry.
+The accounting budget intentionally counts bytes represented in more than one capture phase,
+so it is not a promise that every 256 MiB checkout is admissible.
+
 Workspace and CommandRunner remain affined to the same root and cwd. The MicroVM Workspace's
 `tool.AuthorityResourceResolver` projects relative tool paths onto the same confined guest
 `/workspace` identity used by filesystem RPCs; this lets authorization evaluate the guest

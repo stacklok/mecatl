@@ -277,7 +277,7 @@ func (m *placementReadyManager) EnsureReady(context.Context, microvmmanager.Read
 	return m.endpoint, nil
 }
 
-func TestMicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach(t *testing.T) {
+func TestMicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession(t *testing.T) {
 	ctx := context.Background()
 	daemon := startPlacementTestDaemon(t)
 	const scope server.PlacementScope = "deployment"
@@ -313,13 +313,16 @@ func TestMicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach(t *testi
 	}
 	for range run.Events() {
 	}
+	built.Service.FinishRun(sess.ID, run)
 	ops := daemon.operations()
-	foundResolve := false
 	for _, op := range ops {
-		foundResolve = foundResolve || op == "resolve"
+		if op == "resolve" || op == "detach" {
+			t.Fatalf("daemon operations before CloseSession = %v; run must reuse the create attachment", ops)
+		}
 	}
-	if !foundResolve {
-		t.Fatalf("daemon operations = %v; exact reattach was not exercised", ops)
+	built.Service.CloseSession(sess.ID)
+	if got := daemon.operationCount("detach"); got != 1 {
+		t.Fatalf("detach operations after CloseSession = %d, want 1", got)
 	}
 }
 

@@ -65,7 +65,7 @@ func TestInvariant_placement_binder_required_for_service_construction(t *testing
 	}
 }
 
-func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *testing.T) {
+func TestInvariant_nonowning_placement_binding_is_not_cached(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil)}}
 	svc, err := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/bound", NewID: func() session.SessionID { return "created" }, Now: func() time.Time { return time.Unix(1, 0) }})
@@ -79,7 +79,7 @@ func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *
 	got := len(svc.sessionEnvironments)
 	svc.mu.Unlock()
 	if got != 0 {
-		t.Fatalf("ordinary environment overrides = %d, want 0", got)
+		t.Fatalf("non-owning environment bindings = %d, want 0", got)
 	}
 }
 
@@ -176,8 +176,8 @@ func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err = svc.ClearSessionSuccessor(ctx, source.ID, SuccessorPlacement{})
-	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 1 {
-		t.Fatalf("lease-loss successor = %v, provisional closes = %d", err, closed.Load())
+	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 0 {
+		t.Fatalf("lease-loss successor = %v, source attachment closes = %d", err, closed.Load())
 	}
 	if _, loadErr := store.Load(context.Background(), "successor"); !errors.Is(loadErr, port.ErrSessionNotFound) {
 		t.Fatalf("lease-loss successor persisted: %v", loadErr)

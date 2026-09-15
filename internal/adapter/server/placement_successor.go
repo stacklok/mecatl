@@ -61,9 +61,7 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 		if placementErr != nil {
 			return "", placementErr
 		}
-		if preflight.Close != nil {
-			_ = preflight.Close()
-		}
+		rollbackUnpublishedPlacement(s, &preflight)
 	}
 	if err := s.cancelAndAwaitClearSource(ctx, source); err != nil {
 		return "", err
@@ -165,9 +163,12 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err != nil {
 		return "", err
 	}
-	if binding.Close != nil {
-		defer func() { _ = binding.Close() }()
-	}
+	publishedPlacement := false
+	defer func() {
+		if !publishedPlacement {
+			rollbackUnpublishedPlacement(s, &binding)
+		}
+	}()
 	// Durable awaiting sessions have no registered relay for the preflight to
 	// settle. Cancel them only after placement has been revalidated under the
 	// mutation lease, so a failed successor cannot consume the pending ask.
@@ -269,6 +270,8 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		s.logDiscoveryError(ctx, "persist successor placement", err)
 		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
+	s.installSessionPlacement(created.ID, binding, false)
+	publishedPlacement = true
 	if broker != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
 		commitErr := s.commitBrokerAttachment(commitCtx, created.ID, broker)
@@ -301,7 +304,7 @@ func successorProviderSelector(source *session.Session, req ForkSuccessorRequest
 
 func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement) (PlacementBinding, error) {
 	if requested.Selector == "" {
-		return s.ReattachPlacement(ctx, source.EnvironmentRef)
+		return s.sessionPlacement(ctx, source)
 	}
 	if source.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return PlacementBinding{}, ErrPlacementNotFound

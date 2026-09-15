@@ -14,12 +14,12 @@ func TestStartupPlacementFailureShowsStableRemediation(t *testing.T) {
 	m := New(Deps{
 		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		StartupFailureHint: func() string {
-			return "next: run 'mecated microvm doctor'; diagnostics log: /state/mecatl/mecatui.log"
+			return "next: run 'mecated microvm doctor'; inspect the mecatui diagnostics log for detailed cause"
 		},
 	})
-	updated, _ := m.Update(client.ConnectErrMsg{Err: errors.New("server: placement unavailable at /private/root")})
+	updated, _ := m.Update(client.ConnectErrMsg{Err: errors.New("server: placement unavailable: microvm readiness failed; stage=preflight; category=host_prerequisite; cause=KVM is unavailable to the current user, run microvm doctor for host remediation; remediation=run 'mecated microvm doctor' and inspect the mecatui/server diagnostics log, then retry")})
 	got := updated.(Model)
-	for _, want := range []string{"placement_unavailable", "mecated microvm doctor", "/state/mecatl/mecatui.log"} {
+	for _, want := range []string{"placement_unavailable", "stage=preflight", "category=host_prerequisite", "cause=KVM is unavailable", "mecated microvm doctor", "diagnostics log"} {
 		if !strings.Contains(got.fatalErr, want) {
 			t.Fatalf("fatal error %q omitted %q", got.fatalErr, want)
 		}

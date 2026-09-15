@@ -162,15 +162,15 @@ func TestACPUsesHostCompositionRootAndClosesRejectedBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ACP rejected host composition root in favor of guest /workspace: %v", err)
 	}
-	if created == nil || provider.closes.Load() != 1 {
-		t.Fatalf("created=%v close calls=%d, want persisted session and one provisional detach", created != nil, provider.closes.Load())
+	if created == nil || provider.closes.Load() != 0 {
+		t.Fatalf("created=%v close calls=%d, want persisted session and retained attachment", created != nil, provider.closes.Load())
 	}
 
 	if _, err := svc.CreateACPSession(t.Context(), t.TempDir(), session.ModeDefault, session.Limits{}, nil, nil); err == nil {
 		t.Fatal("ACP accepted cwd outside the host composition root")
 	}
-	if provider.closes.Load() != 2 {
-		t.Fatalf("rejected ACP binding close calls=%d, want 2", provider.closes.Load())
+	if provider.closes.Load() != 1 {
+		t.Fatalf("rejected ACP binding close calls=%d, want 1", provider.closes.Load())
 	}
 
 	if _, err := svc.CreateACPSession(t.Context(), hostRoot, session.ModeDefault, session.Limits{}, nil, func(session.SessionID, tool.Environment) (tool.Environment, error) {
@@ -178,8 +178,8 @@ func TestACPUsesHostCompositionRootAndClosesRejectedBinding(t *testing.T) {
 	}); err == nil {
 		t.Fatal("ACP accepted failed editor overlay")
 	}
-	if provider.closes.Load() != 3 {
-		t.Fatalf("failed-overlay binding close calls=%d, want 3", provider.closes.Load())
+	if provider.closes.Load() != 2 {
+		t.Fatalf("failed-overlay binding close calls=%d, want 2", provider.closes.Load())
 	}
 }
 
@@ -220,12 +220,12 @@ func TestLoadACPSessionOwnsExactBindingUntilOverrideLifecycleEnds(t *testing.T) 
 			if _, err := svc.LoadACPSession(t.Context(), created.ID, hostRoot, nil, overlay); err != nil {
 				t.Fatal(err)
 			}
-			if got := provider.reattachCloses.Load(); got != 0 {
-				t.Fatalf("successful load closed live binding %d times, want 0", got)
+			if got := provider.reattaches.Load(); got != 0 {
+				t.Fatalf("successful load multiplied attachment owners: reattaches = %d, want 0", got)
 			}
 			if tc.shutdown {
 				svc.Close()
-				if got := provider.reattachCloses.Load(); got != 1 {
+				if got := provider.closes.Load(); got != 1 {
 					t.Fatalf("shutdown close calls = %d, want 1", got)
 				}
 				return
@@ -233,16 +233,16 @@ func TestLoadACPSessionOwnsExactBindingUntilOverrideLifecycleEnds(t *testing.T) 
 			if _, err := svc.LoadACPSession(t.Context(), created.ID, hostRoot, nil, overlay); err != nil {
 				t.Fatal(err)
 			}
-			if got := provider.reattachCloses.Load(); got != 1 {
-				t.Fatalf("replacement close calls = %d, want 1", got)
+			if got := provider.reattaches.Load(); got != 0 {
+				t.Fatalf("replacement multiplied attachment owners: reattaches = %d, want 0", got)
 			}
 			svc.CloseSession(created.ID)
-			if got := provider.reattachCloses.Load(); got != 2 {
-				t.Fatalf("CloseSession close calls = %d, want 2", got)
+			if got := provider.closes.Load(); got != 1 {
+				t.Fatalf("CloseSession close calls = %d, want 1", got)
 			}
 			svc.Close()
-			if got := provider.reattachCloses.Load(); got != 2 {
-				t.Fatalf("shutdown reclosed binding: got %d calls, want 2", got)
+			if got := provider.closes.Load(); got != 1 {
+				t.Fatalf("shutdown reclosed binding: got %d calls, want 1", got)
 			}
 		})
 	}
@@ -278,8 +278,8 @@ func TestRemotePlacementWithoutCompositionRootNeverUsesGuestRoot(t *testing.T) {
 			if len(roots) != 2 || roots[0] != "" || roots[1] != "" {
 				t.Fatalf("composition roots = %q, want two empty roots (never guest /workspace)", roots)
 			}
-			if provider.defaultBinds.Load() != 1 || provider.reattaches.Load() == 0 {
-				t.Fatalf("placement calls: bind=%d reattach=%d, want one bind and exact reattach", provider.defaultBinds.Load(), provider.reattaches.Load())
+			if provider.defaultBinds.Load() != 1 || provider.reattaches.Load() != 0 {
+				t.Fatalf("placement calls: bind=%d reattach=%d, want one retained exact binding", provider.defaultBinds.Load(), provider.reattaches.Load())
 			}
 		})
 	}
@@ -372,8 +372,8 @@ func TestGuestExecutionRootNeverBecomesHostCompositionRoot(t *testing.T) {
 	}
 	for range run.Events() {
 	}
-	if provider.reattaches.Load() == 0 {
-		t.Fatal("run entry did not exactly reattach the persisted placement")
+	if provider.reattaches.Load() != 0 {
+		t.Fatal("run entry multiplied the retained exact placement attachment")
 	}
 	if provider.defaultBinds.Load() != 1 {
 		t.Fatalf("reattach path called Bind: default Bind calls = %d", provider.defaultBinds.Load())

@@ -1168,20 +1168,8 @@ func applyTrustPrompt(cfg config, diag port.Diagnostics) config {
 // mecatuiServerImplementation is the stable family of the embedded server.
 const mecatuiServerImplementation = "mecatui"
 
-func microVMFailureHint(cfg config) string {
-	diagnosticsPath := cfg.diagnosticsLog
-	if diagnosticsPath == "" {
-		diagnosticsPath = resolveDiagLogPath(xdgconfig.OSEnv)
-	}
-	failureHint := "next: run 'mecated microvm doctor'"
-	if diagnosticsPath != "" {
-		if cfg.quiet {
-			failureHint += "; diagnostics are disabled by --quiet (rerun without --quiet for log: " + diagnosticsPath + ")"
-		} else {
-			failureHint += "; diagnostics log: " + diagnosticsPath
-		}
-	}
-	return failureHint
+func microVMFailureHint(config) string {
+	return "next: run 'mecated microvm doctor'; inspect the mecatui diagnostics log for detailed cause"
 }
 
 // embeddedConfig constructs the embedded server's declarative app.Config. app.Build

@@ -18,7 +18,19 @@ for provenance in "$assets"/*.provenance.json; do
   fi
   found=true
   bundle=${provenance%.json}.sigstore.json
-  if [ -n "${MICROVM_RELEASE_SIGNING_KEY:-}" ]; then
+  if [ -f "$bundle" ]; then
+    if [ -n "${MICROVM_RELEASE_SIGNING_KEY:-}" ]; then
+      echo "cannot verify a reused bundle while signing with a local test key: $bundle" >&2
+      exit 1
+    fi
+    repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required to verify a reused bundle}
+    signing_ref=${SIGNING_REF:?SIGNING_REF is required to verify a reused bundle}
+    identity="https://github.com/$repo/.github/workflows/release.yml@$signing_ref"
+    cosign verify-blob --certificate-identity "$identity" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --bundle "$bundle" "$provenance" >/dev/null
+    echo "Reusing verified signature bundle $(basename "$bundle")"
+  elif [ -n "${MICROVM_RELEASE_SIGNING_KEY:-}" ]; then
     COSIGN_PASSWORD=${COSIGN_PASSWORD:-} cosign sign-blob --yes --key "$MICROVM_RELEASE_SIGNING_KEY" --bundle "$bundle" "$provenance"
   else
     cosign sign-blob --yes --bundle "$bundle" "$provenance"

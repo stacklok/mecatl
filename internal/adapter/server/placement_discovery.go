@@ -22,35 +22,36 @@ type ScopedWorktree struct {
 	Bare     bool
 }
 
-func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, error) {
+func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, func(), error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			return nil, tool.Environment{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+			return nil, tool.Environment{}, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
 		s.logDiscoveryError(ctx, "load session", err)
-		return nil, tool.Environment{}, fmt.Errorf("%w: discovery backend failed", ErrInternal)
+		return nil, tool.Environment{}, nil, fmt.Errorf("%w: discovery backend failed", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
-		return nil, tool.Environment{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+		return nil, tool.Environment{}, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
-		return sess, tool.Environment{}, nil
+		return sess, tool.Environment{}, func() {}, nil
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	binding, release, err := s.borrowSessionPlacement(ctx, sess)
 	if err != nil {
-		return nil, tool.Environment{}, err
+		return nil, tool.Environment{}, nil, err
 	}
-	return sess, binding.Environment, nil
+	return sess, binding.Environment, release, nil
 }
 
 // ListCommandsForSession owner-authorizes and exactly reattaches before command
 // discovery. A no-FS source returns empty without touching either provider.
 func (s *Service) ListCommandsForSession(ctx context.Context, id session.SessionID) ([]Command, error) {
-	sess, _, err := s.ownedSessionEnvironment(ctx, id)
+	sess, _, release, err := s.ownedSessionEnvironment(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS || s.cfg.Commands == nil {
 		return nil, nil
 	}
@@ -70,10 +71,11 @@ func (s *Service) ListCommandsForSession(ctx context.Context, id session.Session
 // enumeration, then issues caller/source-scoped selectors without retaining
 // them. A no-FS source is an empty result and invokes no lister.
 func (s *Service) ListWorktreesForSession(ctx context.Context, id session.SessionID) ([]ScopedWorktree, error) {
-	sess, _, err := s.ownedSessionEnvironment(ctx, id)
+	sess, _, release, err := s.ownedSessionEnvironment(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return nil, nil
 	}

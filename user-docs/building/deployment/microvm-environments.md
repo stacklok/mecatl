@@ -55,15 +55,16 @@ cd ../..
 
 ## Embedded mecatui journey
 
-Set the server-owned placement once in `~/.config/mecatl/settings.yaml`, then use bare
-`mecatui`:
-
-```yaml
-execution:
-  default_placement: microvm-local
-```
+Set the server-owned placement once in the XDG operator settings file, then use bare
+`mecatui`. This command uses `$XDG_CONFIG_HOME` when set and the standard fallback otherwise:
 
 ```sh
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+mkdir -p "$CONFIG_HOME/mecatl"
+cat >"$CONFIG_HOME/mecatl/settings.yaml" <<'YAML'
+execution:
+  default_placement: microvm-local
+YAML
 mecated microvm doctor
 mecatui
 ```
@@ -72,8 +73,9 @@ mecatui
 `ready to configure on first use` and succeeds. Bare mecatui hosts its in-process server;
 you do not start a separate `mecated serve` process. During the first session, the UI
 shows bounded download, verification, installation, and daemon-start progress. A failure
-names the preparation stage and directs you to `mecated microvm doctor` plus the exact
-mecatui diagnostics log. Inspect and resume without reselecting placement:
+names a bounded preparation stage, category, and actionable cause, then directs you to
+`mecated microvm doctor` and the mecatui diagnostics log. Inspect and resume without
+reselecting placement:
 
 ```sh
 mecated microvm status
@@ -151,6 +153,15 @@ configuration cannot set or weaken this policy. Host provider, MCP, web, hook, a
 and telemetry traffic is outside guest egress policy.
 
 Sessions and isolated children receive separate Git worktrees in a repository VM.
+Creating those worktrees captures repository state under fixed host-safety ceilings. At most
+two captures run at once per daemon process. An initial capture has a cumulative 256 MiB
+accounting budget across Git path listings, tracked and untracked content, staged and
+unstaged binary patches, and the committed archive, plus 100,000 cumulative
+tracked/untracked/archive entry records; each verification scan has the same limits.
+Because content represented in multiple phases is counted each time, this is not a 256 MiB
+checkout-size guarantee. If creation reports `source capture limit exceeded`, reduce the
+repository or dirty working-tree size (for example, remove unnecessary untracked artifacts)
+and retry; no session placement is registered and temporary capture data is removed.
 Worktrees separate Git state and routing, not mutually hostile processes in the same VM.
 Different repositories receive different VMs. A daemon restart may leave records,
 rootfs, and worktrees intact while live hosted dependencies are unavailable; affected

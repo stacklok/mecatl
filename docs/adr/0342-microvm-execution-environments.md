@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-19
-- Scope: Linux amd64 local microVM MVP; repository VM identity; logical worktree routing; artifact admission; guest ownership and networking
+- Scope: Linux amd64 local microVM MVP; repository VM identity; logical worktree and schedule placement lifecycle; artifact admission; guest ownership and networking
 - Supersedes: the earlier branch-only session-per-VM, derived guest-tools image, deny-default networking, explicit init/recover, external cosign, and per-session rootfs decisions recorded in prior revisions of this unmerged ADR
 - Superseded by: none
 
@@ -89,7 +89,38 @@ Sessions in one repository reuse the same VM with distinct refs and worktrees. A
 direct-write child reuses its parent's Environment; a read-only Subagent, Parallel branch,
 or Team member receives a distinct daemon-created worktree and ref in that VM. Closing a
 session or child detaches process-local handles; it does not destroy the repository VM,
-rootfs, shared caches, or sibling logical environments.
+rootfs, shared caches, or sibling logical environments. Mecated retains one exact attached
+binding per live placement generation and shares it across session runs, discovery, ACP, and
+team borrowers. `CloseSession`/`EndSession`, team cleanup, or service shutdown releases that
+Service-owned binding only after the final borrower exits, so no borrower can detach another.
+A placement provisioned for a session that fails before its first durable snapshot is instead
+rolled back by exact generation deletion; dirty or failed cleanup remains in durable daemon
+inventory for explicit recovery and never broadens deletion to the repository VM, rootfs, or
+siblings. Once persistence succeeds, rollback authority is discarded and ordinary teardown is
+detach-only.
+
+Schedules resolve placement once at creation and persist its exact ref and scope. A schedule
+created from a session borrows that session's logical worktree and never owns its lifecycle.
+An independently created MicroVM schedule provisions one logical worktree and owns it until
+the first fire claim. Updates preserve the placement and ownership relationship. Each fire
+mints a fresh persisted `sched--` session but reauthorizes and attaches the same exact
+schedule ref; neither a mecated/harness restart while microvmd remains live nor a changed
+deployment default causes rebinding or host fallback. Reattachment succeeds only when that
+exact repository generation and its owned runtime dependencies remain available under the
+general rule above; restarting microvmd itself remains the loud fail-closed case.
+
+Owned schedule deletion uses an atomic, durable deleting marker. Before any fire claim it
+disables the schedule, removes only the exact schedule-owned logical placement, preserves a
+dirty worktree according to provider deletion semantics, and conditionally removes the same
+schedule incarnation; failures leave the marker and exact ref for retry. The first atomic
+claim transfers placement lifetime to the persisted fire-session lineage. From then on,
+schedule deletion removes only the schedule record and retains the worktree for historical
+or resumable fire sessions. A claimed or running fire blocks deletion until recovery settles
+it. Borrowed, no-FS, host-local, and legacy records without explicit ownership metadata are
+never destructively cleaned up. No schedule operation deletes the repository VM, rootfs,
+origin session, or sibling logical worktrees. This retention is the cost of preserving
+already-published fire sessions without a crash-durable placement reference-counting or
+lineage garbage-collection protocol.
 
 The MVP uses the existing isolated-child merge behavior: non-conflicting changes apply and
 conflicts preserve the child. It does not add crash-durable merge recovery, daemon-wide
@@ -184,6 +215,8 @@ control, arbitrary URL, or installer override. Preparation and tagged binaries s
 - No new repository-VM deletion UX or sophisticated retention policy ships in the MVP.
 - Merge correctness is the existing single-client behavior, not a crash-durable or
   cross-process transaction.
+- Once a schedule fire is claimed, its shared logical worktree is retained with the
+  fire-session lineage; automatic lineage-wide placement garbage collection is not claimed.
 - Permissive egress is not network containment.
 
 ## Deferred decisions
@@ -197,7 +230,7 @@ The following require later ADRs or amendments after MVP evidence:
 - upstream Brood signing and independent refresh channels;
 - per-session fairness, quotas, dashboards, and exhaustive cache-poisoning controls.
 
-Non-Git sources, schedules, remote or multi-user microvmd, cross-principal VM sharing,
+Non-Git sources, remote or multi-user microvmd, cross-principal VM sharing,
 unified host+guest egress containment, and guest provider/MCP credentials also remain out of
 scope.
 

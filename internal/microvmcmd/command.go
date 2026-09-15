@@ -157,7 +157,7 @@ func runStatus(ctx context.Context, args []string, out io.Writer, manager Manage
 func statusSummary(status microvmmanager.Status, err error) (state, errorClass, remediation string) {
 	if err == nil {
 		if !status.Configured {
-			return "unconfigured", "", "Select microvm-local in operator settings; run 'mecated microvm doctor' first."
+			return "unconfigured", "", "Not configured; run 'mecated microvm doctor' to check host readiness."
 		}
 		return "ready", "", ""
 	}
@@ -223,7 +223,7 @@ func writeStatusText(out io.Writer, status microvmmanager.Status) {
 	_, _ = fmt.Fprintln(out, "status scope: current OS principal on this execution host")
 	_, _ = fmt.Fprintln(out, "status is read-only; it never installs, starts, stops, or deletes microVM state")
 	if !status.Configured {
-		_, _ = fmt.Fprintln(out, "backend state: ready to configure on first use")
+		_, _ = fmt.Fprintln(out, "backend state: not configured; run mecated microvm doctor to check host readiness")
 		writeSelectionExamples(out)
 	} else if !status.Running {
 		_, _ = fmt.Fprintln(out, "backend state: configured; daemon not running")

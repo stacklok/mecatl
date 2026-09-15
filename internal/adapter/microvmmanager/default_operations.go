@@ -31,6 +31,13 @@ const maxReleaseBundleBytes = 2 << 30
 
 const managedProcessSchema = "mecatl-microvmd-process/v1"
 
+var (
+	// ErrUnsupportedPlatform marks a host on which microvm-local cannot run.
+	ErrUnsupportedPlatform = errors.New("unsupported microVM platform")
+	// ErrKVMUnavailable marks missing or inaccessible Linux KVM support.
+	ErrKVMUnavailable = errors.New("KVM unavailable")
+)
+
 func scrubbedCommand(cmd *exec.Cmd) *exec.Cmd {
 	cmd.Env = envscrub.Scrub(os.Environ())
 	return cmd
@@ -69,7 +76,7 @@ func (o *DefaultOperations) platform() (string, string) {
 func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 	goos, goarch := o.platform()
 	if !supportedPlatform(goos, goarch) {
-		return fmt.Errorf("unsupported microVM platform %s/%s", goos, goarch)
+		return fmt.Errorf("%w: microvm-local supports Linux amd64 with KVM only; use host-local on this host", ErrUnsupportedPlatform)
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return errors.New("git is required for microVM worktrees")
@@ -87,7 +94,7 @@ func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 		}
 		file, err := os.OpenFile("/dev/kvm", os.O_RDWR|syscall.O_CLOEXEC, 0)
 		if err != nil {
-			return fmt.Errorf("open /dev/kvm read-write as the current user: %w (fix host access explicitly; the manager will not run sudo or change groups/ACLs)", err)
+			return fmt.Errorf("%w: open /dev/kvm read-write as the current user: %w (fix host access explicitly; the manager will not run sudo or change groups/ACLs)", ErrKVMUnavailable, err)
 		}
 		return file.Close()
 	}

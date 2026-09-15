@@ -33,10 +33,10 @@ This completed scenario follows
   - verify: `TestMicroVMRedesign_Scenario1_EnsureReadyConvergesUnderManagerLock`
 - AC1.3: A failed readiness attempt returns an actionable error without changing the configured deployment default; repeating ordinary use retries readiness.
   - verify: `TestMicroVMRedesign_Scenario1_ReadinessNeverRewritesDesiredConfig`
-- AC1.4: The dedicated `--microvm` flag and required `microvm init` and `microvm recover` commands are absent; `status`, `doctor`, and `delete` remain available and nonduplicative.
-  - verify: `TestMicroVMRedesign_Scenario1_ObsoleteActivationAndRecoverySurfaceIsRemoved`
-- AC1.5: With no microVM profile selected, existing default and no-fs snapshots, catalogs, prompts, startup, and tool behavior remain byte-compatible and no microVM dependency enters the engine module.
-  - verify: `TestInvariant_microvm_disabled_is_byte_compatible`
+- AC1.4: The dedicated `--microvm` flag and obsolete `microvm init` and `microvm recover` commands are absent; `status`, `doctor`, and `delete` remain available and nonduplicative.
+  - verify: `TestMecatedMicroVMHelpAllMatchesAdvertisedTopLevelGuidance`
+- AC1.5: With no MicroVM profile selected, host-local and no-FS placement behavior and catalog profiles remain unchanged, and MicroVM dependencies stay out of the root module, engine module, and default binaries.
+  - verify: `TestBareEmbeddedHostLocalOmissionDoesNoMicroVMWork`, `TestHostLocalOmissionDoesNoMicroVMWork`, `TestNoFSCatalogProfile`, `TestADR_0224_MicroVMDependenciesStayOutOfEngineAndRoot`
 
 ### Scenario 2 — canonical repository identity owns one durable VM generation
 
@@ -70,6 +70,8 @@ repository guest. Filesystem and exec remain bound to one `EnvironmentRef` and o
   - verify: `TestRepositoryGuestAuthenticationRejectsCompetingConnectorBeforeDisclosure`, `TestMicroVMMVP_Scenario3_EnvironmentRefAuthenticatesAssignedRoot`
 - AC3.3: Stale, replayed, wrong-owner, wrong-generation, sibling-ref, path-escape, and cross-worktree protocol requests fail closed; Workspace and CommandRunner remain affined to the same assigned root/cwd with no host fallback. Git worktrees isolate working/index state and logical RPC routing, not mutually hostile same-repository Bash: arbitrary Bash may address sibling guest paths. Different repositories remain VM-isolated and host/other-repository paths remain unavailable.
   - verify: `TestInvariant_microvm_logical_environment_is_confined_and_affined`
+- AC3.4: Host repository capture is fail-bounded before logical-placement registration: no more than two captures run per daemon process; one initial capture cumulatively admits 256 MiB across Git listings, tracked/untracked content, staged/unstaged binary patches, and committed archive plus 100,000 tracked/untracked/archive entry records; each verification scan has the same ceilings. Potentially large data streams through owner-private temporary files, tar extraction copies only validated regular-entry sizes, and limit, cancellation, or validation failure removes temporary files and provisional worktree state while returning the stable actionable `source capture limit exceeded` error.
+  - verify: `TestSourceCaptureLimitsAndCleanup`, `TestSourceCaptureVerificationLimitCleansProvisionalWorktree`, `TestSourceCaptureCancellationCleansTemporaryState`, `TestSourceCaptureConcurrencyIsProcessBounded`, `TestMicroVMEnvironments_Scenario3_SourceStateCaptureIsExactOrFails`
 
 ### Scenario 4 — immutable Brood bytes and one explicit repository rootfs
 
@@ -91,7 +93,7 @@ MVP step attaches that primitive to the repository generation.
 - AC4.5: Runtime Sigstore verification uses `toolhive-core/container/verifier` in-process and production configuration exposes no cosign executable/path, verification subprocess, or verification temporary-file protocol.
   - verify: `TestMicroVMRedesign_Scenario4_SigstoreVerificationIsInProcess`
 
-### Scenario 5 — sessions and delegation attach to repository-scoped execution
+### Scenario 5 — sessions, schedules, and delegation attach to repository-scoped execution
 
 This follows [the attachment architecture](../architecture/microvm-environments.md#session-and-delegation-attachment).
 
@@ -102,12 +104,16 @@ cross-process merge coordinator or crash-durable merge journal is required.
 
 - AC5.1: Sessions in one repository attach to the same repository VM with distinct logical refs and worktrees; a direct-write child reuses its parent's logical Environment, while a read-only Subagent, Parallel branch, or Team member receives a distinct logical ref and worktree in that VM.
   - verify: `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`, `TestMicroVMMVP_Scenario5_SessionsAndChildrenReuseRepositoryVM`
-- AC5.2: Closing a session or child detaches its process-local handles without destroying the repository VM, rootfs, shared cache, or another attached logical environment.
-  - verify: `TestMicroVMMVP_Scenario5_CloseDetachesWithoutDestroyingRepositoryVM`
+- AC5.2: Mecated owns one exact attached binding per live placement generation and shares it across runs, discovery, ACP, and team borrowers. Closing a session or child releases that ownership only after the final borrower exits and detaches its process-local handles exactly once, without destroying the repository VM, rootfs, shared cache, or another attached logical environment. Repeated runs do not mint attachment owners; service shutdown drains the same ownership registry.
+  - verify: `TestMicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession`, `TestPlacementRepeatedRunsAndShutdownShareOneOwner`, `TestPlacementBorrowersDelayDetachUntilLastRelease`, `TestMicroVMMVP_Scenario5_CloseDetachesWithoutDestroyingRepositoryVM`
+- AC5.2a: A logical placement provisioned for an unpublished session is exact-generation deleted when validation, factory construction, capacity admission, collision handling, or persistence fails. Successful persistence transfers ownership and disables rollback. Dirty or failed cleanup remains durably discoverable for retry; rollback never deletes the repository VM, rootfs, or sibling placements and does not change EndSession or DeleteSession policy.
+  - verify: `TestFailedCreateRollsBackUnpublishedPlacement`, `TestFailedFactoryCreateRollsBackUnpublishedPlacement`, `TestCapacityFailurePrecedesPlacementProvisioning`, `TestCollisionAfterProvisioningRollsBackUnpublishedPlacement`, `TestRollbackFailureRetainsExplicitRecoveryDiagnostic`, `TestSuccessfulCreateNeverRollsBack`
 - AC5.3: The existing isolated-child merge path applies a non-conflicting child change and preserves the child on conflict; the MVP makes no cross-process serialization or crash-recovery claim.
   - verify: `TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior`
 - AC5.4: Production status inventories repository logical attachments—not the superseded session-per-VM registry—in deterministic pages of at most 64, showing two distinct logical worktrees on one repository generation; exact logical deletion removes clean state, retains dirty state for recovery, and never implies repository-VM deletion.
   - verify: `TestRepositoryProductionInventoryPaginationAndLogicalDelete`
+- AC5.5: Schedule creation durably pins one exact placement: an origin-backed schedule borrows its session's logical worktree, while an independent MicroVM schedule provisions and owns one logical worktree. Updates cannot change placement or ownership, and every fire exactly reauthorizes the persisted ref without following the current default, including after a harness restart while microvmd remains live. Before the first claim, deletion atomically disables the schedule and cleans only its owned placement, retaining dirty state; cleanup or completion failure leaves a restart-safe tombstone retried against the same ref. The first atomic claim hands placement lifetime to the persisted fire-session lineage, so later deletion removes only the schedule record and retains the worktree for historical or resumable fires. Active fires block deletion, and borrowed, no-FS, host-local, and legacy-ambiguous placements are never destructively cleaned up; no path deletes the repository VM, rootfs, origin session, or sibling worktrees.
+  - verify: `TestADR_0291_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef`, `TestInvariant_scheduled_placement_is_reauthorized_at_fire`, `TestScheduleIndependentPlacementAllocatedOnceAndCleaned`, `TestScheduleClaimHandsPlacementToFireSession`, `TestScheduleCleanupFailureRetainsDisabledExactPlacement`, `TestScheduleLegacyAndNoFSPlacementsAreNeverDeleted`, `TestScheduleDeleteDisablesBeforeActiveFireCleanup`, `TestScheduleDeleteUsesAtomicBeginRecordForClaimHandoff`, `TestScheduleDeleteCompletionFailureLeavesRetryableTombstone`, `TestScheduleCreatePersistenceFailureRollsBackOwnedPlacement`
 
 ### Scenario 6 — Linux ownership and useful networking are honest
 
@@ -170,7 +176,7 @@ automated gate and is not evidence for microvmd restart recovery.
 - upstream Brood signing and independent artifact/config refresh channels;
 - per-session fairness, quotas, dashboards, and exhaustive cache-poisoning controls.
 
-Non-Git environments, schedules, remote/multi-user microvmd, cross-principal VM sharing,
+Non-Git environments, remote/multi-user microvmd, cross-principal VM sharing,
 unified host+guest egress containment, and moving provider/MCP credentials into the guest
 also remain out of scope.
 

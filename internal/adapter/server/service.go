@@ -857,6 +857,11 @@ type Service struct {
 	// placementBinder is the sole creation/successor placement binding seam.
 	// It is nil only for legacy hand-built configurations that have not migrated.
 	placementBinder *PlacementBinder
+	// placementAttachMu serializes exact-ref attachment creation without holding
+	// Service.mu across provider I/O. attachedPlacements shares one daemon handle
+	// across sessions and long-lived team borrowers of the same exact ref.
+	placementAttachMu  sync.Mutex
+	attachedPlacements map[session.EnvironmentRef]*servicePlacementAttachment
 
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
@@ -1416,6 +1421,7 @@ func NewService(cfg Config) (*Service, error) {
 	svc := &Service{
 		cfg:                      cfg,
 		placementBinder:          placementBinder,
+		attachedPlacements:       make(map[session.EnvironmentRef]*servicePlacementAttachment),
 		shutdownCancel:           shutdownCancel,
 		runs:                     make(map[session.SessionID]*runState),
 		teams:                    make(map[string]*teamState),
@@ -1682,6 +1688,10 @@ type createSessionOpts struct {
 	// placement is a trusted, already-reauthorized exact binding supplied only by
 	// server composition (scheduled fire). It bypasses default placement binding.
 	placement *PlacementBinding
+	// placementEnvironmentOverride preserves a caller-decorated environment after
+	// publication even when the provider has no detachable attachment. ACP editor
+	// buffers are the only such create-time override.
+	placementEnvironmentOverride bool
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -2199,6 +2209,22 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
+	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil
+	if definitelyPerSession {
+		if opts.debugTargetID != "" {
+			if s.cfg.DebugSessionEngine == nil {
+				return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
+			}
+		} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
+			return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+		}
+		s.mu.Lock()
+		full := len(s.sessionEngines) >= s.cfg.MaxSessionEngines
+		s.mu.Unlock()
+		if full {
+			return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
+		}
+	}
 	var (
 		err       error
 		workspace string
@@ -2239,9 +2265,12 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			profile = ProfileNoFS
 		}
 	}
-	if placement != nil && placement.Close != nil {
-		defer func() { _ = placement.Close() }()
-	}
+	publishedPlacement := false
+	defer func() {
+		if !publishedPlacement {
+			rollbackUnpublishedPlacement(s, placement)
+		}
+	}()
 	if err := s.bindRelatedIncarnations(ctx, &opts); err != nil {
 		return nil, err
 	}
@@ -2344,10 +2373,15 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
-		return s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
+		created, err := s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
+		if err == nil && created == sess {
+			s.installSessionPlacement(sess.ID, *placement, opts.placementEnvironmentOverride)
+			publishedPlacement = true
+		}
+		return created, err
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest, placement)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest, placement, &publishedPlacement)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -2360,7 +2394,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 // profile-aware workspace rule and the carryover snapshot semantics.
 //
 //nolint:gocyclo // Creation keeps factory, authorization, broker ownership, registration, and teardown in one transaction.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding, publishedPlacement *bool) (*session.Session, error) {
 	if opts.debugTargetID != "" {
 		if s.cfg.DebugSessionEngine == nil {
 			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
@@ -2506,6 +2540,8 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return persisted, perr
 	}
+	s.installSessionPlacement(sess.ID, *placement, opts.placementEnvironmentOverride)
+	*publishedPlacement = true
 	if broker != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 		commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
@@ -2743,7 +2779,20 @@ func (s *Service) CreateSessionWithMCP(ctx context.Context, mode session.Permiss
 // tracks the session and does this on disconnect). The gRPC/HTTP surfaces never
 // call this, so their environment path is unchanged (issue #462 phase-2 finding #2).
 func (s *Service) SetSessionEnvironment(id session.SessionID, env tool.Environment) {
+	s.mu.Lock()
+	_, ownsPlacement := s.sessionEnvironmentCloses[id]
+	s.mu.Unlock()
+	if ownsPlacement {
+		s.updateSessionEnvironment(id, env)
+		return
+	}
 	s.setSessionEnvironment(id, env, nil)
+}
+
+func (s *Service) updateSessionEnvironment(id session.SessionID, env tool.Environment) {
+	s.mu.Lock()
+	s.sessionEnvironments[id] = env
+	s.mu.Unlock()
 }
 
 func (s *Service) setSessionEnvironment(id session.SessionID, env tool.Environment, closeFn func() error) {
@@ -3019,6 +3068,8 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	engines := s.sessionEngines
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
+	teams := s.teams
+	s.teams = make(map[string]*teamState)
 	brokerAttachments := s.brokerAttachments
 	s.brokerAttachments = make(map[session.SessionID]brokercontract.Attachment)
 	// Drop all per-session environment overrides on shutdown and retain their
@@ -3082,6 +3133,11 @@ func (s *Service) Close() {
 	attachmentWG.Wait()
 	cancelAttachments()
 
+	for _, team := range teams {
+		if team.releasePlacement != nil {
+			team.releasePlacement()
+		}
+	}
 	for _, closeEnvironment := range environmentCloses {
 		if closeEnvironment != nil {
 			if err := closeEnvironment(); err != nil {
@@ -4985,7 +5041,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	if !sess.EnvironmentRef.Valid() {
 		return nil, tool.Environment{}, "", ErrInvalidPlacementSelection
 	}
-	verified, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	verified, err := s.sessionPlacement(ctx, sess)
 	if err != nil {
 		return nil, tool.Environment{}, "", err
 	}

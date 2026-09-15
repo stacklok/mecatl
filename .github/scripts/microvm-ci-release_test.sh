@@ -112,6 +112,46 @@ publish_cli_needs=$(awk '/^  publish-cli:/{on=1; next} on && /^  [a-zA-Z0-9_-]+:
 printf '%s\n' "$create_release_section" | grep -Fx '    needs: validate-release-ref' >/dev/null
 printf '%s\n' "$publish_microvm_needs" | grep -Fx '    needs: [validate-release-ref, create-release, endorse-brood-resolution]' >/dev/null
 printf '%s\n' "$publish_cli_needs" | grep -Fx '    needs: [guard, create-release]' >/dev/null
+# Every publishing job must have an explicit or transitive dependency on the
+# immutable-ref validator. This graph check catches a newly added publisher as
+# well as a one-off dependency typo.
+python3 - "$release" <<'PY'
+import re
+import sys
+
+workflow = open(sys.argv[1], encoding="utf-8").read().splitlines()
+jobs = {}
+current = None
+for line in workflow:
+    match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
+    if match:
+        current = match.group(1)
+        jobs[current] = []
+        continue
+    if current is None:
+        continue
+    match = re.fullmatch(r"    needs: (.+)", line)
+    if not match:
+        continue
+    value = match.group(1).strip()
+    if value.startswith("[") and value.endswith("]"):
+        jobs[current] = [item.strip() for item in value[1:-1].split(",")]
+    else:
+        jobs[current] = [value]
+
+def reaches_validation(job, seen=None):
+    if job == "validate-release-ref":
+        return True
+    seen = set() if seen is None else seen
+    if job in seen:
+        return False
+    seen.add(job)
+    return any(reaches_validation(dep, seen) for dep in jobs.get(job, []))
+
+for job in sorted(name for name in jobs if name == "publish" or name.startswith("publish-")):
+    if not reaches_validation(job):
+        raise SystemExit(f"publishing job {job} bypasses validate-release-ref")
+PY
 # GoReleaser uploads to the release created above without replacing its notes.
 require 'mode: keep-existing' "$goreleaser"
 
@@ -178,6 +218,12 @@ require 'main.microVMReleaseDefaultsB64' "$repo_root/.ko.yaml"
 require 'anchore/sbom-action@' "$release"
 require 'sign-microvm-release-evidence.sh' "$release"
 require 'reuse-platform-release-assets.sh' "$release"
+upload_microvm=$(awk '/^      - name: Upload microVM release assets$/{in_block=1; next} in_block && /^      - name: /{exit} in_block{print}' "$release")
+payload_upload_line=$(printf '%s\n' "$upload_microvm" | grep -n '"${assets\[@\]}"' | cut -d: -f1)
+manifest_upload_line=$(printf '%s\n' "$upload_microvm" | grep -n '"${manifest}"' | cut -d: -f1)
+completion_upload_line=$(printf '%s\n' "$upload_microvm" | grep -n '"${completion}"' | cut -d: -f1)
+test "$payload_upload_line" -lt "$manifest_upload_line"
+test "$manifest_upload_line" -lt "$completion_upload_line"
 
 # Every release asset has one job-level producer. In particular, the microVM
 # publisher must not recreate host binaries owned by publish-mecatui-host.
@@ -191,7 +237,7 @@ printf '%s\n' "$publish_host_section" | grep -F '${binary_name}-${VERSION}-${pla
 printf '%s\n' "$publish_host_section" | grep -F 'binary: [mecated, mecatui]' >/dev/null
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseVersion' >/dev/null
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseStampRequired=release' >/dev/null
-require '[ "${PLATFORM}" != linux-amd64 ] && [ "$(basename "${asset}")" = install-microvm-release.sh ]' "$release"
+require '[ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-release.sh ]' "$release"
 
 # Functional host-stamp/entrypoint contract: both real binaries consume the same
 # defaults through their package-specific version symbol. Mecated exercises its offline
@@ -515,21 +561,69 @@ PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=sta
 )
 cmp "$scratch/first-platform-digests" "$scratch/second-platform-digests"
 
-mv "$scratch/release/mecatl-runtime-linux-amd64.provenance.sigstore.json" "$scratch/missing-asset"
+# Simulate interruption before one payload and the final completion marker. The
+# rerun downloads prior bytes, reconstructs candidates, verifies preserved
+# Sigstore bundles against the reconstructed statements, and uploads only gaps.
+rm -f "$scratch/release/mecatl-runtime-linux-amd64.tar.gz" \
+  "$scratch/release/microvm-default-linux-amd64.json"
+rm -rf "$scratch/incomplete"
+mkdir -p "$scratch/incomplete"
+: >"$scratch/reuse-output"
+PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=stacklok/mecatl \
+  SIGNING_REF=refs/tags/v0.0.0-test GITHUB_OUTPUT="$scratch/reuse-output" \
+  "$reuse_platform_assets" v0.0.0-test microvm linux-amd64 v0.0.0-test "$scratch/incomplete"
+require 'reused=false' "$scratch/reuse-output"
+require 'partial=true' "$scratch/reuse-output"
+test -f "$scratch/incomplete/mecatl-microvmd-linux-amd64"
+test ! -e "$scratch/incomplete/mecatl-runtime-linux-amd64.tar.gz"
+test ! -e "$scratch/incomplete/microvm-default-linux-amd64.json"
+for candidate in "$scratch/one"/*; do
+  case "$candidate" in *.sigstore.json) continue ;; esac
+  cp "$candidate" "$scratch/incomplete/$(basename "$candidate")"
+done
+: >"$scratch/cosign-calls"
+cat >"$scratch/bin/cosign" <<'SH'
+#!/bin/sh
+set -eu
+[ -z "${COSIGN_CALLS:-}" ] || printf '%s\n' "$*" >>"$COSIGN_CALLS"
+case "$1" in verify-blob) exit 0 ;; *) exit 1 ;; esac
+SH
+chmod +x "$scratch/bin/cosign"
+PATH="$scratch/bin:$PATH" COSIGN_CALLS="$scratch/cosign-calls" \
+  GITHUB_REPOSITORY=stacklok/mecatl SIGNING_REF=refs/tags/v0.0.0-test \
+  "$sign" "$scratch/incomplete"
+require 'verify-blob --certificate-identity https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/v0.0.0-test' "$scratch/cosign-calls"
+PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=stacklok/mecatl \
+  "$upload_assets" v0.0.0-test "$scratch/incomplete"/*
+test -f "$scratch/release/mecatl-runtime-linux-amd64.tar.gz"
+test -f "$scratch/release/microvm-default-linux-amd64.json"
+
+# A completion marker on an incomplete set is corruption, not resumable state.
+rm -f "$scratch/release/mecatl-runtime-linux-amd64.tar.gz"
 if PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=stacklok/mecatl \
   SIGNING_REF=refs/tags/v0.0.0-test \
-  "$reuse_platform_assets" v0.0.0-test microvm linux-amd64 v0.0.0-test "$scratch/incomplete" >/dev/null 2>&1; then
-  echo 'incomplete platform release asset set was reused' >&2
+  "$reuse_platform_assets" v0.0.0-test microvm linux-amd64 v0.0.0-test "$scratch/completed-incomplete" >/dev/null 2>&1; then
+  echo 'incomplete platform set with a completion marker was accepted' >&2
   exit 1
 fi
-mv "$scratch/missing-asset" "$scratch/release/mecatl-runtime-linux-amd64.provenance.sigstore.json"
-printf '0%.0s' $(seq 1 64) >"$scratch/release/SHA256SUMS-linux-amd64"
-if PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=stacklok/mecatl \
+cp "$scratch/one/mecatl-runtime-linux-amd64.tar.gz" "$scratch/release/"
+
+# A partial rerun may proceed to candidate reconstruction, but the immutable
+# uploader must reject any existing byte that differs from that candidate.
+rm -f "$scratch/release/microvm-default-linux-amd64.json"
+printf 'corrupt existing byte\n' >"$scratch/release/mecatl-microvmd-linux-amd64"
+rm -rf "$scratch/mismatched"
+PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=stacklok/mecatl \
   SIGNING_REF=refs/tags/v0.0.0-test \
-  "$reuse_platform_assets" v0.0.0-test microvm linux-amd64 v0.0.0-test "$scratch/mismatched" >/dev/null 2>&1; then
-  echo 'mismatched platform release asset set was reused' >&2
+  "$reuse_platform_assets" v0.0.0-test microvm linux-amd64 v0.0.0-test "$scratch/mismatched"
+cp "$scratch/one"/* "$scratch/mismatched/"
+if PATH="$scratch/bin:$PATH" RELEASE_STORE="$scratch/release" GITHUB_REPOSITORY=stacklok/mecatl \
+  "$upload_assets" v0.0.0-test "$scratch/mismatched"/* >/dev/null 2>&1; then
+  echo 'mismatched partial platform asset was overwritten' >&2
   exit 1
 fi
+cp "$scratch/one/mecatl-microvmd-linux-amd64" "$scratch/release/"
+cp "$scratch/one/microvm-default-linux-amd64.json" "$scratch/release/"
 
 for kind in mecated mecatui; do
   host_first="$scratch/host-first-$kind"

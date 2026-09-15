@@ -149,7 +149,7 @@ func TestInvariant_filesystem_placement_root_selects_policy_engine_for_every_kin
 	}
 }
 
-func TestInvariant_environment_override_is_reauthorized_at_every_run_entry(t *testing.T) {
+func TestInvariant_environment_override_reauthorizes_nonowning_provider(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: "custom-fs", ID: "opaque", Revision: "r1"}
 	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil), CompositionRoot: "/fresh"}}
 	store := memstore.New()
@@ -172,7 +172,7 @@ func TestInvariant_environment_override_is_reauthorized_at_every_run_entry(t *te
 		}
 	}
 	if got := provider.reattaches - baseline; got != 2 {
-		t.Fatalf("run entry reauthorized placement %d times, want 2", got)
+		t.Fatalf("run entry reattached non-owning placement %d times, want 2", got)
 	}
 }
 

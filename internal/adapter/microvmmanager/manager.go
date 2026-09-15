@@ -378,8 +378,64 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 	return "unix://" + m.paths.Socket, nil
 }
 
+// ReadinessError preserves the failed transaction stage for safe public
+// classification while retaining the detailed cause for diagnostics.
+type ReadinessError struct {
+	Stage ReadinessStage
+	Cause error
+}
+
+func (e *ReadinessError) Error() string {
+	return fmt.Sprintf("microvm-local readiness failed during %s: %v; correct the reported problem and retry ordinary use", e.Stage, e.Cause)
+}
+
+func (e *ReadinessError) Unwrap() error { return e.Cause }
+
+// ReadinessFailure is the bounded, path-free projection suitable for clients.
+type ReadinessFailure struct {
+	Stage, Category, Cause string
+}
+
+// ClassifyReadinessFailure reduces a detailed readiness error to a closed public
+// category and constant actionable cause. The original error remains diagnostics-only.
+func ClassifyReadinessFailure(err error, fallback ReadinessStage) ReadinessFailure {
+	stage := fallback
+	var readinessErr *ReadinessError
+	if errors.As(err, &readinessErr) {
+		stage = readinessErr.Stage
+	}
+	failure := ReadinessFailure{Stage: string(stage)}
+	switch {
+	case errors.Is(err, ErrUnsupportedPlatform):
+		failure.Category = "unsupported_platform"
+		failure.Cause = "microvm-local requires Linux amd64 with KVM, use host-local on this host"
+	case errors.Is(err, ErrKVMUnavailable):
+		failure.Category = "host_prerequisite"
+		failure.Cause = "KVM is unavailable to the current user, run microvm doctor for host remediation"
+	case stage == StagePreflight:
+		failure.Category = "host_prerequisite"
+		failure.Cause = "a required host prerequisite is unavailable, run microvm doctor for host remediation"
+	case stage == StageDownload:
+		failure.Category = "artifact_download"
+		failure.Cause = "microVM artifacts could not be downloaded, check connectivity and retry"
+	case stage == StageVerify:
+		failure.Category = "artifact_verification"
+		failure.Cause = "microVM artifact verification failed, do not use the downloaded artifacts"
+	case stage == StageInstall:
+		failure.Category = "artifact_install"
+		failure.Cause = "verified microVM artifacts could not be installed"
+	case stage == StageDaemon || stage == StageSocket || stage == StageReconcile || stage == StageHealth || stage == StageReady:
+		failure.Category = "daemon_policy_identity"
+		failure.Cause = "the microVM daemon, policy, or identity check failed, inspect doctor and diagnostics before retrying"
+	default:
+		failure.Category = "readiness_configuration"
+		failure.Cause = "microVM readiness configuration is unavailable or invalid"
+	}
+	return failure
+}
+
 func readinessError(stage ReadinessStage, err error) error {
-	return fmt.Errorf("microvm-local readiness failed during %s: %w; correct the reported problem and retry ordinary use", stage, err)
+	return &ReadinessError{Stage: stage, Cause: err}
 }
 
 func configuredRequestCompatible(path string, release Release, policy Policy) error {
@@ -597,7 +653,9 @@ func (m *Manager) Doctor(ctx context.Context) (string, error) {
 		}
 	}
 
-	if preflightErr != nil {
+	if errors.Is(preflightErr, ErrUnsupportedPlatform) {
+		_, _ = fmt.Fprintln(&report, "next: microvm-local is supported only on Linux amd64 with KVM; use host-local on this host")
+	} else if preflightErr != nil {
 		_, _ = fmt.Fprintln(&report, "next: fix the failed host prerequisite, then rerun doctor")
 	} else if !configured && !running && runningErr == nil {
 		_, _ = fmt.Fprintln(&report, "next: select microvm-local to configure the backend on first use:")
@@ -606,11 +664,13 @@ func (m *Manager) Doctor(ctx context.Context) (string, error) {
 	} else {
 		_, _ = fmt.Fprintln(&report, "next: select microvm-local as the deployment default:")
 	}
-	_, _ = fmt.Fprintln(&report, "  embedded mecatui operator settings:")
-	_, _ = fmt.Fprintln(&report, "    execution:")
-	_, _ = fmt.Fprintln(&report, "      default_placement: microvm-local")
-	_, _ = fmt.Fprintln(&report, "  guest IPv4 egress defaults to permissive; before first use set execution.microvm.guest_egress.mode to deny-all or allowlist")
-	_, _ = fmt.Fprintln(&report, `  mecated serve --headless --default-placement microvm-local; then POST /v1/sessions with {}`)
+	if !errors.Is(preflightErr, ErrUnsupportedPlatform) {
+		_, _ = fmt.Fprintln(&report, "  embedded mecatui operator settings:")
+		_, _ = fmt.Fprintln(&report, "    execution:")
+		_, _ = fmt.Fprintln(&report, "      default_placement: microvm-local")
+		_, _ = fmt.Fprintln(&report, "  guest IPv4 egress defaults to permissive; before first use set execution.microvm.guest_egress.mode to deny-all or allowlist")
+		_, _ = fmt.Fprintln(&report, `  mecated serve --headless --default-placement microvm-local; then POST /v1/sessions with {}`)
+	}
 	_, _ = fmt.Fprintln(&report, "doctor is read-only; it never downloads, installs, or starts microvmd")
 	return report.String(), errors.Join(failures...)
 }

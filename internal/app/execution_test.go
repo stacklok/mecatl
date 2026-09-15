@@ -67,9 +67,10 @@ func TestFoldExecutionCLIOverrideWinsOnlyWhenSet(t *testing.T) {
 
 func TestMicroVMReadinessProgressAndStableFailureCrossPlacementBoundary(t *testing.T) {
 	manager := &executionReadyManager{err: errors.New("private manager failure")}
+	diag := newCapturingDiagnostics()
 	var progress []string
 	cfg, err := ConfigureExecution(Config{
-		Workspace: t.TempDir(), DefaultPlacement: PlacementMicroVMLocal, DefaultPlacementSet: true,
+		Workspace: t.TempDir(), DefaultPlacement: PlacementMicroVMLocal, DefaultPlacementSet: true, Diagnostics: diag,
 		MicroVMReadyRequest: func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
 			return microvmmanager.ReadyRequest{}, nil
 		},
@@ -79,7 +80,7 @@ func TestMicroVMReadinessProgressAndStableFailureCrossPlacementBoundary(t *testi
 		MicroVMReadinessObserver: func(_ microvmmanager.ReadinessStage, message string) {
 			progress = append(progress, message)
 		},
-		MicroVMReadinessFailureHint: "next: run 'mecated microvm doctor'; diagnostics log: /state/mecatl/mecatui.log",
+		MicroVMReadinessFailureHint: "must not appear in public output /private/hint",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,13 +94,21 @@ func TestMicroVMReadinessProgressAndStableFailureCrossPlacementBoundary(t *testi
 			t.Fatalf("progress %q omitted %q", progress, want)
 		}
 	}
-	for _, want := range []string{"preparation failed during download", "mecated microvm doctor", "/state/mecatl/mecatui.log"} {
+	for _, want := range []string{"stage=download", "category=artifact_download", "cause=microVM artifacts could not be downloaded", "mecated microvm doctor", "diagnostics log"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q omitted %q", err, want)
 		}
 	}
-	if strings.Contains(err.Error(), "private failure") {
-		t.Fatalf("stable UI error leaked private manager detail: %v", err)
+	for _, secret := range []string{"private manager failure", "/private/hint"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("stable public error leaked private detail %q: %v", secret, err)
+		}
+	}
+	if len(err.Error()) > 512 {
+		t.Fatalf("stable public error is unbounded: %d bytes", len(err.Error()))
+	}
+	if !strings.Contains(strings.Join(diag.capturedStrings(), "\n"), "private manager failure") {
+		t.Fatalf("detailed readiness cause was not retained in diagnostics: %q", diag.capturedStrings())
 	}
 }
 

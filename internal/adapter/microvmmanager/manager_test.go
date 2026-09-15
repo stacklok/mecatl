@@ -353,6 +353,7 @@ func TestDoctorReportsFreshAndFailureStatesWithoutMutation(t *testing.T) {
 		{name: "healthy", configured: true, ops: &fakeOps{running: true}, want: []string{"host preflight: passed", "backend: healthy", "PASS hypervisor ready"}},
 		{name: "daemon unhealthy", configured: true, ops: &fakeOps{running: true, doctorErr: errors.New("guest transport unavailable")}, want: []string{"backend: unhealthy", "guest transport unavailable"}},
 		{name: "host preflight failed", ops: &fakeOps{failAt: "preflight"}, want: []string{"host preflight: failed", "backend: ready to configure on first use"}},
+		{name: "unsupported platform", ops: &fakeOps{preflightErr: ErrUnsupportedPlatform}, want: []string{"supported only on Linux amd64 with KVM", "use host-local on this host"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -383,12 +384,39 @@ func TestDoctorReportsFreshAndFailureStatesWithoutMutation(t *testing.T) {
 			if tc.ops.failAt != "preflight" && strings.Contains(report, "failed host prerequisite") {
 				t.Fatalf("passed preflight received failed-prerequisite guidance:\n%s", report)
 			}
+			if tc.name == "unsupported platform" && strings.Contains(report, "default_placement: microvm-local") {
+				t.Fatalf("unsupported platform was told microvm-local is fixable:\n%s", report)
+			}
 			for _, forbidden := range []string{"download", "verify", "install", "start", "stop", "wait"} {
 				if contains(tc.ops.calls, forbidden) {
 					t.Fatalf("read-only Doctor called %q: %v", forbidden, tc.ops.calls)
 				}
 			}
 		})
+	}
+}
+
+func TestClassifyReadinessFailureUsesOnlyBoundedActionableCategories(t *testing.T) {
+	tests := []struct {
+		stage    ReadinessStage
+		cause    error
+		category string
+	}{
+		{StagePreflight, fmt.Errorf("%w: darwin/arm64 /private/path", ErrUnsupportedPlatform), "unsupported_platform"},
+		{StagePreflight, fmt.Errorf("%w: permission SECRET", ErrKVMUnavailable), "host_prerequisite"},
+		{StageDownload, errors.New("GET https://user:SECRET@example.invalid/private"), "artifact_download"},
+		{StageVerify, errors.New("signature from /private/key failed"), "artifact_verification"},
+		{StageInstall, errors.New("installer output SECRET"), "artifact_install"},
+		{StageDaemon, errors.New("policy private-ref at /private/socket"), "daemon_policy_identity"},
+	}
+	for _, tc := range tests {
+		failure := ClassifyReadinessFailure(readinessError(tc.stage, tc.cause), StagePrepare)
+		if failure.Stage != string(tc.stage) || failure.Category != tc.category {
+			t.Errorf("stage %s classified as %+v", tc.stage, failure)
+		}
+		if strings.Contains(failure.Cause, "SECRET") || strings.Contains(failure.Cause, "/private") || len(failure.Cause) > 240 {
+			t.Errorf("stage %s exposed unbounded/private cause %q", tc.stage, failure.Cause)
+		}
 	}
 }
 
@@ -492,6 +520,7 @@ type fakeOps struct {
 	doctorErr        error
 	failAt           string
 	identityMismatch string
+	preflightErr     error
 }
 
 func (f *fakeOps) stageError(stage string) error {
@@ -502,6 +531,9 @@ func (f *fakeOps) stageError(stage string) error {
 }
 func (f *fakeOps) Preflight(context.Context, Paths) error {
 	f.calls = append(f.calls, "preflight")
+	if f.preflightErr != nil {
+		return f.preflightErr
+	}
 	return f.stageError("preflight")
 }
 func (f *fakeOps) Download(context.Context, Release, string) (string, error) {

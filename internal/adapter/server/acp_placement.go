@@ -24,37 +24,26 @@ func (s *Service) CreateACPSession(ctx context.Context, cwd string, mode session
 		return nil, err
 	}
 	if err := assertACPPlacementCWD(cwd, binding); err != nil {
-		discardPlacementBinding(binding)
+		rollbackUnpublishedPlacement(s, &binding)
 		return nil, err
 	}
 	id := s.cfg.NewID()
-	var environmentClose func() error
 	if overlay != nil {
 		binding.Environment, err = overlay(id, binding.Environment)
 		if err != nil {
-			discardPlacementBinding(binding)
+			rollbackUnpublishedPlacement(s, &binding)
 			return nil, fmt.Errorf("%w: editor filesystem overlay unavailable", ErrFailedPrecondition)
 		}
 		if err := validatePlacementBinding(binding); err != nil {
-			discardPlacementBinding(binding)
+			rollbackUnpublishedPlacement(s, &binding)
 			return nil, err
 		}
-		// The override still depends on this exact attached placement. Transfer its
-		// detach callback to Service ownership instead of letting createSession's
-		// provisional-binding defer close it before ACP can use the environment.
-		environmentClose, binding.Close = binding.Close, nil
 	}
 	created, err := s.createSession(ctx, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{
-		id: id, idSet: true, placement: &binding,
+		id: id, idSet: true, placement: &binding, placementEnvironmentOverride: overlay != nil,
 	})
 	if err != nil {
-		if environmentClose != nil {
-			_ = environmentClose()
-		}
 		return nil, err
-	}
-	if overlay != nil {
-		s.setSessionEnvironment(created.ID, binding.Environment, environmentClose)
 	}
 	return created, nil
 }
@@ -70,7 +59,7 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 	if !persisted.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: session has no exact placement", ErrFailedPrecondition)
 	}
-	binding, err := s.ReattachPlacement(ctx, persisted.EnvironmentRef)
+	binding, err := s.sessionPlacement(ctx, persisted)
 	if err != nil {
 		return nil, err
 	}
@@ -100,11 +89,7 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 		return nil, fmt.Errorf("%w: session placement changed while loading", ErrFailedPrecondition)
 	}
 	if overlay != nil {
-		s.setSessionEnvironment(id, binding.Environment, binding.Close)
-	} else {
-		// Without an editor-buffer override, ordinary run entry performs its own
-		// exact reattachment. This load-time binding is only provisional.
-		discardPlacementBinding(binding)
+		s.updateSessionEnvironment(id, binding.Environment)
 	}
 	return sess, nil
 }

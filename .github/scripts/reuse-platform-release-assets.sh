@@ -82,8 +82,28 @@ if [ "$found" -eq 0 ]; then
   exit 0
 fi
 if [ "$found" -ne "$total" ]; then
-  echo "release contains an incomplete $kind asset set for $platform ($found of $total assets)" >&2
-  exit 1
+  if [ "$kind" != microvm ]; then
+    echo "release contains an incomplete $kind asset set for $platform ($found of $total assets)" >&2
+    exit 1
+  fi
+  completion="microvm-default-$platform.json"
+  if printf '%s\n' "$remote" | grep -Fx "$completion" >/dev/null; then
+    echo "release completion marker exists for an incomplete microVM asset set for $platform ($found of $total assets)" >&2
+    exit 1
+  fi
+  rm -rf "$output"
+  mkdir -p "$output"
+  for name in $names; do
+    if printf '%s\n' "$remote" | grep -Fx "$name" >/dev/null; then
+      gh release download "$tag" --repo "$repo" --pattern "$name" --dir "$output" >/dev/null
+    fi
+  done
+  [ -z "${GITHUB_OUTPUT:-}" ] || {
+    echo 'reused=false' >>"$GITHUB_OUTPUT"
+    echo 'partial=true' >>"$GITHUB_OUTPUT"
+  }
+  echo "Resuming incomplete microVM asset set for $platform ($found of $total assets); existing bytes will be checked against reconstructed candidates before upload"
+  exit 0
 fi
 
 rm -rf "$output"

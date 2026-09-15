@@ -91,28 +91,30 @@ admission still apply.
 
 ## Embedded mecatui journey
 
-Set the operator-owned deployment policy once in `~/.config/mecatl/settings.yaml`:
-
-```yaml
-execution:
-  default_placement: microvm-local
-```
-
-Then use the canonical administration command and launch the embedded server normally:
+Set the operator-owned deployment policy once in the XDG settings location. The
+following is copy-paste runnable and honors `$XDG_CONFIG_HOME`:
 
 ```sh
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+mkdir -p "$CONFIG_HOME/mecatl"
+cat >"$CONFIG_HOME/mecatl/settings.yaml" <<'YAML'
+execution:
+  default_placement: microvm-local
+YAML
 mecated microvm doctor
 mecatui
 ```
+
+This runs the canonical administration check and then launches the embedded server normally.
 
 `microvm doctor` is diagnostic only. With prerequisites satisfied, a fresh home reports
 `backend: ready to configure on first use` and exits successfully. Bare `mecatui` embeds
 its own server; do not start a separate `mecated serve` process. It resolves the operator
 execution policy, then the first-session screen shows bounded download, verification,
 installation, and daemon-start progress while the verified runtime is prepared. A
-preparation failure names a stable stage and directs the operator to `mecated microvm
-doctor` and the exact mecatui diagnostics log. `mecatui connect ADDRESS` is a pure remote
-client and never reads or forwards local placement intent.
+preparation failure names a bounded stage, category, and actionable cause, then directs the
+operator to `mecated microvm doctor` and the mecatui diagnostics log. `mecatui connect
+ADDRESS` is a pure remote client and never reads or forwards local placement intent.
 
 Inspect placement and resume without reselecting it:
 

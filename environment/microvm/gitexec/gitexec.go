@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 )
@@ -40,10 +41,44 @@ func run(ctx context.Context, dir string, stdin []byte, environment []string, ar
 	return runCommand(ctx, dir, nil, nil, stdin, environment, args...)
 }
 
+// RunStream invokes Git while streaming stdin and stdout. Stderr is bounded so
+// repository-controlled path diagnostics cannot consume unbounded host memory.
+func RunStream(ctx context.Context, dir string, stdin io.Reader, stdout io.Writer, args ...string) error {
+	if len(args) == 0 {
+		return errors.New("git command is required")
+	}
+	commandArgs := commandArguments(nil, args)
+	cmd := exec.CommandContext(ctx, "git", commandArgs...)
+	cmd.Dir = dir
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	stderr := &limitedBuffer{remaining: 64 << 10}
+	cmd.Stderr = stderr
+	cmd.Env = commandEnvironment(nil)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git %s: %w: %s", args[0], err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return nil
+}
+
 func runCommand(ctx context.Context, dir string, extraFiles []*os.File, prefix []string, stdin []byte, environment []string, args ...string) ([]byte, error) {
 	if len(args) == 0 {
 		return nil, errors.New("git command is required")
 	}
+	commandArgs := commandArguments(prefix, args)
+	cmd := exec.CommandContext(ctx, "git", commandArgs...)
+	cmd.Dir = dir
+	cmd.ExtraFiles = extraFiles
+	cmd.Stdin = bytes.NewReader(stdin)
+	cmd.Env = commandEnvironment(environment)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, bytes.TrimSpace(out))
+	}
+	return out, nil
+}
+
+func commandArguments(prefix, args []string) []string {
 	commandArgs := make([]string, 0, len(fixedArgs)+len(prefix)+len(args)+1)
 	commandArgs = append(commandArgs, fixedArgs...)
 	commandArgs = append(commandArgs, prefix...)
@@ -51,12 +86,11 @@ func runCommand(ctx context.Context, dir string, extraFiles []*os.File, prefix [
 	if args[0] == "diff" {
 		commandArgs = append(commandArgs, "--no-ext-diff")
 	}
-	commandArgs = append(commandArgs, args[1:]...)
-	cmd := exec.CommandContext(ctx, "git", commandArgs...)
-	cmd.Dir = dir
-	cmd.ExtraFiles = extraFiles
-	cmd.Stdin = bytes.NewReader(stdin)
-	cmd.Env = append([]string{
+	return append(commandArgs, args[1:]...)
+}
+
+func commandEnvironment(environment []string) []string {
+	return append([]string{
 		"PATH=" + os.Getenv("PATH"),
 		"LC_ALL=C",
 		"GIT_CONFIG_NOSYSTEM=1",
@@ -65,9 +99,19 @@ func runCommand(ctx context.Context, dir string, extraFiles []*os.File, prefix [
 		"GIT_PAGER=cat",
 		"PAGER=cat",
 	}, environment...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, bytes.TrimSpace(out))
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	remaining int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	original := len(p)
+	if len(p) > b.remaining {
+		p = p[:b.remaining]
 	}
-	return out, nil
+	b.remaining -= len(p)
+	_, _ = b.Buffer.Write(p)
+	return original, nil
 }

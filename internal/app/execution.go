@@ -116,7 +116,8 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 			if cfg.MicroVMReadinessFailed != nil {
 				cfg.MicroVMReadinessFailed(microvmmanager.StagePrepare)
 			}
-			return requestErr
+			cfg.diag().Log(ctx, port.LevelWarn, "microvm-local readiness failed", "stage", string(microvmmanager.StagePrepare), "error", requestErr)
+			return publicMicroVMReadinessError(requestErr, microvmmanager.StagePrepare)
 		}
 		lastStage := microvmmanager.StagePrepare
 		ctx = microvmmanager.WithReadinessObserver(ctx, func(stage microvmmanager.ReadinessStage, message string) {
@@ -131,22 +132,16 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 			if cfg.MicroVMReadinessFailed != nil {
 				cfg.MicroVMReadinessFailed(lastStage)
 			}
-			if cfg.MicroVMReadinessFailureHint != "" {
-				cfg.diag().Log(ctx, port.LevelWarn, "microvm-local readiness failed", "stage", string(lastStage), "error", readyErr)
-				return fmt.Errorf("microvm-local preparation failed during %s; %s", lastStage, cfg.MicroVMReadinessFailureHint)
-			}
-			return readyErr
+			cfg.diag().Log(ctx, port.LevelWarn, "microvm-local readiness failed", "stage", string(lastStage), "error", readyErr)
+			return publicMicroVMReadinessError(readyErr, lastStage)
 		}
 		if readyEndpoint != endpoint {
 			endpointErr := fmt.Errorf("microvm-local readiness returned unexpected endpoint %q", readyEndpoint)
 			if cfg.MicroVMReadinessFailed != nil {
 				cfg.MicroVMReadinessFailed(lastStage)
 			}
-			if cfg.MicroVMReadinessFailureHint != "" {
-				cfg.diag().Log(ctx, port.LevelWarn, "microvm-local readiness failed", "stage", string(lastStage), "error", endpointErr)
-				return fmt.Errorf("microvm-local preparation failed during %s; %s", lastStage, cfg.MicroVMReadinessFailureHint)
-			}
-			return endpointErr
+			cfg.diag().Log(ctx, port.LevelWarn, "microvm-local readiness failed", "stage", string(lastStage), "error", endpointErr)
+			return publicMicroVMReadinessError(endpointErr, lastStage)
 		}
 		return nil
 	}
@@ -167,4 +162,9 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 	cfg.EnvironmentForkers[kind] = provider
 	cfg.EnvironmentMergers[kind] = provider
 	return cfg, nil
+}
+
+func publicMicroVMReadinessError(err error, fallback microvmmanager.ReadinessStage) error {
+	failure := microvmmanager.ClassifyReadinessFailure(err, fallback)
+	return server.NewPlacementReadinessError(failure.Stage, failure.Category, failure.Cause)
 }
