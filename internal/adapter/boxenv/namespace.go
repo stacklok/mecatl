@@ -16,6 +16,7 @@ import (
 
 var _ tool.WorkspaceNamespace = (*Workspace)(nil)
 
+// ReadDir lists the immediate entries in p within the Box workspace.
 func (w *Workspace) ReadDir(ctx context.Context, p string) ([]tool.FileInfo, error) {
 	dir, err := cleanDirPath(p)
 	if err != nil {
@@ -72,6 +73,7 @@ func (w *Workspace) ReadDir(ctx context.Context, p string) ([]tool.FileInfo, err
 	return entries, nil
 }
 
+// Remove deletes p without recursively removing non-empty directories.
 func (w *Workspace) Remove(ctx context.Context, p string) error {
 	key, err := cleanPath(p)
 	if err != nil {
@@ -98,6 +100,7 @@ func (w *Workspace) Remove(ctx context.Context, p string) error {
 	}
 }
 
+// Rename moves oldPath to newPath without overwriting an existing destination.
 func (w *Workspace) Rename(ctx context.Context, oldPath, newPath string) error {
 	oldKey, err := cleanPath(oldPath)
 	if err != nil {
@@ -130,6 +133,7 @@ func (w *Workspace) Rename(ctx context.Context, oldPath, newPath string) error {
 	}
 }
 
+// CopyFile copies source to a new destination and returns the destination version.
 func (w *Workspace) CopyFile(ctx context.Context, source, destination string) (tool.FileVersion, error) {
 	srcKey, err := cleanPath(source)
 	if err != nil {
