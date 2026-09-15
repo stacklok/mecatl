@@ -224,6 +224,18 @@ type Deps struct {
 	// selection always wins — this field is simply never set true then.
 	ThemeAutoDetect bool
 
+	// ProbeKeyboardCapability bounds how long the prompt's newline hint trusts its
+	// optimistic chord: composition sets it true only when stdout is a real TTY.
+	// Bubble Tea asks every terminal for its keyboard enhancements on the first
+	// render, but a terminal that does not implement them answers nothing at all,
+	// so an unanswered query is the only signal there is and it needs a deadline.
+	// There is nothing to answer on redirected output or in a test harness, so the
+	// deadline is not armed there and the hint keeps its optimistic chord. An
+	// explicit negative reply still corrects the hint immediately, armed or not.
+	// See keyboardProbeDeadline for why an unanswered query is treated as
+	// unconfirmed rather than as a proven negative.
+	ProbeKeyboardCapability bool
+
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
@@ -678,7 +690,23 @@ type Model struct {
 	// repeat/release event types. The destructive physical gesture fails closed
 	// while false. doubleEscapeReleased records the release boundary for the
 	// current arm; doubleEscapeTimer is the deterministic scheduling test seam.
-	keyboardEventTypes   bool
+	keyboardEventTypes bool
+	// newlineHintLegacyOnly drives WHICH newline chord the prompt hint advertises;
+	// it gates no behavior, because every chord stays bound either way. It starts
+	// false (advertise the preferred chord, normally shift+enter) and flips once
+	// the terminal's support for a modified Enter is unconfirmed.
+	//
+	// keyboardProbeSettled records that the question is decided, by either of the
+	// two signals that can decide it: an explicit KeyboardEnhancementsMsg, or the
+	// probe deadline passing with no reply at all (the only signal an unsupporting
+	// terminal gives is silence). It makes the deadline idempotent and stops a late
+	// reply from being second-guessed. Note what the pair does NOT claim: a true
+	// here means support was not confirmed, not that it was disproved.
+	newlineHintLegacyOnly bool
+	keyboardProbeSettled  bool
+	// keyboardProbeTimer is the deterministic scheduling test seam, mirroring
+	// doubleEscapeTimer below.
+	keyboardProbeTimer   keyboardProbeTimerFunc
 	doubleEscapeArmed    bool
 	doubleEscapeReleased bool
 	doubleEscapeGen      int
@@ -983,7 +1011,10 @@ func New(deps Deps) Model {
 	hk := keyMarkingsWithScroll(keys, deps.scrollKeysMarking())
 
 	prompt := prompttextarea.New(prompttextarea.Config{
-		Placeholder: "Ask mecatl to do something…  (" + hk.submit + " to send · " + hk.newlineFirst + " for newline · " + hk.help + " for help)",
+		// New runs before the terminal has answered any capability query, so the
+		// newline chord starts on the binding's preferred chord and is rewritten
+		// only if the terminal proves it cannot deliver it (settleKeyboardProbe).
+		Placeholder: promptPlaceholder(keys, false),
 		SelectAll:   keys.SelectAll,
 	})
 
@@ -1210,6 +1241,15 @@ type startupResumeReadyMsg struct{}
 // CreateSession directly (the historical path, with an empty selection).
 func (m Model) Init() tea.Cmd {
 	startup := m.startupCmd()
+	// The keyboard-capability probe deadline wraps structurally around whatever
+	// startup fires, for the same reason the theme auto-detect below does: the
+	// prompt hint's optimistic newline chord needs a bound on how long it trusts
+	// itself, and Bubble Tea issues the capability query on the first render
+	// regardless of which startup branch ran. Deps.ProbeKeyboardCapability is
+	// false unless composition armed it (stdout is a real TTY).
+	if m.deps.ProbeKeyboardCapability {
+		startup = tea.Batch(m.keyboardProbeDeadlineCmd(), startup)
+	}
 	// The light/dark auto-detect (ADR 0280) wraps structurally around whatever
 	// startup fires, so every branch gets it without threading a themeDetectCmd
 	// through each one. Deps.ThemeAutoDetect is false unless composition armed it
@@ -1254,4 +1294,13 @@ func (m Model) startupCmd() tea.Cmd {
 	// reconcile, so fire CreateSession directly (with the empty selection) — do NOT
 	// wait on a ListModels that will never arrive, which would strand at "connecting…".
 	return tea.Batch(m.sp.Tick, m.createSessionCmd(), m.statusLineWaitCmd())
+}
+
+// promptPlaceholder renders the empty-prompt hint. It is the ONE place the prompt
+// names its chords, so the capability-dependent newline chord is chosen here and
+// nowhere else. (The welcome splash carries only a submit hint, which no terminal
+// capability affects.)
+func promptPlaceholder(km keyMap, legacyOnly bool) string {
+	return "Ask mecatl to do something…  (" + firstKey(km.Submit, "enter") + " to send · " +
+		newlineHintChord(km, legacyOnly) + " for newline · " + firstKey(km.Help, "?") + " for help)"
 }

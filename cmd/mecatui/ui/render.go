@@ -261,8 +261,15 @@ type joinPrefixState struct {
 // also fully determines the virtual cursor's blink phase — mecatui never routes
 // cursor.BlinkMsg to the textarea, so the cursor is static: visible while focused,
 // hidden while blurred; if blink routing is ever added, the blink phase must join
-// this key), and the box dimensions. The theme, placeholder, and prompt are fixed
-// per process and need no key slot.
+// this key), the box dimensions, and the placeholder. The theme and prompt are
+// fixed per process and need no key slot.
+//
+// The placeholder is keyed because it is NOT fixed per process: the newline chord
+// it advertises is rewritten if the terminal proves it cannot deliver the chord
+// mecatui started on (see settleKeyboardProbe). That correction arrives on a
+// timer with no other model change behind it, so without a key slot the corrected
+// hint would sit in the model unpainted until unrelated input happened to re-key
+// the cache — which is precisely when the user no longer needs it.
 type inputRenderKey struct {
 	value                              string
 	row                                int // cursor's logical line (textarea.Line)
@@ -274,6 +281,7 @@ type inputRenderKey struct {
 	focused                            bool
 	width, height                      int
 	mode                               string
+	placeholder                        string
 }
 
 // mdEntry is one memoized assistant-block render: the source text and wrap width
