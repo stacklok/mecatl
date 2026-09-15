@@ -173,6 +173,109 @@ func TestSelectionStoreRealpathKeying(t *testing.T) {
 	}
 }
 
+// writeGitWorktreeLayout lays out a minimal git linked-worktree filesystem
+// structure under a temp dir: mainRoot/.git (a plain directory, the "ordinary
+// checkout") and worktreeRoot/.git (a FILE pointing at
+// mainRoot/.git/worktrees/<name>, whose "commondir" sibling points back at
+// mainRoot/.git) — exactly what `git worktree add` produces, built by hand so
+// the test stays offline (no real git invocation).
+func writeGitWorktreeLayout(t *testing.T, mainRoot, worktreeRoot, name string) {
+	t.Helper()
+	mainGitDir := filepath.Join(mainRoot, ".git")
+	if err := os.MkdirAll(mainGitDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	adminDir := filepath.Join(mainGitDir, "worktrees", name)
+	if err := os.MkdirAll(adminDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktreeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pointer := "gitdir: " + adminDir + "\n"
+	if err := os.WriteFile(filepath.Join(worktreeRoot, ".git"), []byte(pointer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSelectionStoreWorktreesShareRepoIdentity asserts that a pick made in a git
+// linked worktree lands on the SAME entry as the main checkout — a worktree switch
+// is no more a model-relevant event than a branch switch in one checkout — while an
+// ordinary (non-worktree) checkout keeps its own realpath keying unchanged.
+func TestSelectionStoreWorktreesShareRepoIdentity(t *testing.T) {
+	stateHome := t.TempDir()
+	repoRoot := t.TempDir()
+	worktreeRoot := filepath.Join(t.TempDir(), "wt")
+	writeGitWorktreeLayout(t, repoRoot, worktreeRoot, "wt")
+	store := newSelectionStore(fakeStateEnv(stateHome))
+
+	// A pick made from inside the WORKTREE...
+	sel := client.ModelSelection{ProviderID: "toolhive", ModelID: "gpt-5.6-luna"}
+	if err := store.Save(worktreeRoot, sel); err != nil {
+		t.Fatalf("Save(worktreeRoot): %v", err)
+	}
+
+	// ...is visible from the MAIN checkout root, and vice versa.
+	store2 := newSelectionStore(fakeStateEnv(stateHome))
+	if got := store2.Load(repoRoot); got != sel {
+		t.Fatalf("Load(repoRoot) = %+v, want the worktree's pick %+v (shared repo identity)", got, sel)
+	}
+	if got := store2.Load(worktreeRoot); got != sel {
+		t.Fatalf("Load(worktreeRoot) = %+v, want %+v", got, sel)
+	}
+
+	// A pick made from the MAIN checkout updates the SAME shared entry.
+	sel2 := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
+	if err := store2.Save(repoRoot, sel2); err != nil {
+		t.Fatalf("Save(repoRoot): %v", err)
+	}
+	store3 := newSelectionStore(fakeStateEnv(stateHome))
+	if got := store3.Load(worktreeRoot); got != sel2 {
+		t.Fatalf("Load(worktreeRoot) after main-checkout save = %+v, want %+v (one shared identity)", got, sel2)
+	}
+
+	// The state file has exactly ONE workspace entry, not two.
+	data, err := os.ReadFile(filepath.Join(stateHome, "mecatui", "models.yaml"))
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	if strings.Count(string(data), "providerId:") != 1 {
+		t.Fatalf("expected exactly one persisted entry (shared identity), got:\n%s", data)
+	}
+}
+
+// TestSelectionStoreOrdinaryCheckoutUnaffected asserts an ordinary git checkout
+// (a plain ".git" directory, no worktree layer) still keys on its own realpath,
+// exactly as before this feature — so existing entries for a main checkout are
+// never invalidated by the worktree-unification logic.
+func TestSelectionStoreOrdinaryCheckoutUnaffected(t *testing.T) {
+	stateHome := t.TempDir()
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := newSelectionStore(fakeStateEnv(stateHome))
+
+	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
+	if err := store.Save(repoRoot, sel); err != nil {
+		t.Fatalf("Save(repoRoot): %v", err)
+	}
+	store2 := newSelectionStore(fakeStateEnv(stateHome))
+	if got := store2.Load(other); got != (client.ModelSelection{}) {
+		t.Fatalf("Load(other) = %+v, want the zero selection — unrelated repos still don't share an entry", got)
+	}
+	if got := store2.Load(repoRoot); got != sel {
+		t.Fatalf("Load(repoRoot) = %+v, want %+v", got, sel)
+	}
+}
+
 // TestSelectionStoreSaveGlobalDefault covers the global-default writer: it
 // round-trips, is read by LoadGlobalDefault, and PRESERVES the per-workspace map +
 // version (read-modify-write touching only the default block).
