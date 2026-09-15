@@ -8,6 +8,7 @@
 **Delivery:** Split. Shared cursor, layout, style, and pointer semantics need human interface review before implementation changes multiple surfaces.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1589](https://github.com/stacklok/mecatl/issues/1589).
+**Plan PR:** [#1593](https://github.com/stacklok/mecatl/pull/1593)
 
 Mecatui will establish package-private bounded browsing and logical-item cursor behavior by consolidating or extending the existing helpers in [`cmd/mecatui/ui/window.go`](../../cmd/mecatui/ui/window.go) and [`cmd/mecatui/ui/agents_overlay.go`](../../cmd/mecatui/ui/agents_overlay.go). The behavior is proved in the unified Agents overlay—whose rosters and details exercise both modes—and the `/models` picker. Filtering, actions, domain state, confirmation, and data loading remain surface-owned; private helper names and type layout are not acceptance surfaces.
 
