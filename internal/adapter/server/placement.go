@@ -103,6 +103,9 @@ type PlacementBindRequest struct {
 	Principal *session.Principal
 	Scope     PlacementScope
 	Operation PlacementOperation
+	// BindingID is the final server-minted session identity. Providers that
+	// allocate durable environments use it as their idempotency/reference key.
+	BindingID session.SessionID
 }
 
 // PlacementMetadata is the bounded, display-safe provider projection returned
@@ -159,6 +162,14 @@ type PlacementReattachRequest struct {
 	Ref       session.EnvironmentRef
 	Principal *session.Principal
 	Scope     PlacementScope
+	// BindingID identifies the durable reference being reattached.
+	BindingID session.SessionID
+}
+
+// PlacementValidator performs side-effect-free startup validation. Providers
+// whose Bind allocates resources implement this seam so preflight never binds.
+type PlacementValidator interface {
+	ValidatePlacement(context.Context) error
 }
 
 // PlacementBinder is the server-owned choke point around one deployment
@@ -241,10 +252,14 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	if err != nil {
 		return nil, err
 	}
-	// NewService runs before a listener can serve. Binding the configured
-	// default proves that its current record is authorized, available,
-	// revision-stable, and capable of constructing a complete environment. The
-	// result is deliberately not cached.
+	if validator, ok := cfg.PlacementProvider.(PlacementValidator); ok {
+		if err := validator.ValidatePlacement(ctx); err != nil {
+			return nil, fmt.Errorf("server: validate default placement: %w", sanitizePlacementProviderError(err))
+		}
+		return binder, nil
+	}
+	// Legacy providers validate by binding the configured default. Providers whose
+	// Bind allocates must implement PlacementValidator above.
 	validation, err := binder.Bind(ctx, PlacementBindRequest{
 		Selector: DefaultPlacement(), Scope: cfg.PlacementScope,
 		Operation: PlacementOperationCreate,
@@ -258,14 +273,14 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	return binder, nil
 }
 
-func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
+func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal, bindingID session.SessionID) (string, *PlacementBinding, error) {
 	selector := DefaultPlacement()
 	if profile == ProfileNoFS {
 		selector = NoFSPlacement()
 	}
 	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
-		Operation: PlacementOperationCreate,
+		Operation: PlacementOperationCreate, BindingID: bindingID,
 	})
 	if err != nil {
 		return "", nil, err
@@ -318,7 +333,7 @@ func (s *Service) privateWorkspace(ctx context.Context, sess *session.Session) (
 	if ok && env.Ref() == sess.EnvironmentRef && env.Workspace() != nil {
 		return env.Workspace().Root(), nil
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	binding, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 	if err != nil {
 		return "", err
 	}

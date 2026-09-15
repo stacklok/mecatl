@@ -6544,6 +6544,40 @@ deny-dominant (the inner fold runs first — a configured Deny or configured Ask
 reaches the checker). Default `false` is the byte-identical un-routed posture table. See
 `docs/adr/0080-guardrail-routed-escape-checking.md`.
 
+### Experimental native Kubernetes execution provider
+
+The opt-in candidate composes a separately deployed provider through
+`internal/adapter/executionclient/client.go` (`Provider`). The private
+`/internal/execution/v1` mTLS API authenticates an exact URI SAN, binds short-lived
+Ed25519 grants to client, owner hash, session binding, environment revision,
+epoch, and a closed operation set, and sends credential-free requests to the
+workload helper. `internal/adapter/executioncontroller/handler.go` (`Handler`)
+owns authentication and grant checks; `internal/adapter/executioncontroller/store.go`
+(`execute`) claims the one CR status operation before dispatch and marks
+uncertain completion `FenceUnknown`.
+
+`internal/adapter/executioncontroller/controller.go` (`Reconciler`) watches the
+namespaced `ExecutionEnvironment` CR and creates a retained PVC plus a
+single executor Pod from an operator-only, digest-pinned profile. The Pod
+has no service-account token and contains the fixed helper built by
+`build/execution-workload/Dockerfile`. `internal/executionexecutor/executor.go`
+(`Executor.Execute`) dispatches bounded file operations and foreground Shell in
+`/workspace`. Authority-resource resolution is itself an authenticated
+`file.resolve_authority` operation: the executor invokes the existing physical
+`osfs` resolver, and the remote Workspace returns only the confined canonical
+`/workspace` identity. Resolver, transport, authorization, or confinement errors
+fail closed before the external authority evaluator runs; there is no lexical
+client-side substitute.
+
+Composition selects this path only when `Config.RemoteExecution` is set. The
+remote catalog excludes local project ingestion, schedules, SkillDraft,
+Parallel, and Team, while explicit `profile:"no-fs"` still selects the existing
+no-FS placement. The `mecatl-execution` and `mecak8s` charts remain independent.
+The current candidate does not complete run-wide execution ownership, successor
+binding/reference release, controlled executor replacement or PVC deletion, or
+multi-key rotation/revocation. Unproven executor loss remains `FenceUnknown` and
+has no automated takeover.
+
 ### Server-owned session placement and worktree successors (ADR 0291)
 
 Placement is server-owned across embedded, loopback, remote, and cloud-native composition.

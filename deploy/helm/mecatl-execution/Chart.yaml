@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mecatl-execution
+version: 0.1.0-draft
+appVersion: dev
+description: Optional native Kubernetes execution provider (draft)
+type: application

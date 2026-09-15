@@ -146,6 +146,9 @@ type Config struct {
 	// PlacementScope is the trusted authorization scope passed to the provider.
 	// Empty defaults to the process deployment scope.
 	PlacementScope server.PlacementScope
+	// RemoteExecution selects the remote-environment catalog attenuation and
+	// model-visible posture. It is set only by an explicit composition root.
+	RemoteExecution bool
 	// ClientMCPOnCreate permits client-provided MCP servers on a session-creating
 	// API request (issue #821, ADR 0237 applied to outbound MCP). It is a
 	// deployment policy the cmd/ main decides from its listener topology and Build passes through verbatim; the zero value fails
@@ -2138,18 +2141,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		sessionReadLedger = redisBackend.ReadLedger
 	}
 	worktreeLister := buildWorktreeLister(cfg)
+	selectorIssuer, err := server.NewWorktreeSelectorIssuer(placementSelectorKey[:])
+	if err != nil {
+		return nil, fmt.Errorf("initialize placement selector issuer: %w", err)
+	}
+	localProvider := &localPlacementProvider{
+		scope: placementScope, root: cfg.Workspace, workspace: workspaceFactory,
+		runnerForRoot: func(root string) tool.CommandRunner {
+			return buildCommandRunnerForRoot(cfg, root)
+		},
+		worktrees: worktreeLister, selectors: selectorIssuer,
+	}
 	if placementProvider == nil {
-		selectorIssuer, err := server.NewWorktreeSelectorIssuer(placementSelectorKey[:])
-		if err != nil {
-			return nil, fmt.Errorf("initialize placement selector issuer: %w", err)
-		}
-		placementProvider = &localPlacementProvider{
-			scope: placementScope, root: cfg.Workspace, workspace: workspaceFactory,
-			runnerForRoot: func(root string) tool.CommandRunner {
-				return buildCommandRunnerForRoot(cfg, root)
-			},
-			worktrees: worktreeLister, selectors: selectorIssuer,
-		}
+		placementProvider = localProvider
+	} else if cfg.RemoteExecution {
+		placementProvider = &profilePlacementProvider{remote: placementProvider, local: localProvider}
 	}
 	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
 	if attempts != nil {
@@ -2993,6 +2999,19 @@ func sessionEngineFactory(
 	}
 }
 
+func remoteSessionConfiguration(cfg Config, profile server.SessionProfile, workspace string, instructions prompt.InstructionAssembler, policy port.PermissionPolicy) (string, bool, prompt.InstructionAssembler, port.PermissionPolicy) {
+	if !cfg.RemoteExecution || profile == server.ProfileNoFS {
+		return workspace, false, instructions, policy
+	}
+	if variants, ok := instructions.(sessionInstructionSet); ok {
+		instructions = variants.remote
+	}
+	if variants, ok := policy.(sessionPermissionPolicies); ok {
+		policy = variants.remote
+	}
+	return "", true, instructions, policy
+}
+
 func sessionEngineFactoryWithTools(
 	cfg Config,
 	reg *providerRegistry,
@@ -3017,7 +3036,8 @@ func sessionEngineFactoryWithTools(
 		// is scoped to this one session's assembly; the SHARED engine keeps the
 		// build-time pin over cfg.Workspace (the server's own root — the one
 		// the shared engine was assembled for).
-		cfg.childPermResolver = childPermResolverFor(cfg, workspace)
+		projectWorkspace, remote, sessionInstructions, sessionPolicy := remoteSessionConfiguration(cfg, profile, workspace, instructions, policy)
+		cfg.childPermResolver = childPermResolverFor(cfg, projectWorkspace)
 		// The NO-FS profile (issue #55): the service routes every no-fs session
 		// through this factory unconditionally (the shared engine has the FS tools
 		// baked in), and the profile selects the no-FS catalog assembly + the
@@ -3186,7 +3206,7 @@ func sessionEngineFactoryWithTools(
 		// Caller-scoped lazy hydration: rebuild this authenticated session's global
 		// and admitted project generations from durable state before binding the
 		// Skill tool. A failed authoritative read clears only these partitions.
-		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, assets, workspace)
+		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, assets, projectWorkspace)
 
 		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider:        resolvedProvider,
@@ -3195,6 +3215,7 @@ func sessionEngineFactoryWithTools(
 			clientMgr:       mgr,
 			narrate:         false,
 			noFS:            noFS,
+			remote:          remote,
 			mode:            mode,
 			skillPartitions: skillPartitions,
 			sessionTools:    sessionTools,
@@ -3206,13 +3227,14 @@ func sessionEngineFactoryWithTools(
 		// the shared wiring, so no collaborator is silently dropped and a non-default
 		// provider never contaminates compaction/counting.
 		learningCfg := cfg
-		learningCfg.Workspace = workspace
-		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
+		learningCfg.Workspace = projectWorkspace
+		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, projectWorkspace)
 		learningCfg.Model = resolvedModel
 		learningCfg.attemptRepository = assets.attemptRepository
 		learningCfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
-		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
+		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, sessionPolicy, hooks, mcpProvider, sessionInstructions)
+		deps.PromptConfig = applyRemoteExecutionPosture(deps.PromptConfig, remote)
 		attachOperatorProfile(&deps, assets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
 		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmission, buildProcedureProcessor(learningCfg, assets)), assets.reflectionLifecycle)
@@ -4077,7 +4099,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the tier-0 project MemoryIndexAssembler. Operator facts no longer ride a
 	// turn-0 user fragment; the same user store is loaded per request into the
 	// volatile system-prompt suffix below.
-	instructions := buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
+	instructions := sessionInstructionSet{
+		standard: buildInstructionAssembler(rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg)),
+		remote:   buildInstructionAssembler(nil, soulSrc, memStore, userModelStore, true),
+	}
 
 	// Guardrails decorate the ordinary hook chain. Completion learning has its own
 	// synchronous engine seam and no longer shares Stop-hook ownership.
@@ -4111,7 +4136,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// recursion guard and operator-tier-only config carry over); the option is a
 	// no-op at any non-auto posture or with no checker, so yolo/strict/trusted
 	// and the un-knobbed auto stay byte-identical.
-	sharedPolicy := escapePolicyForConfig(cfg, reg, provider, policy)
+	sharedPolicy := sessionPermissionPolicies{
+		standard: escapePolicyForConfig(cfg, reg, provider, policy),
+		remote: escapePolicyForConfig(cfg, reg, provider,
+			permpolicy.NewPolicyWithResolver(mainRules(cfg), learned, nil, mainEvaluatorOptions(cfg)...)),
+	}
 	var learningAdmission *learningAdmission
 	if cfg.operatorLearningMode != learning.Off {
 		learningAdmission = newLearningAdmission(cfg.UserModelReviewInterval)
@@ -4179,6 +4208,27 @@ func attachOperatorProfile(deps *agent.Deps, store tool.MemoryStore) {
 	if store != nil {
 		deps.OperatorProfileSource = store
 	}
+}
+
+type sessionPermissionPolicies struct {
+	standard port.PermissionPolicy
+	remote   port.PermissionPolicy
+}
+
+func (p sessionPermissionPolicies) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
+	return p.standard.Evaluate(ctx, id, mode, call, ws)
+}
+func (p sessionPermissionPolicies) Learn(id session.SessionID, call session.ToolCall) {
+	p.standard.Learn(id, call)
+}
+
+type sessionInstructionSet struct {
+	standard prompt.InstructionAssembler
+	remote   prompt.InstructionAssembler
+}
+
+func (s sessionInstructionSet) Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error) {
+	return s.standard.Assemble(ctx, ws)
 }
 
 // buildInstructionAssembler composes the ephemeral turn-0 instruction fragments:
@@ -5304,7 +5354,7 @@ func compactionDecision(cfg Config) diagFact {
 // here with the composition-resolved provider (or the not-configured sentinel),
 // NOT as a zero-value tools.All()/NoFS() entry — an only-when-configured tool that
 // vanishes would be the silent-disable this harness avoids.
-func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProvider tool.SearchProvider) {
+func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS, remote bool, searchProvider tool.SearchProvider) {
 	if noFS {
 		for _, t := range tools.NoFS() {
 			cat.MustRegister(t)
@@ -5316,7 +5366,8 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 		cat.MustRegister(t)
 	}
 	cat.MustRegister(tools.NewWebSearchTool(searchProvider))
-	if runner := buildCommandRunner(cfg); runner != nil {
+	runner := buildCommandRunner(cfg)
+	if runner != nil || remote {
 		// The AGENT-loop Shell tool (not the fstools one): foreground byte-identical,
 		// plus the `background: true` detach over the run's child registry. Its
 		// companion ShellStatus — the SOLE status/collect/cancel channel for those
@@ -5326,7 +5377,11 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 		cat.MustRegister(agent.NewShellTool())
 		cat.MustRegister(agent.NewShellStatusTool())
 		if log {
-			cfg.diag().Log(context.Background(), port.LevelInfo, "Shell tool ENABLED", "shell", cfg.Shell, "cwd", cfg.Workspace)
+			if remote {
+				cfg.diag().Log(context.Background(), port.LevelInfo, "Shell tool ENABLED", "shell", "remote execution")
+			} else {
+				cfg.diag().Log(context.Background(), port.LevelInfo, "Shell tool ENABLED", "shell", cfg.Shell, "cwd", cfg.Workspace)
+			}
 		}
 	} else if log {
 		cfg.diag().Log(context.Background(), port.LevelInfo, "Shell tool DISABLED (shell-less mode): the agent has no command execution",
@@ -5634,6 +5689,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		provider:   provider,
 		providerID: reg.Default(),
 		model:      cfg.Model,
+		remote:     cfg.RemoteExecution,
 		narrate:    true,
 	})
 	// Aggregate the build-time Subagent per-def INLINE MCP managers' teardown into
@@ -8122,6 +8178,20 @@ func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
 }
 
 const workspaceRootForPrompt = "/workspace"
+
+const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills, commands, schedules, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
+
+func applyRemoteExecutionPosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "remote foreground shell", ""
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + remoteExecutionPostureNote
+	return pc
+}
 
 func applyDebugSessionPosture(pc prompt.Config, target session.SessionID, selectedServers []string) prompt.Config {
 	if pc.Role == "" {

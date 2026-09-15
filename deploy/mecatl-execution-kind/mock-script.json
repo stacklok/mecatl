@@ -1,0 +1,16 @@
+{
+  "turns": [
+    {"tool_calls":[{"id":"write-proof","name":"Write","args":{"path":"proof.txt","content":"alpha\n"}}]},
+    {"tool_calls":[{"id":"read-before-edit","name":"Read","args":{"path":"proof.txt"}}]},
+    {"tool_calls":[{"id":"edit-proof","name":"Edit","args":{"path":"proof.txt","old_string":"alpha","new_string":"beta"}}]},
+    {"tool_calls":[{"id":"copy-proof","name":"Copy","args":{"source":"proof.txt","destination":"copy.txt"}}]},
+    {"tool_calls":[{"id":"move-proof","name":"Move","args":{"source":"copy.txt","destination":"moved.txt"}}]},
+    {"tool_calls":[{"id":"glob-proof","name":"Glob","args":{"pattern":"*.txt"}},{"id":"grep-proof","name":"Grep","args":{"pattern":"beta","path":"*.txt"}}]},
+    {"tool_calls":[{"id":"write-mod","name":"Write","args":{"path":"go.mod","content":"module example.com/qualification\n\ngo 1.27\n"}}]},
+    {"tool_calls":[{"id":"write-test","name":"Write","args":{"path":"remote_test.go","content":"package qualification\n\nimport (\"os\"; \"testing\")\n\nfunc TestRemoteWorkspace(t *testing.T) { b, err := os.ReadFile(\"proof.txt\"); if err != nil { t.Fatal(err) }; if string(b) != \"beta\\n\" { t.Fatalf(\"proof = %q\", b) } }\n"}}]},
+    {"tool_calls":[{"id":"shell-go-test","name":"Shell","args":{"command":"go test ./...","timeout_ms":120000}}]},
+    {"tool_calls":[{"id":"remove-moved","name":"Remove","args":{"path":"moved.txt"}}]},
+    {"tool_calls":[{"id":"read-final","name":"Read","args":{"path":"proof.txt"}}]},
+    {"text":"REMOTE_EXECUTION_QUALIFICATION_COMPLETE"}
+  ]
+}

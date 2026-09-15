@@ -18,6 +18,34 @@ const (
 	defaultPlacementScope         = server.PlacementScope("deployment")
 )
 
+type profilePlacementProvider struct {
+	remote server.PlacementProvider
+	local  *localPlacementProvider
+}
+
+func (p *profilePlacementProvider) ValidatePlacement(ctx context.Context) error {
+	if validator, ok := p.remote.(server.PlacementValidator); ok {
+		return validator.ValidatePlacement(ctx)
+	}
+	return nil
+}
+func (p *profilePlacementProvider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+	if req.Selector.IsNoFS() {
+		return p.local.Bind(ctx, req)
+	}
+	return p.remote.Bind(ctx, req)
+}
+func (p *profilePlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	if req.Ref.Kind == session.EnvKindNoFS {
+		return p.local.Reattach(ctx, req)
+	}
+	remote, ok := p.remote.(server.PlacementReattacher)
+	if !ok {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	return remote.Reattach(ctx, req)
+}
+
 // localPlacementProvider is the trusted composition default. It owns exactly
 // one configured local record plus the no-FS attenuation; it has no inventory
 // registry or path-derived public identifier.
