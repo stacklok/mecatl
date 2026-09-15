@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,8 +59,8 @@ type stubTool struct{ name string }
 func (s stubTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: s.name, Description: "stub", Schema: []byte(`{"type":"object"}`)}
 }
-func (s stubTool) ReadOnly() bool { return true }
-func (s stubTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (stubTool) ReadOnly() bool { return true }
+func (stubTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, ""), nil
 }
 
@@ -191,7 +192,26 @@ func TestMemoryPostureLandsInBuiltEngineSystemPrompt(t *testing.T) {
 // applyMemoryPosture call there the commonest deployment would never see the
 // instruction. Driven through a full app.Build over a scripted provider.
 func TestMemoryPostureLandsOnSharedEngine(t *testing.T) {
-	t.Parallel()
+	// NOT parallel: t.Setenv below. Two things are load-bearing for reaching the
+	// SHARED engine, and both were proven by mutation (deleting the buildEngine
+	// call site must fail THIS test):
+	//
+	//   1. The XDG config base must be neutralised. resolveUserModelDir otherwise
+	//      falls back to the real <xdg>/mecatl/usermodel and builds a
+	//      learned-skill repository there, and a non-nil Config.LearnedSkills
+	//      routes EVERY session through the per-session factory. NoUserModel does
+	//      NOT cover this: it disables the user-model STORE, not the learned-skill
+	//      repository. Clearing the base also keeps the test off the developer's
+	//      real ~/.config.
+	//   2. The launch root must be symlink-resolved. Build sets SharedEngineRoot to
+	//      cfg.Workspace verbatim while placement verifies the root through the
+	//      filesystem, and sessionNeedsPerFactory compares the two for equality; on
+	//      macOS t.TempDir() hands back /var/... which resolves to /private/var/...
+	//
+	// The deployment therefore has PROJECT memory only, so the user clause must be
+	// absent — which is the per-clause honesty gate, exercised here end-to-end.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
 	ctx := context.Background()
 	var captured prompt.Layered
 	var invoked bool
@@ -202,15 +222,12 @@ func TestMemoryPostureLandsOnSharedEngine(t *testing.T) {
 		}),
 	}, mockllm.TextTurn("ok"))
 
-	// NoUserModel is what actually reaches the shared engine: a resolvable
-	// user-model dir builds a learned-skill repository, and Service.createSession
-	// routes EVERY session through the per-session factory when
-	// cfg.LearnedSkills != nil. Without it this test would silently assert the
-	// factory site a second time. The cost is that this deployment has only
-	// PROJECT memory, so the user clause must be absent — which is itself the
-	// per-clause honesty gate, exercised here end-to-end.
+	ws, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
 	built, err := Build(ctx, Config{
-		Workspace:    t.TempDir(),
+		Workspace:    ws,
 		Model:        "mock",
 		StoreDir:     t.TempDir(),
 		MemoryDir:    t.TempDir(),
