@@ -1,0 +1,27 @@
+fullnameOverride: ""
+provider:
+  image: ""
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  clientURISANs: []
+  ownerAttesterURISANs: []
+  administratorURISANs: []
+  tlsSecretName: ""
+  grantSigningSecretName: ""
+  grantKeyID: current
+service:
+  port: 8443
+profiles: {}
+# Example profile (all fields are required):
+# profiles:
+#   go:
+#     image: registry.example/workload@sha256:<digest>
+#     storageClass: standard
+#     storageSize: 2Gi
+#     cpuRequest: 100m
+#     memoryRequest: 128Mi
+#     cpuLimit: "1"
+#     memoryLimit: 1Gi
+#     maxFileBytes: 5242880
+#     maxCommandBytes: 1048576
+#     maxCommandDuration: 5m

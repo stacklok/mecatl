@@ -59,7 +59,7 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 	if !persisted.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: session has no exact placement", ErrFailedPrecondition)
 	}
-	binding, err := s.ReattachPlacement(ctx, persisted.EnvironmentRef)
+	binding, err := s.ReattachPlacementForBinding(ctx, persisted.EnvironmentRef, persisted.ID)
 	if err != nil {
 		return nil, err
 	}

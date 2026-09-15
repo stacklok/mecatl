@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "service", "profiles"],
+  "properties": {
+    "fullnameOverride": {"type":"string"},
+    "provider": {"type":"object","additionalProperties":false,"required":["image","clientURISANs","ownerAttesterURISANs","tlsSecretName","grantSigningSecretName"],"properties":{"image":{"type":"string","pattern":"@sha256:[0-9a-fA-F]{64}$"},"imagePullPolicy":{"enum":["Always","IfNotPresent","Never"]},"replicas":{"const":1},"clientURISANs":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","pattern":"^[a-z][a-z0-9+.-]*://"}},"ownerAttesterURISANs":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string"}},"administratorURISANs":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"tlsSecretName":{"type":"string","minLength":1},"grantSigningSecretName":{"type":"string","minLength":1},"grantKeyID":{"type":"string","minLength":1}}},
+    "service":{"type":"object","additionalProperties":false,"required":["port"],"properties":{"port":{"type":"integer","minimum":1,"maximum":65535}}},
+    "profiles":{"type":"object","minProperties":1,"additionalProperties":{"type":"object","additionalProperties":false,"required":["image","storageClass","storageSize","cpuRequest","memoryRequest","cpuLimit","memoryLimit","maxFileBytes","maxCommandBytes","maxCommandDuration"],"properties":{"image":{"type":"string","pattern":"@sha256:[0-9a-fA-F]{64}$"},"storageClass":{"type":"string","minLength":1},"storageSize":{"type":"string","minLength":1},"cpuRequest":{"type":"string","minLength":1},"memoryRequest":{"type":"string","minLength":1},"cpuLimit":{"type":"string","minLength":1},"memoryLimit":{"type":"string","minLength":1},"maxFileBytes":{"type":"integer","minimum":1,"maximum":5242880},"maxCommandBytes":{"type":"integer","minimum":1,"maximum":1048576},"maxCommandDuration":{"type":"string","pattern":"^[1-9][0-9]*(ms|s|m)$"}}}}
+  }
+}

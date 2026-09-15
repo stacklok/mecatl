@@ -151,6 +151,120 @@ delegation cannot add filesystem access that the parent lacks.
 See [Execution environments](/features/execution-environments.md) for the
 shared placement, no-FS, child-environment, and reattachment model.
 
+### Experimental Kubernetes execution provider
+
+The repository contains a draft, experimental execution provider for an
+operator-controlled Kubernetes cluster. It runs as a separate service and
+controller with its own `mecatl-execution` chart. `mecak8s` remains a client: it
+has no Pod, PVC, custom-resource, or controller management permissions.
+
+This candidate is suitable for offline evaluation only. It does not yet provide
+run-wide execution ownership, complete successor reference binding and release,
+controlled executor replacement or PVC deletion, or complete signing-key
+rotation and revocation. Do not use it for hostile multitenancy or claim high
+availability from this configuration.
+
+Before you install it, prepare these values through your trusted image and
+Secret delivery system:
+
+- A digest-pinned provider image.
+- A digest-pinned workload image that contains `/mecatl-executor`, `/bin/sh`,
+  and the toolchain needed by foreground commands.
+- A server mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
+- A separate Ed25519 grant-signing Secret containing `key.pem`.
+- A `mecak8s` client mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
+- Exact client URI SANs for the `mecak8s` identity. The identity that attests
+  OIDC owners must also appear in `provider.ownerAttesterURISANs`.
+
+The following profile shows every required chart key. Save it as
+`execution-values.yaml` and replace each placeholder:
+
+```yaml
+provider:
+  image: <PROVIDER_IMAGE>@sha256:<PROVIDER_DIGEST>
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  clientURISANs:
+    - spiffe://<TRUST_DOMAIN>/client/mecak8s
+  ownerAttesterURISANs:
+    - spiffe://<TRUST_DOMAIN>/client/mecak8s
+  administratorURISANs: []
+  tlsSecretName: <PROVIDER_MTLS_SECRET>
+  grantSigningSecretName: <GRANT_SIGNING_SECRET>
+  grantKeyID: current
+
+service:
+  port: 8443
+
+profiles:
+  coding:
+    image: <WORKLOAD_IMAGE>@sha256:<WORKLOAD_DIGEST>
+    storageClass: <STORAGE_CLASS>
+    storageSize: 2Gi
+    cpuRequest: 100m
+    memoryRequest: 128Mi
+    cpuLimit: "1"
+    memoryLimit: 1Gi
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+```
+
+Install the provider chart separately from `mecak8s`:
+
+```sh
+helm upgrade --install mecatl-execution ./deploy/helm/mecatl-execution \
+  --namespace <NAMESPACE> \
+  --values execution-values.yaml
+kubectl rollout status deployment/mecatl-execution --namespace <NAMESPACE>
+```
+
+Add the following block to the existing `mecak8s` values. The endpoint must use
+the provider certificate's DNS identity. Keep OIDC caller authentication enabled;
+the remote binding is scoped to the verified issuer and subject.
+
+```yaml
+execution:
+  enabled: true
+  endpoint: https://mecatl-execution.<NAMESPACE>.svc:8443
+  profile: coding
+  tlsSecret: <MECAK8S_EXECUTION_MTLS_SECRET>
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
+```
+
+An enabled client conflicts with `workspace`, `redis.filesystem.enabled`,
+Parallel, and Team. Remote sessions receive the filesystem tools and foreground
+Shell, but do not ingest project instructions, rules, skills, or source from the
+remote PVC. Schedules, SkillDraft, background Shell, and delegated filesystem
+execution are outside this draft.
+
+The provider retains one PVC per logical environment. Session deletion and chart
+uninstall do not delete committed workspace data. Retirement requires no live
+references and a terminal executor; even then, this candidate retains the PVC.
+A missing executor or lost terminal receipt moves the environment to
+`FenceUnknown` and requires external operator fencing. There is no automated
+recovery from that state.
+
+Foreground command cancellation is cooperative and bounded. The helper attempts
+to terminate the command process group and reports a terminal receipt. If it
+cannot prove termination, the environment is fenced instead of admitting more
+work. There is no detached command status or cancellation API in this draft.
+
+The focused qualification task is `task e2e:k8s:execution`. It requires a generic
+local Go, `ko`, Podman, Kind, Helm, and `kubectl` toolchain. Optional toolbox use
+requires explicit `MECATL_EXECUTION_DEV_TOOLBOX` and
+`MECATL_EXECUTION_K8S_TOOLBOX` values. The task uses a synthetic OIDC issuer and
+the mock model provider, creates a unique state directory and Kind cluster, and
+retains both for inspection. It performs no cleanup. Kind's default kindnet does
+not enforce NetworkPolicy, so this flow provides no NetworkPolicy isolation
+evidence.
+
+When `execution.enabled` is `false`, the `mecak8s` chart mounts no execution mTLS
+Secret and passes no execution-provider flags. The separate provider chart and
+any environments it owns continue independently.
+
 The no-FS default is intentional. A standard mecak8s pod is storage-free and has
 no authoritative filesystem root, so the server binds omitted/default profile to
 its configured no-FS placement. Clients never send a workspace path; explicit

@@ -1523,11 +1523,21 @@ func (s *Service) BindPlacement(ctx context.Context, selector PlacementSelector,
 // ReattachPlacement authorizes and resolves the exact persisted environment
 // identity. It never invokes Bind and therefore cannot follow a changed default.
 func (s *Service) ReattachPlacement(ctx context.Context, ref session.EnvironmentRef) (PlacementBinding, error) {
+	return s.reattachPlacement(ctx, ref, "")
+}
+
+// ReattachPlacementForBinding supplies the durable session reference identity
+// required by allocating remote providers.
+func (s *Service) ReattachPlacementForBinding(ctx context.Context, ref session.EnvironmentRef, bindingID session.SessionID) (PlacementBinding, error) {
+	return s.reattachPlacement(ctx, ref, bindingID)
+}
+
+func (s *Service) reattachPlacement(ctx context.Context, ref session.EnvironmentRef, bindingID session.SessionID) (PlacementBinding, error) {
 	if s == nil || s.placementBinder == nil {
 		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrFailedPrecondition)
 	}
 	binding, err := s.placementBinder.Reattach(ctx, PlacementReattachRequest{
-		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope, BindingID: bindingID,
 	})
 	if err != nil {
 		s.logPlacementProviderError(ctx, "reattach", err)
@@ -2057,53 +2067,61 @@ func (s *Service) classifyCreateWinner(existing *session.Session, owner *session
 	return existing, nil
 }
 
-// reserveSessionID validates a caller-chosen session id (WithSessionID, ADR 0059
-// decision #7 Phase-2) against THREE collision sources and reserves it for the
-// duration of the create, returning a release func the caller MUST defer:
-//
-//  1. a LIVE per-session engine (sessionEngines — a collision would shadow an
-//     in-flight session);
-//  2. an in-flight create holding the id (reservedIDs — closes the old TOCTOU:
-//     the prior check released s.mu before the slow factory call and the separate
-//     registration, so two concurrent creates on the same id both passed);
-//  3. a PERSISTED session already in the store (a completed prior create is NOT
-//     in sessionEngines — e.g. the shared-engine fast path never registers there).
-//
-// The in-memory reservation (1)+(2) is taken under a single s.mu hold; the store
-// probe (3) runs after (no I/O under the mutex). On a collision or an infra probe
-// fault the reservation is released before returning the error. Once the session
-// is registered (per-session) or persisted (shared) the durable collision sources
-// take over, so the reservation only needs to live for the create.
-func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, owner *session.Principal, request createRequest) (existing *session.Session, release func(), err error) {
+func (s *Service) reserveCreateID(ctx context.Context, id session.SessionID, owner *session.Principal) (*session.Session, func(), error) {
 	s.mu.Lock()
 	_, liveEngine := s.sessionEngines[id]
 	_, reserved := s.reservedIDs[id]
 	if liveEngine || reserved {
 		s.mu.Unlock()
-		// Accurate for BOTH cases: a live per-session engine (liveEngine) OR a
-		// concurrent in-flight create holding the id (reserved).
 		return nil, nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
 	}
 	s.reservedIDs[id] = struct{}{}
 	s.mu.Unlock()
-	release = func() {
+	release := func() {
 		s.mu.Lock()
 		delete(s.reservedIDs, id)
 		s.mu.Unlock()
 	}
-	// Probe the store for a persisted session under this id. A not-found error
-	// means the id is clear; any other infrastructure fault fails closed and is
-	// exposed only through a content-free public category.
-	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
+	existing, err := s.cfg.Store.Load(ctx, id)
+	if errors.Is(err, port.ErrSessionNotFound) {
+		return nil, release, nil
+	}
+	if err != nil {
 		release()
-		winner, classifyErr := s.classifyCreateWinner(existing, owner, request)
-		return winner, nil, classifyErr
-	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
-		release()
-		s.logDiscoveryError(ctx, "probe session placement", lerr)
 		return nil, nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
-	return nil, release, nil
+	sameOwner := existing != nil && (existing.Owner == nil && owner == nil || existing.Owner.SameIdentity(owner))
+	if !sameOwner {
+		release()
+		return nil, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return existing, release, nil
+}
+
+func (s *Service) reserveGeneratedSessionID(ctx context.Context, id session.SessionID) (func(), error) {
+	s.mu.Lock()
+	_, liveEngine := s.sessionEngines[id]
+	_, reserved := s.reservedIDs[id]
+	if liveEngine || reserved {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
+	}
+	s.reservedIDs[id] = struct{}{}
+	s.mu.Unlock()
+	release := func() {
+		s.mu.Lock()
+		delete(s.reservedIDs, id)
+		s.mu.Unlock()
+	}
+	if existing, err := s.cfg.Store.Load(ctx, id); err == nil && existing != nil {
+		release()
+		return nil, port.ErrSessionAlreadyExists
+	} else if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
+		release()
+		s.logDiscoveryError(ctx, "probe generated session placement", err)
+		return nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
+	}
+	return release, nil
 }
 
 func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) error {
@@ -2222,6 +2240,27 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
 	owner := resolveOwner(ctx, opts)
+	// Durable placement allocation is keyed by the final session id. Mint it once
+	// before Bind; the id is never replaced after a remote allocation succeeds.
+	finalID := opts.id
+	generatedID := !opts.idSet
+	if opts.idSet && finalID == "" {
+		return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
+	}
+	if !opts.idSet {
+		finalID = s.cfg.NewID()
+	}
+	var existingCreate *session.Session
+	var releaseCreate func()
+	if generatedID {
+		releaseCreate, err = s.reserveGeneratedSessionID(ctx, finalID)
+	} else {
+		existingCreate, releaseCreate, err = s.reserveCreateID(ctx, finalID, owner)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer releaseCreate()
 	var placement *PlacementBinding
 	if opts.placement != nil {
 		if err := validatePlacementBinding(*opts.placement); err != nil {
@@ -2233,7 +2272,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner)
+		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID)
 		if err != nil {
 			return nil, err
 		}
@@ -2248,57 +2287,17 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		return nil, err
 	}
 
-	// Resolve the session id: the caller's override (WithSessionID, ADR 0059
-	// decision #7 Phase-2) wins; otherwise the Service's NewID generator mints a
-	// fresh one (the byte-identical pre-Phase-2 path). WithSessionID with an EMPTY
-	// id is rejected (the doc promises it), distinguished from "never called" by
-	// idSet. A caller-chosen id is validated + reserved by reserveSessionID (see
-	// its doc for the three collision sources); the reservation is released on
-	// EVERY exit path.
+	// Reserve the final id for the rest of creation. Placement allocation above is
+	// idempotent on this same key, so a retry cannot allocate a second environment.
+	request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
 	var retryRequest *createRequest
-	mintID := s.cfg.NewID
-	if opts.idSet {
-		if opts.id == "" {
-			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
-		}
-		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
+	if !generatedID {
 		retryRequest = &request
-		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
-		if err != nil {
-			return nil, err
+		if existingCreate != nil {
+			return s.classifyCreateWinner(existingCreate, owner, request)
 		}
-		if existing != nil {
-			return existing, nil
-		}
-		defer release()
-		mintID = func() session.SessionID { return opts.id }
 	}
-	// A broker attachment is keyed by the canonical persisted identity. Mint and
-	// reserve generated IDs before any attachment or catalogue construction.
-	if s.cfg.MCPBroker != nil && !opts.idSet {
-		id := mintID()
-		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
-		// Populate the outer retryRequest too (not just the local var used for
-		// reserveSessionID above): persistCreatedSession's collision-retry path
-		// (resolveCreateCollision) needs a non-nil *createRequest to classify an
-		// idempotent-retry winner on this generated-id branch, exactly as the
-		// opts.idSet branch above already does. Before this fix, retryRequest
-		// stayed nil here (the "request" identifier above is a fresh local, not
-		// the outer var), so resolveCreateCollision's request==nil guard always
-		// short-circuited and a genuine ErrSessionAlreadyExists from persistNewSession
-		// always hard-failed instead of resolving to the existing winner.
-		retryRequest = &request
-		existing, release, reserveErr := s.reserveSessionID(ctx, id, owner, request)
-		if reserveErr != nil {
-			return nil, reserveErr
-		}
-		if existing != nil {
-			release()
-			return nil, fmt.Errorf("%w: generated session id %q already exists", ErrInvalidArgument, id)
-		}
-		defer release()
-		mintID = func() session.SessionID { return id }
-	}
+	mintID := func() session.SessionID { return finalID }
 
 	// Issue #20 (model-switch context carryover): when a source session is
 	// named, validate it (turn-boundary) and snapshot its conversation ONCE
@@ -4974,7 +4973,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	if !sess.EnvironmentRef.Valid() {
 		return nil, tool.Environment{}, ErrInvalidPlacementSelection
 	}
-	verified, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	verified, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 	if err != nil {
 		return nil, tool.Environment{}, err
 	}

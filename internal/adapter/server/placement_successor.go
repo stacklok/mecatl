@@ -297,7 +297,7 @@ func successorProviderSelector(source *session.Session, req ForkSuccessorRequest
 
 func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement) (PlacementBinding, error) {
 	if requested.Selector == "" {
-		return s.ReattachPlacement(ctx, source.EnvironmentRef)
+		return s.ReattachPlacementForBinding(ctx, source.EnvironmentRef, source.ID)
 	}
 	if source.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return PlacementBinding{}, ErrPlacementNotFound

@@ -47,7 +47,7 @@ func (s *Service) localSessionContextRoot(ctx context.Context, id session.Sessio
 	if persisted.EnvironmentRef.Kind != session.EnvKindLocal {
 		return "", ErrFailedPrecondition
 	}
-	binding, err := s.ReattachPlacement(ctx, persisted.EnvironmentRef)
+	binding, err := s.ReattachPlacementForBinding(ctx, persisted.EnvironmentRef, persisted.ID)
 	if err != nil {
 		return "", err
 	}
