@@ -1265,7 +1265,7 @@ show the plain prompt-hint card.
 | `enter` (idle) | send the prompt |
 | `enter` (while a run streams) | **steer the current run** when supported (applies at the next turn boundary); otherwise **queue a follow-up** (staged; the whole queue is **merged into one prompt** and sent when the turn ends) |
 | `↑` (empty input, non-empty queue) | **edit queued** — pull the merged staged follow-ups back into the input for revising (non-destructive; the queue is emptied into the textarea, not dropped). Works both mid-run and while a paused queue is held. |
-| `shift+enter` (or `ctrl+j`) | newline in the input |
+| `shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter` | newline in the input. All four are bound unconditionally; which ones a terminal can send depends on whether it implements the Kitty keyboard protocol or `modifyOtherKeys` (Enter's legacy CR byte has nowhere to put a modifier). `ctrl+j` is a plain LF and always arrives; `alt+enter` is `ESC CR` and needs Option/Alt sent as Meta. The prompt hint names `shift+enter` and falls back to the binding's first legacy-safe chord once that capability is unconfirmed (an explicit no-enhancements reply, or an unanswered capability query at the `keyboardProbeDeadline`). |
 | paste (bracketed) | replace the active prompt selection, or insert clipboard text at the caret; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder, replacing the active selection before insertion or otherwise appending at the end of the input, expanding on send (ignored while an overlay/modal is open) |
 | `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else replace the active prompt selection with clipboard **text** (see below) |
 | `ctrl+u` | clear the entire unsent draft, including staged attachments and large-paste placeholders (rebindable via `ClearPrompt`) |
@@ -1407,7 +1407,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | Action | Default chord(s) | Scope | What it does |
 |---|---|---|---|
 | `Submit` | `enter` | global | send the prompt; while a run streams, steer when supported or queue a follow-up otherwise |
-| `Newline` | `shift+enter`, `ctrl+j` | global | newline in the input |
+| `Newline` | `shift+enter`, `ctrl+j`, `ctrl+enter`, `alt+enter` | global | newline in the input; the prompt hint advertises the FIRST chord, falling back to the first that survives legacy encoding (`chordSurvivesLegacyEncoding`) once key disambiguation is unconfirmed, so order the chords by preference |
 | `Cancel` | `esc` | global | cancel the running turn; the separate physical double-`esc` compatibility gesture clears an eligible idle draft within 500ms and is not remappable |
 | `ClearPrompt` | `ctrl+u` | global | clear the entire unsent draft, including staged attachments and large-paste placeholders |
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |

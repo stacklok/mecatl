@@ -218,6 +218,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	}
 	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
 	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
+	keyboardProbe := resolveKeyboardProbe(stdoutIsTTY)
 	if options.recoveryOnly {
 		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
 	}
@@ -292,48 +293,45 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
-		Conv:                   cl,
-		MCP:                    cl,
-		Cmds:                   cl,
-		ServerInfo:             cl,
-		Skills:                 cl,
-		Agents:                 cl,
-		Soul:                   cl,
-		UserModel:              cl,
-		Reflections:            cl,
-		Dream:                  cl,
-		Models:                 cl,
-		Worktrees:              cl,
-		Sched:                  cl,
-		Sessions:               cl,
-		StorageHealth:          cl,
-		Migration:              cl,
-		Cleanup:                cl,
-		SessionManagement:      cl,
-		Transcript:             cl,
-		Replayer:               cl,
-		LiveStream:             cl,
-		SelectionStore:         store,
-		Learning:               learningSettingsForConfig(cfg),
-		Connect:                savedConnectController{},
-		ConnectOpen:            options.connectOpen,
-		ConnectError:           options.connectError,
-		ConnectReason:          options.connectReason,
-		ConnectTarget:          options.connectTarget,
-		ConnectResumeSessionID: options.connectResumeSessionID,
-		BearerBacked:           dial.AuthToken != "" || dial.TokenSource != nil,
-		InitialModel:           initialSel,
-		WorkspaceDefault:       wsDefault,
-		WorkspaceDefaultSet:    wsDefaultSet,
-		GlobalDefault:          globalDefault,
-		Clipboard:              client.NewClipboard(),
-		Theme:                  th,
-		ThemeAutoDetect:        themeAutoDetect,
-		// Only a real terminal can answer the keyboard-capability query, so only a
-		// real terminal gets the deadline that bounds the prompt hint's optimistic
-		// newline chord.
-		ProbeKeyboardCapability: stdoutIsTTY,
+		Session:                 &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
+		Conv:                    cl,
+		MCP:                     cl,
+		Cmds:                    cl,
+		ServerInfo:              cl,
+		Skills:                  cl,
+		Agents:                  cl,
+		Soul:                    cl,
+		UserModel:               cl,
+		Reflections:             cl,
+		Dream:                   cl,
+		Models:                  cl,
+		Worktrees:               cl,
+		Sched:                   cl,
+		Sessions:                cl,
+		StorageHealth:           cl,
+		Migration:               cl,
+		Cleanup:                 cl,
+		SessionManagement:       cl,
+		Transcript:              cl,
+		Replayer:                cl,
+		LiveStream:              cl,
+		SelectionStore:          store,
+		Learning:                learningSettingsForConfig(cfg),
+		Connect:                 savedConnectController{},
+		ConnectOpen:             options.connectOpen,
+		ConnectError:            options.connectError,
+		ConnectReason:           options.connectReason,
+		ConnectTarget:           options.connectTarget,
+		ConnectResumeSessionID:  options.connectResumeSessionID,
+		BearerBacked:            dial.AuthToken != "" || dial.TokenSource != nil,
+		InitialModel:            initialSel,
+		WorkspaceDefault:        wsDefault,
+		WorkspaceDefaultSet:     wsDefaultSet,
+		GlobalDefault:           globalDefault,
+		Clipboard:               client.NewClipboard(),
+		Theme:                   th,
+		ThemeAutoDetect:         themeAutoDetect,
+		ProbeKeyboardCapability: keyboardProbe,
 		StatusSource:            statusSource,
 		LocalSessionContext:     cl,
 		Server:                  target,
@@ -528,6 +526,19 @@ func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
 // without a real terminal.
 func resolveThemeAutoDetect(cfg config, stdoutIsTTY bool) bool {
 	return cfg.theme == "" && stdoutIsTTY
+}
+
+// resolveKeyboardProbe decides whether the deadline that bounds the prompt
+// hint's optimistic newline chord is armed for this launch: only when stdout is
+// a real terminal. Bubble Tea asks every terminal for its keyboard enhancements
+// on the first render, but redirected output has nothing to answer with, so
+// silence there says nothing about a terminal and must not downgrade the hint.
+// An explicit negative reply still corrects the hint immediately, armed or not.
+// Extracted as a pure function (stdout's TTY-ness passed in, not read here) for
+// the same reason resolveThemeAutoDetect above is: so the gate's rule is
+// unit-testable without a real terminal.
+func resolveKeyboardProbe(stdoutIsTTY bool) bool {
+	return stdoutIsTTY
 }
 
 func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
