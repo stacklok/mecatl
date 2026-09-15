@@ -690,7 +690,7 @@ func (s *sessionsState) handleNavigationKey(msg tea.KeyPressMsg) (handled bool, 
 		}
 	case "end":
 		if key.Matches(msg, s.deps.keys.ScrollBottom) {
-			s.cursor = clampModelsCursor(len(s.filtered)-1, len(s.filtered))
+			s.cursor = clampBounded(len(s.filtered)-1, len(s.filtered))
 			return true, false
 		}
 	}

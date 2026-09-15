@@ -421,6 +421,51 @@ func clampBounded(value, count int) int {
 	return min(value, count-1)
 }
 
+func boundedListViewWithIndicators(list *boundedList, capacity int, reveal bool) boundedListView {
+	if capacity <= 0 {
+		list.viewport.height = 0
+		list.reveal = false
+		return boundedListView{}
+	}
+	reserved := 0
+	for range 3 {
+		list.viewport.height = max(1, capacity-reserved)
+		if reveal {
+			list.revealCursor(list.layout())
+		}
+		view := list.view()
+		needed := 0
+		if view.above > 0 {
+			needed++
+		}
+		if view.below > 0 {
+			needed++
+		}
+		next := min(needed, capacity-1)
+		if next == reserved {
+			break
+		}
+		reserved = next
+	}
+	// Recompute for the final reservation: the last iteration may have changed it.
+	list.viewport.height = max(1, capacity-reserved)
+	if reveal {
+		list.revealCursor(list.layout())
+	}
+	view := list.view()
+	available := max(0, capacity-len(view.rows))
+	if view.above > 0 && available > 0 {
+		available--
+	} else {
+		view.above = 0
+	}
+	if view.below > 0 && available == 0 {
+		view.below = 0
+	}
+	list.reveal = false
+	return view
+}
+
 // scrollWindow returns the [start,end) slice bounds of a scrolling window of size
 // limit over n rows, kept around the selected cursor so it stays visible. It is a
 // pure function of (cursor, n, limit) — the window FOLLOWS the cursor (no stored

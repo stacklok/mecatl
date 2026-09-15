@@ -361,7 +361,7 @@ func (m Model) onParallelGroupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		ordered := branchesByIndex(g.branches)
-		cursor := clampCursor(m.parallel.branchCursor, len(ordered))
+		cursor := clampBounded(m.parallel.branchCursor, len(ordered))
 		if cursor >= len(ordered) {
 			return m, nil
 		}
@@ -424,11 +424,6 @@ func (m Model) navigateAgentsList(msg tea.KeyPressMsg, list agentsSelectableList
 	return control.cursor, control, true
 }
 
-func agentsListPageSize(th theme.Theme, height int, list agentsSelectableList) int {
-	w := list.window(th, height)
-	return max(1, w.end-w.start)
-}
-
 func (m Model) agentsListGeometry() (theme.Theme, helpKeys, int, int) {
 	th := m.deps.Theme
 	layout := newAgentsOverlayLayout(th, m.agentsTab, m.width, m.vp.Height())
@@ -439,14 +434,33 @@ func (m Model) agentsListGeometry() (theme.Theme, helpKeys, int, int) {
 	return th, m.helpKeyMarkings(), layout.bodyWidth, height
 }
 
-func (m Model) subagentRosterPageSize(fleet []subagentLane) int {
+// reconcileAgentsLists persists stable cursor and viewport anchors when streamed
+// delegation collections change. Renderers receive Model state by value, so they
+// cannot be the owner of this update.
+func (m *Model) reconcileAgentsLists() {
+	if m.team.view == teamNone {
+		return
+	}
 	th, hk, width, height := m.agentsListGeometry()
-	return agentsListPageSize(th, height, subagentSelectableList(th, m.subagents, fleet, hk, width))
-}
-
-func (m Model) parallelRosterPageSize(groups []parallelGroup) int {
-	th, hk, width, height := m.agentsListGeometry()
-	return agentsListPageSize(th, height, parallelSelectableList(th, m.parallel, groups, hk, width))
+	if height <= 0 {
+		return
+	}
+	reconcile := func(list agentsSelectableList) boundedList {
+		control, _, _ := list.configuredControl(th, height)
+		return control
+	}
+	m.subagents.roster = reconcile(subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width))
+	m.subagents.cursor = m.subagents.roster.cursor
+	m.parallel.roster = reconcile(parallelSelectableList(th, m.parallel, m.conv.parallelGroups, hk, width))
+	m.parallel.cursor = m.parallel.roster.cursor
+	if group := findParallelGroup(m.conv.parallelGroups, m.parallel.group); group != nil {
+		m.parallel.branches = reconcile(parallelBranchSelectableList(th, m.parallel, group, hk, width))
+		m.parallel.branchCursor = m.parallel.branches.cursor
+	}
+	if team := m.conv.latestTeamBlock(); team != nil {
+		m.team.roster = reconcile(teamSelectableList(th, m.team, team, hk, width))
+		m.team.cursor = m.team.roster.cursor
+	}
 }
 
 func (m Model) onAgentsWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
@@ -740,7 +754,7 @@ func essentialSubagentBody(th theme.Theme, st subagentState, fleet []subagentLan
 	}
 	if st.view != subagentFocus {
 		if len(fleet) > 0 {
-			body.selected = renderSubagentRosterTitle(th.Style("spinner"), "▶ ", &fleet[clampCursor(st.cursor, len(fleet))], bodyWidth)
+			body.selected = renderSubagentRosterTitle(th.Style("spinner"), "▶ ", &fleet[clampBounded(st.cursor, len(fleet))], bodyWidth)
 		}
 		return body
 	}
@@ -764,7 +778,7 @@ func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGr
 	}
 	if st.view != parallelGroupView {
 		if len(groups) > 0 {
-			body.selected = line(th.Style("spinner"), "▶ ", parallelRosterLine(&groups[clampCursor(st.cursor, len(groups))]))
+			body.selected = line(th.Style("spinner"), "▶ ", parallelRosterLine(&groups[clampBounded(st.cursor, len(groups))]))
 		}
 		return body
 	}
@@ -777,7 +791,7 @@ func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGr
 	body.title = line(th.Style("askTitle"), "", "parallel · join="+parallelJoinMode(group.join))
 	ordered := branchesByIndex(group.branches)
 	if len(ordered) > 0 {
-		body.selected = line(th.Style("spinner"), "▶ ", parallelBranchLine(&ordered[clampCursor(st.branchCursor, len(ordered))]))
+		body.selected = line(th.Style("spinner"), "▶ ", parallelBranchLine(&ordered[clampBounded(st.branchCursor, len(ordered))]))
 		body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("· +%d more branch(es)", max(0, len(ordered)-1))))
 	}
 	return body
@@ -823,7 +837,7 @@ func essentialTeamBody(th theme.Theme, st teamState, b *block, hk helpKeys, line
 	default:
 		order := teamLaneOrder(b.teamLanes)
 		if len(order) > 0 {
-			lane := &b.teamLanes[order[clampCursor(st.cursor, len(order))]]
+			lane := &b.teamLanes[order[clampBounded(st.cursor, len(order))]]
 			body.selected = line(th.Style("spinner"), "▶ ", teamRosterLine(th, lane, teamNameWidth(b.teamLanes, order), b.teamDone))
 		}
 	}
@@ -1026,10 +1040,6 @@ func prepareSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, 
 // mirroring renderTeamRoster: a header (running/done counts), the slice of rows that
 // fits with the selected row marked with the unbordered ▶ treatment, "+K above/below" tails, and an always-visible
 // footer hint. An empty fleet reads as a muted "(no subagents)". height<=0 shows all.
-type agentsCursorWindow struct {
-	start, end, above, below int
-}
-
 type agentsSelectableList struct {
 	header, footer string
 	rows           []string
@@ -1078,21 +1088,11 @@ func (l agentsSelectableList) boundedView(th theme.Theme, height int) boundedLis
 	return boundedListViewWithIndicators(&control, capacity, reveal)
 }
 
-func (l agentsSelectableList) window(th theme.Theme, height int) agentsCursorWindow {
-	view := l.boundedView(th, height)
-	if len(view.rows) == 0 {
-		return agentsCursorWindow{}
-	}
-	start := view.rows[0].itemIndex
-	end := view.rows[len(view.rows)-1].itemIndex + 1
-	return agentsCursorWindow{start: start, end: end, above: start, below: len(l.rows) - end}
-}
-
 func (l agentsSelectableList) render(th theme.Theme, height int) string {
 	view := l.boundedView(th, height)
 	var middle []string
 	if len(view.rows) == 0 && len(l.rows) > 0 {
-		middle = append(middle, th.Style("spinner").Render("▶ "+l.rows[clampCursor(l.cursor, len(l.rows))]))
+		middle = append(middle, th.Style("spinner").Render("▶ "+l.rows[clampBounded(l.cursor, len(l.rows))]))
 	}
 	if view.above > 0 {
 		count, noun := view.rows[0].itemIndex, l.noun
@@ -1132,7 +1132,7 @@ func subagentSelectableList(th theme.Theme, st subagentState, fleet []subagentLa
 	list := agentsSelectableList{
 		header: renderDelegationRows(th.Style("askTitle"), "", subagentRosterHeader(running, done), bodyWidth),
 		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth),
-		cursor: clampCursor(st.cursor, len(fleet)), muted: muted, noun: "rows",
+		cursor: clampBounded(st.cursor, len(fleet)), muted: muted, noun: "rows",
 		bodyWidth: bodyWidth, control: st.roster,
 	}
 	for row := range fleet {
@@ -1172,12 +1172,6 @@ func fleetCounts(fleet []subagentLane) (running, done int) {
 // metadata useful to narrow, unframed callers too.
 func subagentRosterLine(ln *subagentLane) string {
 	return subagentRosterText(ln, 0, 0)
-}
-
-// renderSubagentRosterRow applies a selection prefix only to the title. Details always
-// begin at four columns, so selected and unselected rows have the same readable shape.
-func renderSubagentRosterRow(style lipgloss.Style, prefix string, ln *subagentLane, bodyWidth int) string {
-	return style.Render(prefix + subagentRosterText(ln, bodyWidth, lipgloss.Width(prefix)))
 }
 
 func renderSubagentRosterTitle(style lipgloss.Style, prefix string, ln *subagentLane, bodyWidth int) string {
@@ -1486,7 +1480,7 @@ func parallelSelectableList(th theme.Theme, st parallelState, groups []parallelG
 	list := agentsSelectableList{
 		header: renderDelegationRows(th.Style("askTitle"), "", fmt.Sprintf("parallel · %d running · %d done", running, done), bodyWidth),
 		footer: renderCardChromeSegments(muted, []string{hk.closeOnly + " close", hk.navUp + "/" + hk.navDown + " select", hk.choose + " focus", hk.nextTab + " switch", hk.scroll + " page", hk.jumpTopFull + "·" + hk.jumpEndFull + " first/last"}, bodyWidth),
-		cursor: clampCursor(st.cursor, len(groups)), muted: muted, noun: "rows",
+		cursor: clampBounded(st.cursor, len(groups)), muted: muted, noun: "rows",
 		bodyWidth: bodyWidth, control: st.roster,
 	}
 	for row := range groups {
@@ -1586,7 +1580,7 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 	}
 	header += "\n" + muted.Render(indentWrap(boundedPreviewsParNote, bodyWidth))
 	ordered := branchesByIndex(g.branches)
-	cursor := clampCursor(st.branchCursor, len(ordered))
+	cursor := clampBounded(st.branchCursor, len(ordered))
 	cancellable := false
 	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches", bodyWidth: bodyWidth, control: st.branches}
 	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter)-2)}
@@ -1635,23 +1629,6 @@ func prepareParallelGroupFocus(th theme.Theme, st parallelState, groups []parall
 	}
 	list := parallelBranchSelectableList(th, st, g, hk, bodyWidth)
 	return func(height int) string { return list.render(th, height) }
-}
-
-// renderParallelBranchRow renders a branch's two-level summary within a focused
-// group. The title owns the selectable/winner markers; the details and activity below
-// are visibly subordinate while retaining every existing trace line.
-func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool, width int) string {
-	style, prefix := th.Style("muted"), "  "
-	switch {
-	case selected:
-		style, prefix = th.Style("spinner"), "▶ "
-		if br.index == winner {
-			prefix += "★ "
-		}
-	case br.index == winner:
-		prefix = "★ "
-	}
-	return style.Render(prefix+parallelBranchText(br, width, lipgloss.Width(prefix))) + "\n"
 }
 
 const parallelBranchTraceGutter = "  │ "

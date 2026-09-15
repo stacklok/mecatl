@@ -48,11 +48,13 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 		}
 	})
 
-	for _, width := range []int{2, 1, 0, -1} {
-		var viewport boundedViewport
-		viewport.setGeometry(width, 2, 2, boundedWrap)
-		if got := viewport.view([]string{"content"}); len(got.rows) != 0 {
-			t.Errorf("width %d with gutter 2 rendered %d rows, want empty", width, len(got.rows))
+	for _, policy := range []boundedWidthPolicy{boundedWrap, boundedClip} {
+		for _, width := range []int{2, 1, 0, -1} {
+			var viewport boundedViewport
+			viewport.setGeometry(width, 2, 2, policy)
+			if got := viewport.view([]string{"content"}); len(got.rows) != 0 {
+				t.Errorf("policy %d width %d with gutter 2 rendered %d rows, want empty", policy, width, len(got.rows))
+			}
 		}
 	}
 }
@@ -214,6 +216,11 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	if list.viewport.offset != 1 || len(list.view().rows) != 4 {
 		t.Fatalf("valid geometry growth left a blank page: offset=%d rows=%d, want 1/4", list.viewport.offset, len(list.view().rows))
 	}
+	list.viewport.offset = 1
+	list.setGeometry(12, 1, 0, boundedClip)
+	if list.viewport.offset != 1 || len(list.view().rows) != 1 {
+		t.Fatalf("valid geometry shrink lost/clobbered viewport: offset=%d rows=%d, want 1/1", list.viewport.offset, len(list.view().rows))
+	}
 	viewportType := reflect.TypeOf(boundedViewport{})
 	for _, name := range []string{"x", "xOffset", "horizontalOffset"} {
 		if _, ok := viewportType.FieldByName(name); ok {
@@ -229,6 +236,25 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 		if got := list.view(); len(got.rows) != 0 {
 			t.Errorf("bounds %v rendered %d rows, want empty", bounds, len(got.rows))
 		}
+	}
+
+	var indicators boundedList
+	indicators.setGeometry(12, 2, 2, boundedClip)
+	indicators.setItems([]boundedListItem{{id: "a", text: "a"}, {id: "b", text: "b"}, {id: "c", text: "c"}})
+	indicators.viewport.offset = 1
+	got := boundedListViewWithIndicators(&indicators, 2, false)
+	if len(got.rows) < 1 {
+		t.Fatalf("two-row viewport was consumed entirely by indicators: %#v", got)
+	}
+	chrome := 0
+	if got.above > 0 {
+		chrome++
+	}
+	if got.below > 0 {
+		chrome++
+	}
+	if len(got.rows)+chrome > 2 {
+		t.Fatalf("content plus indicators use %d rows, want <= 2: %#v", len(got.rows)+chrome, got)
 	}
 }
 
