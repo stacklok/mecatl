@@ -515,73 +515,13 @@ tasks:
       # workflow runs this task directly. v1.1.x requires newer Helm plugin
       # manifest fields than the Helm 3.16 development floor supports.
       HELM_UNITTEST_VERSION: v1.0.3
-      # Peeled commit behind v1.0.3. Installing by immutable commit avoids
-      # executing different plugin code if the release tag is ever moved.
-      HELM_UNITTEST_REF: 6f82a998e0b5461762ca959f87f5dd344af5e4eb
     cmds:
       # Match ToolHive's cross-Helm install path: Helm 4 verifies plugin
-      # signatures by default, while Helm 3 does not expose --verify. The
-      # release archives and extracted executables are independently pinned
-      # because GitHub release assets are mutable.
+      # signatures by default, while Helm 3 does not expose --verify.
       - cmd: |
           set -eu
           expected="{{.HELM_UNITTEST_VERSION}}"
           expected="${expected#v}"
-
-          platform_os=$(uname -s | tr '[:upper:]' '[:lower:]')
-          case "$platform_os" in
-            darwin) platform_os=macos ;;
-            msys*|mingw*) platform_os=windows ;;
-          esac
-          platform_arch=$(uname -m)
-          case "$platform_arch" in
-            aarch64) platform_arch=arm64 ;;
-            x86_64) platform_arch=amd64 ;;
-          esac
-          binary_name=untt
-          case "$platform_os-$platform_arch" in
-            linux-amd64)
-              archive_sha=9761f23d9509c98770c026e019e743b524b57010f4bc29175f78d2582ace0633
-              binary_sha=87c9cc6b4798fb7546a7608094fa4255e2b3795ae755c78214796df7fafaa1e4 ;;
-            linux-arm64)
-              archive_sha=1e645d96b36582cd8b9fbd53240110267f14d80aa01137341251c60438bbe6b0
-              binary_sha=d060602f26d24a0d2d2d0162f3261e78babf10b02d8c84b8ce0cf3b16ea3e81d ;;
-            linux-ppc64le)
-              archive_sha=d77db2890d29ebca87245f67820243849681ce20aae0b92c027bc2d1c1558576
-              binary_sha=c33900a680adcd6efe22035ba311df6b24abc2b1553e6c3d7b2e9c2e5694f97b ;;
-            linux-s390x)
-              archive_sha=dd87bda5965b81b51fce77afaf76bb4f32447376f7ff4fb8fbc070987c5e791b
-              binary_sha=90b69e9be04ef792354fd4a0656de5da01be7714a532777ab8b28fa169784d8d ;;
-            macos-amd64)
-              archive_sha=46413a86ded6bfc70cd704ebac16f8d4a0f36712ae399a5d24e32bc44f96985f
-              binary_sha=c3ad7c853278d66114c2937ea9968851e6f84c5aba3ff94a9f842ff79f2af8c5 ;;
-            macos-arm64)
-              archive_sha=6a6b67b3f638f015e09c093b67c7609a07101b971a1a6d6a83d1a7f75861a4b2
-              binary_sha=c576ec43ed952921f1348eaa447150439858afd38a45e8ef1aeeed1da12e953f ;;
-            windows-amd64)
-              archive_sha=ff8fa7e105749d606820f3265b539702921299ee8ca1f48308609bb48086ee24
-              binary_sha=22da4467e5335f136e6d4fccacdbe567e5b1ef6a68df8bffc6b7fe24cd785126
-              binary_name=untt.exe ;;
-            *)
-              echo "helm-unittest $expected has no binary for $platform_os-$platform_arch" >&2
-              exit 1 ;;
-          esac
-
-          sha256_file() {
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "$1" | awk '{ print $1 }'
-            elif command -v shasum >/dev/null 2>&1; then
-              shasum -a 256 "$1" | awk '{ print $1 }'
-            else
-              echo "sha256sum or shasum is required" >&2
-              return 1
-            fi
-          }
-
-          plugin_root=$(helm env HELM_PLUGINS)
-          if command -v cygpath >/dev/null 2>&1; then
-            plugin_root=$(cygpath -u "$plugin_root")
-          fi
           installed=$(helm plugin list | awk '$1 == "unittest" { print $2 }')
           if [ -n "$installed" ] && [ "$installed" != "$expected" ]; then
             echo "helm-unittest $installed is installed; version $expected is required" >&2
@@ -589,30 +529,9 @@ tasks:
             exit 1
           fi
           if [ -z "$installed" ]; then
-            SKIP_BIN_INSTALL=1 helm plugin install https://github.com/helm-unittest/helm-unittest \
-              --version {{.HELM_UNITTEST_REF}} \
+            helm plugin install https://github.com/helm-unittest/helm-unittest \
+              --version {{.HELM_UNITTEST_VERSION}} \
               $(helm plugin install --help | grep -qE '^[[:space:]]+--verify([=[:space:]]|$)' && echo --verify=false)
-
-            install_tmp=$(mktemp -d)
-            trap 'rm -rf "$install_tmp"' EXIT
-            archive="helm-unittest-$platform_os-$platform_arch-$expected.tgz"
-            curl -fsSL \
-              "https://github.com/helm-unittest/helm-unittest/releases/download/v$expected/$archive" \
-              -o "$install_tmp/$archive"
-            actual_archive_sha=$(sha256_file "$install_tmp/$archive")
-            if [ "$actual_archive_sha" != "$archive_sha" ]; then
-              echo "helm-unittest $expected archive checksum mismatch" >&2
-              exit 1
-            fi
-            tar -xzf "$install_tmp/$archive" -C "$plugin_root/helm-unittest"
-          fi
-
-          binary="$plugin_root/helm-unittest/$binary_name"
-          actual_binary_sha=$(sha256_file "$binary")
-          if [ "$actual_binary_sha" != "$binary_sha" ]; then
-            echo "helm-unittest $expected executable checksum mismatch" >&2
-            echo "run 'helm plugin uninstall unittest' and retry" >&2
-            exit 1
           fi
       - helm unittest --strict deploy/helm/mecak8s
 

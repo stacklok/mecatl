@@ -7,9 +7,9 @@ task deploy:helm-unittest
 ```
 
 The task installs `helm-unittest` 1.0.3 when the plugin is absent and renders
-the chart without a Kubernetes cluster. It verifies pinned archive and
-executable checksums and stops with remediation instructions for a different
-plugin version or binary, so local and CI runs use the same test engine.
+the chart without a Kubernetes cluster. It stops with remediation instructions
+when a different plugin version is installed, so local and CI runs use the same
+test engine.
 
 To test a published chart, extract it before running the plugin; version 1.0.3
 does not discover suites inside a packaged `.tgz`:
