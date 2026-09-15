@@ -731,7 +731,7 @@ type cleanupTeamBlockingProvider struct {
 	release <-chan struct{}
 }
 
-func (p cleanupTeamBlockingProvider) Capabilities() port.ProviderCapabilities {
+func (cleanupTeamBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
