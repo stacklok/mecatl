@@ -139,26 +139,16 @@ A tool with no matching rule is **unchecked** — guardrails are opt-in per tool
 
 ## Cost model
 
-> The per-session `maxChecks` call-count cap described in the original version of this
-> section was removed by [ADR 0049](./0049-guardrails-remove-maxchecks.md). The
-> `minContentBytes` and `maxContentBytes` guards below are unchanged.
+> The per-session `maxChecks`, `minContentBytes`, and `maxContentBytes` input
+> skips described in the original version of this section were removed by
+> [ADR 0049](./0049-guardrails-remove-maxchecks.md),
+> [ADR 0342](./0342-contextual-investigative-guardrails.md), and
+> [ADR 0050](./0050-guardrails-remove-maxcontentbytes.md), respectively.
 
-Each check is one extra LLM call. Two cost/abuse guards:
-
-- **`minContentBytes`.** Skip the checker for a trivially short **inbound (Post)**
-  result that cannot carry a meaningful injection (omitting it checks every Post
-  result). It applies to **Post only** — **outbound (Pre) args are always inspected
-  regardless of size**, because secrets are short and a tiny exfiltration arg is
-  exactly what the Pre check exists to catch.
-- **`maxContentBytes` (built-in, 256 KiB).** Content over this is **not** inspected.
-  In an enforcing mode it is **not silently passed**: it routes through the
-  fail-open/closed policy (fail-closed blocks; fail-open WARNs), so an attacker cannot
-  emit a huge tool result to induce a silent fail-open and slip past. Advisory passes
-  but logs.
-
-There is no per-session call-count cap: the checker runs per matched call, and cost
-control lives in the operator's provider/billing layer (checker token spend is not
-folded into the agent's `MaxRunTokens`).
+Each matched boundary is reviewed; content length is not a reason to skip it. Finite
+secondary evidence and trajectory capacities report an unresolved/incomplete review
+rather than silently passing. There is no per-session call-count cap: checker cost
+control lives in the operator's provider/billing layer.
 
 ## Fail-open vs fail-closed
 
@@ -254,9 +244,7 @@ A full config overrides the defaults with an explicit rule list:
 ```yaml
 guardrails:
   model: gpt-5-mini          # the checker model (or a --model-alias); --guardrails-model overrides
-  minContentBytes: 16        # skip a short INBOUND (post) result (omit = check every post).
-                             # Never applies to outbound (pre) args — those are always inspected.
-  rules:                     # an explicit list REPLACES the default advisory set
+  rules:                     # an explicit list REPLACES the default set
     - match: "WebFetch"      # inbound injection on fetched pages
       phases: ["post"]
       mode: block

@@ -590,31 +590,11 @@ status view. The implementation does not claim that protocol tests prove a chose
 checker model detects every prompt injection, secret, or dynamic Shell dependency.
 Use release-validation evidence before making an efficacy claim.
 
-Inspecting every shell command would be an unacceptable latency/cost tax on the
-`ls` / `grep` / `git status` traffic that dominates a session, so the default
-`Shell` rule carries a **read-only pre-filter**: a command that is confidently
-read-only (the same classifiers Layer 1's rule engine uses) skips the checker
-entirely — zero LLM calls. Anything else — a mutating or outward command, an
-unrecognized verb, or a substitution it can't prove read-only — falls through to
-inspection; ambiguity always fails toward inspecting, never skipping.
-
-The default `Shell` rule also swaps in a **Shell-specific rubric** in place of
-the generic exfiltration prompt used for the network/MCP rules — the generic
-rubric's "if uncertain, judge unsafe" false-positives badly on ordinary shell
-work (a write to a sibling repo never leaves the machine, so it isn't
-exfiltration). The Shell rubric instead judges a command **safe unless it names
-one of five concrete danger categories**: (1) sending data off the machine to a
-network destination, especially secrets; (2) fetching and executing remote code
-(`curl … | sh`); (3) an irreversible action against a remote you may not control
-(force-push, push/merge, `gh pr merge`, publishing a release, deleting a remote
-branch/repo); (4) a destructive, hard-to- reverse local operation (recursive
-deletion, overwriting a disk device, mass recursive chmod/chown); (5) a
-local-persistence write to a credential, SSH key, shell-startup file, scheduler
-entry, or git hook — a write that never leaves the machine but grants later
-off-machine access or persistent code execution. Ordinary local writes (source,
-config, build output, notes — including to sibling repos), builds, tests, local
-file moves/copies, and routine origin-remote git operations are explicitly
-judged safe.
+A confidently read-only Shell command skips only **action** review; inbound Shell
+results remain covered. Every contextual review uses the fixed harness-owned
+safety, authority, provenance, evidence, and structured-output rubric. A rule's
+optional `prompt` adds operator task-risk context beneath that rubric; it cannot
+replace or weaken the fixed contract.
 
 Set `defaultMode: advisory` to start the default set in observe-only mode and
 tune up from there.
@@ -623,7 +603,6 @@ tune up from there.
 # ~/.config/mecatl/settings.yaml  (user-global only — NOT a checked-in project file)
 guardrails:
   model: gpt-5-mini # configuring a model is the opt-in; default rules apply
-  minContentBytes: 16 # skip a short INBOUND (post) result; outbound (pre) args are always inspected
   rules: # an explicit list REPLACES the default set
     - match: 'WebFetch' # inbound injection on fetched pages
       phases: ['post'] # "pre" = outbound args, "post" = inbound result; omit = both
@@ -633,11 +612,14 @@ guardrails:
     - match: 'Shell' # outbound exfil in shell args
       phases: ['pre']
       mode: block
+      prompt: 'Treat publishing externally as high risk unless the current user task explicitly requires it.'
       failClosed: true # explicit per-rule override; checker outage is fail-closed by default
 ```
 
 A matcher keys on the tool **name** only (exact > `prefix*` > `*`, most-specific
-wins); a tool with no matching rule is unchecked. Checker outage is fail-closed
+wins); a tool with no matching rule is unchecked. `guardrails.rules[].prompt` adds operator task-risk context beneath the fixed
+harness safety, authority, provenance, evidence, and output contract; it cannot
+replace that rubric. Checker outage is fail-closed
 by default: bounded recovery is followed by a human boundary when interactive,
 or action denial/result withholding when unattended. Explicit
 `onCheckerDown: warn` continues with a visible operational warning; it never

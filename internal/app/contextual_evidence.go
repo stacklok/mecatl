@@ -16,24 +16,24 @@ import (
 )
 
 type workspaceReviewEvidenceBackend struct {
-	reader  tool.BoundedWorkspaceReader
+	reader  tool.BoundedWorkspaceRangeReader
 	path    string
 	size    int64
 	version string
 }
 
 func (b workspaceReviewEvidenceBackend) Size(context.Context) (int64, error) { return b.size, nil }
+func (b workspaceReviewEvidenceBackend) EvidencePageRanges(ctx context.Context, offset, total int64) ([]reviewEvidencePage, error) {
+	return lineBoundedEvidencePageRanges(ctx, b, offset, total)
+}
 
 func (b workspaceReviewEvidenceBackend) ReadAt(ctx context.Context, offset, size int64) (string, error) {
-	if offset != 0 || size != b.size {
-		return "", fmt.Errorf("%w: unsupported evidence range", errEvidenceDenied)
-	}
-	content, version, err := b.reader.ReadVersionBounded(ctx, b.path, b.size)
+	content, version, total, err := b.reader.ReadVersionRangeBounded(ctx, b.path, offset, size, maxReviewEvidenceBytes)
 	if err != nil {
 		return "", err
 	}
 	encoded, err := tool.EncodeFileVersion(version)
-	if err != nil || encoded != b.version {
+	if err != nil || encoded != b.version || total != b.size || int64(len(content)) != size {
 		return "", fmt.Errorf("%w: evidence changed after inventory", errEvidenceDenied)
 	}
 	return session.ToValidUTF8(string(content)), nil
@@ -44,13 +44,17 @@ type memoryReviewEvidenceBackend struct{ content string }
 func (b memoryReviewEvidenceBackend) Size(context.Context) (int64, error) {
 	return int64(len(b.content)), nil
 }
+func (b memoryReviewEvidenceBackend) EvidencePageRanges(ctx context.Context, offset, total int64) ([]reviewEvidencePage, error) {
+	return lineBoundedEvidencePageRanges(ctx, b, offset, total)
+}
 func (b memoryReviewEvidenceBackend) ReadAt(_ context.Context, offset, size int64) (string, error) {
-	if offset != 0 || size != int64(len(b.content)) {
+	if offset < 0 || size < 0 || offset+size > int64(len(b.content)) {
 		return "", fmt.Errorf("%w: unsupported evidence range", errEvidenceDenied)
 	}
-	return b.content, nil
+	return b.content[offset : offset+size], nil
 }
 
+//nolint:gocyclo // Preparation keeps binding, authorization-before-I/O, capacity, and cleanup in one auditable path.
 func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, prep agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
 	req := prep.Request
 	if prep.Environment.Ref() != req.Environment || req.Event.SessionID == "" || req.ReviewID == "" {
@@ -69,21 +73,18 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 	complete := true
 
 	if prep.Result != nil {
-		content := prep.Result.Content
-		if len(prep.Result.Parts) > 0 {
-			if encoded, err := json.Marshal(prep.Result.Parts); err == nil {
-				content += "\n" + string(encoded)
-			}
-		}
-		content = session.ToValidUTF8(content)
-		if int64(len(content)) <= maxReviewEvidenceRead {
-			candidates = append(candidates, reviewEvidenceCandidate{Kind: "tool_result", Display: req.EffectiveCall.Name + " result", Version: "result-v1", Complete: true, Authorized: true, Binding: binding, Backend: memoryReviewEvidenceBackend{content: content}})
+		content, resultComplete := reviewableResultContent(*prep.Result)
+		complete = complete && resultComplete
+		if int64(len(content)) <= maxReviewEvidenceBytes {
+			candidates = append(candidates, reviewEvidenceCandidate{Kind: "tool_result", Display: req.EffectiveCall.Name + " result", Version: "result-v1", Complete: resultComplete, Authorized: true, Binding: binding, Backend: memoryReviewEvidenceBackend{content: content}})
+		} else {
+			complete = false
 		}
 	}
 
 	paths := reviewEvidencePaths(req.EffectiveCall)
 	if len(paths) > 0 {
-		reader, ok := prep.Environment.Workspace().(tool.BoundedWorkspaceReader)
+		reader, ok := prep.Environment.Workspace().(tool.BoundedWorkspaceRangeReader)
 		if !ok {
 			complete = false
 		} else {
@@ -93,15 +94,21 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 					continue
 				}
 				seen[path] = struct{}{}
-				info, err := prep.Environment.Workspace().Stat(ctx, path)
-				if errors.Is(err, fs.ErrNotExist) {
-					continue
-				}
-				if err != nil || info.IsDir || info.Size > maxReviewEvidenceRead {
+				if prep.Authorize == nil {
 					complete = false
 					continue
 				}
-				content, version, err := reader.ReadVersionBounded(ctx, path, maxReviewEvidenceRead)
+				readArgs, err := json.Marshal(struct {
+					Path string `json:"path"`
+				}{Path: path})
+				if err != nil || prep.Authorize(ctx, session.NewToolCall(req.EffectiveCall.ID, readToolName, readArgs)) != nil {
+					complete = false
+					continue
+				}
+				content, version, total, err := reader.ReadVersionRangeBounded(ctx, path, 0, maxReviewEvidenceRead, maxReviewEvidenceBytes)
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
 				if err != nil {
 					complete = false
 					continue
@@ -111,7 +118,8 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 					complete = false
 					continue
 				}
-				candidates = append(candidates, reviewEvidenceCandidate{Kind: "text_file", Display: path, Version: encoded, Complete: true, Authorized: true, Binding: binding, Backend: workspaceReviewEvidenceBackend{reader: reader, path: path, size: int64(len(content)), version: encoded}})
+				_ = content // The bounded first page establishes version and total size.
+				candidates = append(candidates, reviewEvidenceCandidate{Kind: "text_file", Display: path, Version: encoded, Complete: true, Authorized: true, Binding: binding, Backend: workspaceReviewEvidenceBackend{reader: reader, path: path, size: total, version: encoded}})
 			}
 		}
 	}
@@ -123,44 +131,35 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 }
 
 func reviewEvidencePaths(call session.ToolCall) []string {
-	var args map[string]json.RawMessage
-	if json.Unmarshal(call.Args, &args) != nil {
-		return nil
-	}
-	var paths []string
-	for _, key := range []string{"path", "source", "destination"} {
-		var value string
-		if json.Unmarshal(args[key], &value) == nil && value != "" {
-			paths = append(paths, value)
-		}
-	}
-	if call.Name != tool.ShellToolName {
-		return paths
-	}
-	var command string
-	if json.Unmarshal(args["command"], &command) != nil {
-		return paths
-	}
-	if script, ok := exactShellScriptPath(command); ok {
-		paths = append(paths, script)
-	}
-	return paths
+	return tool.LocalFileOperands(call.Name, call.Args)
 }
 
 func exactShellScriptPath(command string) (string, bool) {
-	trimmed := strings.TrimSpace(command)
-	if trimmed == "" || strings.ContainsAny(trimmed, ";&|$`()<>\\\n\r") {
+	args, _ := json.Marshal(struct {
+		Command string `json:"command"`
+	}{Command: command})
+	paths := tool.LocalFileOperands(tool.ShellToolName, args)
+	if len(paths) != 1 {
 		return "", false
 	}
-	fields := strings.Fields(trimmed)
-	if strings.Join(fields, " ") != trimmed {
-		return "", false
+	return paths[0], true
+}
+
+func reviewableResultContent(result session.ToolResult) (string, bool) {
+	var b strings.Builder
+	b.WriteString(result.Content)
+	complete := true
+	for _, part := range result.Parts {
+		if part.Kind == session.MediaImage || part.Kind == session.MediaAudio || part.BlockKind == session.BlockImage || part.BlockKind == session.BlockAudio || len(part.Data) > 0 {
+			complete = false
+			continue
+		}
+		if text := session.ToolBlockText(part); text != "" {
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(text)
+		}
 	}
-	if len(fields) == 1 && (strings.HasPrefix(fields[0], "./") || strings.HasSuffix(fields[0], ".sh")) {
-		return fields[0], true
-	}
-	if len(fields) == 2 && (fields[0] == "sh" || fields[0] == "bash" || fields[0] == "dash") && (strings.HasPrefix(fields[1], "./") || strings.HasSuffix(fields[1], ".sh")) {
-		return fields[1], true
-	}
-	return "", false
+	return session.ToValidUTF8(b.String()), complete
 }

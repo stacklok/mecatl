@@ -5442,6 +5442,10 @@ func (s *Service) awaitRunDeregister(ctx context.Context, id session.SessionID, 
 // The service mutex orders the approval with renewal-loss invalidation; a surfaced
 // child ask is still addressed through its parent run's approval router.
 func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	return s.resolveLiveRun(id, target, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
+}
+
+func (s *Service) resolveLiveRun(id session.SessionID, target *agent.Run, resolution agent.ApprovalResolution, expectedRunID string) error {
 	if s.draining.Load() {
 		return fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -5451,7 +5455,7 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 	if st == nil {
 		return ErrNoActiveRun
 	}
-	return s.approveRunState(id, st, target, askID, verdict, expectedRunID)
+	return s.resolveRunState(id, st, target, resolution, expectedRunID)
 }
 
 // approveRunState crosses the persistence barrier for the runState captured by
@@ -5459,6 +5463,10 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 // signals the run. The explicit captured state keeps the post-barrier registry
 // identity proof in one place.
 func (s *Service) approveRunState(id session.SessionID, st *runState, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	return s.resolveRunState(id, st, target, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
+}
+
+func (s *Service) resolveRunState(id session.SessionID, st *runState, target *agent.Run, resolution agent.ApprovalResolution, expectedRunID string) error {
 	// Persist and a control signal must be one ordered transaction. Persist takes
 	// persistMu before revalidating under s.mu, so retain that lock order here.
 	st.persistMu.Lock()
@@ -5477,10 +5485,12 @@ func (s *Service) approveRunState(id session.SessionID, st *runState, target *ag
 	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
 		return err
 	}
-	// Set before waking the run. If permission.ask is still buffered, its relay
-	// observes this marker and skips the now-stale awaiting snapshot.
-	st.resolvedAskID = askID
-	target.Approve(askID, verdict)
+	if err := target.ResolveApproval(resolution); err != nil {
+		return err
+	}
+	// Set only after atomic validation+submission succeeds. If permission.ask is
+	// still buffered, its relay observes this marker and skips the stale snapshot.
+	st.resolvedAskID = resolution.AskID
 	return nil
 }
 
@@ -5530,6 +5540,12 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // follow-up (additive, out of the Phase 2 gate) — see docs/adr/0027-cloud-native.md
 // Phase 2.
 func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+	return s.ResolveApprovalRun(ctx, id, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
+}
+
+// ResolveApprovalRun atomically validates guardrail purpose and review identity
+// before submitting a verdict. Validation failures leave the pending hold intact.
+func (s *Service) ResolveApprovalRun(ctx context.Context, id session.SessionID, resolution agent.ApprovalResolution, expectedRunID string) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
@@ -5558,7 +5574,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 			resumeAdmission := st.resumeAdmission
 			s.mu.Unlock()
 			if resumeAdmission {
-				return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
+				return s.resumeFromAwaiting(ctx, id, resolution, expectedRunID, generation)
 			}
 			return nil, ErrNoActiveRun
 		}
@@ -5567,13 +5583,13 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 		// Compare against and signal the run that would ACTUALLY receive the
 		// verdict. approveLiveRun revalidates the registry + lease after crossing
 		// the awaiting-persistence barrier.
-		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
+		if err := s.resolveLiveRun(id, run, resolution, expectedRunID); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
 	s.mu.Unlock()
-	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
+	return s.resumeFromAwaiting(ctx, id, resolution, expectedRunID, generation)
 }
 
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
@@ -5600,7 +5616,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
 //
 //nolint:gocyclo // Approval resume keeps generation, lock ordering, lease, and exact-once launch in one transaction.
-func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
+func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, resolution agent.ApprovalResolution, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -5623,7 +5639,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		if run == nil {
 			return nil, ErrNoActiveRun
 		}
-		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
+		if err := s.resolveLiveRun(id, run, resolution, expectedRunID); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -5658,6 +5674,13 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		// stranded-for-Approve as before (last-write-wins / nothing to resume).
 		return nil, ErrNoActiveRun
 	}
+	pending, ok := sess.PendingAsk()
+	if !ok || pending.AskID != resolution.AskID {
+		return nil, errors.New("approval ask is unknown, stale, or already resolved")
+	}
+	if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
+		return nil, err
+	}
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
 	if err != nil {
 		return nil, err
@@ -5686,7 +5709,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	}
 	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
-		return engine.ResumeApproval(ctx, sess, env, askID, verdict)
+		return engine.ResumeApproval(ctx, sess, env, resolution.AskID, resolution.Verdict)
 	})
 	if err != nil {
 		return nil, err
@@ -5778,7 +5801,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 	// caller approves THE PLAN this session is parked on, and the askID is read
 	// off the snapshot rather than supplied. There is no caller expectation to
 	// enforce, so it passes no expected run id.
-	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "", generation)
+	resumed, rerr := s.resumeFromAwaiting(ctx, id, agent.ApprovalResolution{AskID: ask.AskID, Verdict: verdict}, "", generation)
 	if rerr != nil {
 		return nil, rerr
 	}

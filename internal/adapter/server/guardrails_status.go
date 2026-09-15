@@ -68,15 +68,14 @@ func configuredReviewDetailRegistry(configured *ReviewDetailRegistry) *ReviewDet
 	return NewReviewDetailRegistry()
 }
 
-// PublishReviewDetail satisfies agent.ReviewDetailSink. Root-aware engine paths use
-// PublishReviewDetailForRoot; this compatibility method deliberately does not mint
-// a parent-child relation from an unbound child id.
+// PublishReviewDetail satisfies agent.ReviewDetailSink. The engine supplies the
+// explicit delegation root; missing root identity is rejected rather than treating
+// a child as its own lifecycle owner.
 func (r *ReviewDetailRegistry) PublishReviewDetail(_ context.Context, detail agent.ReviewDetail) {
-	r.PublishReviewDetailForRoot(context.Background(), detail.SessionID, detail)
+	r.publishReviewDetailForRoot(detail.RootSessionID, detail)
 }
 
-// PublishReviewDetailForRoot binds detail to the exact delegation root that produced it.
-func (r *ReviewDetailRegistry) PublishReviewDetailForRoot(_ context.Context, root session.SessionID, detail agent.ReviewDetail) {
+func (r *ReviewDetailRegistry) publishReviewDetailForRoot(root session.SessionID, detail agent.ReviewDetail) {
 	if r == nil || root == "" || detail.SessionID == "" || detail.ReviewID == "" || len(detail.ReviewID) > maxReviewIDBytes {
 		return
 	}

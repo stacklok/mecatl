@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-06-24
 - Scope: the guardrails (`modelhook`) cost model — removal of the per-session checker call-count cap (`maxChecks` / the `checkBudget`). Touches `breaker.go`, `internal/adapter/modelhook/modelhook.go`, `internal/app/guardrails.go`, `internal/app/build.go`, `internal/adapter/permconfig/schema.go`, and the operator-tier `guardrails:` YAML subtree. NO engine (`engine/agent`) change; no `port.LLMRequest`, proto, or wire-contract change.
-- Supersedes: the COST-MODEL / per-session call-count cap decision in [ADR 0021](./0021-guardrails.md) ONLY (the `maxChecks` / `checkBudget` call cap and the auto-200 default that applied to the default advisory rule set). 0021's engine half, the threat model, the rule/mode semantics, the matcher, the operator-tier-only enforcement, the recursion guard, the fail-open/closed posture, the sanitize-laundering defense, and the remaining cost guards (`minContentBytes`, `maxContentBytes`) are NOT superseded — they carry over verbatim.
+- Supersedes: the COST-MODEL / per-session call-count cap decision in [ADR 0021](./0021-guardrails.md) ONLY (the `maxChecks` / `checkBudget` call cap and the auto-200 default that applied to the default advisory rule set).
 - Superseded by: none
 
 ## Context
@@ -19,12 +19,12 @@ The auto-200 default compounded this: an operator who set only a model — the d
 **Remove the per-session checker call-count cap (`maxChecks` / `checkBudget`) entirely. The checker runs once per matched tool boundary, unbounded, for the life of the session. Cost control lives in the operator's provider/billing layer, not in the harness.** Concretely:
 
 - The `checkBudget` type and its `admit` method are removed from `breaker.go`. The `failureStreak` (the consecutive-checker-FAILURE escalation to the one-time "checker DOWN" sticky WARN) is KEPT unchanged — it bounds a correctness concern (a persistently-broken checker), not a cost concern.
-- `modelhook.Runner` no longer carries a `budget` field; `modelhook.Options` no longer has a `MaxChecks` field; `modelhook.New` no longer constructs a budget. The `check` path applies only the `minContentBytes` skip, the `maxContentBytes` bound, and the fail-open/closed policy on a checker error.
+- `modelhook.Runner` no longer carries a `budget` field; `modelhook.Options` no longer has a `MaxChecks` field; `modelhook.New` no longer constructs a budget.
 - `internal/app/guardrails.go` drops `defaultGuardrailsMaxChecks` (the auto-200) and the `maxChecks := cfg.GuardrailsMaxChecks` / default-cap-injection logic; `buildGuardrailsHooks` no longer passes `MaxChecks` to `modelhook.New`. `effectiveGuardrailSpecs`'s `usedDefaults` return is now used ONLY to annotate the build-time posture line ("default set"), never to inject a cap.
 - `Config.GuardrailsMaxChecks` (`internal/app/build.go`) and `GuardrailsSection.MaxChecks` / its strict-parse entry (`internal/adapter/permconfig/schema.go`) are removed. The operator-tier `guardrails:` YAML subtree is parsed STRICTLY as before; `maxChecks` is now an UNKNOWN key, so a config carrying it fails loud (strict parse) rather than silently ignoring it — an operator who copied an old config is told, not surprised.
 - The build-time `guardrails ACTIVE` posture line (`logGuardrailsPosture`) no longer appends a `maxChecks=<n>` suffix.
 
-The two remaining cost/abuse guards from 0021's cost model are unchanged: **`minContentBytes`** (skip the checker for a trivially short INBOUND (Post) result — Post-only; outbound Pre args are always inspected regardless of size) and **`maxContentBytes`** (the built-in 256 KiB bound; over-bound content in an enforcing mode routes through fail-open/closed, never a silent pass — the induced-fail-open defense).
+The later contextual reviewer removes content-length skips entirely; see [ADR 0342](./0342-contextual-investigative-guardrails.md).
 
 ## Consequences
 
@@ -36,7 +36,7 @@ The two remaining cost/abuse guards from 0021's cost model are unchanged: **`min
 
 **Behaviour change (the honest cost):** checker calls are now unbounded per session — deliberately. A long, tool-heavy session with the default advisory rule set (which matches `mcp__*` on both directions) will make one checker call per matched tool boundary, which is exactly the coverage the operator asked for when they configured a checker model. The auto-200 default is gone; an operator relying on it to cap spend must now bound spend at the provider/billing layer (where cost control belongs). The failure mode is NOT unbounded: a sustained checker outage still escalates to the one-time sticky "checker DOWN" WARN (the `failureStreak`), and each checker call is bounded by the 30s-ish per-attempt timeout + the fail-open/closed policy, so a broken checker degrades loudly rather than running away.
 
-**Unchanged:** the engine-layer routing (the `modelhook.Runner`, the PreToolUse/PostToolUse wiring, the verdict parse), the recursion guard, the fail-open/closed posture, the sanitize-laundering defense, the operator-tier-only RULES enforcement, the default advisory rule set, the `minContentBytes`/`maxContentBytes` cost guards, and the kill-switch absoluteness — all carry over from [ADR 0021](./0021-guardrails.md) verbatim. The `failureStreak` "checker DOWN" escalation is unchanged.
+**Unchanged at the time:** the engine-layer routing, verdict parse, recursion guard, fail-open/closed posture, operator-tier-only enforcement, and kill switch. Later contextual-review changes are recorded by [ADR 0342](./0342-contextual-investigative-guardrails.md).
 
 ## See also
 

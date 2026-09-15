@@ -42,7 +42,7 @@ func main() {
 	for event := range run.Events() {
 		fmt.Println(event.Type)
 		if event.Type == session.EvPermissionAsk && event.Ask != nil {
-			run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
+			_ = run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
 		}
 	}
 }

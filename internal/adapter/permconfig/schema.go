@@ -1561,8 +1561,6 @@ type GuardrailsSection struct {
 	// Model is the checker model id / alias. Empty leaves the CLI --guardrails-model
 	// to supply it; a value here is overridden by the CLI flag when both are set.
 	Model string `yaml:"model"`
-	// MinContentBytes skips the checker for content shorter than this. 0 = check all.
-	MinContentBytes int `yaml:"minContentBytes"`
 	// Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it).
 	Disabled bool `yaml:"disabled"`
 	// OnCheckerDown sets the global posture when the checker model is unavailable
@@ -1593,7 +1591,8 @@ type GuardrailRuleSpec struct {
 	Phases []string `yaml:"phases"`
 	// Mode is "block"/"advisory"; empty defaults to block.
 	Mode string `yaml:"mode"`
-	// Prompt overrides the built-in inspection rubric.
+	// Prompt adds operator task-risk context beneath the fixed harness safety,
+	// provenance, evidence, and structured-output rubric; it cannot replace it.
 	Prompt string `yaml:"prompt"`
 	// FailClosed optionally overrides the fail-closed global default for this rule.
 	FailClosed bool `yaml:"failClosed"`
@@ -1622,13 +1621,12 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 
 func (g *GuardrailsSection) strictFields() map[string]any {
 	return map[string]any{
-		"model":           &g.Model,
-		"minContentBytes": &g.MinContentBytes,
-		"disabled":        &g.Disabled,
-		"onCheckerDown":   &g.OnCheckerDown,
-		"defaultMode":     &g.DefaultMode,
-		"escape":          &g.Escape,
-		"rules":           &g.Rules,
+		"model":         &g.Model,
+		"disabled":      &g.Disabled,
+		"onCheckerDown": &g.OnCheckerDown,
+		"defaultMode":   &g.DefaultMode,
+		"escape":        &g.Escape,
+		"rules":         &g.Rules,
 	}
 }
 

@@ -47,11 +47,6 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if g.Disabled {
 		cfg.GuardrailsDisabled = true
 	}
-	// Scalar cost knobs: YAML supplies them (no flag), but a non-zero CLI value (if a
-	// flag is ever added) would win; today these come only from YAML.
-	if cfg.GuardrailsMinContentBytes == 0 {
-		cfg.GuardrailsMinContentBytes = g.MinContentBytes
-	}
 	// OnCheckerDown: YAML supplies it (no flag); empty = fail (the safe default).
 	if cfg.GuardrailsOnCheckerDown == "" {
 		cfg.GuardrailsOnCheckerDown = strings.TrimSpace(g.OnCheckerDown)
@@ -360,46 +355,15 @@ func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCov
 // model is configured but the operator authored no explicit rules. Enabling
 // guardrails is the opt-in to spend — the default posture is enforcement (block),
 // not observe-only. Advisory is available via the defaultMode key or an explicit
-// rule list.
-//
-// Shell IS matched (pre, block) so a configured guardrail protects the local-shell
-// blast radius out of the box (the motivating incident: an agent ran
-// `gh pr merge --squash` as a Shell call and merged its own PR unattended; the old
-// default set only matched WebSearch/WebFetch/mcp__* so guardrails never saw it). To
-// avoid an LLM call on every shell command, the Shell rule carries SkipReadOnlyShell:
-// the modelhook adapter's read-only pre-filter lets a confidently-read-only Pre Shell
-// command bypass the checker entirely, so ONLY mutating/outward commands are
-// inspected. The pre-filter is fail-safe — an ambiguous/substitution command is still
-// inspected. The OTHER local tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob)
-// remain deliberately unmatched. See ADR 0060.
+// rule list. The list covers action and inbound review across local, web, MCP,
+// and delegation boundaries; SkipReadOnlyShell avoids action review only for a
+// positively classified read-only command.
 var defaultGuardrailSpecs = []modelhook.RuleSpec{
-	// Outbound search/fetch args (a query/URL carrying a secret) AND inbound results
-	// (a fetched page / search snippet carrying an injection).
 	{Match: "WebSearch", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
-	// WebFetch's risk is overwhelmingly the INBOUND page (injection); its outbound arg
-	// is just a URL. Post only.
 	{Match: "WebFetch", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
-	// FetchMcpResource (issue #223 Phase 2): the same class as WebFetch — a client
-	// fetch of an https:// resource URI an MCP tool surfaced as a resource_link. The
-	// risk is the INBOUND fetched content (injection); its outbound arg is just a URI.
-	// Post only, mirroring WebFetch.
 	{Match: "FetchMcpResource", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
-	// CallMcpWithQuery (issue #223): the same class as mcp__* — it calls a remote
-	// MCP tool. Outbound args (exfil into the remote call body) AND inbound results
-	// (injection in the server's filtered response), so pre+post, mirroring mcp__*.
 	{Match: "CallMcpWithQuery", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
-	// All MCP tools, both directions: outbound args (exfil into an MCP call body) and
-	// inbound results (injection in an MCP server's response).
 	{Match: "mcp__*", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
-	// Local shell (the #1 blast radius). Pre only — inspect the OUTBOUND command for a
-	// mutating/outward action (e.g. `gh pr merge`, a push, a destructive write). The
-	// read-only pre-filter (SkipReadOnlyShell) skips the checker for a confidently
-	// read-only command, so a guardrail-protected shell costs an LLM call ONLY on a
-	// mutating/outward command, not on every `ls`/`grep`/`git status`. It carries a
-	// Shell-SPECIFIC rubric (modelhook.DefaultShellPrePrompt): the generic exfiltration
-	// rubric (defaultPrePrompt) false-positives on ordinary local writes (a local write
-	// is data STAYING on the machine, not exfiltration), so Shell gets a concrete-trigger,
-	// fail-toward-safe rubric instead. ADR 0060.
 	{Match: "Shell", Phases: []string{string(modelhook.PhasePre), string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock), SkipReadOnlyShell: true, Prompt: modelhook.DefaultShellPrePrompt},
 	{Match: readToolName, Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},
 	{Match: "ListDir", Phases: []string{string(modelhook.PhasePost)}, Mode: string(modelhook.ModeBlock)},

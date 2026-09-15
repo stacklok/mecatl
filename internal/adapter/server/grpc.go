@@ -881,14 +881,12 @@ func (h *HarnessServer) handleResumeApprovalFrame(ctx context.Context, id sessio
 	verdict := verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow())
 	target := ct.active()
 	kind := guardrailApprovalKindFromProto(ra.GetGuardrailKind())
-	if err := target.ValidateRemoteApprovalIntent(ra.GetAskId(), ra.GetReviewId(), kind, verdict); err != nil {
+	resolution := agent.ApprovalResolution{AskID: ra.GetAskId(), ReviewID: ra.GetReviewId(), Kind: kind, Verdict: verdict}
+	if err := h.svc.resolveLiveRun(id, target, resolution, ra.GetExpectedRunId()); err != nil {
 		select {
 		case rl.notices <- &mecatlv1.Event{Type: "control.refused", Text: valid(err.Error())}:
 		default:
 		}
-		return
-	}
-	if err := h.svc.approveLiveRun(id, target, ra.GetAskId(), verdict, ra.GetExpectedRunId()); err != nil {
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
 	}
 }
@@ -1674,7 +1672,9 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				if frame.approval != nil {
 					ra := frame.approval
 					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
-						result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+						if err := result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow())); err != nil {
+							h.svc.Diagnostics().Log(ctx, port.LevelWarn, "authorization approval frame refused", "session", string(id), "err", err.Error())
+						}
 					}
 				} else if frame.cancel != nil {
 					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {

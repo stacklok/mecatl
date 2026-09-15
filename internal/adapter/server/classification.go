@@ -297,6 +297,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"StartScheduledRunContent":     {KindCallerOwned, "trusted scheduler-purpose entry; authorizes the schedule owner before its kind gate and shared run-entry path"},
 	"Approve":                      {KindCallerOwned, "delegates to ApproveRun's authorization"},
 	"ApproveRun":                   {KindCallerOwned, "same-process path authorizes via the registered run's owning session; the cross-process resumeFromAwaiting path authorizes via loadAndReopen"},
+	"ResolveApprovalRun":           {KindCallerOwned, "same owner checks as ApproveRun, with atomic pending-purpose validation before verdict submission"},
 	"ApprovePlan":                  {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
 	"Cancel":                       {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
 	"CancelChild":                  {KindCallerOwned, "authorizes the PARENT session via GetSession before reaching into its child registry"},

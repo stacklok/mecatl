@@ -2069,14 +2069,15 @@ the child's surfaced askIDs, invokes `cancel()` OUTSIDE the registry lock, then 
 `childAskRouter.unregister` (a locked delete) BEFORE emitting the new `permission.retract` event
 (string-passthrough EventType; payload rides the existing `Event.Ask` carrying the AskID ONLY) — a
 racing late approval falls through to the parent's own registry and dies as an unknown-ask no-op.
-askIDs additionally carry a trailing ":<discriminator>" SUFFIX (`newAskID`; the leading "<sessionID>:"
-prefix isChildAsk consumes is untouched). The discriminator is the host-supplied
-`RunRequest.AskIDDiscriminator` when set (a durable, cross-process-reconstructable value, colon-free —
-ADR-0044, #117) else the process-global "r<runSerial>" fallback resolved once in `startRun`. Without a
-disjoint per-RUN suffix, cancel-a-parked-ask → `resume` the same child id in the same run (Counters
-reset) → the provider re-mints the same call id → the new ask would COLLIDE with the retracted one and
-a stale queued ResumeApproval could resolve it (CWE-863); the serial guarantees disjointness
-automatically, a host discriminator inherits it via the unique/stable-per-attempt host contract.
+askIDs retain the trailing colon-free host discriminator component (`newAskID`; the leading
+`<sessionID>:` prefix `isChildAsk` consumes is untouched). The discriminator is the host-supplied
+`RunRequest.AskIDDiscriminator` when set (or the process-global `r<runSerial>` fallback resolved once
+in `startRun`), and the opaque call component gains `.a<occurrence>` from a concurrency-safe per-run
+issuance sequence. The exact host suffix and four-component colon grammar therefore remain stable
+while two genuine approval occurrences for the same call and tool counter cannot collide in a
+client's resolved-ask set. Without disjoint per-RUN and per-ask identity, cancel/resume can replay a
+stale verdict and an ordinary→guardrail→reauthorization chain can cause a later ask to be suppressed
+as an already-resolved duplicate (CWE-863).
 Ask OWNERSHIP is recorded at the single surfacing seam: `childPosture` gains an explicit `childID`
 field (set at ALL THREE construction sites — subagent: childID; team: `m.sess.ID`; parallel:
 `childSess.ID` — because `role` does NOT universally carry the session id), passed through
@@ -3247,6 +3248,12 @@ Success adds a durable local scrollback notice but leaves existing transcript ca
 Older servers leave the capability false, so the palette hides the built-in and typed use is
 rejected locally rather than sent as a prompt.
 
+## Contextual guardrail evidence binding
+
+Local evidence authority is semantic, not field-name based. `engine/tool/tool.go` (`LocalFileOperands`) recognizes only explicit built-in filesystem operands and the narrow exact Shell-script form; MCP, custom, and delegation payload labels never become local targets or repeat grants. `engine/agent/actionreview.go` (`prepareActionReview`) authorizes each derived `Read` under the originating session before dependency snapshots, and snapshots use `BoundedWorkspaceReader` without a `Stat` → unbounded-read race.
+
+`internal/app/contextual_evidence.go` (`PrepareReviewEvidence`) mints only authorized, version-bound sources. `internal/app/contextual_reviewer.go` (`newFiniteReviewEvidenceSource`) divides larger text into a finite opaque continuation chain under the existing 16-handle / 400,000-byte total and 25,000-byte / 2,000-line page limits. Pages carry one source version; changing the source invalidates later reads, and an acceptable assessment after any page read requires the whole chain. The checker never supplies a path or offset. Image, audio, and binary parts are currently an explicit unsupported-inspection case: textual metadata may be shown as data, but omitted media makes `EvidenceComplete=false`; enforcing review therefore holds the exact typed result for one-time human release. No URL is fetched and no base64 representation is treated as visual inspection. The checker prompt projects only environment kind; exact private environment ID/revision remains in the in-process evidence binding.
+
 ## Run-bound knobs — index
 
 The run-bound knobs (turn/tool-call/round caps, token budgets, no-progress nudges,
@@ -3899,27 +3906,11 @@ check-count cap; finite evidence and trajectory capacities become a completed
 unresolved assessment rather than silently skipping review. Protocol tests do not
 establish the configured model's efficacy.
 
-**Per-tool rubric routing (ADR 0060).** `buildCheckPrompt` calls `rubric(phase, rule)`,
-which prefers a rule's non-empty `prompt` over the built-in default — the SAME seam
-operator custom prompts use. The default **Shell** rule wires `Prompt:
-modelhook.DefaultShellPrePrompt` (an EXPORTED const), so a Pre Shell check routes to a
-Shell-SPECIFIC rubric; **Web/MCP** rules leave `Prompt` empty and keep the generic
-`defaultPrePrompt`. Why: `defaultPrePrompt` is an exfiltration rubric for network/MCP
-boundaries — its "sensitive local data transmitted off the machine" + "if uncertain,
-judge unsafe" clauses false-positive on local-shell args (a real incident blocked a
-legitimate write to a sibling repo as "exfiltration"; a local write is data STAYING on
-the machine). `DefaultShellPrePrompt` flags only FIVE concrete dangerous categories
-(off-machine upload, `curl … | sh`, irreversible remote actions incl. `gh pr merge`,
-destructive local ops, AND local-PERSISTENCE writes to sensitive targets — authorized_keys
-/ shell rc / crontab / systemd / git-hooks — which never leave the machine so the first
-four miss them) and EXPLICITLY declares ORDINARY local writes/builds/tests/origin-remote
-git SAFE (category 5 and the local-write carve-out coexist: a normal source write to a
-sibling repo stays SAFE, only the named sensitive targets are UNSAFE), replacing the
-blanket "if uncertain, judge unsafe" with "judge SAFE unless a specific dangerous action
-is identifiable" — a deliberate precision-over-recall posture for the local shell, with
-the out-of-band approve-once ask (ADR 0062) as the residual recovery. An operator's
-explicit `Shell` rule with no `prompt:` falls back to `defaultPrePrompt` (least-surprising
-— an explicit rule opts out of the default-set conveniences).
+**Per-tool policy context.** Every review starts with the fixed harness-owned action or
+inbound rubric. A non-empty rule `prompt` is appended as operator task-risk context; it
+cannot replace the safety, authority, provenance, source-aware false-positive, evidence,
+or structured-output contract. `defaultGuardrailSpecs` may use prompts for built-in
+risk context, and an operator's explicit rule uses the same additive path.
 
 **Inbound escrow.** The tool and PostToolUse hook run once, then UTF-8 repair and
 contextual inbound review happen before recorder, history, save, final result event,
@@ -3938,13 +3929,12 @@ the private held-result escrow in `engine/agent/inboundreview.go` instead. An
 advisory result remains byte-identical. Machine review metadata contains only
 validated refs, route, assessment, inspection, disposition, and reason code;
 human rationale uses the live-only Service registry.
-**Cost/abuse:** a `minContentBytes` skip **(Post/inbound ONLY — Pre/outbound args are always
-inspected regardless of size, since a short exfiltration arg is exactly what the Pre
-check catches)**. The former `maxContentBytes` (256 KiB) bound was REMOVED
-([ADR 0050](../adr/0050-guardrails-remove-maxcontentbytes.md)) — the checker now inspects
-content regardless of size, and a checker error / timeout on huge input flows through the
-existing fail-closed path. **Fail-closed by default**: an operational checker failure
-recovers within the review budget, then asks/holds interactively or denies/withholds
+**Cost/abuse:** matched inputs are never skipped because they are short or large. Finite
+secondary evidence and trajectory capacities fail honestly as unresolved/incomplete,
+while checker errors and timeouts follow the configured checker-down posture. The former
+`maxContentBytes` input bound was removed by
+[ADR 0050](../adr/0050-guardrails-remove-maxcontentbytes.md). **Fail-closed by default**:
+an operational checker failure recovers within the review budget, then asks/holds interactively or denies/withholds
 unattended. Explicit `onCheckerDown: warn` continues with a visible operational warning;
 it never fabricates a prohibited finding. A sustained outage remains health-visible.
 **Operator-tier config** is read by `permconfig.Resolver.OperatorGuardrails()` from the **user-global + CLI

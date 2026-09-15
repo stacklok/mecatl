@@ -77,6 +77,15 @@ func (r *resultRecorder) ToolCall(_ session.SessionID, _ session.ToolCall, resul
 	r.results = append(r.results, result)
 }
 
+func resolveScoped(t *testing.T, run *agent.Run, ask *session.PendingAsk, verdict session.ApprovalVerdict) error {
+	t.Helper()
+	resolution := agent.ApprovalResolution{AskID: ask.AskID, Verdict: verdict}
+	if ask.Guardrail != nil {
+		resolution.ReviewID, resolution.Kind = ask.Guardrail.ReviewID, ask.Guardrail.Kind
+	}
+	return run.ResolveApproval(resolution)
+}
+
 func TestADR_0342_ContextualGuardrails_Scenario2_FailureMatrix(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -104,7 +113,7 @@ func TestADR_0342_ContextualGuardrails_Scenario2_FailureMatrix(t *testing.T) {
 			for ev := range run.Events() {
 				if ev.Type == session.EvPermissionAsk {
 					asks++
-					run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+					_ = resolveScoped(t, run, ev.Ask, session.VerdictAllowOnce)
 				}
 				if ev.ToolResult != nil && ev.ToolResult.Content == "raw-result" {
 					raw = true
@@ -146,9 +155,21 @@ func TestADR_0342_ContextualGuardrails_Scenario3_ExactResultRelease(t *testing.T
 			if ev.Ask.Guardrail == nil || ev.Ask.Guardrail.Kind != session.GuardrailApprovalResultRelease {
 				t.Fatalf("release scope = %+v", ev.Ask.Guardrail)
 			}
-			run.Approve(ev.Ask.AskID, session.VerdictAllowAlways) // rejected without consuming
-			run.Approve("unknown", session.VerdictAllowOnce)
-			run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+			if err := resolveScoped(t, run, ev.Ask, session.VerdictAllowAlways); err == nil {
+				t.Fatal("allow-always released a held result")
+			}
+			if err := run.ResolveApproval(agent.ApprovalResolution{AskID: ev.Ask.AskID, ReviewID: ev.Ask.Guardrail.ReviewID, Kind: session.GuardrailApprovalAction, Verdict: session.VerdictAllowOnce}); err == nil {
+				t.Fatal("wrong approval kind released a held result")
+			}
+			if err := run.Approve(ev.Ask.AskID, session.VerdictAllowOnce); err == nil {
+				t.Fatal("compatibility approval released a result without acknowledgement")
+			}
+			if err := run.Approve("unknown", session.VerdictAllowOnce); err == nil {
+				t.Fatal("unknown approval did not report an actionable error")
+			}
+			if err := resolveScoped(t, run, ev.Ask, session.VerdictAllowOnce); err != nil {
+				t.Fatalf("valid release: %v", err)
+			}
 		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			streamed = append(streamed, *ev.ToolResult)
@@ -238,9 +259,9 @@ func TestADR_0342_ContextualGuardrails_Scenario3_ConcurrentInboundReleaseOrderin
 		if ev.Type == session.EvPermissionAsk {
 			asks = append(asks, ev.Ask.Call)
 			if len(asks) == 1 {
-				run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+				_ = resolveScoped(t, run, ev.Ask, session.VerdictAllowOnce)
 			} else {
-				run.Approve(ev.Ask.AskID, session.VerdictDeny)
+				_ = resolveScoped(t, run, ev.Ask, session.VerdictDeny)
 			}
 		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
@@ -266,7 +287,7 @@ func TestADR_0342_ContextualGuardrails_Scenario3_ConcurrentInboundReleaseOrderin
 		if ev.Type == session.EvPermissionAsk {
 			cancelAsks++
 			if cancelAsks == 1 {
-				cancelRun.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+				_ = resolveScoped(t, cancelRun, ev.Ask, session.VerdictAllowOnce)
 			} else {
 				cancelRun.Cancel()
 			}

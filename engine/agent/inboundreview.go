@@ -74,11 +74,11 @@ func (e *Engine) prepareInboundAssessment(r *Run, sess *session.Session, env too
 		Event:          governance.HookEvent{Phase: governance.PhasePostToolUse, Tool: call.Name, Input: input, SessionID: string(sess.ID), CallID: string(call.ID)},
 		EffectiveCall:  session.NewToolCall(call.ID, call.Name, append(json.RawMessage(nil), call.Args...)),
 		PrincipalFacts: principal, PrincipalFactsComplete: principalComplete,
-		Caller: reviewCaller(e, r), Environment: env.Ref(), Target: target,
+		Caller: reviewCaller(e, r, sess), Environment: env.Ref(), Target: target,
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxEvidenceHandles: defaultReviewEvidenceHandles, MaxEvidenceBytes: defaultReviewEvidenceBytes, MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	prepared := prepareReviewEvidence(r.ctx, r, sess, env, assessment.request, &result)
+	prepared := e.prepareReviewEvidence(r.ctx, r, sess, env, assessment.request, &result)
 	assessment.request.Evidence, assessment.request.EvidenceComplete = prepared.Evidence, prepared.Complete
 	assessment.source, assessment.close = prepared.Source, prepared.Close
 	return assessment
@@ -184,22 +184,6 @@ func (root *reviewRoot) bindHeldAsk(key heldResultKey, askID string) bool {
 	return true
 }
 
-func (root *reviewRoot) releaseReviewID(askID string) (string, bool) {
-	root.mu.Lock()
-	defer root.mu.Unlock()
-	for _, held := range root.held {
-		if held.askID == askID {
-			return held.key.reviewID, true
-		}
-	}
-	return "", false
-}
-
-func (root *reviewRoot) isReleaseAsk(askID string) bool {
-	_, ok := root.releaseReviewID(askID)
-	return ok
-}
-
 func (root *reviewRoot) consumeHeld(key heldResultKey, askID string) (session.ToolResult, bool) {
 	root.mu.Lock()
 	defer root.mu.Unlock()
@@ -265,7 +249,7 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 		return session.NewToolError(call.ID, withheldResultText), false
 	}
 	ask := session.PendingAsk{
-		AskID: newAskID(sess.ID, sess.Counters.ToolCalls, call.ID, r.askDiscriminator), Tool: call.Name,
+		AskID: r.issueAskID(sess.ID, sess.Counters.ToolCalls, call.ID), Tool: call.Name,
 		Reason: "contextual guardrail withheld this already-produced result pending Release once or Deny", Call: call.ID,
 		Origin:    session.ApprovalOriginHookGuardrail,
 		Guardrail: &session.GuardrailPendingScope{ReviewID: assessment.request.ReviewID, Kind: session.GuardrailApprovalResultRelease, SessionOnly: true},

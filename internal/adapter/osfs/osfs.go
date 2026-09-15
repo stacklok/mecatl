@@ -35,6 +35,7 @@ package osfs
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"hash/maphash"
@@ -994,6 +995,63 @@ func (w *Workspace) ReadVersionBounded(_ context.Context, path string, maxBytes 
 		return nil, tool.FileVersion{}, fmt.Errorf("osfs: file %q exceeds the %d-byte bounded read limit", path, maxBytes)
 	}
 	return data, osfsVersion(data), nil
+}
+
+// ReadVersionRangeBounded reads one range through the confined file descriptor,
+// hashes the opened snapshot without materializing the rest, and rejects the
+// source before page allocation when its size exceeds totalLimit.
+func (w *Workspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	if offset < 0 || maxBytes < 0 || totalLimit < 0 {
+		return nil, tool.FileVersion{}, 0, errors.New("osfs: negative bounded range")
+	}
+	r, rel, err := w.fs.resolveRead(path)
+	if err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	file, err := r.Open(rel)
+	if err != nil {
+		return nil, tool.FileVersion{}, 0, mapEscape(path, err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	total := info.Size()
+	if total > totalLimit || offset > total {
+		return nil, tool.FileVersion{}, total, fmt.Errorf("osfs: file %q exceeds bounded range", path)
+	}
+	pageSize := min(maxBytes, total-offset)
+	page := make([]byte, pageSize)
+	if pageSize > 0 {
+		if _, err := file.ReadAt(page, offset); err != nil && !errors.Is(err, io.EOF) {
+			return nil, tool.FileVersion{}, total, err
+		}
+	}
+	hash := sha256.New()
+	buf := make([]byte, 32*1024)
+	var readTotal int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, tool.FileVersion{}, total, err
+		}
+		n, readErr := file.Read(buf)
+		if n > 0 {
+			readTotal += int64(n)
+			_, _ = hash.Write(buf[:n])
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, tool.FileVersion{}, total, readErr
+		}
+	}
+	after, err := file.Stat()
+	if err != nil || readTotal != total || after.Size() != total {
+		return nil, tool.FileVersion{}, total, fmt.Errorf("osfs: file %q changed during bounded range read", path)
+	}
+	return page, tool.NewFileVersion(fmt.Sprintf("%x", hash.Sum(nil))), total, nil
 }
 
 // osfsVersion mints a FileVersion from content bytes (sha256 via

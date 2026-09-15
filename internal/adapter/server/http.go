@@ -1183,13 +1183,8 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verdict := verdictFromHTTP(body.Verdict, body.Allow)
-	if live, ok := h.svc.LookupRun(id); ok {
-		if err := live.ValidateRemoteApprovalIntent(body.AskID, body.ReviewID, session.GuardrailApprovalKind(body.GuardrailKind), verdict); err != nil {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
-	}
-	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdict, body.ExpectedRunID)
+	resolution := agent.ApprovalResolution{AskID: body.AskID, ReviewID: body.ReviewID, Kind: session.GuardrailApprovalKind(body.GuardrailKind), Verdict: verdict}
+	run, err := h.svc.ResolveApprovalRun(r.Context(), id, resolution, body.ExpectedRunID)
 	if err != nil {
 		writeServiceError(w, err)
 		return

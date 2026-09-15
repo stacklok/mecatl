@@ -13,15 +13,26 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Remote contextual-approval intent validation** — adds `agent.Run.ValidateRemoteApprovalIntent` so transport adapters can require an exact review/purpose acknowledgement before releasing a privately held tool result, without consuming the pending ask. Added (minor).
+- **Atomic contextual approval resolution** — adds `agent.ApprovalResolution`,
+  `agent.ValidateApprovalResolution`, and `agent.Run.ResolveApproval` so hosts validate
+  the exact pending review purpose and submit its verdict under one registry lock. Changes
+  `Run.Approve` to return an actionable error and restricts it to ordinary/legacy action
+  approvals; result release requires the atomic operation. `ReviewEvidencePreparation`
+  also gains a trusted originating-session `Authorize` callback that evidence preparers
+  must consult before backend metadata or content reads. Changed (breaking, pre-v1 minor).
 
 - **Contextual guardrail foundation** — adds the consumer-local `agent.ToolReviewer`,
   `ReviewEvidenceSource`, `ReviewEvidencePreparer`, explicit review policy/metadata/grant
   extension interfaces, and `ReviewDetailSink`, with bounded request, result, evidence,
-  trajectory, preparation, and detail value types. Adds `tool.BoundedWorkspaceReader` so
+  trajectory, preparation, and detail value types. `ReviewDetail.RootSessionID`
+  explicitly binds child detail to its delegation-root lifetime so external sinks do
+  not silently treat a child as a root. Adds `tool.BoundedWorkspaceReader` so
   evidence-capable workspaces can reject oversized reads before allocation. Adds
   session-owned machine projections for guardrail reviews and approval scopes, plus explicit
-  `session.ApprovalOrigin` on pending and durable approval records. Added (minor).
+  `session.ApprovalOrigin` on pending and durable approval records. Adds
+  `tool.LocalFileOperands` so only explicit built-in filesystem semantics can mint
+  local evidence/targets, and `tool.BoundedWorkspaceRangeReader` plus opaque
+  continuation metadata for version-consistent finite evidence paging. Added (minor).
 
 - **Explicit approval origin** — replaces `session.PendingAsk.HookOriginated`,
   `PlanOriginated`, and the derived `AskOrigin` accessor/type with one serialized

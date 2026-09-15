@@ -62,7 +62,6 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES contextual guardrails. A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
-| `guardrails.minContentBytes` | `int` | `0` | MinContentBytes skips the checker for content shorter than this. 0 = check all. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
 | `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "fail" (default, fail-closed) or explicit "warn" (continue with an operational warning). Per-rule failClosed overrides: failClosed:true tightens under warn; explicit false loosens under fail. Empty = fail. |
 | `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default) or "advisory". An explicit rules list replaces the defaults entirely (this key is ignored). |
@@ -71,7 +70,7 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 | `guardrails.rules[].match` | `string` | `(empty)` | Match is the tool-name matcher (exact / "prefix*" / "*"). |
 | `guardrails.rules[].phases` | `[]string` | `(absent)` | Phases lists "pre"/"post"; empty = both. |
 | `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"advisory"; empty defaults to block. |
-| `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt overrides the built-in inspection rubric. |
+| `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt adds operator task-risk context beneath the fixed harness safety, provenance, evidence, and structured-output rubric; it cannot replace it. |
 | `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed optionally overrides the fail-closed global default for this rule. |
 
 ## `posture`

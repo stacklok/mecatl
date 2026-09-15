@@ -69,8 +69,6 @@
 #   # defaultMode: advisory. Leave empty (and pass no --guardrails-model) to keep
 #   # guardrails OFF.
 #   model: claude-haiku-4-6
-#   # MinContentBytes skips the checker for content shorter than this. 0 = check all.
-#   minContentBytes: 0
 #   # Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it).
 #   disabled: false
 #   # OnCheckerDown sets the global posture when the checker model is unavailable

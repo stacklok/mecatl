@@ -753,10 +753,6 @@ type Config struct {
 	// per-rule prompt + fail-closed). Empty disables guardrails. Sourced only from
 	// the operator tier (user-global YAML + CLI), never the project file.
 	GuardrailsRules []GuardrailRule
-	// GuardrailsMinContentBytes skips the checker for content shorter than this (a
-	// cost guard — trivially short content cannot carry a meaningful payload). 0
-	// checks everything.
-	GuardrailsMinContentBytes int
 	// GuardrailsDisabled is the master kill-switch (--guardrails=off): when true,
 	// guardrails are forced OFF regardless of model/rules config.
 	GuardrailsDisabled bool

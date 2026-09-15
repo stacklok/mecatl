@@ -119,8 +119,10 @@ type finiteReviewEvidenceSource struct {
 
 // newFiniteReviewEvidenceSource mints the complete finite inventory before a
 // reviewer runs. Capacity is checked against backend size metadata before any
-// content read. Candidates that are forbidden, unauthorized, oversized, or
-// otherwise unavailable receive no handle and make completeness false.
+// content read. Large textual objects become a finite chain of opaque page
+// handles; no path or caller-chosen offset is accepted.
+//
+//nolint:gocyclo // Finite admission keeps binding, preallocation, page minting, and completeness in one auditable path.
 func newFiniteReviewEvidenceSource(ctx context.Context, access reviewEvidenceBinding, candidates []reviewEvidenceCandidate, capacity agent.ReviewCapacity) (*finiteReviewEvidenceSource, []agent.ReviewEvidenceMeta, bool) {
 	limitHandles := maxReviewEvidenceHandles
 	if capacity.MaxEvidenceHandles > 0 && capacity.MaxEvidenceHandles < limitHandles {
@@ -135,34 +137,104 @@ func newFiniteReviewEvidenceSource(ctx context.Context, access reviewEvidenceBin
 	complete := true
 	var allocated int64
 	for _, candidate := range candidates {
-		if len(metas) >= limitHandles || !candidate.Authorized || candidate.ClassifiedCredential || candidate.Binary || !eligibleEvidenceKind(candidate.Kind) || candidate.Backend == nil || candidate.Offset < 0 || !sameReviewEvidenceBinding(candidate.Binding, access) {
+		if !candidate.Authorized || candidate.ClassifiedCredential || candidate.Binary || !eligibleEvidenceKind(candidate.Kind) || candidate.Backend == nil || candidate.Offset < 0 || !sameReviewEvidenceBinding(candidate.Binding, access) {
 			complete = false
 			continue
 		}
 		total, err := candidate.Backend.Size(ctx)
-		if err != nil || total < candidate.Offset {
+		if err != nil || total < candidate.Offset || total-candidate.Offset > limitBytes-allocated {
 			complete = false
 			continue
 		}
-		preview := min(total-candidate.Offset, maxReviewEvidenceRead)
-		if allocated+preview > limitBytes {
+		ranges, err := reviewEvidencePageRanges(ctx, candidate.Backend, candidate.Offset, total)
+		if err != nil || len(ranges) > limitHandles-len(metas) {
 			complete = false
 			continue
 		}
-		handle, err := randomReviewEvidenceHandle()
+		handles := make([]string, len(ranges))
+		for i := range handles {
+			handles[i], err = randomReviewEvidenceHandle()
+			if err != nil {
+				break
+			}
+		}
 		if err != nil {
 			complete = false
 			continue
 		}
-		meta := agent.ReviewEvidenceMeta{Handle: handle, Kind: candidate.Kind, Display: candidate.Display, Version: candidate.Version, Complete: candidate.Complete && candidate.Offset+preview == total}
-		if !meta.Complete {
+		for i, page := range ranges {
+			continuation := ""
+			if i+1 < len(handles) {
+				continuation = handles[i+1]
+			}
+			meta := agent.ReviewEvidenceMeta{Handle: handles[i], Kind: candidate.Kind, Display: candidate.Display, Version: candidate.Version, Continuation: continuation, Complete: candidate.Complete && continuation == ""}
+			source.entries[handles[i]] = finiteReviewEvidenceEntry{meta: meta, binding: candidate.Binding, backend: candidate.Backend, offset: page.offset, size: page.size}
+			metas = append(metas, meta)
+		}
+		allocated += total - candidate.Offset
+		if !candidate.Complete {
 			complete = false
 		}
-		source.entries[handle] = finiteReviewEvidenceEntry{meta: meta, binding: candidate.Binding, backend: candidate.Backend, offset: candidate.Offset, size: preview}
-		metas = append(metas, meta)
-		allocated += preview
 	}
 	return source, metas, complete
+}
+
+type reviewEvidencePage struct{ offset, size int64 }
+
+type evidencePageRanger interface {
+	EvidencePageRanges(context.Context, int64, int64) ([]reviewEvidencePage, error)
+}
+
+func reviewEvidencePageRanges(ctx context.Context, backend boundedReviewEvidenceBackend, offset, total int64) ([]reviewEvidencePage, error) {
+	if pager, ok := backend.(evidencePageRanger); ok {
+		return pager.EvidencePageRanges(ctx, offset, total)
+	}
+	if offset == total {
+		return []reviewEvidencePage{{offset: offset}}, nil
+	}
+	pages := make([]reviewEvidencePage, 0, int((total-offset+maxReviewEvidenceRead-1)/maxReviewEvidenceRead))
+	for offset < total {
+		size := min(maxReviewEvidenceRead, total-offset)
+		pages = append(pages, reviewEvidencePage{offset: offset, size: size})
+		offset += size
+	}
+	return pages, nil
+}
+
+func lineBoundedEvidencePageRanges(ctx context.Context, backend boundedReviewEvidenceBackend, offset, total int64) ([]reviewEvidencePage, error) {
+	if offset == total {
+		return []reviewEvidencePage{{offset: offset}}, nil
+	}
+	pages := make([]reviewEvidencePage, 0, int((total-offset+maxReviewEvidenceRead-1)/maxReviewEvidenceRead))
+	for offset < total {
+		size := min(maxReviewEvidenceRead, total-offset)
+		content, err := backend.ReadAt(ctx, offset, size)
+		if err != nil || int64(len(content)) != size {
+			if err == nil {
+				err = errors.New("evidence backend changed byte length during paging")
+			}
+			return nil, err
+		}
+		if reviewEvidenceLineCount(content) > maxReviewEvidenceLines {
+			cut := 0
+			for lines := 0; cut < len(content); cut++ {
+				if content[cut] == '\n' {
+					lines++
+					if lines == maxReviewEvidenceLines {
+						cut++
+						break
+					}
+				}
+			}
+			if cut == 0 {
+				return nil, errors.New("evidence page cannot satisfy line bound")
+			}
+			size = int64(cut)
+		}
+		pages = append(pages, reviewEvidencePage{offset: offset, size: size})
+		offset += size
+	}
+	return pages, nil
 }
 
 func randomReviewEvidenceHandle() (string, error) {
@@ -229,7 +301,7 @@ func (s *finiteReviewEvidenceSource) ReadReviewEvidence(ctx context.Context, req
 	if int64(len(content)) > entry.size || reviewEvidenceLineCount(content) > maxReviewEvidenceLines {
 		return agent.ReviewEvidence{}, fmt.Errorf("%w: bounded evidence backend exceeded native Read preview limits", errEvidenceDenied)
 	}
-	return agent.ReviewEvidence{Handle: entry.meta.Handle, Kind: entry.meta.Kind, Version: entry.meta.Version, Complete: entry.meta.Complete, Content: content}, nil
+	return agent.ReviewEvidence{Handle: entry.meta.Handle, Kind: entry.meta.Kind, Version: entry.meta.Version, Continuation: entry.meta.Continuation, Complete: entry.meta.Complete, Content: content}, nil
 }
 
 func reviewEvidenceLineCount(content string) int {
@@ -374,6 +446,13 @@ func validateReviewRequest(req agent.ToolReviewRequest) error {
 		}
 		seen[meta.Handle] = struct{}{}
 	}
+	for _, meta := range req.Evidence {
+		if meta.Continuation != "" {
+			if _, exists := seen[meta.Continuation]; !exists || meta.Continuation == meta.Handle {
+				return fmt.Errorf("%w: invalid evidence continuation", errEvidenceDenied)
+			}
+		}
+	}
 	return nil
 }
 
@@ -400,7 +479,29 @@ func buildContextualReviewPrompt(req agent.ToolReviewRequest) string {
 	effectiveArgs := promptReq.EffectiveCall.Args
 	promptReq.Event.Input = nil
 	promptReq.EffectiveCall.Args = nil
-	encoded, err := json.Marshal(promptReq)
+	promptContext := struct {
+		ReviewID               string
+		Job                    agent.ReviewJob
+		Event                  governance.HookEvent
+		EffectiveCall          session.ToolCall
+		PrincipalFacts         []agent.ReviewPrincipalFact
+		PrincipalFactsComplete bool
+		Caller                 agent.ReviewCaller
+		EnvironmentKind        string
+		Target                 agent.ReviewTarget
+		Evidence               []agent.ReviewEvidenceMeta
+		EvidenceComplete       bool
+		Trajectory             []agent.ReviewTrajectoryFact
+		TrajectoryComplete     bool
+		Capacity               agent.ReviewCapacity
+	}{
+		ReviewID: promptReq.ReviewID, Job: promptReq.Job, Event: promptReq.Event, EffectiveCall: promptReq.EffectiveCall,
+		PrincipalFacts: promptReq.PrincipalFacts, PrincipalFactsComplete: promptReq.PrincipalFactsComplete,
+		Caller: promptReq.Caller, EnvironmentKind: string(promptReq.Environment.Kind), Target: promptReq.Target,
+		Evidence: promptReq.Evidence, EvidenceComplete: promptReq.EvidenceComplete,
+		Trajectory: promptReq.Trajectory, TrajectoryComplete: promptReq.TrajectoryComplete, Capacity: promptReq.Capacity,
+	}
+	encoded, err := json.Marshal(promptContext)
 	if err != nil {
 		encoded = []byte(`{"context_encoding":"unavailable"}`)
 	}
@@ -479,6 +580,9 @@ func ensureJSONEOF(dec *json.Decoder) error {
 func validateReviewResult(result agent.ToolReviewResult, req agent.ToolReviewRequest, state *reviewToolState) error {
 	if err := validateReviewAssessmentShape(result, req); err != nil {
 		return err
+	}
+	if result.Assessment == agent.ReviewAcceptable && !state.readPageChainsComplete() {
+		return errors.New("acceptable assessment requires every started evidence page chain to be complete")
 	}
 	if err := validateReviewReferences(result, reviewSourceRefs(req)); err != nil {
 		return err
@@ -639,6 +743,47 @@ func (s *reviewToolState) wasRead(handle, version string) bool {
 	return s.read[handle] == version
 }
 
+func (s *reviewToolState) readPageChainsComplete() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	metas := make(map[string]agent.ReviewEvidenceMeta, len(s.req.Evidence))
+	referenced := make(map[string]struct{}, len(s.req.Evidence))
+	for _, meta := range s.req.Evidence {
+		metas[meta.Handle] = meta
+		if meta.Continuation != "" {
+			referenced[meta.Continuation] = struct{}{}
+		}
+	}
+	for handle, root := range metas {
+		if _, isContinuation := referenced[handle]; isContinuation {
+			continue
+		}
+		anyRead, allRead := false, true
+		seen := make(map[string]struct{})
+		for {
+			if _, cycle := seen[root.Handle]; cycle {
+				return false
+			}
+			seen[root.Handle] = struct{}{}
+			readVersion, read := s.read[root.Handle]
+			anyRead = anyRead || read
+			allRead = allRead && read && readVersion == root.Version
+			if root.Continuation == "" {
+				break
+			}
+			next, ok := metas[root.Continuation]
+			if !ok || next.Version != root.Version {
+				return false
+			}
+			root = next
+		}
+		if anyRead && !allRead {
+			return false
+		}
+	}
+	return true
+}
+
 type readReviewEvidenceTool struct{ state *reviewToolState }
 
 func (*readReviewEvidenceTool) Spec() tool.ToolSpec {
@@ -722,7 +867,7 @@ func (t *readReviewEvidenceTool) reserve(handle string, size int64) error {
 }
 
 func validateReadEvidence(evidence agent.ReviewEvidence, args agent.ReviewEvidenceRequest, meta agent.ReviewEvidenceMeta, size int64) error {
-	if evidence.Handle != args.Handle || evidence.Version != args.Version || evidence.Kind != meta.Kind || evidence.Complete != meta.Complete || int64(len(evidence.Content)) > size || int64(len(evidence.Content)) > maxReviewEvidenceRead || reviewEvidenceLineCount(evidence.Content) > maxReviewEvidenceLines {
+	if evidence.Handle != args.Handle || evidence.Version != args.Version || evidence.Kind != meta.Kind || evidence.Continuation != meta.Continuation || evidence.Complete != meta.Complete || int64(len(evidence.Content)) > size || int64(len(evidence.Content)) > maxReviewEvidenceRead || reviewEvidenceLineCount(evidence.Content) > maxReviewEvidenceLines {
 		return errors.New("evidence source violated its bounded binding")
 	}
 	return nil

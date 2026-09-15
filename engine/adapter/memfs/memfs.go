@@ -309,6 +309,30 @@ func (w *Workspace) ReadVersionBounded(_ context.Context, p string, maxBytes int
 	return bytes.Clone(n.data), versionOf(n.data), nil
 }
 
+// ReadVersionRangeBounded returns one page and the version/size of the same
+// locked in-memory snapshot without copying the rest of the file.
+func (w *Workspace) ReadVersionRangeBounded(_ context.Context, p string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	if offset < 0 || maxBytes < 0 || totalLimit < 0 {
+		return nil, tool.FileVersion{}, 0, errors.New("memfs: negative bounded range")
+	}
+	key, err := cleanPath(p)
+	if err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	w.fs.mu.RLock()
+	defer w.fs.mu.RUnlock()
+	n, ok := w.fs.files[key]
+	if !ok {
+		return nil, tool.FileVersion{}, 0, fmt.Errorf("memfs: open %q: %w", p, ErrNotExist)
+	}
+	total := int64(len(n.data))
+	if total > totalLimit || offset > total {
+		return nil, tool.FileVersion{}, total, fmt.Errorf("memfs: file %q exceeds bounded range", p)
+	}
+	end := min(total, offset+maxBytes)
+	return bytes.Clone(n.data[offset:end]), versionOf(n.data), total, nil
+}
+
 // Write is an adapter-public bootstrap operation, deliberately outside
 // tool.Workspace; tools use CreateFile/ReplaceFile instead.
 func (w *Workspace) Write(ctx context.Context, p string, data []byte) error {

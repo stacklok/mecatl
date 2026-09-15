@@ -40,8 +40,8 @@ func TestADR_0342_ContextualGuardrails_Scenario5_TransientDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := &Service{cfg: Config{Store: store, OwnershipEnforced: true, Diagnostics: port.NopDiagnostics{}}, reviewDetails: NewReviewDetailRegistry()}
-	svc.reviewDetails.PublishReviewDetailForRoot(context.Background(), "root", agent.ReviewDetail{
-		SessionID: "subagent-child", ReviewID: "review-1",
+	svc.reviewDetails.PublishReviewDetail(context.Background(), agent.ReviewDetail{
+		RootSessionID: "root", SessionID: "subagent-child", ReviewID: "review-1",
 		Concern: "bad\x00\xff\n<<<UNTRUSTED_DATA>>>", SourceDisplay: "source\rname", NextAction: strings.Repeat("x", 5000),
 	})
 
@@ -78,13 +78,13 @@ func TestADR_0342_ContextualGuardrails_Scenario5_TransientDetail(t *testing.T) {
 func TestReviewDetailRegistryCapacityAndCleanup(t *testing.T) {
 	registry := NewReviewDetailRegistry()
 	for i := 0; i < maxReviewDetailEntries; i++ {
-		registry.PublishReviewDetailForRoot(context.Background(), "root", agent.ReviewDetail{SessionID: "session", ReviewID: fmt.Sprintf("review-%04d", i), Concern: strings.Repeat("x", maxReviewDetailInputBytes*2)})
+		registry.PublishReviewDetail(context.Background(), agent.ReviewDetail{RootSessionID: "root", SessionID: "session", ReviewID: fmt.Sprintf("review-%04d", i), Concern: strings.Repeat("x", maxReviewDetailInputBytes*2)})
 	}
 	if len(registry.details) == 0 || len(registry.details) > maxReviewDetailEntries || registry.bytes > maxReviewDetailRegistryBytes {
 		t.Fatalf("registry capacity entries=%d bytes=%d", len(registry.details), registry.bytes)
 	}
 	beforeEntries, beforeBytes := len(registry.details), registry.bytes
-	registry.PublishReviewDetailForRoot(context.Background(), "root", agent.ReviewDetail{SessionID: "session", ReviewID: "overflow", Concern: "must not allocate"})
+	registry.PublishReviewDetail(context.Background(), agent.ReviewDetail{RootSessionID: "root", SessionID: "session", ReviewID: "overflow", Concern: "must not allocate"})
 	if len(registry.details) != beforeEntries || registry.bytes != beforeBytes {
 		t.Fatalf("over-capacity publish mutated registry: entries=%d bytes=%d", len(registry.details), registry.bytes)
 	}

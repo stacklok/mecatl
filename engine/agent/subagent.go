@@ -4491,11 +4491,11 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	if ask.ConfiguredAsk {
 		// Fall through to surface / headless auto-deny (skip every auto-approve).
 	} else if ask.FlooredConfiguredAllow {
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
+		_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
 	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)) {
 		// Step A2: isolated child + isolation-approvable Shell → auto-approve.
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
+		_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
 	}
 	// Surface to the human when the parent is interactive and a surface seam is
@@ -4542,7 +4542,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 					"command", cmdPreview, "decision", "reviewed-allow",
 					"verdict_reason", clampPreview(outcome.reason))
 			}
-			run.Approve(ask.AskID, session.VerdictAllowOnce)
+			_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 			return
 		case outcome.reviewed:
 			if posture.caps.diag != nil {

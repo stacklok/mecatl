@@ -626,11 +626,11 @@ type Run struct {
 	// resolve the new one (CWE-863). Set once before the run goroutine starts and
 	// only read after, so it needs no synchronisation.
 	serial int64
-	// askDiscriminator is the resolved trailing askID component for this run:
-	// req.AskIDDiscriminator when the host supplied a valid (non-empty,
-	// colon-free) value, else the process-global "r<serial>" fallback. Resolved
-	// once in startRun. See newAskID + RunRequest.AskIDDiscriminator + ADR-0044.
+	// askDiscriminator is the resolved trailing host/run namespace component for asks.
 	askDiscriminator string
+	// askSequence uniquely identifies each approval occurrence within this run. It is
+	// atomic because child/worker event paths may mint asks concurrently.
+	askSequence atomic.Uint64
 	// runID is the host-minted identity stamped onto every event this run emits
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
@@ -854,11 +854,12 @@ type RunRequest struct {
 	// DERIVE the ask discriminator from it. It must never be branched on, logged,
 	// sent to a provider, or used to reach storage — see ADR 0249's consequences.
 	RunID string
-	// AskIDDiscriminator, when non-empty, REPLACES the trailing process-global
-	// "r<serial>" component of every askID minted this run (see agent.newAskID),
-	// making the askID reconstructable across processes from persisted state. The
-	// askID format is "<sessionID>:<n>:<callID>:<discriminator>". HOST CONTRACT:
-	// the host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
+	// AskIDDiscriminator, when non-empty, supplies the colon-free HOST namespace
+	// of every askID minted this run. Live issuance appends a per-run `.aN`
+	// occurrence token to the opaque call component, making repeated approvals for
+	// one call distinct while retaining the exact host suffix and four-component
+	// colon grammar. The host value remains reconstructable from persisted state.
+	// The host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
 	// STABLE across processes for the SAME attempt — this preserves the CWE-863
 	// replay guard the process-global serial provides (the Interrupt/re-mint
 	// scenario documented on newAskID): a stale verdict for a retracted ask must
@@ -920,47 +921,90 @@ func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
 func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 
-// ValidateRemoteApprovalIntent verifies transport-level acknowledgement for a
-// contextual result release without consuming the pending ask. Ordinary permission
-// and action approvals retain their compatibility behavior.
-func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error {
-	if r == nil || r.reviewRoot == nil {
+// ApprovalResolution atomically identifies and resolves one registered approval.
+// ReviewID and Kind must exactly acknowledge a guardrail-scoped ask; ordinary
+// permission asks leave both empty. VerdictAllowAlways is ineligible for result
+// release, which supports only release-once or deny.
+type ApprovalResolution struct {
+	AskID    string
+	ReviewID string
+	Kind     session.GuardrailApprovalKind
+	Verdict  session.ApprovalVerdict
+}
+
+// ValidateApprovalResolution checks a resolution against the exact pending ask.
+func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error {
+	return validateApprovalResolution(ask, resolution, true)
+}
+
+func validateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution, requireGuardrailAck bool) error {
+	if ask.AskID != resolution.AskID {
+		return errors.New("approval ask identity does not match the registered ask")
+	}
+	if ask.Guardrail == nil {
+		if resolution.ReviewID != "" || resolution.Kind != "" {
+			return errors.New("ordinary permission approval must not claim a guardrail review")
+		}
 		return nil
 	}
-	expected, release := r.reviewRoot.releaseReviewID(askID)
-	if !release {
-		return nil
-	}
-	if verdict == session.VerdictAllowAlways {
+	if ask.Guardrail.Kind == session.GuardrailApprovalResultRelease && resolution.Verdict == session.VerdictAllowAlways {
 		return errors.New("result release supports only release once or deny")
 	}
-	if reviewID != expected || kind != session.GuardrailApprovalResultRelease {
-		return errors.New("result release requires an exact review_id and result_release acknowledgement; upgrade the client and retry")
+	if requireGuardrailAck || resolution.ReviewID != "" || resolution.Kind != "" {
+		if resolution.ReviewID != ask.Guardrail.ReviewID || resolution.Kind != ask.Guardrail.Kind {
+			return errors.New("guardrail approval requires the exact review_id and approval kind from the pending ask")
+		}
 	}
 	return nil
 }
 
-// Approve resolves the permission.ask identified by askID with the client's
-// verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
-// and VerdictAllowAlways permits it AND asks the policy to learn a per-session
-// allow rule for the matching tool+pattern. It is non-blocking and safe to call
-// from another goroutine; an unknown or already-resolved askID is ignored.
-func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
-	// A result-release ask accepts Release once or Deny only. Ignore unsupported
-	// verdicts while the ask and held bytes remain live, before any resolution,
-	// audit event, aggregate transition, or deletion.
-	if r.reviewRoot != nil && r.reviewRoot.isReleaseAsk(askID) && v != session.VerdictAllowOnce && v != session.VerdictDeny {
-		return
+// ResolveApproval validates purpose, review identity, verdict eligibility, and
+// pending identity while holding the ask registry lock, then submits the verdict
+// exactly once. A failed validation leaves the ask registered and unresolved.
+func (r *Run) ResolveApproval(resolution ApprovalResolution) error {
+	if r == nil || resolution.AskID == "" {
+		return errors.New("approval requires a non-empty ask id")
 	}
-	// Router-first: a foreign (child-namespaced) askID belongs to a SURFACED subagent
-	// ask — route the verdict to the owning child Run. Because child askIDs are prefixed
-	// by a distinct child session id, they never collide with this run's own asks, so a
-	// router miss (route==false) safely falls through to our own registry. A nil router
-	// (child run / headless) skips straight to the own-registry path.
+	if r.childAsks != nil {
+		if owned, err := r.childAsks.routeResolution(resolution); owned {
+			return err
+		}
+	}
+	return r.asks.resolveChecked(resolution.AskID, approval{verdict: resolution.Verdict}, func(ask session.PendingAsk) error {
+		return validateApprovalResolution(ask, resolution, true)
+	})
+}
+
+// ValidateRemoteApprovalIntent is retained for source compatibility. Hosts must
+// use ResolveApproval for an atomic validate-and-submit operation.
+func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error {
+	if r == nil {
+		return errors.New("approval run is unavailable")
+	}
+	r.asks.mu.Lock()
+	ask, ok := r.asks.scopes[askID]
+	r.asks.mu.Unlock()
+	if !ok {
+		return errors.New("approval ask is unknown, stale, or already resolved")
+	}
+	return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, ReviewID: reviewID, Kind: kind, Verdict: verdict}, true)
+}
+
+// Approve is the compatibility helper for ordinary permission and legacy action
+// approvals. Result release requires ResolveApproval's explicit review acknowledgement.
+func (r *Run) Approve(askID string, v session.ApprovalVerdict) error {
+	if r == nil || askID == "" {
+		return errors.New("approval requires a non-empty ask id")
+	}
 	if r.childAsks != nil && r.childAsks.route(askID, v) {
-		return
+		return nil
 	}
-	r.asks.resolve(askID, v)
+	return r.asks.resolveChecked(askID, approval{verdict: v}, func(ask session.PendingAsk) error {
+		if ask.Guardrail != nil && ask.Guardrail.Kind == session.GuardrailApprovalResultRelease {
+			return errors.New("result release requires ResolveApproval with the exact review_id and result_release kind")
+		}
+		return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, Verdict: v}, false)
+	})
 }
 
 // RetractPermissionAsk withdraws this run's own pending permission ask without
@@ -1365,7 +1409,21 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			reject("no longer permitted in plan mode", fmt.Sprintf("authorization continuation is no longer permitted: plan mode is active and %q now mutates the workspace; present a plan and exit plan mode first", pending.Call.Name))
 			return
 		}
-		result, cancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
+		decision := e.permissionDecision(ctx, sess, env, pending.Call)
+		auth := permissionAuthorization{call: pending.Call, env: env.Ref(), decision: decision}
+		auth.authority, auth.authorityBound = sess.BoundAuthority()
+		auth.authorityExempt = r.req.extraToolAuthorityExempt(pending.Call.Name)
+		if authorityResult, denied := e.authorizeExecution(ctx, r, sess, env, sess.Counters.Turns, pending.Call); denied {
+			results := []session.ToolResult{authorityResult}
+			if err := sess.RecordToolResults(results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+				return
+			}
+			e.save(ctx, r, sess)
+			e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
+			return
+		}
+		result, cancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, time.Time{})
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")

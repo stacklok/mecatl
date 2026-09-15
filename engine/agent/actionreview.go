@@ -165,7 +165,17 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 	target, paths := reviewTarget(call)
 	facts, complete := r.reviewRoot.principalSnapshot()
 	facts = append([]ReviewPrincipalFact(nil), facts...)
-	deps, depsComplete := snapshotActionDependencies(ctx, env.Workspace(), paths)
+	authorizedPaths := make([]string, 0, len(paths))
+	authorityComplete := true
+	for _, path := range paths {
+		if err := e.authorizeReviewEvidenceRead(ctx, r, sess, env, call.ID, path); err != nil {
+			authorityComplete = false
+			continue
+		}
+		authorizedPaths = append(authorizedPaths, path)
+	}
+	deps, depsComplete := snapshotActionDependencies(ctx, env.Workspace(), authorizedPaths)
+	depsComplete = depsComplete && authorityComplete
 	for i, dep := range deps {
 		state := "absent"
 		if dep.exists {
@@ -184,11 +194,11 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 		ReviewID: fmt.Sprintf("%s:%s:action", sess.ID, call.ID), Job: ReviewJobAction,
 		Event:         governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: call.Name, Input: eventInput, SessionID: string(sess.ID), CallID: string(call.ID)},
 		EffectiveCall: effectiveCall, PrincipalFacts: facts, PrincipalFactsComplete: complete,
-		Caller: reviewCaller(e, r), Environment: env.Ref(), Target: target,
+		Caller: reviewCaller(e, r, sess), Environment: env.Ref(), Target: target,
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxEvidenceHandles: defaultReviewEvidenceHandles, MaxEvidenceBytes: defaultReviewEvidenceBytes, MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	prepared := prepareReviewEvidence(ctx, r, sess, env, req, nil)
+	prepared := e.prepareReviewEvidence(ctx, r, sess, env, req, nil)
 	req.Evidence, req.EvidenceComplete = prepared.Evidence, prepared.Complete
 	out := actionReview{request: req, dependencies: deps, source: prepared.Source, close: prepared.Close}
 	if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok {
@@ -197,12 +207,44 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 	return out
 }
 
-func prepareReviewEvidence(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, req ToolReviewRequest, result *session.ToolResult) PreparedReviewEvidence {
+func (e *Engine) authorizeReviewEvidenceRead(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, callID session.ToolCallID, path string) error {
+	available := false
+	if e.deps.Catalog != nil {
+		for _, candidate := range e.deps.Catalog.Available(sess.Mode) {
+			if candidate.Spec().Name == "Read" {
+				available = true
+				break
+			}
+		}
+	}
+	if !available {
+		return errors.New("review evidence Read is outside the originating session catalog")
+	}
+	args, err := json.Marshal(struct {
+		Path string `json:"path"`
+	}{Path: path})
+	if err != nil {
+		return err
+	}
+	if denied, checked := e.authorizeExecution(ctx, r, sess, env, sess.Counters.Turns-1, session.NewToolCall(callID, "Read", args)); checked {
+		return errors.New(denied.Content)
+	}
+	return nil
+}
+
+func (e *Engine) prepareReviewEvidence(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, req ToolReviewRequest, result *session.ToolResult) PreparedReviewEvidence {
 	if r.reviewRoot.preparer == nil {
 		return PreparedReviewEvidence{}
 	}
 	prepared, err := r.reviewRoot.preparer.PrepareReviewEvidence(ctx, ReviewEvidencePreparation{
 		Request: req, Environment: env, Owner: sess.Owner.Clone(), Result: result,
+		Authorize: func(authCtx context.Context, call session.ToolCall) error {
+			paths := tool.LocalFileOperands(call.Name, call.Args)
+			if call.Name != "Read" || len(paths) != 1 {
+				return fmt.Errorf("unsupported review evidence authorization call %q", call.Name)
+			}
+			return e.authorizeReviewEvidenceRead(authCtx, r, sess, env, call.ID, paths[0])
+		},
 	})
 	if err != nil {
 		if prepared.Close != nil {
@@ -220,14 +262,18 @@ func prepareReviewEvidence(ctx context.Context, r *Run, sess *session.Session, e
 	return prepared
 }
 
-func reviewCaller(e *Engine, r *Run) ReviewCaller {
+func reviewCaller(e *Engine, r *Run, sess *session.Session) ReviewCaller {
 	role := e.deps.Role
 	if role == "" {
 		role = "main"
 	}
 	caps := make([]string, 0)
 	if e.deps.Catalog != nil {
-		for _, spec := range e.deps.Catalog.Specs(session.ModeDefault) {
+		specs := e.deps.Catalog.Specs(sess.Mode)
+		if authority, bound := sess.BoundAuthority(); bound {
+			specs = authoritySpecs(specs, authority.CapabilitySet, true)
+		}
+		for _, spec := range specs {
 			caps = append(caps, spec.Name)
 		}
 	}
@@ -235,46 +281,36 @@ func reviewCaller(e *Engine, r *Run) ReviewCaller {
 }
 
 func reviewTarget(call session.ToolCall) (ReviewTarget, []string) {
-	var args map[string]json.RawMessage
-	_ = json.Unmarshal(call.Args, &args)
-	keys := []string{"path", "destination", "source", "url", "uri", "target"}
-	var paths []string
-	var display string
-	for _, key := range keys {
-		var value string
-		if raw := args[key]; len(raw) > 0 && json.Unmarshal(raw, &value) == nil && value != "" {
-			if display == "" {
-				display = value
-			}
-			if key == "path" || key == "destination" || key == "source" {
-				paths = append(paths, value)
-			}
+	paths := tool.LocalFileOperands(call.Name, call.Args)
+	if len(paths) > 0 {
+		return ReviewTarget{Kind: "workspace", Display: paths[0], DestinationID: paths[0]}, paths
+	}
+	if call.Name == "WebFetch" {
+		var args struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(call.Args, &args) == nil && args.URL != "" {
+			return ReviewTarget{Kind: "external", Display: args.URL, DestinationID: args.URL}, nil
 		}
 	}
-	kind := "tool"
-	if len(paths) > 0 {
-		kind = "workspace"
-	} else if display != "" {
-		kind = "external"
-	}
-	return ReviewTarget{Kind: kind, Display: display, DestinationID: display}, paths
+	return ReviewTarget{Kind: "tool"}, nil
 }
 
 func snapshotActionDependencies(ctx context.Context, ws tool.Workspace, paths []string) ([]actionDependency, bool) {
 	if len(paths) == 0 {
 		return nil, false
 	}
+	reader, ok := ws.(tool.BoundedWorkspaceReader)
+	if !ok {
+		return nil, false
+	}
 	deps := make([]actionDependency, 0, len(paths))
 	for _, path := range paths {
-		info, err := ws.Stat(ctx, path)
+		_, version, err := reader.ReadVersionBounded(ctx, path, defaultReviewEvidenceBytes)
 		if errors.Is(err, fs.ErrNotExist) {
 			deps = append(deps, actionDependency{path: path})
 			continue
 		}
-		if err != nil || info.IsDir || info.Size > defaultReviewEvidenceBytes {
-			return deps, false
-		}
-		_, version, err := ws.ReadVersion(ctx, path)
 		if err != nil {
 			return deps, false
 		}
@@ -285,6 +321,15 @@ func snapshotActionDependencies(ctx context.Context, ws tool.Workspace, paths []
 		deps = append(deps, actionDependency{path: path, exists: true, version: encoded})
 	}
 	return deps, true
+}
+
+func (e *Engine) revalidateAuthorizedActionDependencies(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, callID session.ToolCallID, dependencies []actionDependency) bool {
+	for _, dependency := range dependencies {
+		if err := e.authorizeReviewEvidenceRead(ctx, r, sess, env, callID, dependency.path); err != nil {
+			return false
+		}
+	}
+	return revalidateActionDependencies(ctx, env.Workspace(), dependencies)
 }
 
 func revalidateActionDependencies(ctx context.Context, ws tool.Workspace, want []actionDependency) bool {
@@ -322,13 +367,10 @@ func reviewFact(call session.ToolCall, target ReviewTarget, decision string) Rev
 }
 
 func (r *Run) publishReviewDetail(ctx context.Context, detail ReviewDetail) {
-	if r.reviewRoot == nil || r.reviewRoot.details == nil {
+	if r.reviewRoot == nil || r.reviewRoot.details == nil || r.reviewRoot.rootSessionID == "" {
 		return
 	}
-	if sink, ok := r.reviewRoot.details.(rootReviewDetailSink); ok && r.reviewRoot.rootSessionID != "" {
-		sink.PublishReviewDetailForRoot(ctx, r.reviewRoot.rootSessionID, detail)
-		return
-	}
+	detail.RootSessionID = r.reviewRoot.rootSessionID
 	r.reviewRoot.details.PublishReviewDetail(ctx, detail)
 }
 
@@ -481,7 +523,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 
 func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment, reason string) (session.ToolResult, bool, bool, bool) {
 	ask := session.PendingAsk{
-		AskID: newAskID(sess.ID, sess.Counters.ToolCalls, call.ID, r.askDiscriminator), Tool: call.Name, Args: call.Args,
+		AskID: r.issueAskID(sess.ID, sess.Counters.ToolCalls, call.ID), Tool: call.Name, Args: call.Args,
 		Reason: reason, Call: call.ID, Origin: session.ApprovalOriginHookGuardrail,
 		Guardrail: &session.GuardrailPendingScope{ReviewID: assessment.action.request.ReviewID, Kind: session.GuardrailApprovalAction, GrantDigest: assessment.action.digest, SessionOnly: true, RepeatAvailable: assessment.action.repeat},
 	}
@@ -518,6 +560,9 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 func (e *Engine) reauthorizeAction(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization) (allowed, cancelled bool, reason string) {
 	if auth == nil || !auth.matches(call, env.Ref()) {
 		return false, false, "contextual guardrail permission binding became stale before execution"
+	}
+	if !auth.authorityStillValid(sess, call, env) {
+		return false, false, "contextual guardrail authority binding became stale before execution"
 	}
 	current := e.permissionDecision(ctx, sess, env, call)
 	if current == auth.decision {
@@ -565,7 +610,7 @@ func (e *Engine) reviewAction(ctx context.Context, r *Run, sess *session.Session
 	if cancelled || !proceed {
 		return res, nil, cancelled, false
 	}
-	res, park, cancelled := e.postPreToolUse(ctx, r, sess, env, turnIdx, call, t, enqueue)
+	res, park, cancelled := e.postPreToolUse(ctx, r, sess, env, turnIdx, call, t, auth, enqueue)
 	issuer, hasIssuer := r.reviewRoot.reviewer.(ReviewGrantStore)
 	if armGrant {
 		e.armPostActionGrant(ctx, r, sess, env, call, session.VerdictAllowAlways, assessment.action.repeat, issuer, hasIssuer, res, park, cancelled)

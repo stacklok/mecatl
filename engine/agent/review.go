@@ -46,7 +46,10 @@ type ReviewTarget struct{ Kind, Display, DestinationID string }
 // ReviewEvidenceMeta advertises one review-local evidence handle.
 type ReviewEvidenceMeta struct {
 	Handle, Kind, Display, Version string
-	Complete                       bool
+	// Continuation is the next opaque handle for the same versioned evidence
+	// object. Empty means this page is final.
+	Continuation string
+	Complete     bool
 }
 
 // ReviewCapacity reports the applicable count and byte capacities.
@@ -108,6 +111,7 @@ type ReviewEvidenceRequest struct{ ReviewID, Handle, Version string }
 // ReviewEvidence is one bounded evidence preview.
 type ReviewEvidence struct {
 	Handle, Kind, Version string
+	Continuation          string
 	Complete              bool
 	Content               string
 }
@@ -125,6 +129,10 @@ type ReviewEvidencePreparation struct {
 	Environment tool.Environment
 	Owner       *session.Principal
 	Result      *session.ToolResult
+	// Authorize verifies one evidence-source call against the originating run's
+	// effective catalog, mode, and bound authority. Preparers must call it before
+	// touching backend metadata or content; model/reviewer input cannot replace it.
+	Authorize func(context.Context, session.ToolCall) error
 }
 
 // PreparedReviewEvidence owns one review-local finite capability set. Close is
@@ -143,22 +151,31 @@ type ReviewEvidencePreparer interface {
 	PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)
 }
 
-// ReviewPolicyProvider declares configured applicability and enforcement. A
-// ToolReviewer without this capability retains action-only enforcement.
+// ReviewPolicyProvider declares configured applicability and enforcement. The
+// toolName and job identify the candidate rule; operationalFailure selects its
+// checker-down posture. The returns report whether review applies and whether a
+// finding or unresolved assessment is enforced. A ToolReviewer without this
+// capability retains action-only enforcement.
 type ReviewPolicyProvider interface {
-	GuardrailReviewPolicy(string, ReviewJob, bool) (applies, enforce bool)
+	GuardrailReviewPolicy(toolName string, job ReviewJob, operationalFailure bool) (applies, enforce bool)
 }
 
-// ReviewMetadataProvider projects machine-safe rule and checker-route metadata.
+// ReviewMetadataProvider projects machine-safe metadata for the rule selected by
+// toolName and job. Empty return values mean no metadata is available.
 type ReviewMetadataProvider interface {
-	GuardrailReviewMetadata(string, ReviewJob) (ruleID, ruleOrigin, providerID, modelID string)
+	GuardrailReviewMetadata(toolName string, job ReviewJob) (ruleID, ruleOrigin, providerID, modelID string)
 }
 
-// ReviewGrantStore is the optional session-local exact-action repeat-grant seam.
+// ReviewGrantStore is the optional exact-action repeat-grant seam. GrantDigest
+// must bind the exact session, environment revision, caller authority, effective
+// call, target, and every eligible versioned dependency under a purpose-separated
+// keyed digest; false means repeat is ineligible. AllowsGrant tests that digest.
+// ArmGrant stores only that digest for the named session and must not widen its
+// scope or persist it beyond the implementation's documented session lifetime.
 type ReviewGrantStore interface {
-	GrantDigest(ToolReviewRequest) (string, bool)
-	AllowsGrant(string) bool
-	ArmGrant(string, string)
+	GrantDigest(request ToolReviewRequest) (digest string, eligible bool)
+	AllowsGrant(digest string) bool
+	ArmGrant(digest, sessionID string)
 }
 
 // ToolReviewer performs one contextual tool review.
@@ -166,20 +183,17 @@ type ToolReviewer interface {
 	Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)
 }
 
-// ReviewDetail is transient, owner-authorized human display detail.
+// ReviewDetail is transient, owner-authorized human display detail. RootSessionID
+// is the owning delegation-root run; SessionID is the reviewed root or child.
+// Sinks must scope child relations and cleanup to RootSessionID, never infer a
+// child to be its own root.
 type ReviewDetail struct {
-	SessionID                                    session.SessionID
+	RootSessionID, SessionID                     session.SessionID
 	ReviewID, Concern, SourceDisplay, NextAction string
 }
 
-// ReviewDetailSink publishes transient review detail under root-run ownership.
+// ReviewDetailSink publishes transient review detail under the explicit root-run
+// ownership carried by ReviewDetail.RootSessionID.
 type ReviewDetailSink interface {
 	PublishReviewDetail(context.Context, ReviewDetail)
-}
-
-// rootReviewDetailSink is the optional root-aware lifecycle binding used by the
-// in-tree Service. Keeping it optional preserves ReviewDetailSink compatibility
-// for engine consumers while preventing child ids from becoming standalone authority.
-type rootReviewDetailSink interface {
-	PublishReviewDetailForRoot(context.Context, session.SessionID, ReviewDetail)
 }

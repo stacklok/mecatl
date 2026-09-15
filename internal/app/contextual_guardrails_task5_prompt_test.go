@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -108,7 +109,9 @@ func TestContextualMainResultReleaseDetailUsesOwnerAuthorization(t *testing.T) {
 		if _, err := built.Service.GetGuardrailReviewDetail(otherCtx, sess.ID, reviewID); !errors.Is(err, server.ErrNotFound) {
 			t.Fatalf("foreign owner detail error=%v, want concealed not found", err)
 		}
-		run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+		if err := run.ResolveApproval(agent.ApprovalResolution{AskID: ev.Ask.AskID, ReviewID: ev.Ask.Guardrail.ReviewID, Kind: ev.Ask.Guardrail.Kind, Verdict: session.VerdictAllowOnce}); err != nil {
+			t.Fatalf("release result: %v", err)
+		}
 	}
 	built.Service.FinishRun(sess.ID, run)
 	if reviewID == "" {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"os"
@@ -17,12 +18,14 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 type evidenceBuildProvider struct {
 	mu          sync.Mutex
 	call        int
 	handle      string
+	handles     []string
 	version     string
 	reviewID    string
 	prompt      string
@@ -48,16 +51,20 @@ func (p *evidenceBuildProvider) Stream(_ context.Context, req port.LLMRequest) (
 	case 1:
 		for _, message := range req.Messages {
 			p.prompt += message.Text
-			if match := evidenceMetaPattern.FindStringSubmatch(message.Text); len(match) == 3 {
-				p.handle, p.version = match[1], match[2]
+			for _, match := range evidenceMetaPattern.FindAllStringSubmatch(message.Text, -1) {
+				if len(match) == 3 {
+					p.handles = append(p.handles, match[1])
+					p.version = match[2]
+				}
 			}
 			if match := reviewIDPattern.FindStringSubmatch(message.Text); len(match) == 2 {
 				p.reviewID = match[1]
 			}
 		}
-		if p.handle == "" || p.version == "" || p.reviewID == "" {
+		if len(p.handles) == 0 || p.version == "" || p.reviewID == "" {
 			return nil, fmt.Errorf("review request did not advertise the script evidence binding")
 		}
+		p.handle = p.handles[0]
 		args, _ := json.Marshal(map[string]string{"review_id": p.reviewID, "handle": p.handle, "version": p.version})
 		chunks = toolCallChunks(session.NewToolCall("read-evidence", readReviewEvidenceToolName, args))
 	case 2:
@@ -66,15 +73,19 @@ func (p *evidenceBuildProvider) Stream(_ context.Context, req port.LLMRequest) (
 				p.sawContents = true
 			}
 		}
-		if !p.sawContents {
-			return nil, fmt.Errorf("reviewer did not receive script contents through the advertised handle")
+		if len(p.handles) > 1 {
+			args, _ := json.Marshal(map[string]string{"review_id": p.reviewID, "handle": p.handles[1], "version": p.version})
+			chunks = toolCallChunks(session.NewToolCall("read-evidence-2", readReviewEvidenceToolName, args))
+			break
 		}
-		args, _ := json.Marshal(map[string]any{
-			"assessment": "acceptable", "concerns": []any{},
-			"evidence":         []any{map[string]any{"handle": p.handle, "version": p.version, "supports": []string{"call"}}},
-			"missing_evidence": []any{},
-		})
-		chunks = toolCallChunks(session.NewToolCall("submit-review", submitReviewAssessmentToolName, args))
+		chunks = p.submitChunks()
+	case 3:
+		for _, message := range req.Messages {
+			if message.ToolResult != nil && strings.Contains(message.ToolResult.Content, "SCRIPT_EVIDENCE_TAIL") {
+				p.sawContents = true
+			}
+		}
+		chunks = p.submitChunks()
 	default:
 		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
 	}
@@ -88,8 +99,56 @@ func (p *evidenceBuildProvider) Stream(_ context.Context, req port.LLMRequest) (
 	}, nil
 }
 
+func (p *evidenceBuildProvider) submitChunks() []port.Chunk {
+	if !p.sawContents {
+		call := session.NewToolCall("submit-missing", submitReviewAssessmentToolName, json.RawMessage(`{"assessment":"unresolved","concerns":[],"evidence":[],"missing_evidence":[{"ref":"script","kind":"content","handle":"","reason":"script contents missing"}]}`))
+		return toolCallChunks(call)
+	}
+	uses := make([]any, 0, len(p.handles))
+	for _, handle := range p.handles {
+		uses = append(uses, map[string]any{"handle": handle, "version": p.version, "supports": []string{"call"}})
+	}
+	args, _ := json.Marshal(map[string]any{"assessment": "acceptable", "concerns": []any{}, "evidence": uses, "missing_evidence": []any{}})
+	return toolCallChunks(session.NewToolCall("submit-review", submitReviewAssessmentToolName, args))
+}
+
 func toolCallChunks(call session.ToolCall) []port.Chunk {
 	return []port.Chunk{{Kind: port.ChunkToolCall, ToolCall: &call}, {Kind: port.ChunkUsage, Usage: &session.Usage{}}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+}
+
+type countingEvidenceWorkspace struct {
+	tool.Workspace
+	stats, reads int
+}
+
+func (w *countingEvidenceWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, error) {
+	w.stats++
+	return w.Workspace.Stat(ctx, path)
+}
+func (w *countingEvidenceWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	w.reads++
+	return w.Workspace.(tool.BoundedWorkspaceReader).ReadVersionBounded(ctx, path, maxBytes)
+}
+
+func TestEvidenceAuthorizationPrecedesBackendMetadata(t *testing.T) {
+	ctx := context.Background()
+	base := memfs.NewWorkspace("/review")
+	if err := base.Write(ctx, "b", []byte("must-not-be-read")); err != nil {
+		t.Fatal(err)
+	}
+	workspace := &countingEvidenceWorkspace{Workspace: base}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review", Revision: "r1"}
+	env := tool.MustEnvironment(ref, workspace, reviewerReadLedger{}, nil)
+	req := agent.ToolReviewRequest{ReviewID: "review-denied", Job: agent.ReviewJobAction, Event: sessionHookEvent("review-denied"), EffectiveCall: session.NewToolCall("read-a", "Read", json.RawMessage(`{"path":"b"}`)), Caller: agent.ReviewCaller{Role: "worker", Capabilities: []string{"Read"}}, Environment: ref, Capacity: agent.ReviewCapacity{MaxEvidenceHandles: maxReviewEvidenceHandles, MaxEvidenceBytes: maxReviewEvidenceBytes}}
+	reviewer := &guardrailActionReviewer{providerID: "provider", modelID: "model"}
+	prepared, err := reviewer.PrepareReviewEvidence(ctx, agent.ReviewEvidencePreparation{Request: req, Environment: env, Authorize: func(context.Context, session.ToolCall) error { return errors.New("originating worker lacks Read b") }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	if prepared.Complete || len(prepared.Evidence) != 0 || workspace.stats != 0 || workspace.reads != 0 {
+		t.Fatalf("prepared=%+v stats=%d reads=%d; denied candidate touched backend", prepared, workspace.stats, workspace.reads)
+	}
 }
 
 func TestFiniteWorkspaceEvidenceReadsContentAndRejectsChangedScript(t *testing.T) {
@@ -108,7 +167,7 @@ func TestFiniteWorkspaceEvidenceReadsContentAndRejectsChangedScript(t *testing.T
 		Capacity: agent.ReviewCapacity{MaxEvidenceHandles: maxReviewEvidenceHandles, MaxEvidenceBytes: maxReviewEvidenceBytes},
 	}
 	reviewer := &guardrailActionReviewer{providerID: "provider", modelID: "model"}
-	prepared, err := reviewer.PrepareReviewEvidence(ctx, agent.ReviewEvidencePreparation{Request: req, Environment: env})
+	prepared, err := reviewer.PrepareReviewEvidence(ctx, agent.ReviewEvidencePreparation{Request: req, Environment: env, Authorize: func(context.Context, session.ToolCall) error { return nil }})
 	if err != nil || !prepared.Complete || len(prepared.Evidence) != 1 || prepared.Source == nil {
 		t.Fatalf("prepare = %+v, err=%v", prepared, err)
 	}
@@ -143,9 +202,92 @@ func TestExactShellScriptPathDoesNotGuessFromArguments(t *testing.T) {
 	}
 }
 
+type authorityBeforeReviewProvider struct {
+	mu                     sync.Mutex
+	mainCalls, reviewCalls int
+}
+
+func (*authorityBeforeReviewProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+func (p *authorityBeforeReviewProvider) Stream(_ context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var chunks []port.Chunk
+	if strings.Contains(req.System.Render(), contextualReviewerSystemPrompt) {
+		p.reviewCalls++
+		chunks = []port.Chunk{{Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+	} else if p.mainCalls == 0 {
+		p.mainCalls++
+		chunks = toolCallChunks(session.NewToolCall("grep-denied", "Grep", json.RawMessage(`{"path":"b","pattern":"x"}`)))
+	} else {
+		p.mainCalls++
+		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		for _, chunk := range chunks {
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}, nil
+}
+
+func TestBuildBoundAuthorityPrecedesContextualReviewer(t *testing.T) {
+	ctx := context.Background()
+	cfg := guardrailE2ECfg(t, false, PostureAuto, "")
+	cfg.GuardrailsRules = []GuardrailRule{{Match: "Grep", Phases: []string{"pre"}, Mode: "block"}}
+	setup, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := setup.Service.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup.Close()
+	store, err := jsonlstore.New(cfg.StoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, bound := persisted.BoundAuthority()
+	if !bound {
+		t.Fatal("Build session did not carry bound authority")
+	}
+	narrowed := authoritySnapshotWithNarrowedTools(t, persisted, authority.CapabilitySet.Tools, "Grep")
+	if err := store.Save(ctx, narrowed); err != nil {
+		t.Fatal(err)
+	}
+	provider := &authorityBeforeReviewProvider{}
+	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
+	built, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	run, err := built.Service.StartRun(ctx, sess.ID, "grep b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if provider.reviewCalls != 0 {
+		t.Fatalf("contextual reviewer calls = %d, want zero before authority denial", provider.reviewCalls)
+	}
+	if provider.mainCalls != 2 {
+		t.Fatalf("main calls = %d, want denied call followed by completion", provider.mainCalls)
+	}
+}
+
 func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 	cfg := guardrailE2ECfg(t, false, PostureYolo, "./review-script.sh")
-	if err := os.WriteFile(cfg.Workspace+"/review-script.sh", []byte("#!/bin/sh\nprintf SCRIPT_EVIDENCE_MARKER\n"), 0o700); err != nil {
+	script := "#!/bin/sh\n# SCRIPT_EVIDENCE_MARKER\nexit 0\n" + strings.Repeat("# pad line\n", 2_500) + "# SCRIPT_EVIDENCE_TAIL\n"
+	if err := os.WriteFile(cfg.Workspace+"/review-script.sh", []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	provider := &evidenceBuildProvider{}
@@ -174,7 +316,10 @@ func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 		}
 	}
 	built.Service.FinishRun(sess.ID, run)
-	if provider.handle == "" || !provider.sawContents || !strings.Contains(provider.prompt, `"EvidenceComplete":true`) {
-		t.Fatalf("Build reviewer did not consume finite script evidence: calls=%d handle=%q contents=%v events=%v prompt=%s", provider.call, provider.handle, provider.sawContents, observed, provider.prompt)
+	if len(provider.handles) != 2 || provider.handle == "" || !provider.sawContents || !strings.Contains(provider.prompt, `"EvidenceComplete":true`) {
+		t.Fatalf("Build reviewer did not consume both finite script pages: calls=%d handles=%v contents=%v events=%v prompt=%s", provider.call, provider.handles, provider.sawContents, observed, provider.prompt)
+	}
+	if strings.Contains(provider.prompt, cfg.Workspace) {
+		t.Fatalf("checker prompt leaked private environment path %q", cfg.Workspace)
 	}
 }

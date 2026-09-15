@@ -28,6 +28,8 @@ The product direction and exact interface live in the [acceptance plan](../accep
 
 Replace the old reviewer rather than retaining modes. Remove sanitize from code, configuration, prompts, tests, and current documentation without compatibility or migration machinery. Guardrails remain off unless enabled; enforcing `block` and explicit `advisory` remain.
 
+Remove `minContentBytes` from the strict schema and composition rather than retaining an ignored option: matched inbound content is never skipped merely because it is short. Existing configurations that still set the removed key fail strict unknown-key validation and must delete it; there is no compatibility mapping or silent migration.
+
 Use one protocol with separate prompts:
 
 - **action** reviews the exact outbound call after one trusted mutation and deterministic re-evaluation; and
