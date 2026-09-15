@@ -3,12 +3,14 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
@@ -37,7 +39,10 @@ type modelsState struct {
 	filtered     []client.ModelInfo
 	filter       textinput.Model
 	cursor       int
-	rowBudget    int // view cache, refreshed from Render geometry
+	list         boundedList
+	rowBudget    int           // view cache, refreshed from Render geometry
+	hitItems     map[HitID]int // view cache, replaced by every Render frame
+	revealCursor bool
 	deps         surfaceDeps
 	intent       surfaceIntent
 }
@@ -61,15 +66,61 @@ type modelsGlobalDefaultIntent struct {
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
+	prefix, suffix := modelsFixedLines(*s, s.provenance)
 	s.rowBudget = modelsRowBudgetFor(height, modelsPanelFixedRows(*s, s.provenance, s.deps.marks))
-	return renderModelsPanel(s.deps.theme, s.catalog, *s, s.deps.caps, s.provenance, s.deps.marks, s.rowBudget, width), nil
+	s.rowBudget = min(s.rowBudget, max(0, height-len(prefix)-len(suffix)))
+	reveal := s.syncList(width, s.rowBudget) || s.revealCursor
+	view := boundedListViewWithIndicators(&s.list, s.rowBudget, reveal)
+	s.revealCursor = false
+	s.cursor = s.list.cursor
+	s.hitItems = make(map[HitID]int)
+
+	lines := make([]string, 0, height)
+	appendLine := func(line string) {
+		if len(lines) < max(0, height) {
+			lines = append(lines, boundedDisplayLine(line, width))
+		}
+	}
+	for _, line := range prefix {
+		appendLine(line)
+	}
+	regions := make([]ClickableRegion, 0, len(view.rows))
+	if view.above > 0 {
+		appendLine(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d lines", view.above)))
+	}
+	if len(view.rows) > 0 {
+		for _, row := range view.rows {
+			marker := "  "
+			if row.cursorMarker {
+				marker = "▶ "
+			}
+			text := marker + row.text
+			style := s.deps.theme.Style("muted")
+			if row.selected {
+				style = s.deps.theme.Style("spinner")
+			}
+			y := len(lines)
+			appendLine(style.Render(text))
+			if y < len(lines) && s.deps.hits != nil {
+				id := s.deps.hits.allocate()
+				x1 := min(max(0, width), lipgloss.Width(lines[y]))
+				if x1 > 0 {
+					regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
+					s.hitItems[id] = row.itemIndex
+				}
+			}
+		}
+	}
+	if view.below > 0 {
+		appendLine(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d lines", view.below)))
+	}
+	for _, line := range suffix {
+		appendLine(line)
+	}
+	return strings.Join(lines, "\n"), regions
 }
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	budget := s.rowBudget
-	if budget == 0 {
-		budget = modelsMinRows
-	}
 	switch {
 	case key.Matches(msg, s.deps.keys.Close):
 		if s.filter.Value() != "" {
@@ -79,17 +130,17 @@ func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		}
 		return nil, true, true
 	case msg.String() == keyMenuUp:
-		s.cursor = clampModelsCursor(s.cursor-1, len(s.filtered))
+		s.moveCursor(boundedLineUp)
 	case msg.String() == keyMenuDown:
-		s.cursor = clampModelsCursor(s.cursor+1, len(s.filtered))
+		s.moveCursor(boundedLineDown)
 	case key.Matches(msg, s.deps.keys.ScrollU):
-		s.cursor = clampModelsCursor(s.cursor-budget, len(s.filtered))
+		s.moveCursor(boundedPageUp)
 	case key.Matches(msg, s.deps.keys.ScrollD):
-		s.cursor = clampModelsCursor(s.cursor+budget, len(s.filtered))
+		s.moveCursor(boundedPageDown)
 	case key.Matches(msg, s.deps.keys.ScrollTop):
-		s.cursor = 0
+		s.moveCursor(boundedTop)
 	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		s.cursor = clampModelsCursor(len(s.filtered)-1, len(s.filtered))
+		s.moveCursor(boundedEnd)
 	case key.Matches(msg, s.deps.keys.SetGlobalDefault):
 		if chosen, ok := s.chosen(); ok {
 			s.intent = modelsGlobalDefaultIntent{client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}, modelLabel(chosen)}
@@ -110,6 +161,19 @@ func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 }
 
 func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	if hit, ok := msg.(surfaceHitMsg); ok {
+		if s.view == modelsNone {
+			return nil, false, false
+		}
+		index, current := s.hitItems[hit.ID]
+		if !current {
+			return nil, true, false
+		}
+		s.list.setCursor(index)
+		s.cursor = s.list.cursor
+		s.revealCursor = true
+		return nil, true, false
+	}
 	result, ok := msg.(client.ModelsMsg)
 	if !ok {
 		return nil, false, false
@@ -132,8 +196,18 @@ func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	return nil, true, false
 }
 
-func (*modelsState) HandleWheel(tea.MouseWheelMsg) (tea.Cmd, bool) { return nil, true }
-func (*modelsState) Close()                                        {}
+func (s *modelsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	if msg.Mouse().Button == tea.MouseWheelUp {
+		s.list.scroll(boundedLineUp)
+	} else {
+		s.list.scroll(boundedLineDown)
+	}
+	return nil, true
+}
+func (s *modelsState) Close() {
+	s.view = modelsNone
+	s.hitItems = nil
+}
 func (s *modelsState) takeSurfaceIntent() surfaceIntent {
 	intent := s.intent
 	s.intent = nil
@@ -142,6 +216,140 @@ func (s *modelsState) takeSurfaceIntent() surfaceIntent {
 func (s *modelsState) syncFilter() {
 	s.filtered = filterModels(s.catalog.models, s.filter.Value())
 	s.cursor = clampModelsCursor(s.cursor, len(s.filtered))
+	s.list.setItems(modelsBoundedItems(s.catalog, s.filtered))
+	if len(s.filtered) > 0 && s.list.cursorID == "" {
+		s.list.setCursor(s.cursor)
+	}
+	s.cursor = s.list.cursor
+}
+
+func (s *modelsState) syncList(width, height int) bool {
+	hadCursor := s.list.cursorID != ""
+	s.list.setGeometry(width, height, 2, boundedWrap)
+	s.list.setItems(modelsBoundedItems(s.catalog, s.filtered))
+	reveal := len(s.filtered) > 0 && (!hadCursor || s.list.cursor != s.cursor)
+	if reveal {
+		s.list.setCursor(s.cursor)
+	}
+	s.cursor = s.list.cursor
+	return reveal
+}
+
+func (s *modelsState) moveCursor(move boundedMove) {
+	s.revealCursor = true
+	if s.list.viewport.valid() {
+		if move == boundedPageUp || move == boundedPageDown {
+			delta := max(1, s.rowBudget)
+			if move == boundedPageUp {
+				delta = -delta
+			}
+			s.list.setCursor(s.cursor + delta)
+		} else {
+			s.list.move(move)
+		}
+		s.cursor = s.list.cursor
+		return
+	}
+	delta := 1
+	if s.rowBudget > 0 {
+		delta = s.rowBudget
+	}
+	switch move {
+	case boundedLineUp:
+		s.cursor = clampModelsCursor(s.cursor-1, len(s.filtered))
+	case boundedLineDown:
+		s.cursor = clampModelsCursor(s.cursor+1, len(s.filtered))
+	case boundedPageUp:
+		s.cursor = clampModelsCursor(s.cursor-delta, len(s.filtered))
+	case boundedPageDown:
+		s.cursor = clampModelsCursor(s.cursor+delta, len(s.filtered))
+	case boundedTop:
+		s.cursor = 0
+	case boundedEnd:
+		s.cursor = clampModelsCursor(len(s.filtered)-1, len(s.filtered))
+	}
+}
+
+func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []boundedListItem {
+	items := make([]boundedListItem, 0, len(models))
+	for _, model := range models {
+		items = append(items, boundedListItem{
+			id:   model.ProviderID + "\x00" + model.ID,
+			text: modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, model),
+		})
+	}
+	return items
+}
+
+func boundedListViewWithIndicators(list *boundedList, capacity int, reveal bool) boundedListView {
+	reserved := 0
+	var view boundedListView
+	for range 3 {
+		list.viewport.height = max(0, capacity-reserved)
+		if reveal {
+			list.revealCursor(list.layout())
+		}
+		view = list.view()
+		needed := 0
+		if view.above > 0 {
+			needed++
+		}
+		if view.below > 0 {
+			needed++
+		}
+		if needed <= reserved {
+			list.reveal = false
+			return view
+		}
+		reserved = needed
+	}
+	list.reveal = false
+	return view
+}
+
+func modelsFixedLines(picker modelsState, prov string) (prefix, suffix []string) {
+	title := "Models"
+	if len(picker.filtered) > 0 {
+		title += "  (" + strconv.Itoa(len(picker.filtered)) + ")"
+	}
+	prefix = append(prefix, picker.deps.theme.Style("askTitle").Render(title))
+	if prov != "" {
+		prefix = append(prefix, picker.deps.theme.Style("muted").Render(prov))
+	}
+	prefix = append(prefix, picker.filter.View(), "", picker.deps.theme.Style("warning").Render(modelSwitchDisclosure), "")
+	if picker.loading {
+		prefix = append(prefix, picker.deps.theme.Style("muted").Render("loading…"))
+	} else if picker.err != nil {
+		prefix = append(prefix,
+			picker.deps.theme.Style("errorText").Render("✗ list models: "+sanitizeTerminal(picker.err.Error())),
+			picker.deps.theme.Style("muted").Render(modelsErrorHint),
+		)
+	} else if len(picker.catalog.models) == 0 {
+		for _, line := range strings.Split(modelsEmptyCopy(picker.deps.caps, picker.catalog.statuses), "\n") {
+			prefix = append(prefix, picker.deps.theme.Style("muted").Render(line))
+		}
+	} else if len(picker.filtered) == 0 {
+		prefix = append(prefix, picker.deps.theme.Style("muted").Render("no models match "+strconv.Quote(picker.filter.Value())+" — "+picker.deps.marks.closeOnly+" to clear"))
+	}
+	for _, status := range renderProviderStatusLines(picker.catalog.statuses, len(picker.catalog.models) == 0) {
+		suffix = append(suffix, picker.deps.theme.Style("errorText").Render(sanitizeTerminal(status)))
+	}
+	suffix = append(suffix, "",
+		picker.deps.theme.Style("muted").Render("type to filter · ↑/↓/"+picker.deps.marks.scrollUp+" move · "+picker.deps.marks.choose+" use · "+picker.deps.marks.setGlobalDefault+" set global default · "+picker.deps.marks.closeOnly+" clear filter / close"),
+		picker.deps.theme.Style("muted").Render("● current  ★ global default"),
+		picker.deps.theme.Style("muted").Render("reason = emits reasoning · set its effort tier with /effort"))
+	return prefix, suffix
+}
+
+func boundedDisplayLine(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rows := boundedWidthLines(line, width, boundedClip)
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[0]
 }
 func (s *modelsState) chosen() (client.ModelInfo, bool) {
 	if s.cursor < 0 || s.cursor >= len(s.filtered) {
@@ -176,10 +384,7 @@ func filterModels(models []client.ModelInfo, q string) []client.ModelInfo {
 const modelSwitchDisclosure = "Switching models is expensive as it clears caches."
 
 func modelsRowBudgetFor(height, fixedRows int) int {
-	if b := height - fixedRows; b >= modelsMinRows {
-		return b
-	}
-	return modelsMinRows
+	return max(0, height-fixedRows)
 }
 
 // modelsPanelFixedRows derives the list's viewport budget from the same variable

@@ -917,9 +917,13 @@ and a compact context window (e.g. `200K`, `1M`; omitted when unknown). The pick
 opens with a **type-to-filter** input focused: type to narrow the list by a
 substring match (case-insensitive) over `provider_id`, model `id`, and display
 name — at 300+ live models this is how you find one fast. The list **scrolls** in a
-window clipped to the terminal height that follows the cursor (the selected row
-stays visible when you page past the top/bottom edge), so a large catalog never
-overruns the screen. A header line reads **`current: <model> (<provenance>)`** — a
+physical-line window derived from the offered width and height. Keyboard cursor
+movement minimally reveals the selected item. The mouse wheel moves the visible
+window by one line without moving the cursor. A primary click on the marker or
+text of any visible model-row line moves the cursor to that model; it does not
+switch models. Clicks on picker chrome, overflow indicators, and blank trailing
+cells do nothing. Press `enter` to switch to the cursor row. A large catalog never
+overruns the offered area. A header line reads **`current: <model> (<provenance>)`** — a
 best-effort, client-derived hint of where the live model came from (`server default`
 / `--model flag` / `picked this session` / `workspace default` / `global default`);
 it is a hint, not authority (the server owns the resolution). Each row carries a
@@ -1285,7 +1289,8 @@ show the plain prompt-hint card.
 | in the permission modal / plan-review bar / ask-args view: left-click a button | activate it (same as its chord — **alt screen only**). Clicking anywhere else in the modal does nothing (it is a gate, not a form) |
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
-| mouse wheel | scroll the conversation (**alt screen only**; see below) |
+| mouse wheel | scroll the visible body owner by one physical line (**alt screen only**). Agents and `/models` consume wheel input without moving their logical cursor or scrolling the hidden conversation; compact and `vp short` Agents views consume it without changing state. With no overlay owner, the conversation scrolls. |
+| primary click (`/models` row) | move the Models cursor to the clicked visible row without switching models; press `enter` to activate it (**alt screen only**) |
 | mouse click (prompt text) | place the prompt caret; drag from it to select prompt text (**alt screen only**; see below) |
 | mouse drag (left) | select text in the prompt or conversation — dragging in the conversation to an edge auto-scrolls; prompt release does **not** copy (alt screen only; see below) |
 | double / triple-click (left) | select word / whole line in the conversation (copies; alt screen only) |
@@ -1298,7 +1303,7 @@ show the plain prompt-hint card.
 | `shift+tab` | cycle the current session permission mode outside an MCP prompt argument form: **default → plan → accept-edits → default**. In that form, it moves focus to the previous required argument instead. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` / `ctrl+e` | move to the start / end of the current prompt line |
 | `ctrl+p` | move to the previous prompt line |
-| `f6` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
+| `f6` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, and `esc` steps back or closes. The mouse wheel scrolls the visible normal roster or detail without moving its cursor or the hidden conversation. At terminal heights below 24 rows, compact Agents exposes only `esc`; wheel input is consumed without changing state. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `f7` | open the reasoning-effort picker |
 | `f8` | open the MCP prompts picker |
 | `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |

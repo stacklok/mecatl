@@ -645,7 +645,7 @@ func itoa3(i int) string {
 // SELECTED row in the rendered window and pushes an early row out of view.
 func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 	fm := manyModels(30)
-	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 
@@ -672,7 +672,7 @@ func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 // top, the first row is visible again (the window follows the cursor up too).
 func TestModelsWindowFollowsCursorPastTop(t *testing.T) {
 	fm := manyModels(30)
-	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 

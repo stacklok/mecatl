@@ -4024,6 +4024,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd
 	}
+	if m.team.view != teamNone {
+		return m.onAgentsWheel(msg)
+	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	// A wheel event changes the scroll offset: invalidate the vpView cache so the

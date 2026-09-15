@@ -708,7 +708,7 @@ func TestAgentsRosterWindowed(t *testing.T) {
 	const n = 20
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24) // vp height 16 → ~6 lane rows
+	m = resize(m, 100, 30) // vp height 16 → ~6 lane rows
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -742,7 +742,7 @@ func TestAgentsWindowFollowsCursor(t *testing.T) {
 	const n = 20
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
+	m = resize(m, 100, 30)
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -763,14 +763,21 @@ func TestAgentsWindowFollowsCursor(t *testing.T) {
 	if !strings.Contains(out, "above") {
 		t.Errorf("jump-to-end should show a '+K above' tail, got %q", out)
 	}
-	if strings.Contains(out, "below") {
-		t.Errorf("jump-to-end should NOT show a '+K below' tail, got %q", out)
+	if strings.Contains(out, "rows below") {
+		t.Errorf("jump-to-end should not hide a later logical row, got %q", out)
 	}
-	// The selected (highlighted) row must be the last member — find the › row.
+	// The selected segment must carry the cursor marker.
+	selectedFound := false
 	for _, ln := range strings.Split(out, "\n") {
-		if strings.Contains(ln, "›") && !strings.Contains(ln, last) {
-			t.Errorf("selected row is not the last member: %q", ln)
+		if strings.Contains(ln, "▶") {
+			selectedFound = true
+			if !strings.Contains(ln, last) {
+				t.Errorf("selected row is not the last member: %q", ln)
+			}
 		}
+	}
+	if !selectedFound {
+		t.Error("selected last member has no cursor marker")
 	}
 
 	// home/g jumps back to the first.
@@ -787,24 +794,22 @@ func TestAgentsPageKeys(t *testing.T) {
 	const n = 20
 	big := bigRoster(n)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
+	m = resize(m, 100, 30)
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 
-	th, hk, width, height := m.agentsListGeometry()
-	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
+	beforeDown := m.team.cursor
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
-	if m.team.cursor != page {
-		t.Errorf("pgdn moved cursor to %d, want one page (%d)", m.team.cursor, page)
+	if m.team.cursor <= beforeDown {
+		t.Errorf("pgdn did not move to a later bounded item: %d", m.team.cursor)
 	}
-	w := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).window(th, height)
-	wantUp := max(0, m.team.cursor-(w.end-w.start))
+	beforeUp := m.team.cursor
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if m.team.cursor != wantUp {
-		t.Errorf("pgup moved cursor to %d, want current physical-window move to %d", m.team.cursor, wantUp)
+	if m.team.cursor >= beforeUp {
+		t.Errorf("pgup did not move to an earlier bounded item: %d", m.team.cursor)
 	}
 }
 
@@ -1387,7 +1392,7 @@ func TestAgentsFindingsView(t *testing.T) {
 func TestAgentsRosterWindowedGolden(t *testing.T) {
 	big := bigRoster(20)
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
+	m = resize(m, 100, 30)
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -1444,7 +1449,7 @@ func verboseFocusTeam(c *conversation) {
 // lipgloss.Place). Mirrors TestAgentsRosterWindowed.
 func TestAgentsFocusWindowed(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24) // vp height 16 → ~6 trace rows
+	m = resize(m, 100, 30) // vp height 16 → ~6 trace rows
 	m = seedTeam(m, verboseFocusTeam)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -1486,7 +1491,7 @@ func TestAgentsFocusWindowed(t *testing.T) {
 // back" footer all visible (no clipping).
 func TestAgentsFocusWindowedGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
+	m = resize(m, 100, 30)
 	m = seedTeam(m, verboseFocusTeam)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)

@@ -1,5 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
+
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃  ▸ Subagents    Parallel    Teams                                                            ┃
@@ -13,7 +14,6 @@
   ┃    ◐ find dead code #r-b2e2                                                                  ┃
   ┃      Read… · 4 tools · ↑0 ↓0                                                                 ┃
   ┃    ◐ trace config loading #r-c1d3                                                            ┃
-  ┃      Shell… · 11 tools · ↑0 ↓0                                                               ┃
   ┃    · +3 rows below                                                                           ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close         ┃
