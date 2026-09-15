@@ -124,7 +124,7 @@ describe("multimodal prompt helpers", () => {
           sessionCapabilities: { audio: true, image: true },
           sessionId: "session-xor",
         }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           receivedPrompt = (await requests[Symbol.asyncIterator]().next()).value;
           yield terminal("run-xor");
@@ -243,7 +243,7 @@ describe("multimodal prompt helpers", () => {
           sessionCapabilities: { audio: false, image: true },
           sessionId: "session-grpc-media",
         }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           grpcStreams += 1;
           grpcPrompt = (await requests[Symbol.asyncIterator]().next()).value;
@@ -273,7 +273,8 @@ describe("multimodal prompt helpers", () => {
     let httpPrompt: unknown;
     const httpFetch: typeof globalThis.fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
-      if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+      if (path === "/v1/compatibility")
+        return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
       if (path === "/v1/sessions") {
         return Response.json({
           session_capabilities: { audio: false, image: true },

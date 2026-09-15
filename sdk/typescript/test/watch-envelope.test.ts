@@ -30,7 +30,7 @@ async function collect(
 function grpcWatch(frames: WatchSessionEventsResponse[]) {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
       watchSessionEvents: async function* () {
         yield* frames;
       },
@@ -43,7 +43,7 @@ function httpWatch(values: unknown[], requests: string[] = []): typeof globalThi
     const url = String(input);
     const parsed = new URL(url);
     if (parsed.pathname === "/v1/compatibility") {
-      return Response.json({ api_major: 1, features: [watchFeature] });
+      return Response.json({ api_major: 1, capabilities: {}, features: [watchFeature] });
     }
     if (parsed.pathname === "/v1/sessions/session-watch/watch") {
       requests.push(url);
@@ -224,7 +224,7 @@ describe("watch envelope union", () => {
 
     const errorFetch: typeof globalThis.fetch = async (input) => {
       if (new URL(String(input)).pathname === "/v1/compatibility") {
-        return Response.json({ api_major: 1, features: [watchFeature] });
+        return Response.json({ api_major: 1, capabilities: {}, features: [watchFeature] });
       }
       return new Response(
         'event: error\ndata: {"code":"cursor_expired","detail":"expired","status":412}\n\n',

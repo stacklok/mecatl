@@ -20,7 +20,7 @@ describe("compatibility floor", () => {
         router.service(HarnessService, {
           getCompatibilityInfo: (_request, context) => {
             grpcHeaders.push(new Headers(context.requestHeader));
-            return { apiMajor: 1 };
+            return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
           },
           getSession: (_request, context) => {
             grpcHeaders.push(new Headers(context.requestHeader));

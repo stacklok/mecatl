@@ -37,7 +37,7 @@ describe("connection status", () => {
         },
         getCompatibilityInfo: async () => {
           await floor;
-          return { apiMajor: 1 };
+          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
         },
       });
     });
@@ -109,7 +109,7 @@ describe("connection status", () => {
         getCompatibilityInfo: () => {
           compatibilityCalls += 1;
           if (dropHeartbeat) throw new ConnectError("dropped", Code.Unavailable);
-          return { apiMajor: 1 };
+          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
         },
       });
     });
@@ -160,7 +160,7 @@ describe("connection status", () => {
         createSession: () => ({ sessionId: "session" }),
         getCompatibilityInfo: () => {
           compatibilityCalls += 1;
-          return { apiMajor: 1 };
+          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
         },
       });
     });
@@ -189,7 +189,7 @@ describe("connection status", () => {
           createSession: () => ({ sessionId: "node-session" }),
           getCompatibilityInfo: () => {
             nodeCompatibilityCalls += 1;
-            return { apiMajor: 1 };
+            return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
           },
         });
       }),

@@ -17,6 +17,14 @@ import {
 } from "./errors.js";
 import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
+import {
+  cloneServerCompatibility,
+  projectServerCompatibility,
+  type ServerCompatibility,
+  SUPPORTED_API_MAJOR,
+} from "./server.js";
+
+export { SUPPORTED_API_MAJOR } from "./server.js";
 
 /** Canonical routing hint for session-bound Mecatl requests. It grants no authority. @public */
 export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
@@ -77,13 +85,11 @@ function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined 
   return { ...options, headers };
 }
 
-/** The API major implemented by this SDK. @public */
-export const SUPPORTED_API_MAJOR = 1;
-
 const transportKinds = new WeakMap<Transport, TransportKind>();
 const transportOperations = new WeakMap<Transport, TransportOperations>();
 const rawJsonValues = new WeakMap<object, JsonValue>();
 const compatibilityInvalidators = new WeakMap<RawClient, () => void>();
+const compatibilityReaders = new WeakMap<RawClient, CompatibilityReader>();
 
 interface TransportOperations {
   cancelRun(sessionId: string, runId: string, signal: AbortSignal): Promise<void>;
@@ -92,7 +98,13 @@ interface TransportOperations {
 interface CompatibilityResult {
   header: Headers;
   message: GetCompatibilityInfoResponse;
+  projection: ServerCompatibility;
   trailer: Headers;
+}
+
+interface CompatibilityReader {
+  ordinary(options?: CallOptions): Promise<CompatibilityResult>;
+  refresh(options?: CallOptions): Promise<CompatibilityResult>;
 }
 
 export function registerTransport(
@@ -129,6 +141,35 @@ export function getRawJson(message: object): JsonValue | undefined {
 /** Clears one raw client's cached compatibility descriptor before a reconnect. */
 export function invalidateRawCompatibility(client: RawClient): void {
   compatibilityInvalidators.get(client)?.();
+}
+
+async function projectedCompatibility(
+  client: RawClient,
+  options: CallOptions | undefined,
+  refresh: boolean,
+): Promise<ServerCompatibility> {
+  const reader = compatibilityReaders.get(client);
+  if (reader === undefined) throw new TypeError("Unknown raw client");
+  const result = await (refresh ? reader.refresh(options) : reader.ordinary(options));
+  options?.onHeader?.(result.header);
+  options?.onTrailer?.(result.trailer);
+  return cloneServerCompatibility(result.projection);
+}
+
+/** Reads the current shared compatibility generation for a high-level operation. */
+export function readRawCompatibility(
+  client: RawClient,
+  options?: CallOptions,
+): Promise<ServerCompatibility> {
+  return projectedCompatibility(client, options, false);
+}
+
+/** Starts and installs a fresh compatibility generation for explicit discovery. */
+export function refreshRawCompatibility(
+  client: RawClient,
+  options?: CallOptions,
+): Promise<ServerCompatibility> {
+  return projectedCompatibility(client, options, true);
 }
 
 /** Transport-neutral, descriptor-driven operations beneath Client/Session/Run. @public */
@@ -177,28 +218,43 @@ function incompatible(cause: unknown, transport: TransportKind): IncompatibleSer
 export function createRawClient(options: RawClientOptions): RawClient {
   const transport = options.transport;
   const transportKind = options.transportKind ?? transportKinds.get(transport) ?? "grpc";
-  let compatibility: Promise<CompatibilityResult> | undefined;
+  let nextGeneration = 0;
+  let compatibility:
+    | { readonly generation: number; readonly promise: Promise<CompatibilityResult> }
+    | undefined;
 
-  const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+  const startCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
     const probeOptions = withoutSessionAffinity(callOptions);
-    compatibility ??= transport
-      .unary(
-        HarnessService.method.getCompatibilityInfo,
-        probeOptions?.signal,
-        probeOptions?.timeoutMs,
-        probeOptions?.headers,
-        {},
-        probeOptions?.contextValues,
-      )
+    const generation = ++nextGeneration;
+    const response = (() => {
+      try {
+        return transport.unary(
+          HarnessService.method.getCompatibilityInfo,
+          probeOptions?.signal,
+          probeOptions?.timeoutMs,
+          probeOptions?.headers,
+          {},
+          probeOptions?.contextValues,
+        );
+      } catch (cause) {
+        return Promise.reject(cause);
+      }
+    })();
+    const promise = response
       .then((response) => {
         const info = response.message;
         if (info.apiMajor !== SUPPORTED_API_MAJOR) throw incompatible(undefined, transportKind);
-        return { header: response.header, message: info, trailer: response.trailer };
+        return {
+          header: response.header,
+          message: info,
+          projection: projectServerCompatibility(info, transportKind),
+          trailer: response.trailer,
+        };
       })
       .catch((cause: unknown) => {
         // A transient floor failure must not poison this client permanently.
         // Connection monitoring and a later ordinary operation may retry it.
-        compatibility = undefined;
+        if (compatibility?.generation === generation) compatibility = undefined;
         if (cause instanceof IncompatibleServerError) throw cause;
         const normalized = normalizeError(cause, transportKind);
         if (
@@ -211,13 +267,18 @@ export function createRawClient(options: RawClientOptions): RawClient {
         }
         throw normalized;
       });
-    return compatibility;
+    compatibility = { generation, promise };
+    return promise;
+  };
+
+  const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+    return compatibility?.promise ?? startCompatibility(callOptions);
   };
 
   const client: RawClient = {
     async features(callOptions?: CallOptions): Promise<ReadonlySet<string>> {
       const result = await ensureCompatibility(callOptions);
-      return new Set(result.message.features);
+      return new Set(result.projection.features);
     },
     async unary<I extends DescMessage, O extends DescMessage>(
       method: DescMethodUnary<I, O>,
@@ -274,6 +335,10 @@ export function createRawClient(options: RawClientOptions): RawClient {
   };
   compatibilityInvalidators.set(client, () => {
     compatibility = undefined;
+  });
+  compatibilityReaders.set(client, {
+    ordinary: ensureCompatibility,
+    refresh: startCompatibility,
   });
   return client;
 }

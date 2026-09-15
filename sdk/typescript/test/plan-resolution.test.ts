@@ -42,7 +42,7 @@ describe("streaming plan resolution", () => {
           yield event(`continuation-${call}`, "message.delta", "executing");
           yield terminal(`continuation-${call}`, "end_turn", "implemented");
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -93,7 +93,7 @@ describe("streaming plan resolution", () => {
           }
           yield event("resumed-missing");
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -122,7 +122,7 @@ describe("streaming plan resolution", () => {
           controls += 1;
           yield terminal("resumed-once", "plan_iterate", "iterate");
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -154,7 +154,7 @@ describe("streaming plan resolution", () => {
             type: "result",
           };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });

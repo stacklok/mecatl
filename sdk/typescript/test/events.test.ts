@@ -28,7 +28,7 @@ describe("event unions", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-known" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* () {
           yield {
             event: {
@@ -109,7 +109,7 @@ describe("event unions", () => {
     const grpcTransport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-grpc" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* () {
           yield { event: futureEvent };
           yield {
@@ -163,7 +163,8 @@ describe("event unions", () => {
     };
     const httpFetch: typeof globalThis.fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
-      if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+      if (path === "/v1/compatibility")
+        return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
       if (path === "/v1/sessions" && init?.method === "POST") {
         return Response.json({ session_id: "session-http" }, { status: 201 });
       }

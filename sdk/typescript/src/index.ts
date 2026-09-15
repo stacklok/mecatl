@@ -162,6 +162,17 @@ export type {
   RunResult,
 } from "./run.js";
 export type {
+  Server,
+  ServerCompatibility,
+  ServerInfo,
+  ServerInfoOptions,
+} from "./server.js";
+export {
+  ServerFeature,
+  ServerPosture,
+  WATCH_SESSION_EVENTS_FEATURE,
+} from "./server.js";
+export type {
   DreamTargetCapability,
   ManualDreamCapabilities,
   ServerCapabilities,

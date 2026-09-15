@@ -99,7 +99,7 @@ function routerTransport(fails = false): Transport {
     router.service(HarnessService, {
       getCompatibilityInfo: () => {
         if (fails) throw new Error("first dial refused");
-        return { apiMajor: 1 };
+        return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
       },
     });
   });

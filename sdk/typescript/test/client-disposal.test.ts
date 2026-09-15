@@ -44,7 +44,7 @@ function lifecycleTransport(events: string[] = []): Transport {
   const transport = createRouterTransport((router) => {
     router.service(HarnessService, {
       createSession: () => ({ sessionId: "session-1" }),
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
       getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       converse: async function* (requests) {
         const input = requests[Symbol.asyncIterator]();

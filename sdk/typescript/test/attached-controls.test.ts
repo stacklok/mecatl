@@ -65,6 +65,7 @@ function httpHarness(options: HttpHarnessOptions = {}): {
     if (url.pathname === "/v1/compatibility") {
       return Response.json({
         api_major: 1,
+        capabilities: {},
         features: options.features ?? [watchFeature],
       });
     }
@@ -114,7 +115,7 @@ function grpcHarness(): {
         calls += 1;
         yield { event: { runId, text: "unexpected", type: "message.delta" } };
       },
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
       getSession: () => ({ session: { sessionId } }),
       watchSessionEvents: async function* () {
         yield { cursor: "cursor-boundary", phase: "live" };

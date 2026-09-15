@@ -205,7 +205,7 @@ describe("raw steer", () => {
     const strictTransport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-strict" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: () => ({ session: { sessionId: "session-strict" } }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
@@ -257,7 +257,7 @@ describe("raw steer", () => {
     let omittedExpectedRunId: string | undefined;
     const promotionTransport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();

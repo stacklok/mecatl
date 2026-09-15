@@ -49,7 +49,7 @@ function queryHarness(options: QueryHarnessOptions = {}) {
         calls.push(`delete:${request.sessionId}`);
         return {};
       },
-      getCompatibilityInfo: () => ({ apiMajor: 1 }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
       getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       converse: async function* (requests) {
         const input = requests[Symbol.asyncIterator]();
@@ -125,6 +125,7 @@ function fakeClient(create: () => Promise<Session>, close: () => Promise<void>):
     models: undefined as never,
     reflection: undefined as never,
     schedules: undefined as never,
+    server: undefined as never,
     sessions: {
       create,
       fork: vi.fn(),
@@ -259,7 +260,7 @@ describe("query one-shot lifecycle", () => {
         },
         createSession: () => ({ sessionId: "query-plan-session" }),
         deleteSession: () => ({}),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           runNumber += 1;
           const input = requests[Symbol.asyncIterator]();
@@ -388,7 +389,7 @@ describe("query one-shot lifecycle", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "manual-session" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();
