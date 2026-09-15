@@ -441,12 +441,17 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyW
 }
 
 func renderTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk helpKeys, bodyWidth, height int) string {
+	return prepareTeamFocusAt(th, b, member, scroll, hk, bodyWidth)(height)
+}
+
+func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
-		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "agents", bodyWidth) + "\n\n" +
+		body := renderDynamicCardChromeLine(th.Style("askTitle"), "", "agents", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", "member "+sanitizeTerminal(member)+" is no longer in the roster", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
+		return func(int) string { return body }
 	}
 
 	var out strings.Builder
@@ -462,42 +467,43 @@ func renderTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk h
 	}
 	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
 	out.WriteString("\n\n")
+	prefix := out.String()
 
 	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
-	trace := r.renderTrace(ln.trace)
-	if trace == "" {
-		out.WriteString(muted.Render("(no activity yet)"))
-	} else {
-		// The trace is ALREADY rendered (carries ANSI; its text was sanitized at the
-		// source in renderTrace). It must NOT go through truncateLines, which
-		// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
-		// line count ANSI-safely instead, to the rows that fit the terminal height.
-		lines := strings.Split(trace, "\n")
-		w := renderedLineWindow(scroll, len(lines), teamFocusRows(height))
-		out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
+	// The trace is ALREADY rendered (carries ANSI; its text was sanitized at the
+	// source in renderTrace). It must NOT go through truncateLines, which
+	// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
+	// line count ANSI-safely instead, to the rows that fit the terminal height.
+	var traceLines []string
+	if trace := r.renderTrace(ln.trace); trace != "" {
+		traceLines = strings.Split(trace, "\n")
 	}
-
+	failure := ""
 	// A benched-on-error member surfaces WHY its last failed round failed, mirroring
 	// the subagent focus pane's failure block (issue #331). Rendered ONLY when the
 	// team ended with the member stopped for an error and a cause was carried; a done
 	// (possibly retried) member does not render it (it recovered).
 	if b.teamDone && ln.stopped && ln.stopReason == teamStopReasonError && ln.cause != "" {
-		out.WriteString("\n")
-		out.WriteString(teamFailureLineAtWidth(ln, bodyWidth))
+		failure = "\n" + teamFailureLineAtWidth(ln, bodyWidth)
 	}
-
+	lead := focusBackHint(hk)
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
 	// already stopped, and a known session id (the CancelChild handle). The chords
 	// read the LIVE CancelChild/Close markings (issue #457).
-	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
-	w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
-	lead := focusBackHint(hk)
 	if !b.teamDone && !ln.stopped && ln.sessionID != "" {
 		lead = hk.cancelChild + " cancel · " + lead
 	}
-	hint := agentsDetailHint(hk, w, lead)
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
-	return out.String()
+	return func(height int) string {
+		w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+		body := prefix
+		if len(traceLines) == 0 {
+			body += muted.Render("(no activity yet)")
+		} else {
+			body += strings.Join(traceLines[w.start:w.end], "\n")
+		}
+		hint := agentsDetailHint(hk, w, lead)
+		return body + failure + "\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth)
+	}
 }
 
 // teamFailureLine renders the focus pane's failure block for a team member that ended
@@ -643,34 +649,28 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 }
 
 func renderTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
-	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	var out strings.Builder
+	return prepareTeamTasksAt(th, b, scroll, hk, bodyWidth)(height)
+}
 
-	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", "tasks", bodyWidth))
-	out.WriteString("\n")
-	out.WriteString(renderDelegationRows(muted, "", teamTasksSummary(b.teamTasks), bodyWidth))
-	out.WriteString("\n\n")
-
+func prepareTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+	muted := th.Style("muted")
+	prefix := renderDelegationRows(th.Style("askTitle"), "", "tasks", bodyWidth) + "\n" +
+		renderDelegationRows(muted, "", teamTasksSummary(b.teamTasks), bodyWidth) + "\n\n"
 	if len(b.teamTasks) == 0 {
-		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no tasks)", bodyWidth))
-		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
-		return out.String()
+		body := prefix + renderDynamicCardChromeLine(muted, "", "(no tasks)", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth)
+		return func(int) string { return body }
 	}
-
-	byID := make(map[string]string, len(b.teamTasks))
-	for _, t := range b.teamTasks {
-		byID[t.id] = t.state
-	}
-
 	lines := renderedTaskLines(th, b, bodyWidth)
-	w := renderedLineWindow(scroll, len(lines), teamTasksRows(height))
-	out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.tasks)), bodyWidth))
-	return out.String()
+	return func(height int) string {
+		w := renderedLineWindow(scroll, len(lines), teamTasksRows(height))
+		return prefix + strings.Join(lines[w.start:w.end], "\n") + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.tasks)), bodyWidth)
+	}
 }
 
 // maxTaskDescLen bounds the inline task description so a row stays one line (the
@@ -771,29 +771,28 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 }
 
 func renderTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
-	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	var out strings.Builder
+	return prepareTeamFindingsAt(th, b, scroll, hk, bodyWidth)(height)
+}
 
-	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", "findings", bodyWidth))
-	out.WriteString("\n")
-	out.WriteString(renderDelegationRows(muted, "", teamFindingsSummary(b.teamFindings), bodyWidth))
-	out.WriteString("\n\n")
-
+func prepareTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+	muted := th.Style("muted")
+	prefix := renderDelegationRows(th.Style("askTitle"), "", "findings", bodyWidth) + "\n" +
+		renderDelegationRows(muted, "", teamFindingsSummary(b.teamFindings), bodyWidth) + "\n\n"
 	if len(b.teamFindings) == 0 {
-		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no findings)", bodyWidth))
-		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
-		return out.String()
+		body := prefix + renderDynamicCardChromeLine(muted, "", "(no findings)", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth)
+		return func(int) string { return body }
 	}
-
 	lines := renderedFindingLines(th, b, bodyWidth)
-	w := renderedLineWindow(scroll, len(lines), teamFindingsRows(height))
-	out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.findings)), bodyWidth))
-	return out.String()
+	return func(height int) string {
+		w := renderedLineWindow(scroll, len(lines), teamFindingsRows(height))
+		return prefix + strings.Join(lines[w.start:w.end], "\n") + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.findings)), bodyWidth)
+	}
 }
 
 // findingRow renders one finding row: "member · body". Both the member name and the
