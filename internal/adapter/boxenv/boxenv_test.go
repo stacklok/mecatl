@@ -34,9 +34,9 @@ type fakeBoxAPI struct {
 func newFakeBoxAPI(t *testing.T) (*fakeBoxAPI, *httptest.Server) {
 	t.Helper()
 	fake := &fakeBoxAPI{t: t, files: make(map[string][]byte), state: "ready"}
-	server := httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
-	t.Cleanup(server.Close)
-	return fake, server
+	testServer := httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
+	t.Cleanup(testServer.Close)
+	return fake, testServer
 }
 
 func (f *fakeBoxAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -271,15 +271,15 @@ func TestWorkspaceVersionedMutationAndGrep(t *testing.T) {
 }
 
 func TestAPIOkFalseIsFailure(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "code": "denied", "message": "no"})
 	}))
-	defer server.Close()
-	base, err := url.Parse(server.URL)
+	defer testServer.Close()
+	base, err := url.Parse(testServer.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &apiClient{base: base, apiKey: "test-key", http: server.Client()}
+	client := &apiClient{base: base, apiKey: "test-key", http: testServer.Client()}
 	if err := client.request(context.Background(), http.MethodGet, "/x", nil, nil, nil); err == nil {
 		t.Fatal("request returned nil error for ok=false")
 	}
