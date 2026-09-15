@@ -3230,6 +3230,12 @@ func sessionEngineFactoryWithTools(
 		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
+		// MODEL-VISIBLE memory self-description (ADR 0070): a session that carries
+		// project or user memory must tell the model the ladder exists so it CALLS
+		// the tools rather than improvising. Gated by catalog presence so a no-fs or
+		// store-less session is never told about a store it cannot reach; the Grep
+		// escalation rung is withheld when Grep itself is absent.
+		deps.PromptConfig = applyMemoryPosture(deps.PromptConfig, deps.Catalog)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
 		// front there is no filesystem — and stop the prompt <env> claiming the
 		// SERVER's cwd/shell/git state, none of which this session can touch. The
@@ -4128,6 +4134,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
+	// MODEL-VISIBLE memory self-description (ADR 0070): same gate as the
+	// per-session path — the shared engine must also carry the note so the
+	// commonest deployment (a plain mecatui launch hitting the shared engine)
+	// tells the model about its memory. Withheld when no memory family is wired.
+	deps.PromptConfig = applyMemoryPosture(deps.PromptConfig, deps.Catalog)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
 	// engine/agent.buildRequest (issue #462 review). The shared engine's
@@ -8266,6 +8277,67 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 		capability = learningAutomaticGlobalPostureNote
 	}
 	pc.Role += "\n\n" + learningAutoPostureNote + capability + assurance
+	return pc
+}
+
+// memoryPostureLead is the opening clause of the memory self-description note
+// (ADR 0070). It is always present when at least one memory family is registered,
+// telling the model to CALL the memory tools rather than guess. The "durable
+// memory store" substring is a stable test key.
+const memoryPostureLead = "You have a durable memory store. " +
+	"When asked what you remember or know about a topic, CALL the memory tools " +
+	"(Recall/RecallUser/SearchMemory/SearchUserModel) rather than guessing — " +
+	"read what was actually saved, then answer."
+
+// memoryPostureProject is appended when the project-scoped family is registered.
+// The "Project memory (" substring is a stable test key.
+const memoryPostureProject = "Project memory (Remember/Recall/SearchMemory/InspectMemory/ForgetMemory/UndoMemory) " +
+	"persists project-scoped facts across sessions. Use it for workspace-specific " +
+	"findings, recurring tasks, and learned project conventions."
+
+// memoryPostureUser is appended when the user-scoped family is registered.
+// The "User memory (" substring is a stable test key.
+const memoryPostureUser = "User memory (RememberUser/RecallUser/SearchUserModel/InspectUserMemory/ForgetUserMemory/UndoUserMemory) " +
+	"persists user-level preferences and cross-project facts. Use it for operator " +
+	"preferences that apply regardless of which project is open."
+
+// memoryPostureEscalation is appended when both a memory family AND Grep exist.
+// Without Grep (the no-fs profile) the docs/repo rungs are unreachable and this
+// clause is withheld. The "escalate to workspace search" substring is a stable
+// test key.
+const memoryPostureEscalation = "When memory tools return nothing and you need more context, " +
+	"escalate to workspace search: use Grep to search project documentation, then " +
+	"the broader repository."
+
+// applyMemoryPosture appends the memory self-description note to a prompt.Config
+// when at least one memory family (project or user) is wired into the catalog
+// (ADR 0070 affordance rule). It is a no-op when catalog is nil or carries no
+// memory tools, so a no-fs or store-less deployment never tells the model about
+// a store it cannot reach. The Grep-gated escalation clause is similarly withheld
+// on the no-fs profile (DefaultRole fallback first — the applyNoFSPosture idiom).
+func applyMemoryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
+	if catalog == nil {
+		return pc
+	}
+	_, hasProject := catalog.Lookup(memory.RememberToolName)
+	_, hasUser := catalog.Lookup(memory.RememberUserToolName)
+	if !hasProject && !hasUser {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	note := memoryPostureLead
+	if hasProject {
+		note += "\n\n" + memoryPostureProject
+	}
+	if hasUser {
+		note += "\n\n" + memoryPostureUser
+	}
+	if _, ok := catalog.Lookup("Grep"); ok {
+		note += "\n\n" + memoryPostureEscalation
+	}
+	pc.Role += "\n\n" + note
 	return pc
 }
 
