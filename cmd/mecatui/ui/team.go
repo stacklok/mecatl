@@ -43,6 +43,8 @@ type teamState struct {
 	cursor int    // selected row in the roster (an index into the render order)
 	member string // the focused member's name (teamFocus)
 	scroll int    // rendered-line offset in focus/tasks/findings
+	roster boundedList
+	detail boundedViewport
 }
 
 // openTeam opens the roster overlay over the most-recent populated Team card.
@@ -160,9 +162,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // visible window is derived from it at render time (teamWindow), so a roster
 // that grows under the overlay never desyncs a stored scroll offset.
 func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cmd) {
-	n := len(b.teamLanes)
-	th, hk, width, height := m.agentsListGeometry()
-	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, b, hk, width))
+	th, hk, width, _ := m.agentsListGeometry()
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m.closeTeam()
@@ -175,8 +175,8 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		m.team.scroll = 0
 		return m, nil
 	}
-	if next, handled := navigateRosterCursor(msg, m.keys, m.team.cursor, n, page); handled {
-		m.team.cursor = next
+	if next, control, handled := m.navigateAgentsList(msg, teamSelectableList(th, m.team, b, hk, width)); handled {
+		m.team.cursor, m.team.roster = next, control
 		return m, nil
 	}
 	switch {
@@ -319,13 +319,15 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 		header: header,
 		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth),
 		cursor: cursor, muted: muted, noun: "rows",
+		bodyWidth: bodyWidth, control: st.roster,
 	}
-	for row, laneIndex := range order {
-		style, prefix := muted, "  "
-		if row == cursor {
-			style, prefix = th.Style("spinner"), "▶ "
+	for _, laneIndex := range order {
+		list.ids = append(list.ids, b.teamLanes[laneIndex].sessionID)
+		if list.ids[len(list.ids)-1] == "" {
+			list.ids[len(list.ids)-1] = b.teamLanes[laneIndex].name
 		}
-		list.rows = append(list.rows, renderTeamRosterRow(style, prefix, &b.teamLanes[laneIndex], nameW, b.teamDone, bodyWidth))
+		lane := &b.teamLanes[laneIndex]
+		list.rows = append(list.rows, teamRosterTitle(lane, nameW, b.teamDone)+"\n    "+teamRosterWork(lane, b.teamDone)+"\n    "+teamRosterRuntime(lane))
 	}
 	return list
 }

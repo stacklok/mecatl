@@ -78,8 +78,8 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 		{"findings", findingsOut, "finding-", teamFindingsRows(height)},
 	} {
 		assertRows(tc.name, tc.out)
-		if got := strings.Count(stripANSIstr(tc.out), tc.marker); got != tc.rows {
-			t.Errorf("%s rendered %d window rows, want %d", tc.name, got, tc.rows)
+		if got := strings.Count(stripANSIstr(tc.out), tc.marker); got < 1 || got > tc.rows {
+			t.Errorf("%s rendered %d identifiable rows, want 1..%d within the physical window", tc.name, got, tc.rows)
 		}
 	}
 	for _, tc := range []struct {

@@ -137,6 +137,7 @@ type boundedList struct {
 	cursor     int
 	cursorID   string
 	cursorLine int
+	reveal     bool
 }
 
 type boundedListLayout struct {
@@ -194,6 +195,7 @@ func (l *boundedList) setCursor(index int) {
 	}
 	l.cursor = clampBounded(index, len(l.items))
 	l.cursorID, l.cursorLine = l.items[l.cursor].id, 0
+	l.reveal = true
 	layout := l.layout()
 	l.revealCursor(layout)
 }
@@ -201,6 +203,7 @@ func (l *boundedList) setCursor(index int) {
 func (l *boundedList) scroll(move boundedMove) {
 	layout := l.layout()
 	l.viewport.move(move, len(layout.rows))
+	l.reveal = false
 }
 
 func (l *boundedList) move(move boundedMove) {
@@ -209,6 +212,7 @@ func (l *boundedList) move(move boundedMove) {
 		return
 	}
 	l.clamp(layout)
+	l.reveal = true
 	itemHeight := layout.ends[l.cursor] - layout.starts[l.cursor]
 	switch move {
 	case boundedLineUp:
@@ -325,8 +329,15 @@ func (l *boundedList) revealCursor(layout boundedListLayout) {
 	if len(l.items) == 0 || !l.viewport.valid() {
 		return
 	}
-	line := layout.starts[l.cursor] + l.cursorLine
-	if line < l.viewport.offset {
+	start, end := layout.starts[l.cursor], layout.ends[l.cursor]
+	line := start + l.cursorLine
+	if end-start <= l.viewport.height {
+		if start < l.viewport.offset {
+			l.viewport.offset = start
+		} else if end > l.viewport.offset+l.viewport.height {
+			l.viewport.offset = end - l.viewport.height
+		}
+	} else if line < l.viewport.offset {
 		l.viewport.offset = line
 	} else if line >= l.viewport.offset+l.viewport.height {
 		l.viewport.offset = line - l.viewport.height + 1

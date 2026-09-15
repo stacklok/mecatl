@@ -13,10 +13,10 @@
   ┃                                                                                              ┃
   ┃  ▶ ✓ branch-1 · refactor with a map                                                          ┃
   ┃      done · 900ms · 2 tools · ↑12K ↓3K                                                       ┃
-  ┃    │   ✓ Edit                                                                                ┃
+  ┃      │   ✓ Edit                                                                              ┃
   ┃    · +2 branches below                                                                       ┃
   ┃                                                                                              ┃
-  ┃  ↑/↓ select · pgup/pgdn page · home/end first/last · esc back                                ┃
+  ┃  esc back · ↑/↓ select · pgup/pgdn page · home/end first/last                                ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
