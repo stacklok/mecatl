@@ -107,9 +107,11 @@ jobs:
       # Validate the chart's default + oidc.enabled renders before the runtime
       # suite. The Dex fixture adds its test-only private-issuer relaxation
       # imperatively, so it cannot prove the operator-facing chart remains safe
-      # or well-formed. helm is pre-installed on ubuntu-24.04 runners (verified
-      # against actions/runner-images' Ubuntu2404-Readme.md, Helm 3.x); no
-      # install step needed.
+      # or well-formed. Match the Helm version used to package releases.
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+
       - name: Install deploy manifest validators
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
 
@@ -131,7 +133,7 @@ jobs:
       - name: Install ko
         run: go install github.com/google/ko@v0.18.1
 
-      # kubectl and helm are pre-installed on ubuntu-24.04 runners; no install step.
+      # kubectl is pre-installed on ubuntu-24.04 runners.
 
       # `task e2e:k8s` == `task build` (deps), then
       # `GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...`.

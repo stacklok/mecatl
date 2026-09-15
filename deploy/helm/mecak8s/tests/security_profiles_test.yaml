@@ -1,0 +1,67 @@
+suite: transport security profiles
+templates:
+  - templates/deployment.yaml
+release:
+  name: unit
+  namespace: test
+set:
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+tests:
+  - it: renders in-pod TLS with OIDC for a real provider
+    set:
+      mockProvider: false
+      oidc.enabled: true
+      oidc.issuer: https://idp.example.com
+      oidc.audience: mecatl
+      tls.enabled: true
+      tls.secretName: mecak8s-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer=https://idp.example.com
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tls-cert=/var/run/secrets/tls/tls.crt
+      - notExists:
+          path: spec.template.metadata.annotations["mecatl.stacklok.com/tls-terminated-upstream"]
+
+  - it: renders an operator-attested edge TLS boundary
+    set:
+      mockProvider: false
+      oidc.enabled: true
+      oidc.issuer: https://idp.example.com
+      oidc.audience: mecatl
+      tls.enabled: false
+      security.tlsTerminatedUpstream: true
+      service.type: ClusterIP
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["mecatl.stacklok.com/tls-terminated-upstream"]
+          value: "true"
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTP
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-audience=mecatl
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --tls-cert=/var/run/secrets/tls/tls.crt
+
+  - it: renders the explicit unsafe real-provider profile
+    set:
+      mockProvider: false
+      security.allowUnsafeRealProvider: true
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["mecatl.stacklok.com/unsafe-real-provider"]
+          value: "true"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --mock
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--oidc-issuer=/)]

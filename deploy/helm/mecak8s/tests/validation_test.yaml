@@ -21,6 +21,95 @@ tests:
       - failedTemplate:
           errorMessage: set at most one of image.digest or image.tag
 
+  - it: rejects a malformed image digest
+    set:
+      image.digest: sha256:not-a-digest
+      image.tag: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: image/digest
+
+  - it: rejects an external Redis endpoint without a numeric port
+    set:
+      redis.endpoint: redis.example.internal
+    asserts:
+      - failedTemplate:
+          errorPattern: redis.endpoint
+
+  - it: rejects an out-of-range NodePort
+    set:
+      service.type: NodePort
+      service.nodePorts.grpc: 29999
+    asserts:
+      - failedTemplate:
+          errorPattern: service/nodePorts/grpc
+
+  - it: rejects a NodePort above the Kubernetes range
+    set:
+      service.type: NodePort
+      service.nodePorts.http: 32768
+    asserts:
+      - failedTemplate:
+          errorPattern: service/nodePorts/http
+
+  - it: rejects a chart-owned environment name
+    set:
+      extraEnv:
+        - name: MECATL_INSTALLATION_ID
+          value: forbidden
+    asserts:
+      - failedTemplate:
+          errorPattern: extraEnv name.*MECATL_INSTALLATION_ID.*collides
+
+  - it: rejects a Redis filesystem combined with a mounted workspace
+    set:
+      redis.filesystem.enabled: true
+      workspace: /workspace
+    asserts:
+      - failedTemplate:
+          errorPattern: workspace
+
+  - it: rejects more Redis followers than follow connections
+    set:
+      redis.follow.poolSize: 8
+      redis.follow.maxFollowers: 9
+    asserts:
+      - failedTemplate:
+          errorMessage: redis.follow.maxFollowers must not exceed redis.follow.poolSize
+
+  - it: rejects pod TLS without a Secret name
+    set:
+      tls.enabled: true
+      tls.secretName: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: tls.secretName is required
+
+  - it: rejects edge termination on a public Service
+    set:
+      mockProvider: false
+      oidc.enabled: true
+      oidc.issuer: https://idp.example.com
+      oidc.audience: mecatl
+      tls.enabled: false
+      security.tlsTerminatedUpstream: true
+      service.type: LoadBalancer
+    asserts:
+      - failedTemplate:
+          errorPattern: service/type
+
+  - it: rejects OIDC without pod or edge TLS for a real provider
+    set:
+      mockProvider: false
+      oidc.enabled: true
+      oidc.issuer: https://idp.example.com
+      oidc.audience: mecatl
+      tls.enabled: false
+      security.tlsTerminatedUpstream: false
+    asserts:
+      - failedTemplate:
+          errorPattern: tls/enabled
+
   - it: rejects a shutdown grace period below the schema minimum
     set:
       terminationGracePeriodSeconds: 43

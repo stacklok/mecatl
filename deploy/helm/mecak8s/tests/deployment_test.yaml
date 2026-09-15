@@ -20,14 +20,68 @@ tests:
           path: spec.replicas
           value: 2
       - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: mecak8s
+            app.kubernetes.io/instance: unit
+            app.kubernetes.io/component: agent
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: mecak8s
+            app.kubernetes.io/instance: unit
+            app.kubernetes.io/component: agent
+      - equal:
           path: spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable
           value: ScheduleAnyway
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels
+          value:
+            app.kubernetes.io/name: mecak8s
+            app.kubernetes.io/instance: unit
+            app.kubernetes.io/component: agent
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: unit-mecak8s
+      - equal:
+          path: spec.template.spec.securityContext
+          value:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
       - equal:
           path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
           value: true
       - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
           path: spec.template.spec.containers[0].securityContext.capabilities.drop[0]
           value: ALL
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /readyz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.timeoutSeconds
+          value: 3
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
@@ -35,11 +89,68 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
           value: 3
       - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 1
+      - equal:
           path: spec.template.spec.containers[0].lifecycle.preStop.httpGet.path
           value: /drain
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.httpGet.scheme
+          value: HTTP
+      - equal:
+          path: spec.template.spec.containers[0].resources
+          value:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
       - contains:
           path: spec.template.spec.containers[0].args
           content: --mock
+
+  - it: preserves scheduling controls at one replica
+    set:
+      replicaCount: 1
+      nodeSelector:
+        workload: agents
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: agents
+          effect: NoSchedule
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.nodeSelector.workload
+          value: agents
+      - equal:
+          path: spec.template.spec.tolerations[0]
+          value:
+            key: dedicated
+            operator: Equal
+            value: agents
+            effect: NoSchedule
+
+  - it: permits an operator to remove topology spread constraints
+    set:
+      replicaCount: 4
+      topologySpreadConstraints: []
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 4
+      - notExists:
+          path: spec.template.spec.topologySpreadConstraints
 
   - it: renders a valid secure production profile
     set:

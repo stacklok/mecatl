@@ -254,7 +254,9 @@ The production chart is published at
 Redis StatefulSet. Reference a Kubernetes Secret for Redis credentials. The
 chart pulls `ghcr.io/stacklok/mecatl/mecak8s:v<chart-version>` by default, so
 the chart and runtime versions stay aligned. Use a signed tag or digest when
-overriding the image.
+overriding the image. `image.digest` accepts a canonical lowercase SHA-256
+digest: `sha256:` followed by 64 lowercase hexadecimal characters. Set only one
+of `image.tag` and `image.digest`.
 
 A real-provider deployment (`mockProvider: false`) must choose one of these
 security postures:

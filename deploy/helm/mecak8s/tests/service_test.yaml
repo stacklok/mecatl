@@ -13,6 +13,21 @@ tests:
       - isKind:
           of: Service
       - equal:
+          path: metadata.name
+          value: unit-mecak8s
+      - equal:
+          path: metadata.labels
+          value:
+            app.kubernetes.io/name: mecak8s
+            app.kubernetes.io/instance: unit
+            app.kubernetes.io/part-of: mecak8s
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: mecak8s
+            app.kubernetes.io/instance: unit
+            app.kubernetes.io/component: agent
+      - equal:
           path: spec.type
           value: ClusterIP
       - contains:
@@ -22,10 +37,32 @@ tests:
             port: 8080
             targetPort: grpc
             appProtocol: kubernetes.io/h2c
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8081
+            targetPort: http
       - notExists:
           path: spec.ports[0].nodePort
       - notExists:
           path: spec.ports[1].nodePort
+
+  - it: renders custom ports on a LoadBalancer
+    set:
+      service.type: LoadBalancer
+      service.grpcPort: 8443
+      service.httpPort: 8444
+    asserts:
+      - equal:
+          path: spec.type
+          value: LoadBalancer
+      - equal:
+          path: spec.ports[0].port
+          value: 8443
+      - equal:
+          path: spec.ports[1].port
+          value: 8444
 
   - it: renders configured NodePort values
     set:

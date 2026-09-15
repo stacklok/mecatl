@@ -1,0 +1,53 @@
+suite: local Redis resources
+templates:
+  - templates/redis-local.yaml
+release:
+  name: unit
+  namespace: test
+set:
+  redis.local.enabled: true
+  mockProvider: true
+tests:
+  - it: renders an ephemeral single-node Redis workload
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: Service
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: redis
+        documentIndex: 0
+      - equal:
+          path: spec.ports[0].port
+          value: 6379
+        documentIndex: 0
+      - isKind:
+          of: StatefulSet
+        documentIndex: 1
+      - equal:
+          path: spec.replicas
+          value: 1
+        documentIndex: 1
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+        documentIndex: 1
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+        documentIndex: 1
+
+  - it: emits no local resources for an external Redis profile
+    set:
+      redis.local.enabled: false
+      redis.endpoint: redis.example.internal:6379
+      redis.credentialsSecret: redis-credentials
+    asserts:
+      - hasDocuments:
+          count: 0

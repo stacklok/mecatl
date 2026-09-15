@@ -1,0 +1,52 @@
+suite: OAuth broker deployment contracts
+templates:
+  - templates/deployment.yaml
+values:
+  - fixtures/oauth-broker-values.yaml
+release:
+  name: unit
+  namespace: test
+tests:
+  - it: uses one replica and a Recreate rollout
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - notExists:
+          path: spec.strategy.rollingUpdate
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --permission-config=/etc/mecatl-mcp/settings.yaml
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "MECATL_MCP_GITHUB_CLIENT_SECRET")]
+          value:
+            name: MECATL_MCP_GITHUB_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: github-oauth
+                key: client-secret
+
+  - it: rejects more than one broker replica
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: replicaCount
+
+  - it: requires a public callback URL
+    set:
+      mcp.broker.callbackURL: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: mcp.broker.callbackURL is required
+
+  - it: requires OIDC caller identity
+    set:
+      mockProvider: true
+      oidc.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: mcp OAuth broker requires oidc.enabled
