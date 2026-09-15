@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
@@ -173,8 +175,10 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	requestSeen := make(chan error, 1)
-	go serveCLICompositionPlacement(listener, requestSeen)
+	created := make(chan struct{}, 1)
+	detached := make(chan struct{}, 1)
+	serverDone := make(chan error, 1)
+	go serveCLICompositionPlacement(listener, created, detached, serverDone)
 
 	workspace, store := t.TempDir(), t.TempDir()
 	parsed, err := parseFlagsMode(modeServe, []string{"--mock", "--default-placement=microvm-local", "--workspace=" + workspace, "--store-dir=" + store})
@@ -186,24 +190,81 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	composition.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
 		return manager, manager.endpoint, nil
 	}
-	built, err := app.Build(t.Context(), composition)
+	buildCtx, cancelBuild := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelBuild()
+	built, err := app.Build(buildCtx, composition)
 	if err != nil {
 		t.Fatalf("CLI composition did not become service-ready: %v", err)
 	}
-	defer built.Close()
-	if _, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{}); err != nil {
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			built.Close()
+		}
+	})
+	createCtx, cancelCreate := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelCreate()
+	if _, err := built.Service.CreateSession(createCtx, session.ModeDefault, session.Limits{}); err != nil {
 		t.Fatalf("create CLI-selected MicroVM session: %v", err)
 	}
-	if err := <-requestSeen; err != nil {
-		t.Fatal(err)
-	}
+	awaitCLICompositionPlacement(t, "create", created, serverDone)
+	assertNoCLICompositionDetach(t, detached, serverDone)
 	if manager.request.Policy.PolicyRevision != "policy-cli-composition" {
 		t.Fatalf("readiness request policy = %q", manager.request.Policy.PolicyRevision)
 	}
+
+	built.Close()
+	closed = true
+	awaitCLICompositionPlacement(t, "detach", detached, serverDone)
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			t.Fatalf("placement server: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("placement server did not terminate after detach")
+	}
 }
 
-func serveCLICompositionPlacement(listener net.Listener, result chan<- error) {
-	for range 2 {
+func awaitCLICompositionPlacement(t *testing.T, operation string, observed <-chan struct{}, done <-chan error) {
+	t.Helper()
+	select {
+	case <-observed:
+		return
+	default:
+	}
+	select {
+	case <-observed:
+	case err := <-done:
+		select {
+		case <-observed:
+			return
+		default:
+			t.Fatalf("placement server stopped before %s: %v", operation, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for placement %s", operation)
+	}
+}
+
+func assertNoCLICompositionDetach(t *testing.T, detached <-chan struct{}, done <-chan error) {
+	t.Helper()
+	select {
+	case <-detached:
+		t.Fatal("placement detached before Build close")
+	default:
+	}
+	select {
+	case <-detached:
+		t.Fatal("placement detached before Build close")
+	case err := <-done:
+		t.Fatalf("placement server stopped before Build close: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func serveCLICompositionPlacement(listener net.Listener, created, detached chan<- struct{}, result chan<- error) {
+	for _, expected := range []string{"create", "detach"} {
 		conn, err := listener.Accept()
 		if err != nil {
 			result <- err
@@ -215,9 +276,15 @@ func serveCLICompositionPlacement(listener net.Listener, result chan<- error) {
 			result <- err
 			return
 		}
+		operation, _ := request["operation"].(string)
+		if operation != expected {
+			_ = conn.Close()
+			result <- fmt.Errorf("placement operation = %q, want %q", operation, expected)
+			return
+		}
 		binding, _ := request["binding"].(map[string]any)
 		response := map[string]any{"binding": binding}
-		if request["operation"] == "create" {
+		if operation == "create" {
 			sessionID, _ := binding["session_id"].(string)
 			response = map[string]any{
 				"binding": map[string]any{"owner": "local", "session_id": sessionID, "environment_id": "env-cli", "ref": "env-cli@1", "generation": 1},
@@ -233,6 +300,11 @@ func serveCLICompositionPlacement(listener net.Listener, result chan<- error) {
 		if err != nil {
 			result <- err
 			return
+		}
+		if operation == "create" {
+			created <- struct{}{}
+		} else {
+			detached <- struct{}{}
 		}
 	}
 	result <- nil
