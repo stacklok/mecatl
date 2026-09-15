@@ -109,6 +109,11 @@ export class AuthenticationError extends MecatlError {
 }
 
 // @public
+export interface ClearSessionOptions {
+    worktreeSelector?: string;
+}
+
+// @public
 export interface Client {
     [Symbol.asyncDispose](): Promise<void>;
     // (undocumented)
@@ -198,7 +203,7 @@ export interface CreateSessionOptions {
     debugTargetSessionId?: string;
     limits?: SessionLimits;
     mcpServers?: SessionMcpServer[];
-    mode?: 0 | 1 | 2 | 3;
+    mode?: SessionMode;
     modelId?: string;
     profile?: string;
     providerId?: string;
@@ -264,6 +269,16 @@ export interface DreamPlans {
     // Warning: (ae-forgotten-export) The symbol "GenerateDreamPlanRequest" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "GenerateDreamPlanResponse" needs to be exported by the entry point index.d.ts
     generate(request: GenerateDreamPlanRequest, options?: RequestOptions): Promise<GenerateDreamPlanResponse>;
+}
+
+// @public
+export interface DreamTargetCapability {
+    // (undocumented)
+    readonly decide: boolean;
+    // (undocumented)
+    readonly generate: boolean;
+    // (undocumented)
+    readonly unavailableReason?: string;
 }
 
 // @public
@@ -436,8 +451,11 @@ export interface EventUsage {
 
 // @public
 export interface ForkSessionOptions {
+    modelId?: string;
+    providerId?: string;
     reasoningEffort?: string;
     title?: string;
+    worktreeSelector?: string;
 }
 
 // @public
@@ -558,6 +576,14 @@ export interface LearningProposals {
     // Warning: (ae-forgotten-export) The symbol "UndoLearningPromotionRequest" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "UndoLearningPromotionResponse" needs to be exported by the entry point index.d.ts
     undoPromotion(request: UndoLearningPromotionRequest, options?: RequestOptions): Promise<UndoLearningPromotionResponse>;
+}
+
+// @public
+export interface ManualDreamCapabilities {
+    // (undocumented)
+    readonly projectMemory?: DreamTargetCapability;
+    // (undocumented)
+    readonly userModel?: DreamTargetCapability;
 }
 
 // @public
@@ -925,6 +951,66 @@ export type SdkCursor = string;
 export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "plan_continuation_start" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
 // @public
+export interface ServerCapabilities {
+    // (undocumented)
+    readonly agents: boolean;
+    // (undocumented)
+    readonly audio: boolean;
+    // (undocumented)
+    readonly bash: boolean;
+    // (undocumented)
+    readonly debugMcp: boolean;
+    // (undocumented)
+    readonly image: boolean;
+    // (undocumented)
+    readonly learnedSkills: boolean;
+    // (undocumented)
+    readonly learningProposals: boolean;
+    // (undocumented)
+    readonly manualCompaction: boolean;
+    // (undocumented)
+    readonly manualDream?: ManualDreamCapabilities;
+    // (undocumented)
+    readonly mcp: boolean;
+    // (undocumented)
+    readonly mcpConnectorStatus: boolean;
+    // (undocumented)
+    readonly memory: boolean;
+    // (undocumented)
+    readonly modelSelection: boolean;
+    // (undocumented)
+    readonly posture: string;
+    // (undocumented)
+    readonly reflection: boolean;
+    // (undocumented)
+    readonly scheduling: boolean;
+    // (undocumented)
+    readonly sessionDebug: boolean;
+    // (undocumented)
+    readonly skills: boolean;
+    // (undocumented)
+    readonly slashCommands: boolean;
+    // (undocumented)
+    readonly soul: boolean;
+    // (undocumented)
+    readonly steer: boolean;
+    // (undocumented)
+    readonly storageCleanup: boolean;
+    // (undocumented)
+    readonly storageHealth: boolean;
+    // (undocumented)
+    readonly storageMigration: boolean;
+    // (undocumented)
+    readonly teams: boolean;
+    // (undocumented)
+    readonly userModel: boolean;
+    // (undocumented)
+    readonly workspaceEnrollment: boolean;
+    // (undocumented)
+    readonly worktrees: boolean;
+}
+
+// @public
 export class ServerError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code"> & {
         code: ServerErrorCode;
@@ -940,12 +1026,19 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 export interface Session {
     activity(options?: AttachOptions): Promise<SessionActivity>;
     attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
-    close(): Promise<void>;
-    delete(): Promise<void>;
+    clear(options?: ClearSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
+    close(options?: RequestOptions): Promise<void>;
+    compact(options?: RequestOptions): Promise<boolean>;
+    delete(options?: RequestOptions): Promise<void>;
     // (undocumented)
     readonly id: string;
+    rename(title: string, options?: RequestOptions): Promise<SessionSnapshot>;
     resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
-    run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
+    retry(options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
+    run(prompt: PromptInput, options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
+    setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot>;
+    snapshot(options?: RequestOptions): Promise<SessionSnapshot>;
+    transcript(options?: RequestOptions): Promise<SessionTranscript>;
 }
 
 // @public
@@ -959,7 +1052,25 @@ export interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisp
 }
 
 // @public
+export interface SessionActivityReplayStatus {
+    // (undocumented)
+    readonly authoritative: boolean;
+    // (undocumented)
+    readonly available: boolean;
+    // (undocumented)
+    readonly complete: boolean;
+}
+
+// @public
 export class SessionBusyError extends InvalidStateError {
+}
+
+// @public
+export interface SessionCapabilities {
+    // (undocumented)
+    readonly audio: boolean;
+    // (undocumented)
+    readonly image: boolean;
 }
 
 // @public
@@ -979,13 +1090,138 @@ export interface SessionMcpServer {
 }
 
 // @public
+export const SessionMode: {
+    readonly Unspecified: 0;
+    readonly Default: 1;
+    readonly Plan: 2;
+    readonly AcceptEdits: 3;
+};
+
+// @public
+export type SessionMode = (typeof SessionMode)[keyof typeof SessionMode];
+
+// @public
+export interface SessionPlacement {
+    // (undocumented)
+    readonly branch: string;
+    // (undocumented)
+    readonly kind: string;
+    // (undocumented)
+    readonly label: string;
+    // (undocumented)
+    readonly revision: string;
+}
+
+// @public
+export interface SessionRelationship {
+    // (undocumented)
+    readonly branchIndex?: number;
+    // (undocumented)
+    readonly callId?: string;
+    // (undocumented)
+    readonly debugTargetSessionId?: string;
+    // (undocumented)
+    readonly memberName?: string;
+    // (undocumented)
+    readonly originSessionId?: string;
+    // (undocumented)
+    readonly parentSessionId?: string;
+    // (undocumented)
+    readonly scheduleName?: string;
+    // (undocumented)
+    readonly teamId?: string;
+}
+
+// @public
+export interface SessionResolvedModel {
+    // (undocumented)
+    readonly contextWindow: bigint;
+    // (undocumented)
+    readonly modelId: string;
+    // (undocumented)
+    readonly providerId: string;
+    // (undocumented)
+    readonly reasoningEffort?: string;
+}
+
+// @public
 export interface Sessions {
-    create(options: CreateSessionOptions): Promise<Session>;
-    fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
-    get(sessionId: string): Promise<Session>;
+    create(options: CreateSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
+    fork(sourceSessionId: string, options?: ForkSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
+    get(sessionId: string, options?: RequestOptions): Promise<Session>;
     // Warning: (ae-forgotten-export) The symbol "ListSessionsRequest" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "ListSessionsResponse" needs to be exported by the entry point index.d.ts
     list(request: ListSessionsRequest, options?: RequestOptions): Promise<ListSessionsResponse>;
+}
+
+// @public
+export interface SessionSnapshot {
+    // (undocumented)
+    readonly capabilities?: ServerCapabilities;
+    // (undocumented)
+    readonly createdAtUnix: bigint;
+    // (undocumented)
+    readonly debugMcpServers: readonly string[];
+    // (undocumented)
+    readonly debugMcpTools: readonly string[];
+    // (undocumented)
+    readonly kind: string;
+    // (undocumented)
+    readonly limits?: SessionSnapshotLimits;
+    // (undocumented)
+    readonly mode: SessionMode;
+    // (undocumented)
+    readonly placement?: SessionPlacement;
+    // (undocumented)
+    readonly relationship?: SessionRelationship;
+    // (undocumented)
+    readonly resolvedModel?: SessionResolvedModel;
+    // (undocumented)
+    readonly sessionCapabilities?: SessionCapabilities;
+    // (undocumented)
+    readonly sessionId: string;
+    // (undocumented)
+    readonly state: string;
+    // (undocumented)
+    readonly title?: SessionTitle;
+    // (undocumented)
+    readonly tokenUsage: Readonly<Record<string, SessionTokenUsage>>;
+    // (undocumented)
+    readonly toolCalls: number;
+    // (undocumented)
+    readonly turns: number;
+}
+
+// @public
+export interface SessionSnapshotLimits {
+    // (undocumented)
+    readonly maxConsecutiveFailures: number;
+    // (undocumented)
+    readonly maxToolCalls: number;
+    // (undocumented)
+    readonly maxTurns: number;
+}
+
+// @public
+export interface SessionTitle {
+    // (undocumented)
+    readonly generationState?: string;
+    // (undocumented)
+    readonly latestAttempt?: SessionTitleAttempt;
+    // (undocumented)
+    readonly provenance: string;
+    // (undocumented)
+    readonly revision?: bigint;
+    // (undocumented)
+    readonly value: string;
+}
+
+// @public
+export interface SessionTitleAttempt {
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly outcome: string;
 }
 
 // @public
@@ -1000,6 +1236,44 @@ export interface SessionTitleEventPayload {
     readonly revision: bigint;
     // (undocumented)
     readonly title: string;
+}
+
+// @public
+export interface SessionTokenUsage {
+    // (undocumented)
+    readonly models: Readonly<Record<string, EventUsage>>;
+    // (undocumented)
+    readonly total?: EventUsage;
+}
+
+// @public
+export interface SessionTranscript {
+    // (undocumented)
+    readonly activity?: SessionActivityReplayStatus;
+    // (undocumented)
+    readonly complete: boolean;
+    // (undocumented)
+    readonly kind: string;
+    // (undocumented)
+    readonly messages: readonly SessionTranscriptMessage[];
+    // (undocumented)
+    readonly relationship?: SessionRelationship;
+    // (undocumented)
+    readonly sessionId: string;
+}
+
+// @public
+export interface SessionTranscriptMessage {
+    // (undocumented)
+    readonly parts: readonly EventContent[];
+    // (undocumented)
+    readonly role: string;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly toolCalls: readonly ToolCallEventPayload[];
+    // (undocumented)
+    readonly toolResult?: ToolResultEventPayload;
 }
 
 // @public

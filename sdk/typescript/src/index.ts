@@ -6,6 +6,7 @@
 
 export type { Transport } from "@connectrpc/connect";
 export type {
+  ClearSessionOptions,
   Client,
   ConnectionStatus,
   ConnectionStatusListener,
@@ -160,6 +161,24 @@ export type {
   RunOptions,
   RunResult,
 } from "./run.js";
+export type {
+  DreamTargetCapability,
+  ManualDreamCapabilities,
+  ServerCapabilities,
+  SessionActivityReplayStatus,
+  SessionCapabilities,
+  SessionPlacement,
+  SessionRelationship,
+  SessionResolvedModel,
+  SessionSnapshot,
+  SessionSnapshotLimits,
+  SessionTitle,
+  SessionTitleAttempt,
+  SessionTokenUsage,
+  SessionTranscript,
+  SessionTranscriptMessage,
+} from "./session-projections.js";
+export { SessionMode } from "./session-projections.js";
 export type {
   CreateTeamOptions,
   Team,

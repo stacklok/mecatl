@@ -296,6 +296,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/run.d.ts.map",
     "package/dist/run.js",
     "package/dist/run.js.map",
+    "package/dist/session-projections.d.ts",
+    "package/dist/session-projections.d.ts.map",
+    "package/dist/session-projections.js",
+    "package/dist/session-projections.js.map",
     "package/dist/spawn-common.d.ts",
     "package/dist/spawn-common.d.ts.map",
     "package/dist/spawn-common.js",
@@ -596,4 +600,47 @@ void [
       );
   });
   expect(builtinImports).toEqual([]);
+});
+
+test("the lifecycle surface is exported documented and API reviewed", () => {
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import { SessionMode } from "@stacklok-oss/mecatl-sdk";
+if (JSON.stringify(SessionMode) !== JSON.stringify({ Unspecified: 0, Default: 1, Plan: 2, AcceptEdits: 3 })) {
+  throw new Error("unexpected SessionMode export");
+}
+`,
+    ],
+    { cwd: consumerRoot, stdio: "pipe" },
+  );
+
+  const declaration = packedFiles.get("package/dist/session-projections.d.ts")?.toString("utf8");
+  for (const symbol of [
+    "DreamTargetCapability",
+    "ManualDreamCapabilities",
+    "ServerCapabilities",
+    "SessionSnapshot",
+    "SessionTranscript",
+  ]) {
+    expect(declaration).toContain(`interface ${symbol}`);
+  }
+  expect(declaration).toContain("declare const SessionMode");
+
+  for (const report of ["mecatl-sdk.api.md", "mecatl-sdk-node.api.md", "mecatl-sdk-deno.api.md"]) {
+    const api = readFileSync(join(packageRoot, "etc", report), "utf8");
+    expect(api).toContain("SessionSnapshot");
+    expect(api).toContain("SessionTranscript");
+    expect(api).toContain("SessionMode");
+  }
+
+  const guide = readFileSync(
+    resolve(packageRoot, "../../user-docs/building/typescript-sdk/sessions-and-runs.md"),
+    "utf8",
+  );
+  for (const operation of ["snapshot()", "transcript()", "rename", "setMode", "clear()", "retry()"])
+    expect(guide).toContain(operation);
 });

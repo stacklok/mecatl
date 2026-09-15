@@ -28,6 +28,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`audioPartFromBlob`](#api-audiopartfromblob-function) | Function |
 | [`AudioPromptPart`](#api-audiopromptpart-interface) | Interface |
 | [`AuthenticationError`](#api-authenticationerror-class) | Class |
+| [`ClearSessionOptions`](#api-clearsessionoptions-interface) | Interface |
 | [`Client`](#api-client-interface) | Interface |
 | [`ClientDiagnosticsOptions`](#api-clientdiagnosticsoptions-interface) | Interface |
 | [`Commands`](#api-commands-interface) | Interface |
@@ -51,6 +52,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`DiagnosticRecord`](#api-diagnosticrecord-interface) | Interface |
 | [`DiagnosticsSink`](#api-diagnosticssink-typealias) | Type alias |
 | [`DreamPlans`](#api-dreamplans-interface) | Interface |
+| [`DreamTargetCapability`](#api-dreamtargetcapability-interface) | Interface |
 | [`ErrorOrigin`](#api-errororigin-typealias) | Type alias |
 | [`Event`](#api-event-typealias) | Type alias |
 | [`EventCommon`](#api-eventcommon-interface) | Interface |
@@ -74,6 +76,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`LearnedSkills`](#api-learnedskills-interface) | Interface |
 | [`LearningAttempts`](#api-learningattempts-interface) | Interface |
 | [`LearningProposals`](#api-learningproposals-interface) | Interface |
+| [`ManualDreamCapabilities`](#api-manualdreamcapabilities-interface) | Interface |
 | [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
@@ -119,16 +122,31 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`Schedules`](#api-schedules-interface) | Interface |
 | [`SdkCursor`](#api-sdkcursor-typealias) | Type alias |
 | [`SDKErrorCode`](#api-sdkerrorcode-typealias) | Type alias |
+| [`ServerCapabilities`](#api-servercapabilities-interface) | Interface |
 | [`ServerError`](#api-servererror-class) | Class |
 | [`ServerErrorCode`](#api-servererrorcode-typealias) | Type alias |
 | [`Session`](#api-session-interface) | Interface |
 | [`SESSION_ID_HEADER_NAME`](#api-session-id-header-name-variable) | Variable |
 | [`SessionActivity`](#api-sessionactivity-interface) | Interface |
+| [`SessionActivityReplayStatus`](#api-sessionactivityreplaystatus-interface) | Interface |
 | [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
+| [`SessionCapabilities`](#api-sessioncapabilities-interface) | Interface |
 | [`SessionLimits`](#api-sessionlimits-interface) | Interface |
 | [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
+| [`SessionMode`](#api-sessionmode-typealias) | Type alias |
+| [`SessionMode`](#api-sessionmode-variable) | Variable |
+| [`SessionPlacement`](#api-sessionplacement-interface) | Interface |
+| [`SessionRelationship`](#api-sessionrelationship-interface) | Interface |
+| [`SessionResolvedModel`](#api-sessionresolvedmodel-interface) | Interface |
 | [`Sessions`](#api-sessions-interface) | Interface |
+| [`SessionSnapshot`](#api-sessionsnapshot-interface) | Interface |
+| [`SessionSnapshotLimits`](#api-sessionsnapshotlimits-interface) | Interface |
+| [`SessionTitle`](#api-sessiontitle-interface) | Interface |
+| [`SessionTitleAttempt`](#api-sessiontitleattempt-interface) | Interface |
 | [`SessionTitleEventPayload`](#api-sessiontitleeventpayload-interface) | Interface |
+| [`SessionTokenUsage`](#api-sessiontokenusage-interface) | Interface |
+| [`SessionTranscript`](#api-sessiontranscript-interface) | Interface |
+| [`SessionTranscriptMessage`](#api-sessiontranscriptmessage-interface) | Interface |
 | [`Skills`](#api-skills-interface) | Interface |
 | [`Soul`](#api-soul-interface) | Interface |
 | [`SteerEventPayload`](#api-steereventpayload-interface) | Interface |
@@ -1047,6 +1065,22 @@ readonly mimeType: string;
 readonly url?: string;
 ```
 
+<Heading as="h3" id="api-clearsessionoptions-interface"><code>ClearSessionOptions</code></Heading>
+
+Optional overrides accepted when clearing a session.
+
+```ts
+export interface ClearSessionOptions
+```
+
+<Heading as="h4" id="api-clearsessionoptions-worktreeselector-propertysignature"><code>ClearSessionOptions.worktreeSelector</code></Heading>
+
+Opaque source-scoped selector for an existing worktree.
+
+```ts
+worktreeSelector?: string;
+```
+
 <Heading as="h3" id="api-client-interface"><code>Client</code></Heading>
 
 The high-level Mecatl client.
@@ -1316,10 +1350,10 @@ mcpServers?: SessionMcpServer[];
 
 <Heading as="h4" id="api-createsessionoptions-mode-propertysignature"><code>CreateSessionOptions.mode</code></Heading>
 
-PermissionMode enum value from the generated `./gen` entry point.
+Permission posture for the new session.
 
 ```ts
-mode?: 0 | 1 | 2 | 3;
+mode?: SessionMode;
 ```
 
 <Heading as="h4" id="api-createsessionoptions-modelid-propertysignature"><code>CreateSessionOptions.modelId</code></Heading>
@@ -1513,6 +1547,32 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<GenerateDreamPlanResponse>`
+
+<Heading as="h3" id="api-dreamtargetcapability-interface"><code>DreamTargetCapability</code></Heading>
+
+Manual dream operations available for one target.
+
+```ts
+export interface DreamTargetCapability
+```
+
+<Heading as="h4" id="api-dreamtargetcapability-decide-propertysignature"><code>DreamTargetCapability.decide</code></Heading>
+
+```ts
+readonly decide: boolean;
+```
+
+<Heading as="h4" id="api-dreamtargetcapability-generate-propertysignature"><code>DreamTargetCapability.generate</code></Heading>
+
+```ts
+readonly generate: boolean;
+```
+
+<Heading as="h4" id="api-dreamtargetcapability-unavailablereason-propertysignature"><code>DreamTargetCapability.unavailableReason</code></Heading>
+
+```ts
+readonly unavailableReason?: string;
+```
 
 <Heading as="h3" id="api-eventcommon-interface"><code>EventCommon</code></Heading>
 
@@ -1964,6 +2024,22 @@ Optional overrides accepted when forking a session.
 export interface ForkSessionOptions
 ```
 
+<Heading as="h4" id="api-forksessionoptions-modelid-propertysignature"><code>ForkSessionOptions.modelId</code></Heading>
+
+Model selector within `providerId`.
+
+```ts
+modelId?: string;
+```
+
+<Heading as="h4" id="api-forksessionoptions-providerid-propertysignature"><code>ForkSessionOptions.providerId</code></Heading>
+
+Configured model-provider ID.
+
+```ts
+providerId?: string;
+```
+
 <Heading as="h4" id="api-forksessionoptions-reasoningeffort-propertysignature"><code>ForkSessionOptions.reasoningEffort</code></Heading>
 
 Requested reasoning-effort tier for the forked session.
@@ -1978,6 +2054,14 @@ Human-readable title for the forked session.
 
 ```ts
 title?: string;
+```
+
+<Heading as="h4" id="api-forksessionoptions-worktreeselector-propertysignature"><code>ForkSessionOptions.worktreeSelector</code></Heading>
+
+Opaque source-scoped selector for an existing worktree.
+
+```ts
+worktreeSelector?: string;
 ```
 
 <Heading as="h3" id="api-hookeventpayload-interface"><code>HookEventPayload</code></Heading>
@@ -2369,6 +2453,26 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<UndoLearningPromotionResponse>`
+
+<Heading as="h3" id="api-manualdreamcapabilities-interface"><code>ManualDreamCapabilities</code></Heading>
+
+Manual dream support for deployment-owned targets.
+
+```ts
+export interface ManualDreamCapabilities
+```
+
+<Heading as="h4" id="api-manualdreamcapabilities-projectmemory-propertysignature"><code>ManualDreamCapabilities.projectMemory</code></Heading>
+
+```ts
+readonly projectMemory?: DreamTargetCapability;
+```
+
+<Heading as="h4" id="api-manualdreamcapabilities-usermodel-propertysignature"><code>ManualDreamCapabilities.userModel</code></Heading>
+
+```ts
+readonly userModel?: DreamTargetCapability;
+```
 
 <Heading as="h3" id="api-mcpinventory-interface"><code>McpInventory</code></Heading>
 
@@ -3368,6 +3472,182 @@ Parameters:
 
 Returns: `Promise<UpdateScheduleResponse>`
 
+<Heading as="h3" id="api-servercapabilities-interface"><code>ServerCapabilities</code></Heading>
+
+Optional server features captured with a session snapshot.
+
+```ts
+export interface ServerCapabilities
+```
+
+<Heading as="h4" id="api-servercapabilities-agents-propertysignature"><code>ServerCapabilities.agents</code></Heading>
+
+```ts
+readonly agents: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-audio-propertysignature"><code>ServerCapabilities.audio</code></Heading>
+
+```ts
+readonly audio: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-bash-propertysignature"><code>ServerCapabilities.bash</code></Heading>
+
+```ts
+readonly bash: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-debugmcp-propertysignature"><code>ServerCapabilities.debugMcp</code></Heading>
+
+```ts
+readonly debugMcp: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-image-propertysignature"><code>ServerCapabilities.image</code></Heading>
+
+```ts
+readonly image: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-learnedskills-propertysignature"><code>ServerCapabilities.learnedSkills</code></Heading>
+
+```ts
+readonly learnedSkills: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-learningproposals-propertysignature"><code>ServerCapabilities.learningProposals</code></Heading>
+
+```ts
+readonly learningProposals: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-manualcompaction-propertysignature"><code>ServerCapabilities.manualCompaction</code></Heading>
+
+```ts
+readonly manualCompaction: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-manualdream-propertysignature"><code>ServerCapabilities.manualDream</code></Heading>
+
+```ts
+readonly manualDream?: ManualDreamCapabilities;
+```
+
+<Heading as="h4" id="api-servercapabilities-mcp-propertysignature"><code>ServerCapabilities.mcp</code></Heading>
+
+```ts
+readonly mcp: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-mcpconnectorstatus-propertysignature"><code>ServerCapabilities.mcpConnectorStatus</code></Heading>
+
+```ts
+readonly mcpConnectorStatus: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-memory-propertysignature"><code>ServerCapabilities.memory</code></Heading>
+
+```ts
+readonly memory: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-modelselection-propertysignature"><code>ServerCapabilities.modelSelection</code></Heading>
+
+```ts
+readonly modelSelection: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-posture-propertysignature"><code>ServerCapabilities.posture</code></Heading>
+
+```ts
+readonly posture: string;
+```
+
+<Heading as="h4" id="api-servercapabilities-reflection-propertysignature"><code>ServerCapabilities.reflection</code></Heading>
+
+```ts
+readonly reflection: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-scheduling-propertysignature"><code>ServerCapabilities.scheduling</code></Heading>
+
+```ts
+readonly scheduling: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-sessiondebug-propertysignature"><code>ServerCapabilities.sessionDebug</code></Heading>
+
+```ts
+readonly sessionDebug: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-skills-propertysignature"><code>ServerCapabilities.skills</code></Heading>
+
+```ts
+readonly skills: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-slashcommands-propertysignature"><code>ServerCapabilities.slashCommands</code></Heading>
+
+```ts
+readonly slashCommands: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-soul-propertysignature"><code>ServerCapabilities.soul</code></Heading>
+
+```ts
+readonly soul: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-steer-propertysignature"><code>ServerCapabilities.steer</code></Heading>
+
+```ts
+readonly steer: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-storagecleanup-propertysignature"><code>ServerCapabilities.storageCleanup</code></Heading>
+
+```ts
+readonly storageCleanup: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-storagehealth-propertysignature"><code>ServerCapabilities.storageHealth</code></Heading>
+
+```ts
+readonly storageHealth: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-storagemigration-propertysignature"><code>ServerCapabilities.storageMigration</code></Heading>
+
+```ts
+readonly storageMigration: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-teams-propertysignature"><code>ServerCapabilities.teams</code></Heading>
+
+```ts
+readonly teams: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-usermodel-propertysignature"><code>ServerCapabilities.userModel</code></Heading>
+
+```ts
+readonly userModel: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-workspaceenrollment-propertysignature"><code>ServerCapabilities.workspaceEnrollment</code></Heading>
+
+```ts
+readonly workspaceEnrollment: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-worktrees-propertysignature"><code>ServerCapabilities.worktrees</code></Heading>
+
+```ts
+readonly worktrees: boolean;
+```
+
 <Heading as="h3" id="api-session-interface"><code>Session</code></Heading>
 
 A durable Mecatl session handle.
@@ -3376,7 +3656,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`close()`](#api-session-close-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`run()`](#api-session-run-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -3413,23 +3693,60 @@ Throws: `NoRunsError` when no run can be selected.
 
 Throws: `CursorScopeError` when a cursor would widen its original filter.
 
+<Heading as="h4" id="api-session-clear-methodsignature"><code>Session.clear</code></Heading>
+
+Creates an empty-history successor without changing this handle.
+
+```ts
+clear(options?: ClearSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
+```
+
+Parameters:
+
+- `options` (`ClearSessionOptions`, optional): Optional opaque worktree selector.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<Session>`: A distinct session handle for the successor.
+
 <Heading as="h4" id="api-session-close-methodsignature"><code>Session.close</code></Heading>
 
 Releases runtime resources without removing the durable session.
 
 ```ts
-close(): Promise<void>;
+close(options?: RequestOptions): Promise<void>;
 ```
 
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
 Returns: `Promise<void>`: A promise that resolves after local session resources are released.
+
+<Heading as="h4" id="api-session-compact-methodsignature"><code>Session.compact</code></Heading>
+
+Requests one out-of-band compaction pass.
+
+```ts
+compact(options?: RequestOptions): Promise<boolean>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<boolean>`: Whether the server reduced the model-visible history.
 
 <Heading as="h4" id="api-session-delete-methodsignature"><code>Session.delete</code></Heading>
 
 Permanently removes the durable session and its sidecars.
 
 ```ts
-delete(): Promise<void>;
+delete(options?: RequestOptions): Promise<void>;
 ```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<void>`: A promise that resolves after the server removes the session.
 
@@ -3438,6 +3755,21 @@ Returns: `Promise<void>`: A promise that resolves after the server removes the s
 ```ts
 readonly id: string;
 ```
+
+<Heading as="h4" id="api-session-rename-methodsignature"><code>Session.rename</code></Heading>
+
+Replaces the title of an eligible session.
+
+```ts
+rename(title: string, options?: RequestOptions): Promise<SessionSnapshot>;
+```
+
+Parameters:
+
+- `title` (`string`): New human-readable title.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<SessionSnapshot>`: The resulting authoritative snapshot.
 
 <Heading as="h4" id="api-session-resolveplan-methodsignature"><code>Session.resolvePlan</code></Heading>
 
@@ -3455,24 +3787,89 @@ Returns: `PlanResolution`: A single-consumption plan-resolution stream.
 
 Throws: `ServerError` when the session has no parked plan awaiting approval.
 
+<Heading as="h4" id="api-session-retry-methodsignature"><code>Session.retry</code></Heading>
+
+Retries the server-selected eligible failed model step.
+
+```ts
+retry(options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
+```
+
+Parameters:
+
+- `options` (`RunOptions`, optional): Automatic permission and plan-approval responders.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<Run>`: The same single-consumption run lifecycle returned by run().
+
+Throws: `SessionBusyError` when the session already has an active run.
+
 <Heading as="h4" id="api-session-run-methodsignature"><code>Session.run</code></Heading>
 
 Starts a run and resolves once its first run-ID-bearing event arrives.
 
 ```ts
-run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
+run(prompt: PromptInput, options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
 ```
 
 Parameters:
 
 - `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the run.
 - `options` (`RunOptions`, optional): Automatic permission and plan-approval responders.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<Run>`: A single-consumption handle for the accepted run.
 
 Throws: `PromptValidationError` when the prompt is invalid or unsupported.
 
 Throws: `SessionBusyError` when the session already has an active run.
+
+<Heading as="h4" id="api-session-setmode-methodsignature"><code>Session.setMode</code></Heading>
+
+Changes the permission posture of an eligible session.
+
+```ts
+setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot>;
+```
+
+Parameters:
+
+- `mode` (`SessionMode`): New SDK permission mode.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<SessionSnapshot>`: The resulting authoritative snapshot.
+
+<Heading as="h4" id="api-session-snapshot-methodsignature"><code>Session.snapshot</code></Heading>
+
+Reads the authoritative current session snapshot.
+
+```ts
+snapshot(options?: RequestOptions): Promise<SessionSnapshot>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<SessionSnapshot>`: A detached SDK-owned projection of the session aggregate.
+
+Throws: `ProtocolError` when the server response is missing or mismatched.
+
+<Heading as="h4" id="api-session-transcript-methodsignature"><code>Session.transcript</code></Heading>
+
+Reads the authoritative model-visible conversation.
+
+```ts
+transcript(options?: RequestOptions): Promise<SessionTranscript>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<SessionTranscript>`: The ordered transcript without provider-private replay fields.
+
+Throws: `ProtocolError` when the server response is missing or mismatched.
 
 <Heading as="h3" id="api-sessionactivity-interface"><code>SessionActivity</code></Heading>
 
@@ -3498,6 +3895,52 @@ Returns: `Promise<void>`
 
 ```ts
 readonly cursor: SdkCursor;
+```
+
+<Heading as="h3" id="api-sessionactivityreplaystatus-interface"><code>SessionActivityReplayStatus</code></Heading>
+
+Availability and completeness of the separate activity replay plane.
+
+```ts
+export interface SessionActivityReplayStatus
+```
+
+<Heading as="h4" id="api-sessionactivityreplaystatus-authoritative-propertysignature"><code>SessionActivityReplayStatus.authoritative</code></Heading>
+
+```ts
+readonly authoritative: boolean;
+```
+
+<Heading as="h4" id="api-sessionactivityreplaystatus-available-propertysignature"><code>SessionActivityReplayStatus.available</code></Heading>
+
+```ts
+readonly available: boolean;
+```
+
+<Heading as="h4" id="api-sessionactivityreplaystatus-complete-propertysignature"><code>SessionActivityReplayStatus.complete</code></Heading>
+
+```ts
+readonly complete: boolean;
+```
+
+<Heading as="h3" id="api-sessioncapabilities-interface"><code>SessionCapabilities</code></Heading>
+
+Media input support for the provider and model bound to a session.
+
+```ts
+export interface SessionCapabilities
+```
+
+<Heading as="h4" id="api-sessioncapabilities-audio-propertysignature"><code>SessionCapabilities.audio</code></Heading>
+
+```ts
+readonly audio: boolean;
+```
+
+<Heading as="h4" id="api-sessioncapabilities-image-propertysignature"><code>SessionCapabilities.image</code></Heading>
+
+```ts
+readonly image: boolean;
 ```
 
 <Heading as="h3" id="api-sessionlimits-interface"><code>SessionLimits</code></Heading>
@@ -3580,6 +4023,126 @@ Absolute HTTPS endpoint, or an HTTP endpoint on an explicit loopback host.
 url?: string;
 ```
 
+<Heading as="h3" id="api-sessionplacement-interface"><code>SessionPlacement</code></Heading>
+
+Bounded display metadata for a session placement.
+
+```ts
+export interface SessionPlacement
+```
+
+<Heading as="h4" id="api-sessionplacement-branch-propertysignature"><code>SessionPlacement.branch</code></Heading>
+
+```ts
+readonly branch: string;
+```
+
+<Heading as="h4" id="api-sessionplacement-kind-propertysignature"><code>SessionPlacement.kind</code></Heading>
+
+```ts
+readonly kind: string;
+```
+
+<Heading as="h4" id="api-sessionplacement-label-propertysignature"><code>SessionPlacement.label</code></Heading>
+
+```ts
+readonly label: string;
+```
+
+<Heading as="h4" id="api-sessionplacement-revision-propertysignature"><code>SessionPlacement.revision</code></Heading>
+
+```ts
+readonly revision: string;
+```
+
+<Heading as="h3" id="api-sessionrelationship-interface"><code>SessionRelationship</code></Heading>
+
+Durable links between a session and its parent resource.
+
+```ts
+export interface SessionRelationship
+```
+
+<Heading as="h4" id="api-sessionrelationship-branchindex-propertysignature"><code>SessionRelationship.branchIndex</code></Heading>
+
+```ts
+readonly branchIndex?: number;
+```
+
+<Heading as="h4" id="api-sessionrelationship-callid-propertysignature"><code>SessionRelationship.callId</code></Heading>
+
+```ts
+readonly callId?: string;
+```
+
+<Heading as="h4" id="api-sessionrelationship-debugtargetsessionid-propertysignature"><code>SessionRelationship.debugTargetSessionId</code></Heading>
+
+```ts
+readonly debugTargetSessionId?: string;
+```
+
+<Heading as="h4" id="api-sessionrelationship-membername-propertysignature"><code>SessionRelationship.memberName</code></Heading>
+
+```ts
+readonly memberName?: string;
+```
+
+<Heading as="h4" id="api-sessionrelationship-originsessionid-propertysignature"><code>SessionRelationship.originSessionId</code></Heading>
+
+```ts
+readonly originSessionId?: string;
+```
+
+<Heading as="h4" id="api-sessionrelationship-parentsessionid-propertysignature"><code>SessionRelationship.parentSessionId</code></Heading>
+
+```ts
+readonly parentSessionId?: string;
+```
+
+<Heading as="h4" id="api-sessionrelationship-schedulename-propertysignature"><code>SessionRelationship.scheduleName</code></Heading>
+
+```ts
+readonly scheduleName?: string;
+```
+
+<Heading as="h4" id="api-sessionrelationship-teamid-propertysignature"><code>SessionRelationship.teamId</code></Heading>
+
+```ts
+readonly teamId?: string;
+```
+
+<Heading as="h3" id="api-sessionresolvedmodel-interface"><code>SessionResolvedModel</code></Heading>
+
+The effective provider and model reported for a session.
+
+```ts
+export interface SessionResolvedModel
+```
+
+<Heading as="h4" id="api-sessionresolvedmodel-contextwindow-propertysignature"><code>SessionResolvedModel.contextWindow</code></Heading>
+
+```ts
+readonly contextWindow: bigint;
+```
+
+<Heading as="h4" id="api-sessionresolvedmodel-modelid-propertysignature"><code>SessionResolvedModel.modelId</code></Heading>
+
+```ts
+readonly modelId: string;
+```
+
+<Heading as="h4" id="api-sessionresolvedmodel-providerid-propertysignature"><code>SessionResolvedModel.providerId</code></Heading>
+
+```ts
+readonly providerId: string;
+```
+
+<Heading as="h4" id="api-sessionresolvedmodel-reasoningeffort-propertysignature"><code>SessionResolvedModel.reasoningEffort</code></Heading>
+
+```ts
+readonly reasoningEffort?: string;
+```
+
 <Heading as="h3" id="api-sessions-interface"><code>Sessions</code></Heading>
 
 Session lifecycle operations exposed by a Client.
@@ -3595,43 +4158,46 @@ Callable members: [`create()`](#api-sessions-create-methodsignature), [`fork()`]
 Creates a session and returns its handle.
 
 ```ts
-create(options: CreateSessionOptions): Promise<Session>;
+create(options: CreateSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
 ```
 
 Parameters:
 
-- `options` (`CreateSessionOptions`)
+- `options` (`CreateSessionOptions`): Session configuration fields.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
-Returns: `Promise<Session>`
+Returns: `Promise<Session>`: A handle for the newly created session.
 
 <Heading as="h4" id="api-sessions-fork-methodsignature"><code>Sessions.fork</code></Heading>
 
-Forks an existing session into a new session.
+Forks an existing session into a distinct successor.
 
 ```ts
-fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
+fork(sourceSessionId: string, options?: ForkSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
 ```
 
 Parameters:
 
-- `sourceSessionId` (`string`)
-- `options` (`ForkSessionOptions`, optional)
+- `sourceSessionId` (`string`): Session whose conversation will be copied.
+- `options` (`ForkSessionOptions`, optional): Optional title, model, reasoning, and worktree overrides.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
-Returns: `Promise<Session>`
+Returns: `Promise<Session>`: A handle for the forked successor session.
 
 <Heading as="h4" id="api-sessions-get-methodsignature"><code>Sessions.get</code></Heading>
 
 Loads an existing session by ID.
 
 ```ts
-get(sessionId: string): Promise<Session>;
+get(sessionId: string, options?: RequestOptions): Promise<Session>;
 ```
 
 Parameters:
 
-- `sessionId` (`string`)
+- `sessionId` (`string`): Durable session ID to load.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
-Returns: `Promise<Session>`
+Returns: `Promise<Session>`: A handle bound to the requested session.
 
 <Heading as="h4" id="api-sessions-list-methodsignature"><code>Sessions.list</code></Heading>
 
@@ -3647,6 +4213,200 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<ListSessionsResponse>`
+
+<Heading as="h3" id="api-sessionsnapshot-interface"><code>SessionSnapshot</code></Heading>
+
+An authoritative, detached view of one durable session.
+
+```ts
+export interface SessionSnapshot
+```
+
+<Heading as="h4" id="api-sessionsnapshot-capabilities-propertysignature"><code>SessionSnapshot.capabilities</code></Heading>
+
+```ts
+readonly capabilities?: ServerCapabilities;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-createdatunix-propertysignature"><code>SessionSnapshot.createdAtUnix</code></Heading>
+
+```ts
+readonly createdAtUnix: bigint;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-debugmcpservers-propertysignature"><code>SessionSnapshot.debugMcpServers</code></Heading>
+
+```ts
+readonly debugMcpServers: readonly string[];
+```
+
+<Heading as="h4" id="api-sessionsnapshot-debugmcptools-propertysignature"><code>SessionSnapshot.debugMcpTools</code></Heading>
+
+```ts
+readonly debugMcpTools: readonly string[];
+```
+
+<Heading as="h4" id="api-sessionsnapshot-kind-propertysignature"><code>SessionSnapshot.kind</code></Heading>
+
+```ts
+readonly kind: string;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-limits-propertysignature"><code>SessionSnapshot.limits</code></Heading>
+
+```ts
+readonly limits?: SessionSnapshotLimits;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-mode-propertysignature"><code>SessionSnapshot.mode</code></Heading>
+
+```ts
+readonly mode: SessionMode;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-placement-propertysignature"><code>SessionSnapshot.placement</code></Heading>
+
+```ts
+readonly placement?: SessionPlacement;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-relationship-propertysignature"><code>SessionSnapshot.relationship</code></Heading>
+
+```ts
+readonly relationship?: SessionRelationship;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-resolvedmodel-propertysignature"><code>SessionSnapshot.resolvedModel</code></Heading>
+
+```ts
+readonly resolvedModel?: SessionResolvedModel;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-sessioncapabilities-propertysignature"><code>SessionSnapshot.sessionCapabilities</code></Heading>
+
+```ts
+readonly sessionCapabilities?: SessionCapabilities;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-sessionid-propertysignature"><code>SessionSnapshot.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-state-propertysignature"><code>SessionSnapshot.state</code></Heading>
+
+```ts
+readonly state: string;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-title-propertysignature"><code>SessionSnapshot.title</code></Heading>
+
+```ts
+readonly title?: SessionTitle;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-tokenusage-propertysignature"><code>SessionSnapshot.tokenUsage</code></Heading>
+
+```ts
+readonly tokenUsage: Readonly<Record<string, SessionTokenUsage>>;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-toolcalls-propertysignature"><code>SessionSnapshot.toolCalls</code></Heading>
+
+```ts
+readonly toolCalls: number;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-turns-propertysignature"><code>SessionSnapshot.turns</code></Heading>
+
+```ts
+readonly turns: number;
+```
+
+<Heading as="h3" id="api-sessionsnapshotlimits-interface"><code>SessionSnapshotLimits</code></Heading>
+
+Stop conditions reported by a session snapshot.
+
+```ts
+export interface SessionSnapshotLimits
+```
+
+<Heading as="h4" id="api-sessionsnapshotlimits-maxconsecutivefailures-propertysignature"><code>SessionSnapshotLimits.maxConsecutiveFailures</code></Heading>
+
+```ts
+readonly maxConsecutiveFailures: number;
+```
+
+<Heading as="h4" id="api-sessionsnapshotlimits-maxtoolcalls-propertysignature"><code>SessionSnapshotLimits.maxToolCalls</code></Heading>
+
+```ts
+readonly maxToolCalls: number;
+```
+
+<Heading as="h4" id="api-sessionsnapshotlimits-maxturns-propertysignature"><code>SessionSnapshotLimits.maxTurns</code></Heading>
+
+```ts
+readonly maxTurns: number;
+```
+
+<Heading as="h3" id="api-sessiontitle-interface"><code>SessionTitle</code></Heading>
+
+Normalized session title metadata.
+
+```ts
+export interface SessionTitle
+```
+
+<Heading as="h4" id="api-sessiontitle-generationstate-propertysignature"><code>SessionTitle.generationState</code></Heading>
+
+```ts
+readonly generationState?: string;
+```
+
+<Heading as="h4" id="api-sessiontitle-latestattempt-propertysignature"><code>SessionTitle.latestAttempt</code></Heading>
+
+```ts
+readonly latestAttempt?: SessionTitleAttempt;
+```
+
+<Heading as="h4" id="api-sessiontitle-provenance-propertysignature"><code>SessionTitle.provenance</code></Heading>
+
+```ts
+readonly provenance: string;
+```
+
+<Heading as="h4" id="api-sessiontitle-revision-propertysignature"><code>SessionTitle.revision</code></Heading>
+
+```ts
+readonly revision?: bigint;
+```
+
+<Heading as="h4" id="api-sessiontitle-value-propertysignature"><code>SessionTitle.value</code></Heading>
+
+```ts
+readonly value: string;
+```
+
+<Heading as="h3" id="api-sessiontitleattempt-interface"><code>SessionTitleAttempt</code></Heading>
+
+The latest bounded title-generation attempt.
+
+```ts
+export interface SessionTitleAttempt
+```
+
+<Heading as="h4" id="api-sessiontitleattempt-id-propertysignature"><code>SessionTitleAttempt.id</code></Heading>
+
+```ts
+readonly id: string;
+```
+
+<Heading as="h4" id="api-sessiontitleattempt-outcome-propertysignature"><code>SessionTitleAttempt.outcome</code></Heading>
+
+```ts
+readonly outcome: string;
+```
 
 <Heading as="h3" id="api-sessiontitleeventpayload-interface"><code>SessionTitleEventPayload</code></Heading>
 
@@ -3684,6 +4444,108 @@ readonly revision: bigint;
 
 ```ts
 readonly title: string;
+```
+
+<Heading as="h3" id="api-sessiontokenusage-interface"><code>SessionTokenUsage</code></Heading>
+
+One durable session usage bucket.
+
+```ts
+export interface SessionTokenUsage
+```
+
+<Heading as="h4" id="api-sessiontokenusage-models-propertysignature"><code>SessionTokenUsage.models</code></Heading>
+
+```ts
+readonly models: Readonly<Record<string, EventUsage>>;
+```
+
+<Heading as="h4" id="api-sessiontokenusage-total-propertysignature"><code>SessionTokenUsage.total</code></Heading>
+
+```ts
+readonly total?: EventUsage;
+```
+
+<Heading as="h3" id="api-sessiontranscript-interface"><code>SessionTranscript</code></Heading>
+
+The authoritative, ordered conversation for one session.
+
+```ts
+export interface SessionTranscript
+```
+
+<Heading as="h4" id="api-sessiontranscript-activity-propertysignature"><code>SessionTranscript.activity</code></Heading>
+
+```ts
+readonly activity?: SessionActivityReplayStatus;
+```
+
+<Heading as="h4" id="api-sessiontranscript-complete-propertysignature"><code>SessionTranscript.complete</code></Heading>
+
+```ts
+readonly complete: boolean;
+```
+
+<Heading as="h4" id="api-sessiontranscript-kind-propertysignature"><code>SessionTranscript.kind</code></Heading>
+
+```ts
+readonly kind: string;
+```
+
+<Heading as="h4" id="api-sessiontranscript-messages-propertysignature"><code>SessionTranscript.messages</code></Heading>
+
+```ts
+readonly messages: readonly SessionTranscriptMessage[];
+```
+
+<Heading as="h4" id="api-sessiontranscript-relationship-propertysignature"><code>SessionTranscript.relationship</code></Heading>
+
+```ts
+readonly relationship?: SessionRelationship;
+```
+
+<Heading as="h4" id="api-sessiontranscript-sessionid-propertysignature"><code>SessionTranscript.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-sessiontranscriptmessage-interface"><code>SessionTranscriptMessage</code></Heading>
+
+One human-displayable message in the authoritative session transcript.
+
+```ts
+export interface SessionTranscriptMessage
+```
+
+<Heading as="h4" id="api-sessiontranscriptmessage-parts-propertysignature"><code>SessionTranscriptMessage.parts</code></Heading>
+
+```ts
+readonly parts: readonly EventContent[];
+```
+
+<Heading as="h4" id="api-sessiontranscriptmessage-role-propertysignature"><code>SessionTranscriptMessage.role</code></Heading>
+
+```ts
+readonly role: string;
+```
+
+<Heading as="h4" id="api-sessiontranscriptmessage-text-propertysignature"><code>SessionTranscriptMessage.text</code></Heading>
+
+```ts
+readonly text: string;
+```
+
+<Heading as="h4" id="api-sessiontranscriptmessage-toolcalls-propertysignature"><code>SessionTranscriptMessage.toolCalls</code></Heading>
+
+```ts
+readonly toolCalls: readonly ToolCallEventPayload[];
+```
+
+<Heading as="h4" id="api-sessiontranscriptmessage-toolresult-propertysignature"><code>SessionTranscriptMessage.toolResult</code></Heading>
+
+```ts
+readonly toolResult?: ToolResultEventPayload;
 ```
 
 <Heading as="h3" id="api-skills-interface"><code>Skills</code></Heading>
@@ -5191,6 +6053,14 @@ Error codes returned by the Mecatl server, plus `unknown` for future codes.
 export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 ```
 
+<Heading as="h3" id="api-sessionmode-typealias"><code>SessionMode</code></Heading>
+
+One SDK permission-mode value.
+
+```ts
+export type SessionMode = (typeof SessionMode)[keyof typeof SessionMode];
+```
+
 <Heading as="h3" id="api-streamprogress-typealias"><code>StreamProgress</code></Heading>
 
 Stream-progress classification carried by model-retry and result payloads.
@@ -5315,6 +6185,19 @@ Canonical routing hint for session-bound Mecatl requests. It grants no authority
 
 ```ts
 SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID"
+```
+
+<Heading as="h3" id="api-sessionmode-variable"><code>SessionMode</code></Heading>
+
+SDK permission modes accepted by session creation and mutation operations.
+
+```ts
+SessionMode: {
+    readonly Unspecified: 0;
+    readonly Default: 1;
+    readonly Plan: 2;
+    readonly AcceptEdits: 3;
+}
 ```
 
 <Heading as="h3" id="api-supported-api-major-variable"><code>SUPPORTED_API_MAJOR</code></Heading>

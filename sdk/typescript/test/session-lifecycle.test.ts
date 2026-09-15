@@ -2,7 +2,16 @@ import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { connectTransport } from "../src/client.js";
 import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
-import { connect, InvalidStateError, ServerError } from "../src/index.js";
+import {
+  connect,
+  InvalidStateError,
+  imagePart,
+  ProtocolError,
+  SESSION_ID_HEADER_NAME,
+  ServerError,
+  SessionMode,
+  TransportError,
+} from "../src/index.js";
 
 function bytes(value: string): number[] {
   return [...new TextEncoder().encode(value)];
@@ -125,5 +134,293 @@ describe("session lifecycle", () => {
     await owned.sessions.create({});
     await owned.close();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("rename setMode and compact map lifecycle results", async () => {
+    const calls: string[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        compactSession: (request) => {
+          calls.push(`compact:${request.sessionId}`);
+          return { compacted: true };
+        },
+        createSession: () => ({
+          sessionCapabilities: { audio: false, image: false },
+          sessionId: "session",
+        }),
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        renameSession: (request) => {
+          calls.push(`rename:${request.sessionId}:${request.title}`);
+          return {
+            session: {
+              mode: SessionMode.Default,
+              sessionCapabilities: { audio: false, image: false },
+              sessionId: request.sessionId,
+              titleMetadata: { provenance: "operator", title: request.title },
+            },
+          };
+        },
+        setMode: (request) => {
+          calls.push(`mode:${request.sessionId}:${request.mode}`);
+          return {
+            session: {
+              mode: request.mode,
+              resolvedModel: {
+                contextWindow: 128_000n,
+                modelId: "plan-model",
+                providerId: "provider",
+              },
+              sessionCapabilities: { audio: false, image: true },
+              sessionId: request.sessionId,
+            },
+          };
+        },
+        converse: async function* (requests) {
+          const first = await requests[Symbol.asyncIterator]().next();
+          expect(first.value?.kind.case).toBe("prompt");
+          if (first.value?.kind.case === "prompt")
+            expect(first.value.kind.value.parts).toHaveLength(1);
+          yield {
+            event: { result: { stop: "end_turn", text: "done" }, runId: "run", type: "result" },
+          };
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+
+    await expect(session.rename("A title")).resolves.toMatchObject({
+      sessionId: "session",
+      title: { provenance: "operator", value: "A title" },
+    });
+    await expect(session.setMode(SessionMode.Plan)).resolves.toMatchObject({
+      mode: SessionMode.Plan,
+      resolvedModel: { modelId: "plan-model" },
+      sessionCapabilities: { audio: false, image: true },
+    });
+    await expect(session.compact()).resolves.toBe(true);
+    await expect(
+      (
+        await session.run([
+          imagePart({ mimeType: "image/png", url: "https://example.com/image.png" }),
+        ])
+      ).result(),
+    ).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(calls).toEqual(["rename:session:A title", "mode:session:2", "compact:session"]);
+    await client.close();
+  });
+
+  it("unary lifecycle controls preserve request options affinity and typed errors", async () => {
+    const seen: string[] = [];
+    let compactFails = true;
+    let createdId = "session";
+    const observe = (operation: string, context: { requestHeader: Headers }) => {
+      seen.push(
+        `${operation}:${context.requestHeader.get("x-caller")}:${context.requestHeader.get(SESSION_ID_HEADER_NAME)}`,
+      );
+    };
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        closeSession: (_request, context) => {
+          observe("close", context);
+          return {};
+        },
+        compactSession: (_request, context) => {
+          observe("compact", context);
+          if (compactFails) throw new ConnectError("offline", Code.Unavailable);
+          return { compacted: false };
+        },
+        createSession: () => ({ sessionId: createdId }),
+        deleteSession: (_request, context) => {
+          observe("delete", context);
+          return {};
+        },
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getSession: (request, context) => {
+          observe("snapshot", context);
+          return { session: { mode: SessionMode.Default, sessionId: request.sessionId } };
+        },
+        getSessionTranscript: (request, context) => {
+          observe("transcript", context);
+          return { complete: true, sessionId: request.sessionId };
+        },
+        renameSession: (request, context) => {
+          observe("rename", context);
+          return { session: { mode: SessionMode.Default, sessionId: request.sessionId } };
+        },
+        setMode: (request, context) => {
+          observe("setMode", context);
+          return { session: { mode: request.mode, sessionId: request.sessionId } };
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+    const requestOptions = {
+      headers: { [SESSION_ID_HEADER_NAME]: "stale", "x-caller": "kept" },
+      timeoutMs: 5_000,
+    };
+
+    await session.snapshot(requestOptions);
+    await session.transcript(requestOptions);
+    await session.rename("title", requestOptions);
+    await session.setMode(SessionMode.Plan, requestOptions);
+    await expect(session.compact(requestOptions)).rejects.toBeInstanceOf(TransportError);
+    await session.close(requestOptions);
+    await session.delete(requestOptions);
+    expect(seen).toEqual([
+      "snapshot:kept:session",
+      "transcript:kept:session",
+      "rename:kept:session",
+      "setMode:kept:session",
+      "compact:kept:session",
+      "close:kept:session",
+      "delete:kept:session",
+    ]);
+
+    createdId = "session-α";
+    compactFails = false;
+    const external = await client.sessions.create({});
+    await external.snapshot(requestOptions);
+    await external.transcript(requestOptions);
+    await external.rename("title", requestOptions);
+    await external.setMode(SessionMode.Plan, requestOptions);
+    await external.compact(requestOptions);
+    await external.close(requestOptions);
+    await external.delete(requestOptions);
+    expect(seen.slice(-7)).toEqual([
+      "snapshot:kept:null",
+      "transcript:kept:null",
+      "rename:kept:null",
+      "setMode:kept:null",
+      "compact:kept:null",
+      "close:kept:null",
+      "delete:kept:null",
+    ]);
+    await client.close();
+  });
+
+  it("clear and fork return successors without invalidating the source", async () => {
+    const closed: string[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        clearSession: () => ({ sessionId: "cleared" }),
+        closeSession: (request, context) => {
+          closed.push(`${request.sessionId}:${context.requestHeader.get(SESSION_ID_HEADER_NAME)}`);
+          return {};
+        },
+        createSession: () => ({ sessionId: "source" }),
+        forkSession: () => ({ sessionId: "forked" }),
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getSession: (request) => ({
+          session: { mode: SessionMode.Default, sessionId: request.sessionId },
+        }),
+      });
+    });
+    const client = connect({ transport });
+    const source = await client.sessions.create({});
+    const cleared = await source.clear();
+    const forked = await client.sessions.fork(source.id);
+
+    expect(cleared.id).toBe("cleared");
+    expect(forked.id).toBe("forked");
+    expect("fork" in source).toBe(false);
+    await expect(source.snapshot()).resolves.toMatchObject({ sessionId: "source" });
+    await source.close();
+    await cleared.close();
+    await forked.close();
+    expect(closed).toEqual(["source:source", "cleared:cleared", "forked:forked"]);
+    await client.close();
+  });
+
+  it("fork and clear map exactly their approved domain options", async () => {
+    const captured: unknown[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        clearSession: (request) => {
+          captured.push(request);
+          return { sessionId: "cleared" };
+        },
+        createSession: () => ({ sessionId: "source" }),
+        forkSession: (request) => {
+          captured.push(request);
+          return { sessionId: "forked" };
+        },
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+      });
+    });
+    const client = connect({ transport });
+    const source = await client.sessions.create({});
+    const selector = "opaque:α/../worktree";
+    await source.clear({ worktreeSelector: selector });
+    await client.sessions.fork(source.id, {
+      modelId: "model",
+      providerId: "provider",
+      reasoningEffort: "max",
+      title: "fork title",
+      worktreeSelector: selector,
+    });
+
+    expect(captured[0]).toMatchObject({
+      sourceSessionId: "source",
+      worktreeSelector: selector,
+    });
+    expect(captured[1]).toMatchObject({
+      modelId: "model",
+      providerId: "provider",
+      reasoningEffort: "max",
+      sourceSessionId: "source",
+      title: "fork title",
+      worktreeSelector: selector,
+    });
+    await client.close();
+  });
+
+  it("create get and fork preserve request options and validate returned ids", async () => {
+    const seen: string[] = [];
+    let createId = "created";
+    let getId = "created";
+    let forkId = "forked";
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: (_request, context) => {
+          seen.push(`create:${context.requestHeader.get("x-caller")}`);
+          return { sessionCapabilities: { audio: false, image: true }, sessionId: createId };
+        },
+        forkSession: (_request, context) => {
+          seen.push(`fork:${context.requestHeader.get("x-caller")}`);
+          return { sessionId: forkId };
+        },
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getSession: (_request, context) => {
+          seen.push(`get:${context.requestHeader.get("x-caller")}`);
+          return {
+            session: {
+              mode: SessionMode.Default,
+              sessionCapabilities: { audio: false, image: true },
+              sessionId: getId,
+            },
+          };
+        },
+      });
+    });
+    const client = connect({ transport });
+    const options = { headers: { "x-caller": "kept" } };
+    await expect(client.sessions.create({}, options)).resolves.toMatchObject({ id: "created" });
+    await expect(client.sessions.get("created", options)).resolves.toMatchObject({ id: "created" });
+    await expect(client.sessions.fork("created", {}, options)).resolves.toMatchObject({
+      id: "forked",
+    });
+    expect(seen).toEqual(["create:kept", "get:kept", "fork:kept"]);
+
+    createId = "";
+    await expect(client.sessions.create({}, options)).rejects.toBeInstanceOf(ProtocolError);
+    getId = "other";
+    await expect(client.sessions.get("created", options)).rejects.toBeInstanceOf(ProtocolError);
+    forkId = "";
+    await expect(client.sessions.fork("created", {}, options)).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+    await client.close();
   });
 });
