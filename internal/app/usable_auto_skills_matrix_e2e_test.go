@@ -83,7 +83,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 				mockllm.TextTurn("matrix use complete"),
 			)
 			provider := mockllm.New(turns...)
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Model: "test-model", Workspace: workspace, TrustProject: tc.trustProject, Headless: !tc.trustProject, PermissionsConventional: tc.projectPolicy,
 				LearningMode: tc.mode, SkillActivationPolicy: tc.policy, SkillEvaluator: tc.evaluator,
 				UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), Diagnostics: diag, StoreDir: storeDir,

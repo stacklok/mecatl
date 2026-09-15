@@ -12,7 +12,7 @@ import (
 func TestBuildBindsServerOwnedDefaultPlacement(t *testing.T) {
 	root := t.TempDir()
 	selected := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: root, NoSoul: true, MemoryDir: t.TempDir(),
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-test"}),
 		liveModelHTTPClient: offlineHTTPClient(),

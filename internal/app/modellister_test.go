@@ -378,7 +378,7 @@ func TestBuildAsyncSwap(t *testing.T) {
 
 	// First, a synchronous-OFF build to confirm the SEED (embedded) is present
 	// immediately and the cap is honest even before any live fetch.
-	seedBuilt, err := Build(ctx, Config{
+	seedBuilt, err := buildIsolated(t, ctx, Config{
 		Workspace:   workspace,
 		NoSoul:      true,
 		envDetector: fakeEnv(map[string]string{"OPENROUTER_API_KEY": sentinelKey}),
@@ -402,7 +402,7 @@ func TestBuildAsyncSwap(t *testing.T) {
 
 	// Now a synchronous-refresh build: the refresh runs inline before Build returns,
 	// so ListModels deterministically reflects the LIVE (fixture) set.
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:   workspace,
 		NoSoul:      true,
 		envDetector: fakeEnv(map[string]string{"OPENROUTER_API_KEY": sentinelKey}),

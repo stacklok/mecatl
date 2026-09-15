@@ -285,7 +285,7 @@ func TestMaxRunTokensPropagatesToParentAndChild(t *testing.T) {
 func TestDefaultConfigPolicyEvaluatesWithoutPanic(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		// DEFAULT permission posture: no Conventional, no ExplicitFiles, no AllowAll —
@@ -361,7 +361,7 @@ func TestSubproviderHalfAFullBuildE2E(t *testing.T) {
 	// A def pinning openrouter, read-only (Read), routable by Subagent(agent="orspec").
 	writeFile(t, agentsDir, "orspec.md", "---\nname: orspec\ndescription: runs on openrouter\nprovider: openrouter\ntools: [Read]\n---\nYou run on openrouter.\n")
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:     workspace,
 		NoSoul:        true,
 		AgentsDirs:    []string{agentsDir},

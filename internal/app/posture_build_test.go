@@ -54,7 +54,7 @@ func postureEchoFromBuild(t *testing.T, built *Built) string {
 func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("operator auto flows to composed posture", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,
@@ -83,7 +83,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("injected user-global posture is discovered", func(t *testing.T) {
 		env := trustSettingsEnv(t.TempDir(), []byte("posture: auto\n"))
 		withTrustEnv(t, env)
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:               t.TempDir(),
 			Model:                   "mock",
 			UseMock:                 true,
@@ -105,7 +105,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	// narration and the shell consumer must both report the fail-safe result.
 	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,
@@ -148,7 +148,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	// both project steering and the read-only child shell.
 	t.Run("operator auto interactive grants ingestion (dev default)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,
@@ -194,7 +194,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		withTrustEnv(t, *permEnv)
 		ws := t.TempDir()
 		mkdirProjectSettings(t, ws, "posture: yolo\n")
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:               ws,
 			Model:                   "mock",
 			UseMock:                 true,
@@ -213,7 +213,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	})
 
 	t.Run("operator yolo on a privileged Config is refused", func(t *testing.T) {
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,

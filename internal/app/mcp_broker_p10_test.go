@@ -115,7 +115,7 @@ func TestCallMcpWithQueryBrokerSupport_BrokerOnlyServiceRegistration(t *testing.
 			if eligible {
 				definitions = []mcpbroker.ToolDefinition{{Backend: "calendar", Name: "mcp__calendar__list", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}
 			}
-			built, err := Build(t.Context(), Config{
+			built, err := buildIsolated(t, t.Context(), Config{
 				Workspace: t.TempDir(), MockProvider: provider, NoSoul: true,
 				MCPAuthority:        mcpauthority.NewBroker(mcpauthority.BrokerConfig{Routes: []permconfig.MCPServerProfile{{Name: "calendar", Auth: permconfig.MCPAuthProfile{Mode: "none"}}}}),
 				MCPBrokerDiscovered: definitions,
@@ -189,7 +189,7 @@ func TestBuiltMountsFixedMCPBrokerHandlerBundle(t *testing.T) {
 }
 
 func TestEmptyBrokerAuthoritySkipsUnconfiguredRuntime(t *testing.T) {
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
 		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{}),
 	})
@@ -204,7 +204,7 @@ func TestEmptyBrokerAuthoritySkipsUnconfiguredRuntime(t *testing.T) {
 
 func TestBuiltOwnsBrokerRuntimeShutdown(t *testing.T) {
 	authority := mcpauthority.NewBroker(mcpauthority.BrokerConfig{})
-	built, err := Build(context.Background(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, MCPAuthority: authority, MCPBrokerCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+	built, err := buildIsolated(t, context.Background(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, MCPAuthority: authority, MCPBrokerCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
 		return session.NewToolResult("call", "ok"), nil
 	}})
 	if err != nil {
@@ -250,7 +250,7 @@ func TestBuildRejectsProgrammaticMCPServersWithBrokerAuthority(t *testing.T) {
 			cfg.NoSoul = true
 			cfg.MCPServers = []mcp.ServerConfig{{Name: "global", URL: "http://127.0.0.1:1/mcp"}}
 
-			_, err := Build(t.Context(), cfg)
+			_, err := buildIsolated(t, t.Context(), cfg)
 			if err == nil || err.Error() != "broker MCP authority cannot be combined with programmatic MCPServers" {
 				t.Fatalf("Build error = %v, want mixed broker authority and MCPServers rejection", err)
 			}

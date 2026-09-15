@@ -332,7 +332,7 @@ func TestTeamRoutesMembersToCategoryModelsE2E(t *testing.T) {
 		`{"name":"worker","role":"rename a variable"}]}`))
 	prov := &routingProvider{parentTool: "Team", parentCall: teamCall}
 
-	built, err := Build(ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
+	built, err := buildIsolated(t, ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableTeams = true }))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -382,7 +382,7 @@ func TestTeamRouterOffByteIdenticalE2E(t *testing.T) {
 	cfg := routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableTeams = true })
 	cfg.RouterDisabled = true // OFF via the ADR 0042 kill-switch
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestParallelRoutesBranchesToCategoryModelsE2E(t *testing.T) {
 		`"fix a typo"]}`))
 	prov := &routingProvider{parentTool: "Parallel", parentCall: parCall}
 
-	built, err := Build(ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
+	built, err := buildIsolated(t, ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableParallel = true }))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -460,7 +460,7 @@ func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
 	t.Setenv("TMPDIR", forkBase)
 	parallelCall := session.NewToolCall("c1", "Parallel", []byte(`{"tasks":["one","two"],"join":"first"}`))
 	prov := &routingProvider{parentTool: "Parallel", parentCall: parallelCall}
-	built, err := Build(ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
+	built, err := buildIsolated(t, ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableParallel = true }))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -527,7 +527,7 @@ func TestParallelRouterOffByteIdenticalE2E(t *testing.T) {
 	cfg := routerE2ECfg(workspace, func() port.LLMProvider { return prov },
 		func(c *Config) { c.EnableParallel = true })
 	cfg.RouterDisabled = true // OFF via the ADR 0042 kill-switch
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

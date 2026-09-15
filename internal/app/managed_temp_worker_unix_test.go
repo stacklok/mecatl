@@ -16,7 +16,7 @@ import (
 // interval-gated startup sweep and Close's worker shutdown before namespace teardown.
 func TestADR_0281_BuildOwnsManagedTempWorkerLifecycle(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "managed")
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		UseMock:   true,
 		Workspace: t.TempDir(),
 		Shell:     "/bin/sh",

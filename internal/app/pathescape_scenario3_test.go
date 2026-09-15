@@ -94,7 +94,7 @@ func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 	f := setupWriteFS(t)
 	create := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "yolo-escape-content-9b2c"})
 	replace := scenario3Call("w2", "Write", map[string]string{"path": f.target, "content": "yolo-escape-content-REPLACED"})
-	built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureYolo,
+	built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureYolo,
 		mockllm.ToolCallTurn(create),
 		mockllm.ToolCallTurn(replace),
 		mockllm.TextTurn("done"),
@@ -153,7 +153,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 		t.Parallel()
 		f := setupWriteFS(t)
 		call := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "must-never-land"})
-		built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureAuto,
+		built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureAuto,
 			mockllm.ToolCallTurn(call),
 			mockllm.TextTurn("done"),
 		))
@@ -195,7 +195,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 		t.Parallel()
 		f := setupWriteFS(t)
 		call := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "auto-escape-content-allowed"})
-		built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureAuto,
+		built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureAuto,
 			mockllm.ToolCallTurn(call),
 			mockllm.TextTurn("done"),
 		))
@@ -330,7 +330,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		"path": canonical, "old_string": "edited-via-alias", "new_string": "edited-after-change",
 	})
 
-	built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureYolo,
+	built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureYolo,
 		// 1: Read canonical → Edit via the `..` alias — the cross-form ledger
 		//    key must match, so this edit SUCCEEDS.
 		mockllm.ToolCallTurn(read, editViaAlias),
@@ -523,7 +523,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial(t *testing.T) {
 	f := setupWriteFS(t)
 	w1 := scenario3Call("w1", "Write", map[string]string{"path": filepath.Join(f.outside, "a.txt"), "content": "A"})
 	w2 := scenario3Call("w2", "Write", map[string]string{"path": filepath.Join(f.outside, "b.txt"), "content": "B"})
-	built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureYolo,
+	built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureYolo,
 		mockllm.ToolCallTurn(w1, w2),
 		mockllm.TextTurn("done"),
 	))
@@ -602,7 +602,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeServedThroughOsRoot(t *testing.T
 	}
 
 	call := scenario3Call("w1", "Write", map[string]string{"path": linkTarget, "content": "must-never-land-through-symlink"})
-	built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureYolo,
+	built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureYolo,
 		mockllm.ToolCallTurn(call),
 		mockllm.TextTurn("done"),
 	))

@@ -23,7 +23,7 @@ func TestCanonicalShellTool_Scenario3_SystemPromptAndAuthoritySeparation(t *test
 			}
 		}
 	})}, mockllm.TextTurn("done"))
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:    t.TempDir(),
 		Model:        "mock",
 		MockProvider: provider,

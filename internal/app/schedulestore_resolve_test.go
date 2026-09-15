@@ -92,7 +92,7 @@ func TestResolveScheduleStore(t *testing.T) {
 // accessor, so there is no second registry to disagree with).
 func TestBuild_ScheduleStoreOverrideWiresScheduleTool(t *testing.T) {
 	ctx := context.Background()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           t.TempDir(),
 		NoSoul:              true,
 		NoUserModel:         true,
@@ -131,7 +131,7 @@ func TestBuild_ScheduleStoreOverrideWiresScheduleTool(t *testing.T) {
 // wiring by disabling the tick loop.
 func TestBuild_ScheduleStoreOverrideStartsScheduler(t *testing.T) {
 	ctx := context.Background()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           t.TempDir(),
 		NoSoul:              true,
 		NoUserModel:         true,

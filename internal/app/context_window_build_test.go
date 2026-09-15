@@ -38,7 +38,7 @@ func TestBuildOperatorContextWindowsFeedEchoListAndPerSessionFactory(t *testing.
 			}
 			operator := writeOperatorSettingsFile(t, "models:\n  aliases:\n    routed: gpt-5\n  default: routed\n  allowlist: [gpt-5]\n  context_windows:\n    openai:\n      gpt-5: 321000\n")
 
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Workspace:               workspace,
 				NoSoul:                  true,
 				TrustProject:            true,

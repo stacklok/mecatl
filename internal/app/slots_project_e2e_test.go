@@ -35,7 +35,7 @@ models:
 `)
 
 	diag := &capturingDiag{}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:               ws,
 		Model:                   "", // let the operator default + project default decide.
 		UseMock:                 true,
@@ -88,7 +88,7 @@ models:
 `)
 
 	diag := &capturingDiag{}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:               ws,
 		Model:                   "operator-default-model",
 		UseMock:                 true,

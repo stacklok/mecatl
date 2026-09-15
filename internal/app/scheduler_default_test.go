@@ -118,7 +118,7 @@ func TestBuildSchedulerEndToEndDefaultOn(t *testing.T) {
 	storeCfg := base
 	storeCfg.StoreDir = t.TempDir()
 	storeCfg.Workspace = t.TempDir()
-	built, err := Build(ctx, storeCfg)
+	built, err := buildIsolated(t, ctx, storeCfg)
 	if err != nil {
 		t.Fatalf("Build (store-dir, default scheduler posture): %v", err)
 	}
@@ -131,7 +131,7 @@ func TestBuildSchedulerEndToEndDefaultOn(t *testing.T) {
 	// fails — the byte-identical no-scheduling path.
 	memCfg := base
 	memCfg.Workspace = t.TempDir()
-	memBuilt, err := Build(ctx, memCfg)
+	memBuilt, err := buildIsolated(t, ctx, memCfg)
 	if err != nil {
 		t.Fatalf("Build (in-memory store, default scheduler posture) = %v, want a clean startup (the on-by-default path never fails on a store with no ScheduleStore)", err)
 	}

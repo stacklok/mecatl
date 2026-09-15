@@ -216,7 +216,7 @@ func TestUserModelE2E(t *testing.T) {
 	// — the composition-level ephemeral guard. (The Build mock provider is not
 	// request-observable, so the request-side prepend proof stays at the engine layer
 	// above; here we guard the persistence side end to end through the Service.)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:    workspace,
 		UseMock:      true,
 		UserModelDir: userModelDir,

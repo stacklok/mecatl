@@ -206,7 +206,7 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 	ctx := context.Background()
 	workspace := t.TempDir()
 	providers := map[string]*mockllm.Provider{}
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Model:                   "test-model",
 		Workspace:               workspace,
 		NoSoul:                  true,
@@ -303,7 +303,7 @@ func TestStartupProjectOffKeepsAlternateRootAutomaticAssets(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := mockllm.New(mockllm.TextTurn("completed"), mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Model: "model", DefaultProvider: providerOpenAI, Workspace: alternateRoot, TrustProject: true, NoSoul: true,
 				PermissionConfigs: []string{operator}, PermissionsConventional: true, permConfigEnv: isolatedPermConfigEnv(t),
 				UserModelDir: t.TempDir(), envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
@@ -352,7 +352,7 @@ func TestExplicitReflectionUsesPersistedSessionProvider(t *testing.T) {
 	providers := map[string]*mockllm.Provider{}
 	var requestMu sync.Mutex
 	requestModels := map[string][]string{}
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Model: "default-model", Workspace: workspace, NoSoul: true, LearningMode: learning.Off,
 		UserModelDir:        userModelDir,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "test", "OPENROUTER_API_KEY": "test"}),
@@ -418,7 +418,7 @@ func TestExplicitReflectionAlternateRootStagesButCannotPromoteProjectProposal(t 
 		mockllm.TextTurn("completed"),
 		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"project_fact","key":"project/build","value":"task build","evidence":["m:0"]}]}`),
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Model: "model", Workspace: alternateRoot, TrustProject: true, NoSoul: true,
 		LearningMode: learning.Off, UserModelDir: t.TempDir(), MemoryDir: t.TempDir(),
 		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
@@ -468,7 +468,7 @@ func TestBuildGRPCReflectionPartitionsVerifiedPrincipals(t *testing.T) {
 		mockllm.TextTurn("bob completed"),
 		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/bob","value":"bob value","evidence":["m:0"]}]}`),
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Model: "model", Workspace: workspace, NoSoul: true, OwnershipEnforced: true,
 		LearningMode: learning.Off, UserModelDir: t.TempDir(),
 		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),

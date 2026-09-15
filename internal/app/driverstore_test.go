@@ -368,7 +368,7 @@ func TestBuildCatalogMemoryDriverRegistersTools(t *testing.T) {
 	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
 
 	cfg := Config{MemoryStoreURL: listener.Addr().String()}
-	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
+	cat, assets, _, _, closeFn, err := buildCatalog(ctx, isolateConfig(t, cfg), regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog(memory driver): %v", err)
 	}
@@ -409,7 +409,7 @@ func TestBuildCatalogMemoryCapabilityTimeoutLeavesNoCatalogOrConnection(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	cfg := Config{MemoryStoreURL: listener.Addr().String(), driverConns: newDriverConns()}
-	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	cat, assets, _, _, closeFn, err := buildCatalog(ctx, isolateConfig(t, cfg), regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err == nil || cat != nil || assets.memStore != nil || closeFn != nil {
 		t.Fatalf("timed-out catalog probe returned partial result: cat=%v store=%T close=%v err=%v", cat, assets.memStore, closeFn != nil, err)
 	}
@@ -436,7 +436,7 @@ func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
 
 	provider := mockllm.New(mockllm.TextTurn("x"))
 	cfg := Config{MemoryStoreURL: listener.Addr().String()}
-	cat, assets, _, _, closeFn, err := buildCatalog(context.Background(), cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	cat, assets, _, _, closeFn, err := buildCatalog(context.Background(), isolateConfig(t, cfg), regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

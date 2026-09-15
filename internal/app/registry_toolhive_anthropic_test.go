@@ -183,7 +183,7 @@ func TestToolhiveNativeAnthropic_BuildPublishesProbeMetadataBeforeImmediateRun(t
 	gateway := httptest.NewServer(http.HandlerFunc(capture.handler))
 	defer gateway.Close()
 
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:             t.TempDir(),
 		NoSoul:                true,
 		ToolhiveLLMBaseURL:    gateway.URL + "/v1",

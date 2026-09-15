@@ -39,7 +39,7 @@ func TestADR_0238_BuildLoadsProviderCredentialLoaderOnce(t *testing.T) {
 		ID: "gateway", BaseURL: "https://gateway.example/v1", DefaultModel: "model",
 		APIFlavor: "openai-responses", Auth: permconfig.ProviderAuth{Method: "api_key"},
 	}}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		ProviderDefinitions: definitions, ProviderCredentialLoader: loader,
 	})
@@ -67,7 +67,7 @@ func TestProviderCredentialLoaderReceivesOIDCDefinitions(t *testing.T) {
 			Auth: permconfig.ProviderAuth{Method: "none"},
 		},
 	}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		ProviderDefinitions: definitions, ProviderCredentialLoader: loader,
 	})
@@ -88,7 +88,7 @@ func TestProviderUnification_Scenario4_CredentialStoreIsolation(t *testing.T) {
 			Auth: permconfig.ProviderAuth{Method: "oidc"},
 		},
 	}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		ProviderDefinitions: definitions, ProviderCredentialLoader: loader,
 	})
@@ -104,7 +104,7 @@ func TestProviderUnification_Scenario4_CredentialStoreIsolation(t *testing.T) {
 func TestADR_0238_BuildOwnsProviderCredentialLifecycle(t *testing.T) {
 	t.Run("loader error aborts build", func(t *testing.T) {
 		loader := &capturingProviderCredentialLoader{err: errors.New("profile unavailable")}
-		if _, err := Build(context.Background(), Config{Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), ProviderCredentialLoader: loader}); err == nil {
+		if _, err := buildIsolated(t, context.Background(), Config{Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), ProviderCredentialLoader: loader}); err == nil {
 			t.Fatal("Build succeeded after provider credential loader error")
 		}
 		if loader.calls != 1 {
@@ -114,7 +114,7 @@ func TestADR_0238_BuildOwnsProviderCredentialLifecycle(t *testing.T) {
 	t.Run("later failure and close release lifecycle once", func(t *testing.T) {
 		closer := new(countingProviderCredentialsCloser)
 		loader := &capturingProviderCredentialLoader{lifecycle: closer}
-		if _, err := Build(context.Background(), Config{ProviderCredentialLoader: loader}); err == nil {
+		if _, err := buildIsolated(t, context.Background(), Config{ProviderCredentialLoader: loader}); err == nil {
 			t.Fatal("Build without provider succeeded")
 		}
 		if got := closer.calls.Load(); got != 1 {
@@ -123,7 +123,7 @@ func TestADR_0238_BuildOwnsProviderCredentialLifecycle(t *testing.T) {
 
 		closer = new(countingProviderCredentialsCloser)
 		loader = &capturingProviderCredentialLoader{lifecycle: closer}
-		built, err := Build(context.Background(), Config{Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), ProviderCredentialLoader: loader})
+		built, err := buildIsolated(t, context.Background(), Config{Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), ProviderCredentialLoader: loader})
 		if err != nil {
 			t.Fatal(err)
 		}

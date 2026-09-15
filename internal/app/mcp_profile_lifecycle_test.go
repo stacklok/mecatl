@@ -32,7 +32,7 @@ func (c *countingMCPProfileCloser) Close() error {
 
 func TestBuildOwnsMCPProfileLifecycleExactlyOnce(t *testing.T) {
 	closer := new(countingMCPProfileCloser)
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		MCPProfileLifecycle: closer,
 	})
@@ -68,7 +68,7 @@ func TestBuildUsesExistingOperatorResolverForMCPProfiles(t *testing.T) {
 	}
 	closer := new(countingMCPProfileCloser)
 	loader := &capturingMCPProfileLoader{closer: closer}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		PermissionConfigs: []string{settings}, MCPProfileLoader: loader,
 	})
@@ -90,7 +90,7 @@ func TestBuildClosesMCPManagerBeforeProfileSources(t *testing.T) {
 	closer := &countingMCPProfileCloser{onClose: func() {
 		managerClosedFirst = atomic.LoadInt32(deletes) > 0
 	}}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		MCPServers: []mcp.ServerConfig{{Name: "ordered", URL: url}}, MCPProfileLifecycle: closer,
 	})
@@ -144,7 +144,7 @@ func TestBuildMCPLoginRequiredDiagnosticsAreModeSpecificAndRedacted(t *testing.T
 			diag := &kvDiag{}
 			oauth := base
 			test.configure(&oauth)
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(), Diagnostics: diag,
 				MCPServers: []mcp.ServerConfig{{Name: test.name, URL: url, OAuth: &oauth}},
 			})
@@ -171,7 +171,7 @@ func TestBuildMCPLoginRequiredDiagnosticsAreModeSpecificAndRedacted(t *testing.T
 func TestBuildFailureAfterProfileLoadClosesReturnedLifecycleOnce(t *testing.T) {
 	closer := new(countingMCPProfileCloser)
 	loader := &capturingMCPProfileLoader{closer: closer}
-	if _, err := Build(context.Background(), Config{MCPProfileLoader: loader}); err == nil {
+	if _, err := buildIsolated(t, context.Background(), Config{MCPProfileLoader: loader}); err == nil {
 		t.Fatal("Build without provider succeeded")
 	}
 	if loader.calls != 1 {
@@ -184,7 +184,7 @@ func TestBuildFailureAfterProfileLoadClosesReturnedLifecycleOnce(t *testing.T) {
 
 func TestBuildFailureClosesMCPProfileLifecycle(t *testing.T) {
 	closer := new(countingMCPProfileCloser)
-	if _, err := Build(context.Background(), Config{MCPProfileLifecycle: closer}); err == nil {
+	if _, err := buildIsolated(t, context.Background(), Config{MCPProfileLifecycle: closer}); err == nil {
 		t.Fatal("Build without provider succeeded")
 	}
 	if got := closer.calls.Load(); got != 1 {
@@ -202,7 +202,7 @@ func TestBuildWarnsWhenOperatorMCPConfiguredWithoutLoader(t *testing.T) {
 		t.Fatal(err)
 	}
 	diag := &kvDiag{}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
 		PermissionConfigs: []string{settings}, Diagnostics: diag,
 	})

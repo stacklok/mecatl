@@ -231,7 +231,7 @@ func TestAgentModelDiscovery_Scenario3_PerSessionCatalogParity(t *testing.T) {
 	cfg := fullyLoadedCfg(t)
 	provider := mockllm.New(mockllm.TextTurn("ok"))
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	shared, assets, _, _, closeAll, err := buildCatalog(ctx, cfg, reg, provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	shared, assets, _, _, closeAll, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestAgentModelDiscovery_Scenario3_NoFSCatalogParity(t *testing.T) {
 	cfg := fullyLoadedCfg(t)
 	provider := mockllm.New(mockllm.TextTurn("ok"))
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	_, assets, _, _, closeAll, err := buildCatalog(ctx, cfg, reg, provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	_, assets, _, _, closeAll, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}

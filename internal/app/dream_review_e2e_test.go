@@ -33,7 +33,7 @@ func TestManualDreamBufconnEndToEnd(t *testing.T) {
 		}
 	}
 	provider := mockllm.New(mockllm.TextTurn(`{"exact_duplicates":[],"synthesized_replacements":[{"survivor":"a","superseded":["b"],"Value":"reviewed replacement","Description":"reviewed description","reason":"combine complete facts"}]}`))
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Model: "model", Workspace: t.TempDir(), MemoryDir: memoryDir, UserModelDir: t.TempDir(), NoSoul: true,
 		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {

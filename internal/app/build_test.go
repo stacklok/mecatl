@@ -251,7 +251,7 @@ func TestRequestManifestGatePropagatesToEveryEngineShape(t *testing.T) {
 // error (the caller closes a successful build).
 func buildWithDefaults(t *testing.T, defaultProvider, defaultModel string, diag port.Diagnostics) (*Built, error) {
 	t.Helper()
-	return Build(context.Background(), Config{
+	return buildIsolated(t, context.Background(), Config{
 		Workspace:       t.TempDir(),
 		NoSoul:          true,
 		DefaultProvider: defaultProvider,
@@ -469,7 +469,7 @@ func TestValidateDefaultModelFactArms(t *testing.T) {
 // junk Default* fields must NOT error (the mock provider isn't catalogued and
 // the mock path never consults the resolved default).
 func TestBuildIgnoresDefaultsUnderUseMock(t *testing.T) {
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:       t.TempDir(),
 		Model:           "mock",
 		UseMock:         true,

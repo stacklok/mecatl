@@ -18,7 +18,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/app"
 )
 
 // fakeMetricsCollector is a minimal httptest server that accepts the OTLP/HTTP
@@ -248,7 +247,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 		t.Fatal("scrape-only (--metrics-addr) must build a Registry")
 	}
 
-	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, obs))
+	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, obs))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}
@@ -363,7 +362,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 		t.Fatal("OTLP-push ON path must build a Metrics handle")
 	}
 
-	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, obs))
+	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, obs))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
 	}

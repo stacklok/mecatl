@@ -20,7 +20,7 @@ func TestBuildWiresSessionLoadFailureObservability(t *testing.T) {
 
 	diag := newSessionLoadBuildDiagnostics()
 	var metrics []port.SessionLoadFailureClass
-	built, err := Build(t.Context(), Config{
+	built, err := buildIsolated(t, t.Context(), Config{
 		Workspace:                        t.TempDir(),
 		Model:                            "mock",
 		UseMock:                          true,

@@ -141,7 +141,7 @@ func driveGuardrailPrompt(t *testing.T, srvURL, id, text string, onEvent func(ev
 func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 	ctx := context.Background()
 	cfg := guardrailE2ECfg(t, true, PostureAuto, "touch "+guardrailMarker)
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 	ctx := context.Background()
 	cfg := guardrailE2ECfg(t, true, PostureAuto, "touch "+guardrailMarker)
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 func TestGuardrailApproveOnceE2EHeadlessTerminalBlock(t *testing.T) {
 	ctx := context.Background()
 	cfg := guardrailE2ECfg(t, false, PostureAuto, "touch "+guardrailMarker)
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestGuardrailApproveOnceE2EHeadlessTerminalBlock(t *testing.T) {
 func TestGuardrailApproveOnceE2EYoloAdvisory(t *testing.T) {
 	ctx := context.Background()
 	cfg := guardrailE2ECfg(t, true, PostureYolo, "touch "+guardrailMarker)
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

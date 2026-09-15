@@ -12,7 +12,7 @@ import (
 )
 
 func TestBuildProjectsOnlySelectedProviderEndpoint(t *testing.T) {
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:       t.TempDir(),
 		NoSoul:          true,
 		OpenRouterKey:   "test-key",

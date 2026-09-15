@@ -367,7 +367,7 @@ func TestNormalizeSubagentModelUnresolvableIsError(t *testing.T) {
 // startup, the --agent-source-url posture), not swallow it.
 func TestBuildFailsOnUnresolvableSubagentModel(t *testing.T) {
 	for _, bad := range []string{"zippy", "sonnet"} {
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:     t.TempDir(),
 			Model:         "mock",
 			UseMock:       true,
@@ -427,7 +427,7 @@ func TestNormalizeSubagentModelKeepsOperatorAliasVerbatim(t *testing.T) {
 // engines through the same builders — adds zero repeats.
 func TestBuildNarratesSubagentModelExactlyOnce(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:     t.TempDir(),
 		Model:         "mock",
 		UseMock:       true,
@@ -572,7 +572,7 @@ func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {
 		mu     sync.Mutex
 		models []string
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:     workspace,
 		NoSoul:        true,
 		Model:         "gpt-5",

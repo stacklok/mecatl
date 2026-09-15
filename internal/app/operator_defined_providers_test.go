@@ -367,7 +367,7 @@ func TestOperatorDefinedLLMProviders_ListingFailureProjectsOnListModelsWire(t *t
 
 			workspace := t.TempDir()
 			operator := writeOperatorSettingsFile(t, "providers:\n  gateway:\n    base_url: "+modelServer.URL+"/v1\n    default_model: gateway-default\n    api_flavor: openai-responses\n    auth:\n      method: api_key\n")
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Workspace:               workspace,
 				NoSoul:                  true,
 				PermissionsConventional: true,
@@ -442,7 +442,7 @@ func TestInvariant_custom_provider_matching_live_model_replaces_floor_metadata(t
 
 	workspace := t.TempDir()
 	operator := writeOperatorSettingsFile(t, "providers:\n  gateway:\n    base_url: "+modelServer.URL+"/v1\n    default_model: "+model+"\n    api_flavor: openai-responses\n    auth:\n      method: api_key\n")
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:               workspace,
 		NoSoul:                  true,
 		PermissionsConventional: true,

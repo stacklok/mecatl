@@ -70,7 +70,7 @@ func TestReadImageUsesResolvedLiveModalities(t *testing.T) {
 		body := `{"data":[{"id":"` + unknownModel + `"},{"id":"` + textOnlyModel + `","architecture":{"input_modalities":["text"]}},{"id":"` + visionModel + `","architecture":{"input_modalities":["text","image"]}},{"id":"` + emptyModel + `","architecture":{"input_modalities":[]}}]}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
 	})}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:       workspace,
 		NoSoul:          true,
 		DefaultProvider: providerOpenRouter,
@@ -145,13 +145,13 @@ func TestReadImageUsesResolvedLiveModalities(t *testing.T) {
 		CustomProviderAPIKeys: map[string]string{"gateway": "sk-test"},
 		liveModelHTTPClient:   genericLiveClient, liveModelRefreshSync: true,
 	}
-	generic, err := Build(context.Background(), genericCfg)
+	generic, err := buildIsolated(t, context.Background(), genericCfg)
 	if err != nil {
 		t.Fatalf("Build generic gateway: %v", err)
 	}
 	genericID := runRead(generic, "gateway", genericModel)
 	generic.Close()
-	restarted, err := Build(context.Background(), genericCfg)
+	restarted, err := buildIsolated(t, context.Background(), genericCfg)
 	if err != nil {
 		t.Fatalf("restart generic gateway: %v", err)
 	}

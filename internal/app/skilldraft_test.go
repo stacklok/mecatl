@@ -157,7 +157,7 @@ func TestCloudNativeLearning_Scenario1_DirectSkillDraftRemainsInactive(t *testin
 				turns = append(turns, mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
 			}
 			provider := mockllm.New(turns...)
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Model: "test-model", Workspace: workspace, TrustProject: true, NoSoul: true,
 				SkillsDraftDir: t.TempDir(), LearningMode: learning.Review,
 				UserModelDir: t.TempDir(), MemoryDir: t.TempDir(),

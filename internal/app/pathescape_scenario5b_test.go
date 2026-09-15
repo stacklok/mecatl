@@ -68,7 +68,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 					mockllm.TextTurn("parent done"),
 				)
 				apply(&cfg)
-				built, err := Build(context.Background(), cfg)
+				built, err := buildIsolated(t, context.Background(), cfg)
 				if err != nil {
 					t.Fatalf("Build: %v", err)
 				}
@@ -165,7 +165,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.
 	// A real shell so the writable path is wired (validateMode rejects
 	// read-write when no writable engine is wired); Shell is never scripted.
 	cfg.Shell = "/bin/sh"
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

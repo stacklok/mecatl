@@ -109,7 +109,7 @@ func TestOpenAICodexCompositionScenario(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport := &codexCompositionTransport{}
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             workspace,
 		NoSoul:                true,
 		DefaultProvider:       providerOpenAICodex,
@@ -335,7 +335,7 @@ func TestOpenAICodexExplicitSelectorRehydrates(t *testing.T) {
 	cfg1 := codexPersistenceConfig(t, workspace, storeDir, providerOpenAI, map[string]string{
 		providerOpenAI: "API-BEFORE", providerOpenAICodex: "CODEX-BEFORE",
 	})
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestOpenAICodexExplicitSelectorRehydrates(t *testing.T) {
 	cfg2 := codexPersistenceConfig(t, workspace, storeDir, providerOpenAI, map[string]string{
 		providerOpenAI: "API-AFTER", providerOpenAICodex: "CODEX-AFTER",
 	})
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestOpenAICodexExplicitSelectorRehydrates(t *testing.T) {
 func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 	ctx := context.Background()
 	workspace, storeDir := t.TempDir(), t.TempDir()
-	built1, err := Build(ctx, codexPersistenceConfig(t, workspace, storeDir, providerOpenAI, map[string]string{
+	built1, err := buildIsolated(t, ctx, codexPersistenceConfig(t, workspace, storeDir, providerOpenAI, map[string]string{
 		providerOpenAI: "API-BEFORE", providerOpenAICodex: "CODEX-BEFORE",
 	}))
 	if err != nil {
@@ -395,7 +395,7 @@ func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 	}
 	built1.Close()
 
-	built2, err := Build(ctx, codexPersistenceConfig(t, workspace, storeDir, providerOpenAICodex, map[string]string{
+	built2, err := buildIsolated(t, ctx, codexPersistenceConfig(t, workspace, storeDir, providerOpenAICodex, map[string]string{
 		providerOpenAI: "API-AFTER", providerOpenAICodex: "CODEX-NEW-DEFAULT",
 	}))
 	if err != nil {
@@ -442,7 +442,7 @@ func TestADR_0104_OpenAICodexSecretSentinels(t *testing.T) {
 		liveModelRefreshSync:  true,
 		hookRunner:            hooks,
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

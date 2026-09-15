@@ -55,7 +55,7 @@ func captureBuiltDelegationPrompt(t *testing.T, parallel, teams bool) prompt.Lay
 		mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req.System }),
 	}, mockllm.TextTurn("done"))
 	workspace := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:      workspace,
 		Model:          "mock",
 		MockProvider:   provider,

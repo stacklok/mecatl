@@ -437,7 +437,7 @@ func buildAcceptanceMCP(t *testing.T, settings string, lookup func(string) (stri
 func buildAcceptanceMCPConfig(t *testing.T, settings string, lookup func(string) (string, bool), diag *acceptanceDiag, llm *mockllm.Provider, headless bool) (*app.Built, error) {
 	t.Helper()
 	return app.Build(context.Background(), app.Config{
-		Workspace: filepath.Dir(settings), Model: "mock", MockProvider: llm, Headless: headless, Diagnostics: diag,
+		Workspace: filepath.Dir(settings), UserModelDir: t.TempDir(), Model: "mock", MockProvider: llm, Headless: headless, Diagnostics: diag,
 		PermissionConfigs: []string{settings},
 		MCPProfileLoader: &acceptanceLoopbackProfileResolver{
 			t: t, loader: cliconfig.NewMCPProfileResolver(nil, lookup),

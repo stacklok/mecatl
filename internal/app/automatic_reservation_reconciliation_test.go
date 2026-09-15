@@ -407,7 +407,7 @@ func automaticBuildRepositories(t *testing.T) (string, learning.AutomaticAdmissi
 
 func startAutomaticReplacementBuild(t *testing.T, base string) *Built {
 	t.Helper()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Model: "mock", Workspace: t.TempDir(), NoSoul: true, LearningMode: learning.Review,
 		UserModelDir: base, MemoryDir: t.TempDir(), MockProvider: mockllm.New(mockllm.TextTurn("unused")),
 	})

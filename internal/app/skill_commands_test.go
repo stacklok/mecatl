@@ -250,7 +250,7 @@ func TestSkillCommandBridgeBuildWiresEndToEnd(t *testing.T) {
 	writeSkill(t, dir, "deploy", "deploy the service", "Deploy the service to $ARGUMENTS.")
 
 	root := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:  root,
 		Model:      "mock",
 		UseMock:    true,
@@ -302,7 +302,7 @@ func TestSkillCommandExpandsThroughEngineLoop(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.TextTurn("ok, deploying."),
 	)
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:           t.TempDir(),
 		Model:               "mock",
 		UseMock:             true,

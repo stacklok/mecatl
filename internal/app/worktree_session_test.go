@@ -67,7 +67,7 @@ func TestClientWorkspaceCannotOverrideServerPlacement(t *testing.T) {
 		t.Fatal("base and wtB are the same path — fixture broken")
 	}
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           base, // the SERVER's launch root — DefaultWorkspace
 		NoSoul:              true,
 		MemoryDir:           t.TempDir(),
@@ -154,7 +154,7 @@ func TestServerPlacementReattachesAfterRestart(t *testing.T) {
 	}
 
 	// First process: create the worktree session + run once to terminal.
-	built1, err := Build(ctx, Config{
+	built1, err := buildIsolated(t, ctx, Config{
 		Workspace:           base,
 		NoSoul:              true,
 		MemoryDir:           t.TempDir(),
@@ -179,7 +179,7 @@ func TestServerPlacementReattachesAfterRestart(t *testing.T) {
 
 	// Second process (restart): rebuild over the SAME store. The worktree
 	// session's in-memory engine is gone; rehydration must rebuild it.
-	built2, err := Build(ctx, Config{
+	built2, err := buildIsolated(t, ctx, Config{
 		Workspace:           base,
 		NoSoul:              true,
 		MemoryDir:           t.TempDir(),

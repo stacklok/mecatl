@@ -9,7 +9,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -29,7 +28,7 @@ func TestMecatedBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	}
 	ac := appConfig(cfg, nil, nil, nil, nil, nil)
 	ac.MockProvider = mockllm.New()
-	if _, err := app.Build(context.Background(), ac); !errors.Is(err, cliconfig.ErrMCPProfileSecret) {
+	if _, err := buildIsolated(t, context.Background(), ac); !errors.Is(err, cliconfig.ErrMCPProfileSecret) {
 		t.Fatalf("conventional operator profile Build error = %v, want missing-secret category", err)
 	}
 
@@ -43,7 +42,7 @@ func TestMecatedBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	}
 	ac = appConfig(cfg, nil, nil, nil, nil, nil)
 	ac.MockProvider = mockllm.New()
-	built, err := app.Build(context.Background(), ac)
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("explicit operator profile did not override conventional source: %v", err)
 	}

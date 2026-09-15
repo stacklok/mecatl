@@ -33,7 +33,7 @@ func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessio
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read-2", Name: "Read", Args: json.RawMessage(`{"path":"docs/note.txt"}`)}),
 		mockllm.TextTurn("second session done"),
 	)
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		RedisURL:            mr.Addr(),
 		RedisAllowPlaintext: true,
 		RedisFilesystem:     true,
@@ -104,7 +104,7 @@ func TestRedisWorkspaceRootListDirIsNotDeniedByAuthority(t *testing.T) {
 		mockllm.ToolCallTurn(session.ToolCall{ID: "list-root", Name: "ListDir", Args: json.RawMessage(`{"path":"."}`)}),
 		mockllm.TextTurn("done"),
 	)
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		RedisURL:            mr.Addr(),
 		RedisAllowPlaintext: true,
 		RedisFilesystem:     true,

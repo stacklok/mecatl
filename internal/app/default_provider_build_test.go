@@ -35,7 +35,7 @@ func writeOperatorSettingsFile(t *testing.T, body string) string {
 // the YAML override is what routes zero-selector sessions to toolhive.
 func buildWithToolhiveAndKey(t *testing.T, operatorSettingsPath string, diag port.Diagnostics) (*Built, error) {
 	t.Helper()
-	return Build(context.Background(), Config{
+	return buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(),
 		NoSoul:    true,
 		// An openrouter key makes openrouter a keyed, key-driven provider — the
@@ -116,7 +116,7 @@ func TestBuildOperatorYAMLDefaultProviderAbsentKeepsLadderDefault(t *testing.T) 
 func TestBuildOperatorYAMLDefaultProviderCLIWins(t *testing.T) {
 	ctx := context.Background()
 	settings := writeOperatorSettingsFile(t, "models:\n  default_provider: toolhive\n")
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(),
 		NoSoul:    true,
 		envDetector: fakeEnv(map[string]string{

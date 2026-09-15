@@ -99,7 +99,7 @@ func TestBuildFailsOnUnresolvableYAMLSubagentModel(t *testing.T) {
 	if err := os.WriteFile(path, []byte("models:\n  subagent: sonnet\n"), 0o600); err != nil {
 		t.Fatalf("write temp config: %v", err)
 	}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:         t.TempDir(),
 		Model:             "mock",
 		UseMock:           true,

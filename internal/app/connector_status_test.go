@@ -16,7 +16,7 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 			if broker {
 				cfg.MCPAuthority = mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: "https://broker.example/oauth/callback", Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}})
 			}
-			built, err := Build(t.Context(), cfg)
+			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -47,7 +47,7 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 
 func TestBrokerMCPStatus_Scenario1_DirectComposition(t *testing.T) {
 	mcpURL, _ := authorityVerticalMCPServer(t)
-	built, err := Build(t.Context(), Config{
+	built, err := buildIsolated(t, t.Context(), Config{
 		Workspace: t.TempDir(), StoreDir: t.TempDir(), NoSoul: true, UseMock: true,
 		MCPServers: []mcp.ServerConfig{{Name: "direct", URL: mcpURL}},
 	})

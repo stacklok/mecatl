@@ -929,7 +929,7 @@ func TestScheduleTool_SchedulerOnByDefault(t *testing.T) {
 	// The cmd layer's default: --no-scheduler unset → SchedulerEnabled true.
 	// NO scheduler opt-in flag exists anymore — the durable store alone
 	// activates the tick loop.
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             workspace,
 		NoSoul:                true,
 		NoUserModel:           true,
@@ -1035,7 +1035,7 @@ func TestScheduleTool_NoSchedulerDisablesTickOnly(t *testing.T) {
 
 	// --no-scheduler passed: SchedulerEnabled false on a schedule-capable
 	// store.
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           workspace,
 		NoSoul:              true,
 		NoUserModel:         true,
@@ -1099,7 +1099,7 @@ func TestScheduleTool_InMemoryStoreByteIdentical(t *testing.T) {
 
 	// The default posture (SchedulerEnabled true — the cmd default) over a
 	// store with NO ScheduleStore: startup must succeed and wire nothing.
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           t.TempDir(),
 		NoSoul:              true,
 		NoUserModel:         true,
@@ -1226,7 +1226,7 @@ func TestScheduleTool_CreateEnforcesMinInterval(t *testing.T) {
 
 	// Through the REAL Build path (the composition wiring): a 5-minute floor
 	// rejects a 1-minute cadence through the Service the tool drives.
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:            workspace,
 		NoSoul:               true,
 		NoUserModel:          true,

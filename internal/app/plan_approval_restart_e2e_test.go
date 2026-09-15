@@ -62,7 +62,7 @@ func TestPlanApprovalRestartE2E(t *testing.T) {
 			session.NewToolCall("c1", "PresentPlan", json.RawMessage(`{"note":"step 1"}`)),
 		))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestPlanApprovalRestartE2E(t *testing.T) {
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("executed after restart"))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}

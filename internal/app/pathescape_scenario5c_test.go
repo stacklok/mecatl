@@ -70,7 +70,7 @@ func TestPathEscapePosture_Scenario5_BaseSharingMemberNotRelaxed(t *testing.T) {
 			)
 			cfg.NoShell = true
 			cfg.EnableTeams = true
-			built, err := Build(context.Background(), cfg)
+			built, err := buildIsolated(t, context.Background(), cfg)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}

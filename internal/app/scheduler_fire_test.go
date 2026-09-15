@@ -90,7 +90,7 @@ func TestSchedulerFire(t *testing.T) {
 			return mockllm.New(mockllm.TextTurn("hello from the fire"))
 		},
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestInvariant_scheduled_placement_is_reauthorized_at_fire(t *testing.T) {
 		Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/private/scheduled-root"), memledger.New(), nil),
 	}}
 	storeDir := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), StoreDir: storeDir, UseMock: true,
 		MockProvider:      mockllm.New(mockllm.TextTurn("done")),
 		PlacementProvider: provider, PlacementScope: "deployment-a",

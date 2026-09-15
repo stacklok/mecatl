@@ -85,7 +85,7 @@ func TestPhase3ReconstructFromStoreAndLog(t *testing.T) {
 	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(turns...)
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestPhase3LogNoChildLeak(t *testing.T) {
 			mockllm.TextTurn("parent done"),
 		)
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

@@ -133,7 +133,7 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
 	transport := &toggleTransport{body: toolhiveFixtureJSON} // starts DOWN (up=false)
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           workspace,
 		NoSoul:              true,
 		ToolhiveLLM:         true,
@@ -206,7 +206,7 @@ func TestToolhiveAvailableNotDefault_E2E(t *testing.T) {
 	workspace := t.TempDir()
 	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		// toolhive auto-detected + probed-ok offline (2 models in the fixture).

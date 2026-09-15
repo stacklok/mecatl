@@ -179,7 +179,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		bcfg := escapeCfg(t, f, PostureAuto, turns...)
 		bcfg.GuardrailsModel = "checker-model"
 		bcfg.GuardrailsEscape = true
-		built, err := Build(context.Background(), bcfg)
+		built, err := buildIsolated(t, context.Background(), bcfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)
 		bcfg.GuardrailsModel = "checker-model"
-		built, err := Build(context.Background(), bcfg)
+		built, err := buildIsolated(t, context.Background(), bcfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}

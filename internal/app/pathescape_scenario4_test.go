@@ -72,7 +72,7 @@ func installRelaxedWorkspace(t *testing.T, built *Built, sessID session.SessionI
 func TestPathEscapePosture_Scenario4_FactoryServesApprovedEscape(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestPathEscapePosture_Scenario4_FactoryServesApprovedEscape(t *testing.T) {
 func TestPathEscapePosture_Scenario4_StrictReadEscapeAsks(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestPathEscapePosture_Scenario4_TrustedWriteEscapeAsks(t *testing.T) {
 	t.Parallel()
 	f := setupWriteFS(t)
 	call := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "trusted-must-never-land"})
-	built, err := Build(context.Background(), writeEscapeCfg(t, f, PostureTrusted,
+	built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureTrusted,
 		mockllm.ToolCallTurn(call),
 		mockllm.TextTurn("done"),
 	))
@@ -235,7 +235,7 @@ func TestPathEscapePosture_Scenario4_TrustedWriteEscapeAsks(t *testing.T) {
 func TestPathEscapePosture_Scenario4_HeadlessEscapeAskDoesNotHang(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
