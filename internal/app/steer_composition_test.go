@@ -102,7 +102,7 @@ func TestSteer_EnabledByDefaultEndToEnd(t *testing.T) {
 	// No DisableSteer set: the DEFAULT is ON. AllowAllTools so the test tool's
 	// dispatch auto-approves (Interactive is false; an ask would park the run
 	// headless instead of holding it mid-dispatch the way this test needs).
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:      t.TempDir(),
 		Model:          "mock",
 		NoSoul:         true,
@@ -197,7 +197,7 @@ func TestSteer_DisabledCompositionInert(t *testing.T) {
 	// (a single scripted turn would exhaust the cursor on the promote and drive the
 	// no-progress path instead of a clean end_turn).
 	llm := mockllm.New(mockllm.TextTurn("done"), mockllm.TextTurn("aftermath done"))
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           t.TempDir(),
 		Model:               "mock",
 		NoSoul:              true,
@@ -257,7 +257,7 @@ func TestSteer_DisabledCompositionInert(t *testing.T) {
 // operator-tier posture/reasoning-effort fold discipline.
 func TestSteer_DisableViaOperatorYAML(t *testing.T) {
 	ctx := context.Background()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           t.TempDir(),
 		Model:               "mock",
 		UseMock:             true,
@@ -287,7 +287,7 @@ func TestSteer_ProjectYAMLIgnored(t *testing.T) {
 	ws := t.TempDir()
 	mkdirProjectSettings(t, ws, "steer: false\n")
 	diag := slogdiagBuffer(t)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:               ws,
 		Model:                   "mock",
 		UseMock:                 true,

@@ -73,7 +73,7 @@ func TestBuildSettlesStaleRunningSnapshotAcrossRestart(t *testing.T) {
 	// orphaned snapshot straight into the store, exactly as if built1's own
 	// (never-invoked) store.Save had been the crash's last write.
 	cfg1 := baseCfg()
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestBuildSettlesStaleRunningSnapshotAcrossRestart(t *testing.T) {
 
 	// built2: a brand-new Build over the SAME store — the restart.
 	cfg2 := baseCfg()
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}

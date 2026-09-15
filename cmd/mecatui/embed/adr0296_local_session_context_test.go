@@ -19,9 +19,10 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-func adr0296MockAppConfig(workspace string) app.Config {
+func adr0296MockAppConfig(t testing.TB, workspace string) app.Config {
+	t.Helper()
 	return app.Config{
-		Workspace: workspace, Model: "mock-model", UseMock: true,
+		Workspace: workspace, UserModelDir: t.TempDir(), Model: "mock-model", UseMock: true,
 		Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic",
 	}
 }
@@ -29,7 +30,7 @@ func adr0296MockAppConfig(workspace string) app.Config {
 func TestADR_0296_EmbeddedMecatuiServesLocalSessionContext(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
-	srv, err := Start(ctx, adr0296MockAppConfig(workspace), PerfConfig{})
+	srv, err := Start(ctx, adr0296MockAppConfig(t, workspace), PerfConfig{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -63,7 +63,7 @@ func TestPlanModeAutoApproveOffByDefault(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	cfg := planAutoApproveConfig(t, llm, false, false) // headless, flag OFF
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPlanModeAutoApproveFiresOnParkedPlanAsk(t *testing.T) {
 	diag := slogdiagBuffer(t)
 	cfg := planAutoApproveConfig(t, llm, false, true) // headless, flag ON
 	cfg.Diagnostics = diag.diag
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestPlanModeAutoApproveDoesNotFireInteractive(t *testing.T) {
 	diag := slogdiagBuffer(t)
 	cfg := planAutoApproveConfig(t, llm, true, true) // interactive, flag ON
 	cfg.Diagnostics = diag.diag
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestPlanModeAutoApproveDoesNotFireInDefaultMode(t *testing.T) {
 	diag := slogdiagBuffer(t)
 	cfg := planAutoApproveConfig(t, llm, false, true) // headless, flag ON
 	cfg.Diagnostics = diag.diag
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestPlanModeAutoApproveDoesNotFireForNonPlanAsk(t *testing.T) {
 	diag := slogdiagBuffer(t)
 	cfg := planAutoApproveConfig(t, llm, false, true) // headless, flag ON
 	cfg.Diagnostics = diag.diag
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestPlanModeAutoApproveBuildNarration(t *testing.T) {
 	diag := slogdiagBuffer(t)
 	cfg := planAutoApproveConfig(t, mockllm.New(mockllm.TextTurn("ok")), false, true)
 	cfg.Diagnostics = diag.diag
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

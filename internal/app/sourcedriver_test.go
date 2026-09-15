@@ -154,7 +154,7 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("x"))
 	cfg := Config{SkillSourceURL: addr}
 
-	defaultCat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	defaultCat, assets, _, _, closeFn, err := buildCatalog(ctx, isolateConfig(t, cfg), regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog(skill driver): %v", err)
 	}
@@ -284,7 +284,7 @@ func TestRemoteSkillSourceBuildRunDefaultAndNoFS(t *testing.T) {
 				mockllm.TextTurn("done"),
 			)
 			ctx := context.Background()
-			built, err := Build(ctx, Config{
+			built, err := buildIsolated(t, ctx, Config{
 				Workspace:      t.TempDir(),
 				Model:          "mock",
 				MockProvider:   provider,
@@ -485,7 +485,7 @@ func TestBuildSoulDriverProbeFatal(t *testing.T) {
 	addr := lis.Addr().String()
 	_ = lis.Close()
 
-	_, err = Build(context.Background(), Config{
+	_, err = buildIsolated(t, context.Background(), Config{
 		Workspace:     t.TempDir(),
 		Model:         "mock",
 		UseMock:       true,
@@ -600,7 +600,7 @@ func TestBuildAgentDriverUnreachableFatal(t *testing.T) {
 		t.Fatal("resolveAgentSeam(unreachable driver) = nil error, want a fatal snapshot failure")
 	}
 
-	_, berr := Build(context.Background(), Config{
+	_, berr := buildIsolated(t, context.Background(), Config{
 		Workspace:      t.TempDir(),
 		Model:          "mock",
 		UseMock:        true,
@@ -622,7 +622,7 @@ func TestBuildCommandDriverProbeFatal(t *testing.T) {
 	addr := lis.Addr().String()
 	_ = lis.Close()
 
-	_, err = Build(context.Background(), Config{
+	_, err = buildIsolated(t, context.Background(), Config{
 		Workspace:        t.TempDir(),
 		Model:            "mock",
 		UseMock:          true,
@@ -808,7 +808,7 @@ func TestBuildCommandDriverProbeOnceAcrossSessionEngines(t *testing.T) {
 	addr := startSourceDriver(t, func(gs *grpc.Server) {
 		driverv1.RegisterCommandSourceServiceServer(gs, srv)
 	})
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:        t.TempDir(),
 		Model:            "mock",
 		UseMock:          true,

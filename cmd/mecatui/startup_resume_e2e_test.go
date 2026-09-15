@@ -400,7 +400,7 @@ func startStartupResumeEmbedded(t *testing.T, cfg app.Config) (string, func()) {
 
 func startStartupResumeConnect(t *testing.T, cfg app.Config) (string, func()) {
 	t.Helper()
-	built, err := app.Build(t.Context(), cfg)
+	built, err := buildIsolated(t, t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("build connect server: %v", err)
 	}

@@ -164,6 +164,85 @@ func TestCatalogPlanOnlyExcludedFromNonPlanModes(t *testing.T) {
 	}
 }
 
+type countingTool struct {
+	name        string
+	description string
+	readOnly    bool
+	specCalls   int
+}
+
+func (c *countingTool) Spec() ToolSpec {
+	c.specCalls++
+	return ToolSpec{Name: c.name, Description: c.description}
+}
+func (c *countingTool) ReadOnly() bool { return c.readOnly }
+func (*countingTool) Execute(context.Context, session.ToolCall, Environment) (session.ToolResult, error) {
+	return session.ToolResult{}, nil
+}
+
+func TestCatalogOrderingAndFilteringDoNotHydrateSpecs(t *testing.T) {
+	c := NewCatalog()
+	write := &countingTool{name: "Write", readOnly: false}
+	grep := &countingTool{name: "Grep", readOnly: true}
+	read := &countingTool{name: "Read", readOnly: true}
+	for _, tool := range []Tool{write, grep, read} {
+		c.MustRegister(tool)
+	}
+
+	assertTools := func(label string, got []Tool, want ...Tool) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s tools = %d, want %d", label, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%s tool[%d] = %T, want registered tool %T", label, i, got[i], want[i])
+			}
+		}
+	}
+	assertCalls := func() {
+		t.Helper()
+		for _, tool := range []*countingTool{write, grep, read} {
+			if tool.specCalls != 1 {
+				t.Fatalf("%s Spec calls = %d, want registration call only", tool.name, tool.specCalls)
+			}
+		}
+	}
+
+	assertTools("Tools", c.Tools(), grep, read, write)
+	assertCalls()
+	assertTools("Available(default)", c.Available(session.ModeDefault), grep, read, write)
+	assertCalls()
+	assertTools("Available(plan)", c.Available(session.ModePlan), grep, read)
+	assertCalls()
+}
+
+func TestCatalogMetadataProjectionsRemainLive(t *testing.T) {
+	c := NewCatalog()
+	read := &countingTool{name: "Read", description: "first", readOnly: true}
+	write := &countingTool{name: "Write", description: "hidden", readOnly: false}
+	c.MustRegister(write)
+	c.MustRegister(read)
+
+	read.description = "updated"
+	specs := c.Specs(session.ModePlan)
+	if len(specs) != 1 || specs[0].Name != "Read" || specs[0].Description != "updated" {
+		t.Fatalf("Specs(plan) = %+v, want live Read metadata", specs)
+	}
+	if read.specCalls != 2 || write.specCalls != 1 {
+		t.Fatalf("Spec calls after Specs(plan) = Read:%d Write:%d, want 2 and 1", read.specCalls, write.specCalls)
+	}
+
+	read.description = "advertised"
+	advertised := c.AdvertisedSpecs(session.ModePlan)
+	if len(advertised) != 1 || advertised[0].Description != "advertised" {
+		t.Fatalf("AdvertisedSpecs(plan) = %+v, want live metadata", advertised)
+	}
+	if read.specCalls != 3 || write.specCalls != 1 {
+		t.Fatalf("Spec calls after AdvertisedSpecs(plan) = Read:%d Write:%d, want 3 and 1", read.specCalls, write.specCalls)
+	}
+}
+
 func equal(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

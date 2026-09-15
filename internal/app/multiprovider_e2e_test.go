@@ -38,7 +38,7 @@ func TestMultiProviderE2E(t *testing.T) {
 
 	const sentinelKey = "sk-SENTINEL-multiprovider"
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		// Fake three-key env ⇒ openai + openrouter + anthropic all AVAILABLE.
@@ -153,7 +153,7 @@ func TestMultiProviderCapabilityEcho(t *testing.T) {
 	// openai is the DEFAULT provider (preferredDefaultProvider prefers it). cfg.Model
 	// is left empty ⇒ the default session resolves to the empty model on openai ⇒
 	// passthrough ⇒ adapter-only caps for the default = openai's Image:false.
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		envDetector: fakeEnv(map[string]string{
@@ -248,7 +248,7 @@ func TestMultiProviderResolvedModelEcho(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		// Pin an explicit default model so the default echo is deterministic (no live
@@ -316,7 +316,7 @@ func TestServerConfiguredDefaultModelEcho(t *testing.T) {
 		wantModel    = "openai/gpt-5-mini" // catalogued for openrouter; NOT its builtin (openai/gpt-5)
 	)
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		// The configured deployment default: openrouter would NOT be the preferred
@@ -398,7 +398,7 @@ func TestResolvedModelMCPOnlySessionMatchesDefaultWindow(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           workspace,
 		NoSoul:              true,
 		Model:               "gpt-5", // catalogued for openai ⇒ a non-zero window
@@ -470,7 +470,7 @@ func TestSessionCapabilitiesNoSecrets(t *testing.T) {
 	workspace := t.TempDir()
 	const sentinelKey = "sk-SENTINEL-capecho"
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		envDetector: fakeEnv(map[string]string{
@@ -540,7 +540,7 @@ func TestSubAgentPinsAnthropic(t *testing.T) {
 		t.Fatalf("write agent def: %v", err)
 	}
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:     workspace,
 		NoSoul:        true,
 		AgentsDirs:    []string{agentsDir},

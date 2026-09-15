@@ -46,7 +46,7 @@ func TestMecatedExplicitBrokerAuthorityReachesBuild(t *testing.T) {
 	ac.MCPBrokerCaller = func(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
 		return session.NewToolResult("", "unused"), nil
 	}
-	built, err := app.Build(context.Background(), ac)
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build explicit broker authority: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestMecatedOmittedMCPModeDefaultsGlobalWithoutBroker(t *testing.T) {
 	ac.PermissionsConventional = false
 	ac.AgentsConventional = false
 	ac.ToolHiveEnabled = false
-	built, err := app.Build(context.Background(), ac)
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("app.Build omitted MCP mode: %v", err)
 	}

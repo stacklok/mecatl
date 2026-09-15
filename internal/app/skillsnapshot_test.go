@@ -59,7 +59,7 @@ func TestBuildWiresListSkillsEndToEnd(t *testing.T) {
 	writeSkill(t, dir, "alpha", "the first skill", "ALPHA BODY")
 
 	ctx := context.Background()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:  t.TempDir(),
 		Model:      "mock",
 		UseMock:    true,

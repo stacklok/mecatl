@@ -1239,7 +1239,7 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:      t.TempDir(),
 		Model:          "mock",
 		UseMock:        true,
@@ -1300,7 +1300,7 @@ func TestBuildAutomaticRetentionRespectsAnotherLocalInstance(t *testing.T) {
 	defer func() { _ = blocker.Release(context.Background(), held) }()
 
 	diag := newCapturingDiagnostics()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", UseMock: true,
 		StoreDir: storeDir, ChildRetention: 24 * time.Hour, Diagnostics: diag,
 	})
@@ -1330,7 +1330,7 @@ func TestBuildZeroConfigChildGCIsNoOp(t *testing.T) {
 	diag := newCapturingDiagnostics()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:   t.TempDir(),
 		Model:       "mock",
 		UseMock:     true,
@@ -1354,7 +1354,7 @@ func TestBuildZeroConfigChildGCIsNoOp(t *testing.T) {
 // assertion). A second Close is a no-op.
 func TestBuildEnabledChildGCNarratesAndStops(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:                  t.TempDir(),
 		Model:                      "mock",
 		UseMock:                    true,

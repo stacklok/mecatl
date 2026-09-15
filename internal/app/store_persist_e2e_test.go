@@ -34,7 +34,7 @@ func TestBuildDisablesDurableEvidenceWithoutEventLog(t *testing.T) {
 			return mockllm.New(mockllm.TextTurn("done"))
 		},
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 			return mockllm.New(mockllm.TextTurn("all done, no tools needed"))
 		},
 	}
-	built1, err := Build(ctx, cfg)
+	built1, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}

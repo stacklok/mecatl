@@ -265,6 +265,10 @@ type Deps struct {
 	// DebugTarget is immutable launch metadata for a dedicated analysis session.
 	// It is presentation/control state only; the client adapter owns wire projection.
 	DebugTarget string
+	// DebugMCP names the selected server-global reporting servers shown in the
+	// debugger's privacy disclosure. It is presentation-only; authorization remains
+	// server-owned.
+	DebugMCP []string
 
 	// Version is the mecatui build identity, shown on the first-run welcome splash
 	// (e.g. "v0.3.1", "dev+0123456789ab", or "dev"). Threaded from the shared

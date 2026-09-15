@@ -195,7 +195,7 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 	// assembly). Using buildCatalog — not a direct assembleCatalog call — is what
 	// keeps a future post-assembly registration in buildCatalog inside the guard.
 	store := fullyLoadedScheduleStore(t, cfg)
-	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), store, eagerScheduleFactoryForTest(t, store))
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, oa, hooks, agents.NewRegistry(nil), store, eagerScheduleFactoryForTest(t, store))
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestPresentPlanInSharedAndPerSessionCatalogs(t *testing.T) {
 	reg := twoProviderReg(oa, providerOpenAI, cfg.Model, or, providerOpenRouter)
 	hooks := hookexec.New(nil)
 
-	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	hooks := hookexec.New(nil)
 
 	store := fullyLoadedScheduleStore(t, cfg)
-	sharedCat, _, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), store, eagerScheduleFactoryForTest(t, store))
+	sharedCat, _, _, _, mcpClose, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, oa, hooks, agents.NewRegistry(nil), store, eagerScheduleFactoryForTest(t, store))
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}

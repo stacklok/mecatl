@@ -56,7 +56,7 @@ func TestNoFSCatalogProfile(t *testing.T) {
 	reg := regForTest(oa, providerOpenAI, cfg.Model)
 	hooks := hookexec.New(nil)
 
-	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
+	sharedCat, assets, _, _, mcpClose, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestNoFSParallelAbsent(t *testing.T) {
 	reg := regForTest(oa, providerOpenAI, cfg.Model)
 	hooks := hookexec.New(nil)
 
-	_, assets, _, _, mcpClose, err := buildCatalog(ctx, cfg, reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
+	_, assets, _, _, mcpClose, err := buildCatalog(ctx, isolateConfig(t, cfg), reg, oa, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestCreateSessionNoFSProfileNoWorkspace(t *testing.T) {
 		reqMu   sync.Mutex
 		systems []string
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:           t.TempDir(), // the SERVER still has a default workspace for the shared engine
 		NoSoul:              true,
 		MemoryDir:           t.TempDir(),
@@ -490,7 +490,7 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("pre-restart-done"))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 			mockllm.TextTurn("rehydrated-done"),
 		)
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -740,7 +740,7 @@ func TestSelectorSessionSurvivesRestartE2E(t *testing.T) {
 		}
 		return mockllm.NewWith([]mockllm.Option{record(&openaiCap)}, mockllm.TextTurn("openai-default"))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -795,7 +795,7 @@ func TestSelectorSessionSurvivesRestartE2E(t *testing.T) {
 		}
 		return mockllm.NewWith([]mockllm.Option{record(&openaiCap)}, mockllm.TextTurn("openai-default"))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}

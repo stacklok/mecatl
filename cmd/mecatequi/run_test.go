@@ -82,7 +82,7 @@ func TestRunEndToEndMockProvider(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo)
 
-	built, err := app.Build(ctx, app.Config{
+	built, err := buildIsolated(t, ctx, app.Config{
 		Workspace:   repo,
 		UseMock:     true,
 		NoSoul:      true,

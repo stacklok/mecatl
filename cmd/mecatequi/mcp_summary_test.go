@@ -13,7 +13,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -35,7 +34,7 @@ func TestMecatequiBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	}
 	cfg := appConfig(f, newDiagnostics(), observability{})
 	cfg.MockProvider = mockllm.New()
-	if _, err := app.Build(context.Background(), cfg); !errors.Is(err, cliconfig.ErrMCPProfileSecret) {
+	if _, err := buildIsolated(t, context.Background(), cfg); !errors.Is(err, cliconfig.ErrMCPProfileSecret) {
 		t.Fatalf("conventional operator profile Build error = %v, want missing-secret category", err)
 	}
 
@@ -49,7 +48,7 @@ func TestMecatequiBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	}
 	cfg = appConfig(f, newDiagnostics(), observability{})
 	cfg.MockProvider = mockllm.New()
-	built, err := app.Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("explicit operator profile did not override conventional source: %v", err)
 	}
@@ -65,7 +64,7 @@ func TestMecatequiBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	}
 	cfg = appConfig(f, newDiagnostics(), observability{})
 	cfg.MockProvider = mockllm.New()
-	if _, err := app.Build(context.Background(), cfg); !errors.Is(err, cliconfig.ErrMCPProfileInvalid) || !strings.Contains(err.Error(), "broker MCP mode is unsupported by this command root") {
+	if _, err := buildIsolated(t, context.Background(), cfg); !errors.Is(err, cliconfig.ErrMCPProfileInvalid) || !strings.Contains(err.Error(), "broker MCP mode is unsupported by this command root") {
 		t.Fatalf("broker-mode Build error = %v, want unsupported command-root error", err)
 	}
 }

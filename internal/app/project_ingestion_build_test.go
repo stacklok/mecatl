@@ -33,7 +33,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 		ws := seedProjectAgentDef(t, "scout")
 		diag := slogdiagBuffer(t)
 
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:          ws,
 			Model:              "mock",
 			UseMock:            true,
@@ -62,7 +62,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 		// def — this proves the pinned assertion is non-vacuous.
 		ws := seedProjectAgentDef(t, "scout")
 
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace:          ws,
 			Model:              "mock",
 			UseMock:            true,
@@ -115,7 +115,7 @@ func TestBuildDeclaredTrustAdmitsProjectAndShell(t *testing.T) {
 	// configuration; do not smuggle the resolved bool into this composition proof.
 	cfg.TrustProject = false
 
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

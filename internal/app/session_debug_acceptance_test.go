@@ -131,7 +131,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		mockllm.ToolCallTurn(session.NewToolCall("glob-1", "Glob", json.RawMessage(`{"pattern":"*.go"}`))),
 		mockllm.TextTurn("target complete"),
 	)
-	built1, err := Build(ctx, Config{Workspace: workspace, StoreDir: storeDir, NoSoul: true, MockProvider: targetProvider})
+	built1, err := buildIsolated(t, ctx, Config{Workspace: workspace, StoreDir: storeDir, NoSoul: true, MockProvider: targetProvider})
 	if err != nil {
 		t.Fatalf("target Build: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		),
 		mockllm.TextTurn("diagnosis and issue draft ready"),
 	)
-	built2, err := Build(ctx, Config{Workspace: workspace, StoreDir: storeDir, NoSoul: true, MockProvider: debugProvider, MCPServers: []mcp.ServerConfig{{Name: "github", URL: mcpURL}}, Posture: PostureYolo, PostureFlagSet: true, Interactive: true})
+	built2, err := buildIsolated(t, ctx, Config{Workspace: workspace, StoreDir: storeDir, NoSoul: true, MockProvider: debugProvider, MCPServers: []mcp.ServerConfig{{Name: "github", URL: mcpURL}}, Posture: PostureYolo, PostureFlagSet: true, Interactive: true})
 	if err != nil {
 		t.Fatalf("restart Build: %v", err)
 	}

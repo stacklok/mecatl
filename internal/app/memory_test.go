@@ -34,7 +34,7 @@ func TestBuildCatalogRegistersMemorySearchWhenEnabled(t *testing.T) {
 
 	t.Run("enabled", func(t *testing.T) {
 		cfg := Config{MemoryDir: t.TempDir()}
-		cat, _, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
+		cat, _, _, _, closeFn, err := buildCatalog(ctx, isolateConfig(t, cfg), regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 		if err != nil {
 			t.Fatalf("buildCatalog: %v", err)
 		}
@@ -49,7 +49,7 @@ func TestBuildCatalogRegistersMemorySearchWhenEnabled(t *testing.T) {
 
 	t.Run("disabled", func(t *testing.T) {
 		cfg := Config{MemoryDir: ""}
-		cat, _, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
+		cat, _, _, _, closeFn, err := buildCatalog(ctx, isolateConfig(t, cfg), regForTest(provider, providerMock, cfg.Model), provider, hooks, agents.NewRegistry(nil), memstore.New(), nil)
 		if err != nil {
 			t.Fatalf("buildCatalog: %v", err)
 		}

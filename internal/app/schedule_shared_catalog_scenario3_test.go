@@ -23,7 +23,7 @@ import (
 func scheduleScenario3Build(t *testing.T, llm port.LLMProvider) (*Built, string) {
 	t.Helper()
 	workspace := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:    workspace,
 		Model:        "mock",
 		StoreDir:     t.TempDir(), // jsonlstore — backs a ScheduleStore
@@ -156,7 +156,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 		mockllm.WithRequestObserver(func(req port.LLMRequest) { capturedNone = req.System }),
 	}, mockllm.TextTurn("ok"))
 	wsNone := t.TempDir()
-	builtNone, err := Build(ctx, Config{
+	builtNone, err := buildIsolated(t, ctx, Config{
 		Workspace:    wsNone,
 		Model:        "mock",
 		MockProvider: llmNone, // no StoreDir → memstore → no ScheduleStore
@@ -206,7 +206,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 		mockllm.TextTurn("scheduled"),
 		mockllm.TextTurn("fire output"),
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:    workspace,
 		Model:        "mock",
 		StoreDir:     storeDir,
@@ -365,7 +365,7 @@ func TestScheduleSharedCatalog_Scenario3_RehydratedSessionKeepsTool(t *testing.T
 	}
 
 	// First process: create + persist a default-profile session.
-	built1, err := Build(ctx, mkConfig())
+	built1, err := buildIsolated(t, ctx, mkConfig())
 	if err != nil {
 		t.Fatalf("Build 1: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestScheduleSharedCatalog_Scenario3_RehydratedSessionKeepsTool(t *testing.T
 	// default-profile session does NOT rehydrate to a per-session engine
 	// (needsRehydration is false for it) — it is restored onto the SHARED
 	// engine. That engine must carry the Schedule tool.
-	built2, err := Build(ctx, mkConfig())
+	built2, err := buildIsolated(t, ctx, mkConfig())
 	if err != nil {
 		t.Fatalf("Build 2: %v", err)
 	}

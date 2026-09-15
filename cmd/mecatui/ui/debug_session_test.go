@@ -37,6 +37,23 @@ func TestDebugIdentityUsesNormalHeaderAcrossPhases(t *testing.T) {
 	}
 }
 
+func TestDebugPrivacyDisclosureIsVisibleInRenderedHeader(t *testing.T) {
+	m := debugUIModel("target-session", 80)
+	m.deps.DebugMCP = []string{"github"}
+	plain := stripANSIstr(m.renderHeader())
+	for _, want := range []string{
+		"PRIVACY: target evidence sent to the configured model may include prompts",
+		"assistant output, tool arguments/results, file paths, and secrets",
+		"reporting servers available: github",
+		"availability does not authorize",
+		"publication or sending.",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("debug privacy disclosure missing %q: %q", want, plain)
+		}
+	}
+}
+
 func TestDebugHeaderKeepsWholeIdentityAndShedsOptionalSegments(t *testing.T) {
 	m := debugUIModel("target-session", 40)
 	m.sessionID = "debug-session"

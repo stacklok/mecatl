@@ -85,7 +85,7 @@ func TestPathEscapePosture_Scenario5_ChildReadEscapeDenied(t *testing.T) {
 			// worktree forker (the seam under test); at auto/yolo applyPosture
 			// already raises TrustProject.
 			cfg.Shell = "/bin/sh"
-			built, err := Build(context.Background(), cfg)
+			built, err := buildIsolated(t, context.Background(), cfg)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}

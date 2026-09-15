@@ -138,7 +138,7 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 			),
 		}}
 		ctx := context.WithValue(context.Background(), placementContextKey{}, "build-context")
-		built, err := Build(ctx, Config{
+		built, err := buildIsolated(t, ctx, Config{
 			Workspace: rootForPlacementTest(t), UseMock: true,
 			PlacementProvider: provider, PlacementScope: "deployment-a",
 		})
@@ -156,7 +156,7 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 
 	t.Run("trusted local default uses opaque identity", func(t *testing.T) {
 		root := t.TempDir()
-		built, err := Build(context.Background(), Config{Workspace: root, UseMock: true})
+		built, err := buildIsolated(t, context.Background(), Config{Workspace: root, UseMock: true})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -189,7 +189,7 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 				),
 				Metadata: server.PlacementMetadata{Label: "Provider placement"},
 			}}
-			built, err := Build(context.Background(), Config{
+			built, err := buildIsolated(t, context.Background(), Config{
 				Workspace: rootForPlacementTest(t), UseMock: true,
 				PlacementProvider: provider, PlacementScope: "deployment-a",
 			})
@@ -216,7 +216,7 @@ func TestADR_0291_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 
 	t.Run("invalid default fails first bind without startup allocation", func(t *testing.T) {
 		provider := &compositionPlacementProvider{err: server.ErrPlacementUnavailable}
-		built, err := Build(context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), Config{
 			Workspace: rootForPlacementTest(t), UseMock: true,
 			PlacementProvider: provider, PlacementScope: "deployment-a",
 		})

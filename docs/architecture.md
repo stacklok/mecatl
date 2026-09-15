@@ -837,7 +837,7 @@ headless calls deny, and allow-always is never learned. Creation conceals absent
 the same not-found result, and the debug session never resumes, leases, mutates, approves,
 cancels, or steers its target. Persisted debug sessions rehydrate through the dedicated
 factory and fail closed if their lineage, no-fs metadata, target, or factory is unavailable.
-Mecatui treats invocation as consent, prints the disclosure before launch, and submits one
+Mecatui treats invocation as consent, keeps the disclosure visible in the debugger UI, and submits one
 first user turn ordered as objective, required InspectSession workflow, expected report
 structure, then a delimited sanitized debugger-runtime context. The runtime block is
 compatibility/transport context, never target evidence; a custom `--prompt` changes only the

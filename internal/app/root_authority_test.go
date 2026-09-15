@@ -163,7 +163,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnou
 		t.Fatal("unknown evaluator silently selected")
 	}
 	diag := &rootAuthorityDiag{}
-	built, err := Build(context.Background(), Config{Workspace: t.TempDir(), UseMock: true, AuthorityEvaluator: "noop", Diagnostics: diag})
+	built, err := buildIsolated(t, context.Background(), Config{Workspace: t.TempDir(), UseMock: true, AuthorityEvaluator: "noop", Diagnostics: diag})
 	if err != nil {
 		t.Fatalf("Build(noop authority evaluator): %v", err)
 	}
@@ -195,7 +195,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario7_PolicyLoadFailureIsFatal(t *testi
 	if err := os.WriteFile(policyPath, []byte(`permit(principal, action, resource);`), 0o600); err != nil {
 		t.Fatalf("write policy: %v", err)
 	}
-	built, err := Build(context.Background(), Config{Workspace: t.TempDir(), UseMock: true, AuthorityEvaluator: "cedar", CedarAuthorityPolicy: policyPath})
+	built, err := buildIsolated(t, context.Background(), Config{Workspace: t.TempDir(), UseMock: true, AuthorityEvaluator: "cedar", CedarAuthorityPolicy: policyPath})
 	if err != nil {
 		t.Fatalf("Build(cedar authority evaluator): %v", err)
 	}

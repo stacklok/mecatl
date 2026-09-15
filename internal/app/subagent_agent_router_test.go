@@ -60,7 +60,7 @@ func TestRoutableDefRoutesToClassifiedModelE2E(t *testing.T) {
 		mu   sync.Mutex
 		reqs []reqRec
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             ws,
 		NoSoul:                true,
 		Model:                 "gpt-5",
@@ -129,7 +129,7 @@ func TestPinnedInheritDefDoesNotRouteE2E(t *testing.T) {
 		mu   sync.Mutex
 		reqs []reqRec
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             ws,
 		NoSoul:                true,
 		Model:                 "gpt-5",
@@ -201,7 +201,7 @@ func TestRoutableDefHallucinatedCategoryFailSoftE2E(t *testing.T) {
 		mu   sync.Mutex
 		reqs []reqRec
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             ws,
 		NoSoul:                true,
 		Model:                 "gpt-5",

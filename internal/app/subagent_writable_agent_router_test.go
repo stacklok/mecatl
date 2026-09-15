@@ -41,7 +41,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 		mu   sync.Mutex
 		reqs []writableRouteReq
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             workspace,
 		NoSoul:                true,
 		Model:                 "gpt-5",

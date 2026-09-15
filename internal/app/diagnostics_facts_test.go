@@ -131,7 +131,7 @@ func TestBuildConfigFactsLogOnceAcrossChildDerivations(t *testing.T) {
 // assertion that actually protects the Build wiring.
 func TestBuildEmitsConfigFactsExactlyOnce(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(),
 		Model:     "mock",
 		UseMock:   true,
@@ -171,7 +171,7 @@ func TestBuildEmitsConfigFactsExactlyOnce(t *testing.T) {
 // the count would become 2 here, and once-per-session/new in production.
 func TestBuildNarratesFamilyFactsExactlyOnceAcrossSessions(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:      t.TempDir(),
 		Model:          "mock",
 		UseMock:        true,

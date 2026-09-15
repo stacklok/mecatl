@@ -120,7 +120,7 @@ func TestApprovalReplayAfterRestartE2E(t *testing.T) {
 			mockllm.TextTurn("done"),
 		)
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestApprovalReplayAfterRestartE2E(t *testing.T) {
 			mockllm.TextTurn("done again"),
 		)
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestApprovalReplayClearedOnCloseSession(t *testing.T) {
 			mockllm.TextTurn("done again"),
 		)
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestApprovalReplayIgnoresNonAllowAlways(t *testing.T) {
 			mockllm.TextTurn("done"),
 		)
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestApprovalReplayIgnoresNonAllowAlways(t *testing.T) {
 			mockllm.TextTurn("done again"),
 		)
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}

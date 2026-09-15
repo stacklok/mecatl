@@ -68,7 +68,7 @@ func testToolhiveRehydrationWithProxyDownE2E(t *testing.T, providerID string) {
 		}
 		return mockllm.New(mockllm.TextTurn("pre-restart-done"))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -97,7 +97,7 @@ func testToolhiveRehydrationWithProxyDownE2E(t *testing.T, providerID string) {
 		}
 		return mockllm.New(mockllm.ErrorTurn(errors.New("connection refused: proxy not running")))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2 (proxy down) must still succeed (register-on-intent): %v", err)
 	}

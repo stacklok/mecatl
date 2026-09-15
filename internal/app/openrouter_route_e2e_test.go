@@ -78,7 +78,7 @@ func TestOpenRouterRouteE2E(t *testing.T) {
 		t.Fatalf("write openrouter config: %v", err)
 	}
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             workspace,
 		NoSoul:                true,
 		ContextWindowOverride: defaultContextWindowTokens,
@@ -192,7 +192,7 @@ func TestOpenRouterRouteE2ECacheHit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace:             workspace,
 		NoSoul:                true,
 		ContextWindowOverride: defaultContextWindowTokens,

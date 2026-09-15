@@ -84,6 +84,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	fixture.mcpClient = fixture.clientWithRoots(roots)
 	built, err := app.Build(ctx, app.Config{
 		Workspace:         t.TempDir(),
+		UserModelDir:      t.TempDir(),
 		StoreDir:          t.TempDir(),
 		MockProvider:      provider,
 		NoSoul:            true,

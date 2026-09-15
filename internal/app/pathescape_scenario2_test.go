@@ -128,7 +128,7 @@ func readEscapeTurns(target string) []mockllm.Turn {
 func TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureYolo, readEscapeTurns(f.target)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureYolo, readEscapeTurns(f.target)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed(t *testing.T) {
 func TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestPathEscapePosture_Scenario2_ReadEscapeAuditParity(t *testing.T) {
 	recorder := &auditRecorder{}
 	cfg := escapeCfg(t, f, PostureYolo, readEscapeTurns(f.target)...)
 	cfg.ToolCallRecorder = recorder
-	built, err := Build(context.Background(), cfg)
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestPathEscapePosture_Scenario2_ReadEscapeAuditParity(t *testing.T) {
 func TestPathEscapePosture_Scenario2_StrictReadUnchanged(t *testing.T) {
 	t.Parallel()
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureStrict, readEscapeTurns(f.target)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestPathEscapePosture_Scenario2_ProcEnvironNotExposed(t *testing.T) {
 		t.Skip("/proc is POSIX-specific")
 	}
 	f := setupEscapeFS(t)
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureYolo, readEscapeTurns("/proc/self/environ")...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureYolo, readEscapeTurns("/proc/self/environ")...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestPathEscapePosture_Scenario2_NestedSymlinkEscapeRejected(t *testing.T) {
 	}
 	linkTarget := filepath.Join(f.outside, "link", "deep.txt")
 
-	built, err := Build(context.Background(), escapeCfg(t, f, PostureYolo, readEscapeTurns(linkTarget)...))
+	built, err := buildIsolated(t, context.Background(), escapeCfg(t, f, PostureYolo, readEscapeTurns(linkTarget)...))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestPathEscapePosture_Scenario2_RestartRehydratesRelaxedWorkspace(t *testin
 	// build1: run one relaxed read so the session persists a completed state.
 	cfg1 := escapeCfg(t, f, PostureYolo, readEscapeTurns(f.target)...)
 	cfg1.StoreDir = storeDir
-	built1, err := Build(context.Background(), cfg1)
+	built1, err := buildIsolated(t, context.Background(), cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestPathEscapePosture_Scenario2_RestartRehydratesRelaxedWorkspace(t *testin
 	// workspace/policy so the resumed out-of-root Read succeeds.
 	cfg2 := escapeCfg(t, f, PostureYolo, readEscapeTurns(f.target)...)
 	cfg2.StoreDir = storeDir
-	built2, err := Build(context.Background(), cfg2)
+	built2, err := buildIsolated(t, context.Background(), cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}

@@ -49,7 +49,7 @@ func TestStorageManagementAuthorityIsExplicit(t *testing.T) {
 
 func TestBuildWiresStorageManagementAuthorityAndSingleWriter(t *testing.T) {
 	manager := &session.Principal{Issuer: "https://idp.example", Subject: "storage-admin", GrantType: session.GrantTypeUser}
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:                   t.TempDir(),
 		Model:                       "mock",
 		UseMock:                     true,

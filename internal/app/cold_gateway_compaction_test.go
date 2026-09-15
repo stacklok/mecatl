@@ -250,7 +250,7 @@ func coldGatewayEventFacts(events []session.Event) (compactions int, archivedMes
 func primeColdGatewaySession(t *testing.T, fixture *coldGatewayModelServer, storeDir, workspace, memoryDir string) session.SessionID {
 	t.Helper()
 	capture := newColdGatewayCapture()
-	built, err := Build(context.Background(), coldGatewayConfig(t, fixture, storeDir, workspace, memoryDir, true, capture))
+	built, err := buildIsolated(t, context.Background(), coldGatewayConfig(t, fixture, storeDir, workspace, memoryDir, true, capture))
 	if err != nil {
 		t.Fatalf("warm Build: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 		root := t.TempDir()
 		id := primeColdGatewaySession(t, fixture, root+"/store", root+"/workspace", root+"/memory")
 		capture := newColdGatewayCapture()
-		built, err := Build(ctx, coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture))
+		built, err := buildIsolated(t, ctx, coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture))
 		if err != nil {
 			t.Fatalf("ready restart Build: %v", err)
 		}
@@ -335,7 +335,7 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 			default:
 			}
 		}
-		built, err := Build(ctx, cfg)
+		built, err := buildIsolated(t, ctx, cfg)
 		if err != nil {
 			release()
 			t.Fatalf("cold restart Build: %v", err)
@@ -420,7 +420,7 @@ func TestCatalogBackedEmptyDiscoveryRejectsUncataloguedSelectionWithoutMutation(
 	})}
 	root := t.TempDir()
 	capture := newColdGatewayCapture()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: root + "/workspace", MemoryDir: root + "/memory", StoreDir: root + "/store",
 		NoSoul: true, NoShell: true, PermissionsConventional: true,
 		permConfigEnv: isolatedPermConfigEnv(t), envDetector: fakeEnv(map[string]string{"OPENROUTER_API_KEY": "offline"}),
@@ -473,7 +473,7 @@ func TestColdGatewayDiscoveryFailureRejectsWithoutMutationAndRetries(t *testing.
 			fixture.setResponse(tc.status, tc.body)
 			root := t.TempDir()
 			capture := newColdGatewayCapture()
-			built, err := Build(context.Background(), coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture))
+			built, err := buildIsolated(t, context.Background(), coldGatewayConfig(t, fixture, root+"/store", root+"/workspace", root+"/memory", true, capture))
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}

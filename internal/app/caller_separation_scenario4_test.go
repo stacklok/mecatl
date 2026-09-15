@@ -187,7 +187,7 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 		}
 	}
 
-	preflight, err := Build(ctx, Config{
+	preflight, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace, Model: "mock", StoreDir: storeDir, NoSoul: true,
 		MockProvider: mockllm.New(mockllm.TextTurn("done")), LocalStorageManagement: true,
 	})
@@ -216,7 +216,7 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 		SchedulerEnabled:            true,
 		SchedulerTickInterval:       100 * time.Millisecond,
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 		t.Fatalf("ownerless schedule changed after cutover: %+v", legacyScheduleAfter)
 	}
 
-	legacyBuild, err := Build(ctx, Config{
+	legacyBuild, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace, Model: "mock", StoreDir: storeDir, NoSoul: true,
 		MockProvider: mockllm.New(mockllm.TextTurn("done")),
 	})

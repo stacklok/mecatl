@@ -30,7 +30,7 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 		mockllm.ToolCallTurn(session.NewToolCall("use-skill", "Skill", []byte(`{"name":"verify-go-change"}`))),
 		mockllm.TextTurn("Used the learned verification workflow."),
 	)
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Model: "test-model", Workspace: workspace, TrustProject: true,
 		LearningMode: learning.Auto, UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), StoreDir: storeDir,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key"}),

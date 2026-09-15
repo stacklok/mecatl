@@ -131,7 +131,7 @@ func TestBuildResolvesAgentRegistryExactlyOnce(t *testing.T) {
 		driverv1.RegisterAgentSourceServiceServer(gs, srv)
 	})
 
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:      t.TempDir(),
 		Model:          "mock",
 		UseMock:        true,

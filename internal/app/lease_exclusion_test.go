@@ -70,7 +70,7 @@ func TestADR_0294_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testi
 	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("owner"))
 	}
-	owner, err := Build(ctx, cfg1)
+	owner, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestADR_0294_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testi
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("competitor"))
 	}
-	competitor, err := Build(ctx, cfg2)
+	competitor, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 			session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"note.txt","content":"replica one"}`)),
 		))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("replica two"))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("replica one"))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("replica two"))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestCrossProcessDoubleExecutionPreventedByLease(t *testing.T) {
 			session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"note.txt","content":"exactly once"}`)),
 		))
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestCrossProcessDoubleExecutionPreventedByLease(t *testing.T) {
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("done"))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestBuildChildLeaseBlocksRemoteRetention(t *testing.T) {
 	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return &firstThenBlockingProvider{}
 	}
-	built1, err := Build(ctx, cfg1)
+	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestBuildChildLeaseBlocksRemoteRetention(t *testing.T) {
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("idle"))
 	}
-	built2, err := Build(ctx, cfg2)
+	built2, err := buildIsolated(t, ctx, cfg2)
 	if err != nil {
 		t.Fatalf("Build #2: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestCompositionAutoWiresLocalStoreLease(t *testing.T) {
 	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.TextTurn("no lease, no problem"))
 	}
-	built, err := Build(ctx, cfg)
+	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

@@ -207,7 +207,7 @@ func TestEmbeddedConfigBuildAcceptsBrokerAuthority(t *testing.T) {
 	ac.MemoryDir = t.TempDir()
 	ac.UserModelDir = t.TempDir()
 	ac.ToolHiveEnabled = false
-	built, err := app.Build(context.Background(), ac)
+	built, err := buildIsolated(t, context.Background(), ac)
 	if err != nil {
 		t.Fatalf("embedded broker authority Build: %v", err)
 	}

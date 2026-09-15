@@ -210,7 +210,7 @@ func TestMaxTeamTokensPropagates(t *testing.T) {
 // Build seam to prove the flag controls the wiring: Build with EnableTeams:false
 // yields a Service whose CreateTeam is disabled.
 func TestTeamsDisabledWhenNoFactory(t *testing.T) {
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace: t.TempDir(),
 		Model:     "mock",
 		UseMock:   true,
@@ -233,7 +233,7 @@ func TestTeamsDisabledWhenNoFactory(t *testing.T) {
 // factory, forker, and team hooks into server.Config.
 func TestBuildEnableTeamsRunsTeam(t *testing.T) {
 	root := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:   root,
 		Model:       "mock",
 		UseMock:     true,

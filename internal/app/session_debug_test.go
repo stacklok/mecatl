@@ -375,7 +375,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 			)
 			ctx := context.Background()
 			cfg := tc.config(t, provider)
-			built, err := Build(ctx, cfg)
+			built, err := buildIsolated(t, ctx, cfg)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}

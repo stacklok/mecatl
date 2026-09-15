@@ -109,16 +109,20 @@ func (c *Catalog) Available(mode session.PermissionMode) []Tool {
 	})
 }
 
-// sorted returns the tools matching keep, ordered by name.
+// sorted returns the tools matching keep, ordered by registration name.
 func (c *Catalog) sorted(keep func(Tool) bool) []Tool {
+	names := make([]string, 0, len(c.tools))
+	for name := range c.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	out := make([]Tool, 0, len(c.tools))
-	for _, t := range c.tools {
+	for _, name := range names {
+		t := c.tools[name]
 		if keep(t) {
 			out = append(out, t)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Spec().Name < out[j].Spec().Name
-	})
 	return out
 }

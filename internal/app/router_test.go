@@ -425,7 +425,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 		mu     sync.Mutex
 		models []string
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
@@ -492,7 +492,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 		mu     sync.Mutex
 		models []string
 	)
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",
@@ -577,7 +577,7 @@ func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
 
-	built, err := Build(ctx, Config{
+	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
 		Model:     "gpt-5",

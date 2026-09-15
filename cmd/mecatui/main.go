@@ -303,6 +303,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Conv:                   cl,
 		MCP:                    cl,
 		Cmds:                   cl,
+		ServerInfo:             cl,
 		Skills:                 cl,
 		Agents:                 cl,
 		Soul:                   cl,
@@ -383,6 +384,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: initialPromptForConfig(cfg),
 		DebugTarget:   cfg.debugTarget,
+		DebugMCP:      append([]string(nil), cfg.debugMCP...),
 	})
 	applyDebugConfig(cfg, &deps)
 	deps.ServerImpl = mecatuiServerImplementation

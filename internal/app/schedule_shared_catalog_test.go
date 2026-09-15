@@ -44,7 +44,7 @@ func TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools(t *testin
 		mockllm.TextTurn("done"),
 	)
 	workspace := t.TempDir()
-	built, err := Build(context.Background(), Config{
+	built, err := buildIsolated(t, context.Background(), Config{
 		Workspace:    workspace,
 		Model:        "mock",
 		StoreDir:     t.TempDir(), // jsonlstore — backs a ScheduleStore
