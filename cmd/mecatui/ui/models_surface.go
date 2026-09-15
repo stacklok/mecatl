@@ -223,8 +223,8 @@ func (s *modelsState) syncList(width, height int) bool {
 	hadCursor := s.list.cursorID != ""
 	s.list.setGeometry(width, height, 2, boundedWrap)
 	s.list.setItems(modelsBoundedItems(s.catalog, s.filtered))
-	reveal := len(s.filtered) > 0 && (!hadCursor || s.list.cursor != s.cursor)
-	if reveal {
+	reveal := len(s.filtered) > 0 && !hadCursor
+	if !hadCursor {
 		s.list.setCursor(s.cursor)
 	}
 	s.cursor = s.list.cursor
@@ -256,6 +256,7 @@ func (s *modelsState) moveCursor(move boundedMove) {
 	case boundedEnd:
 		s.cursor = clampBounded(len(s.filtered)-1, len(s.filtered))
 	}
+	s.list.setCursor(s.cursor)
 }
 
 func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []boundedListItem {
