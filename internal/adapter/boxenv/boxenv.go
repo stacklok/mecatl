@@ -78,7 +78,7 @@ func NewProvider(cfg Config) (*Provider, error) {
 	if err != nil || parsed.Host == "" || parsed.Scheme == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("%w: invalid BaseURL", ErrInvalidConfig)
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname())) {
 		return nil, fmt.Errorf("%w: BaseURL must use https (http is allowed only for loopback tests)", ErrInvalidConfig)
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
@@ -195,7 +195,7 @@ func (p *Provider) waitReady(ctx context.Context, id string) (boxInfo, error) {
 		case "ready", "idle", "running":
 			return box, nil
 		case "error", "failed", "deleted":
-			return boxInfo{}, fmt.Errorf("Box %s entered state %q", id, box.State)
+			return boxInfo{}, fmt.Errorf("box %s entered state %q", id, box.State)
 		}
 		if time.Now().After(deadline) {
 			return boxInfo{}, fmt.Errorf("timed out waiting for Box %s; last state %q", id, box.State)
