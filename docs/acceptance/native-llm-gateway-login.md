@@ -4,7 +4,7 @@
 **Work classification:** Architectural — native endpoint credential custody and deployment trust boundaries.
 **Decision record:** [ADR 0329](../adr/0329-native-llm-endpoint-gateway-credentials.md)
 **Phase:** Native organizational LLM-gateway authentication
-**Status:** landed, 2026-09-10. Implementation is complete and becomes authoritative when the Implementation PR merges.
+**Status:** superseded, 2026-09-15 by [ADR 0333](../adr/0333-unified-provider-configuration-and-mecatui-provider-commands.md). This historical plan retains the original native-endpoint contract; the shipped provider configuration and `mecatui providers` lifecycle are governed by [unified-provider-configuration-and-mecatui-provider-commands.md](unified-provider-configuration-and-mecatui-provider-commands.md).
 **Delivery:** Split. This changes operator CLI/configuration, provider credential custody, durable secret lifecycle, and the trust boundary between mecatl, ToolHive, and remote callers, so the interface must be approved separately from implementation.
 **Expected tasks:** deferred to orchestration
 

@@ -1,6 +1,6 @@
 # ADR 0333 — Unified provider configuration and Mecatui provider commands
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-12
 - Scope: operator provider configuration, provider credential lifecycle, and Mecatui local provider CLI
 - Supersedes: ADR 0329's `llm.endpoints` configuration façade; the authentication-schema portion of ADR 0238

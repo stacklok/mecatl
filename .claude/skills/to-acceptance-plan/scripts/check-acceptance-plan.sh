@@ -151,11 +151,11 @@ fi
 status_count=$(grep -cE '^\*\*Status:\*\*' "$plan" || true)
 status_line=$(grep -E '^\*\*Status:\*\*' "$plan" || true)
 status=''
-if [[ "$status_count" -eq 1 && "$status_line" =~ ^\*\*Status:\*\*[[:space:]]+(draft|proposed|approved|in-progress|landed)([,.[:space:]]|$) ]]; then
+if [[ "$status_count" -eq 1 && "$status_line" =~ ^\*\*Status:\*\*[[:space:]]+(draft|proposed|approved|in-progress|landed|superseded)([,.[:space:]]|$) ]]; then
   status=${BASH_REMATCH[1]}
   printf 'ok: allowed status declaration\n'
 else
-  note_fail 'expected exactly one valid "**Status:**" prefix (allowed: draft, proposed, approved, in-progress, landed).'
+  note_fail 'expected exactly one valid "**Status:**" prefix (allowed: draft, proposed, approved, in-progress, landed, superseded).'
 fi
 
 # Human decisions are deliberately bounded to one machine-readable section. Do not
