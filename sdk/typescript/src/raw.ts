@@ -17,14 +17,6 @@ import {
 } from "./errors.js";
 import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
-import {
-  cloneServerCompatibility,
-  projectServerCompatibility,
-  type ServerCompatibility,
-  SUPPORTED_API_MAJOR,
-} from "./server.js";
-
-export { SUPPORTED_API_MAJOR } from "./server.js";
 
 /** Canonical routing hint for session-bound Mecatl requests. It grants no authority. @public */
 export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
@@ -85,10 +77,14 @@ function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined 
   return { ...options, headers };
 }
 
+/** The API major implemented by this SDK. @public */
+export const SUPPORTED_API_MAJOR = 1;
+
 const transportKinds = new WeakMap<Transport, TransportKind>();
 const transportOperations = new WeakMap<Transport, TransportOperations>();
 const rawJsonValues = new WeakMap<object, JsonValue>();
 const compatibilityInvalidators = new WeakMap<RawClient, () => void>();
+const compatibilityGenerationInvalidators = new WeakMap<RawClient, (generation: number) => void>();
 const compatibilityReaders = new WeakMap<RawClient, CompatibilityReader>();
 
 interface TransportOperations {
@@ -96,9 +92,9 @@ interface TransportOperations {
 }
 
 interface CompatibilityResult {
+  generation: number;
   header: Headers;
   message: GetCompatibilityInfoResponse;
-  projection: ServerCompatibility;
   trailer: Headers;
 }
 
@@ -143,33 +139,31 @@ export function invalidateRawCompatibility(client: RawClient): void {
   compatibilityInvalidators.get(client)?.();
 }
 
-async function projectedCompatibility(
-  client: RawClient,
-  options: CallOptions | undefined,
-  refresh: boolean,
-): Promise<ServerCompatibility> {
-  const reader = compatibilityReaders.get(client);
-  if (reader === undefined) throw new TypeError("Unknown raw client");
-  const result = await (refresh ? reader.refresh(options) : reader.ordinary(options));
-  options?.onHeader?.(result.header);
-  options?.onTrailer?.(result.trailer);
-  return cloneServerCompatibility(result.projection);
+/** Clears a failed strict projection only while its selected generation is current. */
+export function invalidateRawCompatibilityGeneration(client: RawClient, generation: number): void {
+  const invalidate = compatibilityGenerationInvalidators.get(client);
+  if (invalidate === undefined) throw new TypeError("Unknown raw client");
+  invalidate(generation);
 }
 
-/** Reads the current shared compatibility generation for a high-level operation. */
+/** Reads the current shared raw compatibility generation for namespace projection. */
 export function readRawCompatibility(
   client: RawClient,
   options?: CallOptions,
-): Promise<ServerCompatibility> {
-  return projectedCompatibility(client, options, false);
+): Promise<CompatibilityResult> {
+  const reader = compatibilityReaders.get(client);
+  if (reader === undefined) throw new TypeError("Unknown raw client");
+  return reader.ordinary(options);
 }
 
-/** Starts and installs a fresh compatibility generation for explicit discovery. */
+/** Starts and installs a fresh raw compatibility generation for namespace projection. */
 export function refreshRawCompatibility(
   client: RawClient,
   options?: CallOptions,
-): Promise<ServerCompatibility> {
-  return projectedCompatibility(client, options, true);
+): Promise<CompatibilityResult> {
+  const reader = compatibilityReaders.get(client);
+  if (reader === undefined) throw new TypeError("Unknown raw client");
+  return reader.refresh(options);
 }
 
 /** Transport-neutral, descriptor-driven operations beneath Client/Session/Run. @public */
@@ -245,9 +239,9 @@ export function createRawClient(options: RawClientOptions): RawClient {
         const info = response.message;
         if (info.apiMajor !== SUPPORTED_API_MAJOR) throw incompatible(undefined, transportKind);
         return {
+          generation,
           header: response.header,
           message: info,
-          projection: projectServerCompatibility(info, transportKind),
           trailer: response.trailer,
         };
       })
@@ -278,7 +272,7 @@ export function createRawClient(options: RawClientOptions): RawClient {
   const client: RawClient = {
     async features(callOptions?: CallOptions): Promise<ReadonlySet<string>> {
       const result = await ensureCompatibility(callOptions);
-      return new Set(result.projection.features);
+      return new Set(result.message.features);
     },
     async unary<I extends DescMessage, O extends DescMessage>(
       method: DescMethodUnary<I, O>,
@@ -335,6 +329,9 @@ export function createRawClient(options: RawClientOptions): RawClient {
   };
   compatibilityInvalidators.set(client, () => {
     compatibility = undefined;
+  });
+  compatibilityGenerationInvalidators.set(client, (generation) => {
+    if (compatibility?.generation === generation) compatibility = undefined;
   });
   compatibilityReaders.set(client, {
     ordinary: ensureCompatibility,

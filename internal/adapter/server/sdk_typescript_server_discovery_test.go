@@ -17,6 +17,22 @@ func TestSDKServerDiscovery_Scenario4_ConstantRegistryParity(t *testing.T) {
 	serverDir := filepath.Dir(filename)
 	repoRoot := filepath.Join(serverDir, "..", "..", "..")
 	typescript := readParitySource(t, filepath.Join(repoRoot, "sdk", "typescript", "src", "server.ts"))
+	deploymentSource := readParitySource(t, filepath.Join(repoRoot, "cmd", "mecated", "deploymentid.go"))
+	typescriptDeploymentLimit := singleSourceValue(
+		t,
+		typescript,
+		regexp.MustCompile(`(?m)^const MAX_DEPLOYMENT_ID_BYTES = ([0-9]+);$`),
+		"TypeScript deployment byte limit",
+	)
+	goDeploymentLimit := singleSourceValue(
+		t,
+		deploymentSource,
+		regexp.MustCompile(`(?m)^const maxDeploymentIDLen = ([0-9]+)$`),
+		"Go deployment byte limit",
+	)
+	if typescriptDeploymentLimit != goDeploymentLimit {
+		t.Fatalf("TypeScript deployment byte limit = %s, want Go maxDeploymentIDLen %s", typescriptDeploymentLimit, goDeploymentLimit)
+	}
 
 	typedFeatures := sourceCaptureSet(
 		t,

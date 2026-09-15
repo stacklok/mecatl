@@ -59,6 +59,7 @@ import { createPlanResolution, type PlanApprovalVerdict, type PlanResolution } f
 import {
   createRawClient,
   invalidateRawCompatibility,
+  invalidateRawCompatibilityGeneration,
   type RawClient,
   readRawCompatibility,
   refreshRawCompatibility,
@@ -66,7 +67,12 @@ import {
   sessionAffinityIfRepresentable,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
-import { createServer, type Server, type ServerCompatibility } from "./server.js";
+import {
+  createServer,
+  projectServerCompatibility,
+  type Server,
+  type ServerCompatibility,
+} from "./server.js";
 import {
   projectSessionSnapshot,
   projectSessionTranscript,
@@ -1179,11 +1185,21 @@ class ClientImpl implements Client {
   ): Promise<ServerCompatibility> {
     this.#assertOpen();
     const requestOptions = this.#withClientSignal(options);
-    return this.#observeRequest(() =>
-      refresh
+    return this.#observeRequest(async () => {
+      const result = await (refresh
         ? refreshRawCompatibility(this.#raw, requestOptions)
-        : readRawCompatibility(this.#raw, requestOptions),
-    );
+        : readRawCompatibility(this.#raw, requestOptions));
+      let projection: ServerCompatibility;
+      try {
+        projection = projectServerCompatibility(result.message, this.#transportKind);
+      } catch (error) {
+        invalidateRawCompatibilityGeneration(this.#raw, result.generation);
+        throw error;
+      }
+      requestOptions.onHeader?.(result.header);
+      requestOptions.onTrailer?.(result.trailer);
+      return projection;
+    });
   }
 
   #stream<I extends DescMessage, O extends DescMessage>(

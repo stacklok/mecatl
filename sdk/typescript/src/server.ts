@@ -12,10 +12,8 @@ import {
   HarnessService,
 } from "./gen/mecatl/v1/harness_pb.js";
 import type { RequestOptions } from "./namespaces-core.js";
+import { SUPPORTED_API_MAJOR } from "./raw.js";
 import { projectServerCapabilities, type ServerCapabilities } from "./session-projections.js";
-
-/** The API major implemented by this SDK. @public */
-export const SUPPORTED_API_MAJOR = 1;
 
 // BEGIN MECATL_SERVER_FEATURES
 /** Known server feature identifiers. Unknown identifiers remain observable. @public */
@@ -113,11 +111,13 @@ interface ServerOperations {
   ): Promise<MessageShape<O>>;
 }
 
-function validUnicode(value: string): boolean {
+/** Reports whether a JavaScript string contains only well-formed Unicode scalar values. */
+export function isWellFormedUnicode(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const unit = value.charCodeAt(index);
     if (unit < 0xd800 || unit > 0xdfff) continue;
     if (unit > 0xdbff) return false;
+    if (index + 1 >= value.length) return false;
     const next = value.charCodeAt(index + 1);
     if (next < 0xdc00 || next > 0xdfff) return false;
     index += 1;
@@ -137,11 +137,13 @@ function protocol(message: string, transport: TransportKind): ProtocolError {
   return new ProtocolError(message, { transport });
 }
 
+const MAX_DEPLOYMENT_ID_BYTES = 128;
+
 function deployment(value: string, transport: TransportKind): string | undefined {
   if (value === "") return undefined;
   if (
-    !validUnicode(value) ||
-    utf8Bytes(value) > 128 ||
+    !isWellFormedUnicode(value) ||
+    utf8Bytes(value) > MAX_DEPLOYMENT_ID_BYTES ||
     value.trim() === "" ||
     !printableSingleLine(value)
   ) {
@@ -198,7 +200,7 @@ function cleanEscapedPath(value: string): string {
 function canonicalDiagnosticEndpoint(value: string): boolean {
   if (
     value === "" ||
-    !validUnicode(value) ||
+    !isWellFormedUnicode(value) ||
     utf8Bytes(value) > 2_048 ||
     /[\p{Cc}\p{Cf}]/u.test(value)
   ) {

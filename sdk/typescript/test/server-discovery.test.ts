@@ -41,6 +41,7 @@ import {
 } from "../src/index.js";
 import * as nodeEntry from "../src/node.js";
 import { readRawCompatibility } from "../src/raw.js";
+import { isWellFormedUnicode, projectServerCompatibility } from "../src/server.js";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -236,7 +237,7 @@ describe("SDK server discovery", () => {
 
   it("compatibility detaches nested capabilities from the shared cache", async () => {
     const raw = createRawClient({ transport: new DiscoveryTransport() });
-    const first = await readRawCompatibility(raw);
+    const first = projectServerCompatibility((await readRawCompatibility(raw)).message, "grpc");
     const mutable = first.capabilities as {
       agents: boolean;
       manualDream?: { projectMemory?: { decide: boolean } };
@@ -246,7 +247,7 @@ describe("SDK server discovery", () => {
       mutable.manualDream.projectMemory.decide = false;
     }
 
-    const second = await readRawCompatibility(raw);
+    const second = projectServerCompatibility((await readRawCompatibility(raw)).message, "grpc");
     expect(second.capabilities.agents).toBe(true);
     expect(second.capabilities.manualDream?.projectMemory?.decide).toBe(true);
   });
@@ -438,6 +439,36 @@ describe("SDK server discovery", () => {
       await expect(retryClient.models.list(create(ListModelsRequestSchema))).resolves.toBeDefined();
       expect(compatibilityCalls(currentFailure)).toHaveLength(3);
     }
+
+    const staleMalformedTransport = new DiscoveryTransport();
+    const staleMalformed = new Deferred<Record<string, unknown>>();
+    const newerPending = new Deferred<Record<string, unknown>>();
+    staleMalformedTransport.compatibility.push(
+      async () => validCompatibility,
+      () => staleMalformed.promise,
+      () => newerPending.promise,
+    );
+    const staleMalformedClient = connect({ transport: staleMalformedTransport });
+    const staleMalformedRefresh = staleMalformedClient.server.compatibility();
+    const ordinaryOnStaleGeneration = staleMalformedClient.models.list(
+      create(ListModelsRequestSchema),
+    );
+    const newerRefresh = staleMalformedClient.server.compatibility();
+    const ordinaryOnNewerGeneration = staleMalformedClient.models.list(
+      create(ListModelsRequestSchema),
+    );
+    staleMalformed.resolve({ ...validCompatibility, features: [] });
+    await expect(staleMalformedRefresh).rejects.toBeInstanceOf(ProtocolError);
+    await expect(ordinaryOnStaleGeneration).resolves.toBeDefined();
+    expect(compatibilityCalls(staleMalformedTransport)).toHaveLength(3);
+    expect(
+      staleMalformedTransport.calls.filter(({ method }) => method === "ListModels"),
+    ).toHaveLength(1);
+    newerPending.resolve(validCompatibility);
+    await expect(newerRefresh).resolves.toBeDefined();
+    await expect(ordinaryOnNewerGeneration).resolves.toBeDefined();
+    await expect(staleMalformedClient.server.info()).resolves.toBeDefined();
+    expect(compatibilityCalls(staleMalformedTransport)).toHaveLength(3);
   });
 
   it("ordinary calls remain attached to a newer pending compatibility generation", async () => {
@@ -499,6 +530,36 @@ describe("SDK server discovery", () => {
   });
 
   it("compatibility floor and transport failures stay typed and retryable", async () => {
+    const malformedOptionalProjection = {
+      ...validCompatibility,
+      capabilities: undefined,
+      deployment: "private\nlabel",
+      features: [ServerFeature.ServerInfo, ServerFeature.ServerInfo],
+    };
+    const rawTransport = new DiscoveryTransport();
+    rawTransport.compatibility.push(async () => malformedOptionalProjection);
+    const raw = createRawClient({ transport: rawTransport });
+    await expect(raw.features()).resolves.toEqual(new Set([ServerFeature.ServerInfo]));
+    await expect(
+      raw.unary(HarnessService.method.listModels, create(ListModelsRequestSchema)),
+    ).resolves.toBeDefined();
+    expect(compatibilityCalls(rawTransport)).toHaveLength(1);
+
+    const ordinaryTransport = new DiscoveryTransport();
+    const ordinaryCompatibility = new Deferred<Record<string, unknown>>();
+    ordinaryTransport.compatibility.push(() => ordinaryCompatibility.promise);
+    const ordinaryClient = connect({ transport: ordinaryTransport });
+    const ordinary = ordinaryClient.models.list(create(ListModelsRequestSchema));
+    ordinaryCompatibility.resolve(malformedOptionalProjection);
+    await expect(ordinary).resolves.toBeDefined();
+    expect(compatibilityCalls(ordinaryTransport)).toHaveLength(1);
+    await expect(ordinaryClient.server.info()).rejects.toBeInstanceOf(ProtocolError);
+    expect(ordinaryTransport.calls.some(({ method }) => method === "GetServerInfo")).toBe(false);
+    await expect(
+      ordinaryClient.models.list(create(ListModelsRequestSchema)),
+    ).resolves.toBeDefined();
+    expect(compatibilityCalls(ordinaryTransport)).toHaveLength(2);
+
     const missing = createRouterTransport((router) => router.service(HarnessService, {}));
     await expect(connect({ transport: missing }).server.compatibility()).rejects.toBeInstanceOf(
       IncompatibleServerError,
@@ -879,5 +940,16 @@ describe("SDK server discovery", () => {
       );
       expect(report).not.toMatch(/GetCompatibilityInfoResponse|GetServerInfoResponse/u);
     }
+  });
+
+  it("raw compatibility floor does not depend on the server namespace projection", () => {
+    const rawSource = readFileSync(`${packageRoot}/src/raw.ts`, "utf8");
+    expect(rawSource).not.toMatch(/from "\.\/server\.js"/u);
+    expect(rawSource).toContain("export const SUPPORTED_API_MAJOR = 1;");
+  });
+
+  it("well-formed Unicode rejects a trailing unpaired high surrogate", () => {
+    expect(isWellFormedUnicode("valid \ud83d\ude3a text")).toBe(true);
+    expect(isWellFormedUnicode("trailing\ud800")).toBe(false);
   });
 });
