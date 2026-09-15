@@ -1,242 +1,751 @@
-.sectionInner {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0 2rem;
+/* ─── Homepage — typographically led, restrained motion, brand palette ──── */
+
+.root {
+  /* Brand palette (website/src/css/custom.css tokens). Large areas stay on
+     --mec-bg; surface-1/2 are deliberately NOT used as section fills. */
+  --bg: var(--mec-bg);
+  --bg2: var(--mec-bg);
+  --text: var(--mec-text);
+  --muted: var(--mec-text-muted);
+  --dim: #8a837c; /* warm tertiary, ≥ 5:1 on --bg */
+  --teal: var(--mec-teal-bright);
+  --teal-dim: var(--mec-teal-dim);
+  --copper: var(--mec-copper);
+  --copper-bright: var(--mec-copper-bright);
+  --rope: var(--mec-rope);
+  --cta: var(--rope);
+  --line: var(--mec-border);
+  --line-strong: #4a4540;
+  --ghost-fill: rgba(240, 236, 232, 0.05);
+  --ghost-stroke: rgba(240, 236, 232, 0.11);
+  --display: 'Space Grotesk', system-ui, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pad: clamp(1.25rem, 5vw, 5rem);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* ── type scale ─────────────────────────────────────────────────────────
+     Two display moments (hero h1 and statement). Everything else steps down:
+     section title → item title → lede → body → label. The ≤767px
+     block redefines these at roughly 60–70%. */
+  --fs-display-1: clamp(3.1rem, 5.5vw, 5rem); /* hero h1 */
+  --fs-display-2: clamp(2.25rem, 4.5vw, 4.25rem); /* statement */
+  --fs-section: clamp(2.25rem, 3.4vw, 3.25rem); /* h2 */
+  --fs-item: clamp(1.6rem, 2.4vw, 2.25rem); /* h3, deployment link-words */
+  --fs-lede: 1.2rem;
+  --fs-body: 1.05rem;
+  --fs-label: 0.78rem; /* mono eyebrows and numerals */
+
+  /* vertical rhythm */
+  --sect: clamp(4rem, 7vw, 6.5rem); /* section padding, top and bottom */
+  --gap-head: clamp(2rem, 3vw, 3rem); /* section header → its list */
+  --row: 1.7rem; /* list row padding, top and bottom */
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.sectionTitle {
-  max-width: 850px;
-  margin: 0 auto 0.75rem;
-  padding-bottom: 0 !important;
-  border-bottom: none !important;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(1.85rem, 3vw, 2.45rem);
+/* neutralise global theme styles inside this page */
+.root :where(h1, h2, h3) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font-family: var(--display);
   font-weight: 700;
   letter-spacing: -0.03em;
-  text-align: center;
 }
-
-.sectionSubtitle {
-  margin: 0 auto 3rem;
-  color: var(--mec-text-muted);
-  font-size: 1.05rem;
-  text-align: center;
+.root :where(code) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--mono);
+  font-size: 0.92em;
 }
-
-.ctaPrimary, .ctaSecondary {
-  display: inline-block;
-  border-radius: 6px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 0.95rem;
+.root :where(a) {
+  color: inherit;
   text-decoration: none;
 }
-
-.ctaPrimary {
-  padding: 0.7rem 1.6rem;
-  background: var(--mec-teal);
-  color: #fff;
-  font-weight: 600;
+.root :where(a):hover {
+  color: var(--rope);
+}
+.root a:focus-visible,
+.root button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.root :where(em) {
+  font-style: normal;
+  color: var(--teal);
 }
 
-.ctaPrimary:hover { background: var(--mec-teal-bright); color: #fff; text-decoration: none; }
+/* ─── Reveal (hidden state only once JS stamps data-js on the root) ──────── */
 
-.ctaSecondary {
-  padding: 0.7rem 1.6rem;
-  border: 1px solid var(--mec-border);
-  color: var(--mec-text-muted);
-  font-weight: 500;
+.root[data-js] [data-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  transition:
+    opacity 0.9s var(--ease),
+    transform 0.9s var(--ease);
+  transition-delay: var(--d, 0ms);
+}
+.root[data-js] [data-reveal][data-revealed] {
+  opacity: 1;
+  transform: none;
 }
 
-.ctaSecondary:hover { border-color: var(--mec-teal-dim); color: var(--mec-text); text-decoration: none; }
-
-.hero {
-  padding: 5rem 2rem 4rem;
-  background: var(--mec-bg);
-  border-bottom: 1px solid var(--mec-border);
+/* parallax layers get a compositor layer only while the loop is live */
+.root [data-plx-on] [data-plx] {
+  will-change: transform;
 }
 
-.heroInner, .pronunciationInner {
-  display: flex;
-  align-items: center;
-  gap: 4rem;
-  max-width: 1100px;
+/* The shared Docusaurus navbar and footer are styled in custom.css. */
+
+/* section header blocks are their own parallax reference (see useParallax) */
+.head {
+  position: relative;
+}
+
+/* ─── Section scaffolding ─────────────────────────────────────────────────── */
+
+.section {
+  position: relative;
+  overflow: hidden;
+  overflow: clip;
+  padding: var(--sect) 0;
+  background: var(--bg);
+}
+.alt {
+  background: var(--bg2);
+  border-top: 1px solid var(--line);
+}
+.wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1440px;
   margin: 0 auto;
+  padding: 0 var(--pad);
 }
 
-.heroText { flex: 1; min-width: 0; }
-
-.eyebrow, .projectLabel, .deployLabel {
-  color: var(--mec-copper);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+/* eyebrow: "01 ── Outcomes" in small mono */
+.label {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  font-weight: 400;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-
-.eyebrow { margin-bottom: 1.25rem; }
-
-.heroTitle {
-  margin-bottom: 1.25rem;
-  border-bottom: none !important;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(2.2rem, 4vw, 3.4rem);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1.1;
+.label b {
+  color: var(--copper);
+  font-weight: 500;
+}
+.label b::after {
+  content: '';
+  display: inline-block;
+  width: 1.5rem;
+  height: 1px;
+  margin-left: 0.75rem;
+  vertical-align: middle;
+  background: var(--line-strong);
 }
 
+/* section title — a clear step below display */
+.title {
+  margin: 1rem 0 0;
+  font-size: var(--fs-section);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.lede {
+  max-width: 34em;
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: var(--fs-lede);
+  line-height: 1.55;
+}
+/* list rows shared by Outcomes and Capabilities: the original expressive icon,
+   item title, and body — aligned on the title baseline */
+.itemIcon {
+  color: var(--copper);
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.itemTitle {
+  font-size: var(--fs-item);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.itemBody {
+  max-width: 34em;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+.itemBody code {
+  color: var(--text);
+}
+
+/* ghost words — far back, absolutely positioned and clipped by their section
+   so they never add height; sized to read as texture, not as headlines */
+.ghost {
+  position: absolute;
+  z-index: 0;
+  color: transparent;
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.05em;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  -webkit-text-stroke: 1px var(--ghost-stroke);
+}
+
+/* ─── 01 Hero ─────────────────────────────────────────────────────────────── */
+
+/* The hero keeps the copy and its existing calls to action together. */
+.hero {
+  --mascot-w: clamp(260px, 28vw, 420px);
+  padding: clamp(3.5rem, 6vw, 5rem) 0;
+}
+.h1 {
+  max-width: 10.5em;
+  font-size: var(--fs-display-1);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+}
 .heroTitleLink {
-  color: var(--mec-teal-bright);
+  color: var(--teal);
   text-decoration: underline;
   text-decoration-thickness: 0.08em;
   text-underline-offset: 0.12em;
 }
-
-.heroTitleLink:hover { color: var(--mec-teal-bright); }
-
-.heroTitleLink:focus-visible {
-  outline: 2px solid var(--mec-teal-bright);
-  outline-offset: 0.12em;
+.heroTitleLink:hover {
+  color: var(--teal);
 }
-
-.heroSubtitle {
-  max-width: 560px;
-  margin-bottom: 2rem;
-  color: var(--mec-text-muted);
-  font-size: 1.1rem;
-  line-height: 1.7;
+.heroBody {
+  align-self: center;
+  max-width: 62rem;
 }
-
-.heroCtas { display: flex; flex-wrap: wrap; gap: 1rem; }
-.heroMascot { flex-shrink: 0; width: 360px; }
-.mascotImg { width: 100%; height: auto; border-radius: 24px; }
-
-.statement, .outcomes, .features, .deploySection, .stacklok, .pronunciation { border-bottom: 1px solid var(--mec-border); }
-.statement { padding: 3.5rem 0; background: var(--mec-surface); }
-
-.statement p {
-  max-width: 900px;
-  margin: 0 auto;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(1.6rem, 3vw, 2.25rem);
+.sub {
+  max-width: 36em;
+  margin: clamp(1.5rem, 3vh, 2rem) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-lede);
+  line-height: 1.55;
+}
+.heroCtas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin-top: clamp(2rem, 4vh, 3rem);
+}
+.ctaPrimary,
+.ctaSecondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.7rem 1.4rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  font-family: var(--display);
+  font-size: 0.95rem;
   font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1.2;
-  text-align: center;
+  transition:
+    background-color 0.25s var(--ease),
+    border-color 0.25s var(--ease),
+    color 0.25s var(--ease);
+}
+.ctaPrimary {
+  border-color: var(--mec-teal);
+  background: var(--mec-teal);
+  color: var(--mec-bg);
+}
+.ctaPrimary:hover {
+  border-color: var(--mec-teal-bright);
+  background: var(--mec-teal-bright);
+  color: var(--mec-bg);
+}
+.ctaSecondary {
+  color: var(--text);
+}
+.ctaSecondary:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+/* Below 1024px Mecatito is a cameo pinned to the section's bottom-right corner:
+   .wrap is the positioning box, so the negative bottom reaches through the
+   section's bottom padding to its edge. */
+.mascot {
+  position: absolute;
+  z-index: 0;
+  right: var(--pad);
+  bottom: 0;
+  display: block;
+  width: clamp(120px, 14vw, 190px);
+  height: auto;
+}
+.mascot img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
-.outcomes, .features, .deploySection, .stacklok { padding: 5rem 0; }
-.outcomes, .features, .stacklok { background: var(--mec-bg); }
-.deploySection { background: var(--mec-surface); }
-
-.featureGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 1.25rem;
-  margin-top: 3rem;
+/* On wide screens the copy and Mecatito share a simple two-column composition. */
+@media (min-width: 1024px) {
+  .heroWrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--mascot-w);
+    align-items: center;
+    column-gap: clamp(2.5rem, 3vw, 3.5rem);
+  }
+  .mascot {
+    position: static;
+    justify-self: end;
+    width: var(--mascot-w);
+    margin: 0;
+  }
 }
 
-.capabilityGrid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
+/* ─── 02 Statement ────────────────────────────────────────────────────────── */
 
-.featureCard {
-  padding: 1.75rem;
-  border: 1px solid var(--mec-border);
-  border-radius: 10px;
-  background: var(--mec-surface);
-}
-
-.outcomes .featureCard { background: var(--mec-surface-2); }
-.featureCard:hover { border-color: var(--mec-teal-dim); }
-.featureIcon { margin-bottom: 0.75rem; color: var(--mec-teal); font-size: 1.5rem; }
-
-.featureTitle {
-  margin-bottom: 0.5rem;
-  border: none;
-  color: var(--mec-text) !important;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.featureBody, .deployDesc { margin: 0; color: var(--mec-text-muted); font-size: 0.9rem; line-height: 1.65; }
-
-.featureBody code, .deployDesc code {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-size: 0.92em;
-}
-
-.pronunciation { padding: 3.5rem 2rem; background: var(--mec-surface); }
-
-.pronunciationInner { justify-content: center; gap: 2rem; max-width: 760px; }
-
-.pronunciation img { width: 150px; height: auto; border-radius: 16px; }
-
-.pronunciation h2 {
+.statementText {
   margin: 0;
-  border: none;
-  color: var(--mec-text);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(1.5rem, 3vw, 2.2rem);
-  letter-spacing: -0.03em;
-  line-height: 1.2;
+  font-family: var(--display);
+  font-size: var(--fs-display-2);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
 }
 
-.deployGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 3rem; }
+/* ─── 03 Outcomes ─────────────────────────────────────────────────────────── */
 
-.deployCard {
+.olist {
+  margin: var(--gap-head) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.oitem {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: 0 1rem;
+  align-items: baseline;
+  padding: var(--row) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ─── 04 Pronunciation ────────────────────────────────────────────────────── */
+
+/* A feature moment: the band is a flex column tall enough for Mecatito to peek
+   over its bottom edge, with the sentence centred in it. --pup-w is his width;
+   the wrap reserves his column on both sides so the sentence stays centered
+   and cannot overlap him. */
+.pron {
+  --pup-w: clamp(180px, 16vw, 260px);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.5rem;
-  border: 1px solid var(--mec-border);
-  border-radius: 8px;
-  background: var(--mec-bg);
-  text-decoration: none;
+  justify-content: center;
+  min-height: clamp(320px, 26vw, 390px);
+}
+/* filled rather than outlined: legible as texture, still far behind the words */
+.pronGhost {
+  top: calc(50% - 0.45em);
+  right: 0;
+  left: 0;
+  text-align: center;
+  font-size: clamp(4rem, 12vw, 12rem);
+  letter-spacing: -0.06em;
+  color: rgba(42, 157, 143, 0.16);
+  -webkit-text-stroke: 1px rgba(42, 157, 143, 0.34);
+}
+.pronWrap {
+  /* 3rem gives the tilted mascot breathing room. */
+  padding-inline: calc(var(--pad) + var(--pup-w) + 3rem);
+}
+/* a soft vignette behind the sentence keeps it crisp wherever the ghost drifts */
+.pronWrap::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -40% 15%;
+  background: radial-gradient(ellipse at center, rgba(20, 18, 16, 0.92) 0%, rgba(20, 18, 16, 0) 70%);
+  pointer-events: none;
+}
+.pronText {
+  max-width: 24em;
+  margin: 0 auto;
+  font-family: var(--display);
+  font-size: var(--fs-section);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  text-align: center;
+  text-wrap: balance;
+}
+/* Mecatito peeks over the band's bottom edge and faces the sentence. */
+.pup {
+  position: absolute;
+  z-index: 2;
+  right: var(--pad);
+  bottom: calc(var(--pup-w) * -0.28);
+  width: var(--pup-w);
+  pointer-events: none;
+}
+/* the moving part; .pup itself never moves so the reveal observer can see it */
+.pupMotion {
+  position: relative;
+}
+.pupFlip {
+  transform: scaleX(-1) rotate(8deg);
+  transform-origin: 50% 85%;
+}
+.pupFlip img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+/* motion only once JS has stamped data-js (SSR / no-JS: static and visible).
+   Hidden state: fully below the band's edge; revealed: one spring hop up, then
+   a gentle bob. */
+.root[data-js] .pup[data-reveal] {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+.root[data-js] .pup[data-reveal] .pupMotion {
+  transform: translate3d(0, 110%, 0);
+}
+.root[data-js] .pup[data-reveal][data-revealed] .pupMotion {
+  animation:
+    pupHop 0.9s cubic-bezier(0.22, 1, 0.36, 1) both,
+    pupBob 3s ease-in-out 0.9s infinite;
+}
+@keyframes pupHop {
+  0% {
+    transform: translate3d(0, 110%, 0);
+  }
+  62% {
+    transform: translate3d(0, -5%, 0);
+  }
+  82% {
+    transform: translate3d(0, 2%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes pupBob {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  35% {
+    transform: translate3d(0, -5px, 0);
+  }
+  75% {
+    transform: translate3d(0, 4px, 0);
+  }
+}
+/* 768–1023px: a smaller pup and a fluid sentence size so three balanced lines
+   still fit between his column and its mirror on the left */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .pron {
+    --pup-w: clamp(150px, 16vw, 180px);
+  }
+  .pronText {
+    font-size: clamp(1.7rem, 3.6vw, 2.25rem);
+  }
 }
 
-.deployCard:hover { border-color: var(--mec-teal-dim); background: var(--mec-surface-2); text-decoration: none; }
+/* ─── 05 Capabilities — six title + body pairs in two columns ─────────────── */
 
-.projectCallout {
+.capList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 4rem;
+  margin: var(--gap-head) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.capItem {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: 0 1rem;
+  align-items: baseline;
+  padding: var(--row) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ─── 06 Deployment — an index: word · description ……… arrow ─────────────── */
+
+.deployList {
+  margin: var(--gap-head) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.deployItem {
+  border-bottom: 1px solid var(--line);
+}
+.deployLink {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+  grid-template-areas: 'word desc';
+  gap: 0.5rem 3rem;
+  align-items: baseline;
+  padding: calc(var(--row) - 0.15rem) 0;
+}
+.deployWord {
+  grid-area: word;
+  position: relative;
+  justify-self: start;
+  font-family: var(--display);
+  font-size: var(--fs-item);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  transition: transform 0.5s var(--ease);
+}
+.deployWord::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -0.1em;
+  left: 0;
+  height: 1px;
+  background: var(--teal);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.5s var(--ease);
+}
+.deployDesc {
+  grid-area: desc;
+  max-width: 34em;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+.deployDesc code {
+  color: var(--text);
+}
+.deployLink:hover .deployWord,
+.deployLink:focus-visible .deployWord {
+  transform: translate3d(6px, 0, 0);
+}
+.deployLink:hover .deployWord::after,
+.deployLink:focus-visible .deployWord::after {
+  transform: scaleX(1);
+}
+
+/* ─── 07 Stacklok ─────────────────────────────────────────────────────────── */
+
+.quote {
+  max-width: 24em;
+  text-wrap: balance; /* three even lines, no orphaned "stacks." */
+}
+.featured {
+  margin-top: clamp(2.5rem, 4vw, 4rem);
+  padding-top: var(--row);
+  border-top: 1px solid var(--line);
+}
+.featured .label {
+  margin-bottom: 1rem;
+}
+.featuredRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 1.5rem 4rem;
+  align-items: start;
+}
+.projectName {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 2rem;
-  max-width: 780px;
-  margin: 3rem auto 0;
-  padding: 1.75rem;
-  border: 1px solid var(--mec-border);
-  border-radius: 10px;
-  background: var(--mec-surface);
+  gap: 0.6rem;
+  margin: 0;
+  font-size: var(--fs-item);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.projectName img {
+  display: block;
+  width: 1em; /* tracks --fs-item */
+  height: auto;
+}
+.projectBody {
+  max-width: 34em;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+.featured .ctaPrimary {
+  margin-top: 1.25rem;
+}
+/* ─── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 1023px) {
+  .deployLink {
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
+    gap: 0.5rem 2rem;
+  }
 }
 
-.projectLabel { margin: 0 0 0.5rem; }
-
-.projectCallout h3 { margin: 0 0 0.25rem; border: none; color: var(--mec-text) !important; font-family: 'Space Grotesk', sans-serif; }
-.projectCallout p:not(.projectLabel) { margin: 0; color: var(--mec-text-muted); }
-.projectCallout .ctaPrimary { flex-shrink: 0; white-space: nowrap; }
-.projectContent { display: flex; align-items: flex-start; gap: 0.75rem; }
-.toolHiveLogo { width: 48px; height: auto; }
-
-@media (max-width: 1080px) {
-  .outcomes .featureGrid, .deployGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .capabilityGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 899px) {
+  .capList {
+    grid-template-columns: 1fr;
+  }
+  .featuredRow {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
 }
 
-@media (max-width: 768px) {
-  .heroInner { flex-direction: column-reverse; gap: 2rem; }
-  .heroMascot { width: 260px; }
-  .pronunciationInner, .projectCallout { flex-direction: column; text-align: center; }
-  .projectContent { justify-content: center; text-align: left; }
-  .sectionInner { padding: 0 1.25rem; }
-  .capabilityGrid { grid-template-columns: 1fr; }
-  .outcomes .featureGrid, .deployGrid { grid-template-columns: 1fr; }
+@media (max-width: 767px) {
+  /* ── mobile scale ───────────────────────────────────────────────────────
+     type at ~60–70% of desktop · sections 3.75rem · heading→list 1.5rem ·
+     list rows 1.25rem · nothing under 0.8rem · tap targets ≥ 44px */
+  .root {
+    --fs-display-1: clamp(2.4rem, 11vw, 3.25rem);
+    --fs-display-2: clamp(2rem, 8vw, 2.4rem);
+    --fs-section: 1.9rem;
+    --fs-item: 1.35rem;
+    --fs-lede: 1rem;
+    --fs-body: 0.95rem;
+    --fs-label: 0.8rem;
+    --sect: 3.75rem;
+    --gap-head: 1.5rem;
+    --row: 1.35rem;
+  }
+  /* section scaffolding */
+  .title {
+    margin-top: 0.9rem;
+  }
+
+  /* 01 hero: content remains primary; Mecatito becomes a small corner cameo. */
+  .hero {
+    padding: 3.75rem 0 7rem;
+  }
+  .heroBody {
+    max-width: none;
+  }
+  .sub {
+    max-width: 34em;
+    margin-top: 1rem;
+    line-height: 1.5;
+  }
+  .mascot {
+    width: 96px;
+  }
+
+  /* 02 statement: flows as one left-aligned paragraph (no orphaned "up") */
+  .statementText {
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+  }
+  /* 03 outcomes + 05 capabilities: tighter icon column */
+  .oitem,
+  .capItem {
+    grid-template-columns: 2rem 1fr;
+    gap: 0 0.75rem;
+  }
+  .itemBody {
+    line-height: 1.55;
+  }
+
+  /* 04 pronunciation: the sentence is centered and Mecatito is a 110px cameo. */
+  .pron {
+    --pup-w: 110px;
+    min-height: 0;
+    padding-bottom: calc(var(--sect) + 4.5rem);
+  }
+  .pronGhost {
+    top: calc(var(--sect) + 0.5rem);
+  }
+  .pronWrap {
+    padding-inline: var(--pad);
+  }
+  .pronWrap::before {
+    inset: -30% 0;
+  }
+  /* 06 deployment: full-width rows with the description beneath the label. */
+  .deployLink {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'word word'
+      'desc desc';
+    gap: 0.35rem 1rem;
+    align-items: center;
+    min-height: 56px;
+    padding: 1rem 0;
+  }
+  .deployDesc {
+    line-height: 1.55;
+  }
+
+  /* 07 stacklok */
+  .quote {
+    max-width: none;
+  }
+  .featured {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+  }
+  .featured .label {
+    margin-bottom: 0.75rem;
+  }
+  .featuredRow {
+    gap: 0.75rem;
+  }
+  .projectName img {
+    width: 24px;
+  }
+  .projectBody {
+    line-height: 1.55;
+  }
+}
+
+/* ─── Reduced motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .root[data-js] [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  /* Mecatito stays in place without the hop or bob. */
+  .pupMotion {
+    animation: none !important;
+  }
+  .root[data-js] .pup[data-reveal] .pupMotion {
+    opacity: 1;
+    transform: none;
+  }
+  .root * {
+    transition-duration: 0.01ms !important;
+  }
 }
