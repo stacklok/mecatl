@@ -6454,7 +6454,7 @@ func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// (envscrub — "Finding B"; gitenv only ever removed GIT_*/PAGER, never secrets),
 	// then layer the git-neutralising env on the secret-free base so a sandboxed
 	// child sees neither the operator's secrets nor an untrusted repo's git hooks.
-	env := internalGitEnvironment()
+	env := gitSafeEnvironment()
 	return newCommandRunnerForRoot(cfg, root, env, "could not build sandboxed member command runner; team-member Shell disabled")
 }
 
@@ -8862,7 +8862,7 @@ func gitSnapshot(workspace, shell string, trustProject bool) string {
 	// buildSandboxedCommandRunner) so a repo-local git config cannot run code, layered
 	// over the secret scrub (envscrub) so this harness-internal git snapshot never
 	// exposes the harness credentials to a repo-local git driver either.
-	env := internalGitEnvironment()
+	env := gitSafeEnvironment()
 	runner, err := osfs.NewCommandRunnerShell(workspace, shellOr(shell), osfs.WithCommandEnvList(env))
 	if err != nil {
 		return ""
@@ -9359,7 +9359,7 @@ func (g gitWorktreeLister) List(ctx context.Context, root string) ([]server.Work
 	if root == "" {
 		return nil, nil
 	}
-	env := internalGitEnvironment()
+	env := gitSafeEnvironment()
 	runner, err := osfs.NewCommandRunnerShell(root, g.shell, osfs.WithCommandEnvList(env))
 	if err != nil {
 		return nil, nil // no shell — fail-soft

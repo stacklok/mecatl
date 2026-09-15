@@ -130,7 +130,7 @@ func TestCommandRunnerEnvironment_Scenario3_HardenedChildrenStayScrubbed(t *test
 
 func TestCommandRunnerEnvironment_Scenario3_InternalGitStaysScrubbed(t *testing.T) {
 	t.Setenv("GH_TOKEN", "main-only-secret")
-	env := strings.Join(internalGitEnvironment(), "\n")
+	env := strings.Join(gitSafeEnvironment(), "\n")
 	if strings.Contains(env, "main-only-secret") || !strings.Contains(env, "GIT_CONFIG_NOSYSTEM=1") {
 		t.Fatalf("internal Git environment lost hardening: %s", env)
 	}

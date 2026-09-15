@@ -58,7 +58,7 @@ func mainCommandEnvironment(cfg Config) []string {
 	return envscrub.ScrubWithInherited(os.Environ(), cfg.commandEnvironmentInherit, cfg.commandEnvironmentReserved)
 }
 
-func internalGitEnvironment() []string {
+func gitSafeEnvironment() []string {
 	return gitenv.Scrub(envscrub.Scrub(os.Environ()))
 }
 
