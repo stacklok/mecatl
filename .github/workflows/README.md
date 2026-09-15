@@ -31,9 +31,9 @@ including post-release verification, is in the
 
 `VERSION` is the source of truth for the release version. The release PR propagates it
 to `deploy/helm/mecak8s/Chart.yaml` and `deploy/helm/mecak8s/values.yaml`, and both
-release workflows verify the synchronized values and exact three-file diff. Mecatequi's
-sibling actions use `$/` self-repository refs, which resolve to this repository at the
-ref the workflow is running from, so they need no version pin.
+release workflows verify the synchronized values without relying on a fixed list of files.
+Mecatequi's sibling actions use `$/` self-repository refs, which resolve to this repository
+at the ref the workflow is running from, so they need no version pin.
 
 ## Cutting a TypeScript SDK release
 

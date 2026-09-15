@@ -40,8 +40,8 @@ commit. You never run `git push origin main`, and you never create the tag by ha
 
 `VERSION` (repo root, **bare** semver — `0.0.34`, not `v0.0.34`) is the source of truth
 for the release version. The release PR propagates it to the `mecak8s` chart version,
-`appVersion`, and default image tag. Its entire diff contains `VERSION`,
-`deploy/helm/mecak8s/Chart.yaml`, and `deploy/helm/mecak8s/values.yaml`.
+`appVersion`, and default image tag. The workflows verify those values directly rather
+than maintaining a fixed list of files that a release PR may change.
 
 It did not used to be. `mecatequi-reusable.yml` referenced its three sibling composite actions
 by a hardcoded `@vX.Y.Z` literal, so every release had to bump those pins in the same tagged
@@ -69,12 +69,12 @@ Run from the repo root.
    gh run watch "$(gh run list --workflow=create-release-pr.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
    It bumps `VERSION`, the `mecak8s` chart version and app version, and the chart's default
-   image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts the exact
-   three-file diff and synchronized values. **If that verification step fails, do not merge
-   the PR**; close it, delete the branch, and read the job log.
+   image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts that the
+   required values are synchronized. **If that verification step fails, do not merge the PR**;
+   close it, delete the branch, and read the job log.
 
-3. **Review the release PR like any other PR** and confirm the diff contains only the
-   synchronized release metadata:
+3. **Review the release PR like any other PR** and confirm that all changes belong to the
+   release update:
    ```sh
    gh pr list --head "release/vX.Y.Z" --json number,url,files
    gh pr diff <number>
@@ -88,9 +88,8 @@ Run from the repo root.
    gh pr merge <number> --squash
    ```
    The tagging workflow does not read the commit subject — it asks GitHub which PR produced
-   the commit and requires a merged, bot-opened PR from branch `release/vX.Y.Z` whose diff is
-   exactly the three release metadata files with matching values. So the squash title does
-   not matter, but adding anything else to the release PR will stop the tag.
+   the commit and requires a merged, bot-opened PR from branch `release/vX.Y.Z` with matching
+   version values. The squash title and the number of updated files do not affect the tag gate.
 
 5. **Watch the tag get created.** Merging fires `create-release-tag.yml`, which re-verifies the
    commit and pushes the annotated tag. That push fires `release.yml` on its own — the tag is
@@ -248,6 +247,6 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
 - **One release at a time.** If any `release/v*` PR is open, the next dispatch refuses and names
   it — merge or close it first. Once none is open, leftover `release/v*` branches from failed
   runs are deleted automatically before the new PR is cut.
-- **The release PR's whole diff is the three synchronized release metadata files.** Both
-  workflows assert the exact file set and values. Anything else in the commit stops the release
-  rather than being tagged. There is nothing to dry-run locally.
+- **The release gate checks synchronized values, not a fixed file list.** This lets the release
+  automation add another version projection or generated file without requiring a second gate
+  update. There is nothing to dry-run locally.

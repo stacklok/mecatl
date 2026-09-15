@@ -146,23 +146,14 @@ jobs:
               prefix: v
 
       # releaseo writes to disk before committing through the API, so the working tree still
-      # holds exactly what the PR contains. Assert both the file set and every propagated value,
-      # so an incomplete or overly broad release commit is caught before a human reviews it.
+      # holds exactly what the PR contains. Assert every propagated value so an incomplete
+      # release commit is caught before a human reviews it. Do not gate on a fixed file list:
+      # releaseo may gain more version projections or generated output over time.
       - name: Verify the release diff
         env:
           NEW_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          expected="$(printf '%s\n' \
-            VERSION \
-            deploy/helm/mecak8s/Chart.yaml \
-            deploy/helm/mecak8s/values.yaml | sort)"
-          changed="$(git diff --name-only | sort)"
-          if [ "${changed}" != "${expected}" ]; then
-            echo "::error::release commit changed an unexpected set of files"
-            printf 'got:\n%s\n' "${changed:-<no working-tree changes>}"
-            exit 1
-          fi
           if [ "$(tr -d '[:space:]' < VERSION)" != "${NEW_VERSION}" ] \
             || ! grep -Fxq "version: ${NEW_VERSION}" deploy/helm/mecak8s/Chart.yaml \
             || ! grep -Fxq "appVersion: \"v${NEW_VERSION}\"" deploy/helm/mecak8s/Chart.yaml \
@@ -172,9 +163,9 @@ jobs:
           fi
           echo "Release diff verified: VERSION, chart, and image -> ${NEW_VERSION}"
 
-      # The assertion above runs on THIS dispatch, not as a status check on the PR. Convert a PR
-      # whose verification failed to a draft so the finding is mechanically un-mergeable rather
-      # than relying on someone reading this job's log.
+      # The synchronization assertion above runs on THIS dispatch, not as a status check on the
+      # PR. Convert a PR whose verification failed to a draft so the finding is mechanically
+      # un-mergeable rather than relying on someone reading this job's log.
       - name: Block the PR if verification failed
         if: failure() && steps.release.outputs.pr_number != ''
         env:

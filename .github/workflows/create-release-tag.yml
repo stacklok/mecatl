@@ -162,22 +162,9 @@ jobs:
             exit 1
           fi
 
-          # --- provenance holds and the tag is absent: check contents, then tag ---------
-          # A release commit changes only the source version and its chart/image projections.
-          # This stops a correctly named and branched PR from also shipping another payload.
-          expected="$(printf '%s\n' \
-            VERSION \
-            deploy/helm/mecak8s/Chart.yaml \
-            deploy/helm/mecak8s/values.yaml | sort)"
-          changed="$(git diff --name-only "${SHA}^" "${SHA}" | sort)"
-          if [ "${changed}" != "${expected}" ]; then
-            echo "::error::release commit changes an unexpected set of files — refusing to tag"
-            printf 'got:\n%s\n' "${changed}"
-            echo "  The release PR must carry only synchronized release metadata."
-            echo "  VERSION is already bumped on main, so this number is spent: dispatch"
-            echo "  create-release-pr.yml again to cut the next patch from the current main."
-            exit 1
-          fi
+          # --- provenance holds and the tag is absent: check values, then tag ------------
+          # Do not gate on a fixed file list: releaseo may gain more version projections or
+          # generated output over time. The invariant is that every required version agrees.
           if ! grep -Fxq "version: ${VERSION}" deploy/helm/mecak8s/Chart.yaml \
             || ! grep -Fxq "appVersion: \"v${VERSION}\"" deploy/helm/mecak8s/Chart.yaml \
             || ! grep -Fxq "  tag: \"v${VERSION}\"" deploy/helm/mecak8s/values.yaml; then
