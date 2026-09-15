@@ -39,8 +39,23 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AllAgentsSubviewsFitOfferedGeometr
 			t.Run(fmt.Sprintf("%s/%dx%d", tc.name, size.width, size.height), func(t *testing.T) {
 				out := renderAgentsOverlay(th, tc.tab, tc.sub, tc.par, tc.team, team, fleet, groups, hk, size.width, size.height, size.height)
 				assertRenderedFits(t, out, size.width, size.height)
-				if size.height < 24 && strings.Contains(stripANSIstr(out), "select") {
-					t.Fatalf("compact agents view exposed navigation beyond Escape:\n%s", stripANSIstr(out))
+				plain := stripANSIstr(out)
+				if size.height < 24 {
+					if !strings.Contains(plain, "▶") || strings.Contains(plain, "select") || strings.Contains(plain, "vp short") {
+						t.Fatalf("compact agents view lost fallback identity or exposed navigation:\n%s", plain)
+					}
+				} else if strings.Contains(plain, "vp short") || !strings.Contains(plain, "▸") {
+					t.Fatalf("normal agents view used fallback or lost active-tab identity:\n%s", plain)
+				} else if size.width >= 160 {
+					want := map[string]string{
+						"subagent roster": "goal-08", "subagent focus": "trace-00-00",
+						"parallel roster": "join-08", "parallel group": "branch-3",
+						"team roster": "member-08", "team focus": "trace-member-00-00",
+						"team tasks": "task-00", "team findings": "finding-00",
+					}[tc.name]
+					if !strings.Contains(plain, want) {
+						t.Fatalf("normal agents view lost expected %q content:\n%s", want, plain)
+					}
 				}
 			})
 		}
@@ -70,7 +85,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 		})
 	}
 	for _, view := range []teamView{teamTasks, teamFindings} {
-		st := teamState{view: view, scroll: 999}
+		st := teamState{view: view, detail: boundedViewport{offset: 999}}
 		out := renderTeamsTab(th, st, team, hk, 42, 14)
 		if plain := stripANSIstr(out); !strings.Contains(plain, "of 10") || !strings.Contains(plain, "09") {
 			t.Fatalf("bounded team detail lacks final content/overflow for view %d:\n%s", view, plain)
@@ -84,8 +99,31 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 			s := boundedScenarioModelsState(t, 20)
 			out, _ := s.Render(size.width, size.height)
 			assertRenderedFits(t, out, size.width, size.height)
+			plain := stripANSIstr(out)
+			if size.width >= 32 && size.height >= 12 && (!strings.Contains(plain, "Models") || !strings.Contains(plain, "provider")) {
+				t.Fatalf("normal Models geometry lost surface or row identity:\n%s", plain)
+			}
+			if size.width <= 1 && plain == "" {
+				t.Fatal("tiny Models geometry lost its bounded surface identity")
+			}
 		})
 	}
+
+	t.Run("Page Down uses wrapped item geometry", func(t *testing.T) {
+		s := boundedScenarioModelsState(t, 3)
+		s.filtered[0].DisplayName = strings.Repeat("oversized ", 20)
+		s.catalog.models = s.filtered
+		fixed := modelsPanelFixedRows(*s, "", s.deps.marks)
+		_, _ = s.Render(24, fixed+3)
+		s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		if s.cursor != 0 || s.list.cursorLine == 0 {
+			t.Fatalf("Page Down skipped wrapped item segment: cursor=%d line=%d", s.cursor, s.list.cursorLine)
+		}
+		s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
+		if s.cursor != 0 || s.list.cursorLine != 0 {
+			t.Fatalf("Page Up did not return through wrapped item: cursor=%d line=%d", s.cursor, s.list.cursorLine)
+		}
+	})
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(t *testing.T) {
@@ -141,13 +179,23 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 	for _, mode := range []string{"subagent-roster", "subagent-focus", "parallel-roster", "parallel-group", "team-roster", "team-focus", "team-tasks", "team-findings"} {
 		t.Run(mode, func(t *testing.T) {
 			m := boundedScenarioAgentsModel(t, mode)
+			m.vp.SetContent(strings.Repeat("hidden conversation\n", 80))
+			m.vp.SetYOffset(7)
 			beforeCursor := []int{m.subagents.cursor, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor}
-			before := stripANSIstr(m.View().Content)
+			for range 200 {
+				mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+				m = mm.(Model)
+			}
+			if got := agentsScenarioOffset(m, mode); got != 0 {
+				t.Fatalf("wheel-up boundary offset = %d, want 0", got)
+			}
 			mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 			m = mm.(Model)
-			after := stripANSIstr(m.View().Content)
-			if before == after {
-				t.Fatalf("wheel did not move visible %s viewport", mode)
+			if got := agentsScenarioOffset(m, mode); got != 1 {
+				t.Fatalf("wheel down moved %s offset to %d, want one physical line", mode, got)
+			}
+			if m.vp.YOffset() != 7 {
+				t.Fatalf("wheel over %s leaked to hidden conversation: %d", mode, m.vp.YOffset())
 			}
 			afterCursor := []int{m.subagents.cursor, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor}
 			for i := range beforeCursor {
@@ -155,7 +203,37 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 					t.Fatalf("wheel moved logical cursor: before=%v after=%v", beforeCursor, afterCursor)
 				}
 			}
+			mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			m = mm.(Model)
+			if got := agentsScenarioOffset(m, mode); got != 0 {
+				t.Fatalf("wheel up did not return %s to top: %d", mode, got)
+			}
+
+			if strings.Contains(mode, "roster") || mode == "parallel-group" {
+				mm, _, _ = m.onAgentsKey(tea.KeyPressMsg{Code: tea.KeyDown})
+				m = mm.(Model)
+				if plain := stripANSIstr(m.View().Content); !strings.Contains(plain, "▶ ") {
+					t.Fatalf("keyboard movement after wheel did not reveal selected %s item:\n%s", mode, plain)
+				}
+			}
 		})
+	}
+}
+
+func agentsScenarioOffset(m Model, mode string) int {
+	switch mode {
+	case "subagent-roster":
+		return m.subagents.roster.viewport.offset
+	case "subagent-focus":
+		return m.subagents.detail.offset
+	case "parallel-roster":
+		return m.parallel.roster.viewport.offset
+	case "parallel-group":
+		return m.parallel.branches.viewport.offset
+	case "team-roster":
+		return m.team.roster.viewport.offset
+	default:
+		return m.team.detail.offset
 	}
 }
 
@@ -167,59 +245,126 @@ func TestMecatuiBoundedScrollCursor_Scenario3_WheelNeverLeaksOrNavigatesFallback
 	before := m.subagents
 	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if m.vp.YOffset() != 5 || m.subagents.cursor != before.cursor {
-		t.Fatalf("compact agents wheel leaked or navigated: vp=%d cursor=%d", m.vp.YOffset(), m.subagents.cursor)
+	if m.vp.YOffset() != 5 || m.subagents.cursor != before.cursor || m.subagents.roster.viewport.offset != before.roster.viewport.offset {
+		t.Fatalf("compact agents wheel leaked or navigated: vp=%d cursor=%d offset=%d", m.vp.YOffset(), m.subagents.cursor, m.subagents.roster.viewport.offset)
 	}
 
-	models := boundedScenarioModelsState(t, 2)
+	m = boundedScenarioAgentsModel(t, "team-tasks")
+	m.height = 30
+	m.vp.SetHeight(1)
+	m.vp.SetContent(strings.Repeat("conversation\n", 40))
+	m.vp.SetYOffset(5)
+	mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if m.vp.YOffset() != 5 || m.team.detail.offset != 0 {
+		t.Fatalf("vp-short agents wheel leaked or navigated: vp=%d offset=%d", m.vp.YOffset(), m.team.detail.offset)
+	}
+
+	models := boundedScenarioModelsState(t, 20)
 	root := resize(newMCPModel(t, aztec(), nil), 80, 30)
 	root.modal = models
 	root.vp.SetContent(strings.Repeat("conversation\n", 40))
 	root.vp.SetYOffset(5)
-	mm, _ = root.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	root = mm.(Model)
-	if got := root.vp.YOffset(); got != 5 {
-		t.Fatalf("models wheel leaked to hidden conversation: offset=%d", got)
+	_, _ = models.Render(40, 12)
+	cursor := models.cursor
+	for range 200 {
+		mm, _ = root.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		root = mm.(Model)
+	}
+	bottom := models.list.viewport.offset
+	if bottom == 0 || models.cursor != cursor || root.vp.YOffset() != 5 {
+		t.Fatalf("Models wheel-down boundary leaked or moved cursor: offset=%d cursor=%d vp=%d", bottom, models.cursor, root.vp.YOffset())
+	}
+	for range 200 {
+		mm, _ = root.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+		root = mm.(Model)
+	}
+	if models.list.viewport.offset != 0 || models.cursor != cursor || root.vp.YOffset() != 5 {
+		t.Fatalf("Models wheel-up boundary leaked or moved cursor: offset=%d cursor=%d vp=%d", models.list.viewport.offset, models.cursor, root.vp.YOffset())
 	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t *testing.T) {
-	s := boundedScenarioModelsState(t, 12)
-	_, regions := s.Render(60, 18)
-	if len(regions) < 2 {
-		t.Fatalf("models rendered %d row hit regions, want at least 2", len(regions))
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.deps.NoAltScreen = false
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	s := modelsSurface(t, m)
+	s.filtered[1].DisplayName = strings.Repeat("wrapped model identity ", 5)
+	m = resize(m, 40, 60)
+	_ = m.View()
+	s = modelsSurface(t, m)
+	var first renderedHitRegion
+	var second []renderedHitRegion
+	for _, region := range m.hits.frame {
+		switch s.hitItems[region.id] {
+		case 0:
+			if first.id == 0 {
+				first = region
+			}
+		case 1:
+			second = append(second, region)
+		}
 	}
-	second := regions[1]
-	_, handled, closed := s.HandleMsg(surfaceHitMsg{ID: second.hit, X: 1, Y: 0})
-	if !handled || closed || s.cursor != 1 || s.intent != nil {
-		t.Fatalf("click should move cursor only: handled=%v closed=%v cursor=%d intent=%T", handled, closed, s.cursor, s.intent)
+	if first.id == 0 || len(second) < 2 {
+		t.Fatalf("real Models frame hits: first=%d wrapped-second=%d, want marker and continuation regions", first.id, len(second))
 	}
-	_, handled, closed = s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !handled || !closed {
-		t.Fatalf("Enter did not retain activation: handled=%v closed=%v", handled, closed)
+	globalX, globalY := m.metrics.localToGlobal(first.rect.x0, first.rect.y0)
+	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
+	m = mm.(Model)
+	if got := modelsSurface(t, m).cursor; got != 0 {
+		t.Fatalf("marker-cell click selected %d, want first model", got)
 	}
-	if _, ok := s.intent.(modelsSelectIntent); !ok {
-		t.Fatalf("Enter intent = %T, want modelsSelectIntent", s.intent)
+	continuation := second[len(second)-1]
+	globalX, globalY = m.metrics.localToGlobal(continuation.rect.x0+1, continuation.rect.y0)
+	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
+	m = mm.(Model)
+	s = modelsSurface(t, m)
+	if s.cursor != 1 || s.intent != nil {
+		t.Fatalf("click should move cursor only: cursor=%d intent=%T", s.cursor, s.intent)
+	}
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.modal != nil || m.phase != phaseConnecting {
+		t.Fatalf("Enter did not retain activation: modal=%T phase=%v", m.modal, m.phase)
 	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario3_StaleModelHitsIgnored(t *testing.T) {
-	s := boundedScenarioModelsState(t, 8)
-	_, first := s.Render(60, 18)
-	if len(first) == 0 {
-		t.Fatal("models rendered no row hits")
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.deps.NoAltScreen = false
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	_ = m.View()
+	if len(m.hits.frame) == 0 {
+		t.Fatal("Models frame rendered no row hits")
 	}
-	stale := first[0].hit
-	_, _ = s.Render(40, 12)
-	s.cursor = 3
-	_, handled, closed := s.HandleMsg(surfaceHitMsg{ID: stale})
-	if !handled || closed || s.cursor != 3 || s.intent != nil {
-		t.Fatalf("stale hit changed models state: handled=%v closed=%v cursor=%d intent=%T", handled, closed, s.cursor, s.intent)
+	stale := m.hits.frame[0].id
+	_ = m.View()
+	s := modelsSurface(t, m)
+	s.cursor = 2
+	s.list.setCursor(2)
+	before := s.cursor
+	mm, _ = m.Update(surfaceHitMsg{ID: stale})
+	m = mm.(Model)
+	if got := modelsSurface(t, m).cursor; got != before {
+		t.Fatalf("old-frame hit changed cursor: got %d want %d", got, before)
 	}
-	s.Close()
-	_, handled, closed = s.HandleMsg(surfaceHitMsg{ID: stale})
-	if handled || closed || s.cursor != 3 || s.intent != nil {
-		t.Fatalf("closed-surface hit changed state: handled=%v closed=%v cursor=%d intent=%T", handled, closed, s.cursor, s.intent)
+
+	// Chrome, trailing blank space, and out-of-bounds coordinates all miss through
+	// the same frame registry and remain owned by the open Models surface.
+	for _, point := range [][2]int{{0, 0}, {m.width - 1, m.metrics.contentOrigin.y}, {-1, -1}} {
+		mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: point[0], Y: point[1]})
+		m = mm.(Model)
+		if got := modelsSurface(t, m).cursor; got != before {
+			t.Fatalf("miss at %v changed cursor: got %d want %d", point, got, before)
+		}
+	}
+	m.closeModal()
+	mm, _ = m.Update(surfaceHitMsg{ID: stale})
+	m = mm.(Model)
+	if m.modal != nil {
+		t.Fatal("closed-surface stale hit reopened Models")
 	}
 }
 

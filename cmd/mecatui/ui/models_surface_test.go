@@ -76,8 +76,8 @@ func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
 
 func TestModelsSwitchDisclosureIsOneWarningLine(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	picker := modelsState{filter: textinput.New()}
-	got := renderModelsPanel(th, modelCatalog{}, picker, client.Capabilities{}, "", defaultHelpKeys(), modelsMinRows)
+	picker := modelsState{filter: textinput.New(), deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: defaultHelpKeys()}}
+	got, _ := picker.Render(100, 30)
 
 	if strings.Count(modelSwitchDisclosure, "\n") != 0 {
 		t.Fatalf("disclosure must be one line, got %q", modelSwitchDisclosure)
@@ -99,8 +99,9 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 		filtered: []client.ModelInfo{model},
 		filter:   textinput.New(),
 	}
+	picker.deps = surfaceDeps{theme: th, keys: defaultKeys(), marks: defaultHelpKeys()}
 	statusLine := providerStatusLine(status)
-	got := renderModelsPanel(th, picker.catalog, picker, client.Capabilities{}, "", defaultHelpKeys(), modelsMinRows)
+	got, _ := picker.Render(100, 30)
 
 	if !strings.Contains(got, th.Style("errorText").Render(statusLine)) {
 		t.Fatalf("provider status must use the error style:\n%s", got)
@@ -109,8 +110,8 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 		t.Fatalf("provider status must not use the muted style:\n%s", got)
 	}
 	plain := stripANSIstr(got)
-	if !strings.Contains(plain, "openai · GPT-5") || !strings.Contains(plain, "\n\n"+statusLine+"\n") {
-		t.Fatalf("provider status must be separated from model rows:\n%s", plain)
+	if !strings.Contains(plain, "openai · GPT-5") || !strings.Contains(plain, statusLine) {
+		t.Fatalf("provider status and model rows must both render through the real surface:\n%s", plain)
 	}
 
 	withoutStatus := picker
@@ -141,7 +142,7 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if s.cursor != 4 {
-		t.Fatalf("cursor after pgdown = %d, want current Render page budget 4", s.cursor)
+	if s.cursor != 3 {
+		t.Fatalf("cursor after pgdown = %d, want first item after the effective 3-row window", s.cursor)
 	}
 }

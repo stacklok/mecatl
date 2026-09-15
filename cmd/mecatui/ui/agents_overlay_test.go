@@ -1564,13 +1564,13 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"subagent empty", "▶ Subagents · esc close", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabSubagents; return m }},
 		{"subagent focus", "▶ subagent nt-kid · esc back", func(m Model) Model {
 			m.team.view, m.agentsTab = teamRoster, tabSubagents
-			m.subagents = subagentState{view: subagentFocus, child: "subagent-kid", scroll: 3}
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-kid", detail: boundedViewport{offset: 3}}
 			m.conv.subagentFleet = []subagentLane{{childID: "subagent-kid"}}
 			return m
 		}},
 		{"subagent missing focus", "▶ subagent t-gone · esc back", func(m Model) Model {
 			m.team.view, m.agentsTab = teamRoster, tabSubagents
-			m.subagents = subagentState{view: subagentFocus, child: "subagent-gone", scroll: 3}
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-gone", detail: boundedViewport{offset: 3}}
 			return m
 		}},
 		{"parallel roster", "▶ Parallel · esc close", func(m Model) Model {
@@ -1600,19 +1600,19 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"team focus", "▶ agent ann · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann", scroll: 3}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann", detail: boundedViewport{offset: 3}}, tabTeams
 			return m
 		}},
 		{"team missing focus", "▶ agent bob · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamFocus, member: "bob", scroll: 3}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "bob", detail: boundedViewport{offset: 3}}, tabTeams
 			return m
 		}},
 		{"team tasks", "▶ Tasks · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamTasks, scroll: 3}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamTasks, detail: boundedViewport{offset: 3}}, tabTeams
 			return m
 		}},
 		{"team tasks empty", "▶ Tasks · esc back", func(m Model) Model {
@@ -1625,7 +1625,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"team findings", "▶ Findings · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamFindings, scroll: 3}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamFindings, detail: boundedViewport{offset: 3}}, tabTeams
 			return m
 		}},
 		{"team findings empty", "▶ Findings · esc back", func(m Model) Model {
@@ -1640,7 +1640,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		for _, tc := range cases {
 			t.Run(fmt.Sprintf("h%d/%s", height, tc.name), func(t *testing.T) {
 				m := tc.setup(resize(newMCPModel(t, aztec(), nil), 32, height))
-				before := []int{m.subagents.cursor, m.subagents.scroll, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.scroll}
+				before := []int{m.subagents.cursor, m.subagents.detail.offset, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.detail.offset}
 				_ = m.View() // exercise the final view assembly before inspecting its overlay region.
 				body := stripANSIstr(m.renderBody())
 				if got := lipgloss.Height(body); got != 1 {
@@ -1654,7 +1654,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 				}
 				mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 				m = mm.(Model)
-				after := []int{m.subagents.cursor, m.subagents.scroll, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.scroll}
+				after := []int{m.subagents.cursor, m.subagents.detail.offset, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.detail.offset}
 				if !slices.Equal(before, after) {
 					t.Fatalf("compact navigation changed state: before=%v after=%v", before, after)
 				}
