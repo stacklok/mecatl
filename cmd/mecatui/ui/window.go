@@ -16,10 +16,10 @@ const (
 	boundedClip
 )
 
-type boundedScrollMove uint8
+type boundedMove uint8
 
 const (
-	boundedLineUp boundedScrollMove = iota
+	boundedLineUp boundedMove = iota
 	boundedLineDown
 	boundedPageUp
 	boundedPageDown
@@ -27,224 +27,344 @@ const (
 	boundedEnd
 )
 
-// boundedScrollItem is one logical selectable item. The control applies the
-// appropriate prefix to every physical line, so a paged segment never loses
-// its cursor marker.
-type boundedScrollItem struct {
-	text, prefix, cursorPrefix string
-}
-
-type boundedRenderedRow struct {
-	text          string
-	item, itemRow int
-}
-
-type boundedScrollView struct {
-	rows         []boundedRenderedRow
-	above, below int
-}
-
-// boundedScrollCursor owns one physical-line window. cursorMode selects logical
-// item movement; without it offset is a physical browsing-line offset. All
-// state is renderer-local and ephemeral.
-type boundedScrollCursor struct {
+type boundedViewport struct {
 	width, height int
+	gutter        int
 	policy        boundedWidthPolicy
-	items         []boundedScrollItem
-	cursorMode    bool
-	cursor        int
-	itemOffset    int
 	offset        int
 }
 
-func (s *boundedScrollCursor) setBounds(width, height int, policy boundedWidthPolicy) {
-	s.width, s.height, s.policy = width, height, policy
-	s.clampState()
+type boundedViewportView struct {
+	rows         []string
+	above, below int
 }
 
-func (s *boundedScrollCursor) setBrowsing(lines []string) {
-	s.items = make([]boundedScrollItem, len(lines))
-	for i, line := range lines {
-		s.items[i].text = line
+func (v *boundedViewport) setGeometry(width, height, gutter int, policy boundedWidthPolicy) {
+	v.width, v.height, v.gutter, v.policy = width, height, max(0, gutter), policy
+	if !v.valid() {
+		v.offset = 0
 	}
-	s.cursorMode = false
-	s.itemOffset = 0
-	s.clampState()
 }
 
-func (s *boundedScrollCursor) setCursorItems(items []boundedScrollItem, cursor int) {
-	s.items = append(s.items[:0], items...)
-	s.cursorMode = true
-	s.cursor = clampBounded(cursor, len(items))
-	s.itemOffset, s.offset = 0, 0
-	s.clampState()
+func (v *boundedViewport) valid() bool {
+	return v.width >= v.gutter+1 && v.height > 0
 }
 
-func (s *boundedScrollCursor) move(move boundedScrollMove) {
-	if s.width <= 0 || s.height <= 0 {
+func (v *boundedViewport) contentWidth() int {
+	if !v.valid() {
+		return 0
+	}
+	return v.width - v.gutter
+}
+
+func (v *boundedViewport) layout(lines []string) []string {
+	if !v.valid() {
+		return nil
+	}
+	var rows []string
+	for _, line := range lines {
+		for _, sourceLine := range strings.Split(line, "\n") {
+			rows = append(rows, boundedWidthLines(sourceLine, v.contentWidth(), v.policy)...)
+		}
+	}
+	return rows
+}
+
+func (v *boundedViewport) window(total int) renderedLineWindowBounds {
+	if !v.valid() {
+		return renderedLineWindowBounds{}
+	}
+	v.offset = clampScroll(v.offset, total, v.height)
+	return renderedLineWindow(v.offset, total, v.height)
+}
+
+func (v *boundedViewport) view(lines []string) boundedViewportView {
+	rows := v.layout(lines)
+	if len(rows) == 0 {
+		v.offset = 0
+		return boundedViewportView{}
+	}
+	window := v.window(len(rows))
+	return boundedViewportView{
+		rows:  append([]string(nil), rows[window.start:window.end]...),
+		above: window.start,
+		below: len(rows) - window.end,
+	}
+}
+
+func (v *boundedViewport) move(move boundedMove, total int) {
+	if !v.valid() {
 		return
 	}
-	layout := s.layout()
-	if s.cursorMode {
-		s.moveCursor(move, layout)
-	} else {
-		s.moveBrowsing(move, len(layout.rows))
-	}
-	s.clampState()
-}
-
-func (s *boundedScrollCursor) moveBrowsing(move boundedScrollMove, total int) {
 	switch move {
 	case boundedLineUp:
-		s.offset--
+		v.offset--
 	case boundedLineDown:
-		s.offset++
+		v.offset++
 	case boundedPageUp:
-		s.offset -= s.height
+		v.offset -= v.height
 	case boundedPageDown:
-		s.offset += s.height
+		v.offset += v.height
 	case boundedTop:
-		s.offset = 0
+		v.offset = 0
 	case boundedEnd:
-		s.offset = maxScrollOffset(total, s.height)
+		v.offset = maxScrollOffset(total, v.height)
 	}
+	v.offset = clampScroll(v.offset, total, v.height)
 }
 
-func (s *boundedScrollCursor) moveCursor(move boundedScrollMove, layout boundedRowLayout) {
-	if len(s.items) == 0 {
-		return
-	}
-	s.cursor = clampBounded(s.cursor, len(s.items))
-	itemHeight := layout.ends[s.cursor] - layout.starts[s.cursor]
-	switch move {
-	case boundedLineUp:
-		s.cursor--
-		s.itemOffset = 0
-	case boundedLineDown:
-		s.cursor++
-		s.itemOffset = 0
-	case boundedTop:
-		s.cursor, s.itemOffset = 0, 0
-	case boundedEnd:
-		s.cursor, s.itemOffset = len(s.items)-1, 0
-	case boundedPageDown:
-		if itemHeight > s.height && s.itemOffset+s.height < itemHeight {
-			s.itemOffset += s.height
-			return
-		}
-		window := s.cursorWindow(layout)
-		for item, start := range layout.starts {
-			if start >= window.end {
-				s.cursor, s.itemOffset = item, 0
-				return
-			}
-		}
-		s.cursor, s.itemOffset = len(s.items)-1, 0
-	case boundedPageUp:
-		if itemHeight > s.height && s.itemOffset > 0 {
-			s.itemOffset = max(0, s.itemOffset-s.height)
-			return
-		}
-		window := s.cursorWindow(layout)
-		target := max(0, window.start-s.height)
-		candidate := 0
-		for item := range layout.starts {
-			if layout.starts[item] >= window.start {
-				break
-			}
-			if layout.ends[item] > target {
-				candidate = item
-				break
-			}
-		}
-		s.cursor = candidate
-		candidateHeight := layout.ends[candidate] - layout.starts[candidate]
-		s.itemOffset = lastBoundedPageOffset(candidateHeight, s.height)
-	}
-	s.cursor = clampBounded(s.cursor, len(s.items))
+type boundedListItem struct {
+	id, text string
 }
 
-func (s *boundedScrollCursor) view() boundedScrollView {
-	if s.width <= 0 || s.height <= 0 {
-		return boundedScrollView{}
-	}
-	s.clampState()
-	layout := s.layout()
-	if len(layout.rows) == 0 {
-		return boundedScrollView{}
-	}
-	start, end := 0, 0
-	if s.cursorMode {
-		window := s.cursorWindow(layout)
-		start, end = window.start, window.end
-	} else {
-		window := renderedLineWindow(s.offset, len(layout.rows), s.height)
-		start, end = window.start, window.end
-	}
-	return boundedScrollView{
-		rows:  append([]boundedRenderedRow(nil), layout.rows[start:end]...),
-		above: start,
-		below: len(layout.rows) - end,
-	}
+type boundedListRow struct {
+	text                   string
+	id                     string
+	itemIndex, itemLine    int
+	selected, cursorMarker bool
+	gutter                 string
 }
 
-type boundedRowLayout struct {
-	rows         []boundedRenderedRow
+type boundedListView struct {
+	rows         []boundedListRow
+	above, below int
+}
+
+type boundedList struct {
+	viewport boundedViewport
+	items    []boundedListItem
+
+	cursor     int
+	cursorID   string
+	cursorLine int
+}
+
+type boundedListLayout struct {
+	rows         []boundedListRow
 	starts, ends []int
 }
 
-type boundedPhysicalWindow struct{ start, end int }
-
-func (s *boundedScrollCursor) cursorWindow(layout boundedRowLayout) boundedPhysicalWindow {
-	if len(layout.rows) == 0 || len(s.items) == 0 {
-		return boundedPhysicalWindow{}
-	}
-	cursor := clampBounded(s.cursor, len(s.items))
-	itemStart, itemEnd := layout.starts[cursor], layout.ends[cursor]
-	if itemEnd-itemStart > s.height {
-		start := itemStart + min(s.itemOffset, itemEnd-itemStart-1)
-		return boundedPhysicalWindow{start: start, end: min(start+s.height, itemEnd)}
-	}
-	start := min(itemStart, max(0, len(layout.rows)-s.height))
-	return boundedPhysicalWindow{start: start, end: min(start+s.height, len(layout.rows))}
+func (l *boundedList) setGeometry(width, height, gutter int, policy boundedWidthPolicy) {
+	l.viewport.setGeometry(width, height, gutter, policy)
+	layout := l.layout()
+	l.clamp(layout)
 }
 
-func (s *boundedScrollCursor) layout() boundedRowLayout {
-	layout := boundedRowLayout{
-		starts: make([]int, len(s.items)),
-		ends:   make([]int, len(s.items)),
+func (l *boundedList) setItems(items []boundedListItem) {
+	oldLayout := l.layout()
+	oldOffset, oldCursor := l.viewport.offset, l.cursor
+	oldCursorID, oldCursorLine := l.cursorID, l.cursorLine
+	topID, topLine, haveTop := "", 0, false
+	if oldOffset >= 0 && oldOffset < len(oldLayout.rows) {
+		topID, topLine, haveTop = oldLayout.rows[oldOffset].id, oldLayout.rows[oldOffset].itemLine, true
 	}
-	for item, entry := range s.items {
-		layout.starts[item] = len(layout.rows)
-		prefix := entry.prefix
-		if s.cursorMode && item == clampBounded(s.cursor, len(s.items)) {
-			prefix = entry.cursorPrefix
+
+	l.items = append(l.items[:0], items...)
+	newLayout := l.layout()
+	if len(l.items) == 0 {
+		l.cursor, l.cursorID, l.cursorLine, l.viewport.offset = 0, "", 0, 0
+		return
+	}
+	if index := l.itemIndex(oldCursorID); index >= 0 {
+		l.cursor, l.cursorID = index, oldCursorID
+		itemHeight := newLayout.ends[index] - newLayout.starts[index]
+		l.cursorLine = min(max(0, oldCursorLine), max(0, itemHeight-1))
+	} else {
+		l.cursor = clampBounded(oldCursor, len(l.items))
+		l.cursorID, l.cursorLine = l.items[l.cursor].id, 0
+	}
+
+	if haveTop {
+		if index := l.itemIndex(topID); index >= 0 {
+			itemHeight := newLayout.ends[index] - newLayout.starts[index]
+			l.viewport.offset = newLayout.starts[index] + min(topLine, max(0, itemHeight-1))
+		} else {
+			l.viewport.offset = oldOffset
 		}
-		prefixWidth := ansi.StringWidth(ansi.Strip(prefix))
-		textWidth := max(0, s.width-prefixWidth)
-		for _, sourceLine := range strings.Split(entry.text, "\n") {
-			physical := boundedWidthLines(sourceLine, textWidth, s.policy)
-			for _, line := range physical {
-				text := prefix + line
-				if ansi.StringWidth(ansi.Strip(text)) > s.width {
-					text = ansi.Truncate(text, s.width, "")
-				}
-				layout.rows = append(layout.rows, boundedRenderedRow{
-					text: text + "\x1b[0m", item: item, itemRow: len(layout.rows) - layout.starts[item],
+	} else {
+		l.viewport.offset = oldOffset
+	}
+	l.clamp(newLayout)
+}
+
+func (l *boundedList) setCursor(index int) {
+	if len(l.items) == 0 {
+		l.cursor, l.cursorID, l.cursorLine = 0, "", 0
+		return
+	}
+	l.cursor = clampBounded(index, len(l.items))
+	l.cursorID, l.cursorLine = l.items[l.cursor].id, 0
+	layout := l.layout()
+	l.revealCursor(layout)
+}
+
+func (l *boundedList) scroll(move boundedMove) {
+	layout := l.layout()
+	l.viewport.move(move, len(layout.rows))
+}
+
+func (l *boundedList) move(move boundedMove) {
+	layout := l.layout()
+	if len(l.items) == 0 || len(layout.rows) == 0 || !l.viewport.valid() {
+		return
+	}
+	l.clamp(layout)
+	itemHeight := layout.ends[l.cursor] - layout.starts[l.cursor]
+	switch move {
+	case boundedLineUp:
+		l.setCursor(l.cursor - 1)
+	case boundedLineDown:
+		l.setCursor(l.cursor + 1)
+	case boundedTop:
+		l.setCursor(0)
+	case boundedEnd:
+		l.setCursor(len(l.items) - 1)
+	case boundedPageDown:
+		l.pageDown(layout, itemHeight)
+	case boundedPageUp:
+		l.pageUp(layout, itemHeight)
+	}
+	l.clamp(l.layout())
+}
+
+func (l *boundedList) pageDown(layout boundedListLayout, itemHeight int) {
+	if itemHeight > l.viewport.height && l.cursorLine+l.viewport.height < itemHeight {
+		l.cursorLine += l.viewport.height
+		l.viewport.offset = layout.starts[l.cursor] + l.cursorLine
+		return
+	}
+	window := l.viewport.window(len(layout.rows))
+	for index, start := range layout.starts {
+		if start >= window.end {
+			l.cursor, l.cursorID, l.cursorLine = index, l.items[index].id, 0
+			l.viewport.offset = start
+			return
+		}
+	}
+	l.setCursor(len(l.items) - 1)
+}
+
+func (l *boundedList) pageUp(layout boundedListLayout, itemHeight int) {
+	if itemHeight > l.viewport.height && l.cursorLine > 0 {
+		l.cursorLine = max(0, l.cursorLine-l.viewport.height)
+		l.viewport.offset = layout.starts[l.cursor] + l.cursorLine
+		return
+	}
+	window := l.viewport.window(len(layout.rows))
+	target := max(0, window.start-l.viewport.height)
+	candidate := 0
+	for index := range layout.starts {
+		if layout.starts[index] > target {
+			break
+		}
+		candidate = index
+		if target < layout.ends[index] {
+			break
+		}
+	}
+	l.cursor, l.cursorID = candidate, l.items[candidate].id
+	candidateHeight := layout.ends[candidate] - layout.starts[candidate]
+	if candidateHeight > l.viewport.height {
+		if layout.ends[candidate] == window.start {
+			l.cursorLine = lastBoundedPageOffset(candidateHeight, l.viewport.height)
+		} else {
+			l.cursorLine = (target - layout.starts[candidate]) / l.viewport.height * l.viewport.height
+		}
+		l.viewport.offset = layout.starts[candidate] + l.cursorLine
+	} else {
+		l.cursorLine = 0
+		l.viewport.offset = target
+	}
+}
+
+func (l *boundedList) view() boundedListView {
+	layout := l.layout()
+	if len(layout.rows) == 0 {
+		l.viewport.offset = 0
+		return boundedListView{}
+	}
+	l.clamp(layout)
+	window := l.viewport.window(len(layout.rows))
+	rows := append([]boundedListRow(nil), layout.rows[window.start:window.end]...)
+	marked := false
+	for index := range rows {
+		rows[index].selected = rows[index].id == l.cursorID
+		if rows[index].selected && !marked {
+			rows[index].cursorMarker = true
+			marked = true
+		}
+	}
+	return boundedListView{rows: rows, above: window.start, below: len(layout.rows) - window.end}
+}
+
+func (l *boundedList) layout() boundedListLayout {
+	layout := boundedListLayout{
+		starts: make([]int, len(l.items)),
+		ends:   make([]int, len(l.items)),
+	}
+	if !l.viewport.valid() {
+		return layout
+	}
+	gutter := strings.Repeat(" ", l.viewport.gutter)
+	for itemIndex, item := range l.items {
+		layout.starts[itemIndex] = len(layout.rows)
+		for _, sourceLine := range strings.Split(item.text, "\n") {
+			for _, text := range boundedWidthLines(sourceLine, l.viewport.contentWidth(), l.viewport.policy) {
+				layout.rows = append(layout.rows, boundedListRow{
+					text: text, id: item.id, itemIndex: itemIndex,
+					itemLine: len(layout.rows) - layout.starts[itemIndex], gutter: gutter,
 				})
 			}
 		}
-		layout.ends[item] = len(layout.rows)
+		layout.ends[itemIndex] = len(layout.rows)
 	}
 	return layout
 }
 
+func (l *boundedList) revealCursor(layout boundedListLayout) {
+	if len(l.items) == 0 || !l.viewport.valid() {
+		return
+	}
+	line := layout.starts[l.cursor] + l.cursorLine
+	if line < l.viewport.offset {
+		l.viewport.offset = line
+	} else if line >= l.viewport.offset+l.viewport.height {
+		l.viewport.offset = line - l.viewport.height + 1
+	}
+	l.viewport.offset = clampScroll(l.viewport.offset, len(layout.rows), l.viewport.height)
+}
+
+func (l *boundedList) clamp(layout boundedListLayout) {
+	if len(l.items) == 0 || len(layout.rows) == 0 || !l.viewport.valid() {
+		l.viewport.offset = 0
+		return
+	}
+	l.cursor = clampBounded(l.cursor, len(l.items))
+	if l.cursorID == "" || l.itemIndex(l.cursorID) < 0 {
+		l.cursorID = l.items[l.cursor].id
+	} else {
+		l.cursor = l.itemIndex(l.cursorID)
+	}
+	itemHeight := layout.ends[l.cursor] - layout.starts[l.cursor]
+	l.cursorLine = min(max(0, l.cursorLine), max(0, itemHeight-1))
+	l.viewport.offset = clampScroll(l.viewport.offset, len(layout.rows), l.viewport.height)
+}
+
+func (l *boundedList) itemIndex(id string) int {
+	for index := range l.items {
+		if l.items[index].id == id {
+			return index
+		}
+	}
+	return -1
+}
+
 func boundedWidthLines(line string, width int, policy boundedWidthPolicy) []string {
 	if width <= 0 {
-		return []string{""}
+		return nil
 	}
 	if policy == boundedClip {
-		return []string{ansi.Cut(line, 0, width)}
+		return []string{ansi.Cut(line, 0, width) + "\x1b[0m"}
 	}
 	wrapped := strings.Split(ansi.Hardwrap(line, width, true), "\n")
 	lines := make([]string, 0, len(wrapped))
@@ -252,17 +372,17 @@ func boundedWidthLines(line string, width int, policy boundedWidthPolicy) []stri
 	for _, row := range wrapped {
 		rowWidth := ansi.StringWidth(row)
 		if rowWidth == 0 {
-			lines = append(lines, row)
+			lines = append(lines, row+"\x1b[0m")
 			continue
 		}
 		segment := ansi.Cut(line, left, left+rowWidth)
 		left += rowWidth
 		if ansi.StringWidth(segment) <= width {
-			lines = append(lines, segment)
+			lines = append(lines, segment+"\x1b[0m")
 		}
 	}
 	if len(lines) == 0 {
-		return []string{""}
+		return []string{"\x1b[0m"}
 	}
 	return lines
 }
@@ -272,21 +392,6 @@ func lastBoundedPageOffset(itemHeight, pageHeight int) int {
 		return 0
 	}
 	return (itemHeight - 1) / pageHeight * pageHeight
-}
-
-func (s *boundedScrollCursor) clampState() {
-	s.cursor = clampBounded(s.cursor, len(s.items))
-	if s.width <= 0 || s.height <= 0 {
-		s.offset, s.itemOffset = 0, 0
-		return
-	}
-	layout := s.layout()
-	if s.cursorMode && len(s.items) > 0 {
-		itemHeight := layout.ends[s.cursor] - layout.starts[s.cursor]
-		s.itemOffset = min(max(0, s.itemOffset), max(0, itemHeight-1))
-	} else {
-		s.offset = clampScroll(s.offset, len(layout.rows), s.height)
-	}
 }
 
 func clampBounded(value, count int) int {

@@ -8,29 +8,20 @@ import (
 )
 
 func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.T) {
-	items := []boundedScrollItem{{
-		text:         "\x1b[31malpha界 beta-gamma\x1b[0m\nsecond physical line",
-		prefix:       "  ",
-		cursorPrefix: "▶ ",
-	}}
 	for _, tc := range []struct {
 		name   string
 		policy boundedWidthPolicy
 	}{{"wrap", boundedWrap}, {"clip", boundedClip}} {
 		t.Run(tc.name, func(t *testing.T) {
-			var control boundedScrollCursor
-			control.setBounds(8, 2, tc.policy)
-			control.setCursorItems(items, 0)
-			view := control.view()
-			if len(view.rows) > 2 {
-				t.Fatalf("rendered %d physical lines, want at most 2", len(view.rows))
-			}
-			if len(view.rows) == 0 {
-				t.Fatal("positive bounds rendered no cursor rows")
+			var viewport boundedViewport
+			viewport.setGeometry(8, 2, 2, tc.policy)
+			view := viewport.view([]string{"\x1b[31malpha界 beta-gamma\x1b[0m", "second physical line"})
+			if len(view.rows) == 0 || len(view.rows) > 2 {
+				t.Fatalf("rendered %d physical lines, want 1..2", len(view.rows))
 			}
 			for i, row := range view.rows {
-				if got := ansi.StringWidth(ansi.Strip(row.text)); got > 8 {
-					t.Errorf("row %d width = %d, want <= 8: %q", i, got, ansi.Strip(row.text))
+				if got := 2 + ansi.StringWidth(ansi.Strip(row)); got > 8 {
+					t.Errorf("row %d width with gutter = %d, want <= 8: %q", i, got, ansi.Strip(row))
 				}
 			}
 		})
@@ -38,174 +29,254 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 
 	t.Run("wrap preserves styled wide graphemes", func(t *testing.T) {
 		const content = "a界🙂e\u0301Z"
-		var control boundedScrollCursor
-		control.setBounds(4, 10, boundedWrap) // marker leaves two display cells for text
-		control.setCursorItems([]boundedScrollItem{{
-			text: "\x1b[31m" + content + "\x1b[0m", cursorPrefix: "▶ ",
-		}}, 0)
+		var viewport boundedViewport
+		viewport.setGeometry(4, 10, 2, boundedWrap)
+		view := viewport.view([]string{"\x1b[31m" + content + "\x1b[0m"})
 		var rebuilt strings.Builder
-		for i, row := range control.view().rows {
-			plain := ansi.Strip(row.text)
-			if got := ansi.StringWidth(plain); got > 4 {
-				t.Fatalf("row %d width = %d, want <= 4: %q", i, got, plain)
+		for i, row := range view.rows {
+			if got := 2 + ansi.StringWidth(ansi.Strip(row)); got > 4 {
+				t.Fatalf("row %d width with gutter = %d, want <= 4", i, got)
 			}
-			if !strings.Contains(row.text, "\x1b[31m") || !strings.HasSuffix(row.text, "\x1b[0m") {
-				t.Errorf("row %d did not preserve and close ANSI style: %q", i, row.text)
+			if !strings.Contains(row, "\x1b[31m") || !strings.HasSuffix(row, "\x1b[0m") {
+				t.Errorf("row %d did not preserve and close ANSI style: %q", i, row)
 			}
-			rebuilt.WriteString(strings.TrimPrefix(plain, "▶ "))
+			rebuilt.WriteString(ansi.Strip(row))
 		}
 		if got := rebuilt.String(); got != content {
 			t.Fatalf("wrapped content = %q, want byte-preserved graphemes %q", got, content)
 		}
 	})
+
+	for _, width := range []int{2, 1, 0, -1} {
+		var viewport boundedViewport
+		viewport.setGeometry(width, 2, 2, boundedWrap)
+		if got := viewport.view([]string{"content"}); len(got.rows) != 0 {
+			t.Errorf("width %d with gutter 2 rendered %d rows, want empty", width, len(got.rows))
+		}
+	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets(t *testing.T) {
-	items := []boundedScrollItem{
-		{text: "zero-a\nzero-b", prefix: "  ", cursorPrefix: "▶ "},
-		{text: "one-a\none-b", prefix: "  ", cursorPrefix: "▶ "},
-		{text: "two", prefix: "  ", cursorPrefix: "▶ "},
-		{text: "three-a\nthree-b", prefix: "  ", cursorPrefix: "▶ "},
+	items := []boundedListItem{
+		{id: "zero", text: "zero-a\nzero-b"},
+		{id: "one", text: "one-a\none-b"},
+		{id: "two", text: "two"},
+		{id: "three", text: "three-a\nthree-b"},
 	}
-	var control boundedScrollCursor
-	control.setBounds(20, 3, boundedClip)
-	control.setCursorItems(items, 0)
+	var list boundedList
+	list.setGeometry(20, 3, 2, boundedClip)
+	list.setItems(items)
 
-	control.move(boundedPageDown)
-	if got := control.cursor; got != 2 {
-		t.Fatalf("Page Down cursor = %d, want first item beginning after the old window: 2", got)
+	list.move(boundedPageDown)
+	if list.cursor != 2 || list.cursorID != "two" {
+		t.Fatalf("Page Down cursor = (%d,%q), want first item after old window (2,two)", list.cursor, list.cursorID)
 	}
-	control.move(boundedPageUp)
-	if got := control.cursor; got != 0 {
-		t.Fatalf("Page Up cursor = %d, want first item visible in the preceding physical window: 0", got)
+	list.move(boundedPageUp)
+	if list.cursor != 0 || list.cursorID != "zero" {
+		t.Fatalf("Page Up cursor = (%d,%q), want first item in preceding window (0,zero)", list.cursor, list.cursorID)
 	}
-	control.move(boundedLineDown)
-	if got := control.cursor; got != 1 {
-		t.Fatalf("Down cursor = %d, want 1", got)
+	list.move(boundedLineDown)
+	if list.cursor != 1 || list.viewport.offset != 1 {
+		t.Fatalf("Down = cursor %d offset %d, want logical item 1 minimally revealed at offset 1", list.cursor, list.viewport.offset)
 	}
-	control.move(boundedLineUp)
-	if got := control.cursor; got != 0 {
-		t.Fatalf("Up cursor = %d, want 0", got)
+	list.move(boundedLineUp)
+	if list.cursor != 0 || list.viewport.offset != 0 {
+		t.Fatalf("Up = cursor %d offset %d, want item 0 minimally revealed", list.cursor, list.viewport.offset)
 	}
-	control.move(boundedEnd)
-	if got := control.cursor; got != 3 {
-		t.Fatalf("End cursor = %d, want 3", got)
+	list.move(boundedEnd)
+	if list.cursor != 3 || list.cursorID != "three" {
+		t.Fatalf("End cursor = (%d,%q), want last item", list.cursor, list.cursorID)
 	}
-	control.move(boundedTop)
-	if got := control.cursor; got != 0 {
-		t.Fatalf("Top cursor = %d, want 0", got)
+	list.move(boundedTop)
+	if list.cursor != 0 || list.cursorID != "zero" {
+		t.Fatalf("Top cursor = (%d,%q), want first item", list.cursor, list.cursorID)
 	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable(t *testing.T) {
-	items := []boundedScrollItem{
-		{text: "\x1b[31mabcdefghijklmnopqr\x1b[0m", prefix: "  ", cursorPrefix: "▶ "},
-		{text: "next", prefix: "  ", cursorPrefix: "▶ "},
+	items := []boundedListItem{
+		{id: "large", text: "\x1b[31mabcdefghijklmnopqr\x1b[0m"},
+		{id: "next", text: "next"},
 	}
-	var control boundedScrollCursor
-	control.setBounds(5, 2, boundedWrap)
-	control.setCursorItems(items, 0)
+	var list boundedList
+	list.setGeometry(5, 2, 2, boundedWrap)
+	list.setItems(items)
 
-	var reached strings.Builder
-	wantAbove := []int{0, 2, 4}
-	wantBelow := []int{6, 4, 2}
-	for page := 0; page < 3; page++ {
-		view := control.view()
-		if len(view.rows) == 0 || len(view.rows) > 2 {
-			t.Fatalf("page %d has %d rows, want 1..2", page, len(view.rows))
+	wantForward := []string{"abcdef", "ghijkl", "mnopqr"}
+	for page, want := range wantForward {
+		view := list.view()
+		if len(view.rows) != 2 {
+			t.Fatalf("forward page %d has %d rows, want 2", page, len(view.rows))
 		}
-		if view.above != wantAbove[page] || view.below != wantBelow[page] {
-			t.Fatalf("page %d overflow = (%d above, %d below), want (%d, %d)",
-				page, view.above, view.below, wantAbove[page], wantBelow[page])
+		if list.cursorLine != page*2 || list.viewport.offset != page*2 {
+			t.Fatalf("forward page %d cursor line/viewport offset = %d/%d, want %d/%d",
+				page, list.cursorLine, list.viewport.offset, page*2, page*2)
 		}
-		for _, row := range view.rows {
-			plain := ansi.Strip(row.text)
-			if !strings.HasPrefix(plain, "▶ ") {
-				t.Errorf("oversized selected segment lost cursor marker: %q", plain)
+		var content strings.Builder
+		for rowIndex, row := range view.rows {
+			if !row.selected || row.id != "large" || row.gutter != "  " {
+				t.Errorf("forward page %d row %d metadata = %#v", page, rowIndex, row)
 			}
-			if !strings.Contains(row.text, "\x1b[31m") {
-				t.Errorf("wrapped segment lost the item's ANSI style: %q", row.text)
+			if row.cursorMarker != (rowIndex == 0) {
+				t.Errorf("forward page %d row %d marker = %v, want %v", page, rowIndex, row.cursorMarker, rowIndex == 0)
 			}
-			reached.WriteString(strings.TrimPrefix(plain, "▶ "))
-			if !strings.HasSuffix(row.text, "\x1b[0m") {
-				t.Errorf("clipped styled segment can leak ANSI state: %q", row.text)
+			if strings.Contains(row.text, "\x1b[35m") {
+				t.Errorf("control applied caller-owned selected style: %q", row.text)
+			}
+			if !strings.Contains(row.text, "\x1b[31m") || !strings.HasSuffix(row.text, "\x1b[0m") {
+				t.Errorf("forward page %d row %d leaks or loses ANSI style: %q", page, rowIndex, row.text)
+			}
+			prefix := row.gutter
+			if row.cursorMarker {
+				prefix = "▶ "
+			}
+			rendered := prefix + row.text
+			if row.selected {
+				rendered = "\x1b[35m" + rendered + "\x1b[0m"
+			}
+			if !strings.Contains(rendered, "\x1b[35m") {
+				t.Error("caller could not independently apply selected styling")
+			}
+			content.WriteString(ansi.Strip(row.text))
+		}
+		if content.String() != want {
+			t.Fatalf("forward page %d content = %q, want %q", page, content.String(), want)
+		}
+		if page+1 < len(wantForward) {
+			list.move(boundedPageDown)
+			if list.cursorID != "large" {
+				t.Fatalf("Page Down advanced before oversized item was exhausted: %q", list.cursorID)
 			}
 		}
-		if page < 2 {
-			if view.below == 0 {
-				t.Fatalf("page %d reported no content below before oversized item was exhausted", page)
-			}
-			control.move(boundedPageDown)
-			if control.cursor != 0 {
-				t.Fatalf("Page Down advanced cursor before oversized item was exhausted: %d", control.cursor)
-			}
-		}
-	}
-	if got := reached.String(); got != "abcdefghijklmnopqr" {
-		t.Fatalf("reachable oversized content = %q, want complete item", got)
-	}
-	control.move(boundedPageDown)
-	if control.cursor != 1 {
-		t.Fatalf("Page Down after final oversized segment cursor = %d, want 1", control.cursor)
-	}
-	if plain := ansi.Strip(control.view().rows[0].text); plain != "▶ nex" {
-		t.Fatalf("style or content leaked into following item: %q", plain)
 	}
 
-	wantReversePages := []string{"mnopqr", "ghijkl", "abcdef"}
-	for page, want := range wantReversePages {
-		control.move(boundedPageUp)
-		if control.cursor != 0 {
-			t.Fatalf("reverse page %d selected cursor %d, want oversized predecessor 0", page, control.cursor)
+	list.move(boundedPageDown)
+	if list.cursorID != "next" {
+		t.Fatalf("Page Down after final segment selected %q, want next", list.cursorID)
+	}
+	for page, want := range []string{"mnopqr", "ghijkl", "abcdef"} {
+		list.move(boundedPageUp)
+		if list.cursorID != "large" {
+			t.Fatalf("reverse page %d selected %q, want large", page, list.cursorID)
 		}
-		var got strings.Builder
-		for _, row := range control.view().rows {
-			plain := ansi.Strip(row.text)
-			if !strings.HasPrefix(plain, "▶ ") {
-				t.Errorf("reverse page %d lost cursor marker: %q", page, plain)
+		view := list.view()
+		var content strings.Builder
+		for rowIndex, row := range view.rows {
+			if row.cursorMarker != (rowIndex == 0) || row.gutter != "  " {
+				t.Errorf("reverse page %d row %d marker/gutter = %v/%q", page, rowIndex, row.cursorMarker, row.gutter)
 			}
-			got.WriteString(strings.TrimPrefix(plain, "▶ "))
+			content.WriteString(ansi.Strip(row.text))
 		}
-		if got.String() != want {
-			t.Fatalf("reverse page %d content = %q, want immediately preceding segment %q", page, got.String(), want)
+		if content.String() != want {
+			t.Fatalf("reverse page %d content = %q, want %q", page, content.String(), want)
 		}
 	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t *testing.T) {
-	var control boundedScrollCursor
-	control.setBounds(12, 2, boundedClip)
-	control.setBrowsing([]string{"zero", "one", "two", "three", "four"})
-	control.move(boundedLineDown)
-	if got := control.view().above; got != 1 {
-		t.Fatalf("browsing line movement offset = %d, want 1", got)
+	var viewport boundedViewport
+	viewport.setGeometry(12, 2, 0, boundedClip)
+	lines := []string{"zero", "one", "two", "three", "four"}
+	viewport.move(boundedLineDown, len(lines))
+	viewport.move(boundedPageDown, len(lines))
+	if viewport.offset != 3 {
+		t.Fatalf("browsing offset = %d, want clamped 3", viewport.offset)
 	}
-	control.move(boundedPageDown)
-	if got := control.view().above; got != 3 {
-		t.Fatalf("browsing page movement offset = %d, want clamped 3", got)
-	}
-	control.move(boundedEnd)
-	if got := control.view(); got.above != 3 || len(got.rows) != 2 {
-		t.Fatalf("browsing End view = above %d, rows %d; want final nonblank page", got.above, len(got.rows))
+	if got := viewport.view([]string{"only"}); viewport.offset != 0 || len(got.rows) != 1 {
+		t.Fatalf("content shrink left stale offset/view: offset=%d view=%#v", viewport.offset, got)
 	}
 
-	control.setBrowsing([]string{"only"})
-	if got := control.view(); got.above != 0 || len(got.rows) != 1 || ansi.Strip(got.rows[0].text) != "only" {
-		t.Fatalf("content shrink left a blank/reachable stale page: %#v", got)
+	var list boundedList
+	list.setGeometry(12, 2, 2, boundedClip)
+	list.setItems([]boundedListItem{{id: "a", text: "a0\na1"}, {id: "b", text: "b0\nb1"}, {id: "c", text: "c"}})
+	list.setCursor(1)
+	cursor, cursorID, cursorLine := list.cursor, list.cursorID, list.cursorLine
+	list.scroll(boundedLineDown)
+	if list.cursor != cursor || list.cursorID != cursorID || list.cursorLine != cursorLine {
+		t.Fatalf("viewport scroll moved cursor state from (%d,%q,%d) to (%d,%q,%d)",
+			cursor, cursorID, cursorLine, list.cursor, list.cursorID, list.cursorLine)
 	}
-	control.setBounds(12, 5, boundedClip)
-	if got := control.view(); got.above != 0 || len(got.rows) != 1 {
-		t.Fatalf("geometry growth did not clamp browsing offset: %#v", got)
+	if list.viewport.offset == 0 {
+		t.Fatal("independent viewport scroll did not move physical offset")
+	}
+	list.move(boundedLineDown)
+	if list.cursorID != "c" {
+		t.Fatalf("cursor movement after independent scroll selected %q, want c", list.cursorID)
 	}
 
-	control.setCursorItems([]boundedScrollItem{{text: "first"}, {text: "last"}}, 99)
-	if control.cursor != 1 || len(control.view().rows) == 0 {
-		t.Fatalf("cursor content change did not clamp to a reachable item: cursor=%d view=%#v", control.cursor, control.view())
+	list.setGeometry(12, 2, 0, boundedClip)
+	if got := list.view(); len(got.rows) == 0 || got.rows[0].gutter != "" {
+		t.Fatalf("zero-gutter list geometry = %#v, want visible rows with no gutter", got)
+	}
+	list.setGeometry(2, 2, 2, boundedWrap)
+	if got := list.view(); len(got.rows) != 0 || got.above != 0 || got.below != 0 {
+		t.Fatalf("width smaller than gutter+content rendered %#v", got)
 	}
 	for _, bounds := range [][2]int{{0, 2}, {12, 0}, {-1, 2}, {12, -1}} {
-		control.setBounds(bounds[0], bounds[1], boundedWrap)
-		if got := control.view(); len(got.rows) != 0 || got.above != 0 || got.below != 0 {
-			t.Errorf("bounds %v rendered nonempty body/overflow: %#v", bounds, got)
+		list.setGeometry(bounds[0], bounds[1], 2, boundedWrap)
+		if got := list.view(); len(got.rows) != 0 {
+			t.Errorf("bounds %v rendered %d rows, want empty", bounds, len(got.rows))
 		}
+	}
+}
+
+func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t *testing.T) {
+	var list boundedList
+	list.setGeometry(20, 2, 2, boundedClip)
+	list.setItems([]boundedListItem{
+		{id: "a", text: "a0\na1"},
+		{id: "b", text: "b0\nb1\nb2"},
+		{id: "c", text: "c0"},
+	})
+	list.setCursor(1) // minimally reveals b with top anchor {a,1}
+	if list.viewport.offset != 1 {
+		t.Fatalf("initial top offset = %d, want 1", list.viewport.offset)
+	}
+
+	list.setItems([]boundedListItem{
+		{id: "x", text: "x0"},
+		{id: "b", text: "b0\nb1\nb2\nb3"},
+		{id: "a", text: "a0\na1\na2"},
+		{id: "c", text: "c0"},
+	})
+	if list.cursorID != "b" || list.cursor != 1 {
+		t.Fatalf("refresh lost selected stable ID: cursor=(%d,%q)", list.cursor, list.cursorID)
+	}
+	if top := list.view().rows[0]; top.id != "a" || top.itemLine != 1 {
+		t.Fatalf("refresh top anchor = {%q,%d}, want {a,1}", top.id, top.itemLine)
+	}
+
+	list.setItems([]boundedListItem{
+		{id: "x", text: "x0"},
+		{id: "d", text: "d0"},
+		{id: "a", text: "a0\na1\na2"},
+		{id: "c", text: "c0"},
+	})
+	if list.cursorID != "d" || list.cursor != 1 {
+		t.Fatalf("missing selected ID fallback = (%d,%q), want prior index replacement (1,d)", list.cursor, list.cursorID)
+	}
+	list.setItems([]boundedListItem{
+		{id: "b", text: "b0\nb1\nb2\nb3"},
+		{id: "x", text: "x0"},
+		{id: "d", text: "d0"},
+		{id: "a", text: "a0\na1\na2"},
+		{id: "c", text: "c0"},
+	})
+	if list.cursorID != "d" || list.cursor != 2 {
+		t.Fatalf("reappearing old ID snapped selection back: cursor=(%d,%q), want (2,d)", list.cursor, list.cursorID)
+	}
+	oldOffset := list.viewport.offset
+	list.setItems([]boundedListItem{
+		{id: "b", text: "b0\nb1\nb2\nb3"},
+		{id: "x", text: "x0"},
+		{id: "d", text: "d0"},
+		{id: "c", text: "c0"},
+	})
+	wantOffset := clampScroll(oldOffset, 7, 2)
+	if list.viewport.offset != wantOffset {
+		t.Fatalf("missing top ID offset = %d, want physical fallback %d", list.viewport.offset, wantOffset)
+	}
+	if list.cursorID != "d" {
+		t.Fatalf("missing top ID disturbed selected ID: %q", list.cursorID)
 	}
 }
