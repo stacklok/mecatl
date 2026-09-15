@@ -4,7 +4,7 @@
 **Work classification:** Architectural — establishes a durable operator-owned configuration and security boundary for selecting agent command interpreters and selectively inheriting ambient credentials.
 **Decision record:** [ADR 0343](../adr/0343-operator-configured-command-runners.md)
 **Phase:** command-runner configuration
-**Status:** in-progress, 2026-09-15. Drafted from issue #1495 and the operator decisions recorded during planning.
+**Status:** landed, 2026-09-15. Drafted from issue #1495 and the operator decisions recorded during planning.
 **Delivery:** Split. The operator-facing configuration and credential-authority contract need human review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1495](https://github.com/stacklok/mecatl/issues/1495).
