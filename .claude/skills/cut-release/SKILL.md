@@ -38,8 +38,10 @@ Two consequences of the Homebrew half, before you start:
 you dispatch a workflow, a bot opens the PR, a human merges it, and a bot tags the merge
 commit. You never run `git push origin main`, and you never create the tag by hand.
 
-`VERSION` (repo root, **bare** semver — `0.0.34`, not `v0.0.34`) is the single authored source
-of the release version, and the only file a release changes. The release PR is a one-line diff.
+`VERSION` (repo root, **bare** semver — `0.0.34`, not `v0.0.34`) is the source of truth
+for the release version. The release PR propagates it to the `mecak8s` chart version,
+`appVersion`, and default image tag. Its entire diff contains `VERSION`,
+`deploy/helm/mecak8s/Chart.yaml`, and `deploy/helm/mecak8s/values.yaml`.
 
 It did not used to be. `mecatequi-reusable.yml` referenced its three sibling composite actions
 by a hardcoded `@vX.Y.Z` literal, so every release had to bump those pins in the same tagged
@@ -66,13 +68,13 @@ Run from the repo root.
    gh workflow run create-release-pr.yml -f bump_type=patch
    gh run watch "$(gh run list --workflow=create-release-pr.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
-   It bumps `VERSION` and the three Mecatequi pins, opens `Release vX.Y.Z` from branch
-   `release/vX.Y.Z`, and then asserts the diff shape — exactly `VERSION` plus three changed
-   lines in `mecatequi-reusable.yml`. **If that verification step fails, do not merge the PR**;
-   close it, delete the branch, and read the job log. The likely cause is a reordered step in
-   `mecatequi-reusable.yml` (see the `RELEASE-PINNED` comments there).
+   It bumps `VERSION`, the `mecak8s` chart version and app version, and the chart's default
+   image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts the exact
+   three-file diff and synchronized values. **If that verification step fails, do not merge
+   the PR**; close it, delete the branch, and read the job log.
 
-3. **Review the release PR like any other PR** and confirm the diff is only the version bump:
+3. **Review the release PR like any other PR** and confirm the diff contains only the
+   synchronized release metadata:
    ```sh
    gh pr list --head "release/vX.Y.Z" --json number,url,files
    gh pr diff <number>
@@ -87,8 +89,8 @@ Run from the repo root.
    ```
    The tagging workflow does not read the commit subject — it asks GitHub which PR produced
    the commit and requires a merged, bot-opened PR from branch `release/vX.Y.Z` whose diff is
-   only `VERSION` plus the three pins. So the squash title does not matter, but adding anything
-   else to the release PR will stop the tag.
+   exactly the three release metadata files with matching values. So the squash title does
+   not matter, but adding anything else to the release PR will stop the tag.
 
 5. **Watch the tag get created.** Merging fires `create-release-tag.yml`, which re-verifies the
    commit and pushes the annotated tag. That push fires `release.yml` on its own — the tag is
@@ -215,10 +217,10 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
   release workflow and carries a `DO NOT EDIT` header. A manual edit is overwritten by the next
   release and desynchronizes the checksums in the meantime.
 - **Never push to `main`, and never create a root `vX.Y.Z` tag by hand.** Both are the
-  workflows' job. A hand-pushed pin bump skips code review, and a hand-created tag would point
-  at a commit whose pins the release gate then rejects. If `VERSION` is edited on `main` outside
-  a release PR, `create-release-tag.yml` refuses to tag it rather than cutting a release from
-  it. `release.yml`'s `guard` job additionally refuses to publish anything from a tag that is
+  workflows' job. A hand-pushed version bump skips code review, and a hand-created tag can point
+  at a commit whose release metadata the gate rejects. If `VERSION` is edited on `main` outside a
+  release PR, `create-release-tag.yml` refuses to tag it rather than cutting a release from it.
+  `release.yml`'s `guard` job additionally refuses to publish anything from a tag that is
   not an ancestor of `main`, so a tag cut on a branch builds nothing. (This applies to the ROOT
   `v*` line only — the `engine/v*` tags below are still cut by hand, deliberately: they carry
   no pin bump and add no commit to `main`.)
@@ -227,10 +229,11 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
 - **Don't bump illustrative documentation refs** unless asked — the `@vX.Y.Z` examples in
   `user-docs/building/deployment/mecatequi.md` are illustrative and do NOT gate the release. The
   release flow deliberately leaves them alone.
-- **If the release run fails on the pin gate**, the tagged commit didn't carry the bumped pins.
-  That should be impossible through the normal flow — `create-release-pr.yml` verifies the bump
-  before the PR can merge, and `create-release-tag.yml` tags only the merge commit. It means
-  someone tagged by hand, or `VERSION` and the pins drifted apart. Fix forward with a patch.
+- **If the release run fails on the version gate**, the tagged commit has inconsistent release
+  metadata. That should be impossible through the normal flow: `create-release-pr.yml` verifies
+  the bump before the PR can merge, and `create-release-tag.yml` tags only the merge commit. It
+  means someone tagged by hand or the chart metadata drifted from `VERSION`. Fix forward with a
+  patch.
 - **Rerunning is safe.** `create-release-tag.yml` makes one decision from the tag's state and
   the commit's provenance, so it is quiet when there is nothing to do (the tag already points
   here, or `VERSION` names an already-released tag this commit did not produce) and loud only
@@ -245,5 +248,6 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
 - **One release at a time.** If any `release/v*` PR is open, the next dispatch refuses and names
   it — merge or close it first. Once none is open, leftover `release/v*` branches from failed
   runs are deleted automatically before the new PR is cut.
-- **The release PR's whole diff is `VERSION`.** Both workflows assert that: anything else in
-  the commit stops the release rather than being tagged. There is nothing to dry-run locally.
+- **The release PR's whole diff is the three synchronized release metadata files.** Both
+  workflows assert the exact file set and values. Anything else in the commit stops the release
+  rather than being tagged. There is nothing to dry-run locally.

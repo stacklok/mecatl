@@ -252,9 +252,10 @@ The production chart is published at
 `oci://ghcr.io/stacklok/mecatl/charts/mecak8s`; its source is in
 `deploy/helm/mecak8s/`. It requires an external Redis endpoint and creates no
 Redis StatefulSet. Reference a Kubernetes Secret for Redis credentials. The
-chart pulls `ghcr.io/stacklok/mecatl/mecak8s:v<chart-version>` by default, so
-the chart and runtime versions stay aligned. Use a signed tag or digest when
-overriding the image.
+chart's default image tag matches its application and chart versions, so it
+pulls the corresponding signed `ghcr.io/stacklok/mecatl/mecak8s` release. Set
+`image.digest` to pin an immutable image, or clear the tag to use
+`v<chart-version>`.
 
 A real-provider deployment (`mockProvider: false`) must choose one of these
 security postures:
