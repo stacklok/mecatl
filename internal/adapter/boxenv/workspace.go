@@ -34,8 +34,10 @@ type Workspace struct {
 
 var _ tool.Workspace = (*Workspace)(nil)
 
-func (w *Workspace) Root() string { return workspaceRoot }
+// Root returns the logical root exposed to Mecatl tools.
+func (*Workspace) Root() string { return workspaceRoot }
 
+// Read returns the contents of p from the Box workspace.
 func (w *Workspace) Read(ctx context.Context, p string) ([]byte, error) {
 	key, err := cleanPath(p)
 	if err != nil {
@@ -44,6 +46,7 @@ func (w *Workspace) Read(ctx context.Context, p string) ([]byte, error) {
 	return w.client.readFile(ctx, w.boxID, boxPath(key))
 }
 
+// ReadVersion returns file contents and their opaque SHA-256 version.
 func (w *Workspace) ReadVersion(ctx context.Context, p string) ([]byte, tool.FileVersion, error) {
 	data, err := w.Read(ctx, p)
 	if err != nil {
@@ -52,6 +55,7 @@ func (w *Workspace) ReadVersion(ctx context.Context, p string) ([]byte, tool.Fil
 	return data, versionOf(data), nil
 }
 
+// CreateFile creates p only when no file already exists at that path.
 func (w *Workspace) CreateFile(ctx context.Context, p string, data []byte) (tool.FileVersion, error) {
 	key, err := cleanPath(p)
 	if err != nil {
@@ -92,6 +96,7 @@ func (w *Workspace) ensureParent(ctx context.Context, key string) error {
 	return nil
 }
 
+// ReplaceFile atomically replaces p relative to this Workspace handle when old matches.
 func (w *Workspace) ReplaceFile(ctx context.Context, p string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
 	key, err := cleanPath(p)
 	if err != nil {
@@ -112,6 +117,7 @@ func (w *Workspace) ReplaceFile(ctx context.Context, p string, old tool.FileVers
 	return versionOf(data), nil
 }
 
+// Stat returns metadata for p from the Box workspace.
 func (w *Workspace) Stat(ctx context.Context, p string) (tool.FileInfo, error) {
 	key, err := cleanPath(p)
 	if err != nil {
@@ -153,6 +159,7 @@ func (w *Workspace) Stat(ctx context.Context, p string) (tool.FileInfo, error) {
 	return tool.FileInfo{Name: path.Base(key), Size: size, Mode: mode, ModTime: time.Unix(mtime, 0), IsDir: isDir}, nil
 }
 
+// Glob returns sorted file paths matching pattern within the Box workspace.
 func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) {
 	pat := normalizeGlobPattern(pattern)
 	if pat == "" {
@@ -187,6 +194,7 @@ func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) 
 	return out, nil
 }
 
+// Grep returns regexp matches from files selected by pathGlob.
 func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.GrepMatch, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -234,8 +242,10 @@ type Runner struct {
 
 var _ tool.CommandRunner = (*Runner)(nil)
 
-func (r *Runner) BoundWorkspaceRoot() string { return workspaceRoot }
+// BoundWorkspaceRoot reports the workspace root used for command execution.
+func (*Runner) BoundWorkspaceRoot() string { return workspaceRoot }
 
+// Run executes command inside the Box workspace and returns its captured result.
 func (r *Runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
 	timeout := 60
 	if deadline, ok := ctx.Deadline(); ok {
