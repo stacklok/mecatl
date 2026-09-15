@@ -412,8 +412,7 @@ Exact full-ID equality wins; otherwise one unique projected match resolves. On a
 lookup fails or no projection matches, mecatui sends `TARGET` unchanged and reports the ordinary
 server exact-ID authorization/not-found result. These commands do not attach to or continue the
 target.
-They authorize it, create a separate durable no-filesystem debug session, print a privacy
-disclosure, and submit one first genuine user turn. That turn is ordered as the diagnosis
+They authorize it, create a separate durable no-filesystem debug session, keep a visible privacy disclosure in the TUI, and submit one first genuine user turn. That turn is ordered as the diagnosis
 objective, the required status/transcript/pagination workflow, the expected report sections,
 and finally the same sanitized current-client/server report produced by bare `/diagnostics`.
 The report is clearly delimited debugger runtime context, never target evidence. A custom

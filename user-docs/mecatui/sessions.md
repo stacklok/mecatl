@@ -150,10 +150,7 @@ ambiguous, copy the full ID from `/session` and try again. Use the embedded
 command for an embedded store and `connect ADDRESS` for the server that owns the
 target. The optional `--prompt` value replaces the default diagnosis objective.
 
-Before opening the alternate screen, `mecatui` discloses that the selected model
-will receive bounded target evidence. That evidence can contain prompts, model
-output, tool arguments and results, paths, and secrets. Continuing with the
-command consents to that disclosure.
+When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI stating that the selected model will receive bounded target evidence. That evidence can contain prompts, model output, tool arguments and results, paths, and secrets. Invoking the command is the consent gesture; the default diagnostic prompt is then submitted automatically.
 
 The analysis session has no filesystem or shell access. By default, it can only
 use `InspectSession` to read bounded retained evidence. It cannot resume,

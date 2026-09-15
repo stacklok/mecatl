@@ -368,6 +368,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: initialPromptForConfig(cfg),
 		DebugTarget:   cfg.debugTarget,
+		DebugMCP:      append([]string(nil), cfg.debugMCP...),
 	})
 	applyDebugConfig(cfg, &deps)
 	deps.ServerImpl = mecatuiServerImplementation
