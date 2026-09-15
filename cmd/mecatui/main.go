@@ -216,7 +216,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	if !ok {
 		fmt.Fprintf(os.Stderr, "mecatui: unknown theme %q, using %q\n", cfg.theme, th.Name)
 	}
-	themeAutoDetect := resolveThemeAutoDetect(cfg, term.IsTerminal(int(os.Stdout.Fd())))
+	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
 	if options.recoveryOnly {
 		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
 	}
@@ -329,12 +330,16 @@ func runWithOptions(argv []string, options runOptions) error {
 		Clipboard:              client.NewClipboard(),
 		Theme:                  th,
 		ThemeAutoDetect:        themeAutoDetect,
-		StatusSource:           statusSource,
-		LocalSessionContext:    cl,
-		Server:                 target,
-		ConnectionMode:         connectionMode,
-		ClientBuild:            buildinfo.BuildID,
-		Embedded:               cfg.transportMode == modeLocal,
+		// Only a real terminal can answer the keyboard-capability query, so only a
+		// real terminal gets the deadline that bounds the prompt hint's optimistic
+		// newline chord.
+		ProbeKeyboardCapability: stdoutIsTTY,
+		StatusSource:            statusSource,
+		LocalSessionContext:     cl,
+		Server:                  target,
+		ConnectionMode:          connectionMode,
+		ClientBuild:             buildinfo.BuildID,
+		Embedded:                cfg.transportMode == modeLocal,
 		// Model is best-effort display only. For an EXTERNAL --server it reflects
 		// the locally-configured --model flag and may NOT match the server's actual
 		// model (the server owns provider config); for an embedded server it is
