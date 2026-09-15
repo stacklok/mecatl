@@ -47,7 +47,8 @@ jobs:
     # environment's deployment-branch policy restricts it to `main`. Without that, anyone with
     # push access could dispatch a modified copy of this workflow from a branch and exfiltrate a
     # contents:write + pull-requests:write App credential — which is exactly the authority this
-    # whole flow exists to keep behind review. Same pattern as deploy-site.yml's `production`.
+    # whole flow exists to keep behind review. This is the same defense-in-depth pattern used
+    # for protected deployment environments.
     environment: release
     permissions:
       contents: write # delete stale release/v* refs left by a failed run
