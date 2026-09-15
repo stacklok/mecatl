@@ -127,9 +127,12 @@ appears as two protocol-specific Mecatl providers:
 Select native Anthropic models under `toolhive-anthropic`. Mecatl keeps the
 inventories separate so these models use Anthropic Messages.
 
-`toolhive` remains the automatic default between the two gateway providers. A
-configured key-driven provider still takes precedence unless the operator
-explicitly sets `toolhive` or `toolhive-anthropic` as the server default. When
+`toolhive` is the automatic default between the two gateway providers, except
+when the default model is an Anthropic model: Mecatl then prefers
+`toolhive-anthropic`, because Anthropic models only cache their prompt on the
+Messages endpoint. A configured key-driven provider still takes precedence
+unless the operator explicitly sets `toolhive` or `toolhive-anthropic` as the
+server default, and an explicit setting always wins over this preference. When
 the gateway is available but not selected, `/models` shows both protocol
 inventories so you can choose one without removing another provider's
 credential.
@@ -145,6 +148,41 @@ Create a new session after correcting an unresolved default model.
 
 For proxy/direct routing, OIDC setup, TLS constraints, and daemon flags, see
 [Run mecated standalone](/building/deployment/mecated.md#the-toolhive-llm-gateway-no-api-key-needed).
+
+### Select OpenRouter models
+
+One OpenRouter API key registers two protocol-specific providers, the same
+split the ToolHive gateway uses:
+
+|Provider ID|Inference|
+|-|-|
+|`openrouter`|`POST /v1/responses`|
+|`openrouter-anthropic`|`POST /v1/messages`|
+
+Select Anthropic models under `openrouter-anthropic`. That endpoint speaks the
+Anthropic Messages protocol, so Mecatl sends prompt-cache breakpoints and can
+set a cache lifetime with `--anthropic-cache-ttl` (`5m` or `1h`). The
+`openrouter` provider speaks the OpenAI Responses protocol, which cannot
+express either.
+
+This matters for cost. Anthropic caches a prompt only when the caller asks it
+to, so running a Claude model on a path that sends no breakpoint re-pays the
+full input price on every turn, and cache reads are billed at a tenth of that.
+Mecatl therefore prefers `openrouter-anthropic` when the default model is an
+Anthropic model. An explicit `--default-provider` or an operator
+`models.default_provider` still wins.
+
+`openrouter-anthropic` lists Anthropic models only, because OpenRouter's
+Anthropic endpoint does not serve other vendors' models.
+
+In `/models`, a row marked `no-cache` is an Anthropic model on a path that
+sends no prompt-cache breakpoint. The row stays selectable, so you can still
+choose it deliberately.
+
+To turn provider-side prompt caching off everywhere, run with
+`--no-prompt-cache`. Enabling a cache also asks the provider to retain your
+prompt prefix for the cache lifetime, so `--no-prompt-cache` is the right
+setting for a deployment relying on a zero-retention arrangement.
 
 ### Configure aliases, slots, and task routing
 

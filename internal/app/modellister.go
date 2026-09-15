@@ -245,6 +245,38 @@ type openRouterLister struct {
 	inner *openrouter.Lister
 }
 
+// openRouterAnthropicLister is openRouterLister filtered to the Anthropic
+// family (ADR 0343). OpenRouter's Anthropic Messages surface does not serve
+// non-Anthropic models, so advertising the full catalog under
+// providerOpenRouterAnthropic would offer ids that cannot execute.
+//
+// It reuses the SAME public /models endpoint as the openrouter entry rather
+// than probing the Anthropic surface's own /v1/models: that endpoint is not
+// documented for the skin, and an undocumented probe is a worse dependency
+// than a filter over a known-good listing. The ids stay OpenRouter-namespaced
+// ("anthropic/claude-...") because that is what the skin's model field takes.
+//
+// An empty result after filtering is an HONEST empty and propagates as such;
+// the caller's last-known-good / embedded-floor rules then apply unchanged.
+type openRouterAnthropicLister struct {
+	inner openRouterLister
+}
+
+func (l openRouterAnthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
+	raw, err := l.inner.ListModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]modelEntry, 0, len(raw))
+	for _, m := range raw {
+		if !isOpenRouterAnthropicModel(m.ID) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
 // openAICodexLister adapts the account-entitlement response into the one
 // composition-local modelEntry stream. The live list is inventory-authoritative:
 // this wrapper can enrich ONLY ids already returned by Codex. A matching OpenAI
@@ -315,12 +347,13 @@ func (l openRouterLister) ListModels(ctx context.Context) ([]modelEntry, error) 
 			ID:           m.ID,
 			DisplayName:  m.DisplayName,
 			ContextLimit: m.ContextLimit,
-			// top_provider.max_completion_tokens (Slice C). CAPTURED into the meta store,
-			// but currently OFF the OpenRouter request path: OpenRouter rides the openai
-			// Responses adapter, which has no per-model max_tokens resolver today (only the
-			// native anthropic adapter does). The composition UPPER clamp (clampLive in
-			// livemeta.go) gates this value, so a future OpenRouter max_tokens consumer
-			// cannot reintroduce the unbounded-live risk.
+			// top_provider.max_completion_tokens (Slice C). CAPTURED into the meta store.
+			// It is OFF the providerOpenRouter request path (the openai Responses adapter
+			// has no per-model max_tokens resolver), but since ADR 0343 the
+			// providerOpenRouterAnthropic entry rides the NATIVE anthropic adapter, whose
+			// WithMaxTokensResolver consumes exactly this value. The composition UPPER
+			// clamp (clampLive in livemeta.go) gates it, so that consumer cannot
+			// reintroduce the unbounded-live risk.
 			OutputLimit:     m.OutputLimit,
 			InputModalities: m.InputModalities,
 			Reasoning:       m.Reasoning,
@@ -505,6 +538,11 @@ func metadataCatalogProviderID(providerID string) string {
 	switch providerID {
 	case providerOpenAICodex:
 		return providerOpenAI
+	case providerOpenRouterAnthropic:
+		// Its ids are OpenRouter-namespaced ("anthropic/claude-..."), so the
+		// OpenRouter catalog is the matching metadata namespace — NOT Anthropic's
+		// own, whose ids are bare.
+		return providerOpenRouter
 	case providerToolhiveAnthropic:
 		// Metadata only: embeddedModels deliberately does not call this helper,
 		// so Anthropic's public catalog can enrich a gateway-listed ID without
@@ -544,6 +582,12 @@ func projectModelEntry(reg *providerRegistry, providerID string, m modelEntry) *
 	if m.InputModalities != nil {
 		image = modelAdapterCaps(reg, providerID).Image && hasImageModality(m.InputModalities)
 	}
+	// ADR 0343: computed ONCE here, the same single-projection discipline
+	// modelCapability follows, so the picker and the wire cannot disagree.
+	promptCached := false
+	if reg != nil && reg.promptCached != nil {
+		promptCached = reg.promptCached(providerID, m.ID)
+	}
 	return &mecatlv1.ModelInfo{
 		Id:           m.ID,
 		ProviderId:   providerID,
@@ -551,6 +595,7 @@ func projectModelEntry(reg *providerRegistry, providerID string, m modelEntry) *
 		Image:        image,
 		Reasoning:    m.Reasoning,
 		ContextLimit: int64(contextLimit),
+		PromptCached: promptCached,
 	}
 }
 

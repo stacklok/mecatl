@@ -43,6 +43,26 @@ func WithCacheDialect(d CacheDialect) Option {
 	return func(c *config) { c.cacheDialect = d }
 }
 
+// WithCacheKeySalt folds a per-process random value into the prompt_cache_key
+// prefix hash (ADR 0343). Composition mints one value per app.Build and passes
+// it to every openai-adapter entry.
+//
+// Why: the ADR 0100 derivation has no installation-specific input, so two
+// unrelated installations sharing harness version, soul, agent def and tool
+// inventory emit an IDENTICAL key. That lets a recipient correlate sessions
+// across principals and credentials, and confirm guessed configuration — and
+// routing metadata frequently outlives prompt bodies in a provider's retention
+// tiers, so the key outlives the content it fingerprints.
+//
+// "" (the Option unset) reproduces ADR 0100's derivation byte-for-byte, so a
+// consumer passing no Option is unaffected. The salt is never sent as itself,
+// never logged, and never persisted: a fresh value per process costs one
+// sticky-routing lane change per restart, which the derivation already treats
+// as fail-soft for an anchor change.
+func WithCacheKeySalt(salt string) Option {
+	return func(c *config) { c.cacheKeySalt = salt }
+}
+
 // retentionDenyPrefixes are checked BEFORE any allow prefix so a newer,
 // narrower id always wins the classification — "gpt-5" is a prefix of
 // "gpt-5.6", where prompt_cache_retention is DEPRECATED (implicit caching
