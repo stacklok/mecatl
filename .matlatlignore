@@ -63,6 +63,12 @@ user-docs/
 website/AGENTS.md
 website/CLAUDE.md
 
+# Studio's managed-mode working state (the controller pins the project skills
+# and memory dirs here) and ad-hoc local attachment drops — machine-local
+# state, not documentation. CI checkouts never contain them; ignoring them
+# keeps local `check`/`index` runs byte-identical to CI's.
+/.mecatl/
+/attachments/
 # API Extractor reports are review artifacts, not navigational documentation.
 # Exclude both the committed reports and their ignored comparison copies.
 sdk/typescript/etc/*.api.md

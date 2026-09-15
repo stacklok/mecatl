@@ -875,6 +875,18 @@ export interface Run extends AsyncIterable<Event_2> {
 }
 
 // @public
+export interface RunControls {
+    cancel(options?: RequestOptions): Promise<void>;
+    cancelSteer(options?: SteerControlOptions): Promise<SteerCancelAck>;
+    resolveAsk(askId: string, verdict: PermissionVerdict, options?: RequestOptions): Promise<void>;
+    // (undocumented)
+    readonly runId: string;
+    // (undocumented)
+    readonly sessionId: string;
+    steer(prompt: PromptInput, options?: SteerControlOptions): Promise<SteerAck>;
+}
+
+// @public
 export interface RunOptions {
     onPermissionAsk?: PermissionAskResponder;
     onPlanApproval?: PlanApprovalResponder;
@@ -1080,6 +1092,7 @@ export interface Session {
     clear(options?: ClearSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
     close(options?: RequestOptions): Promise<void>;
     compact(options?: RequestOptions): Promise<boolean>;
+    controls(runId: string): RunControls;
     delete(options?: RequestOptions): Promise<void>;
     // (undocumented)
     readonly id: string;
@@ -1342,6 +1355,31 @@ export interface Soul {
 }
 
 // @public
+export interface SteerAck {
+    readonly messageId: string;
+    // (undocumented)
+    readonly outcome: SteerOutcome;
+    readonly promoted: boolean;
+    readonly runId: string;
+}
+
+// @public
+export interface SteerCancelAck {
+    // (undocumented)
+    readonly messageId: string;
+    // (undocumented)
+    readonly outcome: SteerCancelOutcome;
+}
+
+// @public
+export type SteerCancelOutcome = "retracted" | "none_pending";
+
+// @public
+export interface SteerControlOptions extends RequestOptions {
+    messageId?: string;
+}
+
+// @public
 export interface SteerEventPayload {
     // (undocumented)
     readonly messageId: string;
@@ -1350,6 +1388,9 @@ export interface SteerEventPayload {
     // (undocumented)
     readonly text: string;
 }
+
+// @public
+export type SteerOutcome = "accepted" | "appended" | "too_late";
 
 // @public
 export interface SteerOutcomeEventPayload {

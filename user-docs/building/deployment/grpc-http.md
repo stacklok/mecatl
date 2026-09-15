@@ -114,8 +114,16 @@ authentication, and `curl` examples, see the
 
 ### Steering requires gRPC
 
-gRPC can send an in-flight steering instruction, or cancel one, through the live
-`Converse` stream. HTTP/SSE has no client-to-server mid-run steering channel.
+gRPC sends control frames on the live `Converse` stream itself. HTTP/SSE
+steers through a unary pair — `POST /v1/sessions/{id}/steer` (text and/or
+multimodal `parts`, an optional strict `expected_run_id`) and
+`POST /v1/sessions/{id}/cancel-steer` — gated on the `steer` capability bit
+and advertised as `http_steer` in `GET /v1/compatibility`. An unqualified
+steer that loses the race against the run's end is promoted into a follow-up
+run; the response stays unary and returns the promoted `run_id`, while the
+run drains into the durable event log. A strict steer never promotes — it
+answers `409` (`stale_run_control`) and the caller keeps the text. Use gRPC
+when your client needs in-stream control frames.
 
 ## Connect securely
 

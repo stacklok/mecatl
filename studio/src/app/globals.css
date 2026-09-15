@@ -1,0 +1,409 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Tokens hold complete CSS color values — not bare HSL triplets.
+   This keeps operator branding overrides format-agnostic (hex, hsl, oklch all work). */
+:root {
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(240 10% 3.9%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(240 10% 3.9%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(240 10% 3.9%);
+  --primary: hsl(240 5.9% 10%);
+  --primary-foreground: hsl(0 0% 98%);
+  --secondary: hsl(240 4.8% 95.9%);
+  --secondary-foreground: hsl(240 5.9% 10%);
+  --muted: hsl(240 4.8% 95.9%);
+  --muted-foreground: hsl(240 3.8% 46.1%);
+  --accent: hsl(240 4.8% 95.9%);
+  --accent-foreground: hsl(240 5.9% 10%);
+  --destructive: hsl(
+    0 72% 51%
+  ); /* darker than shadcn's default, per the design system */
+  --destructive-foreground: hsl(0 0% 98%);
+  --destructive-strong: hsl(
+    0 74% 40%
+  ); /* a darker red for icons over a destructive/10 tile */
+  --border: hsl(240 5.9% 90%);
+  --input: hsl(240 5.9% 90%);
+  --ring: hsl(240 5% 65%); /* soft neutral focus ring — gray, not near-black */
+  --radius: 0.5rem;
+  --sidebar: hsl(240 4.8% 98.5%);
+  --brand: hsl(161 94% 21%); /* #036a49 — Stacklok brand green */
+  --brand-foreground: hsl(0 0% 100%);
+  --avatar-background: oklch(0.696 0 0 / 89.8%);
+  --nav-background: #18442e;
+  --nav-border: #265b41;
+  --nav-button-active-bg: #398560;
+  --nav-button-active-text: #ffffff;
+
+  /* Status, display, and link tokens (ADR-0018 convergence palette).
+     Complete colour values, never bare HSL triplets. */
+  --success: hsl(142 71% 29%); /* green — succeeded / healthy state */
+  --warning: hsl(35 92% 42%); /* amber — needs attention */
+  --info: hsl(211 92% 43%); /* blue — informational */
+  --title: hsl(240 5% 18%); /* serif page-title ink — softer than body text */
+  --logo: hsl(0 0% 28%); /* wordmark / logo fill — neutral ink */
+  --brand-label: hsl(161 94% 21%); /* brand-coloured label text */
+  --link: hsl(211 92% 43%); /* inline hyperlink */
+  --brand-ink: hsl(
+    161 94% 21%
+  ); /* brand accent ink: nav/tab active, avatar initials */
+  --input-icon: hsl(240 3.8% 46.1%); /* leading input icon ink (muted) */
+  --badge-outline-border: hsl(
+    240 5.9% 90%
+  ); /* outline badge border (= border) */
+  --badge-outline-text: hsl(
+    240 10% 3.9%
+  ); /* outline badge ink (= foreground) */
+  --btn-primary: hsl(161 94% 21%); /* primary CTA fill (= brand) */
+  --btn-primary-hover: #02543a; /* primary CTA hover */
+
+  /* Legacy shadcn sidebar family — consumed by src/components/ui/sidebar.tsx
+     (assistant panel). Keep until that primitive is retired. */
+  --sidebar-foreground: hsl(240 5.3% 26.1%);
+  --sidebar-primary: hsl(240 5.9% 10%);
+  --sidebar-primary-foreground: hsl(0 0% 98%);
+  --sidebar-accent: hsl(240 4.8% 95.9%);
+  --sidebar-accent-foreground: hsl(240 5.9% 10%);
+  --sidebar-border: hsl(220 13% 91%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+.dark {
+  --background: hsl(240 6% 10%);
+  --foreground: hsl(0 0% 98%);
+  --card: hsl(240 6.1% 12.9%); /* cards are elevated in dark */
+  --card-foreground: hsl(0 0% 98%);
+  --popover: hsl(240 6.3% 12.5%);
+  --popover-foreground: hsl(0 0% 98%);
+  --primary: hsl(210 34.5% 98%);
+  --primary-foreground: hsl(0 0% 9.1%);
+  --secondary: hsl(240 4% 15.9%);
+  --secondary-foreground: hsl(0 0% 98%);
+  --muted: hsl(240 6.3% 12.5%);
+  --muted-foreground: hsl(0 0% 63%);
+  --accent: hsl(240 4% 15.9%);
+  --accent-foreground: hsl(0 0% 98%);
+  --destructive: hsl(358.7 100% 69.6%);
+  --destructive-foreground: hsl(0 0% 98%);
+  --destructive-strong: hsl(358.7 78% 55%);
+  --border: hsl(0 0% 15.5%);
+  --input: hsl(0 0% 20.4%);
+  --ring: hsl(0 0% 45.2%);
+  --sidebar: hsl(240 6.3% 12.5%);
+  --brand-foreground: hsl(0 0% 100%);
+  --avatar-background: oklch(0.696 0 0 / 89.8%);
+  --nav-background: #0f2e1e;
+  --nav-border: #1a4430;
+  --nav-button-active-bg: #2d6b4a;
+  --nav-button-active-text: #f0f0f0;
+
+  /* Status, display, and link tokens — dark-mode variants. */
+  --success: hsl(142 61% 55%); /* lighter green for dark surfaces */
+  --warning: hsl(35 92% 62%); /* lighter amber */
+  --info: hsl(211 92% 66%); /* lighter blue */
+  --title: hsl(0 0% 74%); /* serif page-title ink, softer than body */
+  --logo: hsl(0 0% 58%); /* wordmark / logo fill — neutral ink */
+  --brand-label: hsl(158 64% 52%); /* brand label text on dark */
+  --link: hsl(211 92% 66%); /* inline hyperlink on dark */
+  --brand-ink: hsl(142 50% 60%); /* softer brand ink on dark */
+  --input-icon: hsl(0 0% 100%); /* near-white icon ink on dark */
+  --badge-outline-border: hsl(0 0% 32%); /* lighter outline on dark surfaces */
+  --badge-outline-text: hsl(0 0% 80%); /* dimmed outline ink on dark */
+  --btn-primary: #024c34; /* darker primary CTA on dark */
+  --btn-primary-hover: #013826; /* dark hover */
+
+  /* Legacy shadcn sidebar family — dark variants. */
+  --sidebar-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-primary: hsl(224.3 76.3% 48%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(240 3.7% 15.9%);
+  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-border: hsl(240 3.7% 15.9%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+/* Maps CSS tokens → Tailwind utility classes.
+   bg-background, text-foreground, border-border, bg-nav-background, etc. */
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-merriweather);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-strong: var(--destructive-strong);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-avatar-background: var(--avatar-background);
+  --color-nav-background: var(--nav-background);
+  --color-nav-border: var(--nav-border);
+  --color-nav-button-active-bg: var(--nav-button-active-bg);
+  --color-nav-button-active-text: var(--nav-button-active-text);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+
+  /* Convergence palette → utilities: bg-success, text-warning, text-info,
+     text-title, text-logo, text-brand-label, text-link, etc. */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-title: var(--title);
+  --color-logo: var(--logo);
+  --color-brand-label: var(--brand-label);
+  --color-link: var(--link);
+  --color-brand-ink: var(--brand-ink);
+  --color-input-icon: var(--input-icon);
+  --color-badge-outline-border: var(--badge-outline-border);
+  --color-badge-outline-text: var(--badge-outline-text);
+  --color-btn-primary: var(--btn-primary);
+  --color-btn-primary-hover: var(--btn-primary-hover);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply text-foreground;
+    font-family: var(--font-inter), sans-serif;
+  }
+  /* Paint the canvas AND body with the shell gradient's terminal colour:
+     iOS standalone computes dvh stale at launch (self-corrects on first
+     scroll), leaving a strip beside/below the app, and overscroll exposes
+     the canvas too. Every visible surface (the card, panels, dialogs)
+     declares its own bg-background, so nothing reads body's background —
+     matching the gradient's end keeps the stale strip invisible. */
+  html,
+  body {
+    background-color: #06202a;
+  }
+  html.dark,
+  html.dark body {
+    background-color: #02141b;
+  }
+  /* Mobile is read at arm's length — bump the default root size past
+     native body text (~17pt). The Interface scale slider multiplies
+     through --ui-scale rather than replacing the base. */
+  html {
+    font-size: calc(100% * var(--ui-scale, 1));
+  }
+  @media (max-width: 499px) {
+    html {
+      font-size: calc(18px * var(--ui-scale, 1));
+    }
+  }
+}
+
+@layer utilities {
+  .text-page-title {
+    font-family: var(--font-merriweather), serif;
+    font-size: 34px;
+    line-height: 42px;
+    font-weight: 300;
+    letter-spacing: -0.85px;
+  }
+}
+
+[data-sonner-toaster] {
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+}
+
+/* Tiptap / ProseMirror editor styles */
+.tiptap-editor .ProseMirror {
+  outline: none;
+  min-height: 100%;
+  padding: 1.5rem;
+  color: var(--foreground);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+}
+
+.tiptap-editor .ProseMirror h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.tiptap-editor .ProseMirror h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.tiptap-editor .ProseMirror h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1rem 0 0.4rem;
+}
+
+.tiptap-editor .ProseMirror p {
+  margin: 0.5rem 0;
+}
+
+.tiptap-editor .ProseMirror ul,
+.tiptap-editor .ProseMirror ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.tiptap-editor .ProseMirror ul {
+  list-style-type: disc;
+}
+
+.tiptap-editor .ProseMirror ol {
+  list-style-type: decimal;
+}
+
+.tiptap-editor .ProseMirror li {
+  margin: 0.2rem 0;
+}
+
+.tiptap-editor .ProseMirror blockquote {
+  border-left: 3px solid
+    color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.tiptap-editor .ProseMirror code {
+  background: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.85em;
+  font-family: ui-monospace, monospace;
+}
+
+.tiptap-editor .ProseMirror pre {
+  background: hsl(240 10% 10%);
+  color: hsl(0 0% 90%);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  font-family: ui-monospace, monospace;
+  line-height: 1.6;
+}
+
+.tiptap-editor .ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.tiptap-editor .ProseMirror strong {
+  font-weight: 600;
+}
+
+.tiptap-editor .ProseMirror em {
+  font-style: italic;
+}
+
+.tiptap-editor .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+
+.tiptap-editor .ProseMirror a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Placeholder */
+.tiptap-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* Chat composer: a plain-text-style single field (no rich formatting).
+   Mirrors the old transparent-textarea look — 14px, tight leading, muted
+   placeholder — so swapping in ProseMirror keeps the composer identical. */
+.composer-editor .ProseMirror {
+  outline: none;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.composer-editor .ProseMirror p {
+  margin: 0;
+}
+
+.composer-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* Mobile: small UI glyphs step up one notch for touch legibility. Unlayered
+   on purpose — it must override the size-* utilities, which live in a
+   cascade layer; larger deliberate icon sizes are untouched. */
+@media (max-width: 499px) {
+  svg.lucide.size-4,
+  svg.lucide.size-\[17px\] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  svg.lucide.size-3\.5 {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+}
+
+/* Thinking-indicator dots: Tailwind's animate-bounce moves 25% of the
+   element's own height — invisible on a 6px dot. A fixed 5px hop with a
+   squash-and-stretch easing reads as an actual bounce. */
+@keyframes thinking-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: translateY(-5px);
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}

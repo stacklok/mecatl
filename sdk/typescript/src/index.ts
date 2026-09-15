@@ -21,6 +21,14 @@ export type {
   Sessions,
 } from "./client.js";
 export { connect } from "./client.js";
+export type {
+  RunControls,
+  SteerAck,
+  SteerCancelAck,
+  SteerCancelOutcome,
+  SteerControlOptions,
+  SteerOutcome,
+} from "./controls.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";
 export type {
   ClientDiagnosticsOptions,

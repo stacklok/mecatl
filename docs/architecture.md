@@ -999,6 +999,27 @@ HTTPS, origin, CA, hostname, and redirect safeguards. Kind remote login is avail
 the public CA, but is a live qualification path, not ordinary offline-test coverage.
 See [ADR 0275](adr/0275-bounded-scoped-https-keepalive-oidc.md), [ADR 0277](adr/0277-remote-mecatui-oidc.md), [ADR 0287](adr/0287-target-aware-mecatui-tls.md), and [ADR 0274](adr/0274-remote-mecatui-logout-budget.md).
 
+**Studio — the web client (`studio/`).** An optional Next.js *client* of the public
+HTTP/SSE API, in-repo as a Node module (never a Go module — not in `go.work`, the
+layering DAG, depguard, or the api-compat gate). The browser talks only to Studio's
+own server-side proxy routes (`/api/mecatl/*`, `/api/mecatl-control/*`), which pin
+Host/Origin, inject the bearer token server-side, and allowlist headers in both
+directions; the daemon proxy forwards bodies and queries verbatim (session
+placement is server-owned, ADR 0291 — nothing injects a workspace). Two pure deployment modes: managed (a local
+controller supervises a `mecated` spawned from `bin/mecated` on a random loopback
+port with a generated bearer) or external (`MECATL_BASE_URL`; every local control
+surface answers 409 as deployment-owned). Studio is daemon-only — an unreachable
+daemon renders as an offline state, never demo content — and consumes the daemon
+exclusively through the TypeScript SDK (`@stacklok-oss/mecatl-sdk`, source
+`sdk/typescript`, installed as a `file:` dependency and built before Studio
+installs) with the SDK's HTTP transport pointed at the same-origin `/api/mecatl`
+proxy; the SDK owns wire decoding (generated proto bindings, unknown event kinds
+surfaced as typed unknowns), and only the controller calls remain Studio-owned.
+Live re-attach to a running session rides the SDK's durable watch
+(`GET /v1/sessions/{id}/watch`, ADR 0250). A breaking wire change is absorbed by
+the SDK first; Studio moves with it in the same PR. See ADR 0345 (and its
+amendment) and ADR 0346.
+
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against
 an in-process `server.Service`, drives it to a terminal state, and emits three

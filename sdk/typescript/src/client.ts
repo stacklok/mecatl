@@ -2,12 +2,13 @@ import type {
   DescMessage,
   DescMethodStreaming,
   DescMethodUnary,
+  JsonValue,
   MessageInitShape,
   MessageShape,
 } from "@bufbuild/protobuf";
 import { create } from "@bufbuild/protobuf";
 import type { CallOptions, Transport } from "@connectrpc/connect";
-
+import { createRunControls, type RunControls } from "./controls.js";
 import {
   AuthenticationError,
   type DiagnosticsSink,
@@ -283,6 +284,16 @@ export interface Session {
    */
   resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
   /**
+   * Returns strict, run-id-addressed controls for one run of this session.
+   *
+   * The handle needs no event stream, so it also serves a run this client did
+   * not start (a durable watch, a re-attached page). HTTP transport only.
+   *
+   * @param runId - The run every control names through `expected_run_id`.
+   * @returns Controls that resolve asks, cancel, steer, and retract a steer.
+   */
+  controls(runId: string): RunControls;
+  /**
    * Releases runtime resources without removing the durable session.
    *
    * @param options - Request headers, cancellation signal, and deadline.
@@ -414,6 +425,11 @@ interface SessionOperations {
   assertOpen(): void;
   attachmentStatus(): AttachmentStatusWriter;
   cancelRun(sessionId: string, runId: string): Promise<void>;
+  control(
+    sessionId: string,
+    frame: ConverseFrame,
+    options?: RequestOptions,
+  ): Promise<JsonValue | undefined>;
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
   invalidateCompatibility(): void;
@@ -769,6 +785,21 @@ class SessionImpl implements Session {
     }
   }
 
+  controls(runId: string): RunControls {
+    this.#operations.assertOpen();
+    if (runId === "") {
+      throw new InvalidStateError("Run controls require a run id", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    return createRunControls(this.id, runId, {
+      assertOpen: () => this.#operations.assertOpen(),
+      control: (sessionId, frame, options) => this.#operations.control(sessionId, frame, options),
+      promptCapabilities: () => this.#promptCapabilities,
+      transportKind: this.#operations.transportKind,
+    });
+  }
+
   async close(options?: RequestOptions): Promise<void> {
     this.#operations.assertOpen();
     await this.#operations.unary(
@@ -853,6 +884,7 @@ class ClientImpl implements Client {
       attachmentStatus: () => this.#createAttachmentStatus(),
       cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
+      control: (sessionId, frame, options) => this.#control(sessionId, frame, options),
       features: () => this.#features(),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
       registerAttachment: (close) => this.#register(this.#attachments, close),
@@ -1160,6 +1192,40 @@ class ClientImpl implements Client {
     return this.#observeRequest(() =>
       this.#raw.unary(method, input, this.#withClientSignal(options)),
     );
+  }
+
+  async #control(
+    sessionId: string,
+    frame: ConverseFrame,
+    options?: RequestOptions,
+  ): Promise<JsonValue | undefined> {
+    this.#assertOpen();
+    if (this.#transportKind === "grpc") {
+      throw new UnsupportedFeatureError("prompt_free_controls", { transport: "grpc" });
+    }
+    const control = registeredTransportOperations(this.#transport)?.control;
+    if (control === undefined) {
+      throw new UnsupportedFeatureError("prompt_free_controls", { transport: "http" });
+    }
+    const request = create(HarnessService.method.converse.input, frame);
+    const signal =
+      options?.signal === undefined
+        ? this.#abort.signal
+        : AbortSignal.any([this.#abort.signal, options.signal]);
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
+    try {
+      const ack = await control(
+        sessionId,
+        request,
+        signal,
+        sessionAffinityIfRepresentable(sessionId, options)?.headers,
+      );
+      this.#setRequestStatus("online");
+      return ack;
+    } catch (error) {
+      this.#observeError(error);
+      throw error;
+    }
   }
 
   async #cancelRun(sessionId: string, runId: string): Promise<void> {

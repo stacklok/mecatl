@@ -407,7 +407,10 @@ export class RunImpl implements Run {
   }
 }
 
-function approvalVerdict(verdict: PermissionVerdict, transport: TransportKind): ApprovalVerdict {
+export function approvalVerdict(
+  verdict: PermissionVerdict,
+  transport: TransportKind,
+): ApprovalVerdict {
   switch (verdict) {
     case "allow_once":
       return ApprovalVerdict.ALLOW_ONCE;

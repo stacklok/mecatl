@@ -188,6 +188,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/client.d.ts.map",
     "package/dist/client.js",
     "package/dist/client.js.map",
+    "package/dist/controls.d.ts",
+    "package/dist/controls.d.ts.map",
+    "package/dist/controls.js",
+    "package/dist/controls.js.map",
     "package/dist/credentials.d.ts",
     "package/dist/credentials.d.ts.map",
     "package/dist/credentials.js",
@@ -328,6 +332,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/watch.d.ts.map",
     "package/dist/watch.js",
     "package/dist/watch.js.map",
+    "package/dist/wire-json.d.ts",
+    "package/dist/wire-json.d.ts.map",
+    "package/dist/wire-json.js",
+    "package/dist/wire-json.js.map",
     "package/package.json",
   ];
   expect([...packedFiles.keys()].sort()).toEqual(expectedFiles);

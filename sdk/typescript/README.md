@@ -58,6 +58,20 @@ fact, then raises the same error if iteration continues. Both leave the cursor a
 last envelope before the gap. `CursorExpiredError` also ends the attachment and requires
 the caller to choose an explicit restart from the beginning or a transcript reload.
 
+## Run controls by run id
+
+A `Run` returned by `session.run()` carries its own `approve`, `cancel`, and `steer`.
+When the client did not start the run — it re-attached after a reload, or it follows
+the run through `session.activity()` — `session.controls(runId)` gives the same
+controls addressed by run id, over HTTP only. Every control is strict: it names the
+run through `expected_run_id`, so one that outlives its run is refused as
+`stale_run_control` instead of acting on the session's next run. `steer` returns the
+server's `accepted`, `appended`, or `too_late` outcome (the caller keeps the text on
+`too_late`) and takes a client-minted `messageId` that the run's later `steer` event
+echoes as the drained bundle's watermark; `cancelSteer` retracts the pending bundle.
+`client.server.compatibility()` reports whether the server advertises the `http_steer` feature
+these two controls require.
+
 ## Node and Bun local daemon
 
 Node/Bun callers can import `spawn` from `@stacklok-oss/mecatl-sdk/node`. It resolves an existing
