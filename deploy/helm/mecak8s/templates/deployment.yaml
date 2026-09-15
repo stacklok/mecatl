@@ -100,7 +100,7 @@ spec:
             - --grpc-addr=0.0.0.0:8080
             - --http-addr=0.0.0.0:8081
             - --drain-addr=0.0.0.0:8082
-            - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
+            - {{ printf "--redis-url=%s" (include "mecak8s.redisEndpoint" .) | quote }}
             - {{ printf "--redis-follow-pool-size=%d" (int64 .Values.redis.follow.poolSize) | quote }}
             - {{ printf "--redis-max-followers=%d" (int64 .Values.redis.follow.maxFollowers) | quote }}
             {{- if .Values.redis.filesystem.enabled }}

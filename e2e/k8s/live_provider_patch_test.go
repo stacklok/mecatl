@@ -13,7 +13,7 @@ func TestOIDCPatchArgsPreserveLiveProviderAndRedisPlaintextOptIn(t *testing.T) {
 	t.Parallel()
 	current := []string{
 		"--grpc-addr=0.0.0.0:8080",
-		"--redis-url=redis:6379",
+		"--redis-url=mecak8s-mecak8s-redis:6379",
 		"--redis-allow-plaintext",
 		"--default-provider=openrouter",
 		"--default-model=anthropic/claude-haiku-4.5",
@@ -24,7 +24,7 @@ func TestOIDCPatchArgsPreserveLiveProviderAndRedisPlaintextOptIn(t *testing.T) {
 	got := withoutOIDCArgs(current)
 	want := []string{
 		"--grpc-addr=0.0.0.0:8080",
-		"--redis-url=redis:6379",
+		"--redis-url=mecak8s-mecak8s-redis:6379",
 		"--redis-allow-plaintext",
 		"--default-provider=openrouter",
 		"--default-model=anthropic/claude-haiku-4.5",

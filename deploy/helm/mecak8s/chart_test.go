@@ -104,6 +104,18 @@ func serviceFromRender(t *testing.T, rendered string) *corev1.Service {
 	return nil
 }
 
+func localRedisServiceFromRender(t *testing.T, rendered string) *corev1.Service {
+	t.Helper()
+	for _, document := range strings.Split(rendered, "\n---") {
+		var service corev1.Service
+		if err := yaml.Unmarshal([]byte(document), &service); err == nil && service.Kind == "Service" && service.Labels["app.kubernetes.io/name"] == "redis" {
+			return &service
+		}
+	}
+	t.Fatal("rendered chart has no local Redis Service")
+	return nil
+}
+
 func assertFixtureServiceNodePorts(t *testing.T, rendered string) {
 	t.Helper()
 	service := serviceFromRender(t, rendered)
@@ -136,6 +148,25 @@ func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
 		return &deployment
 	}
 	t.Fatal("rendered chart has no Deployment")
+	return nil
+}
+
+func statefulSetFromRender(t *testing.T, rendered string) *appsv1.StatefulSet {
+	t.Helper()
+	for _, document := range strings.Split(rendered, "\n---") {
+		var meta struct {
+			Kind string `yaml:"kind"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &meta); err != nil || meta.Kind != "StatefulSet" {
+			continue
+		}
+		var statefulSet appsv1.StatefulSet
+		if err := yaml.Unmarshal([]byte(document), &statefulSet); err != nil {
+			t.Fatal(err)
+		}
+		return &statefulSet
+	}
+	t.Fatal("rendered chart has no StatefulSet")
 	return nil
 }
 
@@ -404,7 +435,7 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 		t.Fatalf("read Kind values: %v", err)
 	}
 	for _, want := range []string{
-		"mockProvider: true", "endpoint: redis:6379", "credentialsSecret: \"\"",
+		"mockProvider: true", "endpoint: \"\"", "credentialsSecret: \"\"",
 		"enabled: true", "workspace: /tmp",
 	} {
 		if !strings.Contains(string(values), want) {
@@ -437,7 +468,7 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 			t.Fatalf("bare Kind render (no fixture overlay) unexpectedly contains %q — e2e/k8s's suite creates no matching Secret and would hang", forbidden)
 		}
 	}
-	for _, want := range []string{"replicas: 2", "- --mock", "--redis-url=redis:6379", "--workspace=/tmp", "type: ClusterIP"} {
+	for _, want := range []string{"replicas: 2", "- --mock", "--redis-url=kind-mecak8s-redis:6379", "--workspace=/tmp", "type: ClusterIP"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("bare Kind render missing %q", want)
 		}
@@ -1208,7 +1239,7 @@ func TestMecak8sHelmChart_Scenario1_KindProfileIsExplicitlyLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render Kind profile: %v", err)
 	}
-	for _, want := range []string{"kind: StatefulSet", "name: redis", "image: ko.local/mecak8s:dev", "--redis-url=redis:6379"} {
+	for _, want := range []string{"kind: StatefulSet", "name: kind-mecak8s-redis", "image: redis:7-alpine", "image: ko.local/mecak8s:dev", "--redis-url=kind-mecak8s-redis:6379"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("Kind render missing %q", want)
 		}
@@ -1219,6 +1250,151 @@ func TestMecak8sHelmChart_Scenario1_KindProfileIsExplicitlyLocal(t *testing.T) {
 	for _, forbidden := range []string{"redis-credentials", "--redis-password-file", "--redis-tls-ca", "--redis-username-file", "--redis-tls\n"} {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("Kind render includes secure Redis material %q", forbidden)
+		}
+	}
+}
+
+func TestMecak8sHelmChart_LocalRedisIsReleaseScopedAndDigestPinnable(t *testing.T) {
+	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, release := range []string{"alpha", "beta"} {
+		rendered, err := helm(t,
+			"template", release, ".",
+			"--set", "mockProvider=true",
+			"--set", "redis.local.enabled=true",
+			"--set", "redis.local.image.repository=registry.example/redis",
+			"--set", "redis.local.image.tag=",
+			"--set", "redis.local.image.digest="+digest,
+		)
+		if err != nil {
+			t.Fatalf("render %s local Redis: %v\n%s", release, err, rendered)
+		}
+
+		redisName := release + "-mecak8s-redis"
+		redisService := localRedisServiceFromRender(t, rendered)
+		if redisService.Name != redisName {
+			t.Fatalf("Redis Service name = %q, want %q", redisService.Name, redisName)
+		}
+		statefulSet := statefulSetFromRender(t, rendered)
+		if statefulSet.Name != redisName || statefulSet.Spec.ServiceName != redisName {
+			t.Fatalf("Redis StatefulSet name/serviceName = %q/%q, want %q/%q", statefulSet.Name, statefulSet.Spec.ServiceName, redisName, redisName)
+		}
+		for _, want := range []string{
+			"--redis-url=" + redisName + ":6379",
+			"image: registry.example/redis@" + digest,
+		} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s render missing %q\n%s", release, want, rendered)
+			}
+		}
+	}
+}
+
+func TestMecak8sHelmChart_LongLocalRedisNamesRemainDistinct(t *testing.T) {
+	prefix := strings.Repeat("a", 57)
+	overrides := []string{prefix + "111", prefix + "222"}
+	names := make([]string, 0, len(overrides))
+	for i, override := range overrides {
+		rendered, err := helm(t,
+			"template", fmt.Sprintf("release-%d", i), ".",
+			"--set", "mockProvider=true",
+			"--set", "redis.local.enabled=true",
+			"--set-string", "fullnameOverride="+override,
+		)
+		if err != nil {
+			t.Fatalf("render long fullnameOverride %q: %v\n%s", override, err, rendered)
+		}
+		service := localRedisServiceFromRender(t, rendered)
+		statefulSet := statefulSetFromRender(t, rendered)
+		if len(service.Name) > 63 || !strings.HasSuffix(service.Name, "-redis") {
+			t.Fatalf("Redis Service name %q is not a valid suffixed Kubernetes name", service.Name)
+		}
+		if statefulSet.Name != service.Name || statefulSet.Spec.ServiceName != service.Name {
+			t.Fatalf("Redis StatefulSet name/serviceName = %q/%q, want Service name %q", statefulSet.Name, statefulSet.Spec.ServiceName, service.Name)
+		}
+		if !strings.Contains(rendered, "--redis-url="+service.Name+":6379") {
+			t.Fatalf("render missing endpoint derived from Redis Service %q", service.Name)
+		}
+		names = append(names, service.Name)
+	}
+	if names[0] == names[1] {
+		t.Fatalf("distinct long fullnameOverrides produced the same Redis name %q", names[0])
+	}
+}
+
+func TestMecak8sHelmChart_AcceptsValidIPv6HostPorts(t *testing.T) {
+	args := productionArgs()
+	args = append(args,
+		"--set-string", "redis.endpoint=[2001:db8::1]:6380",
+		"--set-string", "learning.store.endpoint=[::1]:9090",
+	)
+	if rendered, err := helm(t, args...); err != nil {
+		t.Fatalf("render valid IPv6 endpoints: %v\n%s", err, rendered)
+	}
+}
+
+func TestMecak8sHelmChart_RejectsInvalidRuntimeValuesBeforeAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  []string
+		want string
+	}{
+		{name: "local Redis endpoint override", set: []string{"redis.local.enabled=true", "redis.endpoint=other:6379"}, want: "redis.endpoint"},
+		{name: "ClusterIP nodePort", set: []string{"service.type=ClusterIP", "service.nodePorts.grpc=30080"}, want: "service.nodePorts"},
+		{name: "invalid agent image digest", set: []string{"image.tag=", "image.digest=sha256:not-a-digest"}, want: "image.digest"},
+		{name: "invalid local Redis image digest", set: []string{"redis.local.enabled=true", "redis.endpoint=", "redis.local.image.tag=", "redis.local.image.digest=sha256:not-a-digest"}, want: "redis.local.image.digest"},
+		{name: "missing local Redis image selector", set: []string{"redis.local.enabled=true", "redis.endpoint=", "redis.local.image.tag=", "redis.local.image.digest="}, want: "set one of redis.local.image.digest or redis.local.image.tag"},
+		{name: "invalid fullname override", set: []string{"fullnameOverride=Invalid_Name"}, want: "fullnameOverride"},
+		{name: "invalid name override", set: []string{"nameOverride=Invalid_Name"}, want: "nameOverride"},
+		{name: "Redis URL instead of host port", set: []string{"redis.endpoint=redis://redis.example.internal:6379"}, want: "redis.endpoint"},
+		{name: "malformed Redis IPv6", set: []string{"redis.endpoint=[::::]:6379"}, want: "redis.endpoint"},
+		{name: "overlong learning store IPv6", set: []string{"learning.store.endpoint=[1:2:3:4:5:6:7:8:9]:6379"}, want: "learning.store.endpoint"},
+		{name: "Redis port above 65535", set: []string{"redis.endpoint=redis.example.internal:65536"}, want: "redis.endpoint port must be between 1 and 65535"},
+		{name: "learning store port above 65535", set: []string{"learning.store.endpoint=learning.example.internal:65536"}, want: "learning.store.endpoint port must be between 1 and 65535"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{}, productionArgs()...)
+			for _, value := range tc.set {
+				args = append(args, "--set", value)
+			}
+			if rendered, err := helm(t, args...); err == nil {
+				t.Fatalf("render accepted invalid values %v:\n%s", tc.set, rendered)
+			} else if !strings.Contains(rendered, tc.want) {
+				t.Fatalf("render failure for %v did not contain %q: %v\n%s", tc.set, tc.want, err, rendered)
+			}
+		})
+	}
+}
+
+func TestMecak8sHelmChart_RejectsEveryChartOwnedExtraVolumeName(t *testing.T) {
+	reservedNames := []string{
+		"tmp",
+		"redis-credentials",
+		"tls",
+		"oidc-ca",
+		"learning-store-ca",
+		"learning-store-mtls",
+		"mcp-profile",
+	}
+	for _, name := range reservedNames {
+		for _, tc := range []struct {
+			kind string
+			set  []string
+			want string
+		}{
+			{kind: "volume", set: []string{"extraVolumes[0].name=" + name, "extraVolumes[0].emptyDir.sizeLimit=1Mi"}, want: "extraVolumes.0.name"},
+			{kind: "mount", set: []string{"extraVolumeMounts[0].name=" + name, "extraVolumeMounts[0].mountPath=/other"}, want: "extraVolumeMounts.0.name"},
+		} {
+			t.Run(tc.kind+"/"+name, func(t *testing.T) {
+				args := append([]string{}, productionArgs()...)
+				for _, value := range tc.set {
+					args = append(args, "--set", value)
+				}
+				if rendered, err := helm(t, args...); err == nil {
+					t.Fatalf("render accepted chart-owned %s name %q:\n%s", tc.kind, name, rendered)
+				} else if !strings.Contains(rendered, tc.want) {
+					t.Fatalf("render failure for chart-owned %s name %q did not contain %q: %v\n%s", tc.kind, name, tc.want, err, rendered)
+				}
+			})
 		}
 	}
 }

@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis
+  name: {{ include "mecak8s.redisFullname" . }}
   labels:
     app.kubernetes.io/name: redis
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -19,13 +19,13 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: redis
+  name: {{ include "mecak8s.redisFullname" . }}
   labels:
     app.kubernetes.io/name: redis
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/part-of: mecak8s
 spec:
-  serviceName: redis
+  serviceName: {{ include "mecak8s.redisFullname" . }}
   replicas: 1
   selector:
     matchLabels:
@@ -47,7 +47,8 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: {{ if .Values.redis.local.image.digest }}{{ .Values.redis.local.image.repository }}@{{ .Values.redis.local.image.digest }}{{ else }}{{ .Values.redis.local.image.repository }}:{{ .Values.redis.local.image.tag }}{{ end }}
+          imagePullPolicy: {{ .Values.redis.local.image.pullPolicy }}
           args: [--save, "", --appendonly, "no"]
           ports:
             - {name: redis, containerPort: 6379}

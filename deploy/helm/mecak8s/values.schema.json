@@ -10,7 +10,7 @@
       "required": ["repository", "digest", "tag", "pullPolicy"],
       "properties": {
         "repository": {"type": "string", "minLength": 1},
-        "digest": {"type": "string"},
+        "digest": {"$ref": "#/definitions/imageDigest"},
         "tag": {"type": "string"},
         "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
       }
@@ -20,7 +20,7 @@
       "additionalProperties": false,
       "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "follow", "filesystem", "readLedger", "local"],
       "properties": {
-        "endpoint": {"type": "string"},
+        "endpoint": {"type": "string", "anyOf": [{"const": ""}, {"$ref": "#/definitions/hostPort"}]},
         "credentialsSecret": {"type": "string"},
         "passwordKey": {"type": "string"},
         "caKey": {"type": "string"},
@@ -36,7 +36,25 @@
         },
         "filesystem": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "readLedger": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
-        "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}
+        "local": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "image"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["repository", "digest", "tag", "pullPolicy"],
+              "properties": {
+                "repository": {"type": "string", "minLength": 1},
+                "digest": {"$ref": "#/definitions/imageDigest"},
+                "tag": {"type": "string"},
+                "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+              }
+            }
+          }
+        }
       }
     },
     "oidc": {
@@ -251,7 +269,7 @@
           "additionalProperties": false,
           "required": ["endpoint", "tokenSecret", "tokenKey", "tls"],
           "properties": {
-            "endpoint": {"type": "string", "pattern": "^(|(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):[0-9]+)$"},
+            "endpoint": {"type": "string", "anyOf": [{"const": ""}, {"$ref": "#/definitions/hostPort"}]},
             "tokenSecret": {"type": "string"},
             "tokenKey": {"type": "string"},
             "tls": {
@@ -366,11 +384,19 @@
       }
     },
     "service": {"type": "object", "additionalProperties": false, "required": ["type", "grpcPort", "httpPort", "nodePorts"], "properties": {"type": {"type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"]}, "grpcPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "httpPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "nodePorts": {"type": "object", "additionalProperties": false, "properties": {"grpc": {"type": "integer", "minimum": 30000, "maximum": 32767}, "http": {"type": "integer", "minimum": 30000, "maximum": 32767}}}}},
-    "nameOverride": {"type": "string"},
-    "fullnameOverride": {"type": "string"},
+    "nameOverride": {"type": "string", "maxLength": 63, "pattern": "^(|[a-z0-9]([-a-z0-9]*[a-z0-9])?)$"},
+    "fullnameOverride": {"type": "string", "maxLength": 63, "pattern": "^(|[a-z0-9]([-a-z0-9]*[a-z0-9])?)$"},
     "podAnnotations": {"type": "object"}
   },
   "allOf": [
+    {
+      "if": {"properties": {"redis": {"properties": {"local": {"properties": {"enabled": {"const": true}}}}}}},
+      "then": {"properties": {"redis": {"properties": {"endpoint": {"maxLength": 0}}}}}
+    },
+    {
+      "if": {"properties": {"service": {"properties": {"type": {"const": "ClusterIP"}}}}},
+      "then": {"properties": {"service": {"properties": {"nodePorts": {"maxProperties": 0}}}}}
+    },
     {
       "if": {"properties": {"redis": {"properties": {"filesystem": {"properties": {"enabled": {"const": true}}}}}}},
       "then": {"properties": {"workspace": {"maxLength": 0}}}
@@ -514,7 +540,15 @@
         "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$"}
       }
     },
-    "volumeName": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+    "hostPort": {
+      "type": "string",
+      "anyOf": [
+        {"pattern": "^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*:[0-9]+$"},
+        {"pattern": "^\\[((([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){1,7}:)|(([0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){1,5}(:[0-9A-Fa-f]{1,4}){1,2})|(([0-9A-Fa-f]{1,4}:){1,4}(:[0-9A-Fa-f]{1,4}){1,3})|(([0-9A-Fa-f]{1,4}:){1,3}(:[0-9A-Fa-f]{1,4}){1,4})|(([0-9A-Fa-f]{1,4}:){1,2}(:[0-9A-Fa-f]{1,4}){1,5})|([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){1,6})|(:((:[0-9A-Fa-f]{1,4}){1,7}|:)))\\]:[0-9]+$"}
+      ]
+    },
+    "imageDigest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"},
+    "volumeName": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "not": {"enum": ["tmp", "redis-credentials", "tls", "oidc-ca", "learning-store-ca", "learning-store-mtls", "mcp-profile"]}},
     "kubernetesVolumeSource": {"type": "object"},
     "imageVolumeSource": {
       "type": "object",

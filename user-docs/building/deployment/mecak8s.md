@@ -1078,7 +1078,11 @@ satisfy them. The chart also supports `affinity`, `nodeSelector`, and
 
 Use Redis Sentinel, Redis Cluster, or a managed service for production high
 availability. The disposable in-cluster Redis fixture has one replica and no
-persistence.
+persistence. Its Service, StatefulSet, and derived agent endpoint are scoped to
+the Helm release. Set `redis.local.image.repository` and either
+`redis.local.image.tag` or `redis.local.image.digest` when local qualification
+must use a mirrored or digest-pinned Redis image; clear the tag when setting a
+digest.
 
 ---
 

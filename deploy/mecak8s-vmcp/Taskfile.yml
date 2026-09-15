@@ -272,5 +272,5 @@ tasks:
             echo "OPENROUTER_API_KEY is not set -- mock provider only"
           fi
           "$@"
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset -l app.kubernetes.io/name=redis,app.kubernetes.io/instance={{.RELEASE}} -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s

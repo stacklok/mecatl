@@ -21,7 +21,7 @@ func TestMecak8sKindFixture_Scenario1_ToolHiveFreeSetup(t *testing.T) {
 	text := fixtureTaskClosure(t, "kind-setup")
 	for _, want := range []string{
 		"reset-state:", "cluster-create:", "namespace-apply:", "image-build-load:", "chart-apply:",
-		"--values=deploy/helm/mecak8s/values-kind.yaml", "--values=deploy/mecak8s-kind/kind-nodeports.yaml", "statefulset/redis",
+		"--values=deploy/helm/mecak8s/values-kind.yaml", "--values=deploy/mecak8s-kind/kind-nodeports.yaml", "statefulset -l app.kubernetes.io/name=redis,app.kubernetes.io/instance={{.RELEASE}}",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Kind base setup missing %q", want)
@@ -376,7 +376,7 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(base), "endpoint: redis:6379") || strings.Contains(string(base), "NodePort") {
+	if !strings.Contains(string(base), "endpoint: \"\"") || strings.Contains(string(base), "NodePort") {
 		t.Fatal("shared Kind values must remain bare ClusterIP profile")
 	}
 	chartDefaults, err := os.ReadFile("../helm/mecak8s/values.yaml")

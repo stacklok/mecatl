@@ -17,7 +17,8 @@ image:
 mockProvider: true
 
 redis:
-  endpoint: redis:6379
+  # Local mode derives <release>-mecak8s-redis:6379 from the generated Service.
+  endpoint: ""
   credentialsSecret: ""
   local:
     enabled: true

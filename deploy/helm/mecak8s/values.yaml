@@ -186,6 +186,12 @@ redis:
     enabled: false
   local:
     enabled: false
+    # Disposable fixture image. A digest overrides tag only when tag is empty.
+    image:
+      repository: redis
+      digest: ""
+      tag: 7-alpine
+      pullPolicy: IfNotPresent
 
 oidc:
   # Caller identity (ADR 0204/0205). Off for mock and explicit unsafe-bypass

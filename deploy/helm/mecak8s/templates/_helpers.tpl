@@ -4,6 +4,17 @@
 {{- define "mecak8s.fullname" -}}
 {{- if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "mecak8s.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}
 {{- end }}
+{{- define "mecak8s.redisFullname" -}}
+{{- $fullname := include "mecak8s.fullname" . -}}
+{{- if le (len $fullname) 57 -}}
+{{- printf "%s-redis" $fullname -}}
+{{- else -}}
+{{- printf "%s-%s-redis" ($fullname | trunc 48 | trimSuffix "-") ($fullname | sha256sum | trunc 8) -}}
+{{- end -}}
+{{- end }}
+{{- define "mecak8s.redisEndpoint" -}}
+{{- if .Values.redis.local.enabled }}{{ printf "%s:6379" (include "mecak8s.redisFullname" .) }}{{ else }}{{ .Values.redis.endpoint }}{{ end -}}
+{{- end }}
 {{- define "mecak8s.telemetryConfigMapName" -}}
 {{- printf "%s-telemetry" (include "mecak8s.fullname" . | trunc 53 | trimSuffix "-") | trunc 63 | trimSuffix "-" -}}
 {{- end }}
@@ -22,8 +33,22 @@ app.kubernetes.io/component: agent
 {{- if and .Values.image.digest .Values.image.tag -}}
 {{- fail "set at most one of image.digest or image.tag" -}}
 {{- end -}}
+{{- if and .Values.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.image.digest)) -}}
+{{- fail "image.digest must be a lowercase sha256 digest" -}}
+{{- end -}}
+{{- end -}}
+{{- define "mecak8s.validHostPort" -}}
+{{- if or
+  (regexMatch "^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*:[0-9]+$" .)
+  (regexMatch "^\\[((([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){1,7}:)|(([0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){1,5}(:[0-9A-Fa-f]{1,4}){1,2})|(([0-9A-Fa-f]{1,4}:){1,4}(:[0-9A-Fa-f]{1,4}){1,3})|(([0-9A-Fa-f]{1,4}:){1,3}(:[0-9A-Fa-f]{1,4}){1,4})|(([0-9A-Fa-f]{1,4}:){1,2}(:[0-9A-Fa-f]{1,4}){1,5})|([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){1,6})|(:((:[0-9A-Fa-f]{1,4}){1,7}|:)))\\]:[0-9]+$" .)
+-}}
+valid
+{{- end -}}
 {{- end -}}
 {{- define "mecak8s.redisPort" -}}
+{{- if not (include "mecak8s.validHostPort" .Values.redis.endpoint) -}}
+{{- fail "redis.endpoint must be a bare host:port without a URL scheme or credentials" -}}
+{{- end -}}
 {{- $match := regexFind ":[0-9]+$" .Values.redis.endpoint -}}
 {{- if eq $match "" -}}
 {{- fail "redis.endpoint must end in a numeric port" -}}
@@ -50,7 +75,13 @@ mounted
 {{- if gt (int .Values.redis.follow.maxFollowers) (int .Values.redis.follow.poolSize) -}}
 {{- fail "redis.follow.maxFollowers must not exceed redis.follow.poolSize" -}}
 {{- end -}}
-{{- if not .Values.redis.local.enabled -}}
+{{- if .Values.redis.local.enabled -}}
+{{- if .Values.redis.endpoint -}}{{ fail "redis.endpoint must be empty when redis.local.enabled is true; the chart derives the release-scoped endpoint" }}{{- end -}}
+{{- $_ := required "redis.local.image.repository is required" .Values.redis.local.image.repository -}}
+{{- if and .Values.redis.local.image.digest .Values.redis.local.image.tag -}}{{ fail "set at most one of redis.local.image.digest or redis.local.image.tag" }}{{- end -}}
+{{- if and (not .Values.redis.local.image.digest) (not .Values.redis.local.image.tag) -}}{{ fail "set one of redis.local.image.digest or redis.local.image.tag" }}{{- end -}}
+{{- if and .Values.redis.local.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.redis.local.image.digest)) -}}{{ fail "redis.local.image.digest must be a lowercase sha256 digest" }}{{- end -}}
+{{- else -}}
 {{- $_ := required "redis.endpoint is required when redis.local.enabled is false" .Values.redis.endpoint -}}
 {{- $_ := include "mecak8s.redisPort" . -}}
 {{- if and (include "mecak8s.redisSecretMounted" .) (not .Values.redis.credentialsSecret) -}}
@@ -59,6 +90,11 @@ mounted
 {{- if and .Values.redis.usernameKey (not .Values.redis.passwordKey) -}}
 {{- fail "redis.usernameKey requires redis.passwordKey" -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- define "mecak8s.validateService" -}}
+{{- if and (eq .Values.service.type "ClusterIP") (gt (len .Values.service.nodePorts) 0) -}}
+{{- fail "service.nodePorts must be empty when service.type is ClusterIP" -}}
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateOIDC" -}}
@@ -109,6 +145,11 @@ mounted
 {{- define "mecak8s.validateLearningStore" -}}
 {{- $store := .Values.learning.store -}}
 {{- $tls := $store.tls -}}
+{{- if $store.endpoint -}}
+{{- if not (include "mecak8s.validHostPort" $store.endpoint) -}}{{ fail "learning.store.endpoint must be a bare host:port" }}{{- end -}}
+{{- $learningPort := regexFind ":[0-9]+$" $store.endpoint | trimPrefix ":" | int -}}
+{{- if or (lt $learningPort 1) (gt $learningPort 65535) -}}{{ fail "learning.store.endpoint port must be between 1 and 65535" }}{{- end -}}
+{{- end -}}
 {{- if or $store.tokenSecret $store.tokenKey -}}
 {{- $_ := required "learning.store.tokenSecret is required when learning.store.tokenKey is set" $store.tokenSecret -}}
 {{- $_ := required "learning.store.tokenKey is required when learning.store.tokenSecret is set" $store.tokenKey -}}
