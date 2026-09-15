@@ -260,8 +260,8 @@ func resolveMCPSubcommand(args []string) commandResolution {
 	if len(args) >= 3 && args[2] == "login" {
 		return commandResolution{
 			handled: true,
-			run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
-				return runMCPLogin(args[3:], stdout)
+			run: subcommandAction(func(_ io.Reader, stdout, stderr io.Writer) error {
+				return runMCPLogin(args[3:], stdout, stderr)
 			}),
 		}
 	}

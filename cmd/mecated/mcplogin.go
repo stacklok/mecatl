@@ -13,6 +13,7 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -166,7 +167,11 @@ func loadMCPLoginProfiles(explicit []string) (*cliconfig.MCPProfiles, error) {
 	return cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{Operator: operator, LookupEnv: os.LookupEnv})
 }
 
-func runMCPLogin(args []string, stdout io.Writer) error {
+func runMCPLogin(args []string, stdout io.Writer, stderr ...io.Writer) error {
+	diagnosticOut := io.Discard
+	if len(stderr) > 0 && stderr[0] != nil {
+		diagnosticOut = stderr[0]
+	}
 	parsed, err := parseMCPLoginArgs(args, stdout)
 	if err != nil {
 		return err
@@ -189,7 +194,7 @@ func runMCPLogin(args []string, stdout io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := executeMCPLogin(ctx, server, opts, app.MCPLoginOptions{DCRAction: parsed.dcrAction}); err != nil {
+	if err := executeMCPLogin(ctx, server, opts, app.MCPLoginOptions{DCRAction: parsed.dcrAction, Diagnostics: slogdiag.NewText(diagnosticOut)}); err != nil {
 		return mcpLoginRemedy(err)
 	}
 	_, err = fmt.Fprintf(stdout, "MCP OAuth login succeeded for %s\n", server.Name)

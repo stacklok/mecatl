@@ -678,3 +678,20 @@ func keys(m map[string]tool.Tool) []string {
 	}
 	return out
 }
+
+func TestOAuthLoginDeadlinePauseInvalidatesExpiredTimer(t *testing.T) {
+	deadline := newOAuthLoginDeadline(context.Background(), time.Hour)
+	defer deadline.close()
+
+	deadline.start()
+	firstGeneration := deadline.generation
+	deadline.pause()
+	deadline.start()
+	deadline.expire(firstGeneration)
+
+	select {
+	case <-deadline.ctx.Done():
+		t.Fatal("stale pre-authorization timer cancelled the resumed deadline")
+	default:
+	}
+}

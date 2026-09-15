@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
@@ -479,4 +480,45 @@ func invalidGrantServer(t *testing.T) *httptest.Server {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant", "error_description": "response-body-canary"})
 	}))
+}
+
+func TestOAuthDCRTokenRestoreFailureLogsRawErrorBeforeRedaction(t *testing.T) {
+	const canary = "credential-store-backend-canary"
+	store := &oauthStoreWrapper{
+		Store: newOAuthMemoryStore(t),
+		get: func(context.Context, []byte) (credentialstore.Record, error) {
+			return credentialstore.Record{}, errors.New(canary)
+		},
+	}
+	recorder := &oauthDiagnosticRecorder{}
+	state := &oauthCredentialState{
+		reader:       store,
+		writer:       store,
+		key:          []byte("dcr-restore-failure-test"),
+		registration: oauthRegistration{kind: oauthDCRClientKind},
+		record:       &credentialstore.Record{},
+		config:       &oauth2.Config{},
+		diag:         NewOAuthDiagnostics(recorder).Redacted(),
+	}
+
+	if _, err := state.tokenLocked(context.Background(), true); err == nil {
+		t.Fatal("tokenLocked unexpectedly succeeded")
+	} else if strings.Contains(err.Error(), canary) {
+		t.Fatalf("returned error leaked the raw store error: %v", err)
+	}
+
+	if len(recorder.records) != 1 {
+		t.Fatalf("diagnostic records = %d, want 1", len(recorder.records))
+	}
+	record := recorder.records[0]
+	if record.level != port.LevelWarn || record.msg != "mcp: OAuth DCR grant restore failed" {
+		t.Fatalf("diagnostic = %#v", record)
+	}
+	attrs := make(map[string]any)
+	for i := 0; i+1 < len(record.attrs); i += 2 {
+		attrs[record.attrs[i].(string)] = record.attrs[i+1]
+	}
+	if got, ok := attrs["err"].(string); !ok || !strings.Contains(got, canary) {
+		t.Fatalf("diagnostic err attribute = %#v, want to contain %q", attrs["err"], canary)
+	}
 }

@@ -25,6 +25,7 @@ type oauthCredentialState struct {
 	requestRefresh bool
 	allowInMemory  bool
 	lifetime       context.Context
+	diag           OAuthDiagnostics
 
 	record               *credentialstore.Record
 	envelope             oauthCredentialEnvelope
@@ -212,9 +213,11 @@ func (s *oauthCredentialState) tokenLocked(ctx context.Context, allowConflict bo
 	}
 	if s.registration.kind == oauthDCRClientKind {
 		if err := s.reloadLocked(ctx); err != nil {
+			s.diag.Warn(ctx, "mcp: OAuth DCR grant restore failed", "err", err)
 			return nil, projectOAuthError(err)
 		}
 		if err := s.validateDCRRegistrationLocked(ctx); err != nil {
+			s.diag.Warn(ctx, "mcp: OAuth DCR grant validation failed", "err", err)
 			return nil, projectOAuthError(err)
 		}
 		if s.token == nil || !s.token.Valid() {

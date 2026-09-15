@@ -179,7 +179,7 @@ func (s *Server) reconnect(ctx context.Context, stale *mcpsdk.ClientSession) (*m
 
 	s.diag.Log(ctx, port.LevelInfo, "mcp server reconnecting", "server", s.name)
 
-	sess, err := s.dial(ctx)
+	sess, err := s.dial(ctx, false)
 	if err != nil {
 		s.dropped = true // leave dropped so the next call retries again
 		s.diag.Log(ctx, port.LevelWarn, "mcp server reconnect failed",

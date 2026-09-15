@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -63,7 +64,8 @@ func loginDiagnostic(category, diagnostic error) error {
 
 // MCPLoginOptions selects an explicit DCR registration recovery action.
 type MCPLoginOptions struct {
-	DCRAction mcp.OAuthDCRLoginAction
+	DCRAction   mcp.OAuthDCRLoginAction
+	Diagnostics port.Diagnostics
 }
 
 // LoginMCP runs one host-authorized OAuth login against an already-resolved MCP
@@ -83,11 +85,14 @@ func LoginMCPWithOptions(ctx context.Context, cfg mcp.ServerConfig, runtime *oau
 	if opts.DCRAction > mcp.OAuthDCRLoginRetryRegistration {
 		return ErrMCPLoginConfig
 	}
+	oauth := *cfg.OAuth
+	oauth.Diagnostics = mcp.NewOAuthDiagnostics(opts.Diagnostics)
+	cfg.OAuth = &oauth
 	if cfg.OAuth.Client.DCR == nil {
 		if opts.DCRAction != mcp.OAuthDCRLoginReuse {
 			return ErrMCPLoginConfig
 		}
-		return loginMCPAuthorize(cfg, func(authorize oauthlogin.AuthorizeFunc) error {
+		return loginMCPAuthorize(cfg, opts.Diagnostics, func(authorize oauthlogin.AuthorizeFunc) error {
 			return runtime.Authorize(ctx, cfg.OAuth.Issuer, authorize)
 		})
 	}
@@ -96,12 +101,12 @@ func LoginMCPWithOptions(ctx context.Context, cfg mcp.ServerConfig, runtime *oau
 		return loginDiagnostic(ErrMCPLoginAuthorization, err)
 	}
 	cfg.OAuth = &prepared
-	return loginMCPAuthorize(cfg, func(authorize oauthlogin.AuthorizeFunc) error {
+	return loginMCPAuthorize(cfg, opts.Diagnostics, func(authorize oauthlogin.AuthorizeFunc) error {
 		return runtime.AuthorizeWithCallbackPath(ctx, cfg.OAuth.Issuer, callbackPath, authorize)
 	})
 }
 
-func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) error) error {
+func loginMCPAuthorize(cfg mcp.ServerConfig, diag port.Diagnostics, run func(oauthlogin.AuthorizeFunc) error) error {
 	var operationCategory error
 	var operationDiagnostic error
 	err := run(func(ctx context.Context, redirectURL string, present func(context.Context, string) (oauthlogin.Result, error)) error {
@@ -111,7 +116,7 @@ func loginMCPAuthorize(cfg mcp.ServerConfig, run func(oauthlogin.AuthorizeFunc) 
 		oauth.Presenter = mcp.OAuthLoginPresenter(present)
 		loginCfg.OAuth = &oauth
 
-		server, err := mcp.Connect(ctx, loginCfg, nil)
+		server, err := mcp.Connect(ctx, loginCfg, diag)
 		if err != nil {
 			operationDiagnostic = err
 			if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthUnavailable) || errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {

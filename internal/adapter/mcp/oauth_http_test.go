@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+
+	"github.com/stacklok/mecatl/engine/port"
 )
 
 func oauthDialContext(origin string) context.Context {
@@ -574,5 +576,125 @@ func TestMCPOAuthRedirectGateRejectsCrossOriginBeforeDial(t *testing.T) {
 	cross.URL = same
 	if err := policy(cross, []*http.Request{first}); err != nil {
 		t.Fatalf("same-origin MCP redirect: %v", err)
+	}
+}
+
+type oauthDiagnosticRecord struct {
+	level port.Level
+	msg   string
+	attrs []any
+}
+
+type oauthDiagnosticRecorder struct {
+	records []oauthDiagnosticRecord
+}
+
+func (r *oauthDiagnosticRecorder) Log(_ context.Context, level port.Level, msg string, attrs ...any) {
+	r.records = append(r.records, oauthDiagnosticRecord{level: level, msg: msg, attrs: append([]any(nil), attrs...)})
+}
+
+func (r *oauthDiagnosticRecorder) With(...any) port.Diagnostics { return r }
+
+func TestMCPOAuthLoginTimeoutDiagnostics_Scenario1_DirectResourceTimeoutPolicy(t *testing.T) {
+	opts := testOAuthOptions(newOAuthMemoryStore(t))
+	client, transport, err := newOAuthHTTPClient("https://mcp.example/mcp", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	if got := transport.base.ResponseHeaderTimeout; got != defaultOAuthTimeout {
+		t.Fatalf("direct OAuth ResponseHeaderTimeout = %v, want %v", got, defaultOAuthTimeout)
+	}
+	if got := client.Timeout; got != defaultOAuthTimeout {
+		t.Fatalf("direct OAuth whole-request timeout = %v, want %v", got, defaultOAuthTimeout)
+	}
+	if got := transport.base.TLSHandshakeTimeout; got != 5*time.Second {
+		t.Fatalf("direct OAuth TLS handshake timeout = %v, want 5s", got)
+	}
+
+	tokenClient, err := NewHardenedOAuthTokenClient(HardenedOAuthTokenClientOptions{TokenEndpoint: "https://issuer.example/token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenTransport, ok := tokenClient.Transport.(*oauthHTTPTransport)
+	if !ok {
+		t.Fatalf("token transport = %T", tokenClient.Transport)
+	}
+	if got := tokenTransport.base.ResponseHeaderTimeout; got != 10*time.Second {
+		t.Fatalf("token OAuth ResponseHeaderTimeout = %v, want 10s", got)
+	}
+}
+
+func TestMCPOAuthLoginTimeoutDiagnostics_Scenario1_DelayedResourceHeadersSucceed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(75 * time.Millisecond)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	opts := testOAuthOptions(newOAuthMemoryStore(t))
+	opts.Issuer = server.URL
+	opts.Client.Preregistered.Issuer = server.URL
+	opts.Network.PrivateOrigins = []string{server.URL}
+	AllowOAuthLoopbackForTest(t, &opts)
+	client, transport, err := newOAuthHTTPClient(server.URL, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	client.Timeout = 200 * time.Millisecond
+	transport.base.ResponseHeaderTimeout = 25 * time.Millisecond
+	if _, err := client.Get(server.URL); err == nil {
+		t.Fatal("old scaled response-header timeout unexpectedly succeeded")
+	}
+	transport.base.ResponseHeaderTimeout = 150 * time.Millisecond
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("revised scaled response-header timeout: %v", err)
+	}
+	closeOAuthResponse(resp)
+}
+
+func TestMCPOAuthLoginTimeoutDiagnostics_Scenario1_RoundTripFailureDiagnostic(t *testing.T) {
+	const secret = "query-token-canary"
+	recorder := &oauthDiagnosticRecorder{}
+	origin := "http://127.0.0.1:1"
+	transport := &oauthHTTPTransport{
+		origins:       map[string]struct{}{origin: {}},
+		private:       map[string]struct{}{},
+		allowLoopback: true,
+		diag:          NewOAuthDiagnostics(recorder).Redacted(),
+		lookup: func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+		},
+		dial: (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext,
+	}
+	transport.base = &http.Transport{DialContext: transport.dialContext}
+	req, err := http.NewRequest(http.MethodGet, origin+"/resource?access_token="+secret, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(req); err == nil {
+		t.Fatal("RoundTrip unexpectedly succeeded")
+	}
+	if len(recorder.records) != 1 {
+		t.Fatalf("diagnostic records = %d, want 1", len(recorder.records))
+	}
+	record := recorder.records[0]
+	if record.level != port.LevelWarn || record.msg != "mcp: OAuth HTTP transport request failed" {
+		t.Fatalf("diagnostic = %#v", record)
+	}
+	attrs := make(map[string]any)
+	for i := 0; i+1 < len(record.attrs); i += 2 {
+		attrs[record.attrs[i].(string)] = record.attrs[i+1]
+	}
+	if attrs["method"] != http.MethodGet || attrs["url"] != origin+"/resource" {
+		t.Fatalf("diagnostic attributes = %#v", attrs)
+	}
+	if _, ok := attrs["duration"].(time.Duration); !ok {
+		t.Fatalf("duration = %T, want time.Duration", attrs["duration"])
+	}
+	if got := attrs["err"].(string); got == "" || strings.Contains(got, secret) {
+		t.Fatalf("redacted error = %q", got)
 	}
 }

@@ -56,6 +56,71 @@ var ErrUnknownServer = errors.New("mcp: unknown server")
 // listing so an unresponsive server cannot stall startup indefinitely.
 const defaultConnectTimeout = 30 * time.Second
 
+// oauthLoginDeadline starts the normal machine deadline for initial network
+// exchange, pauses it while an explicit browser authorization is pending, then
+// starts a fresh deadline when the SDK handler successfully authorizes and
+// retries its request.
+type oauthLoginDeadline struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	timeout time.Duration
+
+	mu         sync.Mutex
+	timer      *time.Timer
+	generation uint64
+	closed     bool
+}
+
+func newOAuthLoginDeadline(ctx context.Context, timeout time.Duration) *oauthLoginDeadline {
+	deadlineCtx, cancel := context.WithCancel(ctx)
+	return &oauthLoginDeadline{ctx: deadlineCtx, cancel: cancel, timeout: timeout}
+}
+
+func (d *oauthLoginDeadline) start() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed || d.timer != nil {
+		return
+	}
+	d.generation++
+	generation := d.generation
+	d.timer = time.AfterFunc(d.timeout, func() { d.expire(generation) })
+}
+
+func (d *oauthLoginDeadline) pause() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed || d.timer == nil {
+		return
+	}
+	d.generation++
+	d.timer.Stop()
+	d.timer = nil
+}
+
+func (d *oauthLoginDeadline) expire(generation uint64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed || generation != d.generation {
+		return
+	}
+	d.timer = nil
+	d.cancel()
+}
+
+func (d *oauthLoginDeadline) close() {
+	d.mu.Lock()
+	if !d.closed {
+		d.closed = true
+		d.generation++
+		if d.timer != nil {
+			d.timer.Stop()
+		}
+		d.cancel()
+	}
+	d.mu.Unlock()
+}
+
 // clientName / clientVersion identify this harness to MCP servers in the
 // initialize handshake.
 const (
@@ -269,6 +334,40 @@ func RedactErrorValue(err error) error {
 		return err
 	}
 	return &redactedError{inner: err, msg: msg}
+}
+
+// OAuthDiagnostics is the small diagnostic seam used by the OAuth implementation.
+// Its zero value is safe; the port adapter stays here so the OAuth files do not
+// depend on engine/port.
+type OAuthDiagnostics struct {
+	warn func(context.Context, string, ...any)
+}
+
+// NewOAuthDiagnostics adapts the application diagnostics port for OAuth.
+func NewOAuthDiagnostics(diag port.Diagnostics) OAuthDiagnostics {
+	if diag == nil {
+		return OAuthDiagnostics{}
+	}
+	return OAuthDiagnostics{warn: func(ctx context.Context, msg string, attrs ...any) {
+		diag.Log(ctx, port.LevelWarn, msg, attrs...)
+	}}
+}
+
+// Warn records a warning when a diagnostic sink is configured.
+func (d OAuthDiagnostics) Warn(ctx context.Context, msg string, attrs ...any) {
+	if d.warn != nil {
+		d.warn(ctx, msg, attrs...)
+	}
+}
+
+// Redacted returns a diagnostic sink that applies the MCP adapter's redaction policy.
+func (d OAuthDiagnostics) Redacted() OAuthDiagnostics {
+	if d.warn == nil {
+		return d
+	}
+	return OAuthDiagnostics{warn: func(ctx context.Context, msg string, attrs ...any) {
+		d.Warn(ctx, RedactText(msg), redactAttrs(attrs)...)
+	}}
 }
 
 // redactingDiagnostics wraps a port.Diagnostics so every message and every
@@ -641,13 +740,24 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp: server %q requires a URL", cfg.Name)
 	}
-	// connectCtx bounds controller restoration, the handshake, and the one-time
-	// tool/resource/prompt listing.
+	// The explicit local login presenter is invoked by the SDK from Client.Connect.
+	// Bound initial network exchange, pause that deadline for the browser/callback,
+	// then arm a fresh machine deadline when authorization succeeds and the SDK
+	// retries its request.
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultConnectTimeout
 	}
-	connectCtx, cancel := context.WithTimeout(ctx, timeout)
+	var connectCtx context.Context
+	var cancel func()
+	var loginDeadline *oauthLoginDeadline
+	if cfg.OAuth != nil && cfg.OAuth.Presenter != nil {
+		loginDeadline = newOAuthLoginDeadline(ctx, timeout)
+		loginDeadline.start()
+		connectCtx, cancel = loginDeadline.ctx, loginDeadline.close
+	} else {
+		connectCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
 	defer cancel()
 
 	var oauthController *OAuthController
@@ -655,6 +765,11 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	cfg, oauthController, err = prepareOAuthServerConfig(connectCtx, cfg)
 	if err != nil {
 		return nil, err
+	}
+	if loginDeadline != nil {
+		oauthController.authorizationContext = ctx
+		oauthController.onAuthorizationStart = loginDeadline.pause
+		oauthController.onAuthorizationSuccess = loginDeadline.start
 	}
 
 	httpClient := newMCPHTTPClient(cfg, oauthController)
@@ -670,7 +785,7 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 		oauth:      oauthController,
 	}
 
-	sess, err := srv.dial(connectCtx)
+	sess, err := srv.dial(connectCtx, loginDeadline != nil)
 	if err != nil {
 		_ = oauthController.Close()
 		return nil, fmt.Errorf("mcp: connect to server %q: %w", cfg.Name, err)
@@ -716,17 +831,23 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 // dial establishes a fresh SDK ClientSession against the configured server. It
 // is the single construction site for transport + client + connect, reused by
 // Connect (initial) and reconnect (after a drop). It applies cfg.Timeout (or
-// defaultConnectTimeout) on top of the passed ctx as an establishment bound.
+// defaultConnectTimeout) on top of the passed ctx as an establishment bound,
+// except for the initial interactive login dial: its caller owns the pausable
+// deadline so browser authorization can temporarily suspend it.
 //
 // dial does NOT take s.mu: the serialization point is the CALLER (reconnect),
 // so the lock is held across dial there. A standalone dial (the initial
 // Connect path) runs uncontested.
-func (s *Server) dial(ctx context.Context) (*mcpsdk.ClientSession, error) {
+func (s *Server) dial(ctx context.Context, initialInteractiveLogin bool) (*mcpsdk.ClientSession, error) {
 	timeout := s.cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultConnectTimeout
 	}
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	dialCtx := ctx
+	cancel := func() {}
+	if !initialInteractiveLogin {
+		dialCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
 	defer cancel()
 
 	transport := &mcpsdk.StreamableClientTransport{

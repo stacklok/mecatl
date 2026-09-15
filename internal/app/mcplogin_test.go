@@ -518,6 +518,31 @@ func loginConfig(t *testing.T, fixture *loginFixture, store credentialstore.Stor
 	}
 }
 
+func TestMCPOAuthLoginTimeoutDiagnostics_Scenario1_InteractiveAuthorizationSeparatesConnectDeadline(t *testing.T) {
+	fixture := newLoginFixture(t)
+	store, err := credentialstore.NewMemoryBackend().Open("mcp-login-interactive-deadline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	browser := &loginBrowser{client: fixture.server.Client(), delay: 100 * time.Millisecond}
+	runtime, err := oauthlogin.New(oauthlogin.Options{Launcher: browser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := loginConfig(t, fixture, store)
+	cfg.Timeout = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := app.LoginMCP(ctx, cfg, runtime); err != nil {
+		t.Fatalf("login with an interactive phase beyond the connect deadline: %v", err)
+	}
+	if browser.calls.Load() != 1 {
+		t.Fatalf("browser calls = %d, want 1", browser.calls.Load())
+	}
+}
+
 func TestLoginMCPRestoresEncryptedCredentialAfterRestart(t *testing.T) {
 	fixture := newLoginFixture(t)
 	root := filepath.Join(t.TempDir(), "credentials")

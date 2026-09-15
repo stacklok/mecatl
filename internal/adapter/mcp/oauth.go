@@ -96,6 +96,8 @@ type OAuthOptions struct {
 	RequestRefreshToken  bool
 	AllowedScopes        []string
 	Timeout              time.Duration
+	// Diagnostics receives redacted OAuth transport diagnostics. The zero value is safe.
+	Diagnostics          OAuthDiagnostics
 	allowLoopbackForTest bool
 	testRootCAs          *x509.CertPool
 	dcr                  *oauthDCRResolved
@@ -325,15 +327,15 @@ func urlOrigin(u *url.URL) string {
 	if ip := net.ParseIP(hostname); ip != nil {
 		hostname = ip.String()
 	}
-	port := u.Port()
-	if port == "" || scheme == "https" && port == "443" || scheme == oauthHTTPURLScheme && port == "80" {
-		port = ""
+	portNum := u.Port()
+	if portNum == "" || scheme == "https" && portNum == "443" || scheme == oauthHTTPURLScheme && portNum == "80" {
+		portNum = ""
 	}
 	if strings.Contains(hostname, ":") {
 		hostname = "[" + hostname + "]"
 	}
-	if port != "" {
-		hostname = net.JoinHostPort(strings.Trim(hostname, "[]"), port)
+	if portNum != "" {
+		hostname = net.JoinHostPort(strings.Trim(hostname, "[]"), portNum)
 	}
 	return scheme + "://" + hostname
 }
@@ -382,6 +384,7 @@ func newOAuthPersistenceCore(ctx context.Context, resource string, opts OAuthOpt
 	if err != nil {
 		return nil, nil, err
 	}
+	state.diag = opts.Diagnostics.Redacted()
 	cfg := &auth.AuthorizationCodeHandlerConfig{
 		PreregisteredClient:      registration.sdk,
 		RedirectURL:              opts.RedirectURL,
@@ -423,12 +426,15 @@ type authorizationFlight struct {
 // OAuthController owns one official SDK authorization handler and the durable
 // credential state for one MCP resource.
 type OAuthController struct {
-	state     *oauthCredentialState
-	handler   *auth.AuthorizationCodeHandler
-	authorize func(context.Context, *http.Request, *http.Response) error
-	presenter OAuthPresenter
-	client    *http.Client
-	transport *oauthHTTPTransport
+	state                  *oauthCredentialState
+	handler                *auth.AuthorizationCodeHandler
+	authorize              func(context.Context, *http.Request, *http.Response) error
+	presenter              OAuthPresenter
+	authorizationContext   context.Context
+	onAuthorizationStart   func()
+	onAuthorizationSuccess func()
+	client                 *http.Client
+	transport              *oauthHTTPTransport
 
 	flightMu sync.Mutex
 	flight   *authorizationFlight
@@ -590,7 +596,11 @@ func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp
 	c.flightMu.Unlock()
 	defer c.active.Done()
 
-	ctx, cancel := c.operationContext(ctx)
+	authorizationCtx := ctx
+	if c.authorizationContext != nil {
+		authorizationCtx = c.authorizationContext
+	}
+	ctx, cancel := c.operationContext(authorizationCtx)
 	defer cancel()
 	if c.presenter == nil {
 		closeOAuthResponse(resp)
@@ -650,7 +660,13 @@ func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp
 			c.completeAuthorizationFlight(flight, err)
 			return err
 		}
+		if c.onAuthorizationStart != nil {
+			c.onAuthorizationStart()
+		}
 		err := projectOAuthError(c.authorize(ctx, req, resp))
+		if err == nil && c.onAuthorizationSuccess != nil {
+			c.onAuthorizationSuccess()
+		}
 		c.completeAuthorizationFlight(flight, err)
 		return err
 	}

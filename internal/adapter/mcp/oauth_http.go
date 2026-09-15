@@ -107,6 +107,7 @@ type oauthHTTPTransport struct {
 	dial               oauthDialFunc
 	allowLoopback      bool
 	base               *http.Transport
+	diag               OAuthDiagnostics
 }
 
 func newOAuthHTTPClient(resource string, opts OAuthOptions) (*http.Client, *oauthHTTPTransport, error) {
@@ -143,13 +144,14 @@ func newOAuthHTTPClient(resource string, opts OAuthOptions) (*http.Client, *oaut
 		lookup:             resolver.LookupNetIP,
 		dial:               dialer.DialContext,
 		allowLoopback:      opts.allowLoopbackForTest,
+		diag:               opts.Diagnostics.Redacted(),
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: opts.testRootCAs}
 	transport.base = &http.Transport{
 		Proxy:                  nil,
 		TLSClientConfig:        tlsConfig,
 		TLSHandshakeTimeout:    5 * time.Second,
-		ResponseHeaderTimeout:  10 * time.Second,
+		ResponseHeaderTimeout:  defaultOAuthTimeout,
 		MaxResponseHeaderBytes: 64 << 10,
 		MaxIdleConns:           8,
 		MaxIdleConnsPerHost:    2,
@@ -288,8 +290,11 @@ func (t *oauthHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error
 		}
 	}
 	req = req.Clone(context.WithValue(req.Context(), oauthOriginContextKey{}, origin))
+	started := time.Now()
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
+		t.diag.Warn(req.Context(), "mcp: OAuth HTTP transport request failed",
+			"method", req.Method, "duration", time.Since(started), "url", req.URL.String(), "err", err)
 		if ctxErr := req.Context().Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -323,7 +328,7 @@ func validateDCRRuntimeMetadataIssuer(resp *http.Response, expected string) erro
 }
 
 func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
+	host, servicePort, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, projectOAuthError(ErrOAuthUnavailable)
 	}
@@ -343,7 +348,7 @@ func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address s
 			wantPort = "80"
 		}
 	}
-	if wantPort != port {
+	if wantPort != servicePort {
 		return nil, projectOAuthError(ErrOAuthUnavailable)
 	}
 	_, private := t.private[origin]
@@ -362,7 +367,7 @@ func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address s
 	}
 	var lastErr error
 	for _, addr := range addrs {
-		conn, dialErr := t.dial(ctx, network, net.JoinHostPort(addr.String(), port))
+		conn, dialErr := t.dial(ctx, network, net.JoinHostPort(addr.String(), servicePort))
 		if dialErr == nil {
 			return conn, nil
 		}
@@ -444,8 +449,8 @@ func validPort(u *url.URL) bool {
 	if strings.HasSuffix(u.Host, ":") && u.Port() == "" {
 		return false
 	}
-	if port := u.Port(); port != "" {
-		n, err := strconv.ParseUint(port, 10, 16)
+	if portNumber := u.Port(); portNumber != "" {
+		n, err := strconv.ParseUint(portNumber, 10, 16)
 		return err == nil && n != 0
 	}
 	return true

@@ -22,6 +22,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/app"
@@ -313,6 +314,31 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("login seam called for rejected profile: %d", calls)
+	}
+}
+
+func TestMCPOAuthLoginTimeoutDiagnostics_Scenario1_CLIAndDiagnosticsRedaction(t *testing.T) {
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	config := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(config, []byte(mcpLoginOAuthYAML("gateway", "local", filepath.Join(t.TempDir(), "credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = original })
+	executeMCPLogin = func(ctx context.Context, _ mcp.ServerConfig, _ oauthlogin.Options, opts app.MCPLoginOptions) error {
+		opts.Diagnostics.Log(ctx, port.LevelWarn, "mcp: OAuth HTTP transport request failed", "url", "https://issuer.example/token", "err", errors.New("unavailable"))
+		return app.ErrMCPLoginConnect
+	}
+	var stdout, stderr strings.Builder
+	err := runMCPLogin([]string{"gateway", "--permission-config", config, "--no-browser"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "could not connect") {
+		t.Fatalf("login error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "https://issuer.example/token") || !strings.Contains(stderr.String(), "level=WARN") {
+		t.Fatalf("stderr diagnostic = %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("diagnostics leaked to stdout: %q", stdout.String())
 	}
 }
 
