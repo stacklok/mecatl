@@ -413,24 +413,30 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 // the drift gate. TestSelfKnowledgePostureNamesLiveDocPages pins NAMES and PATHS:
 // that every axis value is spelled as the domain spells it and every /docs/ path
 // resolves. That is necessary and not sufficient, because the axes clause also
-// carries two claims about what the harness DOES, and those would survive a
-// behaviour change untouched:
+// carries claims about what the harness DOES, and those would survive a behaviour
+// change untouched:
 //
 //	"acceptEdits auto-allows Edit and Write only, leaving Shell and every other
 //	 mutating tool on the normal rules"
 //	"[posture] raises the project-trust floor on INTERACTIVE roots only"
+//	"[headless] project trust can still come from a declared or remembered
+//	 source, not only --trust-project"
 //
-// Both are read here from the real implementation rather than from a remembered
+// Each is read here from the real implementation rather than from a remembered
 // spelling: the first by evaluating the actual permpolicy under session.ModeAccept,
-// the second by running the actual applyPosture. Change either behaviour without
-// rewording the clause and this test fails.
+// the second and third by running the actual applyPosture and resolveTrust. Change
+// any of the three behaviours without rewording the clause and this test fails.
 //
-// It deliberately does NOT pin prose. It asserts only that a claim the clause makes
-// about behaviour agrees with the behaviour, which is the part AGENTS.md's "do not
-// pin arbitrary documentation prose" rule leaves open. The alternative the review
-// floated — deriving the prose from a shared authoritative representation — would
-// mean exporting permission internals so a prompt string can read them, inverting
-// the dependency direction for no gain over this.
+// It deliberately does NOT pin prose, and it does not claim more than these three
+// implementation reads establish — a review round narrowed the second claim after
+// the clause first read as if posture "sets project trust" unqualified, and again
+// after it named --trust-project as headless project trust's only other source. It
+// asserts only that a claim the clause makes about behaviour agrees with the
+// behaviour, which is the part AGENTS.md's "do not pin arbitrary documentation
+// prose" rule leaves open. The alternative the review floated — deriving the prose
+// from a shared authoritative representation — would mean exporting permission
+// internals so a prompt string can read them, inverting the dependency direction
+// for no gain over this.
 func TestSelfKnowledgeBehaviouralClaimsMatchImplementation(t *testing.T) {
 	t.Run("accept-edits auto-allows exactly Edit and Write", func(t *testing.T) {
 		// The REAL main policy at the default posture, the same construction
@@ -495,6 +501,37 @@ func TestSelfKnowledgeBehaviouralClaimsMatchImplementation(t *testing.T) {
 		for _, claim := range []string{"INTERACTIVE", "HEADLESS", "--trust-project"} {
 			if !strings.Contains(selfKnowledgePostureAxes, claim) {
 				t.Errorf("the axes clause does not mention %q: posture's trust behaviour differs by root, and a note that hides that gives a headless deployment a false account of its own permissions", claim)
+			}
+		}
+	})
+
+	t.Run("headless project trust is not limited to --trust-project", func(t *testing.T) {
+		// resolveTrust is the implementation of the claim that a declared or
+		// remembered trust source, not only the --trust-project flag, can grant
+		// project trust on a HEADLESS root: unlike applyPosture, resolveTrust never
+		// reads Config.Headless at all, so TrustDeclared/TrustRemembered admit exactly
+		// as they would on an interactive root. TestResolveTrustDeclared and
+		// TestResolveTrustRememberedMatch already pin those two behaviours in
+		// isolation; this asserts the SAME resolveTrust also runs headless, which is
+		// the fact the axes clause now depends on.
+		ws := realWS(t)
+		configDir := t.TempDir()
+		withTrustEnv(t, trustSettingsEnv(configDir, []byte("trustedWorkspaces:\n  - "+ws+"\n")))
+
+		d := resolveTrust(Config{Workspace: ws, Headless: true})
+		if !d.Trusted || d.Source != TrustDeclared {
+			t.Fatalf("resolveTrust(headless, declared workspace) = %+v, want Trusted via TrustDeclared; "+
+				"a declared workspace must grant trust on a headless root exactly as it does on an "+
+				"interactive one", d)
+		}
+
+		// The clause must not read as if --trust-project were the only headless path.
+		for _, claim := range []string{"declared trusted workspace", "remembered trust"} {
+			if !strings.Contains(selfKnowledgePostureAxes, claim) {
+				t.Errorf("the axes clause does not mention %q: a declared or remembered trust source "+
+					"grants headless project trust exactly as --trust-project does, and naming only the "+
+					"flag gives a headless operator using one of the other two a false account of their "+
+					"own permissions", claim)
 			}
 		}
 	})

@@ -20,14 +20,16 @@ naming a component is still a question about the agent itself.
 
 ## Availability
 
-Every session you talk to carries the account, on every deployment. It comes from
-the server that builds the session rather than from a client feature or an
-operator setting, so a session with no filesystem answers these questions the same
-way a local `mecatui` session does.
+Every ordinary session you talk to carries the account, on every deployment. It
+comes from the server that builds the session rather than from a client feature or
+an operator setting, so a session with no filesystem answers these questions the
+same way a local `mecatui` session does.
 
-Subagents are the exception. A delegated task worker is scoped to its own job and
-does not carry the account, so ask the session directly rather than through a
-subagent.
+Subagents and [analysis sessions](../mecatui/sessions.md#diagnose-a-stored-session)
+are the exception. A delegated task worker is scoped to its own job, and an
+analysis session opened with `mecatui debug` is scoped to reading another
+session's evidence; neither carries the account, so ask the session directly
+rather than through a subagent or an analysis session.
 
 ## What the agent knows on its own
 

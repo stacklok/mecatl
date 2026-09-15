@@ -8293,6 +8293,13 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 // is always present when at least one memory family is registered, telling the
 // model to CALL the memory tools rather than guess.
 //
+// SCOPE-NEUTRAL: the lead itself does not name "project" or "operator" — either
+// family alone enables it (applyMemoryPosture appends memoryPostureLead whenever
+// hasProject || hasUser), and a single-family deployment naming both scopes here
+// would claim a scope it does not have. The specific scopes are named by
+// memoryPostureProject/memoryPostureUser below, each appended only when its family
+// is actually registered.
+//
 // SCOPE: the trigger is deliberately SAVED FACTS, not "a topic". The broader
 // wording matched "what do you know about mecatl's permission modes?", which the
 // escalation clause below then routed into a workspace Grep — the exact failure
@@ -8303,11 +8310,10 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 // operations it registered, and a prose list goes stale against a base-only store
 // (the lifecycle trio is conditional on tool.MemoryLifecycleStore) or a
 // single-family deployment. The "durable memory store" substring is a stable test key.
-const memoryPostureLead = "You have a durable memory store holding facts saved about this project " +
-	"and this operator. When asked what you remember about either, CALL the memory retrieval tools " +
-	"rather than guessing — read what was actually saved, then answer. Saved facts only: a question " +
-	"about mecatl's own capabilities is answered from the mecatl self-knowledge account, never " +
-	"from a memory lookup or a workspace search."
+const memoryPostureLead = "You have a durable memory store holding facts saved earlier. When asked " +
+	"what you remember, CALL the memory retrieval tools rather than guessing — read what was actually " +
+	"saved, then answer. Saved facts only: a question about mecatl's own capabilities is answered from " +
+	"the mecatl self-knowledge account, never from a memory lookup or a workspace search."
 
 // memoryPostureProject is appended when the project-scoped family is registered.
 //
@@ -8423,9 +8429,18 @@ const (
 	// selfKnowledgePostureDirect answers from, so moving it to the canonical page
 	// turns every mode question back into a WebFetch, which is the reflex this note
 	// was added to stop. The obligation that follows is accuracy, not omission, and
-	// the two claims here that carry BEHAVIOUR (accept-edits auto-allows Edit/Write
-	// only; posture raises trust on interactive roots only) are pinned against the
-	// real implementation by TestSelfKnowledgeBehaviouralClaimsMatchImplementation.
+	// the three claims here that carry BEHAVIOUR (accept-edits auto-allows Edit/Write
+	// only; auto/yolo widen authorization via an allow-all rule; posture raises
+	// project trust on interactive roots only, with other trust sources root-agnostic)
+	// are pinned against the real implementation by
+	// TestSelfKnowledgeBehaviouralClaimsMatchImplementation.
+	//
+	// The posture clause does NOT present --trust-project as the only source of
+	// headless project trust: resolveTrust also admits a declared trustedWorkspaces
+	// entry or remembered trust, neither of which checks Config.Headless (only
+	// applyPosture's floor is root-aware). Naming --trust-project alone would tell a
+	// headless operator using a declared or remembered trust source that they have
+	// no path to trust, which is false.
 	// The "Three SEPARATE safety axes" substring is a stable test key.
 	selfKnowledgePostureAxes = "Three SEPARATE safety axes, never conflated. (1) SESSION PERMISSION MODE: " +
 		"exactly three, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
@@ -8433,10 +8448,13 @@ const (
 		"(accept-edits in mecatui) auto-allows Edit and Write only, leaving Shell and every other mutating " +
 		"tool on the normal rules. mecatui shows the mode in its header, takes `--mode` at launch, and " +
 		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide via " +
-		"--posture, rising strict < trusted < auto < yolo, widening how much runs without asking rather " +
-		"than what one call may do. It raises project trust on INTERACTIVE roots only: a HEADLESS " +
-		"deployment does NOT trust the checkout by posture alone, and without an explicit " +
-		"--trust-project gets no project ingestion and no read-only child shell. (3) GUARDRAILS: an optional model-backed checker over selected " +
+		"--posture, rising strict < trusted < auto < yolo. auto and yolo widen what a call is authorized " +
+		"to do, not only how much runs without asking: both set an allow-all rule for every tool call. " +
+		"Posture raises project trust on INTERACTIVE roots only: a HEADLESS deployment does NOT trust the " +
+		"checkout by posture alone. Project ingestion and the read-only child shell follow from project " +
+		"trust however it was granted — an explicit --trust-project flag, a declared trusted workspace, or " +
+		"remembered trust grant it on any root, while posture alone grants it only on an interactive one. " +
+		"(3) GUARDRAILS: an optional model-backed checker over selected " +
 		"tool arguments and results, independent of permissions and inert until an operator configures a " +
 		"checker model. Under every mode and posture a matching deny wins and a configured ask is never " +
 		"suppressed."
