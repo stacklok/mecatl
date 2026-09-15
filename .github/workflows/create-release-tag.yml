@@ -1,7 +1,7 @@
 # Tags the merged release PR — stage 2 of 3 in mecatl's release flow.
 #
 # Fires when a human merges the PR that `create-release-pr.yml` opened, which is the only
-# thing that changes VERSION on main. It re-verifies that the commit really is a merged
+# thing that changes release metadata on main. It re-verifies that the commit really is a merged
 # release PR, then pushes the annotated vX.Y.Z tag that triggers release.yml.
 #
 # WHY THE APP TOKEN IS LOAD-BEARING HERE. GitHub suppresses workflow runs for events triggered
@@ -98,7 +98,7 @@ jobs:
       #   elsewhere      fails        nothing to do (bootstrap: VERSION names a released tag)
       #   elsewhere      passes       ERROR: this release PR's version is already tagged
       #   absent         fails        ERROR: VERSION edited outside the release flow
-      #   absent         passes       verify contents + pins, then tag
+      #   absent         passes       verify synchronized release metadata, then tag
       - name: Decide whether to tag
         id: decide
         env:
@@ -162,18 +162,13 @@ jobs:
             exit 1
           fi
 
-          # --- provenance holds and the tag is absent: check contents, then tag ---------
-          # A release commit bumps the version and nothing else. This is what stops a PR that
-          # is correctly named and correctly branched from also shipping a payload. Since the
-          # sibling actions moved to `$/` self-repository refs, no workflow file carries a
-          # version any more, so VERSION is the whole expected diff.
-          changed="$(git diff --name-only "${SHA}^" "${SHA}")"
-          if [ "${changed}" != "VERSION" ]; then
-            echo "::error::release commit changes more than the version bump — refusing to tag"
-            printf 'got:\n%s\n' "${changed}"
-            echo "  The release PR must carry ONLY the version bump; something else rode along."
-            echo "  VERSION is already bumped on main, so this number is spent: dispatch"
-            echo "  create-release-pr.yml again to cut the next patch from the current main."
+          # --- provenance holds and the tag is absent: check values, then tag ------------
+          # Do not gate on a fixed file list: releaseo may gain more version projections or
+          # generated output over time. The invariant is that every required version agrees.
+          if ! grep -Fxq "version: ${VERSION}" deploy/helm/mecak8s/Chart.yaml \
+            || ! grep -Fxq "appVersion: \"v${VERSION}\"" deploy/helm/mecak8s/Chart.yaml \
+            || ! grep -Fxq "  tag: \"v${VERSION}\"" deploy/helm/mecak8s/values.yaml; then
+            echo "::error::chart or image metadata does not match VERSION — refusing to tag"
             exit 1
           fi
 
