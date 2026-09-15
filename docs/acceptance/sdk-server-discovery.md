@@ -9,7 +9,7 @@
 **Delivery:** Split. The public SDK additions and compatibility-cache concurrency contract merit approval before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1470](https://github.com/stacklok/mecatl/issues/1470)
-**Plan PR:** added when opened
+**Plan PR:** [stacklok/mecatl#1551](https://github.com/stacklok/mecatl/pull/1551)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 SDK consumers can inspect the server's compatibility descriptor and safe build identity
