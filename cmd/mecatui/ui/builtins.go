@@ -71,7 +71,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Debug:        m.deps.Debug,
 		DebugAsk:     m.deps.DebugAsk,
 		Connect:      m.deps.Connect != nil,
-		Workspace:    m.deps.WorkspaceEnrollment != nil,
+		Workspace:    m.workspaceEnrollmentActive() && m.deps.WorkspaceEnrollment != nil,
 		DebugSession: m.deps.DebugTarget != "",
 	}
 }
