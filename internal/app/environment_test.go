@@ -39,6 +39,7 @@ func testEnvironment(ws tool.Workspace, runner tool.CommandRunner) tool.Environm
 type appTestPlacementProvider struct {
 	root         string
 	failReattach bool
+	runner       tool.CommandRunner
 }
 
 func (p appTestPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
@@ -48,7 +49,7 @@ func (p appTestPlacementProvider) Bind(_ context.Context, req server.PlacementBi
 	}
 	root := p.root
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: root, Revision: "test-v1"}
-	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), memledger.New(), nil)}, nil
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), memledger.New(), p.runner)}, nil
 }
 func (appTestPlacementProvider) ListWorktrees(context.Context, server.PlacementDiscoveryRequest) ([]server.ScopedWorktree, error) {
 	return nil, nil
@@ -62,7 +63,7 @@ func (p appTestPlacementProvider) Reattach(_ context.Context, req server.Placeme
 	if req.Ref.Kind == session.EnvKindNoFS {
 		return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, nofs.New(), memledger.New(), nil)}, nil
 	}
-	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(root), memledger.New(), nil)}, nil
+	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(root), memledger.New(), p.runner)}, nil
 }
 
 func newTestServerService(cfg server.Config) (*server.Service, error) {

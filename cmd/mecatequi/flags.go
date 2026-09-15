@@ -97,6 +97,7 @@ type flags struct {
 	useMock           bool
 	storeDir          string
 	shell             string
+	shellFlagSet      bool
 	noShell           bool
 	maxRunTokens      int
 	maxTeamTokens     int
@@ -274,6 +275,8 @@ func parseFlags(argv []string) (flags, error) {
 		switch fl.Name {
 		case "posture":
 			f.postureFlagSet = true
+		case "shell":
+			f.shellFlagSet = true
 		case "subagent-model-router":
 			// Tri-state kill-switch (ADR 0042): record that the flag was given so
 			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
@@ -293,6 +296,11 @@ func parseFlags(argv []string) (flags, error) {
 			f.defaultProviderFlagSet = true
 		}
 	})
+	resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(f.shell, f.shellFlagSet, true, f.permissionConfigs)
+	if err != nil {
+		return flags{}, fmt.Errorf("command runner configuration: %w", err)
+	}
+	f.shell = resolvedShell
 
 	// Provider credentials are resolved once after the remaining input checks and
 	// cached on flags for I/O-free projection by appConfig, mirroring mecated/mecatui.

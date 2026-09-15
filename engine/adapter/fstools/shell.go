@@ -43,6 +43,9 @@ Behavior:
   trust, and secret-scrubbing controls remain independent.
 - The shell is non-interactive: it has no terminal or user input. Do not run
   interactive commands such as "git rebase -i", editors, pagers, or REPLs.
+- Credential-shaped environment variables are scrubbed by default. An
+  authentication failure does not prove that the operator is unauthenticated.
+  Never inspect, echo, copy, write, or commit credentials available to a command.
 - Under a subagent (a forked branch or an isolated team member) the working
   directory is a throwaway, isolated workspace (a git worktree or a copy), not the
   shared base — so commands you run there do not affect the parent's tree.

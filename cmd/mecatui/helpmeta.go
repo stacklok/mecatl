@@ -100,6 +100,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"opencode-base-url":     {group: groupProvider, common: false, local: true, connect: false},
 	"api-key-file":          {group: groupProvider, common: true, local: true, connect: false},
 	"mock":                  {group: groupProvider, common: true, local: true, connect: false},
+	"shell":                 {group: groupProvider, common: false, local: true, connect: false},
 	"no-shell":              {group: groupProvider, common: false, local: true, connect: false},
 	"no-steer":              {group: groupProvider, common: false, local: true, connect: false},
 	"toolhive-llm":          {group: groupProvider, common: false, local: true, connect: false},

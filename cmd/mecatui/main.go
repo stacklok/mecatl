@@ -1161,7 +1161,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// models.router: taxonomy. Idempotent: safe to compute on both calls.
 		RouterDisabled:        cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
 		UseMock:               cfg.mock,
-		Shell:                 "/bin/sh",
+		Shell:                 cfg.shell,
 		NoShell:               cfg.noShell,
 		Compaction:            "heuristic",
 		Tokenizer:             "heuristic",

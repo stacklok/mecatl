@@ -36,6 +36,7 @@ func BuildModel(docs Docs) *Model {
 		providerOverridesSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		commandRunnerSubtree(docs),
 		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
 		steerSubtree(docs),
@@ -228,6 +229,27 @@ func retentionSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
+}
+
+func commandRunnerSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("CommandRunnerSection", permconfig.CommandRunnerSection{}, docs)
+	environment := fieldsOf("CommandRunnerEnvironment", permconfig.CommandRunnerEnvironment{}, docs)
+	for _, field := range fields {
+		switch field.Key {
+		case "shell":
+			field.Default, field.ExampleValue = "/bin/sh (command default)", "/bin/sh"
+		case "environment":
+			field.Nested = environment
+		}
+	}
+	for _, field := range environment {
+		if field.Key == "inherit" {
+			field.Default = "[]"
+			field.ExampleValue = "[GH_TOKEN]"
+		}
+	}
+	return &Subtree{Key: "command_runner", Tier: TierOperator, CommentedOut: true,
+		Doc: "Built-in command interpreter and main-runner environment policy. Operator-tier only; project values are ignored. Explicit --shell overrides shell, and --no-shell disables Shell.", Fields: fields}
 }
 
 func temporaryStorageSubtree(docs Docs) *Subtree {

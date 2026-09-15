@@ -173,10 +173,60 @@ type Config struct {
 	// StorageManagement names the verified OIDC identities allowed to operate on
 	// process-wide storage. It is strict and operator-tier only.
 	StorageManagement *StorageManagementSection `yaml:"storage_management"`
+	// CommandRunner configures the built-in command interpreter and its narrowly
+	// inherited process-environment names. It is strict and operator-tier only.
+	CommandRunner *CommandRunnerSection `yaml:"command_runner"`
 	// TemporaryStorage controls managed command temporary storage. It is strict and
 	// read exclusively from the user-global settings.yaml; project-tier and explicit
 	// CLI configuration values are ignored by the Resolver.
 	TemporaryStorage *TemporaryStorageSection `yaml:"temporary_storage"`
+}
+
+// CommandRunnerSection is the strict operator policy for built-in command runners.
+type CommandRunnerSection struct {
+	// Shell is the command interpreter path. An explicitly empty value disables Shell.
+	Shell    string `yaml:"shell"`
+	ShellSet bool   `yaml:"-"`
+	// Environment controls named ambient environment inheritance for built-in main runners.
+	Environment CommandRunnerEnvironment `yaml:"environment"`
+}
+
+// CommandRunnerEnvironment names external process variables that built-in main
+// runners may retain after the default secret scrub.
+type CommandRunnerEnvironment struct {
+	// Inherit lists portable environment names to retain for built-in main runners.
+	Inherit []string `yaml:"inherit"`
+}
+
+var portableEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// UnmarshalYAML strictly decodes command-runner policy and rejects ambiguous names.
+func (s *CommandRunnerSection) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "command_runner", map[string]any{
+		"shell": &s.Shell, "environment": &s.Environment,
+	}); err != nil {
+		return err
+	}
+	s.ShellSet = mappingHasKey(node, "shell")
+	return nil
+}
+
+// UnmarshalYAML strictly decodes and validates environment inheritance names.
+func (e *CommandRunnerEnvironment) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "command_runner.environment", map[string]any{"inherit": &e.Inherit}); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(e.Inherit))
+	for i, name := range e.Inherit {
+		if !portableEnvironmentName.MatchString(name) {
+			return fmt.Errorf("command_runner.environment.inherit[%d]: invalid environment name", i)
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("command_runner.environment.inherit[%d]: duplicate environment name", i)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
 }
 
 // TemporaryStorageSection is the strict operator policy for command temporary

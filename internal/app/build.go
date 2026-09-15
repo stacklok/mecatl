@@ -58,10 +58,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
-	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	"github.com/stacklok/mecatl/internal/adapter/flocklease"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
-	"github.com/stacklok/mecatl/internal/adapter/gitenv"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/k8slease"
@@ -193,12 +191,14 @@ type Config struct {
 	RedisAllowPlaintext bool
 	// RedisFollowPoolSize and RedisMaxFollowers bound the isolated blocking
 	// event-follow path. Zero retains redisstore's defaults for non-CLI callers.
-	RedisFollowPoolSize int
-	RedisMaxFollowers   int
-	Shell               string
-	NoShell             bool
-	temporaryStorage    temporaryStorageConfig
-	managedTemp         *managedTemporaryStorage
+	RedisFollowPoolSize        int
+	RedisMaxFollowers          int
+	Shell                      string
+	NoShell                    bool
+	commandEnvironmentInherit  []string
+	commandEnvironmentReserved map[string]struct{}
+	temporaryStorage           temporaryStorageConfig
+	managedTemp                *managedTemporaryStorage
 	// AuthorityEvaluator selects the authority evaluator adapter: "local" enforces
 	// minted sets, while "noop" deliberately disables enforcement. "cedar" loads
 	// CedarAuthorityPolicy at startup and fails closed when it cannot be loaded.
@@ -1567,6 +1567,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var commandRunnerErr error
+	cfg, commandRunnerErr = foldOperatorCommandRunnerEnvironment(cfg)
+	if commandRunnerErr != nil {
+		return nil, fmt.Errorf("command runner configuration: %w", commandRunnerErr)
+	}
 	var temporaryStorageErr error
 	cfg, temporaryStorageErr = foldOperatorTemporaryStorage(cfg)
 	if temporaryStorageErr != nil {
@@ -6284,7 +6289,7 @@ func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// builds. Unlike the hardened runners, the main runner is NOT git-neutralised
 	// (gitenv) — the operator's own hooks/pager are honoured here, only the secrets
 	// are removed.
-	env := envscrub.Scrub(os.Environ())
+	env := mainCommandEnvironment(cfg)
 	return newCommandRunnerForRoot(cfg, root, env, "could not build command runner; Shell tool disabled")
 }
 
@@ -6449,7 +6454,7 @@ func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// (envscrub — "Finding B"; gitenv only ever removed GIT_*/PAGER, never secrets),
 	// then layer the git-neutralising env on the secret-free base so a sandboxed
 	// child sees neither the operator's secrets nor an untrusted repo's git hooks.
-	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	env := internalGitEnvironment()
 	return newCommandRunnerForRoot(cfg, root, env, "could not build sandboxed member command runner; team-member Shell disabled")
 }
 
@@ -6928,7 +6933,7 @@ func writableExplorerDeps(cfg Config, provider port.LLMProvider, model, role str
 // childWindowFor. Cross-provider routing by a bare model id is out of scope (the registry is
 // keyed by provider) — same posture as the read-only Subagent + Parallel factories.
 func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) func(model string) (*agent.Engine, bool) {
-	mainRunner := buildCommandRunner(cfg)
+	mainRunner := directWriteCommandRunner(cfg)
 	return func(model string) (*agent.Engine, bool) {
 		model = strings.TrimSpace(model)
 		if model == "" {
@@ -7331,7 +7336,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	//   - no merger: there is nothing to merge — the child already wrote the parent
 	//     tree. (The shared autoMerger stays for Parallel single-branch auto-merge.)
 	// Skipped under no-FS (buildNoFSSubagentTool, above, wires no writable path).
-	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, buildCommandRunner(cfg))
+	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, directWriteCommandRunner(cfg))
 	opts = append(opts, agent.WithWritableChildEngine(writableEngine))
 	// WRITABLE EXPLORER per-call/routed model (mode:"read-write"+`model`, no `agent`;
 	// issue #285): a factory that rebuilds the WRITABLE explorer on the requested model via
@@ -7520,7 +7525,7 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 // preloaded skills, hooks, memory head, reference MCP tools, and direct-write semantics
 // remain identical. Inline MCP defs decline before buildAgentDefEngine can open resources.
 func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) (func(string) (*agent.Engine, bool), func(string, string) (*agent.Engine, bool)) {
-	mainRunner := buildCommandRunner(cfg)
+	mainRunner := directWriteCommandRunner(cfg)
 	build := func(agentName, routedModel string) (*agent.Engine, bool) {
 		agentName = strings.TrimSpace(agentName)
 		routedModel = strings.TrimSpace(routedModel)
@@ -8857,7 +8862,7 @@ func gitSnapshot(workspace, shell string, trustProject bool) string {
 	// buildSandboxedCommandRunner) so a repo-local git config cannot run code, layered
 	// over the secret scrub (envscrub) so this harness-internal git snapshot never
 	// exposes the harness credentials to a repo-local git driver either.
-	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	env := internalGitEnvironment()
 	runner, err := osfs.NewCommandRunnerShell(workspace, shellOr(shell), osfs.WithCommandEnvList(env))
 	if err != nil {
 		return ""
@@ -9354,7 +9359,7 @@ func (g gitWorktreeLister) List(ctx context.Context, root string) ([]server.Work
 	if root == "" {
 		return nil, nil
 	}
-	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	env := internalGitEnvironment()
 	runner, err := osfs.NewCommandRunnerShell(root, g.shell, osfs.WithCommandEnvList(env))
 	if err != nil {
 		return nil, nil // no shell — fail-soft

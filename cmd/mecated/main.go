@@ -133,6 +133,7 @@ type config struct {
 	mockProvider         port.LLMProvider
 	storeDir             string
 	shell                string
+	shellFlagSet         bool
 	noShell              bool
 	authorityEvaluator   string
 	cedarAuthorityPolicy string
@@ -1902,6 +1903,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// composition can let CLI out-rank the operator-global settings.yaml posture: key
 	// and WARN if an alias raised above an explicit lower --posture.
 	recordExplicitFlags(fs, &cfg)
+	resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(cfg.shell, cfg.shellFlagSet, cfg.permissionsConventional, cfg.permissionConfigs)
+	if err != nil {
+		return fs, config{}, fmt.Errorf("command runner configuration: %w", err)
+	}
+	cfg.shell = resolvedShell
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
 	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
@@ -1990,6 +1996,8 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 		switch f.Name {
 		case "posture":
 			cfg.postureFlagSet = true
+		case "shell":
+			cfg.shellFlagSet = true
 		case "subagent-model-router":
 			// Tri-state (ADR 0042): record that the kill-switch flag was given so
 			// appConfig can distinguish "unset" (router governed by the taxonomy) from
