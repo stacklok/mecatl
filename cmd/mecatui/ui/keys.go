@@ -10,6 +10,10 @@ import (
 // Update via msg.String() ("enter" vs "shift+enter") because Bubble Tea v2
 // reports them as distinct KeyPressMsg strings. The approval keys are only live
 // while the permission modal is open; the cancel key only while a run is active.
+//
+// Newline carries FOUR chords because Enter's legacy encoding has nowhere to put
+// a modifier bit: see chordNeedsKeyDisambiguation and newlineHintChord for which
+// of them a given terminal can actually deliver, and which one gets advertised.
 type keyMap struct {
 	Submit  key.Binding
 	Newline key.Binding
@@ -176,8 +180,22 @@ func defaultKeys() keyMap {
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "send"),
 		),
+		// Newline is bound to every chord a terminal might be able to deliver, in
+		// PREFERENCE order: shift+enter is what users reach for and reads best in
+		// the hint, ctrl+j is the one chord no terminal can fail to send (it is a
+		// plain LF byte), and ctrl+enter / alt+enter are the two further shapes
+		// terminals and their users actually produce. alt+enter matters most on
+		// terminals with no disambiguation at all: it is what "Use Option as Meta
+		// Key" sends on macOS Terminal.app, and what a terminal-side shift+enter
+		// rebind to "ESC CR" produces (the shape /terminal-setup-style helpers
+		// install into VS Code, Zed and Alacritty configs).
+		//
+		// Order is load-bearing: newlineHintChord advertises the FIRST chord, and
+		// falls back to the first chord that survives legacy encoding only once the
+		// terminal has proved it cannot disambiguate — so ctrl+j must precede
+		// alt+enter, which needs terminal-side setup mecatui cannot verify.
 		Newline: key.NewBinding(
-			key.WithKeys("shift+enter", "ctrl+j"),
+			key.WithKeys("shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"),
 			key.WithHelp("shift+enter", "newline"),
 		),
 		Cancel: key.NewBinding(
@@ -493,4 +511,65 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		}
 	}
 	return km
+}
+
+// chordNeedsKeyDisambiguation reports whether a chord can only reach mecatui from
+// a terminal that implements key disambiguation — the Kitty keyboard protocol's
+// first flag, or xterm's modifyOtherKeys. Bubble Tea requests both on every
+// frame, so where they exist mecatui sees the chord; where they do not, the
+// keypress is not merely unbound, it is INVISIBLE (nothing arrives to respond
+// to, which is why a dead keypress cannot produce a runtime hint).
+//
+// The rule is Enter's legacy encoding: Enter is a bare CR byte with no room for a
+// modifier bit, so shift+enter and ctrl+enter arrive as an ordinary Enter and
+// submit the prompt. Alt is the one modifier legacy encoding can carry — the
+// terminal prefixes ESC — so alt+enter survives, given a terminal configured to
+// send Option/Alt as Meta. Chords that are not Enter variants (ctrl+j, a plain
+// LF) are unaffected.
+func chordNeedsKeyDisambiguation(chord string) bool {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(chord)), "+")
+	if len(parts) < 2 || parts[len(parts)-1] != "enter" {
+		return false
+	}
+	// Alt is the one modifier legacy encoding can carry on Enter: the terminal
+	// prefixes ESC. Any other modifier, or alt combined with another, needs a
+	// protocol that can encode it.
+	mods := parts[:len(parts)-1]
+	if len(mods) == 1 && mods[0] == "alt" {
+		return false
+	}
+	return true
+}
+
+// newlineHintChord picks the single Newline chord worth advertising in the
+// prompt hint. It names the binding's preferred chord until the terminal has
+// PROVED it cannot deliver that chord, and only then falls back to one that
+// survives legacy encoding.
+//
+// The default is optimistic because the overwhelming majority of terminals do
+// implement key disambiguation, and a hint that flickers through a fallback on
+// every start would be a worse trade than a hint that self-corrects on the few
+// terminals that need it. Absence of a reply is the only negative signal a
+// terminal gives, so "proved" means either an explicit reply reporting no
+// enhancements or the probe deadline passing unanswered (see
+// keyboardProbeDeadline).
+//
+// The chords come from the live binding, so a --keymap rebind flows through to
+// the hint instead of the hint acquiring a second hardcoded chord. A binding with
+// no legacy-safe chord at all keeps the preferred one: there is nothing better to
+// offer, and naming no chord would be worse than naming an unreachable one.
+func newlineHintChord(km keyMap, legacyOnly bool) string {
+	chords := km.Newline.Keys()
+	if len(chords) == 0 {
+		return ""
+	}
+	if !legacyOnly {
+		return chords[0]
+	}
+	for _, c := range chords {
+		if !chordNeedsKeyDisambiguation(c) {
+			return c
+		}
+	}
+	return chords[0]
 }
