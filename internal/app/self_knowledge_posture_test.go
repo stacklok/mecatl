@@ -357,6 +357,15 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 		t.Error("the self-knowledge note names no specific /docs/ page: the model has nothing to escalate to but the site root")
 	}
 
+	// No documentation is compiled into the binary, so every /docs/ path in the
+	// note is resolvable only by joining it onto the site base and fetching it.
+	// Without the base in the note, the paths are unresolvable at best and read as
+	// absolute filesystem paths at worst.
+	const siteBase = "https://mecatl.dev/"
+	if !strings.Contains(note, siteBase) {
+		t.Errorf("the note names %d /docs/ path(s) but never states the %s base they hang off; nothing is embedded in the binary, so an unjoined path cannot be read at all", pages, siteBase)
+	}
+
 	// The axis VALUE sets must match the domain, not a remembered spelling of it.
 	for _, mode := range []session.PermissionMode{session.ModeDefault, session.ModePlan, session.ModeAccept} {
 		if !strings.Contains(note, string(mode)) {

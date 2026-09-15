@@ -8409,8 +8409,15 @@ const (
 
 	// selfKnowledgePostureMap is the doc-tree shape, so a lookup lands on the right
 	// page instead of the site root. Every path here is pinned by the drift gate.
+	//
+	// These are SITE paths, and the clause says so: no documentation is compiled
+	// into the binary and none is readable locally, so a bare "/docs/intro" is
+	// resolvable ONLY by joining it onto the site base and fetching it. Without
+	// that, a leading slash reads as an absolute filesystem path to a model that
+	// holds Read and Grep, which is a wrong turn the note itself would have caused.
 	// The "/docs/features/permissions-and-posture" substring is a stable test key.
-	selfKnowledgePostureMap = "Documentation map: /docs/intro, /docs/features/ (running a server), " +
+	selfKnowledgePostureMap = "Documentation map (site paths under https://mecatl.dev/, never local " +
+		"files): /docs/intro, /docs/features/ (running a server), " +
 		"/docs/mecatui/ (the terminal client), /docs/building/ (embed, deploy, extend), /docs/reference/ " +
 		"(configuration, gRPC/HTTP APIs). Modes, postures and permissions in full: " +
 		"/docs/features/permissions-and-posture. Settings file: /docs/reference/configuration."
