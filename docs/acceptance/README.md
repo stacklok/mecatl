@@ -316,6 +316,9 @@ PR after verification. There is no cleanup or status-only PR.
   SDK-owned session snapshots and transcripts plus typed rename, mode, compaction,
   clear, fork, retry, request-option, affinity, and lifecycle semantics over the
   existing server operations. Status: proposed.
+- [TypeScript SDK server discovery](sdk-server-discovery.md) — a typed pre-session
+  compatibility and safe server-identity namespace with open feature vocabularies,
+  explicit refresh, race-safe shared negotiation, and gRPC/HTTP parity. Status: proposed.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
