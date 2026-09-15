@@ -63,6 +63,33 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AllAgentsSubviewsFitOfferedGeometr
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *testing.T) {
+	t.Run("stream refresh persists semantic roster anchors", func(t *testing.T) {
+		m := boundedScenarioAgentsModel(t, "subagent-roster")
+		m.conv.fleetIndex = make(map[string]int, len(m.conv.subagentFleet))
+		for i := range m.conv.subagentFleet {
+			m.conv.fleetIndex[m.conv.subagentFleet[i].childID] = i
+		}
+		th, hk, width, height := m.agentsListGeometry()
+		control, _, _ := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width).configuredControl(th, height)
+		control.setCursor(5)
+		control.scroll(boundedLineDown)
+		before := control.view().rows[0]
+		m.subagents.cursor, m.subagents.roster = control.cursor, control
+
+		mm, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ChildID: "child-05", ToolName: strings.Repeat("streamed-tool-", 8), ToolCount: 1})
+		m = mm.(Model)
+		if m.subagents.roster.cursorID != "child-05" {
+			t.Fatalf("stream refresh selected ID = %q, want child-05", m.subagents.roster.cursorID)
+		}
+		if len(m.subagents.roster.items) == 0 || !strings.Contains(m.subagents.roster.items[5].text, "streamed-tool-") {
+			t.Fatalf("stream refresh did not persist rebuilt roster items: %#v", m.subagents.roster.items)
+		}
+		after := m.subagents.roster.view().rows[0]
+		if after.id != before.id || after.itemLine != before.itemLine {
+			t.Fatalf("stream refresh top anchor = {%q,%d}, want {%q,%d}", after.id, after.itemLine, before.id, before.itemLine)
+		}
+	})
+
 	th, hk := aztec(), defaultHelpKeys()
 	fleet := boundedScenarioFleet(12)
 	groups := boundedScenarioGroups(10)
@@ -113,8 +140,8 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 		s := boundedScenarioModelsState(t, 3)
 		s.filtered[0].DisplayName = strings.Repeat("oversized ", 20)
 		s.catalog.models = s.filtered
-		fixed := modelsPanelFixedRows(*s, "", s.deps.marks)
-		_, _ = s.Render(24, fixed+3)
+		prefix, suffix := modelsFixedLines(*s, "")
+		_, _ = s.Render(24, len(prefix)+len(suffix)+3)
 		s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 		if s.cursor != 0 || s.list.cursorLine == 0 {
 			t.Fatalf("Page Down skipped wrapped item segment: cursor=%d line=%d", s.cursor, s.list.cursorLine)
@@ -208,16 +235,59 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 			if got := agentsScenarioOffset(m, mode); got != 0 {
 				t.Fatalf("wheel up did not return %s to top: %d", mode, got)
 			}
+			for range 200 {
+				mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+				m = mm.(Model)
+			}
+			bottom := agentsScenarioOffset(m, mode)
+			if bottom <= 0 {
+				t.Fatalf("%s never reached a positive bottom offset", mode)
+			}
+			mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+			m = mm.(Model)
+			if got := agentsScenarioOffset(m, mode); got != bottom {
+				t.Fatalf("%s wheel-down bottom clamp = %d, want %d", mode, got, bottom)
+			}
+			mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			m = mm.(Model)
+			if got := agentsScenarioOffset(m, mode); got != bottom-1 {
+				t.Fatalf("%s wheel-up from bottom = %d, want one line to %d", mode, got, bottom-1)
+			}
 
 			if strings.Contains(mode, "roster") || mode == "parallel-group" {
 				mm, _, _ = m.onAgentsKey(tea.KeyPressMsg{Code: tea.KeyDown})
 				m = mm.(Model)
+				if !agentsScenarioSelectedVisible(m, mode) {
+					t.Fatalf("keyboard movement after wheel did not reveal selected %s item", mode)
+				}
 				if plain := stripANSIstr(m.View().Content); !strings.Contains(plain, "▶ ") {
 					t.Fatalf("keyboard movement after wheel did not reveal selected %s item:\n%s", mode, plain)
 				}
 			}
 		})
 	}
+}
+
+func agentsScenarioSelectedVisible(m Model, mode string) bool {
+	var list *boundedList
+	switch mode {
+	case "subagent-roster":
+		list = &m.subagents.roster
+	case "parallel-roster":
+		list = &m.parallel.roster
+	case "parallel-group":
+		list = &m.parallel.branches
+	case "team-roster":
+		list = &m.team.roster
+	default:
+		return true
+	}
+	for _, row := range list.view().rows {
+		if row.selected {
+			return true
+		}
+	}
+	return false
 }
 
 func agentsScenarioOffset(m Model, mode string) int {
@@ -291,7 +361,18 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	m = feedCmd(t, mm.(Model), cmd)
 	s := modelsSurface(t, m)
 	s.filtered[1].DisplayName = strings.Repeat("wrapped model identity ", 5)
-	m = resize(m, 40, 60)
+	m = resize(m, 40, 35)
+	_ = m.View()
+	s = modelsSurface(t, m)
+	wheelCursor := s.cursor
+	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if s.list.viewport.offset != 1 || s.cursor != wheelCursor {
+		t.Fatalf("Models wheel down = offset/cursor %d/%d, want exact one line and cursor %d", s.list.viewport.offset, s.cursor, wheelCursor)
+	}
+	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if s.list.viewport.offset != 0 || s.cursor != wheelCursor {
+		t.Fatalf("Models wheel up = offset/cursor %d/%d, want 0/%d", s.list.viewport.offset, s.cursor, wheelCursor)
+	}
 	_ = m.View()
 	s = modelsSurface(t, m)
 	var first renderedHitRegion
@@ -316,12 +397,23 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 		t.Fatalf("marker-cell click selected %d, want first model", got)
 	}
 	continuation := second[len(second)-1]
+	beforeClickOffset := s.list.viewport.offset
 	globalX, globalY = m.metrics.localToGlobal(continuation.rect.x0+1, continuation.rect.y0)
 	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
 	m = mm.(Model)
 	s = modelsSurface(t, m)
 	if s.cursor != 1 || s.intent != nil {
 		t.Fatalf("click should move cursor only: cursor=%d intent=%T", s.cursor, s.intent)
+	}
+	if s.list.viewport.offset != beforeClickOffset {
+		t.Fatalf("click on an already-visible model moved viewport from %d to %d", beforeClickOffset, s.list.viewport.offset)
+	}
+	visible := false
+	for _, row := range s.list.view().rows {
+		visible = visible || row.itemIndex == 1 && row.selected
+	}
+	if !visible {
+		t.Fatal("clicked Model cursor was not revealed in its viewport")
 	}
 	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -340,6 +432,8 @@ func TestMecatuiBoundedScrollCursor_Scenario3_StaleModelHitsIgnored(t *testing.T
 		t.Fatal("Models frame rendered no row hits")
 	}
 	stale := m.hits.frame[0].id
+	mm, _ = m.Update(tea.WindowSizeMsg{Width: m.width - 7, Height: m.height - 2})
+	m = mm.(Model)
 	_ = m.View()
 	s := modelsSurface(t, m)
 	s.cursor = 2

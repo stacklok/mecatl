@@ -11,6 +11,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,37 +41,6 @@ func bigRoster(n int) []client.TeamMemberSpec {
 		r = append(r, client.TeamMemberSpec{Name: "member-" + string(rune('a'+i)), Role: "worker"})
 	}
 	return r
-}
-
-func TestNavigateRosterCursor(t *testing.T) {
-	keys := defaultKeys()
-	for _, tc := range []struct {
-		name    string
-		msg     tea.KeyPressMsg
-		cursor  int
-		total   int
-		page    int
-		want    int
-		handled bool
-	}{
-		{name: "up", msg: tea.KeyPressMsg{Code: tea.KeyUp}, cursor: 3, total: 8, page: 2, want: 2, handled: true},
-		{name: "down", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 3, total: 8, page: 2, want: 4, handled: true},
-		{name: "up clamps at first", msg: tea.KeyPressMsg{Code: tea.KeyUp}, cursor: 0, total: 8, page: 2, want: 0, handled: true},
-		{name: "down clamps at last", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 7, total: 8, page: 2, want: 7, handled: true},
-		{name: "page up", msg: tea.KeyPressMsg{Code: tea.KeyPgUp}, cursor: 6, total: 12, page: 4, want: 2, handled: true},
-		{name: "page down", msg: tea.KeyPressMsg{Code: tea.KeyPgDown}, cursor: 2, total: 12, page: 4, want: 6, handled: true},
-		{name: "home", msg: tea.KeyPressMsg{Code: tea.KeyHome}, cursor: 6, total: 8, page: 2, want: 0, handled: true},
-		{name: "end", msg: tea.KeyPressMsg{Code: tea.KeyEnd}, cursor: 1, total: 8, page: 2, want: 7, handled: true},
-		{name: "empty roster", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 4, total: 0, page: 2, want: 0, handled: true},
-		{name: "unhandled", msg: tea.KeyPressMsg{Code: 'z', Text: "z"}, cursor: 4, total: 8, page: 2, want: 4, handled: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, handled := navigateRosterCursor(tc.msg, keys, tc.cursor, tc.total, tc.page)
-			if got != tc.want || handled != tc.handled {
-				t.Errorf("navigateRosterCursor() = (%d, %t), want (%d, %t)", got, handled, tc.want, tc.handled)
-			}
-		})
-	}
 }
 
 // TestAgentsOpensRoster asserts f6 over a populated team opens the roster.
@@ -715,7 +685,12 @@ func TestAgentsRosterWindowed(t *testing.T) {
 	out := stripANSIstr(m.View().Content)
 
 	th, hk, width, height := m.agentsListGeometry()
-	rows := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
+	view := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).boundedView(th, height)
+	visible := make(map[int]struct{})
+	for _, row := range view.rows {
+		visible[row.itemIndex] = struct{}{}
+	}
+	rows := len(visible)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be smaller than roster %d", rows, n)
 	}
@@ -873,19 +848,17 @@ func TestTeamRosterRowUsesIdentityWorkAndRuntimeLines(t *testing.T) {
 		routedModel:    "gpt-5.6-terra",
 		usage:          client.Usage{InputTokens: 100600, OutputTokens: 626},
 	}
-	row := stripANSIstr(renderTeamRosterRow(aztec().Style("spinner"), "▶ ", ln, 0, false, 100))
+	row := stripANSIstr(renderTeamRoster(aztec(), teamState{}, &block{teamLanes: []teamLane{*ln}}, defaultHelpKeys(), 0, 100))
 	lines := strings.Split(row, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("team row has %d lines, want identity/work/runtime: %q", len(lines), row)
+	start := slices.IndexFunc(lines, func(line string) bool { return strings.HasPrefix(line, "▶ ◆ · overlay-reader") })
+	if start < 0 || start+2 >= len(lines) {
+		t.Fatalf("bounded team roster lost identity/work/runtime rows: %q", row)
 	}
-	if !strings.HasPrefix(lines[0], "▶ ◆ · overlay-reader") {
-		t.Fatalf("identity line lost selection or member identity: %q", lines[0])
+	if !strings.HasPrefix(lines[start+1], "    RecordFinding… · Inspect the Agents") {
+		t.Fatalf("work line should group current action and role: %q", lines[start+1])
 	}
-	if !strings.HasPrefix(lines[1], "    RecordFinding… · Inspect the Agents") {
-		t.Fatalf("work line should group current action and role: %q", lines[1])
-	}
-	if !strings.HasPrefix(lines[2], "    ↑100.6K ↓626 · ctx ") || !strings.Contains(lines[2], "medium → gpt-5.6-terra") {
-		t.Fatalf("runtime line should group tokens, context, and route: %q", lines[2])
+	if !strings.HasPrefix(lines[start+2], "    ↑100.6K ↓626 · ctx ") || !strings.Contains(lines[start+2], "medium → gpt-5.6-terra") {
+		t.Fatalf("runtime line should group tokens, context, and route: %q", lines[start+2])
 	}
 }
 

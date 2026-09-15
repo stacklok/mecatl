@@ -116,11 +116,14 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 
 	withoutStatus := picker
 	withoutStatus.catalog.statuses = nil
-	if got, want := modelsPanelFixedRows(picker, "", defaultHelpKeys()), modelsPanelFixedRows(withoutStatus, "", defaultHelpKeys())+2; got != want {
-		t.Fatalf("fixed rows with a separated status = %d, want %d", got, want)
+	withPrefix, withSuffix := modelsFixedLines(picker, "")
+	withoutPrefix, withoutSuffix := modelsFixedLines(withoutStatus, "")
+	if got, want := len(withPrefix)+len(withSuffix), len(withoutPrefix)+len(withoutSuffix)+1; got != want {
+		t.Fatalf("actual chrome rows with status = %d, want %d", got, want)
 	}
 	picker.deps = surfaceDeps{keys: defaultKeys(), theme: th}
-	_, _ = picker.Render(100, modelsPanelFixedRows(picker, "", defaultHelpKeys())+4)
+	prefix, suffix := modelsFixedLines(picker, "")
+	_, _ = picker.Render(100, len(prefix)+len(suffix)+4)
 	if picker.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want 4 after status separation", picker.rowBudget)
 	}
@@ -137,7 +140,8 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		filtered: models,
 		deps:     surfaceDeps{keys: defaultKeys(), theme: theme.New("aztec", theme.AztecPalette())},
 	}
-	_, _ = s.Render(100, modelsPanelFixedRows(*s, "", defaultHelpKeys())+4)
+	prefix, suffix := modelsFixedLines(*s, "")
+	_, _ = s.Render(100, len(prefix)+len(suffix)+4)
 	if s.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
 	}

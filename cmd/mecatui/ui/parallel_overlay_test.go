@@ -266,21 +266,15 @@ func TestParallelBranchRowSeparatesSummaryAndActivity(t *testing.T) {
 		toolCount:     2,
 		usage:         client.Usage{InputTokens: 1200, OutputTokens: 340},
 	}
-	selected := stripANSIstr(strings.TrimSuffix(renderParallelBranchRow(aztec(), br, -1, true, 80), "\n"))
-	unselected := stripANSIstr(strings.TrimSuffix(renderParallelBranchRow(aztec(), br, -1, false, 80), "\n"))
-	selectedRows := strings.Split(selected, "\n")
-	unselectedRows := strings.Split(unselected, "\n")
-	if len(selectedRows) != 2 || len(unselectedRows) != 2 {
-		t.Fatalf("branch summaries = %q / %q, want title plus details", selected, unselected)
+	other := parallelBranch{index: 1, label: "other"}
+	group := []parallelGroup{{parentCallID: "group", winner: -1, branches: []parallelBranch{*br, other}}}
+	selected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group"}, group, defaultHelpKeys(), 80, 0))
+	unselected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group", branchCursor: 1}, group, defaultHelpKeys(), 80, 0))
+	if !strings.Contains(selected, "▶ ✓ branch-1") || !strings.Contains(unselected, "  ✓ branch-1") {
+		t.Fatalf("bounded branch selection markers changed: %q / %q", selected, unselected)
 	}
-	if !strings.HasPrefix(selectedRows[0], "▶ ✓ branch-1") || !strings.HasPrefix(unselectedRows[0], "  ✓ branch-1") {
-		t.Fatalf("selection markers changed branch title semantics: %q / %q", selectedRows[0], unselectedRows[0])
-	}
-	if selectedRows[1] != unselectedRows[1] || !strings.HasPrefix(selectedRows[1], "    ") {
-		t.Fatalf("details should retain one shared four-column indent: %q / %q", selectedRows[1], unselectedRows[1])
-	}
-	if !strings.Contains(selectedRows[0], "…") || !strings.Contains(selectedRows[1], "gpt-5-mini") {
-		t.Fatalf("summary did not clip title or retain routing details: %q", selected)
+	if !strings.Contains(selected, "\n    ") || !strings.Contains(selected, "gpt-5-mini") {
+		t.Fatalf("bounded branch summary lost indented routing details: %q", selected)
 	}
 	if got := indentParallelBranchTrace("  ✓ Edit\n  · changed file", 32); got != "  │   ✓ Edit\n  │   · changed file" {
 		t.Fatalf("activity gutter = %q", got)
@@ -396,7 +390,8 @@ func TestParallelRosterWindowed(t *testing.T) {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
 	}
 	out := stripANSIstr(m.View().Content)
-	rows := m.parallelRosterPageSize(m.conv.parallelGroups)
+	th, hk, width, height := m.agentsListGeometry()
+	rows := len(parallelSelectableList(th, m.parallel, m.conv.parallelGroups, hk, width).boundedView(th, height).rows)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be < groups %d", rows, n)
 	}
