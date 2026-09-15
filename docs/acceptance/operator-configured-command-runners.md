@@ -8,7 +8,7 @@
 **Delivery:** Split. The operator-facing configuration and credential-authority contract need human review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1495](https://github.com/stacklok/mecatl/issues/1495).
-**Plan PR:** pending
+**Plan PR:** [#1587](https://github.com/stacklok/mecatl/pull/1587)
 **Approved baseline:** absent until approved
 
 Mecatl will give the operator a strict `command_runner:` configuration section in the user-global settings file. It makes the command interpreter a durable settings default and permits an explicit list of non-harness environment-variable names to pass through the existing secret scrub to built-in main-session command runners. The default remains a scrubbed environment with `/bin/sh` selected by command roots; an explicit CLI `--shell` remains higher precedence and `--no-shell` remains an unconditional disable. As the settings twin of `--shell`, the configured interpreter applies wherever the existing `Config.Shell` is consumed, including agent-facing runners, hooks, and internal Git; only the environment grant is limited to agent-facing main runners.
