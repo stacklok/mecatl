@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -53,6 +54,42 @@ func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 	}
 	if len(m.modelCatalog.models) != 1 || m.modelCatalog.models[0].ProviderID != "late" {
 		t.Fatalf("root catalog = %+v, want late result", m.modelCatalog.models)
+	}
+}
+
+func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
+	models := make([]client.ModelInfo, 40)
+	for i := range models {
+		models[i] = client.ModelInfo{ProviderID: "provider", ID: fmt.Sprintf("model-%d", i), DisplayName: fmt.Sprintf("Model %d", i)}
+	}
+	fm := &fakeModels{models: models}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	m = resize(m, 40, 15)
+	s := modelsSurface(t, m)
+	_, _ = s.Render(40, 15)
+
+	s.list.setCursor(5)
+	s.cursor = s.list.cursor
+	s.list.scroll(boundedLineDown)
+	beforeTop := s.list.view().rows[0]
+	if s.list.cursorID != "provider\x00model-5" || beforeTop.id == "" {
+		t.Fatalf("refresh setup cursor/top = %q/%q", s.list.cursorID, beforeTop.id)
+	}
+
+	reordered := append([]client.ModelInfo{models[5], models[0], models[1]}, models[2:5]...)
+	reordered = append(reordered, models[6:]...)
+	// The picker receives the newly reconciled catalog before its next frame. Render
+	// owns the geometry/list refresh that must retain the stable selection.
+	s.catalog.models, s.filtered = reordered, reordered
+	_, _ = s.Render(40, 15)
+	s = modelsSurface(t, m)
+	if got := s.list.cursorID; got != "provider\x00model-5" {
+		t.Fatalf("reordered refresh selected %q, want provider/model-5", got)
+	}
+	if afterTop := s.list.view().rows[0]; afterTop.id != beforeTop.id || afterTop.itemLine != beforeTop.itemLine {
+		t.Fatalf("reordered refresh top anchor = {%q,%d}, want {%q,%d}", afterTop.id, afterTop.itemLine, beforeTop.id, beforeTop.itemLine)
 	}
 }
 

@@ -154,6 +154,22 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(t *testing.T) {
+	t.Run("real render applies selected style to Models and Agents", func(t *testing.T) {
+		th := aztec()
+		models := boundedScenarioModelsState(t, 2)
+		models.catalog.active = client.ModelSelection{ProviderID: "provider", ModelID: "model-00"}
+		models.catalog.globalDefault = client.ModelSelection{ProviderID: "provider", ModelID: "model-00"}
+		modelOut, _ := models.Render(80, 24)
+		if want := strings.TrimSuffix(th.Style("spinner").Render("▶ "), "\x1b[m") + "●★ provider"; !strings.Contains(modelOut, want) {
+			t.Fatalf("Models selected row does not apply spinner style: want fragment %q in %q", want, modelOut)
+		}
+
+		agentsOut := renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{cursor: 0}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24)
+		if want := strings.TrimSuffix(th.Style("spinner").Render("▶ "), "\x1b[m"); !strings.Contains(agentsOut, want) {
+			t.Fatalf("Agents selected row does not apply spinner style: want fragment %q in %q", want, agentsOut)
+		}
+	})
+
 	th := aztec()
 	s := boundedScenarioModelsState(t, 2)
 	s.catalog.active = client.ModelSelection{ProviderID: "provider", ModelID: "model-00"}
@@ -419,6 +435,47 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	m = mm.(Model)
 	if m.modal != nil || m.phase != phaseConnecting {
 		t.Fatalf("Enter did not retain activation: modal=%T phase=%v", m.modal, m.phase)
+	}
+	assertModelsOverflowIndicatorClickMisses(t)
+}
+
+func assertModelsOverflowIndicatorClickMisses(t *testing.T) {
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.deps.NoAltScreen = false
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	m = resize(m, 40, 35)
+	_ = m.View()
+
+	s := modelsSurface(t, m)
+	s.filtered[0].DisplayName = strings.Repeat("wrapped model identity ", 5)
+	s.catalog.models = s.filtered
+	_ = m.View()
+	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if s.list.viewport.offset == 0 {
+		t.Fatal("Models setup did not create an overflow indicator")
+	}
+	out := m.View().Content
+	if !strings.Contains(stripANSIstr(out), "↑ ") {
+		t.Fatalf("Models render did not show the expected overflow indicator:\n%s", stripANSIstr(out))
+	}
+
+	var first renderedHitRegion
+	for _, region := range m.hits.frame {
+		if _, ok := s.hitItems[region.id]; ok && (first.id == 0 || region.rect.y0 < first.rect.y0) {
+			first = region
+		}
+	}
+	if first.id == 0 || first.rect.y0 == 0 {
+		t.Fatalf("cannot locate a rendered Models row below its overflow indicator: %#v", first)
+	}
+	before := s.cursor
+	x, y := m.metrics.localToGlobal(first.rect.x0, first.rect.y0-1)
+	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	m = mm.(Model)
+	s = modelsSurface(t, m)
+	if s.cursor != before || s.intent != nil {
+		t.Fatalf("overflow-indicator click must miss without moving or activating Models: cursor=%d intent=%T", s.cursor, s.intent)
 	}
 }
 
