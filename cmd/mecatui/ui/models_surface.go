@@ -64,8 +64,7 @@ func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	prefix, suffix := modelsFixedLines(*s, s.provenance)
-	s.rowBudget = modelsRowBudgetFor(height, modelsPanelFixedRows(*s, s.provenance, s.deps.marks))
-	s.rowBudget = min(s.rowBudget, max(0, height-len(prefix)-len(suffix)))
+	s.rowBudget = max(0, height-len(prefix)-len(suffix))
 	reveal := s.syncList(width, s.rowBudget) || s.revealCursor
 	view := boundedListViewWithIndicators(&s.list, s.rowBudget, reveal)
 	s.revealCursor = false
@@ -212,7 +211,7 @@ func (s *modelsState) takeSurfaceIntent() surfaceIntent {
 }
 func (s *modelsState) syncFilter() {
 	s.filtered = filterModels(s.catalog.models, s.filter.Value())
-	s.cursor = clampModelsCursor(s.cursor, len(s.filtered))
+	s.cursor = clampBounded(s.cursor, len(s.filtered))
 	s.list.setItems(modelsBoundedItems(s.catalog, s.filtered))
 	if len(s.filtered) > 0 && s.list.cursorID == "" {
 		s.list.setCursor(s.cursor)
@@ -245,17 +244,17 @@ func (s *modelsState) moveCursor(move boundedMove) {
 	}
 	switch move {
 	case boundedLineUp:
-		s.cursor = clampModelsCursor(s.cursor-1, len(s.filtered))
+		s.cursor = clampBounded(s.cursor-1, len(s.filtered))
 	case boundedLineDown:
-		s.cursor = clampModelsCursor(s.cursor+1, len(s.filtered))
+		s.cursor = clampBounded(s.cursor+1, len(s.filtered))
 	case boundedPageUp:
-		s.cursor = clampModelsCursor(s.cursor-delta, len(s.filtered))
+		s.cursor = clampBounded(s.cursor-delta, len(s.filtered))
 	case boundedPageDown:
-		s.cursor = clampModelsCursor(s.cursor+delta, len(s.filtered))
+		s.cursor = clampBounded(s.cursor+delta, len(s.filtered))
 	case boundedTop:
 		s.cursor = 0
 	case boundedEnd:
-		s.cursor = clampModelsCursor(len(s.filtered)-1, len(s.filtered))
+		s.cursor = clampBounded(len(s.filtered)-1, len(s.filtered))
 	}
 }
 
@@ -268,32 +267,6 @@ func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bound
 		})
 	}
 	return items
-}
-
-func boundedListViewWithIndicators(list *boundedList, capacity int, reveal bool) boundedListView {
-	reserved := 0
-	var view boundedListView
-	for range 3 {
-		list.viewport.height = max(0, capacity-reserved)
-		if reveal {
-			list.revealCursor(list.layout())
-		}
-		view = list.view()
-		needed := 0
-		if view.above > 0 {
-			needed++
-		}
-		if view.below > 0 {
-			needed++
-		}
-		if needed <= reserved {
-			list.reveal = false
-			return view
-		}
-		reserved = needed
-	}
-	list.reveal = false
-	return view
 }
 
 func modelsFixedLines(picker modelsState, prov string) (prefix, suffix []string) {
@@ -347,15 +320,6 @@ func (s *modelsState) chosen() (client.ModelInfo, bool) {
 	return s.filtered[s.cursor], true
 }
 
-func clampModelsCursor(c, n int) int {
-	if n <= 0 || c < 0 {
-		return 0
-	}
-	if c >= n {
-		return n - 1
-	}
-	return c
-}
 func filterModels(models []client.ModelInfo, q string) []client.ModelInfo {
 	if q == "" {
 		return models
@@ -371,38 +335,6 @@ func filterModels(models []client.ModelInfo, q string) []client.ModelInfo {
 }
 
 const modelSwitchDisclosure = "Switching models is expensive as it clears caches."
-
-func modelsRowBudgetFor(height, fixedRows int) int {
-	return max(0, height-fixedRows)
-}
-
-// modelsPanelFixedRows derives the list's viewport budget from the same variable
-// content rendered around it, including the switch disclosure and provider status.
-func modelsPanelFixedRows(picker modelsState, prov string, hk helpKeys) int {
-	var b strings.Builder
-	b.WriteString("Models\n")
-	if prov != "" {
-		b.WriteString(prov + "\n")
-	}
-	b.WriteString(picker.filter.View() + "\n\n")
-	b.WriteString(modelSwitchDisclosure + "\n\n")
-	statuses := renderProviderStatusLines(picker.catalog.statuses, len(picker.catalog.models) == 0)
-	if modelsRowsRendered(picker) && len(statuses) > 0 {
-		b.WriteString("separator\n")
-	}
-	for range statuses {
-		b.WriteString("status\n")
-	}
-	b.WriteString("row\n\n")
-	b.WriteString("type to filter · ↑/↓/" + hk.scrollUp + " move · " + hk.choose + " use · " + hk.setGlobalDefault + " set global default · " + hk.closeOnly + " clear filter / close\n")
-	b.WriteString("● current  ★ global default\n")
-	b.WriteString("reason = emits reasoning · set its effort tier with /effort")
-	return strings.Count(b.String(), "\n")
-}
-
-func modelsRowsRendered(picker modelsState) bool {
-	return !picker.loading && picker.err == nil && len(picker.catalog.models) > 0 && len(picker.filtered) > 0
-}
 
 const modelsDisabledNote = "Model selection is not available on this server.\nConfigure a provider on the server, then reconnect."
 const modelsErrorHint = "the model service may be unavailable — check mecated is running (log: $XDG_STATE_HOME/mecatl/mecatui.log)"

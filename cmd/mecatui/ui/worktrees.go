@@ -109,7 +109,7 @@ func (m Model) onWorktreesKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.worktrees.cursor = 0
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollBottom):
-		m.worktrees.cursor = clampModelsCursor(len(m.worktrees.filtered)-1, len(m.worktrees.filtered))
+		m.worktrees.cursor = clampBounded(len(m.worktrees.filtered)-1, len(m.worktrees.filtered))
 		return m, nil, true
 	case key.Matches(msg, m.keys.Choose):
 		return m.chooseWorktree(), nil, true

@@ -6,7 +6,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -198,25 +197,6 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 	return m, nil
 }
 
-// navigateRosterCursor applies the shared roster navigation keys to cursor.
-func navigateRosterCursor(msg tea.KeyPressMsg, keys keyMap, cursor, total, page int) (next int, handled bool) {
-	switch {
-	case key.Matches(msg, keys.Up):
-		return clampCursor(cursor-1, total), true
-	case key.Matches(msg, keys.Down):
-		return clampCursor(cursor+1, total), true
-	case key.Matches(msg, keys.ScrollU):
-		return clampCursor(cursor-page, total), true
-	case key.Matches(msg, keys.ScrollD):
-		return clampCursor(cursor+page, total), true
-	case key.Matches(msg, keys.JumpTop):
-		return clampCursor(0, total), true
-	case key.Matches(msg, keys.JumpEnd):
-		return clampCursor(total-1, total), true
-	}
-	return cursor, false
-}
-
 // cancelTeamLane sends a CancelChild frame for one team member's session id (the
 // member's MemberSessionID handle, arriving on team.member events). It is a no-op for
 // a nil lane, a finished team, an already-stopped member, or a lane that never learned
@@ -229,22 +209,6 @@ func (m Model) cancelTeamLane(b *block, ln *teamLane) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.cancelChildByID(ln.sessionID, "member "+sanitizeTerminal(ln.name))
-}
-
-// clampCursor clamps a candidate cursor index to [0, n-1] (and to 0 when the
-// roster is empty), so all the jump/page math can be written without per-call
-// bounds checks.
-func clampCursor(i, n int) int {
-	if n <= 0 {
-		return 0
-	}
-	if i < 0 {
-		return 0
-	}
-	if i >= n {
-		return n - 1
-	}
-	return i
 }
 
 // maxTeamFocusLines is the ABSOLUTE ceiling on how many lines of a focused
@@ -313,7 +277,7 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 	}
 	order := teamLaneOrder(b.teamLanes)
 	nameW := teamNameWidth(b.teamLanes, order)
-	cursor := clampCursor(st.cursor, len(order))
+	cursor := clampBounded(st.cursor, len(order))
 	list := agentsSelectableList{
 		header: header,
 		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth),
@@ -337,20 +301,6 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 		bodyWidth = widths[0]
 	}
 	return teamSelectableList(th, st, b, hk, bodyWidth).render(th, height)
-}
-
-// renderTeamRosterRow uses three fixed physical lines: identity, work summary, and
-// runtime metadata. Each line is clipped to its own budget instead of allowing an
-// arbitrary wrap to split related fields across rows.
-func renderTeamRosterRow(style lipgloss.Style, prefix string, ln *teamLane, nameW int, teamDone bool, bodyWidth int) string {
-	title := teamRosterTitle(ln, nameW, teamDone)
-	work, runtime := teamRosterWork(ln, teamDone), teamRosterRuntime(ln)
-	if bodyWidth > 0 {
-		title = truncateDisplayWidth(title, max(1, bodyWidth-lipgloss.Width(prefix)))
-		work = truncateDisplayWidth(work, max(1, bodyWidth-4))
-		runtime = truncateDisplayWidth(runtime, max(1, bodyWidth-4))
-	}
-	return style.Render(prefix + title + "\n    " + work + "\n    " + runtime)
 }
 
 func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
