@@ -4,11 +4,13 @@ import { createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import type {
+  ControlRefusedEventPayload,
   Event,
   SessionTitleEventPayload,
   TeamEventPayload,
   ToolCallEventPayload,
 } from "../src/events.js";
+import { decodeEvent } from "../src/events.js";
 import { EventSchema, HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import { connect } from "../src/index.js";
 import { sseResponse } from "./scripted-state.js";
@@ -89,6 +91,24 @@ describe("event unions", () => {
     if (result?.kind !== "result") throw new Error("expected result");
     expect(result.payload.stop).toBe("end_turn");
     await client.close();
+  });
+
+  it("normalizes control refusals as typed client-visible events", () => {
+    const event = decodeEvent(
+      create(EventSchema, {
+        type: "control.refused",
+        text: "approval intent was refused",
+        controlRefused: { askId: "ask-guardrail", category: "approval_intent_mismatch" },
+      }),
+      "grpc",
+    );
+    if (event.kind !== "control.refused") throw new Error("expected control.refused");
+    expectTypeOf(event.payload).toEqualTypeOf<ControlRefusedEventPayload>();
+    expect(event.payload).toEqual({
+      askId: "ask-guardrail",
+      category: "approval_intent_mismatch",
+      message: "approval intent was refused",
+    });
   });
 
   it("unknown kinds preserve transport-native raw data", async () => {

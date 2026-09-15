@@ -16,6 +16,7 @@ import {
 import {
   ApprovalVerdict,
   type ConverseRequestSchema,
+  GuardrailApprovalKind,
   type Event as ProtoEvent,
 } from "./gen/mecatl/v1/harness_pb.js";
 import {
@@ -107,7 +108,13 @@ export interface RunOperations {
 }
 
 type ConsumptionMode = "events" | "result";
-type PendingAsk = { readonly controller: AbortController; readonly plan: boolean };
+type PendingAsk = {
+  readonly controller: AbortController;
+  readonly plan: boolean;
+  readonly runId: string;
+  readonly scope: PermissionAskEventPayload["guardrail"];
+  submitted: boolean;
+};
 
 export class RunImpl implements Run {
   readonly id: string;
@@ -146,16 +153,7 @@ export class RunImpl implements Run {
 
   async approve(askId: string, allow: boolean): Promise<void> {
     this.#operations.assertOpen();
-    if (this.#knownAsks.has(askId)) {
-      await this.resolveAsk(askId, allow ? "allow_once" : "deny");
-      return;
-    }
-    this.#send({
-      kind: {
-        case: "resumeApproval",
-        value: { allow, askId, expectedRunId: this.id },
-      },
-    });
+    await this.resolveAsk(askId, allow ? "allow_once" : "deny");
   }
 
   async resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void> {
@@ -171,6 +169,11 @@ export class RunImpl implements Run {
         `Plan approval ask ${askId} must be resolved through onPlanApproval`,
         { transport: this.#operations.transportKind },
       );
+    }
+    if (pending.submitted) {
+      throw new PermissionAskAlreadyResolvedError(askId, {
+        transport: this.#operations.transportKind,
+      });
     }
 
     await this.#resolvePendingAsk(askId, verdict, pending);
@@ -198,7 +201,27 @@ export class RunImpl implements Run {
     pending: PendingAsk,
   ): Promise<void> {
     const wireVerdict = approvalVerdict(verdict, this.#operations.transportKind);
-    this.#pendingAsks.delete(askId);
+    const scope = pending.scope;
+    if (scope?.kind === "unknown") {
+      throw new InvalidStateError(`Approval ask ${askId} has an unknown guardrail scope`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    if (
+      verdict === "allow_always" &&
+      scope !== undefined &&
+      (scope.kind === "result_release" || !scope.repeatAvailable)
+    ) {
+      throw new InvalidStateError(`Approval ask ${askId} does not permit allow_always`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    if (pending.submitted) {
+      throw new PermissionAskAlreadyResolvedError(askId, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    pending.submitted = true;
     pending.controller.abort();
     this.#send({
       kind: {
@@ -206,7 +229,14 @@ export class RunImpl implements Run {
         value: {
           allow: verdict !== "deny",
           askId,
-          expectedRunId: this.id,
+          expectedRunId: pending.runId,
+          guardrailKind:
+            scope?.kind === "action"
+              ? GuardrailApprovalKind.ACTION
+              : scope?.kind === "result_release"
+                ? GuardrailApprovalKind.RESULT_RELEASE
+                : GuardrailApprovalKind.UNSPECIFIED,
+          reviewId: scope?.reviewId ?? "",
           verdict: wireVerdict,
         },
       },
@@ -300,7 +330,9 @@ export class RunImpl implements Run {
         transport: this.#operations.transportKind,
       });
     }
-    if (next.value.runId !== this.id) {
+    const correlatedControlEvent =
+      next.value.type === "permission.ask" || next.value.type === "control.refused";
+    if (next.value.runId !== this.id && !correlatedControlEvent) {
       throw new ProtocolError("The Converse stream changed run id", {
         transport: this.#operations.transportKind,
       });
@@ -311,6 +343,11 @@ export class RunImpl implements Run {
   }
 
   #observe(event: Event): void {
+    if (event.kind === "control.refused") {
+      const pending = this.#pendingAsks.get(event.payload.askId);
+      if (pending !== undefined) pending.submitted = false;
+      return;
+    }
     if (event.kind === "permission.ask") {
       this.#startAsk(event);
       return;
@@ -334,7 +371,13 @@ export class RunImpl implements Run {
     if (this.#ended || this.#knownAsks.has(askId)) return;
     this.#knownAsks.add(askId);
     const plan = event.payload.tool === PLAN_APPROVAL_TOOL;
-    const pending = { controller: new AbortController(), plan };
+    const pending: PendingAsk = {
+      controller: new AbortController(),
+      plan,
+      runId: event.runId,
+      scope: event.payload.guardrail,
+      submitted: false,
+    };
     this.#pendingAsks.set(askId, pending);
     if (plan) {
       this.#startPlanResponder(event, pending);

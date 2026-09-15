@@ -4,8 +4,8 @@
 **Work classification:** Architectural — changes guardrail authority, dispatch ordering, public engine/wire surfaces, operator configuration, and main/worker invariants.
 **Decision record:** [ADR 0342](../adr/0342-contextual-investigative-guardrails.md)
 **Phase:** live contextual action and inbound-content review; cross-process held-result recovery and wider cloud-native security state are deferred
-**Status:** proposed, 2026-09-14. Product choices are approved. Implementation must build and validate the quality-measurement and capacity-calibration deliverables before any production-readiness claim; neither requires results before implementation.
-**Delivery:** Split. Merge of a proposed Plan / Interface PR is the implementation authorization; that gate has not been waived.
+**Status:** in-progress, 2026-09-14. The operator explicitly authorized implementation stacked on Plan / Interface PR #1455 at `1a5d7ed19dbe5bcf3f861c6865e1f9d6e15d9dbf` before its merge. Product choices remain unchanged. Measurement and capacity calibration are implementation deliverables; no real-model efficacy or production-readiness claim is made.
+**Delivery:** Split, with operator-authorized stacked implementation before plan merge. The implementation PR targets the plan branch; human merge and all applicable verification remain required.
 **Expected tasks:** deferred to orchestration
 
 This is a plan/interface deliverable only. It does not claim the behavior is shipped and does not authorize production edits, live model calls, commits, or publication.
@@ -115,16 +115,22 @@ type ToolReviewRequest struct {
 }
 type ToolReviewResult struct { Assessment ReviewAssessment; Concerns []ReviewConcern; Evidence []ReviewEvidenceUse; Missing []ReviewMissingEvidence }
 type ReviewEvidenceRequest struct { ReviewID, Handle, Version string }
-type ReviewEvidence struct { Handle, Kind, Version string; Complete bool; Content string }
+type ReviewEvidence struct { Handle, Kind, Version, Continuation string; Complete bool; Content string }
 type ReviewEvidenceSource interface { ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error) }
 type ToolReviewer interface { Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) }
-type ReviewDetail struct { SessionID session.SessionID; ReviewID, Concern, SourceDisplay, NextAction string }
+type ReviewDetail struct { RootSessionID, SessionID session.SessionID; ReviewID, Concern, SourceDisplay, NextAction string }
 type ReviewDetailSink interface { PublishReviewDetail(context.Context, ReviewDetail) }
 ```
 
-`ReviewDetails` is a callback bound to the owning root Run; publishing associates the entry with that root's existing lifecycle and registered child-reference relation, and root cleanup removes the whole registry. Individual assessment completion does not delete an entry.
+`ReviewDetails` receives explicit `RootSessionID` and reviewed `SessionID`; external sinks must bind child detail and cleanup to that root rather than inferring every child to be its own root. Publishing associates the entry with that root's existing lifecycle and registered child-reference relation, and root cleanup removes the whole registry. Individual assessment completion does not delete an entry.
 
-Add `ToolReviewer ToolReviewer` and `ReviewDetails ReviewDetailSink` to `agent.Deps`. These are engine API additions and require the API snapshot and changelog update during implementation. Do not widen `port.LLMRequest`, `port.HookRunner`, or `port.PermissionPolicy`. Composition builds the reviewer through the normal child-engine factory with the checker provider/model pair, context window, prompt config, cancellation, and token accounting re-derived for that pair.
+`engine/agent` derives local review targets and repeat dependencies only through `tool.LocalFileOperands`, whose allowlist is the explicit built-in local-filesystem surface plus the narrow exact Shell-script form. Matching field names on MCP, delegation, and custom tools remain payload labels and never become local read capabilities. Every implicated file is authorized as a concrete originating-session `Read` before metadata or content access. Repeat snapshots use `tool.BoundedWorkspaceReader`; pageable evidence additionally requires `tool.BoundedWorkspaceRangeReader`. Unsupported backends make repeat/evidence completeness false rather than falling back to `Workspace.ReadVersion` or reopening `Workspace.Root`.
+
+`ReviewEvidenceMeta` and `ReviewEvidence` carry an opaque `Continuation` handle. Sources larger than one 25,000-byte / 2,000-line page advertise a finite version-consistent chain within the existing 16-handle / 400,000-byte aggregate limits. The reviewer cannot supply paths or offsets, and an acceptable assessment after starting a chain requires every page in that chain. Oversized, changed, unsupported, or media/binary evidence stays explicitly incomplete and therefore cannot be accepted as inspected; enforcing inbound review uses the existing one-time exact-result release decision rather than treating checker incapability as a malicious finding.
+
+`ReviewPolicyProvider.GuardrailReviewPolicy(toolName, job, operationalFailure)` returns applicability and enforcement for the selected tool/job and checker-down state. `ReviewMetadataProvider.GuardrailReviewMetadata(toolName, job)` returns only machine-safe rule origin and checker route metadata. `ReviewGrantStore.GrantDigest(request)` must bind the exact session, environment revision, caller authority, effective call, target, and eligible versioned dependencies under a purpose-separated keyed digest; false means repeat is ineligible. `AllowsGrant(digest)` tests that exact digest and `ArmGrant(digest, sessionID)` stores only that session-scoped capability.
+
+Add `ToolReviewer ToolReviewer`, `ReviewEvidencePreparer ReviewEvidencePreparer`, and `ReviewDetails ReviewDetailSink` to `agent.Deps`. The implemented preparer receives an immutable `ReviewEvidencePreparation` carrying the exact `tool.Environment`, trusted session owner, request snapshot, and optional inbound result; it returns `PreparedReviewEvidence` with the finite inventory/source and an engine-owned close callback. `ReviewPolicyProvider`, `ReviewMetadataProvider`, and `ReviewGrantStore` are explicit exported optional capabilities rather than private structural protocols. `tool.BoundedWorkspaceReader` is the narrow optional backend capability used for implicated workspace files; unsupported ACP/remote/no-FS workspaces fail the additional inventory incomplete and are never reopened through `Workspace.Root`. These are engine API additions and require the API snapshot and changelog update during implementation. Do not widen `port.LLMRequest`, `port.HookRunner`, or `port.PermissionPolicy`. Composition builds the reviewer through the normal child-engine factory with the checker provider/model pair, context window, prompt config, cancellation, and token accounting re-derived for that pair.
 
 `engine/session` owns only transport/persistence-neutral machine projections; exact additions are:
 
@@ -253,7 +259,7 @@ Evidence handles are finite, random/opaque, review-local capabilities minted onl
 
 This is an approved breaking replacement: no legacy reviewer, dual mode, sanitize compatibility, migration, deprecation, or automatic rewrite. Strict configuration rejects `sanitize` and unknown fields. Unconfigured deployments remain guardrails-off; explicit advisory remains available.
 
-Additive protobuf fields are ignored by old readers. The server validates approval kind before any state mutation. Action asks support Run once, Don't ask again for this action in this session, and Cancel. `result_release` supports Release once and Cancel only: AllowAlways or any other verdict is rejected before deletion, release, history/event recording, policy learning, waiver arming, or audit claim, leaving the held item available for a valid live answer unless the run is otherwise ending. A valid Release once consumes exactly one bound repaired `ToolResult`, records/emits/delivers it once, and performs no tool/action execution, PreToolUse/PostToolUse hook, reviewer call, `Policy.Learn`, or waiver operation.
+Additive protobuf fields are ignored by old readers. For a `result_release`, the client must echo the displayed `review_id` and `guardrail_kind` in `ResumeApproval` (or the HTTP approve body); absent or mismatched acknowledgement and AllowAlways are rejected with an explicit upgrade/refusal response while the held item remains available for a valid live answer. Ordinary permission and action approvals retain their legacy compatibility because their purpose is unchanged. The server validates approval kind before any state mutation. Action asks support Run once, Don't ask again for this action in this session, and Cancel. `result_release` supports Release once and Cancel only: AllowAlways or any other verdict is rejected before deletion, release, history/event recording, policy learning, waiver arming, or audit claim, leaving the held item available for a valid live answer unless the run is otherwise ending. A valid Release once consumes exactly one bound repaired `ToolResult`, records/emits/delivers it once, and performs no tool/action execution, PreToolUse/PostToolUse hook, reviewer call, `Policy.Learn`, or waiver operation.
 
 If cancellation, decline, disconnect/run cleanup, or restart makes a held result unavailable, the original bytes are destroyed/lost and the outstanding tool call is closed with one recorded/emitted synthetic withholding error so history stays paired; the original tool is never rerun. Cross-process restoration of a contextual action ask likewise cannot prove its live binding: Deny remains Deny and either allow records an accurate unresolved synthetic error without executing. More complete cross-process recovery is deferred.
 
@@ -261,7 +267,7 @@ If cancellation, decline, disconnect/run cleanup, or restart makes a held result
 
 ### Completed-review disposition matrix
 
-`inspection=complete` means the checker completed its protocol; it does not imply that the checker had enough evidence to decide. In particular, `assessment=unresolved` caused by exhausted capacity, incomplete trajectory, or specifically missing decision-relevant evidence is a completed assessment, not an operational checker outage.
+`inspection=complete` means the checker completed its protocol; it does not imply that the checker had enough evidence to decide. In particular, `assessment=unresolved` caused by exhausted capacity, incomplete trajectory, or specifically missing decision-relevant evidence is a completed assessment, not an operational checker outage. `/guardrails` projects bounded process-wide health for the configured checker route shared by the Build: before its first actual checker call it reports `not yet checked`; a rule skip does not manufacture a healthy verdict; an operational failure reports an outage; and the next completed acceptable, prohibited, or unresolved assessment restores operational health. This is route health, not per-session history, and carries no raw failure reason or reviewer content.
 
 | Rule mode | Job | Assessment | Inspection | Runtime disposition |
 |---|---|---|---|---|
@@ -399,7 +405,7 @@ The corpus tests the replacement decision recorded by [ADR 0342](../adr/0342-con
   - verify: `TestADR_0342_ContextualGuardrails_Scenario6_QualityReportSchema`
 - AC6.4: implementation-selected private evidence/trajectory count-and-byte capacities are finite, enforced before allocation, and aggregate exhaustion produces complete unresolved/incomplete behavior rather than acceptable.
   - verify: `TestADR_0342_ContextualGuardrails_Scenario6_ImplementationCalibration`
-- AC6.5: implementation review inspects an evidence report that records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
+- AC6.5: implementation review inspects the [private-capacity evidence report](../design/contextual-guardrails-capacity.md), which records the selected finite capacity constants and units, rationale from native limits, measured offline stress experiments and results, and the corresponding pre-allocation/exhaustion proof artifacts. Neither this report nor separately authorized real-model quality results blocks plan proposal, Plan / Interface merge, or implementation review.
   - verify: inspection — implementation capacity-calibration report contains selected constants, rationale, stress experiments/results, and proof artifact references
 
 ### Scenario 7 — prompt discoverability and lifecycle

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -54,18 +56,35 @@ func completedControlRun(t *testing.T) *agent.Run {
 	return run
 }
 
-func awaitingControlSession(t *testing.T, id session.SessionID) *session.Session {
+type controlAskTool struct{}
+
+func (controlAskTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: "Write"} }
+func (controlAskTool) ReadOnly() bool      { return false }
+func (controlAskTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, "wrote"), nil
+}
+
+func liveAwaitingControlRun(t *testing.T, id session.SessionID) (*session.Session, *agent.Run, string) {
 	t.Helper()
 	ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 	sess := session.New(id, session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
-	sess.BeginRun("run-old")
-	if err := sess.BeginTurn(); err != nil {
-		t.Fatal(err)
+	env := tool.MustEnvironment(ref, nofs.New(), memledger.New(), nil)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(controlAskTool{})
+	eng := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("write-1", "Write", json.RawMessage(`{}`))), mockllm.TextTurn("done")),
+		Catalog: catalog,
+		Policy:  permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Ask}}, permstore.New()),
+		Model:   "test-model",
+	})
+	run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "go", RunID: "run-old"})
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			return sess, run, ev.Ask.AskID
+		}
 	}
-	if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "Write"}); err != nil {
-		t.Fatal(err)
-	}
-	return sess
+	t.Fatal("run ended without a permission ask")
+	return nil, nil, ""
 }
 
 // TestPermissionAskPersistenceSerializesLiveControls forces the awaiting Save
@@ -74,19 +93,19 @@ func awaitingControlSession(t *testing.T, id session.SessionID) *session.Session
 func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		act    func(*Service, session.SessionID, *runState, *agent.Run) error
+		act    func(*Service, session.SessionID, *runState, *agent.Run, string) error
 		marked func(*runState) bool
 	}{
 		{
 			name: "approval",
-			act: func(s *Service, id session.SessionID, st *runState, run *agent.Run) error {
-				return s.approveRunState(id, st, run, "ask-1", session.VerdictAllowOnce, run.RunID())
+			act: func(s *Service, id session.SessionID, st *runState, run *agent.Run, askID string) error {
+				return s.approveRunState(id, st, run, askID, session.VerdictAllowOnce, run.RunID())
 			},
-			marked: func(st *runState) bool { return st.resolvedAskID == "ask-1" },
+			marked: func(st *runState) bool { return st.resolvedAskID != "" },
 		},
 		{
 			name: "cancellation",
-			act: func(s *Service, id session.SessionID, _ *runState, run *agent.Run) error {
+			act: func(s *Service, id session.SessionID, _ *runState, run *agent.Run, _ string) error {
 				return s.cancelLiveRun(id, run, run.RunID())
 			},
 			marked: func(st *runState) bool { return st.cancelSignaled },
@@ -94,7 +113,7 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := session.SessionID("control-persist-" + tc.name)
-			sess := awaitingControlSession(t, id)
+			sess, run, askID := liveAwaitingControlRun(t, id)
 			base := memstore.New()
 			if err := base.Save(context.Background(), sess); err != nil {
 				t.Fatal(err)
@@ -102,7 +121,6 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 			store := &controlPersistBarrierStore{
 				Store: base, entered: make(chan struct{}), release: make(chan struct{}),
 			}
-			run := completedControlRun(t)
 			st := &runState{run: run, sess: sess, settled: make(chan struct{})}
 			svc := &Service{
 				cfg:  Config{Store: store, MutationCapability: NewSessionMutationCapability(false)},
@@ -111,7 +129,7 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 
 			persisted := make(chan struct{})
 			go func() {
-				svc.persistPermissionAsk(context.Background(), id, "ask-1")
+				svc.persistPermissionAsk(context.Background(), id, askID)
 				close(persisted)
 			}()
 			released := false
@@ -127,7 +145,7 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 			controlStarted := make(chan struct{})
 			go func() {
 				close(controlStarted)
-				controlled <- tc.act(svc, id, st, run)
+				controlled <- tc.act(svc, id, st, run, askID)
 			}()
 			<-controlStarted
 			select {
@@ -147,6 +165,9 @@ func TestPermissionAskPersistenceSerializesLiveControls(t *testing.T) {
 			}
 			if !tc.marked(st) {
 				t.Fatal("control did not mark the persisted ask before signaling the run")
+			}
+			run.Cancel()
+			for range run.Events() {
 			}
 		})
 	}

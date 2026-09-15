@@ -329,6 +329,25 @@ release. Do not commit `go.work` to a repository that others will `go get` from.
 
 ---
 
+## Contextual guardrail extension contracts
+
+Embedded hosts may supply `agent.Deps.ToolReviewer`, `ReviewEvidencePreparer`, and
+`ReviewDetails`. Optional `ReviewPolicyProvider.GuardrailReviewPolicy(toolName,
+job, operationalFailure)` reports applicability and enforcement; optional
+`ReviewMetadataProvider.GuardrailReviewMetadata(toolName, job)` returns only
+machine-safe rule and checker-route metadata.
+
+A `ReviewGrantStore` must mint a purpose-separated keyed digest over the exact
+session, environment revision, caller authority, effective call, target, and all
+eligible versioned dependencies. A false eligibility result disables repeat
+approval; `ArmGrant(digest, sessionID)` stores only that digest for the session. `ReviewDetail`
+always carries both `RootSessionID` and the reviewed `SessionID`; sinks must bind
+child visibility and cleanup to the explicit root. Approval clients should call
+`Run.ResolveApproval` with the pending ask ID, review ID, guardrail purpose, and
+verdict atomically—result release cannot use the legacy approval shortcut.
+
+---
+
 ## What's next
 
 - [The agent loop](/building/what-you-get/agent-loop.md) — event taxonomy,

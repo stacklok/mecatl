@@ -524,6 +524,9 @@ full rule engine. Posture is read from the operator-global `settings.yaml`
 The rule list and cost knobs live in the operator-global `settings.yaml`
 (`guardrails:` subtree). A project-tier `guardrails:` block is ignored with a
 WARN — a checked-in file weakening a security checker would be a downgrade.
+Checker outage is fail-closed by default; set `onCheckerDown: warn` only when
+continue-with-warning is the intended deployment policy. The owner-authorized
+coverage and transient detail APIs are gRPC-only; no HTTP paths are implied.
 
 ### MCP
 

@@ -20,7 +20,7 @@ import (
 // text. Any permission ask is auto-allowed.
 func drainRun(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) string {
 	var final string
 	for ev := range run.Events() {

@@ -1,20 +1,60 @@
 package modelhook
 
-import "testing"
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
+	"testing"
+)
 
-// The WaiverHolder is the ADR-0062 "Allow & don't ask again" session-scoped store.
-// These are pure unit tests over its EXACT-equality match contract (CWE-863: never
-// substring, never blanket-per-tool).
+// WaiverHolder now backs ADR-0342 keyed exact-byte grants. These compatibility
+// tests cover the legacy Checker-only helper without retaining normalization.
 
-func TestWaiverMatchesExactNormalizedCommand(t *testing.T) {
+func TestADR_0342_ContextualGuardrails_Scenario1_GrantDomainSeparation(t *testing.T) {
+	h := &WaiverHolder{grants: make(map[string]map[string]struct{})}
+	copy(h.key[:], []byte("0123456789abcdef0123456789abcdef"))
+	parts := [][]byte{[]byte("session-a"), []byte("Write"), []byte(`{"path":"a"}`)}
+
+	got := h.Digest(parts...)
+	mac := hmac.New(sha256.New, h.key[:])
+	_, _ = mac.Write([]byte("mecatl/guardrail-grant/v1"))
+	_, _ = mac.Write([]byte{0})
+	var length [8]byte
+	for _, part := range parts {
+		binary.BigEndian.PutUint64(length[:], uint64(len(part)))
+		_, _ = mac.Write(length[:])
+		_, _ = mac.Write(part)
+	}
+	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if got != want {
+		t.Fatalf("Digest() = %q, want domain-separated fixed-key digest %q", got, want)
+	}
+
+	wrongPurpose := hmac.New(sha256.New, h.key[:])
+	_, _ = wrongPurpose.Write([]byte("mecatl/other-purpose/v1"))
+	_, _ = wrongPurpose.Write([]byte{0})
+	for _, part := range parts {
+		binary.BigEndian.PutUint64(length[:], uint64(len(part)))
+		_, _ = wrongPurpose.Write(length[:])
+		_, _ = wrongPurpose.Write(part)
+	}
+	wrongDigest := base64.RawURLEncoding.EncodeToString(wrongPurpose.Sum(nil))
+	h.ArmDigestForSession("session-a", got)
+	if h.AllowsDigest(wrongDigest) {
+		t.Fatal("holder accepted a wrong-purpose MAC made with the same key and fields")
+	}
+}
+
+func TestWaiverMatchesExactCommandOnly(t *testing.T) {
 	h := NewWaiverHolder()
 	h.ArmFromApproval("s1", "Shell", "gh pr merge 7")
 	if !h.Allows("s1", "Shell", "gh pr merge 7") {
 		t.Fatal("the exact same command must be authorized")
 	}
-	// Whitespace-normalized but otherwise identical: still a match.
-	if !h.Allows("s1", "Shell", "gh   pr  merge 7") {
-		t.Fatal("a whitespace-only difference must still match (normalized equality)")
+	// Whitespace is action data and must not be normalized into the grant.
+	if h.Allows("s1", "Shell", "gh   pr  merge 7") {
+		t.Fatal("a whitespace difference must miss the exact-byte grant")
 	}
 }
 

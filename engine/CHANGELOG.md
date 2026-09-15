@@ -13,6 +13,37 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Atomic contextual approval resolution** — adds `agent.ApprovalResolution`,
+  `agent.ValidateApprovalResolution`, and `agent.Run.ResolveApproval` so hosts validate
+  the exact pending review purpose and submit its verdict under one registry lock. Changes
+  `Run.Approve` to return an actionable error and restricts it to ordinary/legacy action
+  approvals; result release requires the atomic operation. Stable
+  `ErrApprovalNotPending`, `ErrApprovalIntentMismatch`, `ErrApprovalUnsupported`, and
+  `ErrApprovalGrantIneligible` categories let hosts classify failures with `errors.Is`,
+  while `GuardrailReviewTerminalFailure` documents the fail-closed evidence-failure marker.
+  `ReviewEvidencePreparation`
+  also gains a trusted originating-session `Authorize` callback that evidence preparers
+  must consult before backend metadata or content reads. Changed (breaking, pre-v1 minor).
+
+- **Contextual guardrail foundation** — adds the consumer-local `agent.ToolReviewer`,
+  `ReviewEvidenceSource`, `ReviewEvidencePreparer`, explicit review policy/metadata/grant
+  extension interfaces, and `ReviewDetailSink`, with bounded request, result, evidence,
+  trajectory, preparation, and detail value types. `ReviewDetail.RootSessionID`
+  explicitly binds child detail to its delegation-root lifetime so external sinks do
+  not silently treat a child as a root. Adds `tool.BoundedWorkspaceReader` so
+  evidence-capable workspaces can reject oversized reads before allocation. Adds
+  session-owned machine projections for guardrail reviews and approval scopes, plus explicit
+  `session.ApprovalOrigin` on pending and durable approval records. Adds
+  `tool.LocalFileOperands` so only explicit built-in filesystem semantics can mint
+  local evidence/targets, and `tool.BoundedWorkspaceRangeReader` plus opaque
+  continuation metadata for version-consistent finite evidence paging. Added (minor).
+
+- **Explicit approval origin** — replaces `session.PendingAsk.HookOriginated`,
+  `PlanOriginated`, and the derived `AskOrigin` accessor/type with one serialized
+  `PendingAsk.Origin`. Missing or unrecognized origins now fail closed and cannot
+  execute, learn permission rules, arm hook waivers, or transition plan mode. Changed
+  (breaking, pre-v1 minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

@@ -1,9 +1,19 @@
     ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
     ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
+    ifacemethod func (GuardrailReviewTerminalFailure).GuardrailReviewTerminalFailure() bool
     ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
+    ifacemethod func (ReviewDetailSink).PublishReviewDetail(context.Context, ReviewDetail)
+    ifacemethod func (ReviewEvidencePreparer).PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)
+    ifacemethod func (ReviewEvidenceSource).ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error)
+    ifacemethod func (ReviewGrantStore).AllowsGrant(digest string) bool
+    ifacemethod func (ReviewGrantStore).ArmGrant(digest string, sessionID string)
+    ifacemethod func (ReviewGrantStore).GrantDigest(request ToolReviewRequest) (digest string, eligible bool)
+    ifacemethod func (ReviewMetadataProvider).GuardrailReviewMetadata(toolName string, job ReviewJob) (ruleID string, ruleOrigin string, providerID string, modelID string)
+    ifacemethod func (ReviewPolicyProvider).GuardrailReviewPolicy(toolName string, job ReviewJob, operationalFailure bool) (applies bool, enforce bool)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
+    ifacemethod func (ToolReviewer).Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)
     method func (*Engine).Capabilities() port.ProviderCapabilities
     method func (*Engine).CompactSession(ctx context.Context, sess *session.Session) (ManualCompactionResult, error)
     method func (*Engine).ContextWindow() int
@@ -36,7 +46,7 @@
     method func (*PreparedRun).Abort() PreparedRunTransition
     method func (*PreparedRun).Run() *Run
     method func (*PreparedRun).Start() (*Run, PreparedRunTransition)
-    method func (*Run).Approve(askID string, v session.ApprovalVerdict)
+    method func (*Run).Approve(askID string, v session.ApprovalVerdict) error
     method func (*Run).Cancel()
     method func (*Run).CancelChild(childID string) bool
     method func (*Run).CancelSteer() (SteerOutcome, error)
@@ -44,8 +54,10 @@
     method func (*Run).EnqueueSteerWithMessageID(text string, parts []session.Content, messageID string) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
     method func (*Run).Outcome() RunOutcome
+    method func (*Run).ResolveApproval(resolution ApprovalResolution) error
     method func (*Run).RetractPermissionAsk(askID string) bool
     method func (*Run).RunID() string
+    method func (*Run).ValidateRemoteApprovalIntent(askID string, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
     method func (*ScheduleQueryTool).Spec() tool.ToolSpec
@@ -99,6 +111,11 @@ const PreparedRunDuplicateAbort PreparedRunTransition = "duplicate_abort"
 const PreparedRunDuplicateStart PreparedRunTransition = "duplicate_start"
 const PreparedRunStartAfterAbort PreparedRunTransition = "start_after_abort"
 const PreparedRunStarted PreparedRunTransition = "started"
+const ReviewAcceptable ReviewAssessment = "acceptable"
+const ReviewJobAction ReviewJob = "action"
+const ReviewJobInbound ReviewJob = "inbound"
+const ReviewProhibited ReviewAssessment = "prohibited"
+const ReviewUnresolved ReviewAssessment = "unresolved"
 const RouterMissBadVerdict untyped string = "bad-verdict"
 const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
@@ -147,11 +164,13 @@ func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
 func NewUserModelObserver(engine *Engine) *UserModelReviewer
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
 func ParseReflectionOutcome(in learning.Input, raw []byte, limits ReflectionLimits) (learning.Outcome, error)
+func RejectDuplicateJSONKeys(raw []byte) error
 func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool)
 func StripLoneCodeFence(s string) string
 func TeamStop(o TeamOutcome) session.StopReason
 func TightenTeamTokenBudget(serverBudget int, request int) int
+func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error
 func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
 func WithAgentModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
 func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) SubagentOption
@@ -214,6 +233,7 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
+type ApprovalResolution struct{AskID string; ReviewID string; Kind session.GuardrailApprovalKind; Verdict session.ApprovalVerdict}
 type ArtifactHandle string
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
 type BranchSummary struct{Label string; Summary string; Failed bool}
@@ -223,11 +243,12 @@ type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
 type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
 type DelegationTightening struct{Tools []string "json:\"tools,omitempty\""; RemainingDelegationDepth *int "json:\"remaining_delegation_depth,omitempty\""; FileSystem *bool "json:\"filesystem,omitempty\""; DirectWrite *bool "json:\"direct_write,omitempty\""}
-type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; AuthorityEvaluator port.AuthorityEvaluator; Hooks port.HookRunner; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; EnableDurableEvidence bool; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue; EnableSteer bool}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; AuthorityEvaluator port.AuthorityEvaluator; Hooks port.HookRunner; ToolReviewer ToolReviewer; ReviewEvidencePreparer ReviewEvidencePreparer; ReviewDetails ReviewDetailSink; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; EnableDurableEvidence bool; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue; EnableSteer bool}
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)
 type EvidenceReflector struct{}
+type GuardrailReviewTerminalFailure interface{GuardrailReviewTerminalFailure() bool}
 type HeuristicCompactor struct{MaxToolBodyChars int; KeepLastTurns int}
 type HeuristicTokenCounter struct{CharsPerToken int}
 type InspectMemberTool struct{}
@@ -244,11 +265,33 @@ type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
+type PreparedReviewEvidence struct{Source ReviewEvidenceSource; Evidence []ReviewEvidenceMeta; Complete bool; Close func()}
 type PreparedRun struct{}
 type PreparedRunTransition string
 type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
 type ResumeApprovalOptions struct{CanPresentAuthorization bool}
+type ReviewAssessment string
+type ReviewCaller struct{Role string; Isolated bool; Capabilities []string}
+type ReviewCapacity struct{MaxEvidenceHandles int; MaxEvidenceBytes int64; MaxTrajectoryFacts int; MaxTrajectoryBytes int64}
+type ReviewConcern struct{Ref string; Category string; Rationale string; SourceRef string}
+type ReviewDetail struct{RootSessionID session.SessionID; SessionID session.SessionID; ReviewID string; Concern string; SourceDisplay string; NextAction string}
+type ReviewDetailSink interface{PublishReviewDetail(context.Context, ReviewDetail)}
+type ReviewEvidence struct{Handle string; Kind string; Version string; Continuation string; Complete bool; Content string}
+type ReviewEvidenceMeta struct{Handle string; Kind string; Display string; Version string; Continuation string; Complete bool}
+type ReviewEvidencePreparation struct{Request ToolReviewRequest; Environment tool.Environment; Owner *session.Principal; Result *session.ToolResult; Authorize func(context.Context, session.ToolCall) error}
+type ReviewEvidencePreparer interface{PrepareReviewEvidence(context.Context, ReviewEvidencePreparation) (PreparedReviewEvidence, error)}
+type ReviewEvidenceRequest struct{ReviewID string; Handle string; Version string}
+type ReviewEvidenceSource interface{ReadReviewEvidence(context.Context, ReviewEvidenceRequest) (ReviewEvidence, error)}
+type ReviewEvidenceUse struct{Handle string; Version string; Supports []string}
+type ReviewGrantStore interface{AllowsGrant(digest string) bool; ArmGrant(digest string, sessionID string); GrantDigest(request ToolReviewRequest) (digest string, eligible bool)}
+type ReviewJob string
+type ReviewMetadataProvider interface{GuardrailReviewMetadata(toolName string, job ReviewJob) (ruleID string, ruleOrigin string, providerID string, modelID string)}
+type ReviewMissingEvidence struct{Ref string; Kind string; Handle string; Reason string}
+type ReviewPolicyProvider interface{GuardrailReviewPolicy(toolName string, job ReviewJob, operationalFailure bool) (applies bool, enforce bool)}
+type ReviewPrincipalFact struct{Kind string; Ref string; Statement string; PositiveVerdict bool}
+type ReviewTarget struct{Kind string; Display string; DestinationID string}
+type ReviewTrajectoryFact struct{Call session.ToolCallID; Ref string; Direction string; DataClass string; TargetID string; Decision string}
 type Run struct{}
 type RunOutcome int32
 type RunRequest struct{Text string; Parts []session.Content; CanPresentAuthorization bool; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
@@ -269,7 +312,14 @@ type TeamOption func(*TeamTool)
 type TeamOutcome struct{Rounds int; Quiescent bool; Members []MemberOutcome; Report string; Findings []session.TeamFindingSnapshot; BudgetExhausted bool; Usage session.Usage}
 type TeamTool struct{}
 type TokenCounter interface{Count(text string) int; CountMessages(msgs []session.Message) int}
+type ToolReviewRequest struct{ReviewID string; Job ReviewJob; Event governance.HookEvent; EffectiveCall session.ToolCall; PrincipalFacts []ReviewPrincipalFact; PrincipalFactsComplete bool; Caller ReviewCaller; Environment session.EnvironmentRef; Target ReviewTarget; Evidence []ReviewEvidenceMeta; EvidenceComplete bool; Trajectory []ReviewTrajectoryFact; TrajectoryComplete bool; Capacity ReviewCapacity}
+type ToolReviewResult struct{Assessment ReviewAssessment; Concerns []ReviewConcern; Evidence []ReviewEvidenceUse; Missing []ReviewMissingEvidence}
+type ToolReviewer interface{Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)}
 type UserModelReviewer struct{}
+var ErrApprovalGrantIneligible error
+var ErrApprovalIntentMismatch error
+var ErrApprovalNotPending error
+var ErrApprovalUnsupported error
 var ErrCompactionWouldOrphan error
 var ErrForkWorkspace error
 var ErrMemberAlreadyAdded error

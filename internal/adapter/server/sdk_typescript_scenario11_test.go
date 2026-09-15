@@ -172,7 +172,8 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		runArgs := append([]string{"-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"}, args...)
+		cmd := exec.Command("git", runArgs...)
 		cmd.Dir = repo
 		output, err := cmd.CombinedOutput()
 		if err != nil {

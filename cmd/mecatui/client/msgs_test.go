@@ -191,6 +191,7 @@ func TestEventToMsg(t *testing.T) {
 		{"no_progress", &mecatlv1.Event{Type: "no_progress", Text: "nudging to continue"}, NoProgressMsg{Text: "nudging to continue"}},
 		{"provider.route", &mecatlv1.Event{Type: "provider.route", Text: "anthropic"}, ProviderRouteMsg{Text: "anthropic"}},
 		{"recover_notice", &mecatlv1.Event{Type: "recover_notice", Text: "permanent failure advisory"}, RecoverNoticeMsg{Text: "permanent failure advisory"}},
+		{"control.refused", &mecatlv1.Event{Type: "control.refused", RunId: "run-1", Text: "refused", ControlRefused: &mecatlv1.ControlRefused{AskId: "ask-1", Category: "approval_intent_mismatch"}}, ControlRefusedMsg{AskID: "ask-1", Category: "approval_intent_mismatch", RunID: "run-1", Text: "refused"}},
 		{
 			"result",
 			&mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
@@ -587,6 +588,17 @@ func TestAskRoundTrip(t *testing.T) {
 				t.Errorf("verdict = %v, want %v", ra.GetVerdict(), tc.wantVerdict)
 			}
 		})
+	}
+
+	fs := newFakeStream()
+	st := NewStream(fs, fs)
+	scope := &GuardrailApprovalScope{ReviewID: "review-release-1", Kind: "result_release"}
+	if err := st.SendApprovalForScope("ask-release-1", VerdictAllowOnce, scope, "run-1"); err != nil {
+		t.Fatalf("SendApprovalForScope: %v", err)
+	}
+	ra := fs.sentFrames()[0].GetResumeApproval()
+	if ra.GetReviewId() != scope.ReviewID || ra.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE || ra.GetExpectedRunId() != "run-1" {
+		t.Fatalf("guardrail acknowledgement = %+v", ra)
 	}
 }
 

@@ -406,7 +406,7 @@ describe("spawn", () => {
         fileSystem: {
           mkdtemp: async (prefix) => {
             prefixes.push(prefix);
-            return mkdtemp(prefixes.length === 1 ? prefix : join(scratchRoot, "mecatl-sdk-short-"));
+            return mkdtemp(prefix);
           },
         },
         tempDirectory: longBase,

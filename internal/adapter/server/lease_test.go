@@ -442,6 +442,16 @@ func TestStaleSessionSweepRecoversAfterSelfInflictedLeaseLoss(t *testing.T) {
 	if !lost.Load() {
 		t.Fatal("the renewer never attempted a Renew after arming renewHook")
 	}
+	// Renew invokes the hook before onLeaseLost records the tombstone. Wait for
+	// the loss-path Release, the public fake-lease observation that the tombstone
+	// transition and held-lease removal completed, rather than racing that tail.
+	deadline = time.Now().Add(2 * time.Second)
+	for lease.releaseCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if lease.releaseCount() == 0 {
+		t.Fatal("lease-loss cleanup never released the stale hold")
+	}
 	if svc.IsLive(sess.ID) {
 		t.Fatal("precondition: IsLive after loss with no live run = true, want false")
 	}
@@ -539,6 +549,13 @@ func TestStaleSessionSweepRefusesWhenGenuinelyHeldElsewhere(t *testing.T) {
 	}
 	if !lost.Load() {
 		t.Fatal("the renewer never attempted a Renew after arming renewHook")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for lease.releaseCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if lease.releaseCount() == 0 {
+		t.Fatal("lease-loss cleanup never released the stale hold")
 	}
 
 	if err := store.Save(context.Background(), crashOrphanedSession(t, sess.ID)); err != nil {

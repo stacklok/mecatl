@@ -790,6 +790,12 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 			"file", file, "root", ws.Root())
 	}
 
+	if value, ok := block.Slots["guardrail"]; ok && value.ExplicitProvider {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models: IGNORING project-tier models.slots.guardrail provider object (operator-tier only)",
+			"file", file, "root", ws.Root())
+	}
+
 	// (2) Opt-in by operator allowlist, then trust-gated.
 	op := r.operatorModels
 	if op == nil || len(op.Allowlist) == 0 {
@@ -813,9 +819,24 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 	if block.Default != "" && acc.Default == "" {
 		acc.Default = block.Default
 	}
-	acc.Slots = mergeFirstWins(acc.Slots, block.Slots)
+	acc.Slots = mergeFirstWinsSlots(acc.Slots, block.Slots)
 	acc.Aliases = mergeFirstWins(acc.Aliases, block.Aliases)
 	return acc
+}
+
+func mergeFirstWinsSlots(dst, src ModelSlots) ModelSlots {
+	if dst == nil && len(src) > 0 {
+		dst = make(ModelSlots, len(src))
+	}
+	for key, value := range src {
+		if value.ExplicitProvider {
+			continue
+		}
+		if _, exists := dst[key]; !exists {
+			dst[key] = value
+		}
+	}
+	return dst
 }
 
 // mergeFirstWins copies src entries into dst, keeping any key dst already holds (the

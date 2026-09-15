@@ -173,7 +173,7 @@ func TestGenericAuthorizationGateOrderAndEffectiveCall(t *testing.T) {
 	run := engine.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go", CanPresentAuthorization: true})
 	events := drain(run)
 
-	if got := fmt.Sprint(order); got != "[permission pre authorization]" {
+	if got := fmt.Sprint(order); got != "[permission pre permission authorization]" {
 		t.Fatalf("gate order = %s", got)
 	}
 	if got := string(protected.requested.Args); got != `{"effective":true}` {

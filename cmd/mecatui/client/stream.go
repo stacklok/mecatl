@@ -91,6 +91,16 @@ func (s *Stream) ApprovalResolved(askID string) bool {
 	return ok
 }
 
+// ForgetApprovalResolved reopens transport deduplication after a refused reply.
+func (s *Stream) ForgetApprovalResolved(askID string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.resolvedApprovals, askID)
+}
+
 // ReadLoop runs the receive loop on its OWN goroutine over the live Converse
 // stream: it drains Recv and pushes translated tea.Msgs onto out, then closes
 // out when the stream ends. It MUST run off the Bubble Tea update goroutine (it
@@ -234,6 +244,33 @@ func resumeApproval(askID string, v Verdict) *mecatlv1.ResumeApproval {
 		verdict = mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY
 	}
 	return &mecatlv1.ResumeApproval{AskId: askID, Allow: allow, Verdict: verdict}
+}
+
+func resumeApprovalForScope(askID string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) *mecatlv1.ResumeApproval {
+	ra := resumeApproval(askID, v)
+	ra.ExpectedRunId = expectedRunID
+	if scope == nil {
+		return ra
+	}
+	ra.ReviewId = scope.ReviewID
+	switch scope.Kind {
+	case "action":
+		ra.GuardrailKind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION
+	case "result_release":
+		ra.GuardrailKind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE
+	}
+	return ra
+}
+
+// SendApprovalForScope resolves an ask with its complete displayed guardrail purpose
+// and expected run identity. A nil guardrail scope denotes an ordinary approval.
+func (s *Stream) SendApprovalForScope(askID string, v Verdict, scope *GuardrailApprovalScope, expectedRunID string) error {
+	return s.sendFrame(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: resumeApprovalForScope(askID, v, scope, expectedRunID)}})
+}
+
+// SendGuardrailApproval resolves a contextual ask while acknowledging its displayed purpose.
+func (s *Stream) SendGuardrailApproval(askID string, v Verdict, scope *GuardrailApprovalScope) error {
+	return s.SendApprovalForScope(askID, v, scope, "")
 }
 
 // SendApproval resolves a paused permission.ask. The server prefers the

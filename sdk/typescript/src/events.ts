@@ -12,6 +12,7 @@ export const MECATL_EVENT_KINDS = [
   "authorization.resolved",
   "compaction",
   "compaction.archive",
+  "control.refused",
   "hook",
   "message.delta",
   "model.retry",
@@ -95,10 +96,19 @@ export interface ToolResultEventPayload {
   readonly structuredContent: string;
 }
 
+/** A contextual guardrail approval scope carried by a permission ask. @public */
+export interface GuardrailApprovalScope {
+  readonly kind: "action" | "result_release" | "unknown";
+  readonly repeatAvailable: boolean;
+  readonly reviewId: string;
+  readonly sessionOnly: boolean;
+}
+
 /** The payload shared by `permission.ask` and `permission.retract`. @public */
 export interface PermissionAskEventPayload {
   readonly args: string;
   readonly askId: string;
+  readonly guardrail?: GuardrailApprovalScope | undefined;
   readonly reason: string;
   readonly tool: string;
 }
@@ -338,6 +348,13 @@ export interface ParallelEventPayload {
   readonly workspace: string;
 }
 
+/** The normalized, client-visible reason for a refused in-stream control. @public */
+export interface ControlRefusedEventPayload {
+  readonly askId: string;
+  readonly category: string;
+  readonly message: string;
+}
+
 /** Fields decoded for every event, including future event kinds. @public */
 export interface EventCommon {
   readonly runId: string;
@@ -354,6 +371,7 @@ export interface EventPayloads {
   readonly "authorization.resolved": AuthorizationEventPayload;
   readonly compaction: undefined;
   readonly "compaction.archive": CompactionArchiveEventPayload;
+  readonly "control.refused": ControlRefusedEventPayload;
   readonly hook: HookEventPayload;
   readonly "message.delta": undefined;
   readonly "model.retry": ModelRetryEventPayload;
@@ -479,6 +497,12 @@ function payload(
       return required(event.authorization, kind, transport);
     case "compaction.archive":
       return required(event.compactionArchive, kind, transport);
+    case "control.refused":
+      return {
+        askId: event.controlRefused?.askId ?? "",
+        category: event.controlRefused?.category ?? "",
+        message: event.text,
+      };
     case "hook":
       return required(event.hook, kind, transport);
     case "model.retry":
@@ -488,8 +512,30 @@ function payload(
     case "parallel.start":
       return required(event.parallel, kind, transport);
     case "permission.ask":
-    case "permission.retract":
-      return required(event.ask, kind, transport);
+    case "permission.retract": {
+      const ask = required(event.ask, kind, transport);
+      const guardrail = ask.guardrail;
+      return {
+        args: ask.args,
+        askId: ask.askId,
+        guardrail:
+          guardrail === undefined
+            ? undefined
+            : {
+                kind:
+                  guardrail.kind === 1
+                    ? "action"
+                    : guardrail.kind === 2
+                      ? "result_release"
+                      : "unknown",
+                repeatAvailable: guardrail.repeatAvailable,
+                reviewId: guardrail.reviewId,
+                sessionOnly: guardrail.sessionOnly,
+              },
+        reason: ask.reason,
+        tool: ask.tool,
+      };
+    }
     case "result":
       return required(event.result, kind, transport);
     case "schedule.failed":

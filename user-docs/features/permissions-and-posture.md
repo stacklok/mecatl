@@ -171,15 +171,23 @@ checker model to enable them:
 mecated serve --guardrails-model gpt-5.6-luna
 ```
 
-The checker can inspect outbound tool arguments and inbound tool results. A
-configured checker with no custom rule list uses the default enforcing rule set;
-operators can configure advisory behavior instead. Guardrails remain active in
-headless deployments and are not a replacement for permission rules.
+The checker reviews exact effective actions before execution and already-produced
+results before delivery. A configured checker with no custom rule list uses the
+expanded default enforcing set for Shell, local mutation/read/search, web, MCP,
+and delegation tools; the same applicable rules bind workers. Operators can
+configure advisory behavior instead. Guardrails remain active in headless
+deployments and are not a replacement for permission rules.
+
+Mecatui's `/guardrails` command shows the active checker and session-specific
+coverage. Action findings offer Run once, an exact session-only repeat grant when
+version-binding is complete, or Cancel. Result findings offer Release once or
+Cancel; release delivers the same held result without rerunning side effects.
 
 Guardrail configuration is operator-tier only. A project repository cannot
-weaken or disable the operator's checker. A checker failure follows the
-configured fail-open/fail-closed behavior, and unsafe or malformed sanitized
-content is not silently accepted.
+weaken or disable the operator's checker. Checker outage is fail-closed by
+default and is displayed as an operational failure, not an unsafe finding;
+operators may explicitly choose continue-with-warning. Sanitization and
+checker-authored replacement actions are not supported.
 
 See the [guardrails reference](/building/what-you-get/permissions.md) for
 matchers, modes, and checker failure handling.

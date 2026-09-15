@@ -19,11 +19,12 @@
 immediately and drives the loop in a background goroutine; the `Run` exposes:
 - `Events() <-chan session.Event` — the primary surface, closed exactly once
   when the run terminates.
-- `Approve(askID string, v session.ApprovalVerdict)` — resolves a
-  `permission.ask` out-of-band with one of three verdicts: `VerdictDeny` (the
-  fail-safe zero value), `VerdictAllowOnce`, or `VerdictAllowAlways` (which
-  additionally asks the policy to **learn** a session-scoped allow via
-  `PermissionPolicy.Learn`).
+- `Approve(askID string, v session.ApprovalVerdict) error` — compatibility
+  resolution for ordinary permission and legacy action asks; unknown, stale, and
+  result-release asks return an actionable error.
+- `ResolveApproval(ApprovalResolution) error` — atomically validates the registered
+  ask's review ID, purpose, and verdict eligibility and submits the verdict. Contextual
+  result release must use this operation with the exact `result_release` acknowledgement.
 - `Cancel()` — cancels the run's context.
 - `CancelChild(childID string) bool` — cancels ONE child run (subagent /
   parallel branch / team member) without touching the run itself ([subagents & teams](subagents-and-teams.md)).

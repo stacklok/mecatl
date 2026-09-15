@@ -542,14 +542,17 @@ type approveBody struct {
 	// It is used only when Verdict is empty/unspecified.
 	Allow bool `json:"allow"`
 	// Verdict is the preferred three-way resolution: "deny", "allow_once", or
-	// "allow_always" (allow_always additionally learns a per-session rule). An
-	// empty/unknown value falls back to Allow.
+	// "allow_always" (allow_always additionally learns a per-session rule). Empty
+	// falls back to Allow; an unknown explicit value is rejected.
 	Verdict string `json:"verdict,omitempty"`
 	// ExpectedRunID, when set, scopes this control to ONE run: the request is
 	// refused with a 409 problem (code "stale_run_control") if the session's
 	// current run is a different one. Empty is the legacy behaviour — the control
 	// applies to whatever run is current. See ADR 0249.
 	ExpectedRunID string `json:"expected_run_id,omitempty"`
+	// ReviewID and GuardrailKind acknowledge the contextual purpose shown to the operator.
+	ReviewID      string `json:"review_id,omitempty"`
+	GuardrailKind string `json:"guardrail_kind,omitempty"`
 }
 
 // --- handlers ---------------------------------------------------------------
@@ -1179,7 +1182,9 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ask_id is required")
 		return
 	}
-	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdictFromHTTP(body.Verdict, body.Allow), body.ExpectedRunID)
+	verdict := verdictFromHTTP(body.Verdict, body.Allow)
+	resolution := agent.ApprovalResolution{AskID: body.AskID, ReviewID: body.ReviewID, Kind: session.GuardrailApprovalKind(body.GuardrailKind), Verdict: verdict}
+	run, err := h.svc.ResolveApprovalRun(r.Context(), id, resolution, body.ExpectedRunID)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1222,8 +1227,9 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 
 // verdictFromHTTP maps the HTTP approve body's string verdict to the domain
 // ApprovalVerdict, preferring an explicit verdict and falling back to the legacy
-// allow bool. It is fail-safe: an empty verdict with allow=false, and any
-// unrecognized string, resolve to VerdictDeny.
+// allow bool only when verdict is empty. Unknown explicit strings map to the same
+// guaranteed-invalid sentinel as unknown protobuf enums, so shared validation
+// refuses the control without consuming the pending ask.
 func verdictFromHTTP(verdict string, allow bool) session.ApprovalVerdict {
 	switch verdict {
 	case "allow_always":
@@ -1238,7 +1244,7 @@ func verdictFromHTTP(verdict string, allow bool) session.ApprovalVerdict {
 		}
 		return session.VerdictDeny
 	default:
-		return session.VerdictDeny
+		return invalidTransportApprovalVerdict
 	}
 }
 

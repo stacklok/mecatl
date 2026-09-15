@@ -46,6 +46,8 @@ const (
 	HarnessService_CreateSession_FullMethodName                   = "/mecatl.v1.HarnessService/CreateSession"
 	HarnessService_GetServerInfo_FullMethodName                   = "/mecatl.v1.HarnessService/GetServerInfo"
 	HarnessService_GetSession_FullMethodName                      = "/mecatl.v1.HarnessService/GetSession"
+	HarnessService_ListGuardrailCoverage_FullMethodName           = "/mecatl.v1.HarnessService/ListGuardrailCoverage"
+	HarnessService_GetGuardrailReviewDetail_FullMethodName        = "/mecatl.v1.HarnessService/GetGuardrailReviewDetail"
 	HarnessService_GetSessionTranscript_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionTranscript"
 	HarnessService_SetMode_FullMethodName                         = "/mecatl.v1.HarnessService/SetMode"
 	HarnessService_CloseSession_FullMethodName                    = "/mecatl.v1.HarnessService/CloseSession"
@@ -152,6 +154,8 @@ type HarnessServiceClient interface {
 	GetServerInfo(ctx context.Context, in *GetServerInfoRequest, opts ...grpc.CallOption) (*GetServerInfoResponse, error)
 	// GetSession returns a snapshot of an existing session.
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
+	ListGuardrailCoverage(ctx context.Context, in *ListGuardrailCoverageRequest, opts ...grpc.CallOption) (*ListGuardrailCoverageResponse, error)
+	GetGuardrailReviewDetail(ctx context.Context, in *GetGuardrailReviewDetailRequest, opts ...grpc.CallOption) (*GetGuardrailReviewDetailResponse, error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
 	// transcript for one owned session. It is read-only and does not use EventLog.
 	GetSessionTranscript(ctx context.Context, in *GetSessionTranscriptRequest, opts ...grpc.CallOption) (*GetSessionTranscriptResponse, error)
@@ -553,6 +557,26 @@ func (c *harnessServiceClient) GetSession(ctx context.Context, in *GetSessionReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_GetSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ListGuardrailCoverage(ctx context.Context, in *ListGuardrailCoverageRequest, opts ...grpc.CallOption) (*ListGuardrailCoverageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListGuardrailCoverageResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListGuardrailCoverage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GetGuardrailReviewDetail(ctx context.Context, in *GetGuardrailReviewDetailRequest, opts ...grpc.CallOption) (*GetGuardrailReviewDetailResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGuardrailReviewDetailResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetGuardrailReviewDetail_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,6 +1371,8 @@ type HarnessServiceServer interface {
 	GetServerInfo(context.Context, *GetServerInfoRequest) (*GetServerInfoResponse, error)
 	// GetSession returns a snapshot of an existing session.
 	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
+	ListGuardrailCoverage(context.Context, *ListGuardrailCoverageRequest) (*ListGuardrailCoverageResponse, error)
+	GetGuardrailReviewDetail(context.Context, *GetGuardrailReviewDetailRequest) (*GetGuardrailReviewDetailResponse, error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
 	// transcript for one owned session. It is read-only and does not use EventLog.
 	GetSessionTranscript(context.Context, *GetSessionTranscriptRequest) (*GetSessionTranscriptResponse, error)
@@ -1726,6 +1752,12 @@ func (UnimplementedHarnessServiceServer) GetServerInfo(context.Context, *GetServ
 func (UnimplementedHarnessServiceServer) GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSession not implemented")
 }
+func (UnimplementedHarnessServiceServer) ListGuardrailCoverage(context.Context, *ListGuardrailCoverageRequest) (*ListGuardrailCoverageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListGuardrailCoverage not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetGuardrailReviewDetail(context.Context, *GetGuardrailReviewDetailRequest) (*GetGuardrailReviewDetailResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetGuardrailReviewDetail not implemented")
+}
 func (UnimplementedHarnessServiceServer) GetSessionTranscript(context.Context, *GetSessionTranscriptRequest) (*GetSessionTranscriptResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSessionTranscript not implemented")
 }
@@ -2025,6 +2057,42 @@ func _HarnessService_GetSession_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).GetSession(ctx, req.(*GetSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ListGuardrailCoverage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListGuardrailCoverageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListGuardrailCoverage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListGuardrailCoverage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListGuardrailCoverage(ctx, req.(*ListGuardrailCoverageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_GetGuardrailReviewDetail_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGuardrailReviewDetailRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetGuardrailReviewDetail(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetGuardrailReviewDetail_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetGuardrailReviewDetail(ctx, req.(*GetGuardrailReviewDetailRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3243,6 +3311,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSession",
 			Handler:    _HarnessService_GetSession_Handler,
+		},
+		{
+			MethodName: "ListGuardrailCoverage",
+			Handler:    _HarnessService_ListGuardrailCoverage_Handler,
+		},
+		{
+			MethodName: "GetGuardrailReviewDetail",
+			Handler:    _HarnessService_GetGuardrailReviewDetail_Handler,
 		},
 		{
 			MethodName: "GetSessionTranscript",

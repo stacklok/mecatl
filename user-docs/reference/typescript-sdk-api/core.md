@@ -37,6 +37,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`ConnectionStatusListener`](#api-connectionstatuslistener-typealias) | Type alias |
 | [`ConnectionStatusStore`](#api-connectionstatusstore-interface) | Interface |
 | [`ConnectOptions`](#api-connectoptions-typealias) | Type alias |
+| [`ControlRefusedEventPayload`](#api-controlrefusedeventpayload-interface) | Interface |
 | [`createHttpTransport`](#api-createhttptransport-function) | Function |
 | [`createRawClient`](#api-createrawclient-function) | Function |
 | [`CreateSessionOptions`](#api-createsessionoptions-interface) | Interface |
@@ -61,6 +62,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`EventUsage`](#api-eventusage-interface) | Interface |
 | [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
 | [`getRawJson`](#api-getrawjson-function) | Function |
+| [`GuardrailApprovalScope`](#api-guardrailapprovalscope-interface) | Interface |
 | [`HookEventPayload`](#api-hookeventpayload-interface) | Interface |
 | [`HttpTransportOptions`](#api-httptransportoptions-interface) | Interface |
 | [`imagePart`](#api-imagepart-function) | Function |
@@ -1274,6 +1276,32 @@ Parameters:
 
 Returns: `() => void`
 
+<Heading as="h3" id="api-controlrefusedeventpayload-interface"><code>ControlRefusedEventPayload</code></Heading>
+
+The normalized, client-visible reason for a refused in-stream control.
+
+```ts
+export interface ControlRefusedEventPayload
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-askid-propertysignature"><code>ControlRefusedEventPayload.askId</code></Heading>
+
+```ts
+readonly askId: string;
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-category-propertysignature"><code>ControlRefusedEventPayload.category</code></Heading>
+
+```ts
+readonly category: string;
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-message-propertysignature"><code>ControlRefusedEventPayload.message</code></Heading>
+
+```ts
+readonly message: string;
+```
+
 <Heading as="h3" id="api-createsessionoptions-interface"><code>CreateSessionOptions</code></Heading>
 
 Session-creation fields map directly onto CreateSessionRequest.
@@ -1690,6 +1718,12 @@ readonly "authorization.resolved": AuthorizationEventPayload;
 readonly "compaction.archive": CompactionArchiveEventPayload;
 ```
 
+<Heading as="h4" id="api-eventpayloads-control-refused-propertysignature"><code>EventPayloads["control.refused"]</code></Heading>
+
+```ts
+readonly "control.refused": ControlRefusedEventPayload;
+```
+
 <Heading as="h4" id="api-eventpayloads-message-delta-propertysignature"><code>EventPayloads["message.delta"]</code></Heading>
 
 ```ts
@@ -1978,6 +2012,38 @@ Human-readable title for the forked session.
 
 ```ts
 title?: string;
+```
+
+<Heading as="h3" id="api-guardrailapprovalscope-interface"><code>GuardrailApprovalScope</code></Heading>
+
+A contextual guardrail approval scope carried by a permission ask.
+
+```ts
+export interface GuardrailApprovalScope
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-kind-propertysignature"><code>GuardrailApprovalScope.kind</code></Heading>
+
+```ts
+readonly kind: "action" | "result_release" | "unknown";
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-repeatavailable-propertysignature"><code>GuardrailApprovalScope.repeatAvailable</code></Heading>
+
+```ts
+readonly repeatAvailable: boolean;
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-reviewid-propertysignature"><code>GuardrailApprovalScope.reviewId</code></Heading>
+
+```ts
+readonly reviewId: string;
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-sessiononly-propertysignature"><code>GuardrailApprovalScope.sessionOnly</code></Heading>
+
+```ts
+readonly sessionOnly: boolean;
 ```
 
 <Heading as="h3" id="api-hookeventpayload-interface"><code>HookEventPayload</code></Heading>
@@ -2779,6 +2845,12 @@ readonly args: string;
 
 ```ts
 readonly askId: string;
+```
+
+<Heading as="h4" id="api-permissionaskeventpayload-guardrail-propertysignature"><code>PermissionAskEventPayload.guardrail</code></Heading>
+
+```ts
+readonly guardrail?: GuardrailApprovalScope | undefined;
 ```
 
 <Heading as="h4" id="api-permissionaskeventpayload-reason-propertysignature"><code>PermissionAskEventPayload.reason</code></Heading>
@@ -5290,7 +5362,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -5298,7 +5370,7 @@ MECATL_ERROR_CODES: readonly ["activity_gap", "attempt_live_claim_conflict", "at
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
+MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>

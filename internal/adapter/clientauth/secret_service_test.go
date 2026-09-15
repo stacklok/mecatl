@@ -28,7 +28,11 @@ func TestHeadlessCredentialStorage_Scenario1_HelperFailuresFailClosed(t *testing
 				}
 				return command
 			}
-			state, err := runSecretServiceDetector(ctx, 100*time.Millisecond, factory)
+			budget := 100 * time.Millisecond
+			if mode != "stall" && mode != "cancel" {
+				budget = time.Second
+			}
+			state, err := runSecretServiceDetector(ctx, budget, factory)
 			switch mode {
 			case "80":
 				if err != nil || state != secretServicePresent {

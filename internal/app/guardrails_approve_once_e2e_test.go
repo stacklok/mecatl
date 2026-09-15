@@ -44,14 +44,13 @@ func markerExists(t *testing.T, ws string) bool {
 // YOLO it demotes to advisory (tool runs, no ask, no block).
 
 // guardrailE2EScript scripts the shared mock provider for one Shell call: the agent's
-// tool-call turn, then the checker's UNSAFE verdict turn (a single JSON object — the
-// checker fires during the Shell call's preHook, between the agent's two turns), then the
-// agent's final turn. The checker output must be the whole-object verdict ParseVerdict
-// accepts.
+// tool-call turn, then the reviewer's PROHIBITED assessment turn (a single JSON
+// object — the reviewer fires during the Shell call's preHook, between the agent's
+// two turns), then the agent's final turn.
 func guardrailE2EScript(cmd string) []mockllm.Turn {
 	return []mockllm.Turn{
 		mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", json.RawMessage(`{"command":"`+cmd+`"}`))),
-		mockllm.TextTurn(`{"safe": false, "reason": "merges a PR unattended"}`),
+		mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"merges a PR unattended","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`),
 		mockllm.TextTurn("done"),
 	}
 }
@@ -98,7 +97,11 @@ func guardrailE2ECfg(t *testing.T, interactive bool, posture Posture, cmd string
 type sseGuardEvent struct {
 	Type string `json:"type"`
 	Ask  struct {
-		AskID string `json:"ask_id"`
+		AskID     string `json:"ask_id"`
+		Guardrail struct {
+			ReviewID string `json:"review_id"`
+			Kind     int32  `json:"kind"`
+		} `json:"guardrail"`
 	} `json:"ask"`
 	ToolResult struct {
 		IsError bool   `json:"is_error"`
@@ -157,7 +160,7 @@ func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 	evs := driveGuardrailPrompt(t, srv.URL, string(sess.ID), "merge it", func(ev sseGuardEvent) {
 		if ev.Type == "permission.ask" && !approved {
 			approved = true
-			body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": session.VerdictStringAllowOnce})
+			body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": session.VerdictStringAllowOnce, "review_id": ev.Ask.Guardrail.ReviewID, "guardrail_kind": string(session.GuardrailApprovalAction)})
 			ar, aerr := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/approve", "application/json", strings.NewReader(string(body)))
 			if aerr != nil {
 				t.Errorf("POST approve: %v", aerr)
@@ -208,7 +211,7 @@ func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 	evs := driveGuardrailPrompt(t, srv.URL, string(sess.ID), "merge it", func(ev sseGuardEvent) {
 		if ev.Type == "permission.ask" && !asked {
 			asked = true
-			body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": session.VerdictStringDeny})
+			body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": session.VerdictStringDeny, "review_id": ev.Ask.Guardrail.ReviewID, "guardrail_kind": string(session.GuardrailApprovalAction)})
 			ar, aerr := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/approve", "application/json", strings.NewReader(string(body)))
 			if aerr == nil {
 				ar.Body.Close()

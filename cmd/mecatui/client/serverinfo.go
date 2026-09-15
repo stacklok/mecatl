@@ -35,7 +35,7 @@ func (c *Client) GetServerInfo(ctx context.Context, providerID string) (ServerIn
 	}
 	implementation := strings.TrimSpace(resp.GetServerImplementation())
 	if implementation == "" {
-		implementation = "unknown"
+		implementation = string(SessionKindUnknown)
 	}
 	return ServerInfo{
 		BuildID:                    strings.TrimSpace(resp.GetBuildId()),

@@ -79,6 +79,9 @@ type observableTool interface {
 // adapter/server/proto type crosses. A tool that does not implement childCapableTool
 // (or a nil caps) gets the legacy headless auto-deny posture, unchanged.
 type parentCaps struct {
+	// reviewRoot shares only harness-owned trajectory/reviewer state with workers.
+	// It never carries a parent conversation or model-authored summary.
+	reviewRoot *reviewRoot
 	// interactive is the PARENT run's interactivity: true when a human approver is
 	// attached (the surfaced ask can be answered), false for a headless run.
 	interactive bool
@@ -2588,6 +2591,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// wrap). See buildSubagentRunRequest.
 	runReq, submit, prompt := buildSubagentRunRequest(args, resuming,
 		resumePosture{writable: writable, editsSurvived: editsSurvived}, forkAdvisory)
+	runReq.reviewRoot = caps.reviewRoot
+	runReq.reviewIsolated = !writable && t.childForker != nil
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
 	// Shell asks are eligible for the A2 worktree-safe auto-approve; a forker-less
@@ -2928,6 +2933,8 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	// mode:"read-write"+background is rejected in validateMode, so a background child is
 	// always the read-only forked kind and gets the fresh-checkout resume note.
 	runReq, submit, prompt := buildSubagentRunRequest(b.args, b.resuming, resumePosture{}, forkAdvisory)
+	runReq.reviewRoot = b.caps.reviewRoot
+	runReq.reviewIsolated = t.childForker != nil
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
@@ -4484,11 +4491,11 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	if ask.ConfiguredAsk {
 		// Fall through to surface / headless auto-deny (skip every auto-approve).
 	} else if ask.FlooredConfiguredAllow {
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
+		_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
 	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)) {
 		// Step A2: isolated child + isolation-approvable Shell → auto-approve.
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
+		_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 		return
 	}
 	// Surface to the human when the parent is interactive and a surface seam is
@@ -4535,7 +4542,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 					"command", cmdPreview, "decision", "reviewed-allow",
 					"verdict_reason", clampPreview(outcome.reason))
 			}
-			run.Approve(ask.AskID, session.VerdictAllowOnce)
+			_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 			return
 		case outcome.reviewed:
 			if posture.caps.diag != nil {

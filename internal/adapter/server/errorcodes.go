@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 )
 
@@ -80,6 +81,10 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrCleanupUnsupported, Code: "cleanup_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Session cleanup is not supported"},
 	{Sentinel: ErrCleanupBackend, Code: "cleanup_backend", GRPC: codes.Internal, HTTPStatus: http.StatusInternalServerError, Title: "Storage maintenance failed"},
 	{Sentinel: ErrStaleRunControl, Code: "stale_run_control", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Control targets a run that is no longer current"},
+	{Sentinel: agent.ErrApprovalNotPending, Code: "approval_not_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Approval is not pending"},
+	{Sentinel: agent.ErrApprovalIntentMismatch, Code: "approval_intent_mismatch", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Approval intent does not match pending ask"},
+	{Sentinel: agent.ErrApprovalUnsupported, Code: "approval_unsupported", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Approval kind is unsupported"},
+	{Sentinel: agent.ErrApprovalGrantIneligible, Code: "approval_grant_ineligible", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Approval grant is ineligible"},
 	{Sentinel: ErrInvalidPlacementSelection, Code: "placement_selector_invalid", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Placement selector is invalid"},
 	{Sentinel: ErrPlacementNotFound, Code: "placement_selector_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Placement selector was not found"},
 	{Sentinel: ErrPlacementStale, Code: "placement_selector_stale", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Placement selector is stale"},

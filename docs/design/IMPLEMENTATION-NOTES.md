@@ -2069,14 +2069,15 @@ the child's surfaced askIDs, invokes `cancel()` OUTSIDE the registry lock, then 
 `childAskRouter.unregister` (a locked delete) BEFORE emitting the new `permission.retract` event
 (string-passthrough EventType; payload rides the existing `Event.Ask` carrying the AskID ONLY) — a
 racing late approval falls through to the parent's own registry and dies as an unknown-ask no-op.
-askIDs additionally carry a trailing ":<discriminator>" SUFFIX (`newAskID`; the leading "<sessionID>:"
-prefix isChildAsk consumes is untouched). The discriminator is the host-supplied
-`RunRequest.AskIDDiscriminator` when set (a durable, cross-process-reconstructable value, colon-free —
-ADR-0044, #117) else the process-global "r<runSerial>" fallback resolved once in `startRun`. Without a
-disjoint per-RUN suffix, cancel-a-parked-ask → `resume` the same child id in the same run (Counters
-reset) → the provider re-mints the same call id → the new ask would COLLIDE with the retracted one and
-a stale queued ResumeApproval could resolve it (CWE-863); the serial guarantees disjointness
-automatically, a host discriminator inherits it via the unique/stable-per-attempt host contract.
+askIDs retain the trailing colon-free host discriminator component (`newAskID`; the leading
+`<sessionID>:` prefix `isChildAsk` consumes is untouched). The discriminator is the host-supplied
+`RunRequest.AskIDDiscriminator` when set (or the process-global `r<runSerial>` fallback resolved once
+in `startRun`), and the opaque call component gains `.a<occurrence>` from a concurrency-safe per-run
+issuance sequence. The exact host suffix and four-component colon grammar therefore remain stable
+while two genuine approval occurrences for the same call and tool counter cannot collide in a
+client's resolved-ask set. Without disjoint per-RUN and per-ask identity, cancel/resume can replay a
+stale verdict and an ordinary→guardrail→reauthorization chain can cause a later ask to be suppressed
+as an already-resolved duplicate (CWE-863).
 Ask OWNERSHIP is recorded at the single surfacing seam: `childPosture` gains an explicit `childID`
 field (set at ALL THREE construction sites — subagent: childID; team: `m.sess.ID`; parallel:
 `childSess.ID` — because `role` does NOT universally carry the session id), passed through
@@ -3247,6 +3248,12 @@ Success adds a durable local scrollback notice but leaves existing transcript ca
 Older servers leave the capability false, so the palette hides the built-in and typed use is
 rejected locally rather than sent as a prompt.
 
+## Contextual guardrail evidence binding
+
+Local evidence authority is semantic, not field-name based. `engine/tool/tool.go` (`LocalFileOperands`) recognizes only explicit built-in filesystem operands and the narrow exact Shell-script form; MCP, custom, and delegation payload labels never become local targets or repeat grants. `engine/agent/actionreview.go` (`prepareActionReview`) authorizes each derived `Read` under the originating session before dependency snapshots, and snapshots use `BoundedWorkspaceReader` without a `Stat` → unbounded-read race.
+
+`internal/app/contextual_evidence.go` (`PrepareReviewEvidence`) mints only authorized, version-bound sources. `internal/app/contextual_reviewer.go` (`newFiniteReviewEvidenceSource`) divides larger text into a finite opaque continuation chain under the existing 16-handle / 400,000-byte total and 25,000-byte / 2,000-line page limits. Pages carry one source version; changing the source invalidates later reads, and an acceptable assessment after any page read requires the whole chain. The checker never supplies a path or offset. Image, audio, and binary parts are currently an explicit unsupported-inspection case: textual metadata may be shown as data, but omitted media makes `EvidenceComplete=false`; enforcing review therefore holds the exact typed result for one-time human release. No URL is fetched and no base64 representation is treated as visual inspection. The checker prompt projects only environment kind; exact private environment ID/revision remains in the in-process evidence binding.
+
 ## Run-bound knobs — index
 
 The run-bound knobs (turn/tool-call/round caps, token budgets, no-progress nudges,
@@ -3889,129 +3896,74 @@ three layers to keep the engine importable and the verdict shape in the adapter:
   YAML), and `normalizeGuardrailsModel` (fail-fast model validation + the build-once
   ACTIVE fact).
 
-**Default-on with no rules.** A configured checker model is the opt-in-to-spend; with
-no explicit rule list guardrails take the built-in **default block rule set**
-(`defaultGuardrailSpecs`: WebSearch pre+post, WebFetch post, `mcp__*` pre+post, and
-`Shell` pre — all block, the headline default; ADR 0053 flipped advisory→block, ADR
-0060 added `Shell`). The `Shell` rule carries a **read-only pre-filter**
-(`SkipReadOnlyShell`): the modelhook adapter skips the checker entirely for a Pre Shell
-command it can prove read-only (reusing `governance.ReadOnlyShell`/`SplitCommands`/
-`SubstitutionReadOnly` — fail-safe: substitution/ambiguity is inspected), so a
-guardrail-protected shell costs an LLM call ONLY on a mutating/outward command (e.g.
-`gh pr merge`), not on every `ls`. The OTHER local tools
-(Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob) remain deliberately unmatched. An
-explicit `guardrails.rules` list replaces the
-defaults (an operator's explicit `Shell` rule does NOT inherit the pre-filter — it
-inspects every command). There is no per-session call-count cap — the checker runs per
-matched call, and cost control lives in the operator's provider/billing layer (checker
-token spend is not folded into `MaxRunTokens`).
+**Default coverage.** Configuring a checker model is the opt-in-to-spend. With no
+explicit rule list, `defaultGuardrailSpecs` reviews actions for Shell, local
+mutations, WebSearch/WebFetch, MCP calls, and Subagent/Parallel/Team; it reviews
+inbound results for Shell, Read/ListDir/Grep/Glob, WebSearch/WebFetch, MCP calls,
+`FetchMcpResource`, and `CallMcpWithQuery`. The same applicable rules bind workers.
+An explicit `guardrails.rules` list replaces the defaults. There is no per-session
+check-count cap; finite evidence and trajectory capacities become a completed
+unresolved assessment rather than silently skipping review. Protocol tests do not
+establish the configured model's efficacy.
 
-**Per-tool rubric routing (ADR 0060).** `buildCheckPrompt` calls `rubric(phase, rule)`,
-which prefers a rule's non-empty `prompt` over the built-in default — the SAME seam
-operator custom prompts use. The default **Shell** rule wires `Prompt:
-modelhook.DefaultShellPrePrompt` (an EXPORTED const), so a Pre Shell check routes to a
-Shell-SPECIFIC rubric; **Web/MCP** rules leave `Prompt` empty and keep the generic
-`defaultPrePrompt`. Why: `defaultPrePrompt` is an exfiltration rubric for network/MCP
-boundaries — its "sensitive local data transmitted off the machine" + "if uncertain,
-judge unsafe" clauses false-positive on local-shell args (a real incident blocked a
-legitimate write to a sibling repo as "exfiltration"; a local write is data STAYING on
-the machine). `DefaultShellPrePrompt` flags only FIVE concrete dangerous categories
-(off-machine upload, `curl … | sh`, irreversible remote actions incl. `gh pr merge`,
-destructive local ops, AND local-PERSISTENCE writes to sensitive targets — authorized_keys
-/ shell rc / crontab / systemd / git-hooks — which never leave the machine so the first
-four miss them) and EXPLICITLY declares ORDINARY local writes/builds/tests/origin-remote
-git SAFE (category 5 and the local-write carve-out coexist: a normal source write to a
-sibling repo stays SAFE, only the named sensitive targets are UNSAFE), replacing the
-blanket "if uncertain, judge unsafe" with "judge SAFE unless a specific dangerous action
-is identifiable" — a deliberate precision-over-recall posture for the local shell, with
-the out-of-band approve-once ask (ADR 0062) as the residual recovery. An operator's
-explicit `Shell` rule with no `prompt:` falls back to `defaultPrePrompt` (least-surprising
-— an explicit rule opts out of the default-set conveniences).
+**Per-tool policy context.** Every review starts with the fixed harness-owned action or
+inbound rubric. A non-empty rule `prompt` is appended as operator task-risk context; it
+cannot replace the safety, authority, provenance, source-aware false-positive, evidence,
+or structured-output contract. `defaultGuardrailSpecs` may use prompts for built-in
+risk context, and an operator's explicit rule uses the same additive path.
 
-**The #1 constraint — `PostToolUse` Block is INERT.** The tool has already run by the
-time the post hook fires (`dispatch.go` ~642-648 only emits a hook annotation). So an
-enforcing block on `Post` rewrites the result via `HookOutcome.Mutated` to
-`{content:"blocked by guardrail: …", is_error:true}`, **not** Block — and the loop's
-effective-payload guarantee (recorded history == client stream == model view, all show
-the mutated result) means the model sees the block and the raw injected result reaches
-nobody. Only `PreToolUse` Block is a real veto.
+**Inbound escrow.** The tool and PostToolUse hook run once, then UTF-8 repair and
+contextual inbound review happen before recorder, history, save, final result event,
+client, or working-model delivery. `engine/agent/inboundreview.go` retains an enforcing
+finding in a bounded private root-run map. Release once atomically consumes that exact
+result through the ordinary final-result tail; it never reruns the tool, hook, reviewer,
+or side effect. Cancel, loss, timeout, unattended enforcement, stale binding, or restart
+destroys/loses the bytes and emits a paired synthetic withholding error.
 
 **Recursion guard.** The Runner is wired ONLY into the main engine's hooks, never into
 `buildCatalog`'s child hooks; the checker engine is built via
-`childEngineDepsForProvider` (inert Hooks + nil `ChildAskReviewer` + `Interactive`
-false + tool-less catalog), so a checker call fires no hooks and cannot re-trigger the
-runner. **Modes:** block / sanitize / advisory. **Sanitize is bounded** (the
-sanitize-laundering defense — the rewrite re-enters as content the agent trusts more):
-a nil or oversized (`maxSanitizedBytes`) `sanitized_content`, or a Pre payload that is
-not valid args JSON (which the loop would ignore → run the **original unsafe args**),
-falls back to a **block**; a Post-sanitize prepends a visible
-`[guardrail: redacted unsafe content]` marker so the model knows it was edited. The
-trust assumption is explicit: sanitize TRUSTS the checker's output — use it only with
-a trusted checker model. **Advisory + every finding diagnostic is correlatable:** it
-carries `session` + `call` (the `HookEvent.CallID`, threaded from `dispatch.go`) + a
-stable `guardrail-finding` marker. **Merge (decision 5):** inner FIRST, checker
-SECOND, Block-dominant, messages concat inner-first, mutation conflict → checker wins.
-**Cost/abuse:** a `minContentBytes` skip **(Post/inbound ONLY — Pre/outbound args are always
-inspected regardless of size, since a short exfiltration arg is exactly what the Pre
-check catches)**. The former `maxContentBytes` (256 KiB) bound was REMOVED
-([ADR 0050](../adr/0050-guardrails-remove-maxcontentbytes.md)) — the checker now inspects
-content regardless of size, and a checker error / timeout on huge input flows through the
-existing fail-open/closed path. **Fail-open by default** (checker error / timeout
-→ "no checker" + WARN); `failClosed: true` treats it as unsafe. A sustained checker
-outage escalates to a **one-time "checker DOWN" sticky WARN** (a `failureStreak`
-per Runner; a completed verdict resets it) so a persistently-unguarded surface is not
-lost in a per-call WARN flood. **Operator-tier config:** the `guardrails:` YAML subtree
-is read by `permconfig.Resolver.OperatorGuardrails()` from the **user-global + CLI
+`childEngineDepsForProvider` (inert hooks and reviewer, no ordinary tools), so a
+checker call cannot re-trigger review. **Modes:** block / advisory. Sanitization
+and checker-authored replacement actions were removed; inbound enforcement uses
+the private held-result escrow in `engine/agent/inboundreview.go` instead. An
+advisory result remains byte-identical. Machine review metadata contains only
+validated refs, route, assessment, inspection, disposition, and reason code;
+human rationale uses the live-only Service registry.
+**Cost/abuse:** matched inputs are never skipped because they are short or large. Finite
+secondary evidence and trajectory capacities fail honestly as unresolved/incomplete,
+while checker errors and timeouts follow the configured checker-down posture. The former
+`maxContentBytes` input bound was removed by
+[ADR 0050](../adr/0050-guardrails-remove-maxcontentbytes.md). **Fail-closed by default**:
+an operational checker failure recovers within the review budget, then asks/holds interactively or denies/withholds
+unattended. Explicit `onCheckerDown: warn` continues with a visible operational warning;
+it never fabricates a prohibited finding. A sustained outage remains health-visible.
+**Operator-tier config** is read by `permconfig.Resolver.OperatorGuardrails()` from the **user-global + CLI
 tiers only** — a project-tier block is ignored with a WARN (the trust inversion: a
 project weakening a checker is a downgrade), parsed strictly (unknown sub-key = error).
 
-**Out-of-band approve-once — the askable block ([ADR 0062](../adr/0062-guardrails-approve-once.md), supersedes 0061's prompt directive).**
-A `block` is not a permanent dead-end: it surfaces to the human as an ORDINARY permission
-ask, reusing the existing approval machinery, instead of the removed `/guardrail-allow`
-prompt directive.
+**Human action and release.** Contextual action findings use an explicit
+`session.GuardrailPendingScope{Kind: action}` and `ApprovalOriginHookGuardrail`.
+Run once executes the already-reviewed effective call without rerunning trusted mutation.
+Don't ask again arms only the opaque keyed digest when the target and every known relevant
+dependency are version-bound; it never calls permission learning. Result findings use
+`Kind: result_release`; only AllowOnce and Deny are valid, and validation rejects
+AllowAlways before consuming held bytes. Every restored ask validates explicit origin and
+kind before execution, learning, plan transition, or release. Missing/unknown provenance
+fails closed rather than inferring from a tool name.
 
-- **Engine seam (generic, no guardrail vocabulary).** `governance.HookOutcome.AskApproval`
-  (a `bool`, meaningful only on a PreToolUse `Block`) REFINES a block into an askable
-  block. `engine/agent`'s `preHook` returns a normalized `preHookResult{effective,
-  blocked, askApproval, msg}`; on `{Block, AskApproval}` with `Deps.Interactive` it routes
-  to `askHookApproval` — mint askID, build a `session.PendingAsk{HookOriginated:true}`,
-  `PauseForApproval` → StateAwaiting → emit `EvPermissionAsk` → block on the verdict — the
-  mirror of `authorize`'s policy-ask block. Allow once / Allow always EXECUTE the call
-  DIRECTLY (NOT re-running preHook — the human authorized THIS call); Deny → error result.
-  The headless degrade lives INSIDE `preHook` (a non-`Interactive` engine returns a
-  terminal `blocked` result and emits the `HookBlocked` annotation), so every caller
-  (`runOne`, `runReadBatch` Phase 1, `resolvePendingCall`) inherits the fail-safe. The ask
-  is sequenced one-at-a-time in dispatch (Phase 1, never the parallel fan-out).
-- **Resume skip (the load-bearing serialized marker).** `session.PendingAsk.HookOriginated`
-  (`json:"hook_originated,omitempty"`, SERIALIZED — unlike run-scoped
-  `ConfiguredAsk`/`FlooredConfiguredAllow`) survives a snapshot. The awaiting-resume path
-  (`Engine.ResumeApproval` → `resolvePendingCall`) RE-RUNS preHook on Allow, which for a
-  hook ask would re-block in a fresh process with no in-memory waiver — so when
-  `ask.HookOriginated` it SKIPS preHook and executes directly. Without the serialized
-  marker a resumed guardrail ask re-asks (pinned by a snapshot round-trip test).
-- **Session waiver ("Allow & don't ask again").** A new OPTIONAL `port.HookApprovalLearner`
-  (`LearnHookApproval(ctx, governance.HookEvent)`) is type-asserted on `Deps.Hooks` and
-  called by `askHookApproval` ONLY on a `VerdictAllowAlways` verdict for a hook ask (no
-  method added to `HookRunner` — that would break the API). The `modelhook.Runner`
-  implements it by arming `modelhook.WaiverHolder` (session-keyed; tool-exact + Shell
-  command-substring, the matching shape inherited from the deleted `OverrideScope`). The
-  Runner's `check` consults the waiver FIRST on a Pre phase — a hit returns the empty
-  allow outcome WITHOUT an LLM call and logs a `guardrail-waived` audit line. In-memory
-  only (NOT persisted — the SAFE direction); session-keying gives child isolation for
-  free (the Runner is main-engine-only). The holder is created ONCE in `buildEngine` and
-  threaded to BOTH Runner sites (shared engine + per-session factory); nil = byte-identical
-  no-waiver posture. It is NOT plumbed to the Service — arming is in-loop from a human
-  verdict, never a prompt scan (so there is no `Service.StartRunContent` scan at all).
-- **`blockOutcome` (the single would-be-block funnel).** Pre → `{Block, AskApproval}`
-  (askable; headless degrades in the engine); Post → the inert Mutated-to-error rewrite
-  UNCHANGED (the approve-once flow is PreToolUse-only; `AskApproval` is ignored on Post).
-  `mergeOutcomes` propagates `AskApproval` so a checker block that wants an ask keeps the
-  bit on the merged outcome. The block message carries NO directive grammar.
-- **Posture-coupling (composition-only).** `internal/app`'s `demoteForPosture` (the SINGLE
-  posture→mode coupling point, consumed by both branches of `effectiveGuardrailSpecs`)
-  demotes every rule to advisory under posture **yolo ONLY** (CC `bypassPermissions`
-  parity). strict/trusted/**auto** keep enforcing — under `auto` the interactive
-  approve-once ask IS the enforcement (gated on `Deps.Interactive`, not on posture).
+**Posture coupling.** `internal/app`'s `demoteForPosture` demotes rules to advisory
+under posture **yolo ONLY**. strict/trusted/auto keep contextual enforcement; unattended
+operational failure therefore denies an action or withholds a result by default.
+
+**Coverage and detail projection.** `internal/adapter/server/guardrails_status.go`
+owns the root-run registry and the owner-authorized coverage/detail Service methods.
+Coverage is computed by composition from the loaded session's durable authority tool set,
+the effective compiled rules, and the Build-captured checker provider/model pair. Detail
+is UTF-8 repaired, framing/control neutralized, rune-bounded, and indexed only by a
+registered root/child reference. `FinishRun`, session close, cancellation/disconnect drain,
+and Service shutdown clear it; restart has no registry to restore. Durable Hook/Ask/Approval
+projections remain machine-only. The RPCs are deliberately gRPC-only, and Mecatui's
+`/guardrails` command plus approval card consume their typed client projections.
 
 **Plan approval — the plan-approval gate ([ADR 0069](../adr/0069-plan-approval-gate.md),
 issue #206).** Plan mode (`session.ModePlan`) gains a structured approve→execute gate that

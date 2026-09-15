@@ -200,7 +200,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 				Effect: governance.Ask,
 				Reason: fmt.Sprintf("out-of-workspace read: %q lies outside the workspace root — approve to read it through the FS tool (a Shell cat of the same path is NOT a substitute)", path),
 			}
-		case "Write", "Edit":
+		case writeToolName, editToolName:
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
 			// never a silent un-asked mutation below yolo. Scenario 4 extends
 			// the SAME ask to strict/trusted (whose Write/Edit floor Ask
@@ -419,6 +419,28 @@ func (w *escapeWorkspace) ReadVersion(ctx context.Context, path string) ([]byte,
 		return nil, tool.FileVersion{}, err
 	}
 	return w.Workspace.ReadVersion(ctx, path)
+}
+
+func (w *escapeWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	if err := w.refusePath(path); err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceReader)
+	if !ok {
+		return nil, tool.FileVersion{}, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionBounded(ctx, path, maxBytes)
+}
+
+func (w *escapeWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	if err := w.refusePath(path); err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceRangeReader)
+	if !ok {
+		return nil, tool.FileVersion{}, 0, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionRangeBounded(ctx, path, offset, maxBytes, totalLimit)
 }
 
 // Stat consults the escape classifier (pseudo-fs hard-deny) then delegates.

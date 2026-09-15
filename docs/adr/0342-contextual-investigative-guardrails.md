@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-09-14
 - Scope: contextual action/inbound review, exact effective-call ordering, live repeat grants and result release, main/worker trajectory, checker routing, and safe status
-- Proposed supersession: ADR 0021's one-payload/tool-less classifier architecture; ADR 0051's generic advisory projection; ADR 0060's narrow default coverage; ADR 0062's waiver identity and approval-origin behavior
+- Proposed supersession: ADR 0021's one-payload/tool-less classifier architecture; ADR 0051's generic advisory projection; ADR 0060's narrow default coverage; ADR 0062's waiver identity and approval-origin behavior; ADR 0304's exact gRPC-only exception set, adding the owner-authorized coverage and live-detail RPCs
 - Superseded by: —
 
 ## Context
@@ -22,11 +22,13 @@ Finally, an `EvHook` is observed by the durable relay before live delivery. Chec
 
 ## Proposed decision
 
-The product direction and exact proposed interface live in the [acceptance plan](../acceptance/contextual-guardrails.md). The plan is ready for Plan / Interface review; neither document authorizes implementation until that Split gate is merged. Implementation must build finite capacity calibration and quality-measurement deliverables, while separately authorized release validation supplies any actual checker-model efficacy evidence before a production-readiness claim.
+The product direction and exact interface live in the [acceptance plan](../acceptance/contextual-guardrails.md). Implementation is operator-authorized as a stacked, in-progress change on Plan / Interface PR #1455 while this ADR remains Proposed; human review and merge are still required. Protocol and offline tests do not establish checker-model efficacy, which remains a separately authorized release-validation deliverable.
 
 ### One reviewer, two jobs
 
 Replace the old reviewer rather than retaining modes. Remove sanitize from code, configuration, prompts, tests, and current documentation without compatibility or migration machinery. Guardrails remain off unless enabled; enforcing `block` and explicit `advisory` remain.
+
+Remove `minContentBytes` from the strict schema and composition rather than retaining an ignored option: matched inbound content is never skipped merely because it is short. Existing configurations that still set the removed key fail strict unknown-key validation and must delete it; there is no compatibility mapping or silent migration.
 
 Use one protocol with separate prompts:
 

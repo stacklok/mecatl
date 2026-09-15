@@ -348,6 +348,19 @@ const (
 	HookAdvisory HookDecision = "advisory"
 )
 
+// GuardrailRef is a validated machine reference carried by a review projection.
+type GuardrailRef struct {
+	Ref      string
+	Category string
+}
+
+// GuardrailReviewPayload is the durable machine-only guardrail assessment.
+type GuardrailReviewPayload struct {
+	ReviewID, Job, Assessment, Inspection, Disposition, ReasonCode string
+	RuleID, RuleOrigin, CheckerProviderID, CheckerModelID          string
+	Concerns, Sources                                              []GuardrailRef
+}
+
 // HookPayload is the structured detail carried by an EvHook Event, in addition
 // to the human-readable Event.Text. It lets a client render a hook notice
 // distinctly from a compaction notice — labelling the lifecycle Phase and
@@ -369,6 +382,8 @@ type HookPayload struct {
 	// address the hook notice to the originating tool card (e.g. mark that exact
 	// tool_call as failed) instead of falling back to a free-standing note.
 	CallID ToolCallID
+	// Guardrail carries machine-only review metadata; human rationale is live-only.
+	Guardrail *GuardrailReviewPayload
 }
 
 // ApprovalPayload is the structured detail carried by an EvApproval Event: the
@@ -411,6 +426,8 @@ type ApprovalPayload struct {
 	// event never carries enough to reconstruct a pattern), so AllowAlways is a
 	// filter hint, never a durable rule record.
 	AllowAlways bool
+	// Origin is the explicit provenance of this approval. Unknown never learns.
+	Origin ApprovalOrigin
 }
 
 // The EvApproval verdict-string passthrough labels. They are the ONE source of

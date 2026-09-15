@@ -549,7 +549,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 // terminal text).
 func drainRunWithSubagentStart(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) (final string, starts []session.SubagentPayload) {
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {

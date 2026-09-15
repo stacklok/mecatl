@@ -65,7 +65,13 @@ describe("high-level session affinity", () => {
           });
           const input = requests[Symbol.asyncIterator]();
           await input.next();
-          yield { event: { runId: "different-run-id", text: "started", type: "message.delta" } };
+          yield {
+            event: {
+              ask: { args: "{}", askId: "ask", reason: "test", tool: "Bash" },
+              runId: "different-run-id",
+              type: "permission.ask",
+            },
+          };
           for (const operation of ["approve", "steer", "cancel"]) {
             await input.next();
             seen.push({
@@ -166,7 +172,7 @@ describe("high-level session affinity", () => {
                 promptController = controller;
                 controller.enqueue(
                   encoder.encode(
-                    `data: ${JSON.stringify({ run_id: "different-http-run-id", text: "started", type: "message.delta" })}\n\n`,
+                    `data: ${JSON.stringify({ ask: { args: "{}", ask_id: "ask", reason: "test", tool: "Bash" }, run_id: "different-http-run-id", type: "permission.ask" })}\n\n`,
                   ),
                 );
               },
