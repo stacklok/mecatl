@@ -4,7 +4,8 @@
 **Work classification:** Bounded — this establishes a substantive package-private TUI interaction contract across existing client surfaces without changing a public API, persistence boundary, protocol, or system architecture.
 **Decision record:** None — the control remains confined to `cmd/mecatui/ui`; its local ownership and interaction choices belong in this plan rather than a durable architecture record.
 **Phase:** bounded scroll-cursor convergence, slice 1
-**Status:** proposed, 2026-09-15. Initial slice of the incremental migration tracked by #1589.
+**Status:** in-progress, 2026-09-15. Implementation began from approved PR #1593.
+**Amendment:** 2026-09-15 — after the early package-private API checkpoint, the operator explicitly waived a separate amendment PR and authorized this implementation-branch amendment for stable item identity, independent viewport/cursor anchors, caller-owned selected styling, and tiny-width behavior.
 **Delivery:** Split. Shared cursor, layout, style, and pointer semantics need human interface review before implementation changes multiple surfaces.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1589](https://github.com/stacklok/mecatl/issues/1589).
@@ -17,37 +18,41 @@ This is an incremental targeted correction, not the future formal migration of e
 ## Human decisions
 
 - [x] Initial consumers — Decision: prove multiline cursor rows and browsing details across every unified-Agents subview plus fixed-height cursor rows in `/models`; defer Skills and every other surface to independently classified follow-ups under #1589.
-- [x] Control boundary — Decision: establish one shared physical-line windowing behavior with optional logical-item cursor state by consolidating, extending, or deleting the existing helpers; do not add exported interfaces, a general widget framework, or a second independent windowing policy.
-- [x] Width and oversized-item behavior — Decision: the control owns the hard display-cell width bound after applying the caller-selected wrap-or-clip policy. A selected item taller than the available body remains selected while Page Up/Page Down traverses bounded contiguous segments of that item; every segment retains the cursor marker and exposes accurate overflow before advancing to another item.
-- [x] Cursor presentation — Decision: cursor rows use the literal `▶ ` marker with unbordered `accent` styling and an equal-width unselected prefix; text selection, control focus, current `●`, default `★`, active-tab `▸`, and Parallel-winner state retain distinct meanings and styles.
-- [x] Paging — Decision: Page Down starts at the first physical line after the current window and selects the first logical item visible there; Page Up applies the symmetric preceding-window rule. An oversized selected item consumes successive pages before the cursor advances. Up/Down always moves one logical item and resets any within-item page position.
-- [x] Pointer ownership — Decision: wheel input moves cursor mode by one logical item and browsing mode by one physical line. Models proves primary-click cursor movement without activation through the existing `surface` hit lifecycle. Agents receives a narrow root-level wheel branch before conversation scrolling; it gains no click targets or second hit registry. Compact and `vp short` Agents fallbacks consume wheel input without changing hidden state. Enter remains activation; hover styling is deferred.
+- [x] Control boundary — Decision: use two concrete package-private layers: `boundedViewport` owns physical-line geometry and scroll position; `boundedList` composes it with logical items and cursor state. Do not add a Go interface, exported API, general widget framework, or second independent windowing policy.
+- [x] Width and oversized-item behavior — Decision: the viewport owns the hard display-cell width bound after applying the caller-selected wrap-or-clip policy. Width below the fixed cursor gutter plus one content cell yields an empty body so the owner can use its compact fallback. An item taller than the body is exposed in bounded contiguous segments without ANSI/style leakage.
+- [x] Cursor identity and refresh — Decision: cursor-mode items carry stable IDs. On refresh, retain the selected ID and clamp its within-item position; if it is absent, clamp the prior numeric index and adopt that fallback item's ID, with no later snap-back. Preserve the top visible `{item ID, physical line within item}` anchor when possible so insertion/removal above does not change what the user is reading; fall back to a clamped physical offset when the anchor disappears.
+- [x] Cursor presentation — Decision: the viewport reserves a fixed-width gutter but returns row metadata rather than theme material. The renderer supplies the selected-item style independently from the cursor marker. `▶ ` appears only on the first visible line of each selected-item segment; continuation lines use an equal-width blank gutter. Text selection, control focus, current `●`, default `★`, active-tab `▸`, and Parallel-winner state remain distinct.
+- [x] Cursor and scroll movement — Decision: cursor identity/within-item position and viewport position are separate state. Up/Down moves one logical item and minimally scrolls to reveal it; Page Up/Page Down keeps the approved item-aware paging behavior, including oversized segments. Mouse wheel scrolls the viewport by one physical line without moving the cursor; clicking a Model row moves the cursor and minimally reveals it.
+- [x] Bubbles reuse — Decision: reuse the installed Bubbles v2 and `x/ansi` patterns where they preserve the contract—separate cursor/viewport state, fixed gutter, caller-owned line styling, content-update clamping—but do not adopt `list.Model`, `table.Model`, or `viewport.Model` as the core because their fixed/indexed or private physical-line models cannot preserve variable-height stable item identity and hit metadata.
+- [x] Pointer ownership — Decision: Models uses the existing `surface` hit lifecycle. Agents receives a narrow root-level wheel branch before conversation scrolling; it gains no click targets or second hit registry. Compact and `vp short` Agents fallbacks consume wheel without changing viewport or cursor state. Enter remains activation; hover styling is deferred.
 
 ## Interface contract
 
 - **gRPC / protobuf:** None — all affected state and interactions remain inside the proto-free mecatui renderer.
-- **Exported Go APIs / interfaces:** None — window and cursor behavior remains package-private under `cmd/mecatui/ui`; the conversation-view controller and public engine surface are unchanged.
+- **Exported Go APIs / interfaces:** None — concrete `boundedViewport` and `boundedList` types remain package-private under `cmd/mecatui/ui`; no Go interface is introduced, and the conversation-view controller and public engine surface are unchanged.
 - **Tool schemas:** None — no model-facing tool or argument changes.
 - **CLI / config:** None — no flags, settings, key-binding names, or defaults change; existing remappable navigation actions remain authoritative.
-- **Events / persistence:** None — cursor, within-item page position, browsing offset, geometry, and pointer-hit state remain ephemeral client state.
+- **Events / persistence:** None — stable item IDs, cursor index/within-item position, semantic top anchor, physical fallback offset, geometry, and pointer-hit state remain ephemeral client state.
 - **Security / authority:** None — the control renders only content already admitted to its owning surface and preserves frame-scoped opaque hit dispatch; it introduces no new content, trust, permission, or ownership path.
-- **Compatibility / migration:** Every unified-Agents roster/detail view and `/models` adopts the shared behavior. Agents and Models cursor rows converge on `▶ ` plus unbordered `accent`; wheel input is consumed by the visible owner; Models gains click-to-cursor without click-to-activate. Agents compact-mode navigation remains suspended. Agents clicks, conversation scrolling, and every unlisted surface remain unchanged.
+- **Compatibility / migration:** Every unified-Agents roster/detail view and `/models` adopts the shared behavior. Agents and Models default cursor rows remain `▶ ` plus unbordered `accent`, while the control permits caller-owned selected styles; wheel scrolls the visible viewport without moving its cursor; Models gains click-to-cursor without click-to-activate; item refresh preserves cursor and viewport anchors by stable ID. Agents compact-mode navigation remains suspended. Agents clicks, conversation scrolling, and every unlisted surface remain unchanged.
 
 ## In scope — 3 scenarios, in implementation order
 
 ### Scenario 1 — bounded multiline browsing and cursor movement
 
-A caller supplies explicit content width and physical-line height together with logical items or rendered browsing lines. The control accounts for ANSI-aware display width and physical height, keeps cursor identity separate from physical offsets, and exposes all oversized selected-item content without exceeding its bounds. It generalizes rather than duplicates the physical budget already established by [the Agents overlay plan](mecatui-unified-agents-overlay-fit.md), following the minimum-change discipline in [`AGENTS.md`](../../AGENTS.md).
+A caller supplies explicit content width and physical-line height together with logical items or rendered browsing lines. `boundedViewport` owns physical-line layout and scroll position; `boundedList` adds stable item identity and a cursor that can remain distinct from the viewport. Both account for ANSI-aware display width and expose oversized content without exceeding their bounds. They generalize rather than duplicate the physical budget already established by [the Agents overlay plan](mecatui-unified-agents-overlay-fit.md), following the minimum-change discipline in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
-- AC1.1: At positive width and height, every wrap or clip policy produces no more than the supplied physical-line height and no ANSI-stripped line wider than the supplied display-cell width.
+- AC1.1: At width sufficient for the configured gutter plus one content cell and positive height, every wrap or clip policy produces no more than the supplied physical-line height and no ANSI-stripped line wider than the supplied display-cell width; a smaller width or nonpositive dimension yields an empty body without panic.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight`
-- AC1.2: Up/Down moves one logical item; Page Down selects the first item beginning after the current physical window and Page Up applies the symmetric preceding-window rule; Top/End clamps to the first/last item.
+- AC1.2: Up/Down moves the logical cursor one item and minimally reveals it; Page Down selects the first item beginning after the current physical window and Page Up applies the symmetric preceding-window rule; Top/End clamps to the first/last item.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets`
-- AC1.3: A cursor item taller than the available body is shown in bounded contiguous segments, retains its cursor marker, exposes accurate above/below overflow, and is completely reachable by paging before the cursor advances; ANSI style does not leak across clipped segment boundaries.
+- AC1.3: An item taller than the body is shown in bounded contiguous segments and is completely reachable in both directions; only the first visible line of a selected segment carries the cursor-marker flag, continuation lines retain the fixed blank gutter, caller-selected styling remains independent, and ANSI style does not leak across boundaries.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable`
-- AC1.4: Browsing line/page movement and cursor windows clamp after content or geometry changes without a reachable blank page; nonpositive width or height yields an empty body and no panic; no horizontal offset or panning action exists.
+- AC1.4: Browsing movement, logical cursor state, and physical viewport position remain independently observable and clamp after content or geometry changes without a reachable blank page; no horizontal offset or panning action exists.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds`
+- AC1.5: Replacing cursor-mode items preserves the selected stable ID and top visible `{item ID, item line}` anchor across insertion, removal, reordering, and text-height changes when those IDs remain; a missing selected ID falls back to the clamped prior numeric index and adopts the replacement ID without later snap-back, while a missing top ID falls back to a clamped physical offset.
+  - verify: `TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors`
 
 ### Scenario 2 — representative surfaces honor real geometry and cursor semantics
 
@@ -60,7 +65,7 @@ Agents and Models use the same physical accounting for their complete rendered s
   - verify: `TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting`
 - AC2.3: The complete Models surface derives its row body from the actual offered width and height, including fixed chrome and narrow wrapped/clipped rows; it has no minimum-row rule that can force output beyond the offered geometry.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry`
-- AC2.4: Selected Agents and Model rows use `▶ ` plus unbordered `accent` with an equal-width unselected prefix, while Model current `●`/default `★` and Agents active-tab `▸`/Parallel-winner markers remain independently visible.
+- AC2.4: Selected Agents and Model rows default to `▶ ` plus unbordered `accent` with an equal-width unselected prefix, while the shared control allows each caller to supply a different selected-item style; Model current `●`/default `★` and Agents active-tab `▸`/Parallel-winner markers remain independently visible.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct`
 - AC2.5: Existing focused regressions for palette, mention, Sessions, MCP, Effort, conversation scrolling, and text selection remain green; shared helper changes do not silently migrate their behavior.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario2_UnlistedSharedConsumersUnchanged`
@@ -70,11 +75,11 @@ Agents and Models use the same physical accounting for their complete rendered s
 In alternate-screen mouse mode, wheel and primary-click input target the visible owner rather than hidden conversation content. Models uses the existing frame-scoped hit lifecycle documented in [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md); Agents receives only the explicit root wheel branch needed before its future formal `surface` migration.
 
 **Acceptance:**
-- AC3.1: Wheel over Subagent, Parallel-group, focused-Parallel-branch, or Team rosters moves one logical item; wheel over Subagent/Team traces or Team tasks/findings moves one physical browsing line; every path clamps at both ends.
+- AC3.1: Wheel over any normal Subagent, Parallel-group, focused-Parallel-branch, or Team roster/detail view scrolls its physical viewport by one line without moving its logical cursor; every path clamps at both ends, and subsequent keyboard cursor movement minimally reveals the selected item.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix`
-- AC3.2: Compact or `vp short` Agents views consume wheel without changing hidden cursor/detail offsets, and wheel while Agents or Models owns the body never changes the hidden conversation viewport—even when the owning control is at its boundary.
+- AC3.2: Compact or `vp short` Agents views consume wheel without changing viewport or cursor state, and wheel while Agents or Models owns the body never changes the hidden conversation viewport—even when the owning viewport is at its boundary.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario3_WheelNeverLeaksOrNavigatesFallback`
-- AC3.3: Wheel over Models moves its cursor by one logical item. A primary click on the marker or text-bearing cells of any visible physical line of a Model row moves the logical cursor without switching models; clicks on chrome, overflow indicators, or trailing blank space miss; Enter retains activation.
+- AC3.3: Wheel over Models scrolls its viewport by one physical line without moving its stable cursor. A primary click on the marker or text-bearing cells of any visible physical line of a Model row moves the cursor to that item and minimally reveals it without switching models; clicks on chrome, overflow indicators, or trailing blank space miss; Enter retains activation.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates`
 - AC3.4: Model hit regions are valid only for the render frame and geometry that produced them; old-frame, out-of-bounds, and closed-surface hits cannot change cursor or activate an action.
   - verify: `TestMecatuiBoundedScrollCursor_Scenario3_StaleModelHitsIgnored`
