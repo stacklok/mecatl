@@ -157,7 +157,9 @@ func (s *boundedScrollCursor) moveCursor(move boundedScrollMove, layout boundedR
 				break
 			}
 		}
-		s.cursor, s.itemOffset = candidate, 0
+		s.cursor = candidate
+		candidateHeight := layout.ends[candidate] - layout.starts[candidate]
+		s.itemOffset = lastBoundedPageOffset(candidateHeight, s.height)
 	}
 	s.cursor = clampBounded(s.cursor, len(s.items))
 }
@@ -244,15 +246,18 @@ func boundedWidthLines(line string, width int, policy boundedWidthPolicy) []stri
 	if policy == boundedClip {
 		return []string{ansi.Cut(line, 0, width)}
 	}
-	total := ansi.StringWidth(line)
-	if total == 0 {
-		return []string{line}
-	}
-	lines := make([]string, 0, (total+width-1)/width)
-	for left := 0; left < total; left += width {
-		segment := ansi.Cut(line, left, min(left+width, total))
-		segmentWidth := ansi.StringWidth(segment)
-		if segmentWidth > 0 && segmentWidth <= width {
+	wrapped := strings.Split(ansi.Hardwrap(line, width, true), "\n")
+	lines := make([]string, 0, len(wrapped))
+	left := 0
+	for _, row := range wrapped {
+		rowWidth := ansi.StringWidth(row)
+		if rowWidth == 0 {
+			lines = append(lines, row)
+			continue
+		}
+		segment := ansi.Cut(line, left, left+rowWidth)
+		left += rowWidth
+		if ansi.StringWidth(segment) <= width {
 			lines = append(lines, segment)
 		}
 	}
@@ -260,6 +265,13 @@ func boundedWidthLines(line string, width int, policy boundedWidthPolicy) []stri
 		return []string{""}
 	}
 	return lines
+}
+
+func lastBoundedPageOffset(itemHeight, pageHeight int) int {
+	if itemHeight <= pageHeight || pageHeight <= 0 {
+		return 0
+	}
+	return (itemHeight - 1) / pageHeight * pageHeight
 }
 
 func (s *boundedScrollCursor) clampState() {
