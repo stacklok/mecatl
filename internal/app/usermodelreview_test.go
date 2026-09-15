@@ -208,6 +208,7 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 	providers := map[string]*mockllm.Provider{}
 	built, err := Build(ctx, Config{
 		Model:                   "test-model",
+		ContextWindowOverride:   defaultContextWindowTokens,
 		Workspace:               workspace,
 		NoSoul:                  true,
 		LearningMode:            learning.Auto,

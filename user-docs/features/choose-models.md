@@ -107,7 +107,13 @@ credentials once while it starts, so changing either file requires a restart.
 When a custom provider's live model listing is unreachable, unauthorized, or
 empty, `/models` keeps its configured default model selectable and displays only
 a safe provider status; endpoints, credentials, and raw listing errors or
-response bodies are never published to clients. Built-in `--*-base-url` flags
+response bodies are never published to clients. Selecting that configured
+fallback does not make an unknown context window safe: before the first run,
+Mecatl waits for bounded live discovery. If the listing remains unreachable,
+unauthorized, or empty and no exact window is configured, the run returns
+`context_window_unavailable` without recording the prompt. Restore discovery or
+set `models.context_windows.<provider-id>.<final-model-id>`, then retry. Built-in
+`--*-base-url` flags
 still take precedence over eligible built-in endpoint overrides. See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.

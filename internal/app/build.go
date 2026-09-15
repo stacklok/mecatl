@@ -1167,6 +1167,9 @@ type Config struct {
 	// catalogClassificationObserver is a test-only view of the classifications
 	// derived from one completed full-session assembly.
 	catalogClassificationObserver func(map[string]server.ClassificationEntry)
+	// awaitContextWindowObserver observes entry to Build's admission callback with
+	// the selected provider and model. It is test-only and nil in production.
+	awaitContextWindowObserver func(provider, model string)
 
 	// toolhiveConfigPath is the composition-only test seam for the ToolHive
 	// config-file path (mirroring envDetector/liveModelHTTPClient): ""
@@ -2153,6 +2156,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		previousClose := mcpClose
 		mcpClose = func() { attempts.Close(); previousClose() }
 	}
+	modelsRefreshState := &refreshStaleModelsState{}
+	var modelSwap modelSwapper
 	svcCfg := server.Config{
 		BuildID:              buildinfo.BuildID,
 		ServerImplementation: cfg.ServerImplementation,
@@ -2582,6 +2587,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// improving). Only the ContextWindow scalar is resolved here; provider/model
 		// identity stays the resolved value.
 		ResolveContextWindow: func(p, m string) int64 { return int64(reg.echoWindowResolver(cfg, p, m)()) },
+		AwaitContextWindow: func(awaitCtx context.Context, p, m string) error {
+			if cfg.awaitContextWindowObserver != nil {
+				cfg.awaitContextWindowObserver(p, m)
+			}
+			return awaitContextWindow(awaitCtx, cfg.diag(), reg, modelSwap, modelsRefreshState, p, m)
+		},
 		// Session lease (cloud-native Phase 4): nil unless a backend was selected,
 		// so the default path takes no lease, starts no renewer, and releases
 		// nothing — byte-identical. The owner identity is built once per Build.
@@ -2624,6 +2635,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
+	modelSwap = svc
 
 	// LIVE model listing: Build seeded svcCfg.Models with the EMBEDDED snapshot
 	// synchronously above (so the ModelSelection cap is honest from t=0). A default
@@ -2643,7 +2655,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// intent-driven providers and self-cooldown-gated, so wiring it
 	// unconditionally costs nothing for a deployment with no toolhive entry.
 	svc.SetProviderStatus(providerStatusProto(reg))
-	modelsRefreshState := &refreshStaleModelsState{}
 	svc.SetModelsRefresher(func(refreshCtx context.Context) {
 		refreshStaleModels(refreshCtx, cfg.diag(), reg, svc, modelsRefreshState)
 	})

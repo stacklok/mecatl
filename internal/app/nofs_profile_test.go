@@ -713,13 +713,14 @@ func TestSelectorSessionSurvivesRestartE2E(t *testing.T) {
 
 	baseCfg := func() Config {
 		return Config{
-			Workspace:           workspace,
-			NoSoul:              true,
-			StoreDir:            storeDir,
-			MemoryDir:           memoryDir,
-			MaxRunTokens:        budget,
-			envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai", "OPENROUTER_API_KEY": "sk-openrouter"}),
-			liveModelHTTPClient: offlineHTTPClient(),
+			Workspace:             workspace,
+			NoSoul:                true,
+			StoreDir:              storeDir,
+			MemoryDir:             memoryDir,
+			MaxRunTokens:          budget,
+			ContextWindowOverride: defaultContextWindowTokens,
+			envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai", "OPENROUTER_API_KEY": "sk-openrouter"}),
+			liveModelHTTPClient:   offlineHTTPClient(),
 		}
 	}
 

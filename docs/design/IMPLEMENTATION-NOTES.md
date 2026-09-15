@@ -5802,7 +5802,8 @@ construction. BOTH the per-session factory AND `baseEngineDeps` pass `reg.window
 provider, model)` (`internal/app/livemeta.go` (`windowResolver`)) — the ONE override→live→catalog→128k-floor
 precedence chain — so the compaction trigger AGREES byte-for-byte with the `ListModels`-advertised
 `context_limit` AND with the `resolved_model` echo (the service's `ResolveContextWindow` wraps the
-SAME `windowResolver`). Issue #63: the DEFAULT model gets its REAL window (e.g. 1,050,000 for
+sibling `reg.echoWindowResolver`; both share `resolveWindowCore`, differing only for a provisional
+unknown value while initial discovery is unsettled). Issue #63: the DEFAULT model gets its REAL window (e.g. 1,050,000 for
 `gpt-5.5`), flooring to 128k only when the model is genuinely uncatalogued. Issue #66: because the
 closure re-reads the live store, the SHARED engine — built once, before the live refresh — self-corrects
 to a live-only model's true window on the next compaction check with no rehydration, and the
@@ -5811,6 +5812,27 @@ both the engine and the echo). `baseEngineDeps`
 delegates for the default provider+model, so a per-session engine bound to a non-default provider
 re-derives EVERY provider-closing field rather than shallow-cloning + swapping only `LLM` (which
 would compact/count through the wrong model — cross-provider contamination).
+
+**Cold-window run admission (issue #1541 / ADR 0342).** Resolve-at-use remains the engine's
+backstop, but the service must not let its 128K unknown-model floor trigger persistent compaction
+while a live-listable effective model is still awaiting initial metadata. `liveMetaStore` therefore
+closes one settlement channel from `markRefreshCompleted`; shutdown cancellation leaves it open.
+After `engineAndEnvironmentFor` has selected the real shared/per-session and mode-routed identity,
+`Service` invokes its optional `AwaitContextWindow` callback before `Engine.Run`, before
+failed-step retry preparation, and before restart-restored `ResumeApproval`. Composition bypasses
+waiting for any positive override/exact-config/live/catalog value and for providers with no lister.
+It uses one caller-derived `liveModelRefreshTimeout` context for the initial wait and every
+provider in a recovery refresh. Genuine non-empty-listing evidence is stored in the same atomic
+`liveMetaStore` snapshot as the resolver metadata it admits, so `recordSuccess` cannot expose
+admission readiness ahead of `publishSnapshot`. Listing failure/empty yields retryable
+`context_window_unavailable` with no prompt/inference/compaction; a successful published listing
+that omitted a passthrough model or its window retains the settled 128K compatibility fallback.
+The first rejection does not duplicate startup discovery; a later run reuses `refreshStaleModels`
+and its shared mutex/cooldown/publish path, including operator-defined live-listable providers.
+Admission cleanup releases the provisional registry. The existing session-lifetime lease remains
+held until teardown or shutdown, including after a later launch step rejects. Terminal recovery
+already completed before this gate is intentionally not rolled back; it may close dangling tool
+calls but does not remove genuine user or assistant history.
 
 **Role-tagged child metrics (issue #47, `Config.MetricsRoleScoper` + `roleFamily`).** Child
 engines used to force `Deps.Sink`/`Deps.ToolCallRecorder` nil (the double-count guard); they are

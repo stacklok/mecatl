@@ -48,12 +48,13 @@ func testToolhiveRehydrationWithProxyDownE2E(t *testing.T, providerID string) {
 
 	baseCfg := func() Config {
 		return Config{
-			Workspace:          workspace,
-			NoSoul:             true,
-			StoreDir:           storeDir,
-			ToolhiveLLM:        true,
-			toolhiveConfigPath: cfgPath,
-			envDetector:        fakeEnv(nil), // hermetic: never read the real process environment
+			Workspace:             workspace,
+			NoSoul:                true,
+			StoreDir:              storeDir,
+			ToolhiveLLM:           true,
+			ContextWindowOverride: defaultContextWindowTokens,
+			toolhiveConfigPath:    cfgPath,
+			envDetector:           fakeEnv(nil), // hermetic: never read the real process environment
 		}
 	}
 
