@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
@@ -27,10 +28,30 @@ type OAuthSubject struct {
 	Principal string
 }
 
+// OAuthDCRConfig selects durable Dynamic Client Registration for a direct MCP profile.
+type OAuthDCRConfig struct {
+	// ServerName identifies the private lifecycle record. It is injected by the
+	// resolved profile loader and deliberately has no configuration serialization.
+	ServerName string
+}
+
+// OAuthDCRLoginAction selects the explicit registration operation performed by login.
+type OAuthDCRLoginAction uint8
+
+const (
+	// OAuthDCRLoginReuse reuses a ready registration or creates the initial registration.
+	OAuthDCRLoginReuse OAuthDCRLoginAction = iota
+	// OAuthDCRLoginResetRegistration explicitly replaces a ready registration.
+	OAuthDCRLoginResetRegistration
+	// OAuthDCRLoginRetryRegistration explicitly retries a pending registration attempt.
+	OAuthDCRLoginRetryRegistration
+)
+
 // OAuthClientConfig selects one durable client-registration profile.
 type OAuthClientConfig struct {
 	Preregistered               *oauthex.ClientCredentials
 	ClientIDMetadataDocumentURL string
+	DCR                         *OAuthDCRConfig
 }
 
 // OAuthNetworkPolicy declares endpoint origins. DNS and transport enforcement is
@@ -76,6 +97,9 @@ type OAuthOptions struct {
 	AllowedScopes        []string
 	Timeout              time.Duration
 	allowLoopbackForTest bool
+	testRootCAs          *x509.CertPool
+	dcr                  *oauthDCRResolved
+	dcrTicket            *oauthDCRTicket
 }
 
 // AllowOAuthLoopbackForTest enables loopback only for in-process test servers.
@@ -88,12 +112,26 @@ func AllowOAuthLoopbackForTest(t interface{ Helper() }, opts *OAuthOptions) {
 	}
 }
 
+// TrustOAuthCertificateForTest trusts one test server certificate for OAuth TLS.
+func TrustOAuthCertificateForTest(t interface{ Helper() }, opts *OAuthOptions, cert *x509.Certificate) {
+	t.Helper()
+	if opts == nil || cert == nil {
+		return
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	opts.testRootCAs = roots
+}
+
 type oauthRegistration struct {
-	kind         string
-	clientID     string
-	clientSecret string
-	sdk          *oauthex.ClientCredentials
-	cimd         string
+	kind          string
+	clientID      string
+	clientSecret  string
+	generation    string
+	redirectPath  string
+	dcrServerName string
+	sdk           *oauthex.ClientCredentials
+	cimd          string
 }
 
 func oauthPersistence(opts OAuthOptions) (credentialstore.Reader, credentialstore.ConditionalWriter, error) {
@@ -142,7 +180,7 @@ func validateOAuthOptions(opts OAuthOptions) (oauthRegistration, map[string]stru
 		return oauthRegistration{}, nil, errors.New("OAuth max redirects must be between zero and five")
 	}
 
-	registration, err := validateOAuthRegistration(opts.Client, opts.Issuer)
+	registration, err := resolvedOAuthRegistration(opts)
 	if err != nil {
 		return oauthRegistration{}, nil, err
 	}
@@ -156,8 +194,12 @@ func validateOAuthOptions(opts OAuthOptions) (oauthRegistration, map[string]stru
 func validateOAuthRegistration(clientOpts OAuthClientConfig, issuer string) (oauthRegistration, error) {
 	preregistered := clientOpts.Preregistered != nil
 	cimd := clientOpts.ClientIDMetadataDocumentURL != ""
-	if preregistered == cimd {
+	dcr := clientOpts.DCR != nil
+	if boolCount(preregistered, cimd, dcr) != 1 {
 		return oauthRegistration{}, errors.New("OAuth client must configure exactly one registration form")
+	}
+	if dcr {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is unresolved")
 	}
 	if preregistered {
 		client := clientOpts.Preregistered
@@ -181,6 +223,33 @@ func validateOAuthRegistration(clientOpts OAuthClientConfig, issuer string) (oau
 		return oauthRegistration{}, errors.New("OAuth client ID metadata document URL is invalid")
 	}
 	return oauthRegistration{kind: "cimd", clientID: clientOpts.ClientIDMetadataDocumentURL, cimd: clientOpts.ClientIDMetadataDocumentURL}, nil
+}
+
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
+}
+
+func resolvedOAuthRegistration(opts OAuthOptions) (oauthRegistration, error) {
+	if opts.Client.DCR == nil {
+		return validateOAuthRegistration(opts.Client, opts.Issuer)
+	}
+	if boolCount(opts.Client.Preregistered != nil, opts.Client.ClientIDMetadataDocumentURL != "", true) != 1 || opts.dcr == nil {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is unresolved")
+	}
+	if opts.dcr.issuer != opts.Issuer || opts.dcr.clientID == "" || !validDCRRandom(opts.dcr.generation) || !validDCRServerName(opts.dcr.serverName) {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
+	}
+	client := &oauthex.ClientCredentials{ClientID: opts.dcr.clientID, Issuer: opts.Issuer}
+	if err := client.Validate(); err != nil {
+		return oauthRegistration{}, errors.New("OAuth DCR client registration is invalid")
+	}
+	return oauthRegistration{kind: oauthDCRClientKind, clientID: opts.dcr.clientID, generation: opts.dcr.generation, redirectPath: opts.dcr.path, dcrServerName: opts.dcr.serverName, sdk: client}, nil
 }
 
 func validateOAuthOrigins(issuer *url.URL, network OAuthNetworkPolicy) (map[string]struct{}, error) {
@@ -230,7 +299,7 @@ func validateHTTPURL(field, raw string, httpsOnly bool) (*url.URL, error) {
 	if err != nil || !u.IsAbs() || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return nil, errors.New(field + " is invalid")
 	}
-	if (httpsOnly && !strings.EqualFold(u.Scheme, "https")) || (!httpsOnly && !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
+	if (httpsOnly && !strings.EqualFold(u.Scheme, "https")) || (!httpsOnly && !strings.EqualFold(u.Scheme, oauthHTTPURLScheme) && !strings.EqualFold(u.Scheme, "https")) {
 		return nil, errors.New(field + " is invalid")
 	}
 	if u.Hostname() == "" || !validPort(u) {
@@ -257,7 +326,7 @@ func urlOrigin(u *url.URL) string {
 		hostname = ip.String()
 	}
 	port := u.Port()
-	if port == "" || scheme == "https" && port == "443" || scheme == "http" && port == "80" {
+	if port == "" || scheme == "https" && port == "443" || scheme == oauthHTTPURLScheme && port == "80" {
 		port = ""
 	}
 	if strings.Contains(hostname, ":") {
@@ -378,14 +447,27 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, _, err := validateOAuthOptions(opts); err != nil {
-		return nil, err
+	if opts.Client.DCR != nil && !validDCRRequestedScopes(opts) {
+		return nil, errors.New("OAuth DCR configuration is invalid")
 	}
 	if _, err := canonicalOAuthResource(resource); err != nil {
 		return nil, err
 	}
 	client, transport, err := newOAuthHTTPClient(resource, opts)
 	if err != nil {
+		return nil, err
+	}
+	opts, err = resolvePreparedDCR(ctx, resource, opts, client)
+	if err != nil {
+		transport.base.CloseIdleConnections()
+		return nil, projectOAuthError(err)
+	}
+	if opts.dcr != nil {
+		transport.dcrPublicClientID = opts.dcr.clientID
+		transport.dcrIssuer = opts.Issuer
+	}
+	if _, _, err := validateOAuthOptions(opts); err != nil {
+		transport.base.CloseIdleConnections()
 		return nil, err
 	}
 	lifetimeCtx, lifetimeCancel := context.WithCancel(context.Background())
@@ -430,6 +512,11 @@ func (c *OAuthController) presentAuthorization(ctx context.Context, args *auth.A
 	authorizationURL, err := validateHTTPURL("OAuth authorization URL", args.URL, false)
 	if err != nil || urlOrigin(authorizationURL) != c.transport.issuerOrigin {
 		return nil, projectOAuthError(ErrOAuthUnavailable)
+	}
+	if c.state.registration.kind == oauthDCRClientKind {
+		if err := validateDCRAuthorizationURL(args.URL, c.state.identity.Resource); err != nil {
+			return nil, projectOAuthError(err)
+		}
 	}
 	result, err := c.presenter.PresentAuthorization(ctx, args.URL)
 	return result, projectOAuthError(err)
@@ -488,7 +575,7 @@ func (c *OAuthController) authorizationAllowed(ctx context.Context) error {
 // this credential identity while leaving cancellation bounded by each caller's
 // context. A completed outcome remains attached to its challenge key until a
 // different credential/challenge arrives or ResetCredential invalidates it.
-func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp *http.Response) error {
+func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp *http.Response) error { //nolint:gocyclo // single-flight state transitions stay explicit.
 	if err := c.authorizationAllowed(ctx); err != nil {
 		closeOAuthResponse(resp)
 		return err
@@ -558,14 +645,23 @@ func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp
 		c.flight = flight
 		c.flightMu.Unlock()
 
+		if err := c.state.beginAuthorization(ctx); err != nil {
+			closeOAuthResponse(resp)
+			c.completeAuthorizationFlight(flight, err)
+			return err
+		}
 		err := projectOAuthError(c.authorize(ctx, req, resp))
-		c.flightMu.Lock()
-		flight.err = err
-		flight.completed = true
-		close(flight.done)
-		c.flightMu.Unlock()
+		c.completeAuthorizationFlight(flight, err)
 		return err
 	}
+}
+
+func (c *OAuthController) completeAuthorizationFlight(flight *authorizationFlight, err error) {
+	c.flightMu.Lock()
+	flight.err = err
+	flight.completed = true
+	close(flight.done)
+	c.flightMu.Unlock()
 }
 
 // ResetCredential conditionally deletes the current record and clears the live

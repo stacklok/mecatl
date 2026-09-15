@@ -1,13 +1,13 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃  ▸ Subagents    Parallel    Teams                                                            ┃
   ┃                                                                                              ┃
   ┃  subagent · audit auth flow                                                                  ┃
-  ┃  ◐ audit auth flow #r-a3f1 · Grep… · 7 tools · ↑0 ↓0                                         ┃
+  ┃  ◐ audit auth flow #r-a3f1                                                                   ┃
+  ┃      Grep… · 7 tools · ↑0 ↓0                                                                 ┃
   ┃    bounded previews — child content is clamped + scrubbed, never in the parent               ┃
   ┃      conversation                                                                            ┃
   ┃                                                                                              ┃
@@ -15,7 +15,7 @@
   ┃    ✓ Grep — pattern: auth                                                                    ┃
   ┃    checking the login flow                                                                   ┃
   ┃                                                                                              ┃
-  ┃  x cancel · esc back                                                                         ┃
+  ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                     ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

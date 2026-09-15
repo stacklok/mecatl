@@ -70,9 +70,9 @@ func TestSessionAffinityAndHandoff_Scenario4_TypeScriptHighLevelPropagation(t *t
 	for _, declarations := range typescriptAPIReportDeclarations(t) {
 		requireAPIReportDeclarations(t, declarations,
 			"debugTargetSessionId?: string;",
-			"create(options: CreateSessionOptions): Promise<Session>;",
-			"fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;",
-			"run(prompt: PromptInput, options?: RunOptions): Promise<Run>;",
+			"create(options: CreateSessionOptions, requestOptions?: RequestOptions): Promise<Session>;",
+			"fork(sourceSessionId: string, options?: ForkSessionOptions, requestOptions?: RequestOptions): Promise<Session>;",
+			"run(prompt: PromptInput, options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;",
 		)
 	}
 }

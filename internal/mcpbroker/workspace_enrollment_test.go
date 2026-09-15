@@ -49,6 +49,7 @@ type enrollmentAttachmentFake struct{}
 
 var _ mcpbroker.WorkspaceEnrollmentAttachment = enrollmentAttachmentFake{}
 
+func (enrollmentAttachmentFake) ResetWorkspaceEnrollment(context.Context) error { return nil }
 func (enrollmentAttachmentFake) BeginWorkspaceEnrollment(context.Context) (mcpbroker.WorkspaceEnrollmentPresentation, error) {
 	return mcpbroker.WorkspaceEnrollmentPresentation{}, nil
 }
@@ -361,7 +362,7 @@ func TestWorkspaceEnrollmentInterfaceHasNoClientAuthoredResolution(t *testing.T)
 	for i := 0; i < typ.NumMethod(); i++ {
 		method := typ.Method(i)
 		wantInputs := []reflect.Type{contextType}
-		if method.Name != "BeginWorkspaceEnrollment" {
+		if method.Name != "BeginWorkspaceEnrollment" && method.Name != "ResetWorkspaceEnrollment" {
 			wantInputs = append(wantInputs, refType)
 		}
 		if method.Type.NumIn() != len(wantInputs) {

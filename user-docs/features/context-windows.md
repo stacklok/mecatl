@@ -7,17 +7,15 @@ description:
 
 # Context windows
 
-A model's context window is the maximum token budget for the complete request:
-current instructions, conversation history, and tool definitions. Mecatl checks
-that request before each turn and compacts stored history when needed. You can
-also request one manual pass before the next turn.
+Mecatl compacts stored history when a request approaches the selected model's
+context window. You can also request a compaction before the next turn.
 
 ## Availability
 
 Context-window resolution and automatic compaction are available in `mecated`,
-`mecak8s`, `mecatequi`, mecatui's embedded server, and engine embeddings that
+`mecak8s`, `mecatequi`, `mecatui`'s embedded server, and engine embeddings that
 provide a context-window resolver. The same resolved value is used by the engine
-and, where applicable, the mecatui context meter.
+and, where applicable, the `mecatui` context meter.
 
 ## Window resolution
 
@@ -28,11 +26,9 @@ Mecatl resolves a window at the point of use, in this order:
 3. the embedded model catalog; and
 4. a 128K-token floor for an otherwise unknown model.
 
-Mecatl resolves the value when it is needed instead of taking a startup
-snapshot. If a catalog refresh discovers a better model window while a session
-is running, the next compaction check uses it. The engine always uses a positive
-floor. `mecatui` may briefly show an unresolved context denominator during the
-initial refresh and updates the meter when metadata arrives.
+Mecatl resolves the value when needed, so the next compaction check can use
+newer metadata from a catalog refresh. `mecatui` updates its context meter when
+that metadata arrives.
 
 For a live-listable model that has no configured, live, or embedded window yet,
 Mecatl waits for the bounded initial discovery before admitting a prompt, a
@@ -58,13 +54,10 @@ real model metadata:
 mecated serve --context-window-override 128000
 ```
 
-The override is a token count and wins over live and catalog metadata. It moves
-both the compaction trigger and the mecatui context-meter denominator together.
-It is an operator workaround, not a way to increase a model beyond the limit the
-provider actually accepts. A very small value causes frequent compaction and is
-useful mainly for stress-testing.
+The override wins over live and catalog metadata and controls both compaction
+and the `mecatui` context meter. Set it to the limit the provider accepts.
 
-The equivalent server flag is available to mecatui's embedded server. It does
+The equivalent server flag is available to `mecatui`'s embedded server. It does
 not reconfigure a server used through `mecatui connect`; the connected server's
 resolved model and window are authoritative.
 
@@ -89,10 +82,10 @@ The token estimate is selected with `--tokenizer`:
 - `heuristic` is dependency-free and is the default;
 - `tiktoken` uses the offline tokenizer vocabulary.
 
-These choices are independent: the tokenizer changes measurement, while the
-compaction strategy changes how history is reduced.
+The tokenizer controls measurement. The compaction strategy controls how Mecatl
+reduces history.
 
-Both compactors preserve the conversation's usable shape:
+Both compactors preserve a usable conversation:
 
 - the first genuine user instruction remains pinned;
 - recent user instructions survive verbatim instead of falling into the summary;
@@ -106,7 +99,7 @@ conversation in the durable event log when one is configured. The archive lets
 operators reconstruct earlier context even though the active session history is
 shorter.
 
-## Compact manually in mecatui
+## Compact manually in `mecatui`
 
 When the server advertises manual compaction, enter `/compact` while the session
 is idle. The command runs one pass without waiting for the 80% trigger. It does
@@ -114,12 +107,11 @@ not send a prompt or start a chat turn, and the TUI keeps your visible
 scrollback. A notice says whether model history changed or was already compact.
 
 The configured strategy still applies. A cascade pass that reaches its summary
-tier can make a compaction-model call, so the operation may cost tokens even
-though it creates no chat turn. Active runs and pending approvals must finish
-first. Older servers hide the command. API clients can use gRPC `CompactSession`
-or bodyless `POST /v1/sessions/{id}/compact`; see the
-[gRPC](/reference/grpc-api.md) and [HTTP](/reference/http-sse-api.md) operator
-references for state, ownership, lease, and response details.
+tier can make a model call and consume tokens. Active runs and pending approvals
+must finish first. API clients can use gRPC `CompactSession` or bodyless
+`POST /v1/sessions/{id}/compact`; see the [gRPC](/reference/grpc-api.md) and
+[HTTP](/reference/http-sse-api.md) operator references for state, ownership,
+lease, and response details.
 
 ## Context and cost limits
 
@@ -144,11 +136,6 @@ provider, model, token counter, and context-window resolution remain unchanged.
 - Compaction is lossy by design for old tool bodies and superseded history. The
   recent user goal and valid tool pairing are protected, but every historical
   message is not guaranteed to remain verbatim in the active conversation.
-- A provider can still reject a request for reasons unrelated to context size;
-  changing the override does not repair invalid credentials, policy blocks, or
-  unsupported content.
-- Live metadata refresh is process-local. A restart rebuilds the catalog and
-  resolver from deployment configuration and available provider metadata.
 - A nil context-window resolver in an engine embedding disables automatic
   compaction. Embedders should provide one when their provider has a bounded
   context window.
@@ -163,4 +150,3 @@ and adapter requirements, see
 - [Choose models and providers](./choose-models.md)
 - [Multimodal input](./multimodal-input.md)
 - [The agent loop](/building/what-you-get/agent-loop.md)
-- [Capability and deployment matrix](./capability-matrix.md)

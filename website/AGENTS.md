@@ -66,7 +66,7 @@ slug renames, render correctly in GitHub's markdown preview, and are portable if
 ```markdown
 [The agent loop](/building/what-you-get/agent-loop.md)
 [Overview](/building/extension-points/index.md)
-[Cloud-native kit](/building/cloud-native-kit.md)
+[Cloud-native harness](/building/cloud-native-harness.md)
 ```
 
 The leading `/` resolves from the docs content root (`user-docs/`), not the site root.
@@ -102,10 +102,9 @@ When a URL change is necessary, the pull request must either preserve the old UR
 with a redirect or explain why no redirect is needed, such as when the page was
 never published.
 
-URL redirects use `@docusaurus/plugin-client-redirects`. Declare them in the
-`plugins` section of `docusaurus.config.ts`, verify both the old and canonical
-URLs, and keep the old path while published inbound links may still use it. Do
-not rely on an undocumented hosting or CloudFront change.
+URL redirects use Vercel HTTP redirects. Declare them in `vercel.json`, verify
+both the old and canonical URLs against a Vercel deployment, and keep the old
+path while published inbound links may still use it.
 
 ---
 

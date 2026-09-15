@@ -222,6 +222,7 @@ func sessionMetadata(s *session.Session, modifiedAt time.Time, size int64) port.
 		ModelID: s.ModelID, CreatedAt: s.CreatedAt, Title: s.Title,
 		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), EnvironmentRef: s.EnvironmentRef,
 		Kind: s.Kind, Relationship: s.Relationship, EstimatedBytes: size,
+		Activity: session.ActivityOf(s.Conversation.Messages),
 	}
 }
 
@@ -541,6 +542,7 @@ func decodeMetadataMember(member string) (port.SessionDiscoveryMeta, error) {
 	if string(row.ID) != string(id) {
 		return port.SessionDiscoveryMeta{}, errors.New("member id mismatch")
 	}
+	row.Activity = session.ValidActivity(row.Activity)
 	return row, nil
 }
 

@@ -33,6 +33,14 @@ func readFixture(t *testing.T, name string) []byte {
 	return data
 }
 
+func mentionAttachments(paths ...string) []MentionAttachment {
+	out := make([]MentionAttachment, len(paths))
+	for i, path := range paths {
+		out[i] = MentionAttachment{Path: path, Label: path}
+	}
+	return out
+}
+
 // TestExpandMentionsImagePart asserts an @-mentioned image file, with an
 // image-capable server, becomes one inline image Content part: kind IMAGE, the
 // sniffed image/png MIME, the exact file bytes, a "(inline)" descriptor, and no
@@ -45,7 +53,7 @@ func TestExpandMentionsImagePart(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{Image: true})
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{Image: true})
 	if err != nil {
 		t.Fatalf("ExpandMentions: %v", err)
 	}
@@ -79,7 +87,7 @@ func TestExpandMentionsImageCapGated(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{Image: false})
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{Image: false})
 	if err == nil {
 		t.Fatalf("want error for image with Image:false, got parts=%v", res.Parts)
 	}
@@ -103,7 +111,7 @@ func TestExpandMentionsOversizeRefused(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{Image: true})
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{Image: true})
 	if err == nil {
 		t.Fatalf("want oversize error, got parts=%v", res.Parts)
 	}
@@ -125,7 +133,7 @@ func TestExpandMentionsTextInlined(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{}) // no media caps
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{}) // no media caps
 	if err != nil {
 		t.Fatalf("ExpandMentions: %v", err)
 	}
@@ -144,6 +152,77 @@ func TestExpandMentionsTextInlined(t *testing.T) {
 	}
 }
 
+func TestExpandMentionsUsesOriginalLabel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("labelled content"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	res, err := ExpandMentions([]MentionAttachment{{Path: path, Label: "~/notes.txt"}}, Capabilities{})
+	if err != nil {
+		t.Fatalf("ExpandMentions: %v", err)
+	}
+	if len(res.InlineText) != 1 || !strings.Contains(res.InlineText[0], "--- ~/notes.txt ---") {
+		t.Fatalf("inline text = %q, want original mention label", res.InlineText)
+	}
+	if strings.Contains(res.InlineText[0], dir) {
+		t.Fatalf("inline text leaks resolved directory %q: %q", dir, res.InlineText[0])
+	}
+}
+
+func TestExpandMentionsRejectsFinalSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	link := filepath.Join(dir, "link.txt")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if _, err := ExpandMentions([]MentionAttachment{{Path: link, Label: "link.txt"}}, Capabilities{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("error = %v, want final-symlink rejection", err)
+	}
+}
+
+func TestOpenMentionNoFollowRejectsFinalSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	link := filepath.Join(dir, "link.txt")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	f, err := openMentionNoFollow(link)
+	if err == nil {
+		_ = f.Close()
+		t.Fatal("openMentionNoFollow followed a final symlink")
+	}
+}
+
+func TestReadMentionRejectsIdentityReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	oldPath := filepath.Join(dir, "old.txt")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	openAfterReplace := func(name string) (*os.File, error) {
+		if err := os.Rename(name, oldPath); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(name, []byte("replacement"), 0o600); err != nil {
+			return nil, err
+		}
+		return os.Open(name)
+	}
+	if _, err := readMention(path, openAfterReplace); err == nil || !strings.Contains(err.Error(), "changed while opening") {
+		t.Fatalf("error = %v, want identity-change rejection", err)
+	}
+}
+
 // TestExpandMentionsTooManyParts asserts the per-prompt part-count cap rejects a
 // flood of small image mentions.
 func TestExpandMentionsTooManyParts(t *testing.T) {
@@ -158,7 +237,7 @@ func TestExpandMentionsTooManyParts(t *testing.T) {
 		paths[i] = p
 	}
 
-	if _, err := ExpandMentions(paths, Capabilities{Image: true}); err == nil {
+	if _, err := ExpandMentions(mentionAttachments(paths...), Capabilities{Image: true}); err == nil {
 		t.Fatal("want too-many-parts error")
 	} else if !strings.Contains(err.Error(), "too many media attachments") {
 		t.Errorf("error = %q, want a too-many-attachments message", err)
@@ -185,7 +264,7 @@ func TestExpandMentionsTotalBytes(t *testing.T) {
 		paths = append(paths, p)
 	}
 
-	if _, err := ExpandMentions(paths, Capabilities{Image: true}); err == nil {
+	if _, err := ExpandMentions(mentionAttachments(paths...), Capabilities{Image: true}); err == nil {
 		t.Fatal("want total-bytes error")
 	} else if !strings.Contains(err.Error(), "prompt limit") {
 		t.Errorf("error = %q, want a prompt-limit message", err)
@@ -195,7 +274,7 @@ func TestExpandMentionsTotalBytes(t *testing.T) {
 // TestExpandMentionsUnreadable asserts a missing file is a loud error (never a
 // silent skip).
 func TestExpandMentionsUnreadable(t *testing.T) {
-	if _, err := ExpandMentions([]string{filepath.Join(t.TempDir(), "nope.png")}, Capabilities{Image: true}); err == nil {
+	if _, err := ExpandMentions(mentionAttachments(filepath.Join(t.TempDir(), "nope.png")), Capabilities{Image: true}); err == nil {
 		t.Fatal("want read error for a missing file")
 	}
 }
@@ -211,7 +290,7 @@ func TestExpandMentionsAudioPart(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{Audio: true})
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{Audio: true})
 	if err != nil {
 		t.Fatalf("ExpandMentions: %v", err)
 	}
@@ -245,7 +324,7 @@ func TestExpandMentionsAudioCapGated(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{Audio: false})
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{Audio: false})
 	if err == nil {
 		t.Fatalf("want error for audio with Audio:false, got parts=%v", res.Parts)
 	}
@@ -268,7 +347,7 @@ func TestExpandMentionsUnsupportedFileRefused(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := ExpandMentions([]string{path}, Capabilities{Image: true, Audio: true})
+	res, err := ExpandMentions(mentionAttachments(path), Capabilities{Image: true, Audio: true})
 	if err == nil {
 		t.Fatalf("want unsupported-type error, got parts=%v inline=%v", res.Parts, res.InlineText)
 	}

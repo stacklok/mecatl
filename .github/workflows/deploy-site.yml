@@ -1,10 +1,12 @@
-# Deploy the mecatl.dev docs site (website/) to AWS S3 + CloudFront.
+# Maintain an AWS rollback copy of the mecatl.dev docs site during the Vercel
+# cutover stability window.
 #
 # Hosting lives in the stacklok/infra repo: the private S3 bucket
 # `mecatl-dev-site` behind CloudFront distribution E1CIKTNUUCD4K4, with an edge
-# CloudFront Function doing HTTP Basic Auth while the site is pre-public. This
-# workflow builds the Docusaurus site and publishes it via GitHub OIDC — NO
-# static AWS credentials.
+# CloudFront Function providing the legacy request handling. This workflow
+# builds the Docusaurus site and publishes it via GitHub OIDC. Vercel is the
+# authoritative production host; this copy exists only for rollback and uses
+# no static AWS credentials.
 #
 # It assumes `github_actions_mecatl_role`, whose trust is scoped to this repo's
 # `production` GitHub Environment, so the job MUST declare `environment:
@@ -16,7 +18,7 @@
 # bucket first — needed to force a full re-upload after a change that `aws s3
 # sync` can't detect on its own (e.g. a bucket-level encryption change, which
 # does not re-encrypt existing objects). All actions are SHA-pinned to latest.
-name: Deploy site
+name: Deploy site rollback copy
 
 on:
   push:

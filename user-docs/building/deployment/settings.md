@@ -8,35 +8,38 @@ description:
 
 # Configure Mecatl
 
-Mecatl has separate configuration planes for server behavior, secrets, daemon
-listeners, command-line overrides, and the `mecatui` client. Choose the plane
-owned by the process that runs the agent; a terminal client connected to another
-server cannot reconfigure that server.
+Configure the process that runs the agent. A `mecatui` client connected to a
+remote server cannot change that server's providers, permissions, storage, or
+other operator settings.
+
+Mecatl separates shared agent policy, credentials, daemon topology,
+command-line overrides, and terminal UI preferences. Keep each setting in its
+own configuration plane.
 
 ## Configuration at a glance
 
 |Plane|Practical location or input|Owner|What it configures|
 |-|-|-|-|
-|Operator settings|`$XDG_CONFIG_HOME/mecatl/settings.yaml` (normally `~/.config/mecatl/settings.yaml`)|Server operator|Providers and models, permissions, posture, MCP profiles, and other shared agent policy.|
-|Secret authentication|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (normally `~/.config/mecatl/auth.yaml`), or `--api-key-file`|Server operator|Provider API keys and the experimental Codex credential snapshot. Keep secrets out of `settings.yaml`.|
+|Operator settings|`$XDG_CONFIG_HOME/mecatl/settings.yaml` (usually `~/.config/mecatl/settings.yaml`)|Server operator|Providers and models, permissions, posture, MCP profiles, and other shared agent policy.|
+|Provider credentials|`$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`), or `--api-key-file`|Server operator|Provider API keys and the experimental Codex credential snapshot.|
 |Daemon topology|A chosen `daemon.yaml`, passed to `mecated serve --config PATH`|`mecated` operator|Listener addresses, TLS material, and rate limits. It is not automatically loaded and never contains the API bearer token.|
-|CLI flags and environment|Invocation flags and documented environment variables|The process launcher|A deployment-specific override or one-run choice, such as workspace, provider/model, store, or transport.|
-|mecatui client settings|`$XDG_CONFIG_HOME/mecatui/settings.yaml` (normally `~/.config/mecatui/settings.yaml`)|Local terminal user|Keybindings and status-line presentation only.|
+|CLI flags and environment|Invocation flags and documented environment variables|Process launcher|Deployment-specific overrides such as workspace, provider, model, store, or transport.|
+|mecatui client settings|`$XDG_CONFIG_HOME/mecatui/settings.yaml` (usually `~/.config/mecatui/settings.yaml`)|Local terminal user|Keybindings and status-line presentation only.|
 
-The generated [configuration reference](/reference/configuration.md) is the
-exhaustive schema, defaults, and tier table for the shared operator
-`settings.yaml`. Use `mecated config init` to scaffold it and
-`mecated config validate` to validate it without starting a server.
+Use `mecated config init` to create `settings.yaml`, and use
+`mecated config validate` to check it without starting the server. The generated
+[configuration reference](/reference/configuration.md) lists the complete
+schema, defaults, and allowed configuration tiers.
 
 ## Which settings apply?
 
 |Deployment option|Operator `settings.yaml` and `auth.yaml`|`daemon.yaml`|Agent/server flags|Client-only mecatui settings|Effective defaults|
 |-|-|-|-|-|-|
-|`mecated serve`|Read by the daemon at startup.|Available through `mecated serve --config PATH`.|Configure this daemon; applicable explicit flags override file values.|Not used unless a separate mecatui client connects.|Daemon defaults, then operator settings, then applicable explicit flags.|
-|Bare `mecatui` (embedded server)|Read by the in-process server at startup.|Not used; it does not start a network daemon.|Embedded-server flags configure that local server.|Read locally for UI behavior.|Embedded-server defaults apply before operator settings; applicable embedded flags then override.|
-|`mecatui connect ADDRESS`|Owned and read by the remote server, not the client.|Owned by the remote `mecated` operator.|Only connection/client flags apply; embedded-server flags are rejected.|Read locally for UI behavior.|The remote server is authoritative; local defaults and settings affect only the client UI and connection.|
-|`mecatequi`|Read by the one-shot process at startup.|Not used; it has no listeners.|Configure that one run.|Not used.|Headless by default; use its own flags and operator settings for the single run.|
-|`mecak8s`|Mount `settings.yaml` from an operator-controlled ConfigMap and `auth.yaml` from a read-only Secret; use documented Secret-projected environment variables for provider or MCP credentials.|Not used; Helm and Kubernetes own listener topology.|Helm values supply command arguments and environment to the `mecak8s` process.|Not used.|Kubernetes-native defaults: headless/`auto` posture, no-FS placement, pod listeners, Redis-backed durable state when `redis.endpoint` is configured, and Kubernetes Lease coordination. [Use the mecak8s deployment guide.](./mecak8s.md)|
+|`mecated serve`|Read at startup.|Available through `mecated serve --config PATH`.|Configure the daemon; applicable explicit flags override file values.|Used only by a separate client.|Daemon defaults, then operator settings, then applicable explicit flags.|
+|Bare `mecatui`|Read by the embedded server at startup.|Not used.|Configure the embedded server.|Read locally.|Embedded-server defaults, operator settings, then applicable explicit flags.|
+|`mecatui connect ADDRESS`|Read by the remote server.|Owned by the remote operator.|Only connection and client flags apply.|Read locally.|The remote server controls agent behavior; local settings control only the client and connection.|
+|`mecatequi`|Read at startup.|Not used.|Configure the single run.|Not used.|Headless defaults, operator settings, then applicable explicit flags.|
+|`mecak8s`|Mount `settings.yaml` from a ConfigMap and `auth.yaml` from a read-only Secret. You can also project provider and MCP credentials as documented environment variables.|Not used; Helm and Kubernetes own topology.|Helm values supply arguments and environment variables.|Not used.|Headless `auto` posture, no-filesystem placement, pod listeners, Redis state when configured, and Kubernetes Lease coordination.|
 
 For the daemon and Kubernetes operating details, see
 [Run mecated standalone](./mecated.md) and
@@ -45,27 +48,26 @@ For the daemon and Kubernetes operating details, see
 
 ## Ownership and precedence
 
-`settings.yaml` is the normal user-global operator file. It is not a secret
-store: put custom-provider keys in `auth.yaml`, whose default path can be
-replaced with `--api-key-file`. Both are read when the process starts, so
-restart the server or one-shot runner after changing them.
+`settings.yaml` is the user-global operator file. Put provider keys in
+`auth.yaml`, and use `--api-key-file` to select a non-default credentials file.
+The process reads both files at startup, so restart it after changing either
+file.
 
-A project can contribute only the settings that are allowed at project tier,
-from `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml` in its workspace.
-Operator-only settings remain user-global; project authority is also subject to
-the trust gate. Permission sources have their own ordered scopes, including
+A trusted project can contribute project-tier settings from
+`.mecatl/settings.yaml` or `.mecatl/settings.local.yaml`. Operator-only settings
+remain user-global. Permission sources have their own ordered scopes, including
 explicit `--permission-config` files. See
 [Permissions and posture](/features/permissions-and-posture.md) for the
-applicable trust and precedence rules.
+trust and precedence rules.
 
-For settings with a matching flag, an explicit applicable CLI value overrides
-the file value. Environment variables and flags are command/root-specific: a
-variable or flag documented for one executable or mode may be ignored or
-rejected by another. `daemon.yaml` has a narrower, independent rule: defaults <
-daemon file < explicit `mecated serve` flag. It controls topology only; use
-`--auth-token` or `MECATL_AUTH_TOKEN` for the daemon API bearer. Consult the
-command's `--help-all` and the generated reference for a setting's exact
-precedence rather than assuming every flag applies to every binary.
+An applicable explicit CLI value overrides the corresponding file setting.
+Flags and environment variables are command-specific, so check the command's
+`--help-all` output before reusing an option with another executable or mode.
+
+`daemon.yaml` uses its own precedence: defaults, then the daemon file, then an
+explicit `mecated serve` flag. It controls listener topology, TLS, and rate
+limits. Supply the daemon API bearer through `--auth-token` or
+`MECATL_AUTH_TOKEN`.
 
 ## Configure provider credentials
 
@@ -100,34 +102,33 @@ an error. A missing explicit `--api-key-file` path produces a warning. On Unix,
 Mecatl also warns when group or other users can read the file. Use mode `0600`
 on a shared host and restart the process after replacing a credential.
 
-The experimental `openai-codex` provider captures one immutable token snapshot
-at startup. It has no login or refresh flow. When both the token and file carry
-an account or expiry claim, the values must agree and the earlier expiry wins.
-Mode `0600` prevents access by other users, but another process running as the
-same user can still read a known plaintext path. Use a dedicated
-operating-system identity or a stronger sandbox when that residual risk is
-unacceptable.
+The experimental `openai-codex` provider reads one token snapshot at startup
+and has no login or refresh flow. When both the token and file include an
+account or expiry claim, the values must agree, and the earlier expiry applies.
+Mode `0600` blocks other users, but another process running as the same user can
+still read the plaintext file. Use a dedicated operating-system account or a
+stronger sandbox when you need isolation from same-user processes.
 
 ## Embedded and connected mecatui
 
-Bare `mecatui` embeds a private server, so its local operator settings,
-`auth.yaml`, and embedded-server flags determine provider availability,
-workspace policy, storage, and permissions. `mecatui connect ADDRESS` only dials
-an existing server: that remote operator remains authoritative for all of those
-choices. Local settings cannot set a remote workspace, provider, model, or
-policy; connection credentials authenticate to the server but do not configure
-it.
+Bare `mecatui` embeds a private server. Its local operator settings,
+credentials, and embedded-server flags control provider availability, workspace
+policy, storage, and permissions.
 
-The terminal client still reads its own `$XDG_CONFIG_HOME/mecatui/settings.yaml`
-in both modes. Its UI settings do not alter server behavior. For keymaps, the
-legacy `keymap:` in the shared Mecatl settings file is lowest priority, the
-client file is next, and `mecatui --keymap` wins for that action. See
+`mecatui connect ADDRESS` connects to an existing server whose operator controls
+those choices. Local connection credentials authenticate the client; they do
+not configure the remote server.
+
+The terminal client reads `$XDG_CONFIG_HOME/mecatui/settings.yaml` in both
+modes. These UI settings do not alter server behavior. For keymaps, the legacy
+`keymap:` entry in the shared Mecatl settings file has the lowest priority, the
+client file is next, and `mecatui --keymap` has the highest priority. See
 [Keybindings](/mecatui/keybindings.md),
 [Customize mecatui](/mecatui/customization.md), and
 [Connect to a server](/mecatui/remote-servers.md) for client and transport
 details.
 
-## Configure a specific concern
+## Next steps
 
 - [Choose models and providers](/features/choose-models.md) covers provider,
   model, and endpoint selection.

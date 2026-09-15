@@ -16,7 +16,9 @@ import (
 // the mirror cannot silently drift. It asserts every json-tagged field of
 // metaSnapshot has a field with the SAME json tag name on sessnap.Snapshot.
 // (The reverse is NOT required — metaSnapshot deliberately omits the heavy
-// fields like messages/limits/usage; it is a strict SUBSET, not an equal set.)
+// fields like messages/limits/usage; activity is intentionally carried by the
+// outer currentSnapshot metadata wrapper so the canonical snapshot remains
+// unchanged.)
 //
 // This is an INTERNAL test (package jsonlstore) because metaSnapshot is
 // unexported.
@@ -48,6 +50,17 @@ func TestMetaSnapshotTagsAreSessnapSubset(t *testing.T) {
 			t.Errorf("metaSnapshot.%s (json %q) has no matching field on sessnap.Snapshot — "+
 				"the mirror has drifted; either add the field to sessnap.Snapshot or fix metaSnapshot", metaField.Name, name)
 		}
+	}
+}
+
+func TestCurrentSnapshotActivityIsMetadataOnly(t *testing.T) {
+	currentType := reflect.TypeOf(currentSnapshot{})
+	activity, ok := currentType.FieldByName("Activity")
+	if !ok || strings.Split(activity.Tag.Get("json"), ",")[0] != "activity" {
+		t.Fatal("current snapshot does not carry an activity metadata projection")
+	}
+	if _, found := reflect.TypeOf(sessnap.Snapshot{}).FieldByName("Activity"); found {
+		t.Fatal("canonical sessnap.Snapshot must not duplicate activity metadata")
 	}
 }
 

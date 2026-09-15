@@ -1092,9 +1092,29 @@ Typing `@` opens an inline **file-completion menu** — the same kind of dropdow
 the `/` palette, mutually exclusive with it (a line is either a `/command` or has an
 `@token` word, never both). It lists workspace files matching the typed token
 (case-insensitive substring on the path or base name; dotfiles/`.git` pruned; capped
-to 8 rows and a bounded directory walk so a huge tree never blocks). `↑`/`↓` select,
-`tab`/`enter` complete the highlighted path into the input (`@<path> `), `esc`
-dismisses.
+to 8 rows and a bounded directory walk so a huge tree never blocks). Ordinary paths and
+paths beginning `./` resolve from the client workspace; `./` remains in a completed
+insertion. One or more leading `../` components walk to the corresponding parent of
+that workspace and remain in the insertion, so they may select files outside it. A
+token starting with literal `~/` instead searches the **mecatui client process's home
+directory** and keeps `~/` in the completed insertion; it also supports leading `./`
+and `../` components after `~/`, and works even when the client has no workspace.
+With no client workspace, non-home completion has no implicit process-cwd fallback.
+`↑`/`↓` select, `tab`/`enter` complete the highlighted path into the input
+(`@<path> `), `esc` dismisses.
+
+All of these are local attachment spellings, not server workspace paths. On submit,
+mecatui reads the local file and uploads its content bytes into the conversation; the
+source is not mounted, materialized, or made readable/editable through server tools.
+This matters for remote, containerized, and no-FS sessions: `~` means the machine
+running mecatui, not the server/container or any server workspace. Traversal outside
+the client workspace still uploads content only; it grants no execution-environment
+filesystem access. Attach only content you intend to share, especially from a home
+directory. Only literal leading `~/` is recognized for home expansion; `~user` has
+no home-expansion meaning but can still attach as an ordinary workspace-relative path
+when a file with that name exists. Quoted forms and embedded tildes are ordinary
+prose; a path containing whitespace cannot be completed or mentioned as one token. If the local home cannot be determined, the mention also
+remains prose.
 
 On submit, every `@path` in the prompt is read and routed by sniffed content type:
 
@@ -1663,6 +1683,14 @@ clipboard failure or a session change instead of claiming a stale copy. `esc` cl
 
 **`/sessions` (session continuity).** The session inventory has four session tabs:
 **Chats**, **Scheduled runs**, **Child runs**, and **Other**. When the server
+advertises `session_activity_inventory`, it adds a **Drafts** tab: known empty
+main sessions render there as **`New — no messages`**, while Chats contains only
+active and unknown main rows. Drafts remain selectable for explicit continuation
+or exact-ID `--resume`; `--resume-latest` considers only active main rows and
+checks each authoritative transcript, falling back to older candidates when one
+is unavailable or empty. A server without that feature keeps the historical
+mixed Chats view and hides Drafts. Delete is explicit and permanent when
+permitted; closing this panel never deletes a draft or any other session. When the server
 advertises authenticated bounded storage health or either maintenance operation, a fifth
 **Maintenance** tab appears. Its status view shows current/reclaimable availability,
 aggregate bytes/files/formats/kinds/corruption, effective retention policy, sweep timing,
@@ -2309,3 +2337,22 @@ The manifest forwards `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`,
 endpoints; mecatl auto-detects the provider from whichever key is set. Edit the
 manifest for a deployment that pins a single provider or a stricter egress
 profile.
+
+
+### Agents overlay viewport behavior
+
+F6 opens the client-only Agents overlay. At known terminal heights of 24 rows or
+more, each Subagents, Parallel, and Teams view is physically line-budgeted to the
+offered conversation viewport: frames, tabs, wrapped metadata, overflow range, and
+footer are included. The remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`,
+and `JumpEnd` actions move the selection in Subagent and Team rosters and in a
+focused Parallel group; in Subagent or Team focus, tasks, and findings views they
+scroll the rendered lines. If the surrounding UI leaves too little conversation
+space for even the complete minimal card, an unframed `vp short` line identifies
+the active tab and the available `esc` action instead of clipping the card.
+
+At known terminal heights below 24 rows, the overlay uses a separate unframed,
+width-truncated compact line. A roster identifies its active tab; focus identifies
+the child, Parallel group, or team member, while task and finding views identify
+their subview. The line retains `esc close` or `esc back`, and other overlay
+navigation is suspended.

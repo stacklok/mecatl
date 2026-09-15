@@ -5737,7 +5737,15 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 	}
 
 	onError := func(sc mcp.ServerConfig, err error) {
-		if errors.Is(err, mcp.ErrOAuthLoginRequired) {
+		switch mcp.OAuthDCRRecoveryCategoryOf(err) {
+		case mcp.OAuthDCRRecoveryResetRequired:
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth DCR valid ready registration identity differs from current profile, principal, canonical resource, or exact issuer", "name", sc.Name, "remedy", "run "+mcpLoginRemedy(sc)+" --reset-dcr-registration")
+			return
+		case mcp.OAuthDCRRecoveryPendingIdentityMismatch:
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth DCR pending registration identity mismatch", "name", sc.Name, "remedy", "restore the matching OAuth profile, principal, canonical resource, and exact issuer configuration, then run "+mcpLoginRemedy(sc)+" --retry-dcr-registration")
+			return
+		}
+		if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth login required", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
 			return
 		}

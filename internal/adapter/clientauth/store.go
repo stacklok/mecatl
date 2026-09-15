@@ -834,18 +834,18 @@ func (r *Registry) readRows() ([]registryRow, error) {
 
 // Find returns the one saved connection addressed by an exact canonical resource
 // URL or target. Resource and target aliases are intentionally resolved through
-// the same ambiguity check; a legacy row without ResourceURL is target-only. An
-// alias outside every recognized grammar (including a legacy `scheme://host:port`
+// the same ambiguity check; a legacy row without ResourceURL is target-only. A
+// bare hostname matches by ResourceURL first, then falls back to the
+// Identity.Target it would have at the default HTTPS port, so an explicit-identity
+// row (which never sets ResourceURL) is still reachable by its natural hostname.
+// An alias outside every recognized grammar (including a legacy `scheme://host:port`
 // gRPC target such as `unix://...`, which predates canonicalTarget's own stricter
 // grammar) cannot name a saved row and reports credentialstore.ErrNotFound rather
 // than ErrInvalidIdentity, mirroring FindTarget's leniency: both real callers
 // (cmd/mecatui's connect and resolveTransport) treat "not enrolled" as the
 // ordinary, idempotent miss and anything else as a hard local-storage failure.
 func (r *Registry) Find(alias string) (Connection, error) {
-	var (
-		match func(Connection) bool
-		err   error
-	)
+	var match func(Connection) bool
 	if strings.Contains(alias, "://") {
 		resource, resourceErr := canonicalResourceURL(alias)
 		if resourceErr != nil {
@@ -862,7 +862,14 @@ func (r *Registry) Find(alias string) (Connection, error) {
 		if resourceErr != nil {
 			return Connection{}, credentialstore.ErrNotFound
 		}
-		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
+		var fallbackTarget string
+		if parsed, parseErr := url.Parse(resource); parseErr == nil {
+			fallbackTarget = net.JoinHostPort(parsed.Hostname(), "443")
+		}
+		match = func(conn Connection) bool {
+			return (conn.ResourceURL != "" && conn.ResourceURL == resource) ||
+				(fallbackTarget != "" && conn.Identity.Target == fallbackTarget)
+		}
 	}
 	all, err := r.List()
 	if err != nil {

@@ -2,210 +2,93 @@
 sidebar_position: 8
 title: Agent definitions
 description:
-  Define specialist agents with reusable instructions, tools, models, and memory
-  settings.
+  Define named specialists or supply them from a custom AgentDefSource.
 ---
 
 # Agent definitions
 
 Agent definitions configure named specialists with their own instructions,
-tools, model, MCP servers, hooks, and memory. Unlike an anonymous subagent that
-inherits the parent's defaults, a named specialist runs with the scope defined
-for it.
+tools, model, limits, hooks, MCP servers, and memory. The Subagent tool and
+agent teams use the same definitions.
 
-Named definitions are consumed by **two delegation paths**:
+To configure and use named specialists, see
+[Named agents](/features/named-agents.md). This page covers the source interface
+and custom integrations.
 
-- **Subagent tool** — the model passes `agent: "<name>"` to the Subagent tool;
-  the harness routes to that specialist's engine. Read-only is the default,
-  while supported writable calls can retain Edit/Write under the selected mode.
-- **Team members** — the team `MemberSpec.AgentType` field identifies which def
-  to use for a member slot; a mutating member may retain Edit/Write.
+Implement `tool.AgentDefSource` to load definitions from a database, registry,
+or another backend. Use `engine/adapter/agentfs` to load Markdown files.
 
-A single `<name>.md` file covers both paths without duplication.
+## The AgentDef type
 
----
+`tool.AgentDef` contains logical configuration rather than storage locations:
 
-## The `AgentDef` value object
-
-`engine/tool.AgentDef` is the data type that crosses the port boundary. It is a
-pure value object with no path, directory, or infrastructure type. Where a
-definition came from is the adapter's private business; the `Origin` field
-carries only a tier label for observability.
-
-|Field|Type|Required|Description|
-|-|-|-|-|
-|`Name`|`string`|yes|The routing key passed to the Subagent `agent` arg; also the `AgentType` handle for team members|
-|`Description`|`string`|yes|One-line routing summary, capped at `MaxAgentDescriptionBytes` (2000 bytes). Always in context on every request; keep it concise|
-|`Body`|`string`|—|The specialist's full instructions, capped at `MaxAgentBodyBytes` (32 KiB). Composed into the def's system prompt|
-|`Tools`|`[]string`|—|Allowlist of core tool names. Absent means the call-site default. `Subagent`/`Parallel`/`ToolSearch` are always excluded regardless|
-|`DisallowedTools`|`[]string`|—|Subtractive filter applied after `Tools`/default|
-|`Model`|`string`|—|Model alias or full ID. Empty or `"inherit"` means parent model|
-|`Provider`|`string`|—|Provider ID (`"openai"`, `"openrouter"`, …). Empty inherits the session provider|
-|`PermissionMode`|`string`|—|Raw permission mode string (`default`, `plan`, `acceptEdits`)|
-|`MaxTurns`|`int`|—|Per-run turn cap. Zero means call-site default|
-|`MaxToolCalls`|`int`|—|Per-run tool-call cap. Zero means call-site default|
-|`Skills`|`[]string`|—|Skill names to preload into this def's system prompt at startup|
-|`MCPServers`|`[]AgentMCPServer`|—|Per-def MCP servers (reference or inline; see below)|
-|`Hooks`|`map[string]string`|—|Phase → shell command map scoped to this def's engine|
-|`Memory`|`string`|—|Persistent memory tier: `""` (none), `"user"`, or `"project"` (read-only in v1)|
-|`Color`|`string`|—|UX hint only; never affects execution|
-|`Origin`|`AgentOrigin`|—|Admission tier label (set by the source adapter, not the file itself)|
-
-The two byte caps are canonical — the filesystem parser truncates on discovery,
-and a remote-driver client re-truncates wire data defensively:
-
-```go
-const MaxAgentDescriptionBytes = 2000    // always-in-context; conservative
-const MaxAgentBodyBytes        = 32*1024 // in-context only for the specialist itself
-```
-
-### MCP server entries
-
-Each `AgentMCPServer` entry in `MCPServers` is either a **reference** (a
-configured main server's name, `URL` empty) or an **inline** streamable-HTTP
-server (`Name` + `URL` + optional `Headers`). `AgentMCPServer.IsReference()`
-reports which:
-
-```go
-type AgentMCPServer struct {
-    Name    string
-    URL     string            // empty = reference
-    Headers map[string]string // SECRET-SHAPED; never logged or projected
-}
-
-func (s AgentMCPServer) IsReference() bool { return strings.TrimSpace(s.URL) == "" }
-```
-
-`Headers` is secret-shaped. The harness never logs it, never surfaces it in any
-inventory or snapshot, and never sends it over any non-local cleartext channel.
-
-stdio and non-HTTP transports are rejected outright. Only streamable-HTTP inline
-entries are admitted.
-
-### Admission tiers
-
-`AgentOrigin` is a closed label set:
-
-|Constant|Tier|
+|Field|Purpose|
 |-|-|
-|`AgentOriginExplicit`|Operator-configured path or `--agents-dir` flag|
-|`AgentOriginProject`|Workspace-local (trust-gated at source construction)|
-|`AgentOriginUser`|User-global (never trust-gated)|
-|`AgentOriginDriver`|Remote gRPC driver (`--agent-source-url`)|
+|`Name`|Stable name used by Subagent and team members|
+|`Description`|One-line routing summary|
+|`Body`|Specialist instructions|
+|`Tools`|Optional tool allowlist|
+|`DisallowedTools`|Tool names removed from the selected set|
+|`Model`|Model alias, full ID, `inherit`, or empty|
+|`Provider`|Provider ID, or empty to inherit|
+|`PermissionMode`|Optional `default`, `plan`, or `acceptEdits` mode|
+|`MaxTurns`|Per-run turn limit; zero uses the caller default|
+|`MaxToolCalls`|Per-run tool-call limit; zero uses the caller default|
+|`Skills`|Skill names whose bodies Mecatl preloads|
+|`MCPServers`|Referenced or inline MCP servers|
+|`Hooks`|Hook phase to shell-command mapping|
+|`Memory`|Empty, `user`, or `project` memory tier|
+|`Color`|Display hint with no execution effect|
+|`Origin`|Admission tier set by the source|
 
-Origin is stamped by the source adapter, not the file. A consumer that
-encounters an unrecognised value normalizes it to `AgentOriginDriver`.
+`Description` is limited to `tool.MaxAgentDescriptionBytes` (2,000 bytes).
+`Body` is limited to `tool.MaxAgentBodyBytes` (32 KiB). Apply these limits in
+every source.
 
----
+`Origin` is one of `explicit`, `project`, `user`, or `driver`. It describes the
+admission tier for trust and diagnostics. It must not contain a path or URL.
 
-## The `AgentDefSource` port
-
-`engine/tool.AgentDefSource` is the read-only seam agent definitions cross into
-the harness:
+## The AgentDefSource interface
 
 ```go
 type AgentDefSource interface {
-    ListAgentDefs(ctx context.Context) ([]AgentDef, error)
+    ListAgentDefs(
+        ctx context.Context,
+    ) ([]AgentDef, error)
 }
 ```
 
-`ListAgentDefs` must return defs **sorted by name** with **unique names**. The
-interface is **snapshot-semantics**: the harness resolves once at build time and
-the result is stable for the life of the source. Per-def child engines are built
-exactly once; the build-once, trust-gate-completeness invariant depends on this.
+`ListAgentDefs` returns definitions sorted by name with no duplicates. Sources
+have snapshot semantics: resolve their contents at construction and return a
+stable list for their lifetime.
 
-The harness has no `Get` method on the port. The `agents.Registry`
-(adapter-side) provides name-indexed lookup and the non-port `Detail` channel
-for composition diagnostics, but neither crosses the port boundary.
-
----
-
-## Reference implementations
-
-### `engine/adapter/sourceconformance` — testing
-
-`sourceconformance.AgentFixture` is the canonical fixture set: three defs
-covering a minimal def (name + description + body), a fully-loaded def (every
-optional field), and an MCP-bearing def (one reference entry + one inline entry
-with secret headers).
-
-`RunAgentSource(t, newSource)` is the shared conformance suite. Pass it a
-function that returns a fresh `tool.AgentDefSource` serving exactly the fixture,
-and the suite verifies:
-
-- The list matches the fixture on every field except `Origin` (each backend
-  stamps its own tier).
-- The list is stable across calls (snapshot semantics).
-- No def violates the `MaxAgentDescriptionBytes` or `MaxAgentBodyBytes` caps.
-
-`NewAgentFixtureSource()` returns the in-memory reference implementation that
-serves the fixture with `AgentOriginExplicit` stamped. It is also the suite's
-self-test subject:
+Validate a source with `engine/adapter/sourceconformance`:
 
 ```go
-// in your adapter test
-func TestMyAgentSource(t *testing.T) {
-    sourceconformance.RunAgentSource(t, func(t *testing.T) tool.AgentDefSource {
-        return myNewSource(t)
-    })
+func TestAgentSource(t *testing.T) {
+    sourceconformance.RunAgentSource(
+        t,
+        func(t *testing.T) tool.AgentDefSource {
+            return newAgentSource(t)
+        },
+    )
 }
 ```
 
-### `engine/adapter/agentfs` — production filesystem source (importable)
+The test factory must return a fresh source that serves exactly
+`sourceconformance.AgentFixture`. The suite compares every definition field
+except the source-specific `Origin` value and also checks stable ordering and
+content limits.
 
-The production adapter reads flat `<name>.md` files from one or more
-directories. It graduated into the importable engine module
-(`engine/adapter/agentfs`, issue #328) so an external consumer can compose its
-own sources directly; the in-repo binaries consume it through the
-`internal/adapter/agents` package, which re-exports it via thin aliases (there
-is no second copy to drift). The main types:
+## Use definition files
 
-|Type|Role|
-|-|-|
-|`DirSource`|Scans one local directory; stamps each def with an admission tier and a diagnostics detail string|
-|`MultiSource`|Composes an ordered list of `AgentSource`s; earlier-wins on name collisions|
-|`FSSource`|Snapshot `tool.AgentDefSource` built by running `NewMultiSource` once at construction|
-|`Registry`|Immutable name-indexed view used by the composition layer; not a port type|
-
-`ResolveSources(opts ResolveOptions)` builds the ordered,
-highest-precedence-first source list from the conventional locations and any
-explicit paths. Precedence (highest first):
-
-1. `--agents-dir` flags (`AgentOriginExplicit`)
-2. `<workspace>/.mecatl/agents` (`AgentOriginProject`, trust-gated)
-3. `<workspace>/.claude/agents` (`AgentOriginProject`, trust-gated)
-4. `$XDG_CONFIG_HOME/mecatl/agents` (`AgentOriginUser`)
-5. `~/.claude/agents` (`AgentOriginUser`)
-
-The project tier is withheld when the workspace is untrusted
-(`ResolveOptions.IncludeProjectTier = false`). User-tier sources are never
-gated.
-
-`NewFSSource(ctx, sources...)` runs discovery once, stamps `AgentOriginExplicit`
-on any def that arrived without a tier, and returns the snapshot plus aggregated
-`SkipError` diagnostics. Discovery is forgiving: an absent directory yields no
-defs and no error; a malformed file is skipped and reported, not fatal.
-
-The `Registry.Detail` method exposes the adapter-private locator string
-(`"<label>: <path>"`) for composition diagnostics. It is non-port and never
-reaches any model-facing surface.
-
----
-
-## File format
-
-A definition file is Markdown with a YAML frontmatter block. The `name` and
-`description` fields are required; everything else is optional.
-
-```text
-.mecatl/agents/
-└── code-reviewer.md
-```
+`engine/adapter/agentfs` loads flat Markdown files from one or more directories.
+The file contains YAML front matter followed by the specialist's instructions:
 
 ```yaml
 ---
 name: code-reviewer
-description: Reviews a diff for correctness, style, and test coverage.
+description: Reviews a diff for correctness and test coverage.
 tools: [Read, Grep, Glob]
 disallowedTools: [Write]
 model: sonnet
@@ -213,216 +96,124 @@ provider: openrouter
 permissionMode: plan
 maxTurns: 9
 maxToolCalls: 25
-color: blue
 skills: [refactoring]
 hooks:
   PreToolUse: ./scripts/review-gate.sh
 mcpServers:
   - github
-  - name: jira
-    url: https://jira.example/mcp
-    headers: { Authorization: 'Bearer ${TOKEN}' }
+  - name: issues
+    url: https://issues.example.com/mcp
+    headers:
+      Authorization: 'Bearer ${TOKEN}'
 memory: project
 ---
-You are a meticulous code reviewer. Focus on correctness first, then style.
+Review the requested change. Prioritize correctness, then test coverage.
 ```
 
-The `tools` and `disallowedTools` fields accept either a YAML array
-(`[Read, Grep]`) or a comma/space-separated string (`"Read, Grep"`) for
-compatibility with Claude Code's `.claude/agents` format.
+`name` and `description` are required. The other fields are optional. `tools`
+and `disallowedTools` accept a YAML list or a comma-separated string.
+`mcpServers` accepts comma-separated names or a list of names and inline server
+mappings.
 
-The `mcpServers` field accepts three forms interchangeably: a scalar string of
-comma-separated names, a YAML array of name strings, or a YAML array of mappings
-(for inline servers). Scalars and mappings may be mixed in one array.
+An MCP entry containing only a name references a server already configured for
+the main application. An inline entry supplies a name, streamable HTTP URL, and
+optional headers. Mecatl rejects stdio and other inline transports but keeps the
+rest of the definition.
 
-An inline `mcpServers` entry that declares a `command:`, `type: stdio`, or any
-non-HTTP transport is rejected with a non-fatal diagnostic and dropped. The def
-itself is still kept.
+Treat inline headers as secrets. Do not log them or include them in inventory,
+diagnostic, or snapshot output.
 
-:::note[Secret headers]
+## Resolve filesystem definitions
 
-`headers` values are secret-shaped. Never log them, print them in diagnostics,
-or include them in any inventory surface. The composition layer enforces this.
-The field rides the driver wire only because driver dials refuse non-local
-cleartext connections.
+`agentfs.ResolveSources` searches these sources in descending precedence:
 
-:::
+1. Paths configured with `--agents-dir`
+1. `<WORKSPACE>/.mecatl/agents`
+1. `<WORKSPACE>/.claude/agents`
+1. `$XDG_CONFIG_HOME/mecatl/agents`
+1. `~/.claude/agents`
 
-### `memory` field
+The first definition with a given name wins. Project directories are included
+only for a trusted workspace. User directories are always eligible. Missing
+directories have no effect, and invalid files are skipped with diagnostics.
 
-The `memory` field accepts three values:
+The adapter scans once when the source is created. Restart or rebuild the source
+to pick up file changes.
 
-|Value|Behavior|
+A remote implementation can expose `mecatl.driver.v1.AgentSourceService` and
+connect through `--agent-source-url`. This disables conventional filesystem
+discovery. It cannot be combined with an explicit `--agents-dir`.
+
+## Configure memory
+
+The `memory` field controls a read-only `MEMORY.md` fragment for the specialist:
+
+|Value|Location|
 |-|-|
-|`""` (absent)|No memory; cold start (default)|
-|`"user"`|Cross-project per-agent dir under `$XDG_CONFIG_HOME/mecatl/agents-memory/<sanitized-name>/`|
-|`"project"`|Workspace-relative: `<workspace>/.mecatl/agents-memory/<sanitized-name>/`, **trust-gated**|
+|Empty|No specialist memory|
+|`user`|`$XDG_CONFIG_HOME/mecatl/agents-memory/<NAME>/`|
+|`project`|`<WORKSPACE>/.mecatl/agents-memory/<NAME>/`|
 
-The `MEMORY.md` head (bounded at ~8 KiB) is injected as fenced `UNTRUSTED DATA`
-into the def's cache-stable system-prompt prefix at startup. **Read-only in v1**
-— the agent gains no write tools.
+Project memory is available only for trusted workspaces. Mecatl sanitizes the
+definition name and confines resolved paths to the selected memory directory. It
+injects a bounded memory fragment as untrusted data. The specialist cannot write
+this memory through the memory setting.
 
-The trust gate on `"project"` memory keys on the **resolved tier**, not on the
-def's `Origin`. A user-tier def with `memory: project` still cannot read
-untrusted workspace memory. The def name is path-sanitized (allowlist +
-containment check) to prevent directory traversal; the resolved path is also
-symlink-contained (CWE-59).
+## Invoke a named specialist
 
-Any value other than `""`, `"user"`, or `"project"` is a non-fatal diagnostic;
-the field falls back to `""`.
-
----
-
-## Discovery tiers
-
-```mermaid
-graph TD
-    E["--agents-dir (repeatable)"] -->|AgentOriginExplicit| MS
-    P1["&lt;workspace&gt;/.mecatl/agents"] -->|AgentOriginProject<br/>trust-gated| MS
-    P2["&lt;workspace&gt;/.claude/agents"] -->|AgentOriginProject<br/>trust-gated| MS
-    U1["$XDG_CONFIG_HOME/mecatl/agents"] -->|AgentOriginUser| MS
-    U2["~/.claude/agents"] -->|AgentOriginUser| MS
-    MS["MultiSource<br/>(earlier wins on collision)"] --> FS["FSSource<br/>(snapshot)"]
-    FS -->|ListAgentDefs| Port["tool.AgentDefSource"]
-```
-
-**Precedence:** explicit > project > user. When two sources provide a def with
-the same name, the higher-precedence source wins; the lower-precedence entry is
-dropped and reported as a `SkipError` with `Fatal: true`.
-
-The project tier is controlled by `ResolveOptions.IncludeProjectTier`, which the
-composition layer sets based on `cfg.TrustProject`. This is the same trust gate
-that governs project-tier skills, soul, and permission allow rules — a single
-`--trust-project` flag or `trustedWorkspaces:` entry admits the entire
-project-tier authority set.
-
-Conventional discovery (`--agents-conventional`, on by default) is inert when
-the directories are absent — no error, no defs, no configuration required.
-
----
-
-## Calling a named agent
-
-The model invokes a specialist by passing the `agent` parameter to the Subagent
-tool:
+The model supplies the definition name to Subagent:
 
 ```text
-Subagent(agent="code-reviewer", task="review the diff in HEAD")
+Subagent(
+  agent="code-reviewer",
+  task="Review the diff in HEAD."
+)
 ```
 
-On the Subagent path, named specialists are **read-only by default**
-(`SubagentTool.ReadOnly()` stays `true`). Edit and Write are dropped from the
-catalog even if the def's `tools` allowlist includes them, with a startup
-diagnostic. The specialist runs in an isolated git worktree (when Shell is
-configured and the workspace is trusted) so it retains a shell for inspection
-while writes land in a throwaway clone.
+Named subagents are read-only by default. When `Shell` is available and the
+workspace is trusted, the child inspects an isolated worktree. Read-only runs
+remove mutating tools, including `Edit` and `Write`, even when the definition
+names them.
 
-A specialist can also be invoked writable, landing edits directly in the real
-workspace — see [Writable named specialists](#writable-named-specialists) below.
-For concurrent mutating work, use the team member path with a `Mutating` member
-flag instead.
-
-### Combining `agent` and `model`
-
-The `agent` and `model` Subagent parameters may be used together:
+A caller can add a model override for a read-only run. Definitions with inline
+MCP servers do not support this combination because the temporary engine has no
+owner for the inline connection.
 
 ```text
-Subagent(agent="code-reviewer", model="opus", task="deep review")
+Subagent(
+  agent="code-reviewer",
+  model="opus",
+  task="Review the diff in HEAD."
+)
 ```
 
-The harness rebuilds the specialist's scoped engine on the override model
-(catalog, prompt, skills, hooks, memory — the full def scope) rather than using
-the pre-built def engine. The model is taken verbatim with no alias resolution
-(parity with the model-only path). The per-def limits still bind. A def with
-inline MCP servers is rejected on the `agent`+`model` path in v1 (the inline
-manager has no process-lifetime owner for a per-call engine); reference-only MCP
-is supported.
+Use `mode="read-write"` to run a supported named specialist against the parent
+workspace. Its tool allowlist still applies, and its calls use the main
+session's permission policy. A writable specialist cannot also use a per-call
+model override or inline MCP server.
 
-### Writable named specialists
+Writable specialists edit the parent workspace directly. A canceled or failed
+run can leave partial changes, so review the working tree after the call.
 
-A named specialist can also run **writable**: pass `mode: "read-write"`
-alongside `agent` and the specialist edits the real parent workspace directly,
-instead of running read-only in a throwaway worktree clone.
+An unknown definition name returns the available names so the model can retry.
 
-```text
-Subagent(agent="code-reviewer", mode="read-write", task="apply the review fixes")
-```
+## Implement a custom source
 
-This reuses the same direct-write mechanics as the generic writable Subagent (no
-fork, no copy, no merge-back — the specialist's Edit/Write/Shell mutate the real
-tree in place, exactly as the main agent does). What's new is that the
-specialist keeps its **own** scoped engine — prompt, skills, catalog, model —
-instead of falling back to the generic writable explorer. The harness rebuilds
-the def's scoped engine with mutating tools kept, on the def's resolved
-provider/model, using the main session's command runner.
+When implementing `AgentDefSource`:
 
-A few scope limits apply:
+1. Validate required fields and normalize supported enum values.
+1. Apply the description and body byte limits.
+1. Stamp each definition with its admission tier.
+1. Return a name-sorted, deduplicated snapshot.
+1. Keep storage locators and secret headers out of diagnostics.
+1. Run the source conformance suite.
 
-- **`agent` + `model` + `mode: "read-write"` together is rejected.** A writable
-  specialist always runs on its own resolved model; there's no per-call model
-  override for this path. Drop `model` (or drop `agent` to get a writable
-  explorer on a chosen model).
-- **The deployment must wire writable-specialist support**, or the call fails
-  with "not supported in this deployment." A no-filesystem session never wires
-  this path, so writable specialists are unavailable there.
-- **The def's own tool allowlist still governs.** Running writable only
-  _permits_ Edit/Write/Shell to survive scoping — it doesn't force-inject them.
-  A def whose `tools` allowlist excludes Edit/Write stays non-mutating even when
-  invoked with `mode: "read-write"`.
-- **Inline MCP servers are declined** on this path (a v1 scope limit — an inline
-  server's live connection has no process-lifetime owner on a per-call engine).
-  Reference-only MCP servers (naming a configured main server) work fine, since
-  they borrow the shared connection.
-- **Permissions resolve at main-session parity.** The child's posture is
-  non-isolated, so it does not get the isolated-child auto-approve for
-  read-only/build commands — its Shell, Edit, and Write asks resolve under the
-  operator's normal posture and policy, the same as the main agent's own tools.
+Apply the project trust decision before constructing a source that can return
+project-controlled definitions. A source's `Origin` label is observability data;
+it does not enforce trust by itself.
 
-As with the generic writable Subagent, a crashed or cancelled writable
-specialist can leave partial edits in the working tree — there's no fork to
-discard. Git is the rollback layer: review with `git diff`/`git status`, undo
-with `git checkout`/`git stash`.
+## Next steps
 
-An unknown agent name, or a known agent whose def can't run writable (inline MCP
-servers), is a model-addressable error suggesting the specialist be run
-read-only or that an anonymous writable explorer be used instead.
-
-### What the model sees when no def matches
-
-An unknown `agent` name is a model-addressable error that lists the valid names.
-The model can retry with a corrected name or fall back to an anonymous subagent.
-
----
-
-## Implementing a custom source
-
-To supply agent definitions from a source other than the filesystem (a database,
-a remote registry, a test fixture):
-
-1. Implement `tool.AgentDefSource` — one method, `ListAgentDefs`, returning a
-   name-sorted, unique slice.
-2. Stamp each def's `Origin` with the appropriate `AgentOrigin` tier constant.
-3. Respect the byte caps: truncate `Description` to `MaxAgentDescriptionBytes`
-   (2000) and `Body` to `MaxAgentBodyBytes` (32 KiB) before returning.
-4. Apply snapshot semantics: run your resolution once at construction; return
-   the same stable slice on every `ListAgentDefs` call.
-5. Validate with the conformance suite: call
-   `sourceconformance.RunAgentSource(t, newSource)` against your implementation
-   serving `sourceconformance.AgentFixture`.
-
-A remote gRPC driver implements `mecatl.driver.v1.AgentSourceService` and is
-wired via `--agent-source-url`. It is mutually exclusive with `--agents-dir` and
-supersedes conventional discovery.
-
----
-
-## What's next
-
-- [Skills](/building/extension-points/tool-catalog.md#skills) — the skill source
-  port follows the same snapshot seam and shares the conformance-suite pattern.
-- [Subagent delegation](/building/what-you-get/subagents-teams-parallel.md) —
-  how the agent loop dispatches child runs and manages concurrency.
-- [Permissions & guardrails](/building/what-you-get/permissions.md) — how
-  workspace trust gates the project tier and what untrusted mode degrades.
-- [Hook system](/building/what-you-get/hooks.md) — per-def hooks scoped to a
-  specialist's engine.
+- [Use subagents and teams](/building/what-you-get/subagents-teams-parallel.md).
+- [Provide skills through SkillSource](tool-catalog.md#provide-skills).
+- [Configure project trust](/features/permissions-and-posture.md).

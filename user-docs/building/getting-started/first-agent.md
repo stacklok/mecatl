@@ -6,37 +6,30 @@ description: Install the importable Mecatl engine and build a working Go agent.
 
 # Build your first agent
 
-This guide takes you from a clean Go module to a working Mecatl agent. You will
-create an `agent.Engine`, give it a session-scoped `tool.Environment`, run one
-prompt, and consume the resulting events.
+Build a small Go application that embeds the Mecatl engine, runs one prompt
+against an offline model provider, and prints the result. The finished example
+needs no API key or network connection.
 
-The engine is an importable Go module. It does not start a server or choose your
-provider, workspace, persistence, authentication, or observability for you. Your
-application supplies those pieces through `agent.Deps` and the engine ports.
+## Prerequisites
 
-## What this path covers
+You need Go 1.27 or newer.
 
-1. Run a deterministic offline agent with the reference `mockllm` provider.
-2. Add a custom tool through `tool.Catalog`.
-3. Require approval through `PermissionPolicy` and resolve it from the host.
-4. Choose the next extension point, including a real provider or child
-   delegation.
+## Create a Go module
 
-The first example is offline and requires no API key. To see tools, approval,
-teams, and background subagents together, follow the
-[`mecademo` walkthrough](/building/getting-started/demo.md).
+Create a project outside the Mecatl repository and add the engine dependency:
 
-## Before you start
+```sh
+mkdir first-agent
+cd first-agent
+go mod init example.com/first-agent
+go get github.com/stacklok/mecatl/engine@latest
+```
 
-You need Go 1.27 or newer. The first-agent example is designed to run from a
-clean external module and imports only the public
-`github.com/stacklok/mecatl/engine` module and its reference adapters.
+## Run an offline agent
 
-## First agent: offline and deterministic
+Create `main.go` with the following code:
 
-Create a clean Go module, add the engine dependency, and save this as `main.go`:
-
-```go
+```go title="main.go"
 package main
 
 import (
@@ -55,25 +48,35 @@ import (
 )
 
 func main() {
-    ws := memfs.NewWorkspace("/workspace")
-    env := tool.MustEnvironment(
-        session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "example-v1"},
-        ws,
-        memledger.New(),
-        nil,
-    )
-    eng := agent.NewEngine(agent.Deps{
-        LLM: mockllm.New(mockllm.TextTurn("Hello from your first agent.")),
-        Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "mock",
+    ref := session.EnvironmentRef{
+        Kind: session.EnvKindMem,
+        ID: "/workspace",
+        Revision: "example-v1",
+    }
+    workspace := memfs.NewWorkspace("/workspace")
+    environment := tool.MustEnvironment(ref, workspace, memledger.New(), nil)
+    engine := agent.NewEngine(agent.Deps{
+        LLM: mockllm.New(
+            mockllm.TextTurn("Hello from your first agent."),
+        ),
+        Catalog: tool.NewCatalog(),
+        Policy: permpolicy.NewPolicy(nil, permstore.New()),
+        Model: "mock",
     })
     sess := session.New(
         "first-agent",
         session.ModeDefault,
-        session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "example-v1"},
+        ref,
         session.Limits{},
         time.Now(),
     )
-    run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "Say hello."})
+
+    run := engine.Run(
+        context.Background(),
+        sess,
+        environment,
+        agent.RunRequest{Text: "Say hello."},
+    )
     for event := range run.Events() {
         if event.Type == session.EvResult && event.Result != nil {
             fmt.Println(event.Result.Text)
@@ -82,14 +85,9 @@ func main() {
 }
 ```
 
-The same source is available at
-[`examples/first-agent/main.go`](https://github.com/stacklok/mecatl/blob/main/examples/first-agent/main.go).
-Run it from a clean module rather than from the Mecatl checkout:
+Run the application:
 
 ```sh
-mkdir first-agent && cd first-agent
-go mod init example.com/first-agent
-go get github.com/stacklok/mecatl/engine@latest
 go run .
 ```
 
@@ -99,40 +97,22 @@ It prints:
 Hello from your first agent.
 ```
 
-The example uses the offline `mockllm` adapter, so it needs no API key or
-network. The `tool.Environment` binds the workspace and optional command runner
-that tools would use; this example passes no runner because it has no shell
-tool.
+The example creates an in-memory workspace and binds it to the session through
+`tool.Environment`. It passes no command runner because the empty tool catalog
+contains no shell tool. The `mockllm` adapter returns a fixed response, which
+makes this first run deterministic.
 
-## First tool: register a custom tool
+## Add tools and approvals
 
-A custom tool implements `tool.Tool` and is registered on the catalog passed to
-`agent.Deps`. The
-[first-agent-tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
-uses a scripted mock turn to call a `Ping` tool and prints:
+Register a custom tool on the `tool.Catalog` passed to `agent.Deps`. Each tool
+receives a `session.ToolCall` and the session's `tool.Environment`, then returns
+a model-visible `session.ToolResult`.
 
-```text
-tool.call
-tool.result
-result
-```
-
-The tool receives the model's `session.ToolCall` and the session-scoped
-`tool.Environment`, then returns a model-visible `session.ToolResult`. Its
-`ReadOnly` value tells the dispatcher whether it may run alongside other
-read-only calls. The example allows `Ping` in its permission policy; the next
-step changes that rule to require approval.
-
-For the complete interface, catalog registration rules, MCP integration, and
-progressive disclosure, see
-[Tool catalog](/building/extension-points/tool-catalog.md).
-
-## Approval: let the host decide
-
-A tool can require approval by returning `Ask` from the permission policy. The
+The
+[custom tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
+shows a `Ping` tool that the permission policy allows. The
 [approval example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-approval/main.go)
-uses the same `Ping` shape, but the policy asks before executing it. The host
-consumes the event stream and resolves the ask:
+changes that policy to `Ask` and resolves the request from the host:
 
 ```go
 if event.Type == session.EvPermissionAsk && event.Ask != nil {
@@ -140,76 +120,46 @@ if event.Type == session.EvPermissionAsk && event.Ask != nil {
 }
 ```
 
-It produces this sequence:
+`AllowOnce` applies only to the pending call. `AllowAlways` adds a matching rule
+for the session, and `Deny` returns an error result to the model without running
+the tool. A headless host must provide a policy or another way to resolve
+approval requests.
 
-```text
-tool.call
-permission.ask
-approval
-tool.result
-result
-```
+## Connect a real model
 
-`AllowOnce` executes only this call. `AllowAlways` learns a session-scoped rule
-for the matching call. `Deny` skips execution and sends a model-visible error
-result back to the loop. A headless host must supply its own policy or verdict
-strategy; an approval request is not an automatic grant.
-
-For rule evaluation, scopes, and deny-dominant behavior, see
-[PermissionPolicy](/building/extension-points/permission-policy.md) and
-[Permissions and posture](/features/permissions-and-posture.md).
-
-## Real provider: OpenRouter
-
-After the offline example works, replace `mockllm` with the public
-OpenAI-compatible provider module configured for OpenRouter:
+The
+[OpenRouter example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-openrouter/main.go)
+replaces `mockllm` with the OpenAI Responses-compatible provider module. Copy
+that example to `main.go`, then add the provider dependency and run it:
 
 ```sh
 go get github.com/stacklok/mecatl/provider/openai@latest
-export OPENROUTER_API_KEY='your-key-from-a-secret-manager'
+export OPENROUTER_API_KEY='<OPENROUTER_API_KEY>'
 go run .
 ```
 
-Copy the
-[OpenRouter example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-openrouter/main.go)
-into the clean module first. It reads `OPENROUTER_API_KEY` from the environment
-and defaults to `openai/gpt-5.6-luna`. Set `OPENROUTER_MODEL` to another
-OpenRouter model ID when needed. This path makes a real network request and may
-incur provider charges; never put the key in source, command arguments, or
-documentation.
+The example uses `openai/gpt-5.6-luna` by default. Set `OPENROUTER_MODEL` to use
+another OpenRouter model ID. This request may incur provider charges. Store the
+API key in a secret manager, and keep it out of source code and command
+arguments.
 
-The engine remains provider-neutral. The public `provider/openai` adapter
-supplies the OpenAI Responses-compatible wire implementation and OpenRouter base
-URL; retry/watchdog policy, persistence, authentication, transport, and
-observability remain host responsibilities for a direct embedder.
+The engine supplies the agent loop but leaves storage, authentication,
+transport, retry policy, and observability to the embedding application.
 
-## Compatibility for engine consumers
+Pin the engine and provider module versions together, and review
+[API stability](/building/api-stability.md) before upgrading.
 
-The stable contract is the exported API of the eight core engine packages. Read
-[API stability](../api-stability.md) before upgrading or implementing an
-adapter.
+## Next steps
 
-- `engine/COMPATIBILITY.md` defines the compatibility policy.
-- `engine/CHANGELOG.md` records intentional API additions and breaks.
-- `engine/api/*.txt` contains the committed public-surface snapshots checked by
-  `task api:check`.
-- `engine/adapter/*` reference adapters are useful, but are not stable API; rely
-  on the port interfaces in `engine/port` and `engine/tool` instead.
+- [Explore the engine and session model](/building/what-you-get/engine-and-session.md)
+  to understand `Engine`, `Session`, `Run`, and `Environment`.
+- [Implement the tool catalog](/building/extension-points/tool-catalog.md) to
+  register local tools or connect MCP tools.
+- [Embed the engine directly](/building/deployment/embed-engine.md) to plan a
+  production host around the engine.
 
-The engine is versioned independently from the host repository. A direct
-embedder should pin the engine and provider module versions together and run the
-standalone engine checks when upgrading.
+## Related information
 
-## Where to go next
-
-|You want to…|Read next|
-|-|-|
-|Understand `Engine`, `Session`, `Run`, and `Environment`|[Engine and session model](../what-you-get/engine-and-session.md)|
-|Add a tool or inspect the catalog|[Tool catalog](../extension-points/tool-catalog.md)|
-|Configure approval and denial rules|[PermissionPolicy](../extension-points/permission-policy.md) and [Permissions and posture](/features/permissions-and-posture.md)|
-|Add lifecycle hooks|[HookRunner](../extension-points/hook-runner.md) and [Hook system](../what-you-get/hooks.md)|
-|Persist sessions and event logs|[SessionStore and EventLog](../extension-points/session-store.md)|
-|Use another model provider|[LLMProvider](../extension-points/llm-provider.md)|
-|Run delegated child work|[Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md)|
-|Serve clients over gRPC or HTTP/SSE|[Drive via gRPC / HTTP](../deployment/grpc-http.md)|
-|Understand the complete embedding boundary|[Embed the engine directly](../deployment/embed-engine.md)|
+- [PermissionPolicy](/building/extension-points/permission-policy.md)
+- [API stability](/building/api-stability.md)
+- [First-agent examples](https://github.com/stacklok/mecatl/tree/main/examples)

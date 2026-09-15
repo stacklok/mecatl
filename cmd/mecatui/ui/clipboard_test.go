@@ -303,6 +303,30 @@ func TestSubmitTwoStagedImages(t *testing.T) {
 	}
 }
 
+func TestPastedMediaPathDoesNotExpandHome(t *testing.T) {
+	m, _ := newClipboardModel(t, client.Capabilities{Image: true}, nil)
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "shot.png"), tinyPNG(t), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m.deps.homeDir = func() (string, error) { return home, nil }
+	mm, cmd, ok := m.tryPasteMediaPath("~/shot.png")
+	if ok || cmd != nil || len(mm.(Model).stagedMedia) != 0 {
+		t.Fatalf("home-like clipboard path was expanded: ok=%v cmd=%v staged=%v", ok, cmd, mm.(Model).stagedMedia)
+	}
+}
+
+func TestPastedMediaPathStillResolvesAgainstWorkspace(t *testing.T) {
+	m, _ := newClipboardModel(t, client.Capabilities{Image: true}, nil)
+	if err := os.WriteFile(filepath.Join(m.deps.Workspace, "shot.png"), tinyPNG(t), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mm, _, ok := m.tryPasteMediaPath("shot.png")
+	if !ok || len(mm.(Model).stagedMedia) != 1 {
+		t.Fatalf("workspace-relative clipboard path not staged: ok=%v staged=%v", ok, mm.(Model).stagedMedia)
+	}
+}
+
 // TestSubmitMixedMentionAndClipboard: an @-mention image AND a clipboard image →
 // 2 parts in ONE frame (a single send path, never two).
 func TestSubmitMixedMentionAndClipboard(t *testing.T) {

@@ -10,6 +10,24 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+const sessionActivityInventoryFeature = "session_activity_inventory"
+
+// SupportsSessionActivityInventory reports whether this server's ListSessions
+// pager safely projects persisted activity. Compatibility failures fail closed
+// so mixed-version servers retain the historical Chats view.
+func (c *Client) SupportsSessionActivityInventory(ctx context.Context) bool {
+	resp, err := c.svc.GetCompatibilityInfo(ctx, &mecatlv1.GetCompatibilityInfoRequest{})
+	if err != nil {
+		return false
+	}
+	for _, feature := range resp.GetFeatures() {
+		if feature == sessionActivityInventoryFeature {
+			return true
+		}
+	}
+	return false
+}
+
 // ServerInfo is the safe, content-free identity and sanitized diagnostic display
 // snapshot returned by a server. Its endpoint fields are never connection instructions.
 type ServerInfo struct {

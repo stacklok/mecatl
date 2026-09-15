@@ -36,8 +36,8 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 		if !strings.Contains(stripANSIstr(out), "selected") {
 			t.Fatalf("focused member was lost: %q", stripANSIstr(out))
 		}
-		if !strings.Contains(stripANSIstr(out), "+") {
-			t.Fatalf("height-bounded trace lost its overflow cue: %q", stripANSIstr(out))
+		if !strings.Contains(stripANSIstr(out), "lines 1–") {
+			t.Fatalf("height-bounded trace lost its accurate range cue: %q", stripANSIstr(out))
 		}
 	})
 

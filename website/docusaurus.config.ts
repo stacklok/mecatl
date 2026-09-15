@@ -2,6 +2,10 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+// Tracking is enabled only for Vercel production deployments. Local
+// development and Vercel previews omit it to avoid polluting analytics data.
+const isProductionDeploy = process.env.VERCEL_ENV === 'production';
+
 const config: Config = {
   title: 'Mecatl',
   tagline: 'A cloud-native harness for agentic systems',
@@ -36,6 +40,12 @@ const config: Config = {
   ],
   plugins: [
     [
+      'vercel-analytics',
+      {
+        debug: false,
+      },
+    ],
+    [
       '@signalwire/docusaurus-plugin-llms-txt',
       {
         depth: 2,
@@ -49,7 +59,6 @@ const config: Config = {
           excludeRoutes: ['/search'],
         },
         includeOrder: [
-          '/docs/install',
           '/docs/mecatui/**',
           '/docs/building/**',
           '/docs/features/**',
@@ -66,12 +75,6 @@ const config: Config = {
             url: 'https://discord.gg/stacklok',
           },
         ],
-      },
-    ],
-    [
-      '@docusaurus/plugin-client-redirects',
-      {
-        redirects: [{from: ['/docs/intro'], to: '/docs'}],
       },
     ],
   ],
@@ -95,6 +98,9 @@ const config: Config = {
           showLastUpdateAuthor: true,
         },
         blog: false,
+        googleTagManager: isProductionDeploy
+          ? {containerId: 'GTM-KCC7R6SS'}
+          : undefined,
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -117,28 +123,33 @@ const config: Config = {
       style: 'dark',
       items: [
         {
-          to: '/docs',
+          to: '/docs/mecatui/getting-started',
           position: 'left',
-          label: 'Docs',
+          label: 'Get started',
         },
         {
-          to: '/docs/mecatui',
+          to: '/docs/building/cloud-native-harness',
           position: 'left',
-          label: 'mecatui',
+          label: 'Cloud-native harness',
         },
         {
           to: '/docs/building',
           position: 'left',
-          label: 'Building',
+          label: 'Build',
         },
         {
-          to: '/colophon',
-          label: 'Colophon',
-          position: 'right',
+          to: '/docs/building/deployment',
+          position: 'left',
+          label: 'Deploy',
         },
         {
           href: 'https://github.com/stacklok/mecatl',
           label: 'GitHub',
+          position: 'right',
+        },
+        {
+          href: 'https://discord.gg/stacklok',
+          label: 'Discord',
           position: 'right',
         },
       ],
@@ -149,9 +160,9 @@ const config: Config = {
         {
           title: 'Get started',
           items: [
-            {label: 'Install', to: '/docs/install'},
-            {label: 'Use mecatui', to: '/docs/mecatui'},
-            {label: 'Getting started', to: '/docs/building/getting-started/demo'},
+            {label: 'Use it now', to: '/docs/mecatui/getting-started'},
+            {label: 'Run on Kubernetes', to: '/docs/building/deployment/mecak8s'},
+            {label: 'What is a cloud-native harness?', to: '/docs/building/cloud-native-harness'},
           ],
         },
         {
@@ -167,6 +178,7 @@ const config: Config = {
           items: [
             {label: 'GitHub', href: 'https://github.com/stacklok/mecatl'},
             {label: 'Discord', href: 'https://discord.gg/stacklok'},
+            {label: 'Colophon', to: '/colophon'},
             {label: 'Stacklok', href: 'https://stacklok.com'},
           ],
         },

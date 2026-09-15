@@ -135,7 +135,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization recheck: attachment unavailable",
 			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error(), "broker_state_lost", brokerStateLost(err))
 		if brokerStateLost(err) {
-			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
 	}
@@ -147,7 +147,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	if statusErr != nil {
 		release()
 		if brokerStateLost(statusErr) {
-			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, statusErr
 	}
@@ -197,7 +197,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	attachment, release, attachErr := s.authorizationAttachment(ctx, sess)
 	if attachErr != nil {
 		if brokerStateLost(attachErr) {
-			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, attachErr
 	}
@@ -205,7 +205,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	if cancelErr != nil {
 		release()
 		if brokerStateLost(cancelErr) {
-			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, cancelErr
 	}
@@ -272,7 +272,7 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
 		if brokerStateLost(err) {
-			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
 	}
@@ -287,7 +287,7 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 	release()
 	if err != nil {
 		if brokerStateLost(err) {
-			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
+			return s.resolveAuthorizationWithoutContinuationLocked(ctx, sess, pending)
 		}
 		return MCPAuthorizationResult{}, err
 	}
@@ -390,7 +390,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		// The authorization itself succeeded, but the authenticated replacement
 		// refuses the parked arguments. Resolve through the existing terminal path
 		// so the original call and every deferred sibling stay paired.
-		return s.resolveAuthorizationWithFailureLocked(ctx, sess, claimed, session.AuthorizationGranted, authorizationSchemaMismatch)
+		return s.resolveAuthorizationWithFailureLocked(ctx, sess, claimed, session.AuthorizationGranted, authorizationSchemaMismatch, true)
 	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -587,12 +587,16 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 }
 
 func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus) (MCPAuthorizationResult, error) {
-	return s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, status, "")
+	return s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, status, "", true)
+}
+
+func (s *Service) resolveAuthorizationWithoutContinuationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization) (MCPAuthorizationResult, error) {
+	return s.resolveAuthorizationWithFailureLocked(ctx, sess, pending, session.AuthorizationInterrupted, "", false)
 }
 
 // resolveAuthorizationWithFailureLocked retains the authorization status while
 // allowing a closed local continuation failure to replace only the primary result.
-func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus, primaryFailure string) (MCPAuthorizationResult, error) {
+func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus, primaryFailure string, allowContinuation bool) (MCPAuthorizationResult, error) {
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: resolving to terminal status",
 		"session", string(sess.ID), "authorization", pending.Authorization.ID, "status", string(status), "state", string(sess.State))
 	reason := string(status)
@@ -642,6 +646,12 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 		}
 	}()
 	s.stopAuthorizationExpiry(sess.ID)
+	if !allowContinuation {
+		if err := s.appendAuthorizationResolution(ctx, sess.ID, pending, results, status); err != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: persist terminal authorization lifecycle", ErrInternal)
+		}
+		return mcpAuthorizationResult(pending, status, nil), nil
+	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		// Engine/environment reconstruction is not required to make a terminal

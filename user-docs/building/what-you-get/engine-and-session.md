@@ -1,25 +1,23 @@
 ---
 sidebar_position: 0
-title: Engine & session model
+title: Engine and session model
 description:
   Understand the engine, session, and run objects that make up a Mecatl agent.
 ---
 
-# Engine & session model
+# Engine and session model
 
-Mecatl has no `Agent` type. An agent is the behavior that emerges when an
-`Engine` runs a `Session`. Builders work with three main objects: the reusable
-engine, the persisted session, and the live run handle.
-
----
+Build an agent by running a persisted `Session` with a reusable `Engine`. The
+returned `Run` lets your application follow progress, answer permission
+requests, or cancel the work.
 
 ## The three objects you hold
 
 ### `*agent.Engine`
 
-The engine runs the agent loop. It is long-lived and reusable across sessions
-for the same `(provider, model)` pair. Construct it with the LLM adapter, tool
-catalog, permission policy, and hooks, then call its `Run` method:
+The engine runs the agent loop. Reuse one engine across sessions that use the
+same provider and model. Construct it with the model adapter, tool catalog,
+permission policy, and hooks, then start a run:
 
 ```go
 env := tool.MustEnvironment(
@@ -31,19 +29,13 @@ env := tool.MustEnvironment(
 run := eng.Run(ctx, sess, env, agent.RunRequest{Text: "your prompt here"})
 ```
 
-Create an `Engine` with `agent.NewEngine(agent.Deps{...})`. `Deps` contains the
-capabilities the loop needs. The engine owns no conversation state; that state
-lives in the session.
-
-The example uses the `memledger` reference adapter for the environment's
-required read ledger.
+Create the engine with `agent.NewEngine(agent.Deps{...})`. The example uses the
+`memledger` reference adapter for the environment's required read ledger.
 
 ### `*session.Session`
 
-The session is the **conversation state**. It holds the message history, the
-current state-machine state (`idle → running → completed`, etc.), counters
-(turns, tool calls), and limits. It is the unit of persistence: save a session,
-restore it later, and the conversation picks up exactly where it left off.
+The session holds conversation history, state, usage, counters, and limits. It
+is the unit of persistence, so a restored session can continue where it stopped.
 
 A session is created separately from the engine and passed in at run time:
 
@@ -57,18 +49,17 @@ sess := session.New(
 )
 ```
 
-The same engine can run different sessions. The same session can be reopened and
-run again (after it completes) by the same or a different engine.
+The same engine can run different sessions. After a session completes, you can
+reopen it and use the same engine or another compatible engine.
 
-Legacy snapshots with an unknown producer kind remain inspect-only. An
-authenticated server can adopt an eligible, owned snapshot as a new chat after
-the operator selects its environment, provider, and model. Adoption copies the
-authoritative transcript and leaves the legacy snapshot unchanged.
+Legacy snapshots with an unknown producer remain read-only. An authenticated
+server can copy an eligible, owned snapshot into a new session after the
+operator selects its environment, provider, and model. The original snapshot
+remains unchanged.
 
 ### `*agent.Run`
 
-`engine.Run(...)` returns a `*Run` immediately. The loop starts in a background
-goroutine; the `Run` handle is your interface to it while it's live:
+`engine.Run(...)` starts the loop in the background and returns immediately:
 
 ```go
 for ev := range run.Events() {
@@ -80,29 +71,25 @@ for ev := range run.Events() {
 // channel closed = run is done
 ```
 
-`Run.Events()` is a read-only channel that carries every observable event, in
-order, closed exactly once when the run terminates.
-`Run.Approve(askID, verdict)` sends a permission verdict. `Run.Cancel()` cancels
-the run's context. That is the entire client surface.
-
----
+`Run.Events()` returns ordered events and closes when the run ends.
+`Run.Approve(askID, verdict)` answers a permission request. `Run.Cancel()`
+cancels the run.
 
 ## The things you pass in
 
 |What|Type|What it does|
 |-|-|-|
-|**Environment**|`tool.Environment`|Binds the non-nil filesystem workspace, optional command runner, and environment identity for this run.|
-|**Catalog**|`*tool.Catalog` (on `Deps`)|The tool registry. Holds `Read`, `Write`, `Edit`, `Shell`, MCP servers, and any custom tools you register. The engine reads `Specs(mode)` to tell the model what it can do.|
-|**LLMProvider**|`port.LLMProvider` (on `Deps`)|The model backend. The engine calls `Stream(ctx, LLMRequest)` and receives a neutral chunk stream. The OpenAI and Anthropic adapters ship out of the box; implement this interface to bring your own.|
+|**Environment**|`tool.Environment`|Binds a non-nil workspace, an optional command runner, and the environment identity.|
+|**Catalog**|`*tool.Catalog` on `Deps`|Registers built-in, MCP, and custom tools. `Specs(mode)` defines what the model can use.|
+|**LLM provider**|`port.LLMProvider` on `Deps`|Streams provider-neutral model output. Mecatl includes OpenAI and Anthropic adapters.|
 
 ---
 
 ## What "subagent" and "team" mean
 
-Neither is a new object type. A **subagent** runs on a child `Engine` with its
-own tool catalog, permission policy, and optional model. A **team** is a
-`Supervisor` coordinating several member engines. Each child still performs its
-work through `Engine.Run(session)`.
+Neither is a separate agent type. A subagent uses a child engine with its own
+catalog, policy, and optional model. A team uses a `Supervisor` to coordinate
+member engines. Each child still runs a session through `Engine.Run`.
 
 ---
 
@@ -128,18 +115,14 @@ agent.Deps{LLM, Catalog, Policy, Hooks, Store, ...}
   └── Usage                ← cumulative token spend
 ```
 
-The engine never owns the session. The session never owns the engine. Both are
-passed around explicitly, which is what makes the system testable with fakes
-(`mockllm`, `memfs`, `memstore`) and why the same session can be resumed by a
-process that had no part in starting it.
-
----
+The engine and session remain independent. You can test them with the reference
+adapters and resume a session in a process that did not start it.
 
 ## What's next
 
-- [The agent loop](agent-loop.md) — turn structure, dispatch, compaction, and
+- [The agent loop](agent-loop.md) for turn structure, dispatch, compaction, and
   cancellation in detail.
-- [Permissions & guardrails](permissions.md) — how `Policy.Evaluate` decides
+- [Permissions and guardrails](permissions.md) for how `Policy.Evaluate` decides
   what tools can run.
-- [Extension points](/building/extension-points/index.md) — implement a port
+- [Extension points](/building/extension-points/index.md) to implement a port
   interface to replace any capability without touching the loop.

@@ -3,11 +3,121 @@ package cliconfig
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
+
+func TestDirectMCPDCR_Scenario1_AuthoritySeparatedProfile(t *testing.T) {
+	const template = `mcp:
+  mode: %s
+  servers:
+    - name: connector
+      url: https://connector-gateway.stacklok.dev/gw/mcp
+      auth:
+        mode: oauth
+        oauth:
+          profile: connector
+          principal: local-user
+          issuer: https://connector-gateway.stacklok.dev
+          client: {mode: dcr, dcr: {}}
+          %s
+          credentials:
+            mode: local
+            local: {root: %q, key_env: MECATL_MCP_CREDENTIAL_KEY}
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+`
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	lookup := func(name string) (string, bool) { return key, name == "MECATL_MCP_CREDENTIAL_KEY" }
+	parse := func(t *testing.T, mode, refresh string) *permconfig.MCPSection {
+		t.Helper()
+		var cfg permconfig.Config
+		if err := yaml.Unmarshal([]byte(fmt.Sprintf(template, mode, refresh, filepath.Join(t.TempDir(), "credentials"))), &cfg); err != nil {
+			t.Fatalf("parse direct DCR profile: %v", err)
+		}
+		return cfg.MCP
+	}
+
+	for _, tc := range []struct {
+		name, refresh string
+	}{
+		{name: "no-refresh defaults"},
+		{name: "explicit no refresh", refresh: "request_refresh_token: false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: parse(t, "global", tc.refresh), DefaultMode: mcpauthority.Global, LookupEnv: lookup})
+			if err != nil {
+				t.Fatal(err)
+			}
+			servers, lifecycle, ok := got.Global()
+			if !ok || len(servers) != 1 || servers[0].OAuth == nil {
+				t.Fatalf("global DCR result = %#v, selected %t", servers, ok)
+			}
+			defer lifecycle.Close()
+			oauth := servers[0].OAuth
+			if oauth.Client.DCR == nil || oauth.Client.Preregistered != nil || oauth.Client.ClientIDMetadataDocumentURL != "" {
+				t.Fatalf("resolved client = %#v, want DCR only", oauth.Client)
+			}
+			if oauth.RequestRefreshToken || strings.Join(oauth.AllowedScopes, ",") != "openid" {
+				t.Fatalf("refresh/scopes = %t/%v, want false/[openid]", oauth.RequestRefreshToken, oauth.AllowedScopes)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, mode, replacement string }{
+		{name: "broker authority", mode: "broker"},
+		{name: "upstream", mode: "global", replacement: "issuer: https://connector-gateway.stacklok.dev\n          upstream: {mode: oidc}"},
+		{name: "broker discovery payload", mode: "global", replacement: "client: {mode: dcr, dcr: {discovery_url: https://connector-gateway.stacklok.dev/.well-known/oauth-authorization-server}}"},
+		{name: "mixed client forms", mode: "global", replacement: "client: {mode: dcr, dcr: {}, cimd: {document_url: https://client.example/metadata.json}}"},
+		{name: "static credential payload", mode: "global", replacement: "static_bearer: {token_env: MECATL_TOKEN}"},
+		{name: "environment credentials", mode: "global", replacement: "credentials: {mode: environment, environment: {credential_env: MECATL_CREDENTIAL}}"},
+		{name: "refresh requested", mode: "global", replacement: "request_refresh_token: true"},
+		{name: "unsupported scopes", mode: "global", replacement: "scopes: [openid, offline_access]"},
+	} {
+		t.Run("reject "+tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "credentials")
+			body := fmt.Sprintf(template, tc.mode, "", root)
+			if tc.replacement != "" {
+				switch tc.name {
+				case "upstream":
+					body = strings.Replace(body, "issuer: https://connector-gateway.stacklok.dev", tc.replacement, 1)
+				case "broker discovery payload":
+					body = strings.Replace(body, "client: {mode: dcr, dcr: {}}", tc.replacement, 1)
+				case "mixed client forms":
+					body = strings.Replace(body, "client: {mode: dcr, dcr: {}}", tc.replacement, 1)
+				case "static credential payload":
+					body = strings.Replace(body, "        oauth:\n", "        "+tc.replacement+"\n        oauth:\n", 1)
+				case "environment credentials":
+					body = strings.Replace(body, "credentials:\n            mode: local\n            local: {root: "+fmt.Sprintf("%q", root)+", key_env: MECATL_MCP_CREDENTIAL_KEY}", tc.replacement, 1)
+				case "refresh requested", "unsupported scopes":
+					body = strings.Replace(body, "          \n", "          "+tc.replacement+"\n", 1)
+				}
+			}
+			var cfg permconfig.Config
+			parseErr := yaml.Unmarshal([]byte(body), &cfg)
+			if parseErr == nil {
+				_, parseErr = ResolveMCPAuthority(MCPAuthorityOptions{Operator: cfg.MCP, DefaultMode: mcpauthority.Global, BrokerSupported: true, LookupEnv: lookup})
+			}
+			if parseErr == nil {
+				t.Fatal("invalid authority-separated DCR profile was admitted")
+			}
+		})
+	}
+
+	brokerProfiles := parse(t, "broker", "")
+	if _, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: brokerProfiles, LookupEnv: lookup}); !errors.Is(err, ErrMCPProfileInvalid) {
+		t.Fatalf("direct loader accepted broker authority: %v", err)
+	}
+
+	_ = mcp.OAuthDCRConfig{}
+}
 
 func TestMCPAuthorityRootDefaultsAndExplicitSelection(t *testing.T) {
 	for _, tc := range []struct {

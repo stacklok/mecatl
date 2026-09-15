@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -260,6 +261,52 @@ func TestLoadMCPProfileSecretErrorsAreActionableAndRedacted(t *testing.T) {
 	}
 }
 
+func TestADR_0325_DirectDCRProfileScopeAndStorePolicy(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	newProfile := func(root string) permconfig.MCPServerProfile {
+		return permconfig.MCPServerProfile{
+			Name: "connector", URL: "https://connector.example/gw/mcp",
+			Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
+				Profile: "connector", Principal: "local-user", Issuer: "http://issuer.example",
+				Client:      permconfig.MCPOAuthClientProfile{Mode: "dcr", DCR: &permconfig.MCPDCRClientProfile{}},
+				Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: root, KeyEnv: "MECATL_KEY"}},
+				Network:     &permconfig.MCPOAuthNetworkProfile{},
+			}},
+		}
+	}
+
+	root := filepath.Join(t.TempDir(), "must-not-exist")
+	lookups := 0
+	profile := newProfile(root)
+	_, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{profile}}, LookupEnv: func(string) (string, bool) {
+		lookups++
+		return key, true
+	}})
+	if !errors.Is(err, ErrMCPProfileInvalid) {
+		t.Fatalf("non-HTTPS direct DCR issuer error = %v, want invalid profile", err)
+	}
+	if lookups != 0 {
+		t.Fatalf("credential lookup occurred before issuer rejection: %d", lookups)
+	}
+	if _, statErr := os.Stat(root); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("credential store path was touched before issuer rejection: %v", statErr)
+	}
+
+	preregistered := newProfile(filepath.Join(t.TempDir(), "preregistered"))
+	preregistered.Auth.OAuth.Client = permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretEnv: "MECATL_CLIENT"}}
+	preregistered.Auth.OAuth.Scopes = []string{"read"}
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{preregistered}}, LookupEnv: func(name string) (string, bool) {
+		if name == "MECATL_CLIENT" {
+			return "secret", true
+		}
+		return key, name == "MECATL_KEY"
+	}})
+	if err != nil {
+		t.Fatalf("existing preregistered HTTP issuer policy changed: %v", err)
+	}
+	profiles.Close()
+}
+
 func environmentOAuth() *permconfig.MCPOAuthProfile {
 	return &permconfig.MCPOAuthProfile{
 		Profile: "work", Principal: "principal", Issuer: "https://issuer.example",
@@ -276,4 +323,25 @@ func namesOf(configs []mcp.ServerConfig) []string {
 		out[i] = configs[i].Name
 	}
 	return out
+}
+
+func TestLoadMCPProfilesInjectsDCRLifecycleServerName(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	profile := permconfig.MCPServerProfile{
+		Name: "connector", URL: "https://connector.example/gw/mcp",
+		Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
+			Profile: "connector", Principal: "local-user", Issuer: "https://issuer.example",
+			Client:      permconfig.MCPOAuthClientProfile{Mode: "dcr", DCR: &permconfig.MCPDCRClientProfile{}},
+			Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "local", Local: &permconfig.MCPLocalCredentialProfile{Root: filepath.Join(t.TempDir(), "credentials"), KeyEnv: "MECATL_KEY"}},
+			Network:     &permconfig.MCPOAuthNetworkProfile{},
+		}},
+	}
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{profile}}, LookupEnv: func(string) (string, bool) { return key, true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profiles.Close()
+	if got := profiles.Servers[0].OAuth.Client.DCR.ServerName; got != "connector" {
+		t.Fatalf("DCR lifecycle server name = %q, want connector", got)
+	}
 }

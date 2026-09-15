@@ -153,7 +153,7 @@ PR after verification. There is no cleanup or status-only PR.
   an explicit human waiver of a separate amendment PR/merge for inclusion in the implementation PR.
 - [Idle-session MCP broker workspace refresh](idle-session-broker-workspace-refresh.md) — allows an owned idle broker session to explicitly refresh its complete protected-tool bundle after earlier turns and to recover after broker-process loss without resetting the conversation; retains ToolHive custody and broker-mode single-replica operation. Status: proposed.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
-- [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — proposed contract for durable public-client DCR in a local direct MCP profile, reusing the existing authorization-code login while keeping broker and remote mecatui OIDC authority separate. Status: proposed.
+- [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — core implementation exists for durable public-client DCR in a local direct MCP profile, with no-refresh access grants and explicit re-login after expiry; remaining acceptance proofs, review, and human qualification are tracked in the plan. Status: in-progress.
 - [Live authenticated MCP metadata replaces static stand-ins](authenticated-mcp-metadata-replaces-static-standins.md) — replace protected-tool placeholders with safely admitted authenticated metadata after either lazy authorization or complete pre-prompt enrollment, without revealing undeclared tools on the lazy path. Status: in-progress.
 
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
@@ -311,6 +311,10 @@ PR after verification. There is no cleanup or status-only PR.
   imports, a Deno-native `./deno` entry point, `Deno.Command` local ownership, and real-wire
   shared ConnectRPC gRPC coverage for Deno 2.9.3 through 2.x. Release scope: after v0.1.0, with no later
   version assigned. Status: in-progress.
+- [TypeScript SDK session lifecycle surface](sdk-session-lifecycle-surface.md) —
+  SDK-owned session snapshots and transcripts plus typed rename, mode, compaction,
+  clear, fork, retry, request-option, affinity, and lifecycle semantics over the
+  existing server operations. Status: proposed.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and

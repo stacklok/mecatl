@@ -1,36 +1,30 @@
 ---
 sidebar_position: 3
-title: Permissions & guardrails
+title: Permissions and guardrails
 description:
   Understand Mecatl permissions, approvals, trust, and guardrails for agent
   actions.
 ---
 
-# Permissions & guardrails
+# Permissions and guardrails
 
-This is the builder-facing reference for permission evaluation, delegated
-authority, and custom policy integration. For operator choices, configuration,
-and posture selection, see
+Mecatl combines permission rules with optional model-backed guardrails. This
+page explains evaluation, delegated authority, and custom policy integration.
+For operator configuration and posture selection, see
 [Permissions and posture](/features/permissions-and-posture.md).
 
-Mecatl gates tool execution with **two independent layers**. Layer 1 is a
-rule-based permission engine that fires on **every** tool call before execution
-and resolves to allow / ask / deny. Layer 2 is an optional model-backed
-guardrail checker that inspects tool input and output on **operator-configured
-matchers** — it inspects _content_, where Layer 1 inspects the _call_.
+Mecatl checks tool calls in two independent layers:
 
-The layers are separate by design: Layer 1 decides whether a call is permitted
-to run at all; Layer 2 inspects the data crossing the tool boundary once a call
-is permitted. Configure them independently. Layer 1 is always on (it ships with
-a safe default ruleset); Layer 2 is off until you give it a checker model.
+|Layer|Decision|Default|
+|-|-|-|
+|Permission rules|Whether a call can run: `allow`, `ask`, or `deny`|On with a built-in ruleset|
+|Model-backed guardrails|Whether matched input or output content is safe|Off until you configure a checker model|
 
 ## Delegated authority
 
-Delegated children carry an **authority set**. Authority is neither an approval
-prompt nor an ownership check: it records which capabilities reached this run.
-Permission policy answers whether a call may run now; ownership answers who may
-access the session; authority answers whether the parent delegated the
-capability at all.
+Each child receives an authority set that limits which capabilities it can use.
+Permissions still decide whether an authorized call can run, and ownership
+decides who can access the session.
 
 A root session starts with the tools in its composed catalog. A child receives
 only what survives this calculation:
@@ -43,19 +37,15 @@ parent authority
 − one delegation hop
 ```
 
-For example, a root with `Read`, `Grep`, and `Write` can delegate a read-only
-reviewer that receives only `Read` and `Grep`. That reviewer can use those
-tools, but it cannot regain `Write` or delegate another child after its hop is
-spent. The child's set persists with its session. On resume, Mecatl checks that
-its persisted set still fits the current parent set; a child created before the
-parent was narrowed is refused rather than regaining the removed capability.
+A reviewer delegated only `Read` and `Grep` cannot regain the parent's `Write`
+capability. The authority set persists and must still fit within the parent's
+current authority when the child resumes.
 
 ### Agent definitions and authority ceilings
 
-A definition's `tools:` allowlist scopes the specialist engine in every source,
-but only a definition loaded from an explicit operator directory establishes a
-durable authority ceiling. Start mecated with `--agents-dir` to use that managed
-tier:
+A definition's `tools:` list limits a specialist from any source. Only a
+definition from an explicit operator directory establishes a durable authority
+ceiling. Configure it with `--agents-dir`:
 
 ```sh
 mecated serve --agents-dir /etc/mecatl/agents
@@ -74,17 +64,8 @@ disallowedTools: [Write, Shell]
 Review the requested code and return findings with file and line references.
 ```
 
-When a parent delegates to this specialist, `tools: [Read, Grep]` is a ceiling:
-it can remove capabilities from the parent, but it can never grant either tool
-if the parent did not already hold it. Definitions discovered from conventional
-project or user locations, or from a driver, still scope their specialist
-engine, but do not establish an independent authority ceiling. This prevents a
-project repository or remote definition source from becoming a new authority
-grant.
-
-Derivation happens before Mecatl creates the child engine, workspace, runner, or
-worktree. If the requested child would exceed the parent, the request is refused
-without acquiring those runtime resources.
+The list can remove parent capabilities but cannot add them. Project, user, and
+driver definitions scope a specialist without granting independent authority.
 
 ### Choosing an evaluator
 
@@ -102,14 +83,12 @@ mecated serve --authority-evaluator=cedar --cedar-authority-policy=/etc/mecatl/a
 |`noop` (explicit)|A local or demo deployment deliberately disables authority enforcement.|Accepts well-formed authority requests. It is never a fallback for a missing evaluator.|
 |`cedar` (opt-in)|You need operator-owned rules over an already-authorized capability, such as a workspace path boundary.|Checks the carried set first, then lets Cedar add a denial. It cannot grant an omitted capability.|
 
-A bound session with no configured evaluator fails its tool call closed. That is
-different from selecting `noop` deliberately.
+A bound session without an evaluator fails closed.
 
 ### Cedar policy boundaries
 
-Cedar loads one static policy file at startup. A missing or invalid policy
-prevents mecated from starting; it never falls back to a less restrictive
-evaluator. Keep the policy outside project-controlled directories.
+Cedar loads an operator-owned policy file at startup. A missing or invalid file
+prevents startup. Keep it outside project-controlled directories.
 
 A minimal policy that prevents reads below a protected subtree is:
 
@@ -123,46 +102,35 @@ when {
 };
 ```
 
-Cedar receives the carried capability, requested operation, delegation depth,
-non-secret session identity, and—for `Read`, `Edit`, and `Write`—the normalized
-physical workspace target. It does not receive raw tool arguments, file
-contents, credentials, or headers. A symlink inside the workspace cannot bypass
-a Cedar path boundary because the evaluator sees the resolved target that
-filesystem access will use.
+Cedar receives the capability, operation, delegation depth, non-secret session
+identity, and the resolved workspace target for `Read`, `Edit`, and `Write`. It
+does not receive raw arguments, file contents, credentials, or headers.
 
-Cedar requires verified session owner identity. Deployments that intentionally
-run ownerless sessions should use `local`, or configure caller identity before
-selecting Cedar.
+Cedar requires verified session ownership. Use `local` for ownerless sessions,
+or configure caller identity before selecting Cedar.
 
 ### MCP capabilities
 
-MCP grants stay narrow. `CallMcpWithQuery` is evaluated against the concrete
-tool it addresses, such as `mcp__github__list_pull_requests`, rather than
-receiving blanket access to a server. MCP resource operations similarly spend a
-separate per-server resource capability while preserving their operation, such
-as `ReadMcpResource`, for policy evaluation. Granting one GitHub MCP tool
-therefore does not grant every GitHub MCP tool.
+MCP grants apply to the addressed tool. For example, `CallMcpWithQuery` checks
+`mcp__github__list_pull_requests`, not blanket GitHub server access. Resource
+operations use separate per-server capabilities. Granting one MCP tool does not
+grant the rest of its server.
+
+Authority failures fail closed. Mecatl distinguishes a denied call from an
+unavailable evaluator.
 
 ### Deployment checklist
 
-Before enabling delegated authority:
-
-- Choose `local`, `noop`, or `cedar` intentionally.
-- Put authority-defining specialist definitions in an explicit `--agents-dir`.
-- Treat `tools:` as a ceiling, never a grant.
-- If using Cedar, keep its policy outside project-controlled paths and configure
-  verified caller identity.
-- Test the intended root → child → resume behavior in your deployment.
-
-Authority failures are fail-closed. A denial tells the model that authority
-refused the call; an unavailable evaluator is reported separately to operators
-and is not treated as permission approval. See
-[ADR 0234](https://github.com/stacklok/mecatl/blob/main/docs/adr/0234-authority-evaluator-port.md)
-for the boundary and constraints.
+- Choose the evaluator explicitly.
+- Load authority-defining agents from an operator-owned `--agents-dir`.
+- Treat `tools:` as a ceiling, not a grant.
+- Keep Cedar policies outside project-controlled paths and require verified
+  caller identity.
+- Test delegation and resume with the deployment's actual policy.
 
 ---
 
-## Layer 1 — the permission rule engine
+## Layer 1: permission rules
 
 Every tool call is evaluated against a merged set of rules. A rule is
 `{Scope, Tool, Pattern, Effect}`: `Effect` is `allow`, `ask`, or `deny`; an
@@ -172,24 +140,17 @@ string.
 
 ### Resolution: deny-dominant, then scope
 
-A decision resolves in this order:
+A decision resolves as follows:
 
-1. **Effect dominance: `deny` → `ask` → `allow`.** A `deny` in _any_ scope beats
-   an `ask` or `allow` _anywhere_ — a deny is absolute and final. Otherwise an
-   `ask` beats an `allow`.
+1. **Effect:** `deny` beats `ask`, which beats `allow`, across all scopes.
 2. **Scope breaks same-effect ties** (highest precedence first):
    `Managed > CLI > LocalProject > SharedProject > User > BuiltinDefault`.
-3. **No matching rule → `ask`** — the safe default. The harness never silently
-   allows an unconfigured call.
+3. **Fallback:** no match resolves to `ask`.
 
-There is **one narrow exception** to "ask beats allow": a higher-scope
-configured **Allow** may loosen _only_ the built-in `BuiltinDefault` Ask floor
-(for example, allowing `Shell(go test:*)` relaxes the built-in Shell ask). It
-can **never** suppress a _configured_ Ask, and it can never out-rank a deny in
-any scope.
+A configured allow at a higher scope can loosen only a `BuiltinDefault` ask. It
+cannot override a configured ask or any deny.
 
-A `deny` or `ask` carries a human-readable reason: surfaced to the model on a
-deny (so it can adapt) and to the client on an ask.
+A deny reason goes to the model; an ask reason goes to the client.
 
 ### The scope hierarchy
 
@@ -197,18 +158,16 @@ Scopes are where a rule comes from, highest precedence first:
 
 |Scope|Source|Trust|
 |-|-|-|
-|`Managed`|enterprise/admin floor|always honoured; nothing below overrides its deny|
+|`Managed`|Enterprise or administrator floor|Always honored|
 |`CLI`|each `--permission-config <file>`|fully trusted (the operator's own)|
 |`LocalProject`|`<workspace>/.mecatl/settings.local.yaml` (gitignored, personal)|**trust-gated**|
 |`SharedProject`|`<workspace>/.mecatl/settings.yaml` (checked-in, shared)|**trust-gated**|
 |`User`|`$XDG_CONFIG_HOME/mecatl/settings.yaml`|fully trusted (the operator's own)|
-|`BuiltinDefault`|the built-in floor (read-allow / mutate-ask)|n/a — lowest precedence|
+|`BuiltinDefault`|Built-in read-allow and mutate-ask floor|Lowest precedence|
 
-Project files are re-resolved **per session** against each session's workspace
-root, and the resolver revalidates its cache on the config files' mtime/size —
-so a `deny` added mid-process takes effect on the next call, not at restart. Two
-sessions running in different repos under the same server get different
-decisions for the same tool call.
+Mecatl resolves project files for each session workspace and refreshes changed
+configuration before the next call. Sessions in different projects can receive
+different decisions from one server.
 
 ### The default ruleset
 
@@ -220,80 +179,40 @@ can mutate:
 |`Read`, `ListDir`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `Subagent`|`allow`|
 |`Shell`, `Edit`, `Write`, `Copy`, `Move`, `Remove`, `Team`, `SkillDraft`|`ask`|
 
-(The memory tools, the synthetic `soul:apply` action, and the read-only child
-observability tools are also floor-scoped allows — pre-approved but overridable
-by any higher-scope config.) Read-only exploration runs uninterrupted; anything
-that can mutate the workspace pauses for approval. `Team` asks because it can
-spawn mutating members, unlike the read-only `Subagent` explorer.
+Memory tools, `soul:apply`, and read-only child observability are also built-in
+allows that higher scopes can override. `Team` asks because it can create
+mutating members.
 
 ### Effects: allow, ask, deny
 
-- **`allow`** — the call runs without prompting.
-- **`ask`** — the call pauses and is surfaced to the client for an approval
-  decision (see [The `permission.ask` flow](#the-permissionask-flow)). An
-  approval can be **allow-once** (this call only) or **allow-always** (learned
-  for the session — see below).
-- **`deny`** — the call never runs; the model receives the deny reason and
-  adapts.
+- **`allow`** runs the call without prompting.
+- **`ask`** pauses and asks the client for a decision. The client can allow this
+  call once or learn an allow for the session.
+- **`deny`** returns the reason to the model without running the call.
 
-**Allow-once vs allow-always.** When a client approves an ask, it chooses the
-duration. _Allow-once_ clears only the current call. _Allow-always_ feeds the
-permission policy's `Learn` path, which derives a per-session rule so the same
-call is not re-asked. A learned allow is consulted at the **lowest** scope only
-— it can never override a deny or a configured ask.
+Allow-once applies to the current call. Allow-always learns a session rule at
+the lowest scope, so it cannot override a deny or configured ask.
 
 ### Compound Shell and substitution safety
 
-For `Shell`, the evaluator splits a compound command line (`&&`, `||`, `;`, `|`,
-a bare `&`, newlines, honouring quotes) and requires **every** sub-command to
-pass; the **worst** outcome wins. So `git status && rm -rf /` inherits the
-deny/ask from the `rm` segment even if `git status` alone would be allowed.
+For `Shell`, Mecatl splits compound commands and applies the most restrictive
+decision across all parts. A permitted `git status` does not allow a following
+`rm -rf /`.
 
-Any segment containing command/process substitution or subshell grouping
-(`$(...)`, backticks, `<(...)`, `(`/`{` grouping) — which could smuggle a hidden
-inner command past the splitter — is floored at **`ask`**. An allow rule for the
-outer literal can never silently approve a concealed command. (The substitution
-floor can be loosened by posture — see below — but only for read-only inners.)
+Command substitution, process substitution, and subshell grouping have an `ask`
+floor because they can conceal commands. Posture can loosen this floor only for
+read-only inner commands.
 
 ### Plan mode
 
-When a session is in `plan` mode, the evaluator gates _before_ the rule engine:
-`Edit` and `Write` are unconditionally **denied**, and any non-read-only `Shell`
-command is **denied**. Read-only tools and read-only Shell fall through to the
-rules. The deny reason tells the model to present a plan and exit plan mode
-first.
+Plan mode denies `Edit`, `Write`, and non-read-only `Shell` before rule
+evaluation. Read-only operations continue through the normal rules.
 
-**Getting out of plan mode.** Once the model has a complete plan, it calls the
-`PresentPlan` tool exactly once for that current presentation. That parks the run
-on a **plan-approval** ask — a distinct gate from an ordinary permission ask,
-though it reuses the same ask machinery described above. The model stops and
-waits, and the complete plan is carried in the tool arguments for review. On an
-interactive client (`mecatui` shows a dedicated "Plan ready for review" modal),
-you pick one of three outcomes: approve and run (switches to `default` mode, so
-mutating tools still go through the ordinary deny/ask/allow rules), approve with
-edits auto-accepted (switches to `acceptEdits` mode), or iterate.
-
-Iteration ends the current run in plan mode; the model does not revise in a loop
-without you. In `mecatui`, **Esc** on the plan review chooses this deny/iterate
-outcome. Type feedback in a new prompt, after which the model may present a
-revised or unchanged plan through a **new** `PresentPlan` call and fresh review.
-Later chat assent such as “looks good” also requires that fresh gate and never
-starts execution by itself.
-
-Cancellation is different from iteration. The guarded **Ctrl+C** quit path
-cancels the run; it is not a neutral dismissal of the plan review and does not
-record a deny verdict. The session remains in plan mode. On the next prompt the
-service recovers the cancelled run, closes out its interrupted tool-call history,
-and the model must make a new `PresentPlan` call. Merely hiding a client view does
-not by itself invalidate a plan ask that is still pending on the server.
-
-In a **headless** deployment there's no human to review the plan, so by default
-the ask is denied and the run ends in plan mode until a new prompt arrives. The opt-in
-`--plan-mode-auto-approve` flag (operator-tier only, off by default) instead
-auto-approves a parked plan ask. This is a deliberate autonomous-approval
-capability for the operator, not a safety mechanism: the engine still requires
-`PresentPlan` to reach this ask in the first place — the flag only decides who
-resolves it once parked, human or auto-approve. See the
+The model exits plan mode by calling `PresentPlan`, which creates a separate
+plan-approval ask. An interactive client can approve in `default` mode, approve
+in `acceptEdits` mode, or request another plan iteration. Headless deployments
+deny this ask unless the operator enables `--plan-mode-auto-approve`. The flag
+approves only a plan that the model explicitly presented. See the
 [gRPC API reference](/reference/grpc-api.md) and
 [HTTP and SSE API reference](/reference/http-sse-api.md) for wire behavior.
 
@@ -311,7 +230,7 @@ permissions:
   ask:
     - 'Shell(git push:*)'
   deny:
-    - 'Shell(rm:*)' # deny wins absolutely, in any scope — binds children too
+    - 'Shell(rm:*)' # a deny in any scope also binds children
   subagent:
     deny:
       - 'Shell(gh pr merge:*)' # tighten a child's Shell beyond the main rules
@@ -319,91 +238,66 @@ permissions:
       - 'Shell(go vet:*)' # clears this from a child's substitution-floored ask
 ```
 
-Each entry is a rule spec `Tool(pattern)` or a bare `Tool`. Config rules use
-**glob** semantics; the `prefix:*` / `prefix:` form is normalised to a `prefix*`
-glob. The `permissions:` subtree parses **strictly** — an unknown key (a typo
-like `alow:`) is a loud parse error and the whole file is skipped (and logged),
-never silently ignored; the `subagent:` subtree inside it parses just as
-strictly, on its own.
+Each entry is `Tool(pattern)` or a bare `Tool`, with glob matching. Mecatl
+normalizes `prefix:*` and `prefix:` to `prefix*`. Unknown permission keys cause
+the file to be skipped and logged. The nested `subagent:` block also parses
+strictly.
 
 ### Importing Claude Code's permissions
 
-If you already have a Claude Code `.claude/settings.json` in the repo (or your
-home directory), `--import-claude-permissions` reads its permissions alongside
-your `.mecatl/` config instead of making you duplicate the rules. The import is
-deliberately **lossy** — every lossy outcome is logged, and it never _widens_
-what Claude Code itself would have allowed:
+`--import-claude-permissions` reads rules from a project or user
+`.claude/settings.json`. The import logs lossy conversions and never widens an
+allow:
 
-- `WebFetch(domain:x)` in an allow list is demoted to `ask` — a domain/substring
+- `WebFetch(domain:x)` in an allow list becomes `ask` because a domain substring
   match is too risky to auto-allow without you seeing it at least once.
-- A bare `WebSearch` allow imports verbatim, no demotion (its payload is a query
-  string, not an arbitrary fetch).
-- A `Read(~/...)` pattern imports but stays inert — the `~` is left unexpanded,
-  so it never matches the absolute path a tool actually resolves to.
+- A bare `WebSearch` allow remains an allow.
+- A `Read(~/...)` pattern remains inert because `~` is not expanded.
 - Anything the importer can't parse is dropped, not guessed at.
 
-`deny`/`ask` rules always import verbatim (tightening is never lossy).
-`mecatui`'s embedded server turns this on by default, alongside
-`--permissions-conventional` — if you've used Claude Code in a repo before,
-mecatui picks up its rules with no extra setup.
+Denies and asks import unchanged. Embedded `mecatui` enables this import and
+`--permissions-conventional` by default.
 
 ### The posture ladder
 
-A single operator tier — chosen at process start by whoever owns the blast
-radius — sets how much the harness self-authorizes. Higher tiers grant more
-autonomy and prompt less. Set it with `--posture <strict|trusted|auto|yolo>` (or
-the operator-global `posture:` setting); `--trust-project` is an alias for
-`trusted` and `--yolo` is an alias for `yolo`.
+Posture controls how much the harness self-authorizes. Set it with
+`--posture <strict|trusted|auto|yolo>` or the operator-global `posture:`
+setting. `--trust-project` aliases `trusted`; `--yolo` aliases `yolo`.
 
-|posture|allow-all (no mutate-ask prompts)|child substitution floor|project trust|use it for|
+|Posture|Automatic mutation|Child substitution checks|Project trust|Use it for|
 |-|-|-|-|-|
-|`strict` (**default**, fail-closed)|off|gated|(your own `--trust-project`)|interactive / untrusted repos|
-|`trusted`|off|gated|**on**|a repo you trust, still want prompts|
-|`auto`|**on** (main + children)|**gated** (injection defence **on**)|on|the recommended unattended default|
-|`yolo`|**on** (main + children)|**loosened** (injection defence **off**)|on|a disposable, isolated, single-tenant sandbox|
+|`strict` (default)|Off|On|Explicit only|Interactive or untrusted projects|
+|`trusted`|Off|On|On|Trusted projects that still need prompts|
+|`auto`|On|On|On|Unattended work in a sandbox|
+|`yolo`|On|Off|On|Disposable, isolated, single-tenant sandboxes|
 
-`auto` is the recommended unattended default: allow-all for the main agent and
-its children so a CI / container run never parks on a mutate-ask prompt, but the
-child prompt-injection defence stays **on** (a subagent's `$(...)`/backtick
-command still resolves through the child-ask model rather than auto-running).
-Only step up to `yolo` — which loosens that child substitution floor too — where
-the harness genuinely cannot cause durable harm.
+Use `auto` for unattended operation when the deployment sandbox can tolerate
+automatic mutations. It retains the child substitution check that `yolo`
+disables.
 
-Allow-all is **not** an evaluator bypass. It injects a single `ScopeCLI`
-allow-all rule that loosens only the built-in mutate-ask floor. The governance
-invariants hold at **every** tier including `yolo`:
+Automatic mutation loosens only the built-in mutation prompt. Every posture
+still honors:
 
-- A `deny` in any scope (including `Managed`) still wins — deny-dominance is
-  absolute.
-- Any **deliberately configured** `ask` still asks. Allow-all never suppresses a
-  configured ask, so a misconfigured ask can still block an unattended run (the
-  startup warning says so).
-- Plan-mode hard-denies still fire first.
+- Every deny.
+- Every configured ask.
+- Plan-mode write restrictions.
 
-:::warning[Sandbox-first]
+:::warning[Sandbox required for allow-all posture]
 
-The posture bypasses the _prompt_, never a _sandbox_. The real boundary for
-unattended agentic execution is OS-level isolation (container/microVM,
-network-off-by-default, ephemeral filesystem). Enable an allow-all posture only
-where the harness cannot cause durable harm, and only on single-tenant daemons
-(the posture makes _every_ session on that daemon allow-all). If an allow-all
-posture is requested while running as root and no sandbox env var
-(`MECATL_SANDBOX=1` or `IS_SANDBOX=1`) is set, the process **refuses to start**.
+Posture bypasses approval prompts, not operating-system isolation. Use `auto` or
+`yolo` only in a single-tenant sandbox with bounded network and filesystem
+access. The process refuses an allow-all posture as root unless
+`MECATL_SANDBOX=1` or `IS_SANDBOX=1` is set.
 
 :::
 
-Independently of posture, every agent-facing shell runs with the harness's
-credentials **scrubbed** from its environment — even under `auto`/`yolo`, the
-model cannot `echo $OPENROUTER_API_KEY` or `cat /proc/self/environ` to read a
-provider key.
+Every agent-facing shell receives a credential-scrubbed environment, including
+under `auto` and `yolo`.
 
 ### Out-of-workspace filesystem access (the path-escape posture)
 
-The FS tools (`Read`/`Write`/`Edit`) are rooted at the session workspace; a path
-that resolves outside it used to be a dead end — the call failed with a
-path-escape error and the model fell back to an opaque Shell `cat /path`, losing
-the FS tools' invariants and audit shape. The posture now decides what an
-out-of-workspace escape does instead:
+`Read`, `Write`, and `Edit` are rooted at the session workspace. Posture decides
+whether the main session can access a resolved path outside that root:
 
 |Posture|Read escape|Write escape|
 |-|-|-|
@@ -411,69 +305,40 @@ out-of-workspace escape does instead:
 |`auto`|allow|**ask**|
 |`strict` / `trusted`|**ask**|**ask**|
 
-- **The consent model.** Every ask is an ordinary
-  [Layer 1 `permission.ask`](#the-permissionask-flow): the prompt names the
-  exact path, and approval is **allow-once only** — approving one
-  out-of-workspace call never learns a rule that pre-approves the next one. A
-  configured `deny` or configured `ask` always wins over the posture row
-  (deny-dominance and the configured-Ask floor are untouched), and **plan mode
-  still hard-denies writes first**.
-- **Shell parity.** At `auto`/`yolo` a Shell `cat /outside` already reads the
-  same bytes, so an un-asked read boundary on the FS tools was cosmetic; writes
-  are never silent below `yolo`.
-- **Never relaxed, at any posture:** paths under `/proc`, `/sys`, or `/dev` are
-  a hard deny everywhere. An in-process Read of `/proc/self/environ` would
-  expose the _server's_ raw, unscrubbed environment — a channel the env-scrubbed
-  Shell parity path does not provide — so the parity premise does not extend
-  there. **Child agents** (subagents, team members, parallel branches) also
-  never get the relax at any posture: only the main session's workspace carries
-  it, and a child that shares the parent's workspace is handed a non-relaxed
-  view of the same root.
-- **Serving stays contained.** An approved escape is served through the same
-  symlink-checked containment the workspace itself uses (a fresh `os.Root` on
-  the target's parent directory) — the relax widens _which_ paths may be served,
-  never _how_.
-- **Optional LLM gate at `auto`.** With a guardrail checker model configured,
-  the operator-tier `guardrails.escape: true` setting (user-global
-  `settings.yaml` only) routes each `auto`-posture escape through the
-  [Layer 2 checker](#layer-2--model-backed-guardrails) first: unsafe → deny; a
-  checker error fails closed to the write-escape ask. Default is off — the plain
-  table above. See
-  [ADR 0080](https://github.com/stacklok/mecatl/blob/main/docs/adr/0080-guardrail-routed-escape-checking.md)
-  and the [configuration reference](/reference/configuration.md#guardrails).
+- An approval names the exact path and applies once. It never creates a learned
+  rule.
+- Configured `deny` and `ask` rules still win, and plan mode still denies
+  writes.
+- `/proc`, `/sys`, and `/dev` remain denied at every posture.
+- Child agents never receive out-of-workspace access, even when they share the
+  parent's workspace.
+- Access retains the normal symlink containment checks.
+
+At `auto`, `guardrails.escape: true` can send each escape through the configured
+guardrail model. An unsafe result is denied; a checker failure falls back to the
+write approval. See the
+[configuration reference](/reference/configuration.md#guardrails).
 
 ### Workspace trust
 
-Trust decides whether a **project's** injected authority is admitted. It is a
-composition decision, not a permission scope, and it gates exactly the
-project-tier authority set:
+Trust controls whether Mecatl admits project-provided authority:
 
 - the project's permission **ALLOW** rules (auto-approval the repo grants
   itself);
-- the project **soul** (`<workspace>/.mecatl/soul.md` — a repo rewriting the
-  agent's persona);
+- the project **soul**, `<workspace>/.mecatl/soul.md`;
 - the **project tier** of agent definitions, slash commands, and skills under
   `<workspace>/.mecatl/*` and `<workspace>/.claude/*`.
 
-Trust is **not** a kill-switch. An untrusted repo is still a fully usable coding
-agent — it degrades to **"ask the human" mode**, never **"do nothing" mode**.
-These stay active on **any** repo, trusted or not: the built-in tools and the
-whole loop, the base system prompt, your own user-tier config, **every deny/ask
-rule from any scope** (they only tighten), and the permission prompt itself. So
-an untrusted repo cannot silently steer the model with an injected agent,
-command, skill, persona, or self-granted auto-approve — but you can still read,
-edit, and run-with-a-prompt in it from the first run.
-
-Note the asymmetry: a project's **deny and ask** rules are _always_ honoured
-(they only tighten); only its **allow** rules and soul are trust-gated. Trust is
-**monotonic-positive** — it only ever _grants_ admission, never overrides a deny
-or a configured ask.
+An untrusted project can still use built-in tools, user configuration, and
+approval prompts. Project `deny` and `ask` rules always apply because they only
+tighten access. Project `allow` rules, soul, agents, commands, and skills
+require trust.
 
 Configure trust three ways:
 
-- **`--trust-project`** — a per-invocation flag (the `trusted` posture alias).
-- **`trustedWorkspaces:`** — a list of absolute paths in the user-global
-  `settings.yaml`, for CI / daemons / repeated work in a known-good checkout:
+- `--trust-project` trusts the current project for one invocation.
+- `trustedWorkspaces:` lists trusted absolute paths in user-global
+  `settings.yaml`:
 
   ```yaml
   # ~/.config/mecatl/settings.yaml  (the operator's own, fully-trusted file)
@@ -482,126 +347,74 @@ Configure trust three ways:
     - /home/me/work/known-good-repo
   ```
 
-  This is read-only — Mecatl only reads it, never writes it. Paths are compared
-  on their cleaned, absolute, symlink-resolved form, so a moved or symlinked
-  path cannot forge another workspace's trust.
+  Mecatl compares cleaned, absolute, symlink-resolved paths.
 
-- **The `mecatui` first-encounter prompt** — when you launch the embedded TUI in
-  an untrusted workspace that carries a project authority set, it prompts once
-  (`[t]rust / [o]nce / [n]o`, default no) before the TUI takes over. `t`
-  remembers the decision in a machine-written registry (`trust.yaml`, separate
-  from your human-authored `settings.yaml`). `mecated` never prompts — it reads
-  the registry declaratively.
+- Embedded `mecatui` prompts when it first encounters project authority. A
+  remembered decision is stored in `trust.yaml`. `mecated` reads that registry
+  but never prompts.
 
-A remembered trust is keyed to the project's **identity anchor** (its soul plus
-project-tier agent/command/skill definitions — but _not_ `settings.yaml`, which
-changes every commit). If that anchor drifts after you trusted it, the workspace
-is re-gated to untrusted (and `mecatui` re-prompts). Editing permission rules
-does not re-prompt; changing the persona / agents / commands / skills does.
+A remembered decision is tied to the project's soul, agents, commands, and
+skills. Changing those files returns the project to untrusted. Editing project
+permission rules does not trigger another prompt.
 
-A corrupt or unparseable `settings.yaml` or `trust.yaml` always resolves to
-**untrusted** — a broken config never grants trust.
+A corrupt `settings.yaml` or `trust.yaml` resolves to untrusted.
 
 #### Project-tier ingestion on headless roots (the opt-in design)
 
-On a **headless** root (`--headless`), posture never raises `TrustProject`.
-Explicit `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust
-admits BOTH repo steering and the read-only child shell. Without any trust
-source, `mecatequi --posture auto` keeps allow-all approvals but gets neither
-because `.git` is not vouched.
+On a headless root, posture alone never trusts the project. Use
+`--trust-project`, `trustedWorkspaces:`, or a current remembered decision to
+admit project steering and read-only child Shell access.
 
 ---
 
-## Layer 2 — model-backed guardrails
+## Layer 2: model-backed guardrails
 
-Guardrails inspect the data crossing the agent's tool boundary with a
-**separate, tool-less checker model** and enforce a verdict on the call. It is
-the _dual-LLM quarantine_ pattern: a dedicated model judges tool content as
-**data, never as instructions**, so a compromised tool result or a model bent on
-exfiltration is caught by something the attacker cannot also prompt-inject in
-the same breath.
+Guardrails use a separate, tool-less model to inspect matched tool content:
 
-It catches two trust-boundary crossings:
-
-- **Outbound (`PreToolUse`) — exfiltration.** The model chose the arguments. A
-  guardrail inspects the args before the call runs — a secret in an HTTP body, a
-  credential in an MCP call, `.env` contents addressed to an external service.
-- **Inbound (`PostToolUse`) — prompt injection.** A tool _result_ is
-  attacker-influenced data — a fetched web page, a GitHub issue body, an MCP
-  response. A guardrail inspects the result the model is about to read for
-  injection-like content.
-
-The checker is the same trust model as Layer 1 turned inward: where Layer 1
-gates _whether a call runs_, guardrails inspect _what the call carries_.
+- `PreToolUse` checks outbound arguments for exfiltration before execution.
+- `PostToolUse` checks inbound results for prompt injection before the agent
+  reads them.
 
 ### Verdicts: block, sanitize, advisory
 
-Each rule sets a mode:
+|Mode|Behavior|
+|-|-|
+|`block`|Stops a pre-tool call or replaces a post-tool result with an error.|
+|`sanitize`|Replaces arguments or results with the checker's `sanitized_content`. Invalid or oversized replacements become blocks.|
+|`advisory`|Logs and displays a finding without changing what the tool or model receives.|
 
-- **`block`** — enforce. A `PreToolUse` block is a real veto (the tool never
-  runs). A `PostToolUse` block **rewrites the result to a model-visible error**
-  rather than vetoing (see below).
-- **`sanitize`** — enforce by rewriting the args (pre) or result (post) to the
-  checker's `sanitized_content`. A sanitized result carries a
-  `[guardrail: redacted unsafe content]` marker so the model knows it was
-  edited. Sanitize **trusts the checker's output** (a compromised checker could
-  rewrite content), so use it only with a checker model you trust; a nil,
-  oversized, or invalid rewrite falls back to a block.
-- **`advisory`** — observe-only. A finding emits an operator-log diagnostic and
-  a client-visible advisory notice on the tool card, but the call/result is
-  byte-unchanged and the model sees nothing. Measure the false-positive rate,
-  then promote a rule to `block` or `sanitize`.
+Use `sanitize` only with a checker you trust because its output replaces the
+original content. A rewritten result includes the
+`[guardrail: redacted unsafe content]` marker.
 
 ### PostToolUse block rewrites, it does not veto
 
-This is the key non-obvious point. By the time a `PostToolUse` hook fires, the
-tool has **already run** — so an enforcing inbound block cannot un-run it.
-Instead the guardrail **rewrites** the result to an error (`is_error: true`).
-The loop guarantees the recorded history, the client event stream, and the
-model's view all show the **effective** (rewritten) result — so the model sees
-the block, the client agrees, and the raw injected result never reaches either.
-Only a `PreToolUse` block is a true veto.
+A `PostToolUse` check runs after the tool, so it cannot undo the operation. A
+block replaces the result with `is_error: true`. Recorded history, client
+events, and the model all receive that replacement. Only a `PreToolUse` block
+prevents execution.
 
 ### Recovering from a block: approve-once
 
-A `block` verdict is not a permanent dead end. When the checker blocks a
-`PreToolUse` call, the block is _askable_: on an interactive session the harness
-pauses the run and surfaces it to the human through the **same permission-ask
-flow** Layer 1 uses (see [The `permission.ask` flow](#the-permissionask-flow)) —
-an ordinary approval modal carrying the actual blocked call, not a slash command
-or a prompt directive the human has to predict and pre-type. The human picks one
-of the same three verdicts:
+A `PreToolUse` block creates the same interactive approval flow as a permission
+ask:
 
-- **Deny** — the call never runs; the model receives the block reason and
-  adapts.
-- **Allow once** — the call runs, this time only.
-- **Allow & don't ask again** — the call runs, and the harness arms a
-  **session-scoped waiver**: a later call matching the _exact_ tool and the
-  _exact_ normalized command (`Shell`) or arguments (any other tool) skips the
-  checker for the rest of the session. Matching is exact — never a substring,
-  never a blanket per-tool bypass — so approving one `gh pr merge` call never
-  waves through an unrelated one. The waiver is in-memory only and does not
-  survive a process restart.
+- **Deny:** the call never runs; the model receives the block reason and adapts.
+- **Allow once:** the call runs this time only.
+- **Allow and don't ask again** runs the call and creates an in-memory,
+  session-scoped waiver for the exact tool and normalized arguments. It does not
+  survive restart.
 
-A run parked on an askable guardrail block resumes exactly like any other
-pending approval, including across a process restart. In a **headless**
-deployment there is no human to ask, so an askable block resolves as a terminal
-block — the same fail-safe default as an unresolved Layer 1 ask.
+A pending approval can resume after restart. A headless deployment resolves an
+unanswered block as a terminal block.
 
-**Posture coupling.** Under the [`yolo` posture](#the-posture-ladder) — the
-fully gate-free tier — every guardrail rule is demoted to advisory (log and
-notify only; never block or ask). `strict`, `trusted`, and `auto` all keep
-enforcing: under `auto` the interactive approve-once ask _is_ the intended
-behavior (the checker blocks, an interactive human allows it once), so `auto` is
-deliberately excluded from the demotion — only `yolo` trades the guardrail's
-enforcement away.
+Under `yolo`, all guardrail rules become advisory. `strict`, `trusted`, and
+`auto` retain enforcement.
 
 ### Configuring guardrails
 
-Guardrails are **off until you configure a checker model** — configuring a model
-is the opt-in to spend (the only cost is the per-call checker LLM call). With a
-model and no explicit rule list, guardrails are on with the **default block
-ruleset**:
+Guardrails remain off until you configure a checker model. With a model and no
+explicit rules, Mecatl uses this block ruleset:
 
 |Tool matcher|Phases|Mode|
 |-|-|-|
@@ -610,45 +423,18 @@ ruleset**:
 |`mcp__*` (all MCP tools)|pre + post|block|
 |`Shell`|pre|block (read-only commands skip the checker)|
 
-The other local tools (`Read`/`Edit`/`Write`/`Grep`/`Glob`) are deliberately not
-matched — they have no outward reach, and `Edit`/`Write` are workspace mutations
-git already covers as the rollback layer. `Shell` **is** matched, because the
-shell is an agent's single largest blast radius: it can push, merge, delete, or
-exfiltrate, and a guardrail that ignores it misses exactly that surface (the
-motivating incident was an agent running `gh pr merge --squash` as a `Shell`
-call and merging its own PR unattended, with guardrails never seeing it).
-
-Inspecting every shell command would be an unacceptable latency/cost tax on the
-`ls` / `grep` / `git status` traffic that dominates a session, so the default
-`Shell` rule carries a **read-only pre-filter**: a command that is confidently
-read-only (the same classifiers Layer 1's rule engine uses) skips the checker
-entirely — zero LLM calls. Anything else — a mutating or outward command, an
-unrecognized verb, or a substitution it can't prove read-only — falls through to
-inspection; ambiguity always fails toward inspecting, never skipping.
-
-The default `Shell` rule also swaps in a **Shell-specific rubric** in place of
-the generic exfiltration prompt used for the network/MCP rules — the generic
-rubric's "if uncertain, judge unsafe" false-positives badly on ordinary shell
-work (a write to a sibling repo never leaves the machine, so it isn't
-exfiltration). The Shell rubric instead judges a command **safe unless it names
-one of five concrete danger categories**: (1) sending data off the machine to a
-network destination, especially secrets; (2) fetching and executing remote code
-(`curl … | sh`); (3) an irreversible action against a remote you may not control
-(force-push, push/merge, `gh pr merge`, publishing a release, deleting a remote
-branch/repo); (4) a destructive, hard-to- reverse local operation (recursive
-deletion, overwriting a disk device, mass recursive chmod/chown); (5) a
-local-persistence write to a credential, SSH key, shell-startup file, scheduler
-entry, or git hook — a write that never leaves the machine but grants later
-off-machine access or persistent code execution. Ordinary local writes (source,
-config, build output, notes — including to sibling repos), builds, tests, local
-file moves/copies, and routine origin-remote git operations are explicitly
-judged safe.
+Local filesystem tools are not matched by default. The `Shell` matcher skips
+commands that Mecatl can classify as read-only and inspects everything else. Its
+rubric checks for data exfiltration, remote-code execution, irreversible remote
+actions, destructive local actions, and persistence through credentials or
+startup files. Ordinary source edits, builds, tests, and local file operations
+are considered safe.
 
 Set `defaultMode: advisory` to start the default set in observe-only mode and
 tune up from there.
 
 ```yaml
-# ~/.config/mecatl/settings.yaml  (user-global only — NOT a checked-in project file)
+# ~/.config/mecatl/settings.yaml (user-global only)
 guardrails:
   model: gpt-5-mini # configuring a model is the opt-in; default rules apply
   minContentBytes: 16 # skip a short INBOUND (post) result; outbound (pre) args are always inspected
@@ -660,30 +446,24 @@ guardrails:
       mode: advisory # observe first, tune later
     - match: 'Shell' # outbound exfil in shell args
       phases: ['pre']
-      mode: sanitize # trusts the checker's rewrite — use only with a trusted checker
+      mode: sanitize # use only with a trusted checker
       failClosed: true # a checker outage treats the content as UNSAFE (default is fail-OPEN)
 ```
 
-A matcher keys on the tool **name** only (exact > `prefix*` > `*`, most-specific
-wins); a tool with no matching rule is unchecked. A checker error/timeout
-**fails open** by default (degrade to "no checker" with a WARN; a sustained
-outage escalates to a one-time "checker DOWN" sticky WARN); set
-`failClosed: true` to treat a checker error as unsafe instead. A checker
-**saying safe always passes**.
+A matcher uses the tool name. Exact matches outrank `prefix*`, which outranks
+`*`. A tool without a matching rule is unchecked. Checker errors fail open by
+default and produce a warning; set `failClosed: true` to treat an error as
+unsafe.
 
 Unlike the headless-only ask reviewer, guardrails fire on the main loop
 regardless of `--headless`.
 
 :::warning[Operator-tier only]
 
-The `guardrails:` config is read from the user-global `settings.yaml` and the
-CLI **only** — never from a project-tier file. This inverts the usual
-tighten-only project gate: a project repo disabling or weakening a security
-checker would be a _downgrade_, so a project-tier `guardrails:` block is
-**ignored with a WARN**. The subtree is parsed strictly, so a typo cannot
-silently disable a guardrail. Set the model with `--guardrails-model` (or a
-bound `guardrail` model slot); force the whole layer off with
-`--guardrails=off`.
+Mecatl reads `guardrails:` only from user-global settings and CLI flags. It
+ignores a project-tier block with a warning. Set the model with
+`--guardrails-model` or a bound `guardrail` model slot. Use `--guardrails=off`
+as the deployment-wide kill switch.
 
 :::
 
@@ -691,39 +471,22 @@ bound `guardrail` model slot); force the whole layer off with
 
 ## The `permission.ask` flow
 
-When Layer 1 resolves to `ask`, the call pauses and the harness surfaces a
-`permission.ask` to the client — carrying the tool name, the (clamped, redacted)
-arguments, and the human-readable reason. The client responds with a verdict:
+When Layer 1 resolves to `ask`, the call pauses and emits `permission.ask` with
+the tool name, bounded and redacted arguments, and reason. The client returns:
 
-- **deny** — the call never runs; the model receives the deny and adapts.
-- **allow-once** — the call runs this time only.
-- **allow-always** — the call runs and the policy _learns_ a per-session rule so
+- **deny:** the call never runs; the model receives the deny and adapts.
+- **allow-once:** the call runs this time only.
+- **allow-always:** the call runs and the policy learns a per-session rule so
   the same call is not re-asked. A learned allow lives at the lowest scope and
   can never override a deny or a configured ask.
 
-A run that parks awaiting an approval can be approved later — even after a
-process restart, the harness re-enters the loop at the pending ask when the
-verdict arrives.
+A pending ask can resume after process restart when the verdict arrives.
 
-In `mecatui` the approval modal shows the args up front: the command renders in
-bright text with a left accent bar so it reads distinct from the surrounding
-metadata, long args **wrap** (a `Shell` ask decodes to the command text, never a
-raw JSON blob) and **scroll** inside the card, and `ctrl+t` opens a full-screen
-scrollable view of the whole arguments with the verdict buttons pinned at the
-bottom.
-
-In a **headless** deployment there is no human to ask. An unresolved ask is
-auto-denied by default, with one optional step before that: the
-`--subagent-ask-reviewer` (headless-only) inserts a tool-less, one-turn LLM
-reviewer that can approve a child's ask for that call only — an allow is always
-_allow-once_, never learned, and a deny leaves the child with the same clamped
-denial reason an auto-deny would give it. It is fail-safe (any error keeps the
-call denied), never delegated a _configured_ ask, and deliberately a server flag
-rather than a config key — granting an autonomous approval capability is an
-operator deployment decision, not something a checked-in project file should
-switch on. A per-run breaker trips after 3 consecutive non-allow outcomes
-(denies, errors, timeouts) — once open, later asks in that run skip the reviewer
-and go straight to auto-deny; a single allow resets the count.
+Headless deployments deny unresolved asks. The optional headless-only
+`--subagent-ask-reviewer` adds a one-turn, tool-less model review for child
+asks. It can approve once, never learn an allow, and fails closed. Configured
+asks do not reach the reviewer. After three consecutive denials or failures in
+one run, later asks skip the reviewer; an approval resets that count.
 
 ---
 
@@ -732,8 +495,8 @@ and go straight to auto-deny; a single allow resets the count.
 Children (subagent explorers, team members, parallel branches) get their **own**
 scoped ruleset, distinct from the main engine's:
 
-- Child engines default to **allow-all** at a built-in floor — everything runs
-  except substitution-floored commands and anything a configured deny/ask gates.
+- Child engines default to an allow-all built-in floor. Everything runs except
+  substitution-floored commands and anything a configured deny/ask gates.
 - A top-level **`deny`** binds children too (a deny only ever tightens, so it
   binds everywhere). Top-level `allow`/`ask` are main-only (children are already
   allow-all).
@@ -743,18 +506,16 @@ scoped ruleset, distinct from the main engine's:
   independently classify as read-only).
 - Under `auto` and `yolo` posture, the allow-all rule is pushed to children too.
   The difference between the two tiers is the **child substitution floor**:
-  `auto` keeps it gated (a child's `$(...)` resolves through the child-ask model
-  — injection defence on); `yolo` loosens it (a child's substitution auto-runs —
-  defence off).
+  `auto` keeps it gated through the child-ask model; `yolo` lets child
+  substitutions run automatically.
 
 A project's `subagent:` allows are themselves trust-gated, exactly like its main
 allows.
 
 ---
 
-## What's next?
+## What's next
 
-- [Hook system](hooks.md) — the lifecycle phases the guardrail checker
-  decorates, and how to write your own pre/post-tool and lifecycle hooks.
+- [Hook system](hooks.md) for lifecycle phases and custom hooks.
 - [PermissionPolicy extension point](/building/extension-points/permission-policy.md)
-  — implement the port to replace Layer 1's rule logic with your own.
+  to replace permission-rule logic with your own.

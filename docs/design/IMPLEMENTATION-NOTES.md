@@ -8411,10 +8411,32 @@ Basic and form `client_secret` is rejected before dialing. The MCP resource clie
 separate exact-resource marker for its audience-bound bearer, remains no-proxy/DNS-pinned,
 and rejects cleartext except for an exact private-origin opt-in; an allowlist entry alone
 never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
-This controller supports preregistered confidential and CIMD clients only; DCR
-remains blocked here on ADR 0219's official-SDK hooks. The separately configured
-ToolHive MCP broker supports its own durable DCR resolver under ADR 0314. The
-root module pins `github.com/modelcontextprotocol/go-sdk` at
+Direct/global DCR clients use one private server-scoped durable lifecycle record in the same
+credential-store namespace; it carries and validates profile, principal, canonical resource,
+and exact issuer. `internal/adapter/mcp/oauth_dcr.go` (`PrepareOAuthDCRLogin`) discovers and validates
+protected-resource and authorization-server metadata through the hardened client, then
+creates or reuses a CAS-protected pending/ready registration. Preparation never registers
+or launches a browser; a one-use private ticket permits the subsequent login controller to
+POST exactly one public-client registration after the callback listener has supplied its
+actual variable-port URI. Reset replaces only a valid ready registration; retry replaces
+only a valid pending attempt. Corrupt, mismatched, or uncertain state fails with the
+redacted recovery-required category instead of being deleted or bypassed; reset/retry do not
+repair corrupt selected state.
+
+The DCR grant is a distinct generation-bound v2 envelope implemented by
+`internal/adapter/mcp/oauth_dcr_grant.go`. It stores only the access token required for the
+active generation; direct DCR rejects refresh tokens, `offline_access`, scopes other than
+exactly `openid`, and refresh-token grants. Expiry, grant reset, a registration-generation
+change, or an orphan grant returns login-required without refresh or browser side effects.
+Grant reset writes a generation-bound reset tombstone so a stale authorization writer cannot
+revive the old result. Explicit re-login reuses a valid registration. For this public-client
+path only, `internal/adapter/mcp/oauth_http.go` rejects the official SDK's
+`AuthStyleAutoDetect` Basic probe before dial and admits only its exact parameter retry with
+the expected client ID and no secret/assertion; preregistered confidential clients retain
+the Basic-only policy.
+
+The separately configured ToolHive MCP broker retains its own durable DCR resolver under
+ADR 0314. The root module pins `github.com/modelcontextprotocol/go-sdk` at
 `v1.7.1-0.20260825151509-2732839dbadd`; the controller enables the SDK's
 `AcceptUnadvertisedIss` compatibility path, leaving authorization-server discovery and
 metadata-conditioned RFC 9207 validation in the SDK. A missing callback `iss` is accepted
@@ -8458,12 +8480,16 @@ and controller close on every path while the injected store stays caller-owned. 
 project to context/runtime categories or fixed `ErrMCPLoginConfig`/`ErrMCPLoginFailed`
 without endpoint or credential-bearing causes.
 
-The shipped `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]`
-command is the sole runtime constructor. The repeatable permission-config option selects trusted
-operator settings only, never OAuth values. It uses the canonical operator profile loader, requires a mutable local Store,
-and emits an authorization URL to stdout only in explicit no-browser mode. Normal serving,
-ACP, mecatequi, and mecak8s keep the presenter nil. ADR 0219's metadata-profile blockers
-remain open.
+The shipped `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]
+[--reset-dcr-registration | --retry-dcr-registration]` command is the sole runtime
+constructor. The repeatable permission-config option selects trusted operator settings only,
+never OAuth values. The mutually exclusive DCR-only modifiers perform the explicit
+ready-registration reset or pending-attempt retry before continuing into login; they reject
+other client kinds and invalid/corrupt state without mutation. Grant-only reset remains an
+internal controller operation and has no CLI flag. The command uses the canonical operator
+profile loader, requires a mutable local Store, and emits an authorization URL to stdout only
+in explicit no-browser mode. Normal serving, ACP, mecatequi, and mecak8s keep the presenter
+nil. Complete public-client refresh remains deferred to issue #1355.
 
 ## Operator MCP profiles (ADR 0113)
 

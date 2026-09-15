@@ -23,6 +23,7 @@ type sessionsTab int
 
 const (
 	tabChats sessionsTab = iota
+	tabDrafts
 	tabScheduledRuns
 	tabChildRuns
 	tabOtherRuns
@@ -273,7 +274,9 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 	c := &s.transcript
 	switch msg := msg.(type) {
 	case client.UserPromptMsg:
-		if descs := mediaDescriptors(msg.Parts); len(descs) > 0 {
+		if msg.Synthetic {
+			c.addNotice(msg.Text)
+		} else if descs := mediaDescriptors(msg.Parts); len(descs) > 0 {
 			c.addUserWithMedia(msg.Text, descs)
 		} else {
 			c.addUser(msg.Text)
@@ -334,21 +337,22 @@ type sessionForker interface {
 }
 
 type sessionsState struct {
-	view      sessionsView
-	startup   bool // same /sessions renderer, with launch-only new/quit hints
-	tab       sessionsTab
-	loading   bool
-	err       error
-	sessions  []client.SessionListItem
-	filtered  []client.SessionListItem
-	handles   map[string]string
-	filter    textinput.Model
-	cursor    int
-	selected  client.SessionListItem
-	inspect   bool
-	loadErr   error
-	health    *client.StorageHealth
-	healthErr error
+	view              sessionsView
+	startup           bool // same /sessions renderer, with launch-only new/quit hints
+	tab               sessionsTab
+	loading           bool
+	err               error
+	sessions          []client.SessionListItem
+	activityInventory bool
+	filtered          []client.SessionListItem
+	handles           map[string]string
+	filter            textinput.Model
+	cursor            int
+	selected          client.SessionListItem
+	inspect           bool
+	loadErr           error
+	health            *client.StorageHealth
+	healthErr         error
 
 	maintenance    maintenanceView
 	maintenanceErr bool
@@ -689,13 +693,23 @@ func (s *sessionsState) handleNavigationKey(msg tea.KeyPressMsg) (handled bool, 
 }
 
 func (s *sessionsState) nextTab() {
-	tabCount := tabStorageHealth
+	tabs := []sessionsTab{tabChats}
+	if s.activityInventory {
+		tabs = append(tabs, tabDrafts)
+	}
+	tabs = append(tabs, tabScheduledRuns, tabChildRuns, tabOtherRuns)
 	if (s.deps.caps.StorageHealth && s.healthFetcher != nil) ||
 		(s.deps.caps.StorageMigration && s.migration != nil) ||
 		(s.deps.caps.StorageCleanup && s.cleanup != nil) {
-		tabCount++
+		tabs = append(tabs, tabStorageHealth)
 	}
-	s.tab = (s.tab + 1) % tabCount
+	for i, tab := range tabs {
+		if s.tab == tab {
+			s.tab = tabs[(i+1)%len(tabs)]
+			return
+		}
+	}
+	s.tab = tabs[0]
 }
 
 func (s *sessionsState) handleRenamed(msg client.SessionRenamedMsg) (tea.Cmd, bool, bool) {
@@ -911,7 +925,7 @@ func (s *sessionsState) Close() {
 }
 
 func (s *sessionsState) syncFilter() {
-	tabbed := filterSessionsByTab(s.sessions, s.tab)
+	tabbed := filterSessionsByTabWithActivity(s.sessions, s.tab, s.activityInventory)
 	s.handles = sessionDisplayHandles(tabbed)
 	s.filtered = filterSessions(tabbed, s.handles, s.filter.Value())
 	if s.cursor >= len(s.filtered) {
@@ -966,6 +980,9 @@ func (s *sessionsState) applyPage(msg client.SessionInventoryPageMsg) tea.Cmd {
 		selectedID = s.actionID
 	}
 	replace := msg.Cursor == "" && (s.loadState == sessionsInitialLoading || s.loadState == sessionsStaleRestart)
+	if msg.Cursor == "" {
+		s.activityInventory = msg.Page.ActivityInventory
+	}
 	s.sessions, s.err, s.loading = mergeSessionPages(s.sessions, msg.Page.Sessions, replace), nil, false
 	s.syncFilter()
 	for i := range s.filtered {
@@ -1089,13 +1106,15 @@ func (s *sessionsState) pageCmd() tea.Cmd {
 
 const sessionsVisibleRows = 12
 
-func filterSessionsByTab(sessions []client.SessionListItem, tab sessionsTab) []client.SessionListItem {
+func filterSessionsByTabWithActivity(sessions []client.SessionListItem, tab sessionsTab, activityInventory bool) []client.SessionListItem {
 	out := make([]client.SessionListItem, 0, len(sessions))
 	for _, s := range sessions {
 		keep := false
 		switch tab {
 		case tabChats:
-			keep = s.Kind == client.SessionKindMain
+			keep = s.Kind == client.SessionKindMain && (!activityInventory || s.UsageState != client.SessionActivityDraft)
+		case tabDrafts:
+			keep = activityInventory && s.Kind == client.SessionKindMain && s.UsageState == client.SessionActivityDraft
 		case tabScheduledRuns:
 			keep = s.Kind == client.SessionKindScheduled
 		case tabChildRuns:
@@ -1259,13 +1278,19 @@ func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabil
 	return renderSessionsPanel(th, st, caps, hk, width, height, sessionID)
 }
 
-func sessionsTabBar(th theme.Theme, tab sessionsTab, storageHealth bool) string {
-	labels := []string{"Chats", "Scheduled runs", "Child runs", "Other"}
+func sessionsTabBar(th theme.Theme, tab sessionsTab, activityInventory, storageHealth bool) string {
+	labels := []string{"Chats", "Drafts", "Scheduled runs", "Child runs", "Other"}
+	if !activityInventory {
+		labels[tabDrafts] = ""
+	}
 	if storageHealth {
 		labels = append(labels, "Maintenance")
 	}
 	var parts []string
 	for i, label := range labels {
+		if label == "" {
+			continue
+		}
 		prefix := "  "
 		style := th.Style("muted")
 		if int(tab) == i {
@@ -1284,7 +1309,7 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilit
 	}
 	var b strings.Builder
 	maintenance := caps.StorageHealth || caps.StorageMigration || caps.StorageCleanup
-	b.WriteString(sessionsTabBar(th, st.tab, maintenance) + "\n\n")
+	b.WriteString(sessionsTabBar(th, st.tab, st.activityInventory, maintenance) + "\n\n")
 	if st.tab == tabStorageHealth {
 		b.WriteString(renderStorageHealth(th, st, caps, hk))
 		return b.String()
@@ -1521,7 +1546,9 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 			marker = "▶ "
 		}
 		label := s.Title
-		if label == "" {
+		if st.activityInventory && s.UsageState == client.SessionActivityDraft {
+			label = "New — no messages"
+		} else if label == "" {
 			label = "untitled"
 		}
 		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + sanitizeTerminal(label)

@@ -136,6 +136,9 @@ func (p *MCPProfiles) OAuthServer(name string) (mcp.ServerConfig, bool) {
 // retain their order; a same-name legacy CLI entry replaces the whole settings
 // entry in place, and a distinct legacy entry appends.
 func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
+	if opts.Operator != nil && opts.Operator.Mode == "broker" {
+		return nil, fmt.Errorf("%w: broker MCP authority cannot be loaded as direct profiles", ErrMCPProfileInvalid)
+	}
 	if err := validateLegacyRelaxations(opts.Legacy); err != nil {
 		return nil, err
 	}
@@ -291,15 +294,27 @@ func loadMCPProfile(input profileInput, lookup func(string) (string, bool), owne
 	}
 }
 
+func resolvedOAuthScopePolicy(decl *permconfig.MCPOAuthProfile) (bool, []string) {
+	scopes := append([]string(nil), decl.Scopes...)
+	if decl.Client.Mode == "dcr" && len(scopes) == 0 {
+		scopes = []string{"openid"}
+	}
+	return decl.RequestRefreshToken, scopes
+}
+
 func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (string, bool), owner *MCPProfiles, stores map[string]credentialstore.Store) (*mcp.OAuthOptions, error) {
 	decl := profile.Auth.OAuth
 	if decl == nil || decl.Network == nil {
 		return nil, &MCPProfileError{Server: profile.Name, Field: "oauth.network", Kind: ErrMCPProfileInvalid}
 	}
+	if err := validateGlobalOAuth(profile); err != nil {
+		return nil, err
+	}
+	requestRefresh, allowedScopes := resolvedOAuthScopePolicy(decl)
 	opts := &mcp.OAuthOptions{
 		Subject:       mcp.OAuthSubject{Profile: decl.Profile, Principal: decl.Principal},
 		Issuer:        decl.Issuer,
-		AllowedScopes: append([]string(nil), decl.Scopes...), RequestRefreshToken: decl.RequestRefreshToken,
+		AllowedScopes: allowedScopes, RequestRefreshToken: requestRefresh,
 		Network: mcp.OAuthNetworkPolicy{AdditionalOrigins: append([]string(nil), decl.Network.AdditionalOrigins...), PrivateOrigins: append([]string(nil), decl.Network.PrivateOrigins...), MaxRedirects: decl.Network.MaxRedirects},
 	}
 	if err := loadOAuthClient(profile, decl, lookup, opts); err != nil {
@@ -372,6 +387,10 @@ func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOA
 			return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_env", Ref: client.SecretEnv, Kind: ErrMCPProfileSecret, Expected: "a non-empty client secret in the referenced MECATL_* environment variable", Remedy: "set the referenced environment variable before starting mecatl"}
 		}
 		opts.Client.Preregistered = &oauthex.ClientCredentials{ClientID: client.ID, ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: secret}, Issuer: decl.Issuer}
+		return nil
+	}
+	if decl.Client.DCR != nil {
+		opts.Client.DCR = &mcp.OAuthDCRConfig{ServerName: profile.Name}
 		return nil
 	}
 	if decl.Client.CIMD == nil {

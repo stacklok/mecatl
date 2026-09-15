@@ -25,6 +25,7 @@ func TestMentionToken(t *testing.T) {
 		{"@foo", "@foo", true, "foo"},
 		{"mid-line word", "describe @img", true, "img"},
 		{"path token", "@cmd/main.go", true, "cmd/main.go"},
+		{"home path token", "@~/notes/todo.txt", true, "~/notes/todo.txt"},
 		{"no @", "hello", false, ""},
 		{"email-ish (@ not at word start)", "user@host", false, ""},
 		{"space-terminated (back to prose)", "@foo bar", false, ""},
@@ -447,5 +448,318 @@ func TestParseMentionPaths(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("paths[%d] = %q, want %q (%v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestMentionCompletionResolvesLeadingTraversals(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "parent", "workspace")
+	for _, name := range []string{
+		filepath.Join(workspace, "local.txt"),
+		filepath.Join(base, "parent", "parent.txt"),
+		filepath.Join(base, "grand.txt"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(name, []byte("file"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	for _, tc := range []struct {
+		token string
+		want  string
+	}{
+		{"./local", "./local.txt"},
+		{"../parent", "../parent.txt"},
+		{"../../grand", "../../grand.txt"},
+	} {
+		t.Run(tc.token, func(t *testing.T) {
+			if got := matchMentionFilesWithHome(workspace, tc.token, os.UserHomeDir); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("matches = %v, want [%s]", got, tc.want)
+			}
+
+			m := newMentionModel(t, workspace)
+			m.prompt.Rewrite("attach @" + tc.token)
+			m = m.syncMention().mentionComplete()
+			if got := m.prompt.Value(); got != "attach @"+tc.want+" " {
+				t.Fatalf("completed prompt = %q", got)
+			}
+		})
+	}
+	if got := matchMentionFilesWithHome("", "../anything", os.UserHomeDir); got != nil {
+		t.Fatalf("empty workspace matches = %v, want none", got)
+	}
+}
+
+func TestHomeMentionCompletionResolvesLeadingTraversals(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	for _, name := range []string{
+		filepath.Join(home, "note.txt"),
+		filepath.Join(base, "outside.txt"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(name, []byte("file"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	lookup := func() (string, error) { return home, nil }
+	for _, tc := range []struct {
+		token string
+		want  string
+	}{
+		{"~/./note", "~/./note.txt"},
+		{"~/../outside", "~/../outside.txt"},
+	} {
+		t.Run(tc.token, func(t *testing.T) {
+			if got := matchMentionFilesWithHome("", tc.token, lookup); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("matches = %v, want [%s]", got, tc.want)
+			}
+
+			m := newMentionModel(t, "")
+			m.deps.homeDir = lookup
+			m.prompt.Rewrite("attach @" + tc.token)
+			m = m.syncMention().mentionComplete()
+			if got := m.prompt.Value(); got != "attach @"+tc.want+" " {
+				t.Fatalf("completed prompt = %q", got)
+			}
+		})
+	}
+}
+
+func TestSubmitOutsideWorkspaceMentionAttachesFile(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	if err := os.Mkdir(workspace, 0o750); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "outside.txt"), []byte("outside attachment"), 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	m, send := newSubmitModel(t, workspace, client.Capabilities{})
+	m.prompt.Rewrite("read @../outside.txt")
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if m.phase != phaseRunning || len(send.frames()) != 1 {
+		t.Fatalf("outside-workspace mention did not upload content: phase=%d frames=%v", m.phase, send.frames())
+	}
+	prompt := send.frames()[0].GetPrompt().GetText()
+	if !strings.Contains(prompt, "outside attachment") || !strings.Contains(prompt, "--- ../outside.txt ---") || strings.Contains(prompt, base) {
+		t.Fatalf("outside mention provenance = %q, want typed label without resolved base %q", prompt, base)
+	}
+}
+
+func TestRelativeMentionResolutionRequiresWorkspace(t *testing.T) {
+	for _, path := range []string{"plain.txt", "./local.txt", "../outside.txt"} {
+		if got, ok := resolveMentionWithHome("", path, os.UserHomeDir); ok || got != "" {
+			t.Errorf("resolveMentionWithHome(\"\", %q) = %q, %v; want unresolved", path, got, ok)
+		}
+	}
+	absolute := filepath.Join(t.TempDir(), "absolute.txt")
+	if got, ok := resolveMentionWithHome("", absolute, os.UserHomeDir); !ok || got != absolute {
+		t.Errorf("absolute resolution = %q, %v; want %q, true", got, ok, absolute)
+	}
+}
+
+func TestNoWorkspaceRelativeMentionsStayProse(t *testing.T) {
+	m, send := newSubmitModel(t, "", client.Capabilities{})
+	m.prompt.Rewrite("@plain.txt @./local.txt @../outside.txt")
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if len(send.frames()) != 1 || send.frames()[0].GetPrompt().GetText() != "@plain.txt @./local.txt @../outside.txt" {
+		t.Fatalf("relative mentions did not remain prose: frames=%v", send.frames())
+	}
+}
+
+func TestHomeMentionResolutionOnlyAcceptsLiteralTildeSlash(t *testing.T) {
+	home := t.TempDir()
+	lookup := func() (string, error) { return home, nil }
+
+	got, ok := resolveMentionWithHome("/workspace", "~/docs/note.txt", lookup)
+	if !ok || got != filepath.Join(home, "docs", "note.txt") {
+		t.Fatalf("home resolution = %q, %v", got, ok)
+	}
+	got, ok = resolveMentionWithHome("/workspace", "~other/note.txt", lookup)
+	if !ok || got != filepath.Join("/workspace", "~other/note.txt") {
+		t.Fatalf("non-literal home path = %q, %v", got, ok)
+	}
+	if _, ok := resolveMentionWithHome("/workspace", "~/note.txt", func() (string, error) { return "", os.ErrNotExist }); ok {
+		t.Fatal("failed home lookup resolved a mention")
+	}
+}
+
+func TestTildeUserCompletionUsesWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "~other", "note.txt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("workspace file"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	lookup := func() (string, error) {
+		t.Fatal("~user completion must not resolve the user home")
+		return "", nil
+	}
+
+	m := newMentionModel(t, workspace)
+	m.deps.homeDir = lookup
+	m.prompt.Rewrite("attach @~other/note")
+	m = m.syncMention().mentionComplete()
+	if got := m.prompt.Value(); got != "attach @~other/note.txt " {
+		t.Fatalf("completed prompt = %q", got)
+	}
+}
+
+func TestHomeMentionCompletionPreservesSpellingAndPrunesHidden(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{"docs/note.txt", "docs/.secret", ".hidden/skip.txt"} {
+		path := filepath.Join(home, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("home file"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	lookup := func() (string, error) { return home, nil }
+	if got := matchMentionFilesWithHome("", "~/note", lookup); len(got) != 1 || got[0] != "~/docs/note.txt" {
+		t.Fatalf("home matches = %v, want [~/docs/note.txt]", got)
+	}
+	if got := matchMentionFilesWithHome("", "~/", lookup); len(got) != 1 || got[0] != "~/docs/note.txt" {
+		t.Fatalf("home matches include hidden files: %v", got)
+	}
+
+	m := newMentionModel(t, "")
+	m.deps.homeDir = lookup
+	m.prompt.Rewrite("attach @~/note")
+	m = m.syncMention().mentionComplete()
+	if got := m.prompt.Value(); got != "attach @~/docs/note.txt " {
+		t.Fatalf("completed prompt = %q", got)
+	}
+}
+
+func TestSubmitHomeMentionsAttachTextAndMedia(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "note.txt"), []byte("home attachment"), 0o600); err != nil {
+		t.Fatalf("write text: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "shot.png"), tinyPNG(t), 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	lookup := func() (string, error) { return home, nil }
+
+	textModel, textSend := newSubmitModel(t, "", client.Capabilities{Image: true})
+	textModel.deps.homeDir = lookup
+	textModel.prompt.Rewrite("read @~/note.txt")
+	mm, cmd := textModel.submitPrompt()
+	textModel = mm.(Model)
+	runBatchLeaves(cmd)
+	if textModel.phase != phaseRunning || len(textSend.frames()) != 1 {
+		t.Fatalf("text home mention did not upload content: phase=%d frames=%v", textModel.phase, textSend.frames())
+	}
+	textPrompt := textSend.frames()[0].GetPrompt().GetText()
+	if !strings.Contains(textPrompt, "home attachment") ||
+		!strings.Contains(textPrompt, "--- ~/note.txt ---") || strings.Contains(textPrompt, home) {
+		t.Fatalf("text provenance = %q, want ~/ label without resolved home %q", textPrompt, home)
+	}
+
+	mediaModel, mediaSend := newSubmitModel(t, "", client.Capabilities{Image: true})
+	mediaModel.deps.homeDir = lookup
+	mediaModel.prompt.Rewrite("read @~/shot.png")
+	mm, cmd = mediaModel.submitPrompt()
+	mediaModel = mm.(Model)
+	runBatchLeaves(cmd)
+	if mediaModel.phase != phaseRunning || len(mediaSend.frames()) != 1 || len(mediaSend.frames()[0].GetPrompt().GetParts()) != 1 {
+		t.Fatalf("media home mention did not upload part: phase=%d frames=%v", mediaModel.phase, mediaSend.frames())
+	}
+}
+
+func TestSubmitMentionLabelsStayAsTyped(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "notes.txt"), []byte("workspace attachment"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, send := newSubmitModel(t, ws, client.Capabilities{})
+	m.prompt.Rewrite("read @./notes.txt")
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if len(send.frames()) != 1 {
+		t.Fatalf("frames = %v, want one", send.frames())
+	}
+	prompt := send.frames()[0].GetPrompt().GetText()
+	if !strings.Contains(prompt, "--- ./notes.txt ---") || strings.Contains(prompt, ws) {
+		t.Fatalf("prompt provenance = %q, want typed relative label without %q", prompt, ws)
+	}
+}
+
+func TestSubmitAbsoluteTextMentionAttachesWithTypedLabel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(path, []byte("absolute attachment"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, send := newSubmitModel(t, "", client.Capabilities{})
+	m.prompt.Rewrite("read @" + path)
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if m.phase != phaseRunning || len(send.frames()) != 1 {
+		t.Fatalf("absolute mention did not send content: phase=%d frames=%v", m.phase, send.frames())
+	}
+	prompt := send.frames()[0].GetPrompt().GetText()
+	if !strings.Contains(prompt, "absolute attachment") || !strings.Contains(prompt, "--- "+path+" ---") {
+		t.Fatalf("prompt = %q, want attachment content and typed absolute label %q", prompt, path)
+	}
+}
+
+func TestSubmitFinalSymlinkMentionStaysProse(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(ws, "target.txt")
+	if err := os.WriteFile(target, []byte("must not attach"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(ws, "link.txt")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	m, send := newSubmitModel(t, ws, client.Capabilities{})
+	m.prompt.Rewrite("read @link.txt")
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if len(send.frames()) != 1 || send.frames()[0].GetPrompt().GetText() != "read @link.txt" {
+		t.Fatalf("final symlink did not remain prose: frames=%v", send.frames())
+	}
+}
+
+func TestHomeMentionDirectoryAndMissingStayProse(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, "directory"), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	m, send := newSubmitModel(t, "", client.Capabilities{Image: true})
+	m.deps.homeDir = func() (string, error) { return home, nil }
+	m.prompt.Rewrite("@~/directory @~/missing")
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if m.phase != phaseRunning || len(send.frames()) != 1 || send.frames()[0].GetPrompt().GetText() != "@~/directory @~/missing" || len(send.frames()[0].GetPrompt().GetParts()) != 0 {
+		t.Fatalf("non-files should remain prose: phase=%d frames=%v", m.phase, send.frames())
+	}
+
+	failedHome, failedSend := newSubmitModel(t, "", client.Capabilities{Image: true})
+	failedHome.deps.homeDir = func() (string, error) { return "", os.ErrNotExist }
+	failedHome.prompt.Rewrite("@~/missing")
+	mm, cmd = failedHome.submitPrompt()
+	failedHome = mm.(Model)
+	runBatchLeaves(cmd)
+	if failedHome.phase != phaseRunning || len(failedSend.frames()) != 1 || failedSend.frames()[0].GetPrompt().GetText() != "@~/missing" {
+		t.Fatalf("failed home lookup should leave prose: phase=%d frames=%v", failedHome.phase, failedSend.frames())
 	}
 }

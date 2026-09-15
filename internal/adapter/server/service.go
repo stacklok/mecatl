@@ -2622,7 +2622,10 @@ func (s *Service) CompatibilityInfo(ctx context.Context) *mecatlv1.GetCompatibil
 // It reads the SAME Config value the enforcement seam reads, which is what keeps
 // the advertisement and the refusal from disagreeing.
 func (s *Service) featureScope() FeatureScope {
-	return FeatureScope{ClientMCPOnCreate: s.cfg.ClientMCPOnCreate}
+	return FeatureScope{
+		ClientMCPOnCreate:        s.cfg.ClientMCPOnCreate,
+		SessionActivityInventory: port.SupportsActivityProjection(s.cfg.Store),
+	}
 }
 
 // verifyClientMCPMounted enforces the wire path's ALL-OR-NOTHING client-MCP
@@ -4624,6 +4627,13 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 			}
 		}()
 	}
+	if interruptedAuthorization {
+		// A restored broker authorization has already been repaired to an
+		// interrupted terminal result. An ordinary prompt must not turn that
+		// repair into a brokerless continuation: only the authorization control
+		// owns the paired result/resolution lifecycle.
+		return nil, fmt.Errorf("%w: restored MCP authorization requires its control", ErrFailedPrecondition)
+	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -5149,9 +5159,13 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 	// snapshot that predates the profile label still rehydrates as no-fs.
 	profile := profileForSession(sess)
 	// Rehydration reads the PERSISTED mode (sess.Mode) so a session that switched to
-	// plan before the restart rebuilds on the plan model — surface-agnostic, the same
-	// path a mid-session mode change uses.
-	return s.buildAndRegisterSessionEngine(ctx, sess, sel, profile, sess.Mode, false)
+	// plan before the restart rebuilds on the plan model. It deliberately does not
+	// resurrect broker authority from the persisted binding: the broker process owns
+	// the live attachment and its wrappers; after a restart the binding is only an
+	// upper-bound capability record until the owner explicitly starts a new
+	// enrollment. Exact-tool mode with no tools keeps ordinary prompts usable while
+	// making persisted broker names non-executable.
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, sess.Mode, false, nil, true)
 }
 
 // buildAndRegisterSessionEngine is the ONE shared build+cap-check+register+teardown
@@ -7885,6 +7899,9 @@ type SessionSummary struct {
 	// Kind and Relationship are the durable trusted-producer taxonomy.
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
+	// Activity is the content-free persisted-history projection, present only
+	// when the configured pager proves it can round-trip atomically.
+	Activity session.ActivityState
 	// Capabilities and Reasons describe each public action valid for this row.
 	// ReasonCode is the legacy aggregate public-chat reason.
 	Capabilities SessionInventoryCapabilities
@@ -8101,6 +8118,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	if !ok {
 		return ListSessionsPage{}, port.ErrSessionMetadataPagingUnsupported
 	}
+	activityProjection := port.SupportsActivityProjection(s.cfg.Store)
 	limit := request.PageSize
 	if limit < 0 {
 		return ListSessionsPage{}, fmt.Errorf("%w: page_size must be non-negative", ErrInvalidArgument)
@@ -8131,6 +8149,9 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	}
 	out := ListSessionsPage{Sessions: make([]SessionSummary, 0, len(page.Sessions)), TotalCount: page.TotalCount}
 	for _, meta := range page.Sessions {
+		if !activityProjection {
+			meta.Activity = session.ActivityUnknown
+		}
 		out.Sessions = append(out.Sessions, s.summaryFromDiscoveryMeta(meta))
 	}
 	out.NextCursor, err = encodeInventoryCursor(page.NextCursor)
@@ -8178,6 +8199,7 @@ func (s *Service) summaryFromDiscoveryMeta(meta port.SessionDiscoveryMeta) Sessi
 		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
 		TitleProvenance: meta.TitleProvenance,
 		Owner:           meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
+		Activity:     meta.Activity,
 		Capabilities: caps, Reasons: reasons, ReasonCode: reasons.PublicChat,
 	}
 }

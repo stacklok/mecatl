@@ -89,6 +89,7 @@ func TestWorkspaceEnrollmentConnectedRechecksAndResubmitsOnce(t *testing.T) {
 		t.Fatalf("resubmitted prompts = %v", got)
 	}
 
+	m.phase = phaseIdle
 	mm, cmd = m.runToolsConnect()
 	m = mm.(Model)
 	m = applyAll(m, cmd())

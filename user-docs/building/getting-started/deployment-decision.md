@@ -12,7 +12,8 @@ You can run Mecatl as a standalone server, deploy it to Kubernetes, use it for a
 single CI job, or embed the engine in your own Go application. Each option uses
 the same agent core but differs in how you operate it and manage state.
 
-`mecatui` is the terminal client for an embedded or remote server.
+[`mecatui`](/mecatui/index.md) is the terminal client for an embedded or
+remote server.
 
 ## Decision tree
 
@@ -39,6 +40,9 @@ Kubernetes Leases by default.
 |**`mecated`**|Run a standalone server for interactive clients or a controlled service|In-memory, JSONL on disk, or gRPC driver|A running process and writable storage for durable local sessions|
 |**`mecak8s`**|Run on Kubernetes without persistent volumes or with multiple replicas|Redis with Kubernetes Leases|Redis and Kubernetes RBAC for Leases|
 |**`mecatequi`**|Run one agent job in CI|None; each run is independent|An LLM provider key and CI runner|
+
+For a feature-by-feature comparison, see the
+[capability and deployment matrix](/features/capability-matrix.md).
 
 ## Embed the engine
 

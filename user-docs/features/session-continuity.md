@@ -8,10 +8,9 @@ description:
 
 # Session continuity
 
-A durable session store lets a Mecatl session survive a process restart. The
-store preserves the provider-neutral conversation, state, usage, limits,
-environment identity, and metadata needed to rebuild the same session profile. A
-later process loads that snapshot and resumes the existing conversation.
+Use a durable session store to resume Mecatl sessions after a process restart.
+The store preserves the conversation, state, usage, limits, environment, and
+session settings.
 
 ## Availability
 
@@ -27,7 +26,7 @@ Continuity is available in these forms:
   and ephemeral runs, but it does not survive restart.
 
 A durable store is also required for persisted Subagent `resume:` handles and
-for ACP session loading. The embedded mecatui server uses its configured local
+for ACP session loading. The embedded `mecatui` server uses its configured local
 state; `mecatui connect` uses the remote server's capabilities and cannot manage
 storage policy it does not own.
 
@@ -46,13 +45,10 @@ metadata, and event history. Treat it as sensitive plaintext: keep the directory
 owner-only, do not commit it, and do not place it in a shared sync folder or
 unencrypted multi-user backup.
 
-A prompt against an existing session goes through a run-entry recovery funnel.
-The service reopens completed sessions, interrupts cancelled ones, recovers
-failed ones, and abandons crash-orphaned running sessions only after obtaining
-exclusive ownership. Tool-call history is repaired with synthetic error results
-when necessary so a resumed provider request never contains an orphaned tool
-call. An `awaiting` session is different: it represents a pending approval and
-must be resumed through its approval path rather than reset by a new prompt.
+When you prompt an existing terminal session, Mecatl reopens completed sessions
+and recovers cancelled or failed ones. It repairs incomplete tool-call history
+before contacting the provider. A session awaiting approval must continue
+through its approval path.
 
 ```mermaid
 flowchart TD
@@ -70,12 +66,10 @@ flowchart TD
     J --> K[Persist the snapshot and append events]
 ```
 
-The durable event log is separate from the snapshot and is written independently
-of client delivery. A disconnected client does not prevent the terminal event or
-approval metadata from being recorded. The log also preserves compaction
-archives and supports replaying `allow_always` approvals into a fresh in-memory
-permission policy. Events are already redacted and do not contain raw approval
-arguments or denial reasons.
+The durable event log is separate from the snapshot. It records terminal and
+approval events even when the client disconnects, preserves compaction archives,
+and can restore `allow_always` decisions. Events omit raw approval arguments and
+denial reasons.
 
 ## Storage choices
 
@@ -118,7 +112,7 @@ retention:
   acknowledge_main_deletion: false
 ```
 
-Use the server or mecatui maintenance surface to inspect storage health and
+Use the server or `mecatui` maintenance commands to inspect storage health and
 produce a dry-run plan before optimizing or deleting. Do not delete files under
 the store with `find`, cron, filesystem age rules, or a shell loop. The
 management path understands session families, sidecars, leases, active runs, and
@@ -144,21 +138,11 @@ prevents unsafe release assumptions. Without a suitable lease backend,
 destructive maintenance fails closed rather than relying on process-local
 liveness.
 
-A lease loss is not always a genuine takeover: a missed renewal from a
-transient network blip looks the same, at first, as losing the session to a
-real competing owner. Either way, the owning process immediately stops acting
-as owner and marks the session locally off-limits, refusing every further
-prompt or resume attempt for it on its own. A background sweep, running every
-five minutes, then checks with the real lease backend whether the lease has
-actually become free; if it has, the sweep lifts the local mark automatically.
-A follow-up prompt or approval can then repair the session's terminal state
-through the ordinary run-entry recovery path, with no operator action and no
-process restart required. Recovery depends on the lease backend itself being
-reachable and able to confirm the lease is free: a failed or unavailable check
-leaves the session refused for that pass, and the sweep simply retries five
-minutes later, rather than assuming the lease is free on an inconclusive
-answer. If the lease backend does not support leasing at all, the sweep never
-runs, and the session stays refused until an explicit close.
+After losing a lease, a process stops accepting prompts and approvals for that
+session. Every five minutes, it asks the lease backend whether the lease is free
+and restores access only after a positive result. An unavailable backend leaves
+the session blocked for that pass. Without lease support, the session remains
+blocked until explicitly closed.
 
 ## Restart and deployment limitations
 
@@ -184,5 +168,3 @@ runs, and the session stays refused until an explicit close.
 - [Start and resume sessions](./start-and-resume-sessions.md)
 - [Operate local session storage](/building/deployment/session-storage-operations.md)
 - [Execution environments](./execution-environments.md)
-- [Deployment decision](/building/getting-started/deployment-decision.md)
-- [Capability and deployment matrix](./capability-matrix.md)

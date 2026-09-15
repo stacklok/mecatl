@@ -8,31 +8,27 @@ description:
 
 # Hook system
 
-This is the builder-facing reference for lifecycle hooks and the `HookRunner`
-contract. For the operator-facing permission and guardrail behavior surrounding
-hooks, see [Permissions and posture](/features/permissions-and-posture.md).
-
-Hooks run at fixed phases of the agent loop. They can block an action, rewrite
-what the model sees, or observe an event. Operators deploy hooks; the model
-cannot install, modify, or disable them. Every event starts as allowed.
+Use lifecycle hooks to observe agent activity, block an action, or rewrite a
+prompt, tool call, or result. Operators deploy hooks, and the model cannot
+change or disable them. For operator configuration, see
+[Permissions and posture](/features/permissions-and-posture.md).
 
 ## Hook phases
 
 |Phase|When it fires|Can block?|Can mutate?|Mutation target|
 |-|-|-|-|-|
-|`SessionStart`|Once at the very start of a run, before the prompt is recorded|Yes — aborts the run|No|—|
-|`UserPromptSubmit`|After command expansion, before the prompt is recorded|Yes — ends the run|Yes|The prompt text (`{"prompt": "..."}`)|
-|`PreToolUse`|After permission clears, before the tool executes|Yes — substitutes an error result; the tool does not run|Yes|The tool's args JSON|
-|`PostToolUse`|After the tool executes, before the result is emitted to the client or model|No — the tool already ran; a block only annotates|Yes|The result object (`{"content": "...", "is_error": false}`)|
-|`Stop`|Once at the terminal end of any run path, even if the context is already cancelled|No — terminal notification only|No|—|
-|`SubagentStop`|When a subagent's loop stops (mirrors `Stop` for child agents)|No — terminal notification only|No|—|
-|`TeammateIdle`|When a team member goes idle between rounds|No|No|—|
-|`TaskCreated`|When the team supervisor creates a task|No|No|—|
-|`TaskCompleted`|When a team member completes a task|No|No|—|
+|`SessionStart`|Before the first prompt is recorded|Yes, aborts the run|No||
+|`UserPromptSubmit`|After command expansion, before recording|Yes, ends the run|Yes|Prompt text|
+|`PreToolUse`|After permission approval, before execution|Yes, returns an error instead of running|Yes|Tool arguments|
+|`PostToolUse`|After execution, before emitting the result|No|Yes|Tool result|
+|`Stop`|When a run ends|No|No||
+|`SubagentStop`|When a child run ends|No|No||
+|`TeammateIdle`|When a team member becomes idle|No|No||
+|`TaskCreated`|When the team supervisor creates a task|No|No||
+|`TaskCompleted`|When a team member completes a task|No|No||
 
-`SessionStart` and `UserPromptSubmit` are fail-safe: a hook execution error (not
-just exit 2) also ends the run. `PreToolUse` and `PostToolUse` treat execution
-errors as annotations — neither aborts the run.
+An execution error in `SessionStart` or `UserPromptSubmit` ends the run.
+`PreToolUse` and `PostToolUse` errors become annotations and do not abort it.
 
 ## Shell hook contract
 
@@ -56,9 +52,9 @@ For `PostToolUse` it is `{"content": "...", "is_error": false}`. For
 
 |Exit code|Outcome|
 |-|-|
-|`0`|Allow — stdout is read as an optional message or mutation envelope|
-|`2`|Block — the action is vetoed; the reason is read from stdout (preferred) or stderr|
-|anything else|Hook error — surfaced as an annotation or run abort depending on the phase|
+|`0`|Allow. Stdout can contain a message or mutation envelope.|
+|`2`|Block. Mecatl reads the reason from stdout, then stderr.|
+|Any other value|Report a hook error. The phase determines whether the run aborts.|
 
 A single invocation is bounded by a 30-second timeout.
 
@@ -78,15 +74,14 @@ it replaces the tool's arguments before execution. For `PostToolUse` it replaces
 the result the model and client see. For `UserPromptSubmit` it replaces the
 recorded prompt text.
 
-A malformed (non-JSON-object) stdout is treated as a plain message and the
-original payload stands — so hooks that only print a message or produce no
-output at all are unaffected.
+A non-object stdout value is treated as a message, and the original payload is
+unchanged.
 
 ## Block example: guard Shell against `rm -rf`
 
 ```sh
 #!/bin/sh
-# pretooluse-guard.sh — wire as a PreToolUse hook for the Shell tool.
+# Use this script as a PreToolUse hook for Shell.
 event="$(cat)"
 if printf '%s' "$event" | grep -q '"rm -rf'; then
   echo "blocked: 'rm -rf' is not permitted by policy"
@@ -95,59 +90,53 @@ fi
 exit 0
 ```
 
-Exit 2 causes Mecatl to substitute an error `ToolResult` in place of running the
-command. The model sees a tool failure, not a silent skip.
+Exit 2 returns an error `ToolResult` without running the command.
 
 ## Mutation examples
 
 ### Rewrite the prompt before it is recorded
 
-A `UserPromptSubmit` hook that strips a leaked API key pattern from user input
-before it reaches the model or the session store:
+This `UserPromptSubmit` hook removes an API key pattern before the prompt
+reaches the model or session store:
 
 ```sh
 #!/bin/sh
 event="$(cat)"
 prompt="$(printf '%s' "$event" | python3 -c "import sys,json; print(json.load(sys.stdin)['Input']['prompt'])")"
 clean="$(printf '%s' "$prompt" | sed 's/sk-[A-Za-z0-9]\{32,\}/[REDACTED]/g')"
-python3 -c "import json,sys; print(json.dumps({'mutated': {'prompt': sys.stdin.read()}}))" <<< "$clean"
+printf '%s' "$clean" | \
+  python3 -c "import json,sys; print(json.dumps({'mutated': {'prompt': sys.stdin.read()}}))"
 exit 0
 ```
 
-The mutated prompt is what gets recorded into the session and sent to the model.
+Mecatl records and sends the mutated prompt.
 
 ### Redact a secret from a tool result
 
-A `PostToolUse` hook that scrubs AWS credentials from shell output before the
-model sees it:
+This `PostToolUse` hook removes AWS credentials from shell output:
 
 ```sh
 #!/bin/sh
 event="$(cat)"
 content="$(printf '%s' "$event" | python3 -c "import sys,json; print(json.load(sys.stdin)['Input']['content'])")"
 clean="$(printf '%s' "$content" | sed 's/AKIA[A-Z0-9]\{16\}/[REDACTED_KEY]/g')"
-python3 -c "
+printf '%s' "$clean" | python3 -c "
 import json, sys
 content = sys.stdin.read()
 print(json.dumps({'mutated': {'content': content, 'is_error': False}}))
-" <<< "$clean"
+"
 exit 0
 ```
 
-Because the mutation happens before the result is emitted, the client stream and
-the model's conversation history both show the redacted version — there is no
-divergence.
+The client stream and model history both receive the redacted result.
 
 ## Permission policy evaluates original args
 
-For `PreToolUse`, the permission policy runs on the **original, pre-mutation**
-args. A hook that rewrites the args is not re-permission-checked after the
-rewrite. This is deliberate: a hook is operator-deployed and is treated as more
-trusted than the model. The practical consequence is that a hook can widen a
-call past the policy that gated the model's original request — for example,
-normalizing a path that would otherwise have triggered a confirmation. Don't use
-this to bypass security controls you intend to enforce; use it to implement your
-own operator-controlled transformations.
+For `PreToolUse`, the permission policy evaluates the original arguments. It
+does not evaluate rewritten arguments again because operator hooks are trusted.
+A hook can therefore widen a call beyond what the original permission decision
+covered. Keep security controls in the permission policy when a hook must not
+bypass them.
 
 ## Guardrails: a built-in model-backed hook
 
@@ -155,13 +144,12 @@ Mecatl also includes model-backed `PreToolUse` and `PostToolUse` hooks for
 content that scripts cannot reliably classify, such as prompt injection in a
 fetched page or possible secret exfiltration in tool arguments. These guardrails
 remain off until you configure a checker model. See
-[Permissions and guardrails](permissions.md#layer-2--model-backed-guardrails)
-for the default matchers, enforcement modes, and approval flow.
+[Permissions and guardrails](permissions.md#layer-2-model-backed-guardrails) for
+the default matchers, enforcement modes, and approval flow.
 
 ## What's next
 
-- [Permissions & guardrails](./permissions.md) — the other governance surface;
-  controls what the model can request before hooks fire, and the model-backed
-  guardrail checker.
-- [Extension points — HookRunner](/building/extension-points/hook-runner.md) —
-  how to implement a custom hook runner as a port adapter.
+- [Permissions and guardrails](./permissions.md) for permission evaluation and
+  the model-backed guardrail checker.
+- [HookRunner extension point](/building/extension-points/hook-runner.md) to
+  implement a custom hook runner.

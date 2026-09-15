@@ -87,6 +87,26 @@ func TestPendingWorkspaceEnrollmentSnapshotAndJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEstablishedIdleWorkspaceEnrollmentSnapshotRestores(t *testing.T) {
+	s, want := enrollmentSnapshotSession(t)
+	s.Conversation.Append(session.NewUserMessage("prompt"))
+	snap, err := Of(s)
+	if err != nil {
+		t.Fatalf("Of: %v", err)
+	}
+
+	restored, err := snap.Restore()
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	got, ok := restored.PendingWorkspaceEnrollment()
+	if !ok || got != want {
+		t.Fatalf("restored enrollment = %+v, %v; want %+v, true", got, ok, want)
+	}
+	if restored.State != session.StateIdle || len(restored.Conversation.Messages) != 1 {
+		t.Fatalf("restored established enrollment = state %q, messages %d; want idle, 1", restored.State, len(restored.Conversation.Messages))
+	}
+}
 func TestMalformedPendingWorkspaceEnrollmentSnapshotFailsClosed(t *testing.T) {
 	s, _ := enrollmentSnapshotSession(t)
 	base, err := Of(s)
@@ -107,7 +127,6 @@ func TestMalformedPendingWorkspaceEnrollmentSnapshotFailsClosed(t *testing.T) {
 		mutate func(*Snapshot)
 	}{
 		{"missing authority", func(s *Snapshot) { s.Authority = nil }},
-		{"messages", func(s *Snapshot) { s.Messages = []messageDTO{toDTO(session.NewUserMessage("prompt"))} }},
 		{"running state", func(s *Snapshot) { s.State = session.StateRunning }},
 		{"permission pending", func(s *Snapshot) {
 			s.State = session.StateAwaiting

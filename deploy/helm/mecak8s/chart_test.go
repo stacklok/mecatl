@@ -236,12 +236,17 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 }
 
 func TestADR_0294_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
+	const (
+		defaultShutdownBudgetSeconds int64 = 43
+		minimumGracePeriodSeconds    int64 = defaultShutdownBudgetSeconds + 1
+	)
 	for _, tc := range []struct {
 		name string
 		args []string
 		want int64
 	}{
 		{name: "default", args: productionArgs(), want: 60},
+		{name: "minimum", args: append(productionArgs(), "--set", "terminationGracePeriodSeconds=44"), want: minimumGracePeriodSeconds},
 		{name: "override", args: append(productionArgs(), "--set", "terminationGracePeriodSeconds=75"), want: 75},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -255,9 +260,38 @@ func TestADR_0294_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing
 			}
 		})
 	}
+	for _, grace := range []int64{1, defaultShutdownBudgetSeconds} {
+		args := append(productionArgs(), "--set", fmt.Sprintf("terminationGracePeriodSeconds=%d", grace))
+		if rendered, err := helm(t, args...); err == nil {
+			t.Fatalf("terminationGracePeriodSeconds=%d rendered below the %ds minimum:\n%s", grace, minimumGracePeriodSeconds, rendered)
+		}
+	}
 	// preStop 3s + drain 15s + gRPC 10s + HTTP 5s + close 5s + telemetry 5s.
-	if budget := int64(3 + 15 + 10 + 5 + 5 + 5); budget >= 60 {
-		t.Fatalf("documented default shutdown budget = %ds, want < 60s", budget)
+	if budget := int64(3 + 15 + 10 + 5 + 5 + 5); budget != defaultShutdownBudgetSeconds {
+		t.Fatalf("documented default shutdown budget = %ds, want %ds", budget, defaultShutdownBudgetSeconds)
+	}
+}
+
+func TestMecak8sHelmChart_ProbeTimeoutsCoverReadinessBound(t *testing.T) {
+	const redisReadinessTimeoutSeconds int32 = 2
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatal(err, rendered)
+	}
+	container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+	for name, probe := range map[string]*corev1.Probe{
+		"startup":   container.StartupProbe,
+		"readiness": container.ReadinessProbe,
+	} {
+		if probe == nil || probe.TimeoutSeconds <= redisReadinessTimeoutSeconds {
+			t.Fatalf("%s probe timeoutSeconds = %v, want > Redis readiness timeout %ds", name, probe, redisReadinessTimeoutSeconds)
+		}
+		if probe.FailureThreshold < 1 {
+			t.Fatalf("%s probe failureThreshold = %d, want positive", name, probe.FailureThreshold)
+		}
+	}
+	if probe := container.LivenessProbe; probe == nil || probe.TimeoutSeconds != 1 || probe.FailureThreshold != 3 {
+		t.Fatalf("liveness probe timing = %#v, want timeoutSeconds=1 and failureThreshold=3", probe)
 	}
 }
 

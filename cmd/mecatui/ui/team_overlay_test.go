@@ -374,7 +374,7 @@ func TestAgentsRosterUncapped(t *testing.T) {
 	// Give the overlay enough vertical room for all n lanes: it windows to the body
 	// height (terminal minus chrome — header/footer/input + the input top-pad row), so
 	// size up generously rather than depend on the exact chrome height.
-	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 80})
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", big) })
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -714,7 +714,8 @@ func TestAgentsRosterWindowed(t *testing.T) {
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 
-	rows := teamRosterRows(agentsBodyHeight(m.vp.Height()))
+	th, hk, width, height := m.agentsListGeometry()
+	rows := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be smaller than roster %d", rows, n)
 	}
@@ -791,16 +792,19 @@ func TestAgentsPageKeys(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 
-	page := teamRosterRows(m.vp.Height())
+	th, hk, width, height := m.agentsListGeometry()
+	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width))
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
 	if m.team.cursor != page {
 		t.Errorf("pgdn moved cursor to %d, want one page (%d)", m.team.cursor, page)
 	}
+	w := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).window(th, height)
+	wantUp := max(0, m.team.cursor-(w.end-w.start))
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if m.team.cursor != 0 {
-		t.Errorf("pgup from one page in should return to 0, got %d", m.team.cursor)
+	if m.team.cursor != wantUp {
+		t.Errorf("pgup moved cursor to %d, want current physical-window move to %d", m.team.cursor, wantUp)
 	}
 }
 
@@ -853,6 +857,33 @@ func ctxTurnEnd(name string, used, window int64) client.TeamMsg {
 	})
 }
 
+func TestTeamRosterRowUsesIdentityWorkAndRuntimeLines(t *testing.T) {
+	ln := &teamLane{
+		name:           "overlay-reader",
+		role:           "Inspect the Agents overlay rendering and report problems",
+		current:        "RecordFinding",
+		ctxUsed:        33800,
+		ctxWindow:      1100000,
+		routedCategory: "medium",
+		routedModel:    "gpt-5.6-terra",
+		usage:          client.Usage{InputTokens: 100600, OutputTokens: 626},
+	}
+	row := stripANSIstr(renderTeamRosterRow(aztec().Style("spinner"), "▶ ", ln, 0, false, 100))
+	lines := strings.Split(row, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("team row has %d lines, want identity/work/runtime: %q", len(lines), row)
+	}
+	if !strings.HasPrefix(lines[0], "▶ ◆ · overlay-reader") {
+		t.Fatalf("identity line lost selection or member identity: %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "    RecordFinding… · Inspect the Agents") {
+		t.Fatalf("work line should group current action and role: %q", lines[1])
+	}
+	if !strings.HasPrefix(lines[2], "    ↑100.6K ↓626 · ctx ") || !strings.Contains(lines[2], "medium → gpt-5.6-terra") {
+		t.Fatalf("runtime line should group tokens, context, and route: %q", lines[2])
+	}
+}
+
 // TestAgentsRosterContextMeter asserts each roster lane shows the per-member
 // context band (the footer's renderContextMeter vocabulary) once a turn.end has
 // carried a known window: a low-pressure member reads "ctx … NN%" with no ⚠, a
@@ -873,20 +904,25 @@ func TestAgentsRosterContextMeter(t *testing.T) {
 		c.addTeamMember(member("nowin", "turn.end", client.TeamMsg{
 			Usage: client.Usage{InputTokens: 1200}}))
 	})
+	m = resize(m, 100, 80)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
 
 	rosterLine := func(name string) string {
-		for _, ln := range strings.Split(out, "\n") {
+		lines := strings.Split(out, "\n")
+		for i, ln := range lines {
 			if strings.Contains(ln, name) {
-				return ln
+				return strings.Join(lines[i:min(i+3, len(lines))], "\n")
 			}
 		}
 		return ""
 	}
 
 	low := rosterLine("low")
+	if strings.Contains(low, "[38;") || strings.Contains(low, "[m") {
+		t.Errorf("roster context meter must not leak stripped ANSI control bytes, got %q", low)
+	}
 	if !strings.Contains(low, "ctx ") || !strings.Contains(low, "20%") {
 		t.Errorf("low-pressure lane should show 'ctx … 20%%', got %q", low)
 	}
@@ -1433,20 +1469,20 @@ func TestAgentsFocusWindowed(t *testing.T) {
 	if !strings.Contains(out, "esc back") {
 		t.Errorf("focus footer clipped by the height bound, got %q", out)
 	}
-	// The overflow is surfaced by the "… +N more lines" tail.
-	if !strings.Contains(out, "more line") {
-		t.Errorf("a bounded focus pane should show a '… +N more lines' tail, got %q", out)
+	// The overflow is surfaced by the accurate rendered-line range.
+	if !strings.Contains(out, "lines 1–") {
+		t.Errorf("a bounded focus pane should show an accurate visible range, got %q", out)
 	}
 	// On a TALL terminal the same trace fits with no tail (the bound is min(cap, fit)).
 	tall := resize(m, 100, 80)
 	tallOut := stripANSIstr(tall.View().Content)
-	if strings.Contains(tallOut, "more line") {
+	if strings.Contains(tallOut, " of 12") {
 		t.Errorf("a tall terminal should not truncate the trace, got %q", tallOut)
 	}
 }
 
 // TestAgentsFocusWindowedGolden locks the bounded focus pane at a ~24-row
-// terminal: a capped trace, the "… +N more lines" tail, and the header + "esc
+// terminal: a capped trace, its accurate visible range, and the header + "esc
 // back" footer all visible (no clipping).
 func TestAgentsFocusWindowedGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)

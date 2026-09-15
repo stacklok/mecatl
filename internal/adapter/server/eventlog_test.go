@@ -1266,3 +1266,68 @@ func TestStreamSessionEventsGRPC_EmptySessionID(t *testing.T) {
 		t.Fatalf("status = %v, want codes.InvalidArgument (empty session_id)", status.Code(err))
 	}
 }
+
+func TestSyntheticUserPromptReplay_Scenario2_ReplayAndLiveRelayCompatibility(t *testing.T) {
+	log := memstore.NewEventLog()
+	svc, cs := askingEventLogService(t, log)
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	// This helper fails if ordinary Converse exposes a non-delivery user_prompt.
+	driveAskingSessionToCompletion(t, client, cs.GetSessionId())
+	if err := log.Append(context.Background(), session.SessionID(cs.GetSessionId()), session.Event{
+		Type:       session.EvUserPrompt,
+		UserPrompt: &session.UserPromptPayload{Text: "synthetic replay marker", Synthetic: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	grpcReplay, err := client.StreamSessionEvents(context.Background(), &mecatlv1.StreamSessionEventsRequest{SessionId: cs.GetSessionId()})
+	if err != nil {
+		t.Fatalf("gRPC replay: %v", err)
+	}
+	grpcSynthetic := false
+	for {
+		ev, recvErr := grpcReplay.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("gRPC replay receive: %v", recvErr)
+		}
+		if ev.GetUserPrompt().GetText() == "synthetic replay marker" {
+			grpcSynthetic = ev.GetUserPrompt().GetSynthetic()
+		}
+	}
+	if !grpcSynthetic {
+		t.Fatal("gRPC replay did not expose synthetic=true")
+	}
+
+	httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer httpServer.Close()
+	resp, err := http.Get(httpServer.URL + "/v1/sessions/" + cs.GetSessionId() + "/events")
+	if err != nil {
+		t.Fatalf("HTTP replay: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpSynthetic := false
+	for _, frame := range decodeSSEFrames(t, body) {
+		var ev mecatlv1.Event
+		if err := json.Unmarshal(frame, &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.GetUserPrompt().GetText() == "synthetic replay marker" {
+			httpSynthetic = ev.GetUserPrompt().GetSynthetic()
+		}
+	}
+	if !httpSynthetic {
+		t.Fatal("HTTP replay did not expose synthetic=true")
+	}
+
+	// The scheduled-delivery live exception remains the sole user_prompt exception.
+	TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t)
+}

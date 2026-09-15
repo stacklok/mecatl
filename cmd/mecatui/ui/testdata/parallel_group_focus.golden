@@ -1,5 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
+
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents  ▸ Parallel    Teams                                                            ┃
@@ -10,23 +11,15 @@
   ┃    bounded previews — branch content is clamped + scrubbed, never in the parent              ┃
   ┃    conversation                                                                              ┃
   ┃                                                                                              ┃
-  ┃  ╭──────────────────────────────────────────────────────────────────────────╮                ┃
-  ┃  │  › ✓ branch-1 · refactor with a map · done · 900ms · 2 tools · ↑12K ↓3K  │                ┃
-  ┃  ╰──────────────────────────────────────────────────────────────────────────╯                ┃
-  ┃    ✓ Edit                                                                                    ┃
-  ┃  ╭──────────────────────────────────────────────────────────────────────────────╮            ┃
-  ┃  │  ★ ✓ branch-2 · refactor with a slice · done · 900ms · 3 tools · ↑15K ↓4.2K  │            ┃
-  ┃  ╰──────────────────────────────────────────────────────────────────────────────╯            ┃
-  ┃    ✓ Edit                                                                                    ┃
-  ┃    ✓ Edit — file: svc.go                                                                     ┃
-  ┃    slice approach is cleaner                                                                 ┃
-  ┃    ✗ branch-3 · refactor inline · failed · error · 900ms · 1 tool · ↑4K ↓600                 ┃
-  ┃    ✗ Shell                                                                                   ┃
+  ┃  ▶ ✓ branch-1 · refactor with a map                                                          ┃
+  ┃      done · 900ms · 2 tools · ↑12K ↓3K                                                       ┃
+  ┃    │   ✓ Edit                                                                                ┃
+  ┃    · +2 branches below                                                                       ┃
   ┃                                                                                              ┃
-  ┃                                                                                              ┃
-  ┃  ↑/↓ select · esc back                                                                       ┃
+  ┃  ↑/↓ select · pgup/pgdn page · home/end first/last · esc back                                ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

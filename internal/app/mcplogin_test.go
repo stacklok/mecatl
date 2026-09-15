@@ -48,10 +48,15 @@ type loginBrowser struct {
 	max    atomic.Int32
 	delay  time.Duration
 	block  bool
+	mu     sync.Mutex
+	urls   []string
 }
 
 func (b *loginBrowser) Open(ctx context.Context, authorizationURL string) error {
 	b.calls.Add(1)
+	b.mu.Lock()
+	b.urls = append(b.urls, authorizationURL)
+	b.mu.Unlock()
 	active := b.active.Add(1)
 	defer b.active.Add(-1)
 	for current := b.max.Load(); active > current && !b.max.CompareAndSwap(current, active); current = b.max.Load() {
@@ -83,29 +88,39 @@ func (b *loginBrowser) Open(ctx context.Context, authorizationURL string) error 
 }
 
 type loginFixture struct {
-	server         *httptest.Server
-	mcpServer      *mcpsdk.Server
-	mcpHandler     http.Handler
-	mu             sync.Mutex
-	codes          map[string]loginCode
-	authorize      int
-	token          int
-	refresh        int
-	refreshTokens  map[string]int
-	metadata       int
-	authorized     int
-	toolCalls      int
-	unexpectedAuth int
-	sessionsOpened int
-	sessionsClosed int
-	failToken      bool
-	keepRejecting  bool
-	publicResource bool
-	acceptedBearer string
-	initialExpiry  int
-	failClose      bool
-	mcpBlockState  *loginMCPBlockState
-	redirectURL    string
+	server          *httptest.Server
+	mcpServer       *mcpsdk.Server
+	mcpHandler      http.Handler
+	mu              sync.Mutex
+	codes           map[string]loginCode
+	authorize       int
+	token           int
+	refresh         int
+	refreshTokens   map[string]int
+	metadata        int
+	authorized      int
+	toolCalls       int
+	unexpectedAuth  int
+	sessionsOpened  int
+	sessionsClosed  int
+	failToken       bool
+	keepRejecting   bool
+	publicResource  bool
+	acceptedBearer  string
+	initialExpiry   int
+	failClose       bool
+	mcpBlockState   *loginMCPBlockState
+	redirectURL     string
+	dcr             bool
+	badDCRResponse  bool
+	register        int
+	basicRequests   int
+	tokenForms      []url.Values
+	registeredURI   string
+	dcrClientID     string
+	dcrAccessToken  string
+	dcrRegAccess    string
+	dcrRefreshToken string
 }
 
 type loginMCPBlockState struct {
@@ -124,6 +139,16 @@ type loginCode struct {
 }
 
 func newLoginFixture(t *testing.T) *loginFixture {
+	return newLoginFixtureWithTLS(t, false)
+}
+
+func newDCRLoginFixture(t *testing.T) *loginFixture {
+	f := newLoginFixtureWithTLS(t, true)
+	f.dcr = true
+	return f
+}
+
+func newLoginFixtureWithTLS(t *testing.T, useTLS bool) *loginFixture {
 	t.Helper()
 	f := &loginFixture{codes: make(map[string]loginCode), refreshTokens: make(map[string]int), acceptedBearer: loginAccessToken, initialExpiry: 3600}
 	f.mcpServer = mcpsdk.NewServer(
@@ -142,9 +167,14 @@ func newLoginFixture(t *testing.T) *loginFixture {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "fixture-ready"}}}, nil, nil
 	})
 	f.mcpHandler = f.newMCPHandler()
-	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.serveHTTP(w, r)
-	}))
+	})
+	if useTLS {
+		f.server = httptest.NewTLSServer(handler)
+	} else {
+		f.server = httptest.NewServer(handler)
+	}
 	t.Cleanup(f.server.Close)
 	return f
 }
@@ -158,7 +188,7 @@ func (f *loginFixture) newMCPHandler() http.Handler {
 }
 
 type loginFixtureCounts struct {
-	authorize, token, refresh, metadata, authenticated, toolCalls, unexpectedAuth, opened, closed int
+	authorize, token, refresh, metadata, authenticated, toolCalls, unexpectedAuth, registered, opened, closed int
 }
 
 func (f *loginFixture) snapshot() loginFixtureCounts {
@@ -166,7 +196,7 @@ func (f *loginFixture) snapshot() loginFixtureCounts {
 	defer f.mu.Unlock()
 	return loginFixtureCounts{
 		authorize: f.authorize, token: f.token, refresh: f.refresh, metadata: f.metadata,
-		authenticated: f.authorized, toolCalls: f.toolCalls, unexpectedAuth: f.unexpectedAuth,
+		authenticated: f.authorized, toolCalls: f.toolCalls, unexpectedAuth: f.unexpectedAuth, registered: f.register,
 		opened: f.sessionsOpened, closed: f.sessionsClosed,
 	}
 }
@@ -239,7 +269,11 @@ func (f *loginFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				f.unexpectedAuth++
 				f.mu.Unlock()
 			}
-			w.Header().Set("WWW-Authenticate", `Bearer scope="read"`)
+			scope := "read"
+			if f.dcr {
+				scope = "openid"
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer scope="`+scope+`"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -279,21 +313,34 @@ func (f *loginFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		f.metadata++
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		scopes := []string{"read"}
+		if f.dcr {
+			scopes = []string{"openid"}
+		}
 		_ = json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
-			Resource: f.resource(), AuthorizationServers: []string{f.issuer()}, ScopesSupported: []string{"read"},
+			Resource: f.resource(), AuthorizationServers: []string{f.issuer()}, ScopesSupported: scopes,
 		})
 	case strings.Contains(r.URL.Path, ".well-known/oauth-authorization-server"):
 		f.mu.Lock()
 		f.metadata++
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
+		meta := oauthex.AuthServerMeta{
 			Issuer: f.issuer(), AuthorizationEndpoint: f.origin() + "/as/authorize", TokenEndpoint: f.origin() + "/as/token",
 			ScopesSupported: []string{"read"}, ResponseTypesSupported: []string{"code"}, GrantTypesSupported: []string{"authorization_code", "refresh_token"},
 			TokenEndpointAuthMethodsSupported: []string{"client_secret_basic"}, CodeChallengeMethodsSupported: []string{"S256"}, AuthorizationResponseIssParameterSupported: true,
-		})
+		}
+		if f.dcr {
+			meta.RegistrationEndpoint = f.origin() + "/as/register"
+			meta.ScopesSupported = []string{"openid"}
+			meta.GrantTypesSupported = []string{"authorization_code"}
+			meta.TokenEndpointAuthMethodsSupported = []string{"none"}
+		}
+		_ = json.NewEncoder(w).Encode(meta)
 	case strings.Contains(r.URL.Path, ".well-known/openid-configuration"):
 		http.NotFound(w, r)
+	case r.URL.Path == "/as/register":
+		f.serveRegister(w, r)
 	case r.URL.Path == "/as/authorize":
 		f.serveAuthorize(w, r)
 	case r.URL.Path == "/as/token":
@@ -303,9 +350,44 @@ func (f *loginFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (f *loginFixture) serveRegister(w http.ResponseWriter, r *http.Request) {
+	var request oauthex.ClientRegistrationMetadata
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid registration", http.StatusBadRequest)
+		return
+	}
+	f.mu.Lock()
+	f.register++
+	if len(request.RedirectURIs) == 1 {
+		f.registeredURI = request.RedirectURIs[0]
+	}
+	f.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	clientID := f.dcrClientID
+	if clientID == "" {
+		clientID = loginClientID
+	}
+	response := map[string]any{"client_id": clientID, "token_endpoint_auth_method": "none", "redirect_uris": request.RedirectURIs, "grant_types": request.GrantTypes, "response_types": request.ResponseTypes, "scope": request.Scope}
+	if f.badDCRResponse {
+		response["token_endpoint_auth_method"] = "client_secret_basic"
+		response["client_secret"] = f.dcrRegAccess
+	}
+	if f.dcrRegAccess != "" {
+		response["registration_access_token"] = f.dcrRegAccess
+	}
+	_ = json.NewEncoder(w).Encode(response)
+}
+
 func (f *loginFixture) serveAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if q.Get("client_id") != loginClientID || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || q.Get("resource") != f.resource() {
+	wantScope, wantClientID := "read", loginClientID
+	if f.dcr {
+		wantScope = "openid"
+		if f.dcrClientID != "" {
+			wantClientID = f.dcrClientID
+		}
+	}
+	if q.Get("client_id") != wantClientID || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || q.Get("resource") != f.resource() || q.Get("scope") != wantScope {
 		http.Error(w, "invalid authorization request", http.StatusBadRequest)
 		return
 	}
@@ -342,6 +424,36 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
+	if f.dcr {
+		_, _, basic := r.BasicAuth()
+		f.mu.Lock()
+		if basic {
+			f.basicRequests++
+		}
+		f.tokenForms = append(f.tokenForms, r.PostForm)
+		f.mu.Unlock()
+		wantClientID := f.dcrClientID
+		if wantClientID == "" {
+			wantClientID = loginClientID
+		}
+		if basic || r.Form.Get("client_id") != wantClientID || r.Form.Get("client_secret") != "" || r.Form.Get("client_assertion") != "" || r.Form.Get("grant_type") != "authorization_code" {
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+		access := f.dcrAccessToken
+		if access == "" {
+			access = loginAccessToken
+		}
+		f.mu.Lock()
+		f.acceptedBearer = access
+		f.mu.Unlock()
+		response := map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": initialExpiry, "scope": "openid"}
+		if f.dcrRefreshToken != "" {
+			response["refresh_token"] = f.dcrRefreshToken
+		}
+		f.finishCodeExchange(w, r, response)
+		return
+	}
 	clientID, secret, ok := r.BasicAuth()
 	clientID, _ = url.QueryUnescape(clientID)
 	secret, _ = url.QueryUnescape(secret)
@@ -370,6 +482,10 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": accessToken, "token_type": "Bearer", "refresh_token": successorRefreshToken, "expires_in": 3600, "scope": "read"})
 		return
 	}
+	f.finishCodeExchange(w, r, map[string]any{"access_token": loginAccessToken, "token_type": "Bearer", "refresh_token": loginRefreshToken, "expires_in": initialExpiry, "scope": "read"})
+}
+
+func (f *loginFixture) finishCodeExchange(w http.ResponseWriter, r *http.Request, response map[string]any) {
 	f.mu.Lock()
 	record, found := f.codes[r.Form.Get("code")]
 	if found && !record.used {
@@ -385,7 +501,7 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"access_token": loginAccessToken, "token_type": "Bearer", "refresh_token": loginRefreshToken, "expires_in": initialExpiry, "scope": "read"})
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func loginConfig(t *testing.T, fixture *loginFixture, store credentialstore.Store) mcp.ServerConfig {
@@ -671,6 +787,9 @@ func TestLoginMCPRejectsInvalidShapesBeforeRuntime(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+	if err := app.LoginMCPWithOptions(context.Background(), base, runtime, app.MCPLoginOptions{DCRAction: mcp.OAuthDCRLoginRetryRegistration}); !errors.Is(err, app.ErrMCPLoginConfig) {
+		t.Fatalf("non-DCR recovery action error = %v", err)
 	}
 	if browser.calls.Load() != 0 {
 		t.Fatalf("invalid config launched browser %d times", browser.calls.Load())

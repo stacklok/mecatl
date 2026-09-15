@@ -15,7 +15,7 @@ const (
 )
 
 // WorkspaceEnrollmentID is an opaque correlation identifier for one
-// pre-prompt workspace enrollment.
+// workspace enrollment.
 type WorkspaceEnrollmentID string
 
 // Valid reports whether id is non-empty, bounded, valid UTF-8, and contains no
@@ -49,12 +49,12 @@ func (s *Session) rejectWhileWorkspaceEnrollmentPending(operation string) error 
 	return nil
 }
 
-// BeginWorkspaceEnrollment records one enrollment before the first prompt. It
+// BeginWorkspaceEnrollment records one enrollment from a stable idle session. It
 // does not alter the agent-loop lifecycle or either per-call pending state.
 func (s *Session) BeginWorkspaceEnrollment(pending PendingWorkspaceEnrollment) error {
-	if s.State != StateIdle || s.Conversation == nil || len(s.Conversation.Messages) != 0 ||
+	if s.State != StateIdle || s.Conversation == nil ||
 		s.pending != nil || s.pendingAuthorization != nil {
-		return fmt.Errorf("%w: workspace enrollment must precede the first prompt", ErrIllegalTransition)
+		return fmt.Errorf("%w: workspace enrollment requires an idle session without a conflicting control", ErrIllegalTransition)
 	}
 	if !s.authorityBound {
 		return fmt.Errorf("%w: workspace enrollment requires bound authority", ErrIllegalTransition)
@@ -120,8 +120,8 @@ func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment
 		!s.pendingWorkspaceEnrollment.ExpiresAt.Equal(pending.ExpiresAt) {
 		return fmt.Errorf("session: workspace enrollment %q is not pending", pending.ID)
 	}
-	if s.State != StateIdle || s.Conversation == nil || len(s.Conversation.Messages) != 0 {
-		return fmt.Errorf("%w: workspace enrollment must complete before the first prompt", ErrIllegalTransition)
+	if s.State != StateIdle || s.Conversation == nil {
+		return fmt.Errorf("%w: workspace enrollment requires an idle session", ErrIllegalTransition)
 	}
 	if !s.authorityBound || !ValidWorkspaceEnrollmentToolNames(exactTools) {
 		return fmt.Errorf("%w: invalid workspace enrollment tool set", ErrIllegalTransition)

@@ -22,10 +22,9 @@ import (
 // carries ONLY the fields a /sessions row needs (id, state, counters.turns,
 // model id, title, created_at) and SKIPS the messages array entirely. Go's
 // encoding/json ignores unknown fields, so json.Unmarshal(lastLine, &meta) into
-// this struct parses the JSON but never materializes the (large) conversation.
-// The json tags mirror sessnap.Snapshot's so the wire keys agree exactly —
-// pinned by TestMetaSnapshotTagsAreSessnapSubset (a reflection tripwire so the
-// mirror cannot silently drift).
+// metadata wrapper when current snapshots are written. It must remain a strict
+// subset of sessnap.Snapshot because legacy snapshot files use it as a cheap
+// decode target.
 type metaSnapshot struct {
 	ID              session.SessionID           `json:"id"`
 	State           session.State               `json:"state"`
@@ -217,6 +216,7 @@ func (st *Store) rebuildInventoryRows() ([]port.SessionDiscoveryMeta, error) {
 				meta.EnvironmentRef = m.EnvironmentRef
 				meta.Kind = kind
 				meta.Relationship = m.Relationship
+				meta.Activity = session.ValidActivity(file.activity)
 				meta.Owner = m.Owner
 				meta.CreatedAt = m.CreatedAt
 			}
@@ -225,6 +225,10 @@ func (st *Store) rebuildInventoryRows() ([]port.SessionDiscoveryMeta, error) {
 	}
 	return out, nil
 }
+
+// SupportsSessionActivityProjection reports that the JSONL metadata catalog
+// atomically reflects the latest snapshot's activity.
+func (*Store) SupportsSessionActivityProjection() bool { return true }
 
 // PageSessionMetadata reads at most Limit+1 rows from the owner-specific,
 // pre-ordered derivative catalog. The cursor's byte position seeks directly to

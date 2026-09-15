@@ -210,6 +210,10 @@ type Deps struct {
 	// main.go populates it with client.NewClipboard().
 	Clipboard client.Clipboard
 	Theme     theme.Theme
+
+	// homeDir is a package-private test seam for resolving the local process home
+	// used by @~/ attachments. Production leaves it nil and uses os.UserHomeDir.
+	homeDir func() (string, error)
 	// ThemeAutoDetect enables the terminal-background light/dark auto-detect
 	// (ADR 0280): composition sets it true only when no explicit --theme/
 	// MECATUI_THEME was supplied AND stdout is a real TTY (never on redirected

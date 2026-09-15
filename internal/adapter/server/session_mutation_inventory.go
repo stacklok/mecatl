@@ -97,10 +97,12 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"appendAuthorizationResolution":         {SessionMutationLeaseProven, "no-continuation EventLog fallback invoked only from the same lease-proven authorization-resolution callers"},
 	"ensureAuthorizationRequiredLogged":     {SessionMutationLeaseProven, "called only from resolveAuthorizationLocked/settleAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
 	"ConnectWorkspaceServices":              {SessionMutationLeaseOwned, "runs under runEntryMu with the idle-only, no-active-run precondition and acquires the session mutation lease before persisting"},
-	"cancelWorkspaceEnrollment":             {SessionMutationLeaseOwned, "shared cancel body for RetryWorkspaceEnrollment/CancelWorkspaceEnrollment, gated the same as ConnectWorkspaceServices"},
+	"workspaceEnrollmentTarget":             {SessionMutationLeaseProven, "called only by workspace enrollment controls after run-entry and session lease acquisition; completed-session reopen and snapshot save use that proof"},
+	"cancelWorkspaceEnrollmentLocked":       {SessionMutationLeaseProven, "shared cancel body for RetryWorkspaceEnrollment/CancelWorkspaceEnrollment, called only after the caller has acquired runEntryMu and the session lease"},
+	"connectWorkspaceServicesLocked":        {SessionMutationLeaseProven, "shared begin/observe body for ConnectWorkspaceServices/RetryWorkspaceEnrollment, called only after the caller has acquired runEntryMu and the session lease"},
 	"restoreAuthorizationClaim":             {SessionMutationLeaseProven, "compensating restore invoked only from the same lease-proven authorization-continuation callers after a failed claim-persist"},
-	"settleTerminalWorkspaceEnrollment":     {SessionMutationLeaseOwned, "invoked only from ConnectWorkspaceServices/cancelWorkspaceEnrollment, both gated the same as the enrollment target lookup"},
-	"rebindBrokerAttachment":                {SessionMutationLeaseProven, "invoked only from workspaceEnrollmentTarget, whose ConnectWorkspaceServices/cancelWorkspaceEnrollment callers already hold runEntryMu, the acquired session lease, and brokerMu for the id"},
+	"settleTerminalWorkspaceEnrollment":     {SessionMutationLeaseOwned, "invoked only from connectWorkspaceServicesLocked/cancelWorkspaceEnrollmentLocked, both gated the same as the enrollment target lookup"},
+	"rebindBrokerAttachment":                {SessionMutationLeaseProven, "invoked only from workspaceEnrollmentTarget, whose connectWorkspaceServicesLocked/cancelWorkspaceEnrollmentLocked callers already hold runEntryMu, the acquired session lease, and brokerMu for the id"},
 }
 
 func validateSessionMutationNames(table map[string]SessionMutationEntry, boundaries []string) []error {

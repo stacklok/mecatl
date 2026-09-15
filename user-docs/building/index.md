@@ -39,8 +39,8 @@ deployment.
 - [Deployment guides](/building/deployment/index.md) cover embedding the engine,
   operating `mecated` or `mecak8s`, using `mecatequi` in CI, and connecting
   remote clients.
-- [Cloud-native architecture](/building/cloud-native-kit.md) explains how Mecatl
-  separates the agent process from durable state and execution.
+- [What is a cloud-native harness?](/building/cloud-native-harness.md) explains how
+  Mecatl separates the agent process from durable state and execution.
 - [API stability](/building/api-stability.md) identifies the supported Go
   packages and compatibility guarantees.
 - [Reference](/reference/index.md) provides exact configuration fields and gRPC

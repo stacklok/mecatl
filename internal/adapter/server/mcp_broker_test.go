@@ -47,6 +47,21 @@ func brokerEngineResult() SessionEngineResult {
 	return SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Close: func() error { return nil }}
 }
 
+// brokerEngineResultWithStore mirrors brokerEngineResult but wires the
+// engine's own Store: brokerEngineResult's engine has none, which is a silent
+// no-op save for tests that only exercise enrollment controls, but a test
+// that drives a REAL StartRunContent turn needs it wired to the session's
+// actual store, or nothing the run does ever persists.
+func brokerEngineResultWithStore(store port.SessionStore) SessionEngineResult {
+	return SessionEngineResult{
+		Engine: agent.NewEngine(agent.Deps{
+			LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(),
+			Policy: permpolicy.NewPolicy(nil, nil), Store: store,
+		}),
+		Close: func() error { return nil },
+	}
+}
+
 // brokerPlacementProvider binds every session to the same in-memory workspace;
 // these tests exercise the broker attachment lifecycle, not placement itself.
 type brokerPlacementProvider struct{}

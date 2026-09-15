@@ -104,6 +104,63 @@ func TestADR_0277_LegacyRegistryCompatibility(t *testing.T) {
 	}
 }
 
+func TestADR_0277_BareHostnameFindsDefaultHTTPSLegacyTarget(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := resourceConnection("", "legacy.example.com:443", "https://issuer.example.com")
+	if _, err := registry.Upsert(legacy); err != nil {
+		t.Fatal(err)
+	}
+	got, err := registry.Find("legacy.example.com")
+	if err != nil || !got.Identity.Equal(legacy.Identity) {
+		t.Fatalf("bare legacy lookup = %#v, %v", got, err)
+	}
+
+	ipv6 := resourceConnection("", "[::1]:443", "https://issuer.example.com")
+	if _, err := registry.Upsert(ipv6); err != nil {
+		t.Fatal(err)
+	}
+	got, err = registry.Find("[::1]")
+	if err != nil || !got.Identity.Equal(ipv6.Identity) {
+		t.Fatalf("bare IPv6 legacy lookup = %#v, %v", got, err)
+	}
+}
+
+func TestADR_0277_BareHostnameDoesNotMatchNonDefaultPortTarget(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := resourceConnection("", "legacy.example.com:8443", "https://issuer.example.com")
+	if _, err := registry.Upsert(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Find("legacy.example.com"); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("bare hostname lookup of non-default-port target = %v, want not found", err)
+	}
+}
+
+func TestADR_0277_BareHostnameLogoutRemovesDefaultHTTPSTarget(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	conn := resourceConnection("", "logout.example.com:443", "https://issuer.example.com")
+	if _, err := registry.Upsert(conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Upsert(t.Context(), conn.Identity, Token{AccessToken: "access", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Logout(t.Context(), "logout.example.com", LogoutConfig{Registry: registry, Credentials: creds})
+	if err != nil || !result.RegistryDeleted || result.Entries != 1 {
+		t.Fatalf("bare hostname logout = %#v, %v", result, err)
+	}
+}
+
 func TestADR_0305_SavedIdentityDrift(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {

@@ -289,8 +289,9 @@ func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 // StreamSessionEvents replay surfaces what the user asked.
 func toProtoUserPrompt(p session.UserPromptPayload) *mecatlv1.UserPrompt {
 	return &mecatlv1.UserPrompt{
-		Text:  valid(p.Text),
-		Parts: contentToProto(p.Parts),
+		Text:      valid(p.Text),
+		Parts:     contentToProto(p.Parts),
+		Synthetic: p.Synthetic,
 	}
 }
 
@@ -1091,6 +1092,7 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		Owner:           toProtoPrincipal(s.Owner),
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),
+		ActivityState:   valid(string(s.Activity)),
 		Capabilities: &mecatlv1.SessionInventoryCapabilities{
 			PublicChat:              s.Capabilities.PublicChat,
 			Inspect:                 s.Capabilities.Inspect,

@@ -148,6 +148,9 @@ not send workspace paths or private environment references. By default, new
 sessions have no filesystem access. Schedules retain that placement, and
 delegation cannot add filesystem access that the parent lacks.
 
+See [Execution environments](/features/execution-environments.md) for the
+shared placement, no-FS, child-environment, and reattachment model.
+
 The no-FS default is intentional. A standard mecak8s pod is storage-free and has
 no authoritative filesystem root, so the server binds omitted/default profile to
 its configured no-FS placement. Clients never send a workspace path; explicit
@@ -442,10 +445,32 @@ registration. A plain OAuth2 upstream uses explicit `authorizationEndpoint` and
 
 ### Inspect the broker catalogue in mecatui
 
-On a broker-only connection, `/mcp` shows the current session's enrollment,
-connectors, catalog state, and tool counts. It reads local state without probing
-upstreams or refreshing credentials. A fresh idle session can start setup with
-`c connect tools` or `/tools-connect`; cancel with `/tools-cancel`.
+On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
+broker catalogue: enrollment state, connector names, catalogue state, and tool
+counts. Opening and refresh read only that local state; they do not probe an
+upstream, refresh credentials, or enroll connectors. When the owner-authorized
+session is stably idle and the enrollment controller is wired, `/mcp` (or Ctrl+O)
+offers `c connect tools` after a fresh session, completed turns, a prior
+connection, a failed/terminal attempt, or a broker-process restart. A persisted
+name or inventory row never proves live connectivity: after restart the panel
+truthfully reports broker state unavailable and protected tools remain
+unavailable until the owner explicitly refreshes this same session.
+Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
+second refresh are blocked until the existing operation settles. The existing
+browser flow continues without a reopen-browser action. A running or awaiting
+session does not offer refresh. Setup is destructive and bundle-wide: starting
+it withdraws broker tools, and cancellation or failure leaves them unavailable;
+`/tools-connect` and `/tools-cancel` remain unchanged bare-command shortcuts.
+
+ToolHive remains the sole custodian of upstream OAuth presentation, callback
+state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only
+its opaque enrollment control. Broker OAuth mode remains constrained to one
+Helm replica (`replicaCount: 1`); this refresh path is explicit same-session
+recovery, not automatic recovery, high availability, or multi-replica routing.
+The panel still requires the existing authenticated verified principal and a
+matching owned session; broker-only and direct-MCP compositions remain
+mutually exclusive, so broker-only sessions do not offer direct resources,
+prompts, or groups.
 
 The panel is not an upstream health check. It requires the authenticated owner
 of the session. Broker-only sessions do not expose direct MCP resources,
@@ -709,8 +734,9 @@ for your provider, MCP, Redis, identity-provider, and Kubernetes API traffic.
 Deployment details:
 
 - Two replicas use `RollingUpdate`, `maxSurge: 1`, and `maxUnavailable: 0`.
-- `terminationGracePeriodSeconds` defaults to 60 seconds, above the 43-second
-  default shutdown budget.
+- `terminationGracePeriodSeconds` defaults to 60 seconds. The schema requires at
+  least 44 seconds, the first whole second above the 43-second default shutdown
+  budget.
 - No PVC, no `--store-dir`. The only `volumeMount` is `/tmp` for the Go runtime
   and SSE buffering under `readOnlyRootFilesystem: true`.
 - A `preStop` hook calls the Pod-only plaintext drain listener on port 8082 and
@@ -739,7 +765,8 @@ traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator
 network-isolation responsibility. The `readyz` probe is dynamic: it calls
 `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis
 failure shows up as not-ready and removes the pod from Service endpoints without
-a restart.
+a restart. The startup and readiness probes use a 3-second kubelet timeout so the
+2-second Redis bound can complete before Kubernetes abandons the request.
 
 ---
 
@@ -765,8 +792,9 @@ sequenceDiagram
 The shutdown budget is 43 seconds: three seconds for endpoint propagation, 15
 for run drain, 10 for gRPC, and five each for HTTP, resource closure, and
 telemetry. The Helm `terminationGracePeriodSeconds` default is 60. Increase it
-when you increase any runtime bound. If a bound expires, the server cancels
-in-flight runs; a successor can recover them from Redis.
+when you increase any runtime bound; the schema's 44-second minimum covers only
+the defaults. If a bound expires, the server cancels in-flight runs; a successor
+can recover them from Redis.
 
 A surviving pod can acquire a gracefully released lease immediately. After a
 hard stop, it must wait for the 30-second default lease TTL.

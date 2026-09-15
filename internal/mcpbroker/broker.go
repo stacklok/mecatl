@@ -289,9 +289,11 @@ func (r WorkspaceEnrollmentResult) Valid() bool {
 }
 
 // WorkspaceEnrollmentAttachment is the optional enrollment capability of an
-// Attachment. Callers may begin, observe, or cancel broker-owned state, but can
-// never submit status, discovered definitions, authority, or success.
+// Attachment. Callers may begin, observe, cancel, or explicitly reset broker-
+// owned state, but can never submit status, discovered definitions, authority,
+// or success.
 type WorkspaceEnrollmentAttachment interface {
+	ResetWorkspaceEnrollment(context.Context) error
 	BeginWorkspaceEnrollment(context.Context) (WorkspaceEnrollmentPresentation, error)
 	ObserveWorkspaceEnrollment(context.Context, WorkspaceEnrollmentRef) (WorkspaceEnrollmentResult, error)
 	CancelWorkspaceEnrollment(context.Context, WorkspaceEnrollmentRef) (WorkspaceEnrollmentResult, error)

@@ -1105,6 +1105,9 @@ message SessionSummary {
   // usage types; `main` is ordinary main-session agent usage. Other keys are
   // server-defined and are not enumerated here.
   map<string, TokenUsage> token_usage = 17;
+  // activity_state is the content-free persisted-history projection. It is
+  // present only when this server advertises session_activity_inventory.
+  string activity_state = 18;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -2028,6 +2031,9 @@ message UserPrompt {
   // parts carries any non-text media (image/audio) that rode alongside the text on
   // the user message; nil for a text-only prompt.
   repeated Content parts = 2;
+  // synthetic is true when the harness authored this user-role continuation.
+  // False means principal-authored or legacy-unknown.
+  bool synthetic = 3;
 }
 
 // CompactionArchive is the proto projection of session.CompactionArchivePayload
