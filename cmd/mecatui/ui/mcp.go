@@ -141,7 +141,7 @@ type brokerMCPSetupState struct {
 
 func (m Model) brokerMCPSetupState() brokerMCPSetupState {
 	return brokerMCPSetupState{
-		eligible: m.caps.WorkspaceEnrollment && m.deps.WorkspaceEnrollment != nil && m.sessionID != "" &&
+		eligible: m.workspaceEnrollmentActive() && m.deps.WorkspaceEnrollment != nil && m.sessionID != "" &&
 			m.phase == phaseIdle && m.sessionState == sessionStateIdle,
 		pending: m.enrollment.ID != "" && m.enrollment.Status == client.WorkspaceEnrollmentPending,
 		busy:    m.enrollment.busy,

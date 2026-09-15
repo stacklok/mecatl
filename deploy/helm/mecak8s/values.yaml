@@ -134,11 +134,24 @@ security:
 # runtime shutdown bound.
 terminationGracePeriodSeconds: 60
 
-# Optional Kubernetes scheduling controls. Empty values render no pod fields.
-topologySpreadConstraints: []
+# Prefer replicas on separate nodes without making single-node clusters
+# unschedulable. Each constraint without an explicit labelSelector is scoped to
+# this release's agent pods by the Deployment template. Production deployments
+# can replace this soft default with DoNotSchedule and add zone-level spreading.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
 affinity: {}
 nodeSelector: {}
 tolerations: []
+
+# Omitted for a single replica. maxUnavailable accepts a non-negative integer or
+# a percentage; the default ensures voluntary disruptions remove at most one
+# replica as the Deployment scales.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
 
 # workspace is the operator-mounted agent filesystem root (e.g. a PVC mount
 # path). Empty (the default) is a FILE-LESS deployment: every session is no-FS.

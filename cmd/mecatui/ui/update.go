@@ -446,7 +446,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
-	if m.caps.WorkspaceEnrollment {
+	if m.workspaceEnrollmentActive() {
 		m.enrollment = workspaceEnrollmentState{}
 		m.workspaceEnrollmentNotice = "workspace services not connected — /tools-connect to enable protected tools"
 		return m, cmd
@@ -498,7 +498,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	} else {
 		m.statusMsg = "connected"
 	}
-	if msg.Capabilities.WorkspaceEnrollment {
+	if m.workspaceEnrollmentActive() {
 		m.enrollment = workspaceEnrollmentState{}
 		m.workspaceEnrollmentNotice = "workspace services not connected — /tools-connect to enable protected tools"
 	}
@@ -543,7 +543,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// A "/"-prefixed seed (e.g. -p /clear) is dispatched by submitPrompt's
 	// builtin dispatcher — documented behavior.
 	// InitialPrompt remains queued until the complete frozen catalogue is admitted.
-	if !msg.Capabilities.WorkspaceEnrollment {
+	if !m.workspaceEnrollmentActive() {
 		if mm, submitCmd, ok := m.startInitialPrompt(); ok {
 			return mm, tea.Batch(cmd, submitCmd), true
 		}

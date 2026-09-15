@@ -458,6 +458,12 @@ func (m Model) spinnerVisible() bool {
 	return m.phase == phaseRunning || m.phase == phaseConnecting
 }
 
+// workspaceEnrollmentActive reports whether the current session can use the
+// deployment's workspace-enrollment feature. Debug sessions are always no-fs.
+func (m Model) workspaceEnrollmentActive() bool {
+	return m.caps.WorkspaceEnrollment && m.deps.DebugTarget == ""
+}
+
 // promptRecovery is a text-only prompt that can safely be restored after a run
 // transport outcome. It is tied to the source session and stream generation.
 type promptRecovery struct {

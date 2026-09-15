@@ -1248,17 +1248,21 @@ func TestMecak8sHelmChart_ExternalEndpointRequiresNumericPort(t *testing.T) {
 
 func TestMecak8sHelmChart_ReplicaCountControlsDisruptionBudget(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		replicaCount string
-		wantPDB      bool
-		wantMinAvail int32
+		name               string
+		replicaCount       string
+		extraArgs          []string
+		wantPDB            bool
+		wantMaxUnavailable string
 	}{
 		{name: "single replica", replicaCount: "1", wantPDB: false},
-		{name: "two replicas", replicaCount: "2", wantPDB: true, wantMinAvail: 1},
-		{name: "three replicas", replicaCount: "3", wantPDB: true, wantMinAvail: 1},
+		{name: "two replicas", replicaCount: "2", wantPDB: true, wantMaxUnavailable: "1"},
+		{name: "three replicas", replicaCount: "3", wantPDB: true, wantMaxUnavailable: "1"},
+		{name: "disabled", replicaCount: "3", extraArgs: []string{"--set", "podDisruptionBudget.enabled=false"}, wantPDB: false},
+		{name: "percentage override", replicaCount: "4", extraArgs: []string{"--set-string", "podDisruptionBudget.maxUnavailable=25%"}, wantPDB: true, wantMaxUnavailable: "25%"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append(productionArgs(), "--set", "replicaCount="+tc.replicaCount)
+			args = append(args, tc.extraArgs...)
 			rendered, err := helm(t, args...)
 			if err != nil {
 				t.Fatalf("render replica count %s: %v", tc.replicaCount, err)
@@ -1274,11 +1278,38 @@ func TestMecak8sHelmChart_ReplicaCountControlsDisruptionBudget(t *testing.T) {
 			if pdb == nil {
 				return
 			}
-			if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntVal != tc.wantMinAvail {
-				t.Fatalf("PDB minAvailable = %v, want %d", pdb.Spec.MinAvailable, tc.wantMinAvail)
+			if pdb.Spec.MinAvailable != nil {
+				t.Fatalf("PDB minAvailable = %v, want nil", pdb.Spec.MinAvailable)
+			}
+			if pdb.Spec.MaxUnavailable == nil || pdb.Spec.MaxUnavailable.String() != tc.wantMaxUnavailable {
+				t.Fatalf("PDB maxUnavailable = %v, want %q", pdb.Spec.MaxUnavailable, tc.wantMaxUnavailable)
 			}
 			if !reflect.DeepEqual(pdb.Spec.Selector, deployment.Spec.Selector) {
 				t.Fatalf("PDB selector = %#v, Deployment selector = %#v", pdb.Spec.Selector, deployment.Spec.Selector)
+			}
+		})
+	}
+}
+
+func TestMecak8sHelmChart_DefaultSoftHostnameSpread(t *testing.T) {
+	for _, replicas := range []string{"1", "2", "4"} {
+		t.Run(replicas+" replicas", func(t *testing.T) {
+			args := append(productionArgs(), "--set", "replicaCount="+replicas)
+			rendered, err := helm(t, args...)
+			if err != nil {
+				t.Fatalf("render replica count %s: %v", replicas, err)
+			}
+			deployment := deploymentFromRender(t, rendered)
+			constraints := deployment.Spec.Template.Spec.TopologySpreadConstraints
+			if len(constraints) != 1 {
+				t.Fatalf("topology spread constraints = %d, want 1", len(constraints))
+			}
+			constraint := constraints[0]
+			if constraint.MaxSkew != 1 || constraint.TopologyKey != "kubernetes.io/hostname" || constraint.WhenUnsatisfiable != "ScheduleAnyway" {
+				t.Fatalf("default topology spread = %+v, want soft hostname spread", constraint)
+			}
+			if constraint.LabelSelector == nil || !reflect.DeepEqual(constraint.LabelSelector.MatchLabels, deployment.Spec.Selector.MatchLabels) {
+				t.Fatalf("spread selector = %#v, want Deployment selector %#v", constraint.LabelSelector, deployment.Spec.Selector)
 			}
 		})
 	}
@@ -1979,6 +2010,10 @@ func TestMecak8sHelmChart_NewValuesAreSchemaValidated(t *testing.T) {
 		{name: "image volume with another source", set: "extraVolumes[0].name=multiple,extraVolumes[0].image.reference=registry.example/skill@sha256:abc,extraVolumes[0].configMap.name=config"},
 		{name: "unsafe mount propagation", set: "extraVolumeMounts[0].name=config,extraVolumeMounts[0].mountPath=/config,extraVolumeMounts[0].mountPropagation=Bidirectional"},
 		{name: "mount subpath and expression", set: "extraVolumeMounts[0].name=config,extraVolumeMounts[0].mountPath=/config,extraVolumeMounts[0].subPath=one,extraVolumeMounts[0].subPathExpr=$(VALUE)"},
+		{name: "negative PDB max unavailable", set: "podDisruptionBudget.maxUnavailable=-1"},
+		{name: "PDB percentage over 100", set: "podDisruptionBudget.maxUnavailable=101%"},
+		{name: "invalid PDB max unavailable", set: "podDisruptionBudget.maxUnavailable=many"},
+		{name: "unknown PDB setting", set: "podDisruptionBudget.unknown=true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append(productionArgs(), "--set", tc.set)

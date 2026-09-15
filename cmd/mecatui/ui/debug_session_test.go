@@ -132,6 +132,52 @@ func TestDebugWindowTitleStartsWithStableHandleAcrossPhases(t *testing.T) {
 	}
 }
 
+func TestDebugSessionDisablesWorkspaceEnrollment(t *testing.T) {
+	control := &workspaceEnrollmentControlFake{}
+	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.deps.DebugTarget = "target"
+	m.deps.WorkspaceEnrollment = control
+	m.pendingInitialPrompt = "diagnose"
+	m.workspaceEnrollmentNotice = ""
+
+	if m.workspaceEnrollmentActive() || m.wiredCollaborators().Workspace {
+		t.Fatal("debug session must not activate workspace enrollment")
+	}
+	if _, ok := builtinByName(m.caps, m.wiredCollaborators(), "tools-connect"); ok {
+		t.Fatal("debug session must not register /tools-connect")
+	}
+	if m.brokerMCPSetupState().eligible {
+		t.Fatal("debug session must not be eligible to connect workspace tools")
+	}
+
+	m0, cmd := m.finishStartupResume()
+	m = m0.(Model)
+	runBatchLeaves(cmd)
+	if got := promptTexts(send); len(got) != 1 || got[0] == "" {
+		t.Fatalf("startup debug diagnosis prompts = %v, want one", got)
+	}
+	if m.workspaceEnrollmentNotice != "" {
+		t.Fatalf("debug startup showed workspace enrollment notice: %q", m.workspaceEnrollmentNotice)
+	}
+
+	m, send = builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.deps.DebugTarget = "target"
+	m.deps.WorkspaceEnrollment = control
+	m.pendingInitialPrompt = "diagnose after rebind"
+	m.workspaceEnrollmentNotice = ""
+	m0, cmd, _ = m.applySessionReady(client.SessionReadyMsg{
+		SessionID: "debug-session", Capabilities: client.Capabilities{WorkspaceEnrollment: true},
+	})
+	m = m0.(Model)
+	runBatchLeaves(cmd)
+	if got := promptTexts(send); len(got) != 1 || got[0] == "" {
+		t.Fatalf("rebound debug diagnosis prompts = %v, want one", got)
+	}
+	if m.workspaceEnrollmentNotice != "" {
+		t.Fatalf("rebound debug session showed workspace enrollment notice: %q", m.workspaceEnrollmentNotice)
+	}
+}
+
 func TestDebugBuiltinFilterHidesOnlyBindingBreakingControls(t *testing.T) {
 	caps := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, Posture: "auto"}
 	wired := wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true, Sessions: true, Learning: true, DebugSession: true}
