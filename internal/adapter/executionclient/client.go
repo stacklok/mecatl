@@ -3,23 +3,24 @@
 package executionclient
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	grpccredentials "google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
+
+	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -55,111 +56,292 @@ func LoadTLSConfig(files TLSFiles) (*tls.Config, error) {
 	return &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, Certificates: []tls.Certificate{cert}}, nil
 }
 
-// Client is a bounded client for the private execution-provider HTTP API.
+// Client is a bounded client for the private execution-provider gRPC API.
 type Client struct {
-	endpoint *url.URL
-	http     *http.Client
+	conn *grpc.ClientConn
+	rpc  executionv1.ExecutionProviderServiceClient
 }
 
-// New constructs a production mTLS execution-provider client.
+// New constructs a production mTLS execution-provider client. Endpoint is a
+// plain host:port authority; URI schemes and alternate resolvers are rejected.
 func New(endpoint string, tlsConfig *tls.Config) (*Client, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("execution client: endpoint must be an absolute HTTPS URL without credentials, query, or fragment")
+	if strings.Contains(endpoint, "://") || strings.ContainsAny(endpoint, "/?#@") {
+		return nil, errors.New("execution client: endpoint must be host:port")
+	}
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil || host == "" || port == "" {
+		return nil, errors.New("execution client: endpoint must be host:port")
 	}
 	if tlsConfig == nil || len(tlsConfig.Certificates) == 0 || tlsConfig.RootCAs == nil {
 		return nil, errors.New("execution client: production mTLS configuration is required")
 	}
-	u.Path = strings.TrimRight(u.Path, "/")
-	tr := &http.Transport{TLSClientConfig: tlsConfig.Clone(), DialContext: (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 10 * time.Second}
-	return &Client{endpoint: u, http: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
-}
-
-// NewWithHTTPClient is a hermetic test seam; production callers use New.
-func NewWithHTTPClient(endpoint string, hc *http.Client) (*Client, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme == "" || u.Host == "" || hc == nil {
-		return nil, errors.New("execution client: invalid endpoint or HTTP client")
+	cfg := tlsConfig.Clone()
+	if cfg.MinVersion < tls.VersionTLS13 {
+		cfg.MinVersion = tls.VersionTLS13
 	}
-	u.Path = strings.TrimRight(u.Path, "/")
-	return &Client{endpoint: u, http: hc}, nil
+	conn, err := grpc.NewClient(endpoint,
+		grpc.WithTransportCredentials(grpccredentials.NewTLS(cfg)),
+		grpc.WithDisableRetry(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(executionenv.MaxMessageBytes), grpc.MaxCallSendMsgSize(executionenv.MaxMessageBytes)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("execution client: connect: %w", err)
+	}
+	return &Client{conn: conn, rpc: executionv1.NewExecutionProviderServiceClient(conn)}, nil
 }
 
-// Close releases pooled provider connections.
+// Close releases the provider connection.
 func (c *Client) Close() {
-	if c != nil && c.http != nil {
-		c.http.CloseIdleConnections()
+	if c != nil && c.conn != nil {
+		_ = c.conn.Close()
 	}
-}
-
-func (c *Client) post(ctx context.Context, path string, in, out any) error {
-	body, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String()+executionenv.BasePath+path, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("execution provider request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, executionenv.MaxJSONBody+1))
-	if err != nil {
-		return fmt.Errorf("execution provider response failed: %w", err)
-	}
-	if len(data) > executionenv.MaxJSONBody {
-		return errors.New("execution provider response exceeds limit")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var envelope executionenv.ErrorResponse
-		if executionenv.DecodeStrict(data, &envelope) == nil && envelope.Error != nil {
-			return envelope.Error
-		}
-		return fmt.Errorf("execution provider returned HTTP %d", resp.StatusCode)
-	}
-	if err := executionenv.DecodeStrict(data, out); err != nil {
-		return fmt.Errorf("execution provider returned invalid response: %w", err)
-	}
-	return nil
 }
 
 // ValidateProfile validates a provider profile without allocating an environment.
 func (c *Client) ValidateProfile(ctx context.Context, profile string) (executionenv.ValidateProfileResponse, error) {
-	var out executionenv.ValidateProfileResponse
-	err := c.post(ctx, "/profiles/validate", executionenv.ValidateProfileRequest{Profile: profile}, &out)
-	return out, err
+	v, err := c.rpc.ValidateProfile(ctx, &executionv1.ValidateProfileRequest{Profile: profile})
+	if err != nil {
+		return executionenv.ValidateProfileResponse{}, decodeError(ctx, err)
+	}
+	return executionenv.ValidateProfileResponse{Profile: v.Profile, Digest: v.Digest, Capabilities: v.Capabilities, MaxFileBytes: v.MaxFileBytes, MaxCommandBytes: v.MaxCommandBytes, MaxCommandDurationMillis: v.MaxCommandDurationMillis}, nil
 }
 
 // Ensure idempotently allocates or resolves the environment for a binding.
 func (c *Client) Ensure(ctx context.Context, binding, profile string, owner executionenv.Owner) (executionenv.EnsureEnvironmentResponse, error) {
-	var out executionenv.EnsureEnvironmentResponse
-	err := c.post(ctx, "/environments/ensure", executionenv.EnsureEnvironmentRequest{BindingID: binding, Profile: profile, Owner: owner}, &out)
-	return out, err
+	v, err := c.rpc.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: binding, Profile: profile, Owner: ownerToProto(owner)})
+	if err != nil {
+		return executionenv.EnsureEnvironmentResponse{}, decodeError(ctx, err)
+	}
+	return ensureFromProto(v)
 }
 
 // Attach obtains a fresh grant for an exact environment reference.
 func (c *Client) Attach(ctx context.Context, req executionenv.AttachEnvironmentRequest) (executionenv.AttachEnvironmentResponse, error) {
-	var out executionenv.AttachEnvironmentResponse
-	err := c.post(ctx, "/environments/attach", req, &out)
-	return out, err
+	v, err := c.rpc.AttachEnvironment(ctx, &executionv1.AttachEnvironmentRequest{Context: contextToProto(req.Context), Purpose: req.Purpose})
+	if err != nil {
+		return executionenv.AttachEnvironmentResponse{}, decodeError(ctx, err)
+	}
+	return attachFromProto(v)
 }
 
 // File executes one authorized filesystem operation.
 func (c *Client) File(ctx context.Context, req executionenv.FileRequest) (executionenv.FileResponse, error) {
-	var out executionenv.FileResponse
-	err := c.post(ctx, "/files", req, &out)
-	return out, err
+	if req.Limit < 0 || req.Limit > executionenv.MaxListEntries {
+		return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "invalid file request limit"}
+	}
+	v, err := c.rpc.Files(ctx, &executionv1.FileRequest{Context: contextToProto(req.Context), Operation: fileOperationToProto(req.Operation), Path: req.Path, Destination: req.Destination, Pattern: req.Pattern, Data: req.Data, Version: []byte(req.Version), Limit: int32(req.Limit)}) //nolint:gosec // bounded above
+	if err != nil {
+		return executionenv.FileResponse{}, decodeError(ctx, err)
+	}
+	return fileFromProto(v), nil
 }
 
 // StartCommand executes one foreground command.
 func (c *Client) StartCommand(ctx context.Context, req executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
-	var out executionenv.CommandStartResponse
-	err := c.post(ctx, "/commands/start", req, &out)
-	return out, err
+	v, err := c.rpc.StartCommand(ctx, &executionv1.CommandStartRequest{Context: contextToProto(req.Context), Command: req.Command, TimeoutMillis: req.TimeoutMillis})
+	if err != nil {
+		return executionenv.CommandStartResponse{}, decodeError(ctx, err)
+	}
+	return commandStartFromProto(v)
+}
+
+// CommandStatus queries a command after the request has been authorized.
+func (c *Client) CommandStatus(ctx context.Context, req executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
+	v, err := c.rpc.CommandStatus(ctx, &executionv1.CommandQueryRequest{Context: contextToProto(req.Context), CommandId: req.CommandID, Offset: req.Offset})
+	if err != nil {
+		return executionenv.CommandStatusResponse{}, decodeError(ctx, err)
+	}
+	return commandStatusFromProto(v)
+}
+
+// CancelCommand cancels a command after the request has been authorized.
+func (c *Client) CancelCommand(ctx context.Context, req executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
+	v, err := c.rpc.CancelCommand(ctx, &executionv1.CommandQueryRequest{Context: contextToProto(req.Context), CommandId: req.CommandID, Offset: req.Offset})
+	if err != nil {
+		return executionenv.CommandStatusResponse{}, decodeError(ctx, err)
+	}
+	return commandStatusFromProto(v)
+}
+
+// ReleaseReference releases one durable binding reference.
+func (c *Client) ReleaseReference(ctx context.Context, req executionenv.ReferenceReleaseRequest) error {
+	_, err := c.rpc.ReleaseReference(ctx, &executionv1.ReleaseReferenceRequest{Context: contextToProto(req.Context)})
+	return decodeError(ctx, err)
+}
+
+// RetireEnvironment requests administrative retirement.
+func (c *Client) RetireEnvironment(ctx context.Context, req executionenv.RetireEnvironmentRequest) error {
+	_, err := c.rpc.RetireEnvironment(ctx, &executionv1.RetireEnvironmentRequest{Context: contextToProto(req.Context)})
+	return decodeError(ctx, err)
+}
+
+func decodeError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	st, ok := status.FromError(err)
+	if !ok || len(st.Details()) != 1 {
+		return sanitizedProviderError()
+	}
+	detail, ok := st.Details()[0].(*executionv1.ErrorDetail)
+	if !ok {
+		return sanitizedProviderError()
+	}
+	code := executionenv.ErrorCode(detail.Code)
+	if !code.Valid() || st.Code() != grpcCodeForError(code) || (detail.Retryable && code != executionenv.CodeNotReady && code != executionenv.CodeUnauthenticated) {
+		return sanitizedProviderError()
+	}
+	return &executionenv.Error{Code: code, Message: "execution provider request failed", Retryable: detail.Retryable}
+}
+
+func sanitizedProviderError() error {
+	return &executionenv.Error{Code: executionenv.CodeInternal, Message: "execution provider request failed"}
+}
+
+func grpcCodeForError(code executionenv.ErrorCode) codes.Code {
+	switch code {
+	case executionenv.CodeInvalidArgument:
+		return codes.InvalidArgument
+	case executionenv.CodeUnauthenticated:
+		return codes.Unauthenticated
+	case executionenv.CodePermissionDenied:
+		return codes.PermissionDenied
+	case executionenv.CodeNotFound:
+		return codes.NotFound
+	case executionenv.CodeAlreadyExists:
+		return codes.AlreadyExists
+	case executionenv.CodeConflict, executionenv.CodeVersionMismatch:
+		return codes.Aborted
+	case executionenv.CodeNotReady, executionenv.CodeFenceUnknown:
+		return codes.Unavailable
+	case executionenv.CodeResourceExhausted:
+		return codes.ResourceExhausted
+	default:
+		return codes.Internal
+	}
+}
+func ownerToProto(o executionenv.Owner) *executionv1.Owner {
+	return &executionv1.Owner{Issuer: o.Issuer, Subject: o.Subject}
+}
+func refToProto(r executionenv.EnvironmentRef) *executionv1.EnvironmentRef {
+	return &executionv1.EnvironmentRef{Id: r.ID, Revision: r.Revision}
+}
+func contextToProto(v executionenv.RequestContext) *executionv1.RequestContext {
+	return &executionv1.RequestContext{Environment: refToProto(v.Environment), Owner: ownerToProto(v.Owner), BindingId: v.BindingID, Epoch: v.Epoch, Grant: v.Grant}
+}
+func refFromProto(r *executionv1.EnvironmentRef) executionenv.EnvironmentRef {
+	return executionenv.EnvironmentRef{ID: r.GetId(), Revision: r.GetRevision()}
+}
+func ensureFromProto(v *executionv1.EnsureEnvironmentResponse) (executionenv.EnsureEnvironmentResponse, error) {
+	expiry, err := checkedTime(v.GetGrantExpiresAt())
+	return executionenv.EnsureEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), Grant: v.GetGrant(), GrantExpiresAt: expiry}, err
+}
+func attachFromProto(v *executionv1.AttachEnvironmentResponse) (executionenv.AttachEnvironmentResponse, error) {
+	expiry, err := checkedTime(v.GetGrantExpiresAt())
+	return executionenv.AttachEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), Grant: v.GetGrant(), GrantExpiresAt: expiry}, err
+}
+func checkedTime(v interface {
+	CheckValid() error
+	AsTime() time.Time
+}) (time.Time, error) {
+	if v == nil {
+		return time.Time{}, errors.New("execution provider omitted timestamp")
+	}
+	if err := v.CheckValid(); err != nil {
+		return time.Time{}, errors.New("execution provider returned invalid timestamp")
+	}
+	return v.AsTime(), nil
+}
+func fileOperationToProto(op executionenv.Operation) executionv1.FileOperation {
+	switch op {
+	case executionenv.OpFileRead:
+		return executionv1.FileOperation_FILE_OPERATION_READ
+	case executionenv.OpFileResolveAuthority:
+		return executionv1.FileOperation_FILE_OPERATION_RESOLVE_AUTHORITY
+	case executionenv.OpFileStat:
+		return executionv1.FileOperation_FILE_OPERATION_STAT
+	case executionenv.OpFileCreate:
+		return executionv1.FileOperation_FILE_OPERATION_CREATE
+	case executionenv.OpFileReplace:
+		return executionv1.FileOperation_FILE_OPERATION_REPLACE
+	case executionenv.OpFileList:
+		return executionv1.FileOperation_FILE_OPERATION_LIST
+	case executionenv.OpFileRemove:
+		return executionv1.FileOperation_FILE_OPERATION_REMOVE
+	case executionenv.OpFileRename:
+		return executionv1.FileOperation_FILE_OPERATION_RENAME
+	case executionenv.OpFileCopy:
+		return executionv1.FileOperation_FILE_OPERATION_COPY
+	case executionenv.OpFileGlob:
+		return executionv1.FileOperation_FILE_OPERATION_GLOB
+	case executionenv.OpFileGrep:
+		return executionv1.FileOperation_FILE_OPERATION_GREP
+	}
+	return executionv1.FileOperation_FILE_OPERATION_UNSPECIFIED
+}
+func fileFromProto(v *executionv1.FileResponse) executionenv.FileResponse {
+	r := executionenv.FileResponse{Data: v.GetData(), Version: string(v.GetVersion()), Paths: v.GetPaths(), AuthorityTarget: v.GetAuthorityTarget(), AuthorityWorkspace: v.GetAuthorityWorkspace()}
+	if v.Info != nil {
+		x := fileInfoFromProto(v.Info)
+		r.Info = &x
+	}
+	for _, x := range v.Entries {
+		r.Entries = append(r.Entries, fileInfoFromProto(x))
+	}
+	for _, x := range v.Matches {
+		r.Matches = append(r.Matches, executionenv.GrepMatch{Path: x.Path, Line: int(x.Line), Text: x.Text})
+	}
+	return r
+}
+func fileInfoFromProto(v *executionv1.FileInfo) executionenv.FileInfo {
+	var mt time.Time
+	if v.ModTime != nil && v.ModTime.CheckValid() == nil {
+		mt = v.ModTime.AsTime()
+	}
+	return executionenv.FileInfo{Name: v.Name, Size: v.Size, Mode: v.Mode, ModTime: mt, IsDir: v.IsDir}
+}
+func commandStartFromProto(v *executionv1.CommandStartResponse) (executionenv.CommandStartResponse, error) {
+	if v == nil {
+		return executionenv.CommandStartResponse{}, sanitizedProviderError()
+	}
+	state, ok := commandStateFromProto(v.GetState())
+	if !ok {
+		return executionenv.CommandStartResponse{}, sanitizedProviderError()
+	}
+	result, err := commandStatusFromProto(v.GetResult())
+	if err != nil {
+		return executionenv.CommandStartResponse{}, err
+	}
+	return executionenv.CommandStartResponse{CommandID: v.GetCommandId(), State: state, Result: result}, nil
+}
+func commandStatusFromProto(v *executionv1.CommandStatusResponse) (executionenv.CommandStatusResponse, error) {
+	if v == nil {
+		return executionenv.CommandStatusResponse{}, sanitizedProviderError()
+	}
+	state, ok := commandStateFromProto(v.State)
+	if !ok {
+		return executionenv.CommandStatusResponse{}, sanitizedProviderError()
+	}
+	return executionenv.CommandStatusResponse{CommandID: v.CommandId, State: state, ExitCode: int(v.ExitCode), Stdout: v.Stdout, Stderr: v.Stderr, NextOffset: v.NextOffset, Truncated: v.Truncated, TerminalReceipt: v.TerminalReceipt}, nil
+}
+func commandStateFromProto(v executionv1.CommandState) (executionenv.CommandState, bool) {
+	switch v {
+	case executionv1.CommandState_COMMAND_STATE_RUNNING:
+		return executionenv.CommandRunning, true
+	case executionv1.CommandState_COMMAND_STATE_SUCCEEDED:
+		return executionenv.CommandSucceeded, true
+	case executionv1.CommandState_COMMAND_STATE_FAILED:
+		return executionenv.CommandFailed, true
+	case executionv1.CommandState_COMMAND_STATE_CANCELLED:
+		return executionenv.CommandCancelled, true
+	case executionv1.CommandState_COMMAND_STATE_FENCE_UNKNOWN:
+		return executionenv.CommandFenceUnknown, true
+	default:
+		return "", false
+	}
 }
 
 // Provider adapts the execution service to server placement binding.
@@ -356,20 +538,26 @@ func (w *workspace) call(ctx context.Context, op executionenv.Operation, path, d
 	if err != nil {
 		return executionenv.FileResponse{}, mapFileError(path, err)
 	}
-	out, err := w.credentials.client.File(ctx, executionenv.FileRequest{Context: credentials, Operation: op, Path: path, Destination: dest, Pattern: pattern, Data: data, Version: version, Limit: executionenv.MaxListEntries})
+	limit := 0
+	if op == executionenv.OpFileList || op == executionenv.OpFileGlob || op == executionenv.OpFileGrep {
+		limit = executionenv.MaxListEntries
+	}
+	request := executionenv.FileRequest{Context: credentials, Operation: op, Path: path, Destination: dest, Pattern: pattern, Data: data, Version: version, Limit: limit}
+	out, err := w.credentials.client.File(ctx, request)
 	if isDefinitiveAuthDenial(err) && readOnlyFileOperation(op) {
 		credentials, refreshErr := w.credentials.refresh(ctx)
 		if refreshErr != nil {
 			return executionenv.FileResponse{}, mapFileError(path, refreshErr)
 		}
-		out, err = w.credentials.client.File(ctx, executionenv.FileRequest{Context: credentials, Operation: op, Path: path, Destination: dest, Pattern: pattern, Data: data, Version: version, Limit: executionenv.MaxListEntries})
+		request.Context = credentials
+		out, err = w.credentials.client.File(ctx, request)
 	}
 	return out, mapFileError(path, err)
 }
 
 func isDefinitiveAuthDenial(err error) bool {
 	var remote *executionenv.Error
-	return errors.As(err, &remote) && (remote.Code == executionenv.CodePermissionDenied || remote.Code == executionenv.CodeUnauthenticated)
+	return errors.As(err, &remote) && remote.Code == executionenv.CodeUnauthenticated && remote.Retryable
 }
 
 func readOnlyFileOperation(op executionenv.Operation) bool {

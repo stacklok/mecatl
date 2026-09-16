@@ -41,7 +41,17 @@ spec:
         - --owner-attester-uri-san={{ join "," .Values.provider.ownerAttesterURISANs }}
         - --administrator-uri-san={{ join "," .Values.provider.administratorURISANs }}
         ports:
-        - {name: https, containerPort: 8443}
+        - {name: grpc, containerPort: 8443}
+        startupProbe:
+          tcpSocket: {port: grpc}
+          failureThreshold: 30
+          periodSeconds: 2
+        readinessProbe:
+          tcpSocket: {port: grpc}
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket: {port: grpc}
+          periodSeconds: 10
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -71,4 +81,4 @@ metadata:
 spec:
   selector: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
   ports:
-  - {name: https, port: {{ .Values.service.port }}, targetPort: https}
+  - {name: grpc, port: {{ .Values.service.port }}, targetPort: grpc}

@@ -78,6 +78,30 @@ reattached only when the deployment supplies an `EnvironmentResolver`; a missing
 resolver, mismatched identity, or nil workspace returns an error instead of
 using a local workspace.
 
+## Live qualification (experimental)
+
+The repository keeps real-provider qualification separate from the default mock
+suite. It is explicit opt-in, uses an already-owned retained Kind cluster, and is
+not part of `task test`:
+
+```sh
+MECATL_EXECUTION_CREDENTIAL_FILE=/absolute/path/to/provider-key \
+MECATL_EXECUTION_QUAL_STATE=/absolute/path/to/owned-state \
+task e2e:k8s:execution:live
+```
+
+The credential file must be a private regular file (no group or other access).
+A trusted helper loads it only at runtime and creates a run-scoped Kubernetes
+Secret through the API; it never renders the value into a manifest or reads the
+Secret back. Only the `mecak8s` harness container receives the OpenRouter key.
+The execution provider, controller, OIDC fixture, and executor workloads do not.
+The task first runs the deterministic mock qualification, then runs one bounded
+real-model coding smoke against `https://openrouter.ai/api/v1`. It verifies
+positive token usage, required file and shell tool calls, file contents, and a
+successful `go test` independently through the typed gRPC execution service.
+Finally it restores the mock deployment and removes only its run-scoped Secret;
+the owned cluster and execution workspaces remain for inspection.
+
 ## Limitations
 
 - No-FS sessions cannot use local file tools, shell commands, workspace forks,

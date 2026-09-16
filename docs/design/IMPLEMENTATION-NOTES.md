@@ -6548,7 +6548,8 @@ reaches the checker). Default `false` is the byte-identical un-routed posture ta
 
 The opt-in candidate composes a separately deployed provider through
 `internal/adapter/executionclient/client.go` (`Provider`). The private
-`/internal/execution/v1` mTLS API authenticates an exact URI SAN, binds short-lived
+`mecatl.execution.v1.ExecutionProviderService` gRPC API uses private protocol
+`execution-grpc/1`. It requires mTLS, authenticates exactly one allowlisted URI SAN, binds short-lived
 Ed25519 grants to client, owner hash, session binding, environment revision,
 epoch, and a closed operation set, and sends credential-free requests to the
 workload helper. `internal/adapter/executioncontroller/handler.go` (`Handler`)

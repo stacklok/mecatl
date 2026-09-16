@@ -12,6 +12,13 @@ import (
 
 const grantAlgorithm = "Ed25519"
 
+var (
+	// ErrGrantExpired identifies the only grant failure eligible for a read-only refresh.
+	ErrGrantExpired = errors.New("grant expired")
+	// ErrGrantNotYetValid identifies a grant whose validity window has not started.
+	ErrGrantNotYetValid = errors.New("grant not yet valid")
+)
+
 type grantHeader struct {
 	Algorithm string `json:"alg"`
 	KeyID     string `json:"kid"`
@@ -117,8 +124,11 @@ func (v GrantVerifier) Verify(token string, e GrantExpectation) (GrantClaims, er
 	if c.Issuer != v.Issuer || c.Audience != v.Audience {
 		return c, errors.New("grant issuer or audience mismatch")
 	}
-	if now.Before(c.NotBefore) || !now.Before(c.ExpiresAt) {
-		return c, errors.New("grant is not currently valid")
+	if now.Before(c.NotBefore) {
+		return c, ErrGrantNotYetValid
+	}
+	if !now.Before(c.ExpiresAt) {
+		return c, ErrGrantExpired
 	}
 	maxLifetime := v.MaxLifetime
 	if maxLifetime <= 0 {

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -39,7 +40,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	baseline := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev")
 	providerForward := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
 	providerTLS := loadTLS(t, pki, "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
-	providerClient, err := executionclient.New("https://"+providerForward.addr, providerTLS)
+	providerClient, err := executionclient.New(providerForward.addr, providerTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	}
 
 	intruderTLS := loadTLS(t, pki, "intruder", "mecatl-execution.execution-qualification.svc.cluster.local")
-	intruder, err := executionclient.New("https://"+providerForward.addr, intruderTLS)
+	intruder, err := executionclient.New(providerForward.addr, intruderTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,14 +92,22 @@ func TestKindExecutionQualification(t *testing.T) {
 	if err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeNotFound)) {
 		t.Fatalf("different client attach error = %v, want an existence-hiding denial", err)
 	}
-	for _, path := range []string{"/commands/status", "/commands/cancel", "/environments/retire"} {
-		request := map[string]any{"context": map[string]any{"environment": first.Environment, "owner": owner, "binding_id": binding, "epoch": ready.Epoch, "grant": ready.Grant}}
-		if strings.HasPrefix(path, "/commands/") {
-			request["command_id"] = "not-owned"
-		}
-		status := rawProviderPost(t, ctx, "https://"+providerForward.addr, intruderTLS, path, request)
-		if status != http.StatusForbidden {
-			t.Fatalf("different client %s status = %d, want 403", path, status)
+	rc := executionenv.RequestContext{Environment: first.Environment, Owner: owner, BindingID: binding, Epoch: ready.Epoch, Grant: ready.Grant}
+	for name, call := range map[string]func() error{
+		"command status": func() error {
+			_, err := intruder.CommandStatus(ctx, executionenv.CommandQueryRequest{Context: rc, CommandID: "not-owned"})
+			return err
+		},
+		"command cancel": func() error {
+			_, err := intruder.CancelCommand(ctx, executionenv.CommandQueryRequest{Context: rc, CommandID: "not-owned"})
+			return err
+		},
+		"environment retire": func() error {
+			return intruder.RetireEnvironment(ctx, executionenv.RetireEnvironmentRequest{Context: rc})
+		},
+	} {
+		if err := call(); err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeUnauthenticated)) {
+			t.Fatalf("different client %s error = %v, want denial", name, err)
 		}
 	}
 	providerForward.stop()
@@ -118,7 +127,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	}
 	for _, marker := range []string{"write-proof", "read-before-edit", "edit-proof", "copy-proof", "move-proof", "write-mod", "write-test", "shell-go-test", "remove-moved", "read-final", "moved.txt", "proof.txt:1:beta", "REMOTE_EXECUTION_QUALIFICATION_COMPLETE", "ok"} {
 		if !bytes.Contains(body, []byte(marker)) {
-			t.Fatalf("SSE result omitted %q", marker)
+			t.Fatalf("SSE result omitted %q (%s)", marker, mockSSEStatus(body))
 		}
 	}
 	if bytes.Contains(body, []byte(`"is_error":true`)) {
@@ -148,6 +157,41 @@ func TestKindExecutionQualification(t *testing.T) {
 	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != baseline+2 {
 		t.Fatalf("post-restart environments = %d, want baseline + direct + session (%d)", got, baseline+2)
 	}
+}
+
+func mockSSEStatus(body []byte) string {
+	var names []string
+	errorClasses := map[string]int{}
+	stop := "missing"
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		if !bytes.HasPrefix(line, []byte("data: ")) {
+			continue
+		}
+		var ev mecatlv1.Event
+		if json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &ev) != nil {
+			continue
+		}
+		if ev.ToolCall != nil {
+			names = append(names, ev.ToolCall.Name)
+		}
+		if ev.ToolResult != nil && ev.ToolResult.IsError {
+			errorClasses[classifyMockToolError(ev.ToolResult.Content)]++
+		}
+		if ev.Result != nil {
+			stop = ev.Result.Stop
+		}
+	}
+	return fmt.Sprintf("tools=%s error_classes=%v stop=%s", strings.Join(names, ","), errorClasses, stop)
+}
+
+func classifyMockToolError(content string) string {
+	content = strings.ToLower(content)
+	for _, class := range []string{"grant", "permission", "owner", "stale", "unavailable", "not found", "version", "placement", "environment", "connection", "timeout", "binding", "argument", "request", "profile", "reference", "invalid", "read before", "already exists"} {
+		if strings.Contains(content, class) {
+			return strings.ReplaceAll(class, " ", "_")
+		}
+	}
+	return "other_redacted"
 }
 
 func waitReady(t *testing.T, ctx context.Context, c *executionclient.Client, owner executionenv.Owner, binding string, ref executionenv.EnvironmentRef) executionenv.AttachEnvironmentResponse {
@@ -253,20 +297,6 @@ func resourceCount(t *testing.T, ctx context.Context, kubeconfig, spec string) i
 	return len(bytes.Split(bytes.TrimSpace(out), []byte{'\n'}))
 }
 
-func rawProviderPost(t *testing.T, ctx context.Context, endpoint string, cfg *tls.Config, path string, body any) int {
-	t.Helper()
-	raw, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+executionenv.BasePath+path, bytes.NewReader(raw))
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-	return resp.StatusCode
-}
 func fixtureToken(t *testing.T, ctx context.Context, addr, pki, sub string) string {
 	t.Helper()
 	ca, err := os.ReadFile(filepath.Join(pki, "ca.crt"))
@@ -294,7 +324,7 @@ func fixtureToken(t *testing.T, ctx context.Context, addr, pki, sub string) stri
 }
 func createSession(t *testing.T, ctx context.Context, addr, token string) string {
 	t.Helper()
-	status, body := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, []byte(`{"mode":"default"}`))
+	status, body := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, []byte(`{"mode":"default","limits":{"max_turns":16,"max_tool_calls":24,"max_consecutive_failures":3}}`))
 	if status != http.StatusCreated {
 		t.Fatalf("create session status=%d body=%s", status, body)
 	}

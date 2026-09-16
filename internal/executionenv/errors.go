@@ -26,6 +26,18 @@ const (
 	CodeInternal          ErrorCode = "internal"
 )
 
+// Valid reports whether c is part of the closed private-protocol vocabulary.
+func (c ErrorCode) Valid() bool {
+	switch c {
+	case CodeInvalidArgument, CodeUnauthenticated, CodePermissionDenied, CodeNotFound,
+		CodeAlreadyExists, CodeConflict, CodeVersionMismatch, CodeNotReady, CodeFenceUnknown,
+		CodeResourceExhausted, CodeInternal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Error is a bounded structured private-protocol failure.
 type Error struct {
 	Code      ErrorCode `json:"code"`
@@ -35,12 +47,8 @@ type Error struct {
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
 
-// ErrorResponse is the bounded wire envelope returned for every failed request.
-type ErrorResponse struct {
-	Error *Error `json:"error"`
-}
-
-// DecodeStrict decodes exactly one bounded JSON value without unknown or duplicate fields.
+// DecodeStrict decodes exactly one bounded JSON value for the credential-free
+// provider-to-workload stdin protocol, without unknown or duplicate fields.
 func DecodeStrict(data []byte, dst any) error {
 	if len(data) > MaxJSONBody {
 		return &Error{Code: CodeResourceExhausted, Message: "request body exceeds limit"}

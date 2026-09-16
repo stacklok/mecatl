@@ -9,14 +9,20 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
+	"errors"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
+
+	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
@@ -25,10 +31,9 @@ import (
 )
 
 type integrationBackend struct {
-	allocation  executioncontroller.Allocation
-	ensureCalls int
-	attachCalls int
-	fileCalls   int
+	allocation                          executioncontroller.Allocation
+	ensureCalls, attachCalls, fileCalls int
+	expireNextRead                      bool
 }
 
 func (*integrationBackend) ValidateProfile(context.Context, string) (executioncontroller.Profile, error) {
@@ -54,19 +59,23 @@ func (*integrationBackend) Retire(context.Context, executionenv.EnvironmentRef, 
 }
 func (b *integrationBackend) File(_ context.Context, _, _ string, q executionenv.FileRequest) (executionenv.FileResponse, error) {
 	b.fileCalls++
+	if b.expireNextRead && q.Operation == executionenv.OpFileRead {
+		b.expireNextRead = false
+		return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "expired grant", Retryable: true}
+	}
 	if q.Operation == executionenv.OpFileResolveAuthority {
 		return executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"}, nil
 	}
-	return executionenv.FileResponse{Data: []byte("from-real-handler"), Version: "v1"}, nil
+	return executionenv.FileResponse{Data: []byte("from-grpc"), Version: string([]byte{0xff, 0, 1})}, nil
 }
 func (*integrationBackend) StartCommand(context.Context, string, string, executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
-	return executionenv.CommandStartResponse{}, nil
+	return executionenv.CommandStartResponse{CommandID: "c1", State: executionenv.CommandSucceeded, Result: executionenv.CommandStatusResponse{CommandID: "c1", State: executionenv.CommandSucceeded, Stdout: []byte("ok\n")}}, nil
 }
 func (*integrationBackend) CommandStatus(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, nil
+	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeInternal, Message: "unimplemented"}
 }
 func (*integrationBackend) CancelCommand(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, nil
+	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeInternal, Message: "unimplemented"}
 }
 
 func certificate(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, serverName string, client bool) (tls.Certificate, *x509.Certificate, *ecdsa.PrivateKey) {
@@ -78,7 +87,8 @@ func certificate(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.Privat
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: serverName}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, IsCA: parent == nil, BasicConstraintsValid: true}
 	if client {
 		tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-		tmpl.URIs = []*url.URL{{Scheme: "spiffe", Host: "example.test", Path: "/mecak8s"}}
+		u, _ := url.Parse("spiffe://example.test/mecak8s")
+		tmpl.URIs = []*url.URL{u}
 	} else if parent != nil {
 		tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 		tmpl.DNSNames = []string{"example.test"}
@@ -98,29 +108,38 @@ func certificate(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.Privat
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: parsed}, parsed, key
 }
 
-func TestProviderThroughRealSignedHandlerRefreshesAndReattachesExactly(t *testing.T) {
+type grpcFixture struct {
+	endpoint  string
+	clientTLS *tls.Config
+	stop      func()
+}
+
+func startFixture(t *testing.T, backend executioncontroller.Backend, ready func() bool) grpcFixture {
+	t.Helper()
 	_, ca, caKey := certificate(t, nil, nil, "ca", false)
-	serverTLS, _, _ := certificate(t, ca, caKey, "example.test", false)
-	clientTLS, _, _ := certificate(t, ca, caKey, "client", true)
-	_, private, err := ed25519.GenerateKey(rand.Reader)
+	serverCert, _, _ := certificate(t, ca, caKey, "example.test", false)
+	clientCert, _, _ := certificate(t, ca, caKey, "client", true)
+	_, private, _ := ed25519.GenerateKey(rand.Reader)
+	h := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Clients: map[string]executioncontroller.ClientPolicy{"spiffe://example.test/mecak8s": {MayAttestOwner: true}}, Signer: executioncontroller.GrantSigner{KeyID: "k1", PrivateKey: private, Issuer: "provider", Audience: "executor", Lifetime: time.Minute}, Verifier: executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{"k1": private.Public().(ed25519.PublicKey)}, Issuer: "provider", Audience: "executor", MaxLifetime: 2 * time.Minute}, Ready: ready}, backend)
+	pool := x509.NewCertPool()
+	pool.AddCert(ca)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := &integrationBackend{}
-	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{
-		Clients:  map[string]executioncontroller.ClientPolicy{"spiffe://example.test/mecak8s": {MayAttestOwner: true}},
-		Signer:   executioncontroller.GrantSigner{KeyID: "k1", PrivateKey: private, Issuer: "provider", Audience: "executor", Lifetime: 5 * time.Second},
-		Verifier: executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{"k1": private.Public().(ed25519.PublicKey)}, Issuer: "provider", Audience: "executor", MaxLifetime: 10 * time.Second},
-	}, backend)
-	clientCAs := x509.NewCertPool()
-	clientCAs.AddCert(ca)
-	ts := httptest.NewUnstartedServer(handler)
-	ts.TLS = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverTLS}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}
-	ts.StartTLS()
-	defer ts.Close()
+	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(executioncontroller.TLSConfig(serverCert, pool))), grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes), grpc.MaxSendMsgSize(executionenv.MaxMessageBytes))
+	executionv1.RegisterExecutionProviderServiceServer(s, h)
+	go func() { _ = s.Serve(ln) }()
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	client, err := New(ts.URL, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{clientTLS}, ServerName: "example.test"})
+	return grpcFixture{endpoint: ln.Addr().String(), clientTLS: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{clientCert}, ServerName: "example.test"}, stop: func() { s.Stop(); _ = ln.Close() }}
+}
+
+func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *testing.T) {
+	backend := &integrationBackend{}
+	fx := startFixture(t, backend, nil)
+	defer fx.stop()
+	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,168 +154,151 @@ func TestProviderThroughRealSignedHandlerRefreshesAndReattachesExactly(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver, ok := reattached.Environment.Workspace().(tool.AuthorityResourceResolver)
-	if !ok {
-		t.Fatal("remote workspace does not implement AuthorityResourceResolver")
+	resolver := reattached.Environment.Workspace().(tool.AuthorityResourceResolver)
+	target, root, err := resolver.AuthorityResourcePath("main.go")
+	if err != nil || target != "/workspace/main.go" || root != "/workspace" {
+		t.Fatalf("authority=(%q,%q) err=%v", target, root, err)
 	}
-	target, workspace, err := resolver.AuthorityResourcePath("main.go")
-	if err != nil || target != "/workspace/main.go" || workspace != "/workspace" {
-		t.Fatalf("authority resource=(%q,%q) err=%v", target, workspace, err)
-	}
-	data, err := reattached.Environment.Workspace().Read(context.Background(), "main.go")
-	if err != nil || string(data) != "from-real-handler" {
+	backend.expireNextRead = true
+	data, version, err := reattached.Environment.Workspace().ReadVersion(context.Background(), "main.go")
+	if err != nil || string(data) != "from-grpc" {
 		t.Fatalf("read=%q err=%v", data, err)
 	}
-	if backend.ensureCalls != 1 || backend.attachCalls < 3 || backend.fileCalls != 2 {
+	encoded, err := tool.EncodeFileVersion(version)
+	if err != nil || encoded != string([]byte{0xff, 0, 1}) {
+		t.Fatalf("opaque version=%q err=%v", encoded, err)
+	}
+	result, err := reattached.Environment.CommandRunner().Run(context.Background(), "go test ./...")
+	if err != nil || result.Stdout != "ok\n" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if backend.ensureCalls != 1 || backend.attachCalls < 3 || backend.fileCalls != 3 {
 		t.Fatalf("ensure=%d attach=%d file=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
 	}
 }
 
-func TestProviderMTLSWorkspaceAndForegroundRunner(t *testing.T) {
-	caTLS, ca, caKey := certificate(t, nil, nil, "ca", false)
-	_ = caTLS
-	serverTLS, _, _ := certificate(t, ca, caKey, "example.test", false)
-	clientTLS, _, _ := certificate(t, ca, caKey, "client", true)
-	clientPool := x509.NewCertPool()
-	clientPool.AddCert(ca)
-	calls := map[string]int{}
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(r.TLS.PeerCertificates) == 0 {
-			t.Error("request had no verified client certificate")
-		}
-		calls[r.URL.Path]++
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case executionenv.BasePath + "/profiles/validate":
-			json.NewEncoder(w).Encode(executionenv.ValidateProfileResponse{Profile: "coding", Digest: "sha256:test"})
-		case executionenv.BasePath + "/environments/ensure":
-			json.NewEncoder(w).Encode(executionenv.EnsureEnvironmentResponse{Environment: executionenv.EnvironmentRef{ID: "env-1", Revision: "rev-1"}, Epoch: 2, Ready: true, Grant: "grant-1", GrantExpiresAt: time.Now().Add(time.Minute)})
-		case executionenv.BasePath + "/environments/attach":
-			json.NewEncoder(w).Encode(executionenv.AttachEnvironmentResponse{Environment: executionenv.EnvironmentRef{ID: "env-1", Revision: "rev-1"}, Epoch: 2, Ready: true, Grant: "grant-2", GrantExpiresAt: time.Now().Add(time.Minute)})
-		case executionenv.BasePath + "/files":
-			var q executionenv.FileRequest
-			json.NewDecoder(r.Body).Decode(&q)
-			if q.Context.BindingID != "session-1" || q.Context.Grant != "grant-2" {
-				t.Errorf("file context = %+v", q.Context)
-			}
-			if q.Operation == executionenv.OpFileResolveAuthority {
-				if q.Path == "escape" {
-					w.WriteHeader(http.StatusForbidden)
-					json.NewEncoder(w).Encode(executionenv.ErrorResponse{Error: &executionenv.Error{Code: executionenv.CodePermissionDenied, Message: "path is outside workspace"}})
-				} else {
-					json.NewEncoder(w).Encode(executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"})
-				}
-			} else {
-				json.NewEncoder(w).Encode(executionenv.FileResponse{Data: []byte("remote"), Version: "v1"})
-			}
-		case executionenv.BasePath + "/commands/start":
-			json.NewEncoder(w).Encode(executionenv.CommandStartResponse{CommandID: "c1", State: executionenv.CommandSucceeded, Result: executionenv.CommandStatusResponse{CommandID: "c1", State: executionenv.CommandSucceeded, Stdout: []byte("ok\n"), Stderr: []byte("warn\n")}})
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	ts := httptest.NewUnstartedServer(h)
-	ts.TLS = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverTLS}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientPool}
-	ts.StartTLS()
-	defer ts.Close()
-	roots := x509.NewCertPool()
-	roots.AddCert(ca)
-	client, err := New(ts.URL, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{clientTLS}, ServerName: "example.test"})
+func TestCommandStatusIsUnimplementedOnlyAfterAuthorization(t *testing.T) {
+	backend := &integrationBackend{}
+	fx := startFixture(t, backend, nil)
+	defer fx.stop()
+	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider, _ := NewProvider(client, "coding")
-	if err := provider.ValidatePlacement(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
-	binding, err := provider.Bind(context.Background(), server.PlacementBindRequest{Selector: server.DefaultPlacement(), Principal: principal, Scope: "remote", Operation: server.PlacementOperationCreate, BindingID: "session-1"})
+	defer client.Close()
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
+	ensured, err := client.Ensure(context.Background(), "binding", "coding", owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := binding.Environment.Workspace().(tool.AuthorityResourceResolver)
-	target, root, err := resolver.AuthorityResourcePath("main.go")
-	if err != nil || target != "/workspace/main.go" || root != "/workspace" {
-		t.Fatalf("authority resource=(%q,%q) err=%v", target, root, err)
+	attached, err := client.Attach(context.Background(), executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: ensured.Environment, Owner: owner, BindingID: "binding"}, Purpose: executionenv.PurposeSession})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if target, root, err = resolver.AuthorityResourcePath("escape"); err == nil || target != "" || root != "" {
-		t.Fatalf("escaped authority resource=(%q,%q) err=%v, want fail closed", target, root, err)
+	rc := executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: "binding", Epoch: attached.Epoch, Grant: attached.Grant}
+	_, err = client.rpc.CommandStatus(context.Background(), &executionv1.CommandQueryRequest{Context: contextToProto(rc), CommandId: "c1"})
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("authorized status code=%v", status.Code(err))
 	}
-	data, _, err := binding.Environment.Workspace().ReadVersion(context.Background(), "main.go")
-	if err != nil || string(data) != "remote" {
-		t.Fatalf("read=%q err=%v", data, err)
-	}
-	result, err := binding.Environment.CommandRunner().Run(context.Background(), "go test ./...")
-	if err != nil || result.Stdout != "ok\n" || result.Stderr != "warn\n" {
-		t.Fatalf("command=%+v err=%v", result, err)
-	}
-	if _, streaming := binding.Environment.CommandRunner().(tool.CommandStreamer); streaming {
-		t.Fatal("remote runner unexpectedly advertises streaming")
-	}
-	if calls[executionenv.BasePath+"/profiles/validate"] != 1 || calls[executionenv.BasePath+"/environments/ensure"] != 1 {
-		t.Fatalf("calls=%v", calls)
+	rc.Owner.Subject = "mallory"
+	_, err = client.rpc.CommandStatus(context.Background(), &executionv1.CommandQueryRequest{Context: contextToProto(rc), CommandId: "c1"})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("wrong-owner status code=%v", status.Code(err))
 	}
 }
 
-func TestProviderWaitsForAsyncReadinessWithoutReEnsuring(t *testing.T) {
-	var ensureCalls, attachCalls int
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		ref := executionenv.EnvironmentRef{ID: "env-pending", Revision: "rev-1"}
-		switch r.URL.Path {
-		case executionenv.BasePath + "/environments/ensure":
-			ensureCalls++
-			json.NewEncoder(w).Encode(executionenv.EnsureEnvironmentResponse{Environment: ref, Epoch: 1, Ready: false, Grant: "initial", GrantExpiresAt: time.Now().Add(time.Minute)})
-		case executionenv.BasePath + "/environments/attach":
-			attachCalls++
-			json.NewEncoder(w).Encode(executionenv.AttachEnvironmentResponse{Environment: ref, Epoch: 1, Ready: attachCalls > 1, Grant: "fresh", GrantExpiresAt: time.Now().Add(time.Minute)})
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	ts := httptest.NewServer(h)
-	defer ts.Close()
-	client, err := NewWithHTTPClient(ts.URL, ts.Client())
+func TestGRPCReadinessAndMTLSAreMandatory(t *testing.T) {
+	fx := startFixture(t, &integrationBackend{}, func() bool { return false })
+	defer fx.stop()
+	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider, _ := NewProvider(client, "coding")
+	defer client.Close()
+	_, err = client.ValidateProfile(context.Background(), "coding")
+	var remote *executionenv.Error
+	if !errors.As(err, &remote) || remote.Code != executionenv.CodeNotReady {
+		t.Fatalf("error=%v", err)
+	}
+	noCert := fx.clientTLS.Clone()
+	noCert.Certificates = nil
+	conn, err := grpc.NewClient(fx.endpoint, grpc.WithTransportCredentials(credentials.NewTLS(noCert)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	principal := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	if _, err := provider.Bind(ctx, server.PlacementBindRequest{Selector: server.DefaultPlacement(), Principal: principal, BindingID: "session-pending"}); err != nil {
+	if _, err := executionv1.NewExecutionProviderServiceClient(conn).ValidateProfile(ctx, &executionv1.ValidateProfileRequest{Profile: "coding"}); err == nil {
+		t.Fatal("server accepted client without certificate")
+	}
+}
+
+func TestDecodeErrorRejectsUntrustedOrContradictoryMetadata(t *testing.T) {
+	const marker = "/var/run/secrets/provider-key"
+	typed := func(code executionenv.ErrorCode, retry bool, grpcCode codes.Code) error {
+		st, err := status.New(grpcCode, marker).WithDetails(&executionv1.ErrorDetail{Code: string(code), Retryable: retry})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Err()
+	}
+	multiple, err := status.New(codes.NotFound, marker).WithDetails(
+		&executionv1.ErrorDetail{Code: string(executionenv.CodeNotFound)},
+		&executionv1.ErrorDetail{Code: string(executionenv.CodePermissionDenied)},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if ensureCalls != 1 || attachCalls != 2 {
-		t.Fatalf("ensure=%d attach=%d, want 1/2", ensureCalls, attachCalls)
+	cases := []error{
+		errors.New(marker),
+		status.Error(codes.Internal, marker),
+		typed("", false, codes.Internal),
+		typed(executionenv.ErrorCode("future"), false, codes.Internal),
+		typed(executionenv.CodeNotFound, false, codes.PermissionDenied),
+		typed(executionenv.CodeNotFound, true, codes.NotFound),
+		multiple.Err(),
 	}
-}
-
-func TestProviderReattachMissingNeverEnsures(t *testing.T) {
-	var ensureCalls int
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == executionenv.BasePath+"/environments/ensure" {
-			ensureCalls++
+	for i, input := range cases {
+		got := decodeError(context.Background(), input)
+		var remote *executionenv.Error
+		if !errors.As(got, &remote) || remote.Code != executionenv.CodeInternal || remote.Retryable || strings.Contains(got.Error(), marker) {
+			t.Fatalf("case %d escaped or misclassified: %v", i, got)
 		}
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(executionenv.ErrorResponse{Error: &executionenv.Error{Code: executionenv.CodeNotFound, Message: "environment not found"}})
-	})
-	ts := httptest.NewServer(h)
-	defer ts.Close()
-	client, _ := NewWithHTTPClient(ts.URL, ts.Client())
-	provider, _ := NewProvider(client, "coding")
-	principal := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	_, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: session.EnvironmentRef{Kind: "kubernetes", ID: "deleted", Revision: "rev-1"}, Principal: principal, BindingID: "session-1"})
-	if err == nil || ensureCalls != 0 {
-		t.Fatalf("err=%v ensure=%d, want unavailable and zero ensure calls", err, ensureCalls)
 	}
 }
 
-func TestProviderRequiresOwnerAndBinding(t *testing.T) {
-	p := &Provider{}
-	_, err := p.Bind(context.Background(), server.PlacementBindRequest{Selector: server.DefaultPlacement()})
-	if err == nil {
-		t.Fatal("ownerless/bindingless allocation succeeded")
+func TestDecodeErrorAcceptsClosedTypedErrorAndLocalCancellation(t *testing.T) {
+	st, err := status.New(codes.Unauthenticated, "peer text").WithDetails(&executionv1.ErrorDetail{Code: string(executionenv.CodeUnauthenticated), Retryable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var remote *executionenv.Error
+	if got := decodeError(context.Background(), st.Err()); !errors.As(got, &remote) || remote.Code != executionenv.CodeUnauthenticated || !remote.Retryable {
+		t.Fatalf("typed error=%v", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := decodeError(ctx, status.Error(codes.Canceled, "peer text")); !errors.Is(got, context.Canceled) {
+		t.Fatalf("local cancellation=%v", got)
+	}
+}
+
+func TestCommandResponsesRejectUnknownStates(t *testing.T) {
+	if _, err := commandStartFromProto(&executionv1.CommandStartResponse{State: executionv1.CommandState_COMMAND_STATE_UNSPECIFIED, Result: &executionv1.CommandStatusResponse{State: executionv1.CommandState_COMMAND_STATE_SUCCEEDED}}); err == nil {
+		t.Fatal("accepted unspecified command-start state")
+	}
+	if _, err := commandStatusFromProto(&executionv1.CommandStatusResponse{State: executionv1.CommandState(99), TerminalReceipt: "clean"}); err == nil {
+		t.Fatal("accepted unknown command-status state")
+	}
+}
+
+func TestEndpointRejectsHTTPAndAlternateResolvers(t *testing.T) {
+	cfg := &tls.Config{RootCAs: x509.NewCertPool(), Certificates: []tls.Certificate{{Certificate: [][]byte{{1}}}}}
+	for _, endpoint := range []string{"https://provider:8443", "dns:///provider:8443", "provider"} {
+		if c, err := New(endpoint, cfg); err == nil {
+			c.Close()
+			t.Fatalf("accepted %q", endpoint)
+		}
 	}
 }

@@ -12,7 +12,10 @@ if [ "${MECATL_EXECUTION_QUAL_CLEAN_ENV:-}" != 1 ]; then
 fi
 
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+case "${MECATL_EXECUTION_DEV_TOOLBOX:-}" in ''|dev) ;; *) echo "MECATL_EXECUTION_DEV_TOOLBOX must be empty or dev" >&2; exit 2 ;; esac
+case "${MECATL_EXECUTION_K8S_TOOLBOX:-}" in ''|sre) ;; *) echo "MECATL_EXECUTION_K8S_TOOLBOX must be empty or sre" >&2; exit 2 ;; esac
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+cd "$root"
 run_id=$(date -u +%Y%m%d%H%M%S)-$$
 cluster="mecatl-execution-qual-$run_id"
 context="kind-$cluster"

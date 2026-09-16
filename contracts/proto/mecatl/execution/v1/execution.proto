@@ -1,0 +1,132 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// Private, mutually authenticated execution-provider protocol. This is not part
+// of the public Harness API.
+syntax = "proto3";
+
+package mecatl.execution.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1;executionv1";
+
+service ExecutionProviderService {
+  rpc ValidateProfile(ValidateProfileRequest) returns (ValidateProfileResponse);
+  rpc EnsureEnvironment(EnsureEnvironmentRequest) returns (EnsureEnvironmentResponse);
+  rpc AttachEnvironment(AttachEnvironmentRequest) returns (AttachEnvironmentResponse);
+  rpc ReleaseReference(ReleaseReferenceRequest) returns (google.protobuf.Empty);
+  rpc RetireEnvironment(RetireEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc Files(FileRequest) returns (FileResponse);
+  rpc StartCommand(CommandStartRequest) returns (CommandStartResponse);
+  rpc CommandStatus(CommandQueryRequest) returns (CommandStatusResponse);
+  rpc CancelCommand(CommandQueryRequest) returns (CommandStatusResponse);
+}
+
+message EnvironmentRef { string id = 1; string revision = 2; }
+message Owner { string issuer = 1; string subject = 2; }
+message RequestContext {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string binding_id = 3;
+  uint64 epoch = 4;
+  string grant = 5;
+}
+
+message ValidateProfileRequest { string profile = 1; }
+message ValidateProfileResponse {
+  string profile = 1;
+  string digest = 2;
+  repeated string capabilities = 3;
+  int64 max_file_bytes = 4;
+  int64 max_command_bytes = 5;
+  int64 max_command_duration_millis = 6;
+}
+message EnsureEnvironmentRequest { string binding_id = 1; string profile = 2; Owner owner = 3; }
+message EnsureEnvironmentResponse {
+  EnvironmentRef environment = 1;
+  uint64 epoch = 2;
+  bool ready = 3;
+  string grant = 4;
+  google.protobuf.Timestamp grant_expires_at = 5;
+}
+message AttachEnvironmentRequest { RequestContext context = 1; string purpose = 2; }
+message AttachEnvironmentResponse {
+  EnvironmentRef environment = 1;
+  uint64 epoch = 2;
+  bool ready = 3;
+  string grant = 4;
+  google.protobuf.Timestamp grant_expires_at = 5;
+}
+message ReleaseReferenceRequest { RequestContext context = 1; }
+message RetireEnvironmentRequest { RequestContext context = 1; }
+
+enum FileOperation {
+  FILE_OPERATION_UNSPECIFIED = 0;
+  FILE_OPERATION_READ = 1;
+  FILE_OPERATION_RESOLVE_AUTHORITY = 2;
+  FILE_OPERATION_STAT = 3;
+  FILE_OPERATION_CREATE = 4;
+  FILE_OPERATION_REPLACE = 5;
+  FILE_OPERATION_LIST = 6;
+  FILE_OPERATION_REMOVE = 7;
+  FILE_OPERATION_RENAME = 8;
+  FILE_OPERATION_COPY = 9;
+  FILE_OPERATION_GLOB = 10;
+  FILE_OPERATION_GREP = 11;
+}
+message FileRequest {
+  RequestContext context = 1;
+  FileOperation operation = 2;
+  string path = 3;
+  string destination = 4;
+  string pattern = 5;
+  bytes data = 6;
+  bytes version = 7;
+  int32 limit = 8;
+}
+message FileInfo {
+  string name = 1;
+  int64 size = 2;
+  uint32 mode = 3;
+  google.protobuf.Timestamp mod_time = 4;
+  bool is_dir = 5;
+}
+message GrepMatch { string path = 1; int32 line = 2; string text = 3; }
+message FileResponse {
+  bytes data = 1;
+  bytes version = 2;
+  FileInfo info = 3;
+  repeated FileInfo entries = 4;
+  repeated string paths = 5;
+  repeated GrepMatch matches = 6;
+  string authority_target = 7;
+  string authority_workspace = 8;
+}
+
+enum CommandState {
+  COMMAND_STATE_UNSPECIFIED = 0;
+  COMMAND_STATE_RUNNING = 1;
+  COMMAND_STATE_SUCCEEDED = 2;
+  COMMAND_STATE_FAILED = 3;
+  COMMAND_STATE_CANCELLED = 4;
+  COMMAND_STATE_FENCE_UNKNOWN = 5;
+}
+message CommandStartRequest { RequestContext context = 1; string command = 2; int64 timeout_millis = 3; }
+message CommandStartResponse { string command_id = 1; CommandState state = 2; CommandStatusResponse result = 3; }
+message CommandQueryRequest { RequestContext context = 1; string command_id = 2; int64 offset = 3; }
+message CommandStatusResponse {
+  string command_id = 1;
+  CommandState state = 2;
+  int32 exit_code = 3;
+  bytes stdout = 4;
+  bytes stderr = 5;
+  int64 next_offset = 6;
+  bool truncated = 7;
+  string terminal_receipt = 8;
+}
+
+// ErrorDetail is a stable machine-readable classification. Status messages are
+// intentionally generic so backend/Kubernetes details never cross the boundary.
+message ErrorDetail { string code = 1; bool retryable = 2; }

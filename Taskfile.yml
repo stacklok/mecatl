@@ -514,12 +514,27 @@ tasks:
       credential. The owned cluster is intentionally retained; the command prints
       the exact human-confirmed cleanup command. NOT part of task test.
     preconditions:
-      - sh: command -v toolbox >/dev/null 2>&1
-        msg: "toolbox is required (dev and sre toolboxes)"
       - sh: command -v kind >/dev/null 2>&1 && command -v podman >/dev/null 2>&1
         msg: "kind and rootless Podman are required"
     cmds:
       - deploy/mecatl-execution-kind/run.sh
+
+  e2e:k8s:execution:live:
+    desc: |
+      EXPLICIT OPT-IN: run mock qualification followed by one bounded real-provider
+      coding smoke on the approved retained Kind cluster. Requires absolute
+      MECATL_EXECUTION_CREDENTIAL_FILE and MECATL_EXECUTION_QUAL_STATE paths. A
+      trusted loader stages a run-scoped Secret without exposing its value, the
+      test independently verifies files and go test through typed gRPC, then the
+      mock profile is restored and only that run-scoped Secret is removed. NOT
+      part of task test.
+    preconditions:
+      - sh: test -n "${MECATL_EXECUTION_CREDENTIAL_FILE:-}"
+        msg: "MECATL_EXECUTION_CREDENTIAL_FILE is required"
+      - sh: test -n "${MECATL_EXECUTION_QUAL_STATE:-}"
+        msg: "MECATL_EXECUTION_QUAL_STATE is required"
+    cmds:
+      - deploy/mecatl-execution-kind/live.sh
 
   e2e:k8s:podman:
     desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)

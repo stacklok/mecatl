@@ -74,7 +74,7 @@ This page is the overview and router; the big picture and the layering rule are 
 
 The candidate native execution path is opt-in and keeps the controller boundary
 outside `mecak8s`. `cmd/mecatl-execution-provider` owns the private authenticated
-API and the namespaced `ExecutionEnvironment` reconciler. It creates a retained
+API (`mecatl.execution.v1.ExecutionProviderService`, protocol `execution-grpc/1`) over bounded mTLS gRPC and the namespaced `ExecutionEnvironment` reconciler. It creates a retained
 PVC and a credential-free executor Pod from an operator-defined, digest-pinned
 profile. `cmd/mecatl-executor` serves bounded file operations and foreground
 commands inside `/workspace`; the host-side `internal/adapter/executionclient`

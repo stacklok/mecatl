@@ -6,8 +6,9 @@ import "time"
 
 // Private protocol bounds.
 const (
-	BasePath         = "/internal/execution/v1"
-	MaxJSONBody      = 8 << 20
+	ProtocolVersion  = "execution-grpc/1"
+	MaxMessageBytes  = 8 << 20
+	MaxJSONBody      = 8 << 20 // credential-free provider-to-workload stdin framing only
 	MaxFileBytes     = 5 << 20
 	MaxCommandBytes  = 1 << 20
 	MaxPathBytes     = 4096

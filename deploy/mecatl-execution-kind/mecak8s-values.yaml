@@ -8,7 +8,7 @@ redis:
     enabled: true
 execution:
   enabled: true
-  endpoint: https://mecatl-execution.execution-qualification.svc.cluster.local:8443
+  endpoint: mecatl-execution.execution-qualification.svc.cluster.local:8443
   profile: go
   tlsSecret: execution-client-tls
   caKey: ca.crt

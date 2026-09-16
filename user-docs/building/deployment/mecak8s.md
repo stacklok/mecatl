@@ -219,14 +219,16 @@ helm upgrade --install mecatl-execution ./deploy/helm/mecatl-execution \
 kubectl rollout status deployment/mecatl-execution --namespace <NAMESPACE>
 ```
 
-Add the following block to the existing `mecak8s` values. The endpoint must use
-the provider certificate's DNS identity. Keep OIDC caller authentication enabled;
+Add the following block to the existing `mecak8s` values. The endpoint is a
+`host:port` gRPC target (no URL scheme) and must use the provider certificate's
+DNS identity. The private `mecatl.execution.v1.ExecutionProviderService` uses
+protocol `execution-grpc/1` with mandatory mTLS. Keep OIDC caller authentication enabled;
 the remote binding is scoped to the verified issuer and subject.
 
 ```yaml
 execution:
   enabled: true
-  endpoint: https://mecatl-execution.<NAMESPACE>.svc:8443
+  endpoint: mecatl-execution.<NAMESPACE>.svc:8443
   profile: coding
   tlsSecret: <MECAK8S_EXECUTION_MTLS_SECRET>
   caKey: ca.crt

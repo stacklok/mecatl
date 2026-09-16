@@ -12,17 +12,19 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -33,9 +35,9 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
+func run() error { //nolint:gocyclo // Startup validation and owned-resource shutdown stay in one composition root.
 	var addr, namespace, profilesPath, certPath, keyPath, caPath, signingPath, keyID, issuer, audience, clients, attesters, admins string
-	flag.StringVar(&addr, "listen", ":8443", "HTTPS listen address")
+	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
 	flag.StringVar(&namespace, "namespace", "", "managed Kubernetes namespace")
 	flag.StringVar(&profilesPath, "profiles", "/etc/mecatl-execution/profiles.yaml", "strict operator profile file")
 	flag.StringVar(&certPath, "tls-cert", "/etc/mecatl-execution/tls/tls.crt", "server certificate")
@@ -105,28 +107,37 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	tlsLn := tls.NewListener(ln, executioncontroller.TLSConfig(serverCert, pool))
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 35 * time.Minute, IdleTimeout: 60 * time.Second}
+	server := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(executioncontroller.TLSConfig(serverCert, pool))),
+		grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes),
+		grpc.MaxSendMsgSize(executionenv.MaxMessageBytes),
+	)
+	executionv1.RegisterExecutionProviderServiceServer(server, handler)
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.Serve(tlsLn) }()
+	go func() { serveErr <- server.Serve(ln) }()
 	select {
 	case err := <-controllerErr:
 		cancel()
-		_ = server.Shutdown(context.Background())
+		server.GracefulStop()
 		if err != nil {
 			return fmt.Errorf("controller: %w", err)
 		}
 		return nil
 	case err := <-serveErr:
 		cancel()
-		if !errors.Is(err, http.ErrServerClosed) {
+		if err != nil {
 			return err
 		}
 		return nil
 	case <-ctx.Done():
-		shutdown, c := context.WithTimeout(context.Background(), 10*time.Second)
-		defer c()
-		return server.Shutdown(shutdown)
+		done := make(chan struct{})
+		go func() { server.GracefulStop(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			server.Stop()
+		}
+		return nil
 	}
 }
 func loadSigningKey(path string) (ed25519.PrivateKey, error) {

@@ -358,7 +358,7 @@ func parseFlags(argv []string) (config, error) {
 	positiveDurationFlag(fs, &cfg.closeTimeout, "close-timeout", defaultCloseTimeout, "maximum time allowed for final app resource cleanup")
 	fs.StringVar(&cfg.workspace, "workspace", "", "optional shared agent workspace root, e.g. a mounted PVC path. Empty (the default) is a FILE-LESS deployment: every session is no-FS. A non-empty ABSOLUTE path selects a server-assigned filesystem deployment rooted there — the operator vouches for the mount and clients cannot select another root (ADR 0237)")
 	fs.BoolVar(&cfg.executionEnabled, "execution-enabled", false, "use an independently deployed Kubernetes execution provider for default sessions")
-	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "HTTPS endpoint of the execution provider (requires --execution-enabled)")
+	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "host:port endpoint of the mTLS gRPC execution provider (requires --execution-enabled)")
 	fs.StringVar(&cfg.executionProfile, "execution-profile", "", "operator-configured execution provider profile")
 	fs.StringVar(&cfg.executionTLSCA, "execution-tls-ca", "", "mounted CA bundle used only by the execution client")
 	fs.StringVar(&cfg.executionTLSCert, "execution-tls-cert", "", "mounted execution-provider mTLS client certificate")
