@@ -599,8 +599,21 @@ type MCPOAuthCredentialProfile struct {
 type MCPLocalCredentialProfile struct {
 	// Root is the required absolute credential-store root.
 	Root string `yaml:"root"`
-	// KeyEnv is a MECATL_* environment variable name containing the encryption key.
+	// KeyEnv is the legacy MECATL_* environment variable containing the key.
 	KeyEnv string `yaml:"key_env"`
+	// Key selects root-pinned native custody for newly onboarded profiles.
+	Key *MCPNativeCredentialKey `yaml:"key"`
+}
+
+// MCPNativeCredentialKey is a strict keyring/file custody union.
+type MCPNativeCredentialKey struct {
+	Mode string                `yaml:"mode"`
+	File *MCPFileCredentialKey `yaml:"file"`
+}
+
+// MCPFileCredentialKey identifies the owner-only wrapping-key file.
+type MCPFileCredentialKey struct {
+	Path string `yaml:"path"`
 }
 
 // MCPEnvironmentCredentialProfile declares a read-only environment credential source.
@@ -967,7 +980,7 @@ func (c *MCPOAuthCredentialProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (c *MCPLocalCredentialProfile) strictFields() map[string]any {
-	return map[string]any{"root": &c.Root, "key_env": &c.KeyEnv}
+	return map[string]any{"root": &c.Root, "key_env": &c.KeyEnv, "key": newPermconfigNodePointer(&c.Key)}
 }
 
 // UnmarshalYAML strictly decodes local credential-store metadata.
@@ -978,7 +991,33 @@ func (c *MCPLocalCredentialProfile) UnmarshalYAML(node ast.Node) error {
 	if c.Root == "" || !filepath.IsAbs(c.Root) {
 		return errors.New("mcp.servers[].auth.oauth.credentials.local.root must be absolute")
 	}
+	if c.Key != nil {
+		if c.KeyEnv != "" {
+			return errors.New("local credentials cannot combine key and key_env")
+		}
+		if c.Key.Mode != "keyring" && c.Key.Mode != "file" {
+			return errors.New("local credentials key.mode must be keyring or file")
+		}
+		if c.Key.Mode == "keyring" && c.Key.File != nil {
+			return errors.New("keyring credentials cannot contain file settings")
+		}
+		if c.Key.Mode == "file" && (c.Key.File == nil || c.Key.File.Path == "" || !filepath.IsAbs(c.Key.File.Path)) {
+			return errors.New("file credentials require an absolute key.path")
+		}
+		return nil
+	}
 	return validateMCPSecretRef("mcp.servers[].auth.oauth.credentials.local.key_env", c.KeyEnv)
+}
+
+func (c *MCPNativeCredentialKey) strictFields() map[string]any {
+	return map[string]any{"mode": &c.Mode, "file": newPermconfigNodePointer(&c.File)}
+}
+func (c *MCPNativeCredentialKey) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.local.key", c.strictFields())
+}
+func (c *MCPFileCredentialKey) strictFields() map[string]any { return map[string]any{"path": &c.Path} }
+func (c *MCPFileCredentialKey) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.local.key.file", c.strictFields())
 }
 
 func (c *MCPEnvironmentCredentialProfile) strictFields() map[string]any {

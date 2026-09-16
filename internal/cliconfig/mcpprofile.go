@@ -1,6 +1,7 @@
 package cliconfig
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -60,6 +62,9 @@ type MCPProfileLoadOptions struct {
 	Operator  *permconfig.MCPSection
 	Legacy    *MCPServerList
 	LookupEnv func(string) (string, bool)
+	// Native custody seams keep offline tests away from desktop keyrings and DBus.
+	Keyring     mcpcredential.Keyring
+	DetectLinux mcpcredential.Detector
 }
 
 // MCPProfileResolver binds the legacy CLI metadata and environment lookup to the
@@ -186,7 +191,7 @@ func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
 		return nil, err
 	}
 	for _, input := range profiles {
-		cfg, err := loadMCPProfile(input, opts.LookupEnv, result, stores)
+		cfg, err := loadMCPProfile(input, opts, result, stores)
 		if err != nil {
 			return fail(err)
 		}
@@ -241,7 +246,8 @@ func validateLegacyRelaxations(list *MCPServerList) error {
 	return nil
 }
 
-func loadMCPProfile(input profileInput, lookup func(string) (string, bool), owner *MCPProfiles, stores map[string]credentialstore.Store) (mcp.ServerConfig, error) {
+func loadMCPProfile(input profileInput, loadOpts MCPProfileLoadOptions, owner *MCPProfiles, stores map[string]credentialstore.Store) (mcp.ServerConfig, error) {
+	lookup := loadOpts.LookupEnv
 	if input.legacy != nil {
 		entry := input.legacy
 		if input.finalized {
@@ -283,7 +289,7 @@ func loadMCPProfile(input profileInput, lookup func(string) (string, bool), owne
 		if profile.Auth.OAuth == nil {
 			return mcp.ServerConfig{}, &MCPProfileError{Server: profile.Name, Field: "oauth", Kind: ErrMCPProfileInvalid}
 		}
-		oauth, err := loadOAuthProfile(*profile, lookup, owner, stores)
+		oauth, err := loadOAuthProfile(*profile, lookup, loadOpts, owner, stores)
 		if err != nil {
 			return mcp.ServerConfig{}, err
 		}
@@ -302,7 +308,7 @@ func resolvedOAuthScopePolicy(decl *permconfig.MCPOAuthProfile) (bool, []string)
 	return decl.RequestRefreshToken, scopes
 }
 
-func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (string, bool), owner *MCPProfiles, stores map[string]credentialstore.Store) (*mcp.OAuthOptions, error) {
+func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (string, bool), loadOpts MCPProfileLoadOptions, owner *MCPProfiles, stores map[string]credentialstore.Store) (*mcp.OAuthOptions, error) {
 	decl := profile.Auth.OAuth
 	if decl == nil || decl.Network == nil {
 		return nil, &MCPProfileError{Server: profile.Name, Field: "oauth.network", Kind: ErrMCPProfileInvalid}
@@ -330,7 +336,26 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 		}
 		cacheKey := local.Root + "\x00" + local.KeyEnv
 		store := stores[cacheKey]
-		if store == nil {
+		if local.Key != nil {
+			filePath := ""
+			if local.Key.File != nil {
+				filePath = local.Key.File.Path
+			}
+			selected, openErr := mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
+			if openErr != nil {
+				return nil, &MCPProfileError{Server: profile.Name, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore}
+			}
+			store, err := credentialstore.NewEncryptedFile(local.Root, mcpOAuthCredentialNamespace, selected.Key)
+			clear(selected.Key)
+			runtime.KeepAlive(selected.Key)
+			if err != nil {
+				return nil, &MCPProfileError{Server: profile.Name, Field: "auth.oauth.credentials.local", Kind: ErrMCPProfileStore}
+			}
+			stores[cacheKey] = store
+			owner.owned = append(owner.owned, store)
+			opts.CredentialStore = store
+			return opts, nil
+		} else if store == nil {
 			encoded, ok := lookupMCPEnv(lookup, local.KeyEnv)
 			if !ok || encoded == "" {
 				return nil, &MCPProfileError{Server: profile.Name, Field: "auth.oauth.credentials.local.key_env", Ref: local.KeyEnv, Kind: ErrMCPProfileSecret, Expected: "a canonical padded base64 value decoding to exactly 32 bytes", Remedy: "set the referenced environment variable to a generated 32-byte encryption key"}
