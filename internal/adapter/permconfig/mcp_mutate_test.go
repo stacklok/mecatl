@@ -51,6 +51,21 @@ func TestAddDirectMCPServerWithKeyNestsModeUnderKey(t *testing.T) {
 	}
 }
 
+// TestAddDirectMCPServerWithKeyHandlesEmptyFileStub covers the shape
+// cmd/mecated's readMCPSettings actually produces for a not-yet-created
+// settings file ("{}\n"), which is not "empty" by a raw byte/whitespace
+// check — a nil/blank-only input isn't the only "no settings yet" shape this
+// function has to handle.
+func TestAddDirectMCPServerWithKeyHandlesEmptyFileStub(t *testing.T) {
+	added, err := AddDirectMCPServerWithKey([]byte("{}\n"), "gateway", "https://mcp.example/mcp", "https://issuer.example", "/tmp/mcp-credentials", "keyring", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseYAML(added); err != nil {
+		t.Fatalf("generated document did not parse against the real schema:\n%s\nerr: %v", added, err)
+	}
+}
+
 func TestAddDirectMCPServerWithKeyFileModeNestsPath(t *testing.T) {
 	added, err := AddDirectMCPServerWithKey(nil, "gateway", "https://mcp.example/mcp", "https://issuer.example", "/tmp/mcp-credentials", "file", "/tmp/mcp-credential-key")
 	if err != nil {
