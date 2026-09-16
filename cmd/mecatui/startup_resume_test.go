@@ -136,7 +136,7 @@ func TestADR_0108_StartupStaticValidation(t *testing.T) {
 	main := client.SessionListItem{ID: "main", Kind: client.SessionKindMain, State: "completed", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}}
 	source = &fakeStartupResumeSource{rows: []client.SessionListItem{main}, transcriptErrs: map[string]error{"main": errors.New("backend path")}}
 	_, err = resolveStartupResume(context.Background(), source, "main", false)
-	if !errors.As(err, &resumeErr) || resumeErr.Reason != client.CapabilityReasonTranscriptUnavailable || strings.Contains(err.Error(), "backend path") {
+	if !errors.As(err, &resumeErr) || resumeErr.Reason != client.CapabilityReasonTranscriptUnavailable || strings.Contains(err.Error(), "backend path") || !strings.Contains(err.Error(), "conversation is unavailable") {
 		t.Fatalf("transcript error = %#v", err)
 	}
 }

@@ -107,10 +107,10 @@ func loadExactStartupResume(ctx context.Context, source startupResumeSource, id 
 		if client.IsNotFound(err) {
 			reason = startupReasonNotFound
 		}
-		return nil, &startupResumeError{Reason: reason, text: "the authoritative transcript is unavailable; retry or start without a resume flag", cause: err}
+		return nil, &startupResumeError{Reason: reason, text: "the conversation is unavailable; retry or start without --resume", cause: err}
 	}
 	if !transcript.Complete || transcript.SessionID != id {
-		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the authoritative transcript is unavailable; retry or start without a resume flag", candidateFresh: true}
+		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the conversation is unavailable; retry or start without --resume", candidateFresh: true}
 	}
 	row := client.SessionListItem{
 		ID: id, State: snapshot.State, Placement: snapshot.Placement, CreatedAt: snapshot.CreatedAt,
@@ -154,11 +154,11 @@ func loadStartupResume(ctx context.Context, source startupResumeSource, row clie
 	}
 	transcript, err := source.GetSessionTranscript(ctx, row.ID)
 	if err != nil || !transcript.Complete || transcript.SessionID != row.ID || (latest && len(transcript.Messages) == 0) {
-		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the authoritative transcript is unavailable; retry or start without a resume flag"}
+		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the conversation is unavailable; retry or start without --resume"}
 	}
 	snapshot, err := source.GetSession(ctx, row.ID)
 	if err != nil {
-		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the authoritative session metadata is unavailable; retry or start without a resume flag"}
+		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "session details are unavailable; retry or start without --resume"}
 	}
 	row.State = snapshot.State
 	row.Placement = snapshot.Placement
@@ -176,7 +176,7 @@ func capabilityStartupGuidance(reason client.CapabilityReason) string {
 	case client.CapabilityReasonActiveElsewhere:
 		return "that chat is currently active; retry after its run finishes"
 	case client.CapabilityReasonTranscriptUnavailable:
-		return "the authoritative transcript is unavailable; retry or start without a resume flag"
+		return "the conversation is unavailable; retry or start without --resume"
 	default:
 		return fmt.Sprintf("that session cannot be continued (%s)", client.CapabilityReasonUnknown)
 	}

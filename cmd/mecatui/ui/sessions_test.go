@@ -235,7 +235,7 @@ func TestSessionsUnavailableActionsUsePerActionReasons(t *testing.T) {
 	}{
 		{"continue", tea.KeyPressMsg{Code: tea.KeyEnter}, client.CapabilityReasonInspectOnlyKind, "inspection only"},
 		{"copy", tea.KeyPressMsg{Code: 'y', Text: "y"}, client.CapabilityReasonActiveElsewhere, "active elsewhere"},
-		{"view", tea.KeyPressMsg{Code: 'v', Text: "v"}, client.CapabilityReasonTranscriptUnavailable, "transcript is unavailable"},
+		{"view", tea.KeyPressMsg{Code: 'v', Text: "v"}, client.CapabilityReasonTranscriptUnavailable, "conversation could not be loaded"},
 		{"fork", tea.KeyPressMsg{Code: 'f', Text: "f"}, client.CapabilityReasonAwaitingApproval, "awaiting approval"},
 		{"rename", tea.KeyPressMsg{Code: 'r', Text: "r"}, client.CapabilityReasonActiveElsewhere, "active elsewhere"},
 		{"delete storage", tea.KeyPressMsg{Code: 'd', Text: "d"}, client.CapabilityReasonStorageUnsupported, "unsupported by session storage"},

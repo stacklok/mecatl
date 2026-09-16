@@ -105,7 +105,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 	}
 	m = applyAll(m, cmd())
 	dryRun := stripANSIstr(m.View().Content)
-	for _, want := range []string{"Optimize storage", "Sessions are preserved", "v1: 7", "v2: 9", "Invalid: 2", "Skipped: 3", "Reclaimable: 4.1 KB", "Temporary space required: 2 KB"} {
+	for _, want := range []string{"Preview storage optimization", "Sessions are preserved", "Legacy format: 7", "Current format: 9", "Invalid: 2", "Skipped: 3", "Recoverable: 4.1 KB", "Temporary space needed: 2 KB"} {
 		if !strings.Contains(dryRun, want) {
 			t.Fatalf("optimize dry-run missing %q:\n%s", want, dryRun)
 		}
@@ -113,7 +113,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyAll(mm.(Model), cmd())
 	progress := stripANSIstr(m.View().Content)
-	for _, want := range []string{"migration-job", "paused", "Processed: 4/7", "Migrated: 2", "sanitized failure", "r: resume", "c: cancel"} {
+	for _, want := range []string{"migration-job", "paused", "Processed: 4/7", "Updated: 2", "sanitized failure", "r: resume", "c: cancel"} {
 		if !strings.Contains(progress, want) {
 			t.Fatalf("optimize progress missing %q:\n%s", want, progress)
 		}
@@ -158,7 +158,7 @@ func TestSessionStorageContinuity_Scenario8_CleanupFlow(t *testing.T) {
 	}
 	m = applyAll(m, cmd())
 	review := stripANSIstr(m.View().Content)
-	for _, want := range []string{"Clean up sessions", "DESTRUCTIVE", "Main: 3", "Child: 2", "Scheduled: 1", "Unknown: 2 protected", "Live: 2", "Awaiting: 1", "Protected: 8", "type CLEAN UP"} {
+	for _, want := range []string{"Preview session cleanup", "DESTRUCTIVE", "Chats: 3", "Child runs: 2", "Scheduled runs: 1", "Unknown: 2", "Live: 2", "Awaiting approval: 1", "Protected: 8", "Type CLEAN UP", "cannot be undone"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("cleanup review missing %q:\n%s", want, review)
 		}
@@ -179,7 +179,7 @@ func TestSessionStorageContinuity_Scenario8_CleanupFlow(t *testing.T) {
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyAll(mm.(Model), cmd())
 	result := stripANSIstr(m.View().Content)
-	for _, want := range []string{"partial", "Deleted: 3", "Skipped: 2", "Stale: 1", "Failed: 1", "sanitized skip", "r: new dry run"} {
+	for _, want := range []string{"partial", "Deleted: 3", "Skipped: 2", "Changed: 1", "Failed: 1", "sanitized skip", "r: new preview"} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("cleanup result missing %q:\n%s", want, result)
 		}
@@ -194,6 +194,16 @@ func TestSessionStorageContinuity_Scenario8_CleanupFlow(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("partial cleanup retry did not create a fresh dry run: %v", fake.calls)
+	}
+}
+
+func TestSessionStorageContinuity_Scenario8_CancelledCleanupKeepsCompletedDeletions(t *testing.T) {
+	job := client.CleanupJob{ID: "cleanup-job", State: teamStopReasonCancelled, Processed: 6, Deleted: 3}
+	out := stripANSIstr(renderCleanupJob(testTheme(), job, defaultHelpKeys()))
+	for _, want := range []string{"Job: cleanup-job  Status: cancelled", "Deleted: 3", "Cancellation stops remaining items; completed deletions cannot be undone."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cancelled cleanup result missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -225,7 +235,7 @@ func TestSessionStorageContinuity_Scenario8_MaintenanceProgressReattach(t *testi
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	m = applyAll(mm.(Model), cmd())
 	cancelled := stripANSIstr(m.View().Content)
-	if !strings.Contains(cancelled, "Cancellation stops future items") || strings.Contains(strings.ToLower(cancelled), "roll back") {
+	if !strings.Contains(cancelled, "Cancellation stops remaining items") || strings.Contains(strings.ToLower(cancelled), "roll back") {
 		t.Fatalf("cancellation semantics dishonest:\n%s", cancelled)
 	}
 }

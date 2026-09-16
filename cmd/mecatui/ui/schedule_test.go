@@ -470,8 +470,7 @@ func TestScheduleEscCloses(t *testing.T) {
 	}
 }
 
-// TestScheduleEmptyRender asserts an empty list renders an honest hint pointing
-// at the author paths (CLI / settings.yaml), not an opaque "no schedules".
+// TestScheduleEmptyRender asserts an empty list gives a direct next action.
 func TestScheduleEmptyRender(t *testing.T) {
 	fs := &fakeScheduleLister{schedules: nil}
 	conv := newScheduleConv(scheduleCaps())
@@ -480,7 +479,7 @@ func TestScheduleEmptyRender(t *testing.T) {
 	m = mm.(Model)
 	m = feedCmd(t, m, cmd)
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "no schedules found") {
+	if !strings.Contains(out, "no schedules yet — press c to create one") {
 		t.Errorf("overlay should render the empty hint:\n%s", out)
 	}
 }
@@ -495,6 +494,74 @@ func TestTriggerSummary(t *testing.T) {
 	oneShot := triggerSummary(client.ScheduleSpec{Trigger: client.ScheduleTrigger{OneShot: time.Date(2026, 7, 6, 14, 0, 0, 0, time.UTC)}})
 	if !strings.HasPrefix(oneShot, "one-shot: ") {
 		t.Errorf("one-shot summary = %q", oneShot)
+	}
+}
+
+func TestScheduleSpecUsesUserFacingLabels(t *testing.T) {
+	tests := []struct {
+		name string
+		spec client.ScheduleSpec
+		want []string
+	}{
+		{
+			name: "overlap allowed and unlimited recurrence",
+			spec: client.ScheduleSpec{Trigger: client.ScheduleTrigger{Cron: "*/5 * * * *"}, Singleton: false, Misfire: "fire_once_now"},
+			want: []string{"run overlap: allowed", "missed run: run once now", "run limit: unlimited"},
+		},
+		{
+			name: "one at a time with finite recurrence",
+			spec: client.ScheduleSpec{Trigger: client.ScheduleTrigger{Cron: "*/5 * * * *"}, Singleton: true, Misfire: "skip", MaxFires: 3},
+			want: []string{"run overlap: skip overlapping runs", "missed run: skip and wait for the next one", "run limit: 3"},
+		},
+		{
+			name: "one shot",
+			spec: client.ScheduleSpec{Trigger: client.ScheduleTrigger{OneShot: time.Date(2026, 7, 6, 14, 0, 0, 0, time.UTC)}, Singleton: true, MaxFires: 3},
+			want: []string{"run limit: one run"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var rendered strings.Builder
+			renderScheduleSpecBlock(&rendered, testTheme().Style("muted"), tc.spec)
+			out := stripANSIstr(rendered.String())
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("schedule details missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+
+	var rendered strings.Builder
+	renderScheduleSpecBlock(&rendered, testTheme().Style("muted"), client.ScheduleSpec{
+		Selector:    client.ScheduleSelector{ProviderID: "openai", ModelID: "gpt-5"},
+		Profile:     "no-fs",
+		Mode:        "plan",
+		Mutating:    true,
+		Singleton:   true,
+		Misfire:     "skip",
+		MaxFires:    3,
+		FireTimeout: 5 * time.Minute,
+	})
+	out := stripANSIstr(rendered.String())
+	for _, want := range []string{"model: openai/gpt-5", "workspace access: no workspace files (no-fs)", "permission mode: plan", "may change workspace: true", "run overlap: skip overlapping runs", "missed run: skip and wait for the next one", "run limit: 3", "run timeout: 5m0s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("schedule details missing %q:\n%s", want, out)
+		}
+	}
+	for _, forbidden := range []string{"selector:", "mutating:", "singleton:", "misfire:", "max_fires:", "fire_timeout:"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("schedule details expose backend label %q:\n%s", forbidden, out)
+		}
+	}
+}
+
+func TestScheduleDeleteConfirmationNamesTargetAndConsequence(t *testing.T) {
+	out := stripANSIstr(renderScheduleConfirm(testTheme(), scheduleState{confirm: sampleSchedule("nightly")}, defaultHelpKeys(), 100, 30))
+	for _, want := range []string{"delete schedule", "delete nightly? This cannot be undone.", "enter: delete", "esc: back"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("schedule delete confirmation missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -1027,7 +1094,7 @@ func TestScheduleInspectRendersInFlightFire(t *testing.T) {
 	m := newScheduleModel(t, conv, fs, scheduleCaps())
 	m = openInspectWithFires(t, m, fs)
 	out := stripANSIstr(m.View().Content)
-	for _, want := range []string{"in-flight", "fire-inflight", "started", "last-progress", "deadline", "fire_timeout"} {
+	for _, want := range []string{"in-flight", "fire-inflight", "started", "last update", "deadline", "run timeout"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("in-flight inspect missing %q:\n%s", want, out)
 		}
@@ -1036,7 +1103,7 @@ func TestScheduleInspectRendersInFlightFire(t *testing.T) {
 
 // TestScheduleInspectRendersClaimedPending pins issue #386: a CLAIMED fire
 // (LastFireSessionID == "pending", no run started, no fire records) renders an
-// explicit "in-flight: claimed (session pending)" line, NOT "no fires recorded"
+// explicit waiting line, NOT "no runs recorded"
 // (the genuinely-never-fired case).
 func TestScheduleInspectRendersClaimedPending(t *testing.T) {
 	sched := sampleSchedule("nightly")
@@ -1050,16 +1117,16 @@ func TestScheduleInspectRendersClaimedPending(t *testing.T) {
 	m := newScheduleModel(t, conv, fs, scheduleCaps())
 	m = openInspectWithFires(t, m, fs)
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "in-flight: claimed (session pending)") {
+	if !strings.Contains(out, "waiting to start (session pending)") {
 		t.Errorf("claimed-pending inspect missing the claimed line:\n%s", out)
 	}
-	if strings.Contains(out, "no fires recorded") {
-		t.Errorf("claimed-pending inspect rendered \"no fires recorded\" (a claimed fire must NOT render as never-fired):\n%s", out)
+	if strings.Contains(out, "no runs recorded") {
+		t.Errorf("claimed-pending inspect rendered \"no runs recorded\" (a claimed fire must NOT render as never-fired):\n%s", out)
 	}
 }
 
 // TestScheduleInspectRendersNeverFired pins the genuine never-fired case still
-// renders "no fires recorded" (the distinction from a claimed fire).
+// renders "no runs recorded" (the distinction from a claimed fire).
 func TestScheduleInspectRendersNeverFired(t *testing.T) {
 	sched := sampleSchedule("nightly")
 	fs := &fakeScheduleLister{
@@ -1071,8 +1138,8 @@ func TestScheduleInspectRendersNeverFired(t *testing.T) {
 	m := newScheduleModel(t, conv, fs, scheduleCaps())
 	m = openInspectWithFires(t, m, fs)
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "no fires recorded") {
-		t.Errorf("never-fired inspect missing \"no fires recorded\":\n%s", out)
+	if !strings.Contains(out, "no runs recorded") {
+		t.Errorf("never-fired inspect missing \"no runs recorded\":\n%s", out)
 	}
 	if strings.Contains(out, "in-flight") {
 		t.Errorf("never-fired inspect rendered \"in-flight\" (a never-claimed schedule must NOT render in-flight):\n%s", out)

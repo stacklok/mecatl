@@ -236,6 +236,18 @@ func TestSessionsSurfaceCloseIsConsumed(t *testing.T) {
 	}
 }
 
+func TestSessionDeleteConfirmationNamesTargetAndConsequence(t *testing.T) {
+	st := newSessionsPanelState()
+	st.confirmDelete = true
+	st.actionID = "session-123"
+	out := stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, defaultHelpKeys(), 100, 30))
+	for _, want := range []string{"Permanently delete session \"session-123\"? This cannot be undone.", "y/enter: delete", "esc: cancel"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("session delete confirmation missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSessionsSurfaceEscapeClosesMaintenanceSubviewFirst(t *testing.T) {
 	st := newSessionsPanelState()
 	st.deps.keys = defaultKeys()

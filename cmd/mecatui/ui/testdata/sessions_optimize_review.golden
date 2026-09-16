@@ -2,14 +2,14 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
   Chats    Scheduled runs    Child runs    Other  ▸ Maintenance
 
-Optimize storage — dry run
+Preview storage optimization
 
-Sessions are preserved; this changes only their physical storage format.
-v1: 12  v2: 40  Invalid: 2  Skipped: 3
-Current: 12.6 MB  Reclaimable: 8.4 MB
-Temporary space required: 2.1 MB
+Sessions are preserved; this only updates how they are stored.
+Legacy format: 12  Current format: 40  Invalid: 2  Skipped: 3
+Stored: 12.6 MB  Recoverable: 8.4 MB
+Temporary space needed: 2.1 MB
 
-enter: start resumable optimization  esc: back
+enter: start optimization  esc: back
 
 │
 │ Ask mecatl to do something…

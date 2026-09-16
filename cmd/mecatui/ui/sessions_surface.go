@@ -1171,7 +1171,7 @@ func capabilityReasonText(reason client.CapabilityReason) string {
 	case client.CapabilityReasonActiveElsewhere:
 		return "this chat is active elsewhere"
 	case client.CapabilityReasonTranscriptUnavailable:
-		return "the authoritative transcript is unavailable"
+		return "the conversation could not be loaded"
 	case client.CapabilityReasonEnvironmentUnavailable:
 		return "the chat environment is unavailable"
 	case client.CapabilityReasonStorageUnsupported:
@@ -1212,7 +1212,7 @@ func mergeSessionPages(existing, incoming []client.SessionListItem, replace bool
 	return out
 }
 
-var errIncompleteTranscript = &sessionTranscriptError{"authoritative transcript incomplete"}
+var errIncompleteTranscript = &sessionTranscriptError{"conversation data is incomplete"}
 
 type sessionTranscriptError struct{ text string }
 
@@ -1330,7 +1330,7 @@ const unavailableText = "unavailable"
 
 func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys) string {
 	if st.maintenanceErr {
-		return th.Style("errorText").Render("maintenance request failed; retry or inspect server diagnostics") + "\n" + th.Style("muted").Render(hk.closeOnly+": back")
+		return th.Style("errorText").Render("maintenance request failed; close and try again") + "\n" + th.Style("muted").Render(hk.closeOnly+": back")
 	}
 	if st.actionLoading {
 		return th.Style("muted").Render("loading maintenance status…")
@@ -1350,11 +1350,11 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 	if caps.StorageHealth {
 		switch {
 		case st.healthErr != nil:
-			lines = append(lines, th.Style("errorText").Render("storage health unavailable"))
+			lines = append(lines, th.Style("errorText").Render("storage status unavailable; close and try again"))
 		case st.health == nil:
-			lines = append(lines, th.Style("muted").Render("loading storage health…"))
+			lines = append(lines, th.Style("muted").Render("loading storage status…"))
 		case !st.health.Available:
-			lines = append(lines, th.Style("muted").Render("storage health unavailable"))
+			lines = append(lines, th.Style("muted").Render("storage status unavailable; close and try again"))
 		default:
 			h := *st.health
 			bytesText, reclaimable := unavailableText, unavailableText
@@ -1380,12 +1380,12 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 				failure = sanitizeTerminal(h.LastFailure)
 			}
 			lines = append(lines,
-				"Current: "+bytesText+"  Reclaimable: "+reclaimable,
-				fmt.Sprintf("Sessions: %d  Files: %d  v1: %d  v2: %d", h.SessionCount, h.FileCount, h.V1Count, h.V2Count),
+				"Stored: "+bytesText+"  Recoverable: "+reclaimable,
+				fmt.Sprintf("Sessions: %d  Files: %d  Legacy format: %d  Current format: %d", h.SessionCount, h.FileCount, h.V1Count, h.V2Count),
 				fmt.Sprintf("Main: %d  Child: %d  Scheduled: %d  Unknown: %d  Corrupt: %d", h.MainCount, h.ChildCount, h.ScheduledCount, h.UnknownCount, h.CorruptCount),
 				fmt.Sprintf("Policy: main %s/%d  child %s/%d  scheduled %s/%d  cadence %s", h.Policy.MainMaxAge, h.Policy.MainMaxCount, h.Policy.ChildMaxAge, h.Policy.ChildMaxCount, h.Policy.ScheduledMaxAge, h.Policy.ScheduledMaxCount, h.Policy.SweepCadence),
-				"Last sweep: "+last+"  Next sweep: "+next,
-				"Active job: "+job+"  Last failure: "+failure)
+				"Last cleanup: "+last+"  Next cleanup: "+next,
+				"Active maintenance: "+job+"  Last error: "+failure)
 		}
 	}
 	var actions []string
@@ -1407,22 +1407,22 @@ func renderMigrationPlan(th theme.Theme, plan client.SessionMigrationPlan, hk he
 		return th.Style("askTitle").Render("Optimize storage") + "\n\n" + th.Style("muted").Render("Optimization is unavailable on this backend.  "+hk.closeOnly+": back")
 	}
 	return strings.Join([]string{
-		th.Style("askTitle").Render("Optimize storage — dry run"), "",
-		"Sessions are preserved; this changes only their physical storage format.",
-		fmt.Sprintf("v1: %d  v2: %d  Invalid: %d  Skipped: %d", plan.V1Families, plan.V2Families, plan.InvalidFamilies, plan.SkippedFamilies),
-		"Current: " + humanizeBytes(plan.CurrentBytes) + "  Reclaimable: " + humanizeBytes(plan.ReclaimableBytes),
-		"Temporary space required: " + humanizeBytes(plan.TemporaryBytes), "",
-		th.Style("muted").Render(hk.choose + ": start resumable optimization  " + hk.closeOnly + ": back"),
+		th.Style("askTitle").Render("Preview storage optimization"), "",
+		"Sessions are preserved; this only updates how they are stored.",
+		fmt.Sprintf("Legacy format: %d  Current format: %d  Invalid: %d  Skipped: %d", plan.V1Families, plan.V2Families, plan.InvalidFamilies, plan.SkippedFamilies),
+		"Stored: " + humanizeBytes(plan.CurrentBytes) + "  Recoverable: " + humanizeBytes(plan.ReclaimableBytes),
+		"Temporary space needed: " + humanizeBytes(plan.TemporaryBytes), "",
+		th.Style("muted").Render(hk.choose + ": start optimization  " + hk.closeOnly + ": back"),
 	}, "\n")
 }
 
 func renderMigrationJob(th theme.Theme, job client.SessionMigrationJob, hk helpKeys) string {
-	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + sanitizeTerminal(job.ID) + "  State: " + sanitizeTerminal(job.State),
-		fmt.Sprintf("Processed: %d/%d  Migrated: %d  Skipped: %d  Failed: %d", job.Processed, job.V1Families, job.Migrated, job.SkippedFamilies, job.Failed),
-		"Sessions are preserved; completed items stay committed."}
+	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + sanitizeTerminal(job.ID) + "  Status: " + sanitizeTerminal(job.State),
+		fmt.Sprintf("Processed: %d/%d  Updated: %d  Skipped: %d  Failed: %d", job.Processed, job.V1Families, job.Migrated, job.SkippedFamilies, job.Failed),
+		"Sessions are preserved; completed updates are kept."}
 	lines = append(lines, renderMigrationErrors(job.Errors)...)
 	if job.State == teamStopReasonCancelled {
-		lines = append(lines, "Cancellation stops future items; completed items stay committed.")
+		lines = append(lines, "Cancellation stops remaining items; completed updates are kept.")
 	}
 	lines = append(lines, "", th.Style("muted").Render("r: resume  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
 	return strings.Join(lines, "\n")
@@ -1458,20 +1458,20 @@ func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
 	}
 	eligible, protected := plan.EligibleCounts, plan.Protected
 	return strings.Join([]string{
-		th.Style("errorText").Render("Clean up sessions — DESTRUCTIVE dry run"), "",
-		fmt.Sprintf("Eligible: %d  Main: %d  Child: %d  Scheduled: %d", eligible.Total, cleanupKindCount(eligible, "main"), cleanupKindCount(eligible, "subagent", "parallel_branch", "team_member"), cleanupKindCount(eligible, "scheduled")),
-		fmt.Sprintf("Protected: %d  Unknown: %d protected  Live: %d  Awaiting: %d", protected.Total, cleanupKindCount(protected, "unknown"), protected.ByReason["live"], protected.ByState["awaiting"]),
-		"Estimated deletion: " + humanizeBytes(plan.EstimatedBytes),
-		"Unknown sessions are protected by default. Active, live, and awaiting sessions are not selected.", "",
-		"To confirm this bulk operation, type CLEAN UP (single-row delete consent is not accepted):", st.cleanupConfirm.View(), "",
-		th.Style("muted").Render(hk.choose + ": apply exact dry-run  " + hk.closeOnly + ": back"),
+		th.Style("errorText").Render("Preview session cleanup — DESTRUCTIVE"), "",
+		fmt.Sprintf("Will delete: %d  Chats: %d  Child runs: %d  Scheduled runs: %d", eligible.Total, cleanupKindCount(eligible, "main"), cleanupKindCount(eligible, "subagent", "parallel_branch", "team_member"), cleanupKindCount(eligible, "scheduled")),
+		fmt.Sprintf("Protected: %d  Unknown: %d  Live: %d  Awaiting approval: %d", protected.Total, cleanupKindCount(protected, "unknown"), protected.ByReason["live"], protected.ByState["awaiting"]),
+		"Estimated space freed: " + humanizeBytes(plan.EstimatedBytes),
+		"Unknown, active, live, and awaiting sessions are protected and will not be deleted.", "",
+		"Type CLEAN UP to permanently delete the sessions shown above. This cannot be undone:", st.cleanupConfirm.View(), "",
+		th.Style("muted").Render(hk.choose + ": delete these sessions  " + hk.closeOnly + ": back"),
 	}, "\n")
 }
 
 func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string {
-	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + sanitizeTerminal(job.ID) + "  State: " + sanitizeTerminal(job.State),
-		fmt.Sprintf("Processed: %d  Deleted: %d  Skipped: %d  Stale: %d  Failed: %d", job.Processed, job.Deleted, job.Skipped, job.Stale, job.Failed),
-		"Apply-time changes are skipped; partial completion is safe to inspect and retry."}
+	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + sanitizeTerminal(job.ID) + "  Status: " + sanitizeTerminal(job.State),
+		fmt.Sprintf("Checked: %d  Deleted: %d  Skipped: %d  Changed: %d  Failed: %d", job.Processed, job.Deleted, job.Skipped, job.Stale, job.Failed),
+		"Sessions changed since the preview are skipped. Review partial results, then create a new preview to retry."}
 	for i, item := range job.Errors {
 		if i == 5 {
 			lines = append(lines, fmt.Sprintf("… and %d more", len(job.Errors)-i))
@@ -1480,9 +1480,9 @@ func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string
 		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
 	}
 	if job.State == teamStopReasonCancelled {
-		lines = append(lines, "Cancellation stops future items; completed deletions stay committed.")
+		lines = append(lines, "Cancellation stops remaining items; completed deletions cannot be undone.")
 	}
-	lines = append(lines, "", th.Style("muted").Render("r: new dry run  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
+	lines = append(lines, "", th.Style("muted").Render("r: new preview  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
 	return strings.Join(lines, "\n")
 }
 
@@ -1493,7 +1493,7 @@ func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (st
 			st.renameInput.View() + "\n\n" +
 			th.Style("muted").Render(hk.choose+": save  "+hk.closeOnly+": cancel"), true
 	case st.confirmDelete:
-		return th.Style("errorText").Render("Permanently delete session "+safeSessionID(st.actionID)+"?") + "\n\n" +
+		return th.Style("errorText").Render("Permanently delete session "+safeSessionID(st.actionID)+"? This cannot be undone.") + "\n\n" +
 			th.Style("muted").Render("y/"+hk.choose+": delete  "+hk.closeOnly+": cancel"), true
 	case st.actionLoading:
 		return th.Style("muted").Render("loading…"), true
@@ -1531,7 +1531,7 @@ func sessionsPaginationStatus(st sessionsState) string {
 	case sessionsStaleRestart:
 		return "session inventory changed — restarting from page one…"
 	case sessionsLaterPageError:
-		return "could not load more sessions — showing partial results · r: retry"
+		return "could not load more sessions — showing the sessions already loaded · r: retry"
 	default:
 		return ""
 	}
@@ -1618,20 +1618,20 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, _ string, vpCont
 		label = "session"
 	}
 	if st.loading {
-		b.WriteString(th.Style("title").Render("loading authoritative transcript") + "\n\n")
+		b.WriteString(th.Style("title").Render("loading conversation") + "\n\n")
 		b.WriteString(th.Style("muted").Render("Loading " + sanitizeTerminal(label) + "…"))
 		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": Back"))
 		return b.String()
 	}
 	if st.loadErr != nil {
-		b.WriteString(th.Style("title").Render("transcript unavailable") + "\n\n")
-		b.WriteString(th.Style("errorText").Render("The authoritative transcript could not be loaded. Continuation remains disabled."))
+		b.WriteString(th.Style("title").Render("conversation unavailable") + "\n\n")
+		b.WriteString(th.Style("errorText").Render("This conversation could not be loaded. You cannot continue this session."))
 		b.WriteString("\n" + th.Style("muted").Render("r: Retry  "+hk.closeOnly+": Back"))
 		return b.String()
 	}
 	b.WriteString(th.Style("muted").Render("Inspecting "+sanitizeTerminal(label)+" · read-only") + "\n")
 	if st.transcript.isEmpty() {
-		b.WriteString(th.Style("muted").Render("(empty authoritative transcript)"))
+		b.WriteString(th.Style("muted").Render("(empty conversation)"))
 	} else {
 		b.WriteString(vpContent)
 	}

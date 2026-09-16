@@ -2,17 +2,17 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
   Chats    Scheduled runs    Child runs    Other  ▸ Maintenance
 
-Clean up sessions — DESTRUCTIVE dry run
+Preview session cleanup — DESTRUCTIVE
 
-Eligible: 9  Main: 5  Child: 2  Scheduled: 2
-Protected: 7  Unknown: 3 protected  Live: 2  Awaiting: 1
-Estimated deletion: 6.3 MB
-Unknown sessions are protected by default. Active, live, and awaiting sessions are not selected.
+Will delete: 9  Chats: 5  Child runs: 2  Scheduled runs: 2
+Protected: 7  Unknown: 3  Live: 2  Awaiting approval: 1
+Estimated space freed: 6.3 MB
+Unknown, active, live, and awaiting sessions are protected and will not be deleted.
 
-To confirm this bulk operation, type CLEAN UP (single-row delete consent is not accepted):
+Type CLEAN UP to permanently delete the sessions shown above. This cannot be undone:
 > type CLEAN UP
 
-enter: apply exact dry-run  esc: back
+enter: delete these sessions  esc: back
 
 │
 │ Ask mecatl to do something…

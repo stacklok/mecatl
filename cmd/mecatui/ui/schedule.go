@@ -597,7 +597,7 @@ func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabil
 func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("schedules") + "\n")
-	b.WriteString(th.Style("muted").Render("browse & manage scheduled tasks") + "\n\n")
+	b.WriteString(th.Style("muted").Render("manage scheduled tasks") + "\n\n")
 	switch {
 	case st.filter.Focused():
 		b.WriteString(st.filter.View() + "\n\n")
@@ -620,7 +620,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		if st.filter.Value() != "" {
 			b.WriteString(th.Style("muted").Render("no matches — clear filter to see all"))
 		} else {
-			b.WriteString(th.Style("muted").Render("no schedules found (press c to create, or use `mecated schedule create` / settings.yaml)"))
+			b.WriteString(th.Style("muted").Render("no schedules yet — press c to create one"))
 		}
 		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
@@ -664,7 +664,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("delete schedule") + "\n\n")
-	b.WriteString("delete " + th.Style("accent").Render(sanitizeTerminal(st.confirm.Spec.Name)) + "?\n")
+	b.WriteString("delete " + th.Style("accent").Render(sanitizeTerminal(st.confirm.Spec.Name)) + "? This cannot be undone.\n")
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": delete  "+hk.closeOnly+": back"))
 	return b.String()
 }
@@ -689,19 +689,19 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 	renderScheduleSpecBlock(&b, muted, s.Spec)
 	b.WriteString("\n" + muted.Render("state") + "\n")
 	b.WriteString(muted.Render("enabled: ") + boolStr(s.State.Enabled) +
-		"  fire_count: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
-	b.WriteString(muted.Render("next_fire: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
-	b.WriteString(muted.Render("last_fire: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
+		"  runs: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
+	b.WriteString(muted.Render("next run: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
+	b.WriteString(muted.Render("last run: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
 	if s.State.LastFireSessionID != "" {
-		b.WriteString(muted.Render("last_fire_session: ") + sanitizeTerminal(s.State.LastFireSessionID) + "\n")
+		b.WriteString(muted.Render("last run session: ") + sanitizeTerminal(s.State.LastFireSessionID) + "\n")
 	}
 	if !s.State.LastFireStartedAt.IsZero() || !s.State.LastFireProgressAt.IsZero() || !s.State.FireDeadline.IsZero() {
-		b.WriteString(muted.Render("in-flight:") +
+		b.WriteString(muted.Render("running:") +
 			" started " + formatScheduleTime(s.State.LastFireStartedAt) +
-			"  last-progress " + formatScheduleTime(s.State.LastFireProgressAt) +
+			"  last update " + formatScheduleTime(s.State.LastFireProgressAt) +
 			"  deadline " + formatScheduleTime(s.State.FireDeadline) + "\n")
 	}
-	b.WriteString("\n" + muted.Render("fires") + "\n")
+	b.WriteString("\n" + muted.Render("runs") + "\n")
 	if st.firesLoading {
 		b.WriteString(muted.Render("loading…"))
 	} else if st.firesErr != nil {
@@ -711,9 +711,9 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 		// NOT the same as "no fires recorded" — render it explicitly so a
 		// claimed-but-not-yet-run fire is never mistaken for never-fired.
 		if s.State.LastFireSessionID == "pending" && s.State.LastFireStartedAt.IsZero() {
-			b.WriteString(muted.Render("in-flight: claimed (session pending)"))
+			b.WriteString(muted.Render("waiting to start (session pending)"))
 		} else {
-			b.WriteString(muted.Render("no fires recorded"))
+			b.WriteString(muted.Render("no runs recorded"))
 		}
 	} else {
 		for i, f := range st.fires {
@@ -745,24 +745,55 @@ func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec clie
 		b.WriteString(muted.Render("prompt: ") + sanitizeTerminal(truncate(spec.Prompt, 120)) + "\n")
 	}
 	if spec.Selector.ProviderID != "" || spec.Selector.ModelID != "" {
-		b.WriteString(muted.Render("selector: ") + sanitizeTerminal(spec.Selector.ProviderID+"/"+spec.Selector.ModelID) + "\n")
+		b.WriteString(muted.Render("model: ") + sanitizeTerminal(spec.Selector.ProviderID+"/"+spec.Selector.ModelID) + "\n")
 	}
 	if spec.Profile != "" {
-		b.WriteString(muted.Render("profile: ") + sanitizeTerminal(spec.Profile) + "\n")
+		b.WriteString(muted.Render("workspace access: ") + scheduleWorkspaceAccessText(spec.Profile) + "\n")
 	}
 	if spec.Mode != "" {
-		b.WriteString(muted.Render("mode: ") + sanitizeTerminal(spec.Mode) + "\n")
+		b.WriteString(muted.Render("permission mode: ") + sanitizeTerminal(spec.Mode) + "\n")
 	}
-	b.WriteString(muted.Render("mutating: ") + boolStr(spec.Mutating) +
-		"  singleton: " + boolStr(spec.Singleton) +
-		"  misfire: " + spec.Misfire +
-		"  max_fires: " + strconv.Itoa(int(spec.MaxFires)) + "\n")
+	b.WriteString(muted.Render("may change workspace: ") + boolStr(spec.Mutating) +
+		"  run overlap: " + scheduleOverlapText(spec.Singleton) + "\n")
+	b.WriteString(muted.Render("missed run: ") + scheduleMisfireText(spec.Misfire) +
+		"  run limit: " + scheduleRunLimitText(spec) + "\n")
 	if spec.Timezone != "" {
 		b.WriteString(muted.Render("timezone: ") + sanitizeTerminal(spec.Timezone) + "\n")
 	}
 	if spec.FireTimeout > 0 {
-		b.WriteString(muted.Render("fire_timeout: ") + spec.FireTimeout.String() + "\n")
+		b.WriteString(muted.Render("run timeout: ") + spec.FireTimeout.String() + "\n")
 	}
+}
+
+func scheduleWorkspaceAccessText(profile string) string {
+	if profile == "no-fs" {
+		return "no workspace files (no-fs)"
+	}
+	return sanitizeTerminal(profile)
+}
+
+func scheduleOverlapText(singleton bool) string {
+	if singleton {
+		return "skip overlapping runs"
+	}
+	return "allowed"
+}
+
+func scheduleMisfireText(policy string) string {
+	if policy == "skip" {
+		return "skip and wait for the next one"
+	}
+	return "run once now"
+}
+
+func scheduleRunLimitText(spec client.ScheduleSpec) string {
+	if !spec.Trigger.OneShot.IsZero() {
+		return "one run"
+	}
+	if spec.MaxFires == 0 {
+		return "unlimited"
+	}
+	return strconv.Itoa(int(spec.MaxFires))
 }
 
 // renderScheduleFireLine renders one fire row for the inspect view's fire list.
@@ -783,7 +814,7 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 		"  " + stop
 	if f.Stop == "" {
 		line += "  started " + formatScheduleTime(f.StartedAt) +
-			"  last-progress " + formatScheduleTime(f.ProgressAt) +
+			"  last update " + formatScheduleTime(f.ProgressAt) +
 			"  deadline " + formatScheduleTime(f.Deadline)
 	} else if f.Err != "" {
 		line += "  err: " + sanitizeTerminal(f.Err)
@@ -823,7 +854,7 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ in
 	if f.focusIdx == scheduleFormFieldCount {
 		mutMarker = "▶ "
 	}
-	mutLine := mutMarker + muted.Render("mutating: ")
+	mutLine := mutMarker + muted.Render("may change workspace: ")
 	if f.mutating {
 		mutLine += "yes"
 	} else {
@@ -841,7 +872,7 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ in
 	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
 	// tab/↑↓/y/n are BARE keys via msg.String (NOT keyMap bindings), so they
 	// stay literal (issue #457).
-	b.WriteString("\n" + muted.Render("tab/↑↓: next  "+hk.choose+": advance/submit  y/n: toggle mutating  "+hk.closeOnly+": back"))
+	b.WriteString("\n" + muted.Render("tab/↑↓: next  "+hk.choose+": advance/submit  y/n: allow/disallow changes  "+hk.closeOnly+": back"))
 	return b.String()
 }
 

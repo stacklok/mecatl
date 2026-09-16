@@ -20,7 +20,7 @@ func TestStorageHealthPanelIsCapabilityDrivenAndContentFree(t *testing.T) {
 	st.tab = tabStorageHealth
 	st.health = &health
 	rendered := stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{StorageHealth: true}, helpKeys{}, 100, 30))
-	for _, want := range []string{"Maintenance", "Current: 2 KB", "Sessions: 3", "Status only"} {
+	for _, want := range []string{"Maintenance", "Stored: 2 KB", "Sessions: 3", "Legacy format: 1", "Current format: 2", "Status only"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("panel missing %q:\n%s", want, rendered)
 		}
