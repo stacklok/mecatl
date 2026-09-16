@@ -609,7 +609,7 @@ type Config struct {
 	// Mutating member) and the provider/model.
 	MemberEngine MemberEngineFactory
 	// MemberEngineForOperation resolves the direct RunTeam member factory from the
-	// same operation-pinned context retained by the team. Nil uses MemberEngine.
+	// operation-pinned context acquired at RunTeam. Nil uses MemberEngine.
 	MemberEngineForOperation func(context.Context) MemberEngineFactory
 	// TeamGoalUntrusted, when true, re-fences the gRPC/HTTP CreateTeam goal as
 	// UNTRUSTED data in member and synthesis prompts (threaded to
@@ -3081,28 +3081,19 @@ func (s *Service) Close() {
 	for id := range s.heldLeases {
 		leasedIDs = append(leasedIDs, id)
 	}
-	teamOperationReleases := make([]func(), 0, len(s.teams))
-	for _, ts := range s.teams {
-		// A running direct Team owns its operation pin until Supervisor.Run
-		// returns. Releasing it here would let Build close the manager under live
-		// member calls; the RunTeam defer performs the release after drain.
-		if ts.phase != teamRunning && ts.operationRelease != nil {
-			teamOperationReleases = append(teamOperationReleases, ts.operationRelease)
-			ts.operationRelease = nil
-			ts.operationCtx = nil
-		}
-	}
 	runOperationReleases := make([]func(), 0, len(s.runs))
 	for _, rs := range s.runs {
-		if rs.operationRelease != nil {
+		// Awaiting is deliberately left parked across shutdown and performs no MCP
+		// work. A completed run has also settled its provider/tool operation even if
+		// a caller omitted FinishRun. Every other pin stays attached to
+		// removeRunState so runtime closure cannot overtake live work or admission.
+		settled := rs.awaiting.Load() || (rs.run != nil && rs.run.Outcome() == agent.RunOutcomeCompleted)
+		if settled && rs.operationRelease != nil {
 			runOperationReleases = append(runOperationReleases, rs.operationRelease)
 			rs.operationRelease = nil
 		}
 	}
 	s.mu.Unlock()
-	for _, release := range teamOperationReleases {
-		release()
-	}
 	for _, release := range runOperationReleases {
 		release()
 	}
@@ -3500,6 +3491,17 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	defer release()
 	compactCtx, stopCompact, leaseHeld := s.mutationLeaseContext(ctx, id)
 	defer stopCompact()
+	operationRelease := func() {}
+	if s.cfg.OperationPin != nil {
+		compactCtx, operationRelease, err = s.cfg.OperationPin(compactCtx)
+		if err != nil {
+			return agent.ManualCompactionResult{}, err
+		}
+		if operationRelease == nil {
+			operationRelease = func() {}
+		}
+	}
+	defer operationRelease()
 	sess, _, err = s.managementTarget(ctx, id, false)
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
@@ -3507,7 +3509,7 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
-	eng, _, err := s.engineAndEnvironmentFor(ctx, sess)
+	eng, _, err := s.engineAndEnvironmentFor(compactCtx, sess)
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
 	}

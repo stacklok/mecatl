@@ -173,23 +173,23 @@ func (b *CandidateListBudget) readResponse(body io.Reader, p []byte) (int, error
 		return body.Read(p)
 	}
 	remaining := b.maxBytes - b.bytes
-	b.mu.Unlock()
 	if remaining <= 0 {
+		b.mu.Unlock()
 		return 0, fmt.Errorf("mcp: candidate response bytes exceed limit %d", b.maxBytes)
 	}
-	if len(p) > remaining+1 {
-		p = p[:remaining+1]
+	reserved := len(p)
+	if reserved > remaining {
+		reserved = remaining
 	}
-	n, err := body.Read(p)
+	b.bytes += reserved
+	b.mu.Unlock()
+
+	n, err := body.Read(p[:reserved])
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.sealed {
-		return n, err
+	if !b.sealed && n < reserved {
+		b.bytes -= reserved - n
 	}
-	if b.bytes+n > b.maxBytes {
-		return 0, fmt.Errorf("mcp: candidate response bytes exceed limit %d", b.maxBytes)
-	}
-	b.bytes += n
+	b.mu.Unlock()
 	return n, err
 }
 
@@ -742,7 +742,7 @@ type candidateBudgetRoundTripper struct {
 
 func (t candidateBudgetRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	res, err := t.base.RoundTrip(req)
-	if err != nil || res == nil || res.Body == nil {
+	if err != nil || res == nil || res.Body == nil || req.Method == http.MethodGet {
 		return res, err
 	}
 	res.Body = &candidateBudgetBody{ReadCloser: res.Body, budget: t.budget}
@@ -1131,11 +1131,13 @@ func (s *Server) Name() string { return s.name }
 // notifications/tools/list_changed has fired since the last read (ADR 0057), the
 // snapshot is lazily re-listed under a bounded context.Background() before
 // returning, so a post-notification caller sees the server's current tool set.
-// The re-list runs WITHOUT s.mu held (it may reconnect, which re-acquires
+// Reconciliation candidates are the exception: CandidateBudget marks a validated
+// immutable projection, so notifications only invoke ListChanged and the published
+// snapshot never mutates. The re-list runs WITHOUT s.mu held (it may reconnect, which re-acquires
 // s.mu); only the dirty-check and the final swap hold the lock.
 func (s *Server) Tools() []tool.Tool {
 	s.mu.Lock()
-	dirty := s.toolsDirty
+	dirty := s.toolsDirty && s.cfg.CandidateBudget == nil
 	tools := s.tools
 	s.mu.Unlock()
 	if dirty {
@@ -1152,7 +1154,7 @@ func (s *Server) Tools() []tool.Tool {
 // discipline.
 func (s *Server) Resources() []Resource {
 	s.mu.Lock()
-	dirty := s.resourcesDirty
+	dirty := s.resourcesDirty && s.cfg.CandidateBudget == nil
 	res := s.resources
 	s.mu.Unlock()
 	if dirty {
@@ -1169,7 +1171,7 @@ func (s *Server) Resources() []Resource {
 // discipline.
 func (s *Server) Prompts() []Prompt {
 	s.mu.Lock()
-	dirty := s.promptsDirty
+	dirty := s.promptsDirty && s.cfg.CandidateBudget == nil
 	pr := s.prompts
 	s.mu.Unlock()
 	if dirty {

@@ -40,6 +40,17 @@ func (c serviceCompactCompactor) Compact(context.Context, *session.Conversation)
 	return c.out, c.summary, nil
 }
 
+type compactOperationKey struct{}
+
+type pinAwareCompactor struct {
+	seen *bool
+}
+
+func (c pinAwareCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+	*c.seen, _ = ctx.Value(compactOperationKey{}).(bool)
+	return []session.Message{session.NewUserMessage("short")}, "pinned", nil
+}
+
 type serviceCompactCounter struct{}
 
 func (serviceCompactCounter) Count(s string) int { return len(s) }
@@ -160,6 +171,31 @@ func compactFixture(t *testing.T, state session.State) (*compactTrackingStore, *
 		t.Fatalf("fixture Save: %v", err)
 	}
 	return store, sess, owner
+}
+
+func TestCompactSessionPinsRuntimeThroughCompactor(t *testing.T) {
+	store, sess, owner := compactFixture(t, session.StateIdle)
+	seen, released := false, false
+	eng := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test",
+		Compactor: pinAwareCompactor{seen: &seen}, TokenCounter: serviceCompactCounter{},
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng, Store: store, EventLog: store, Now: time.Now, OwnershipEnforced: true,
+		OperationPin: func(ctx context.Context) (context.Context, func(), error) {
+			return context.WithValue(ctx, compactOperationKey{}, true), func() { released = true }, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	if _, err := svc.CompactSession(session.WithPrincipal(context.Background(), owner), sess.ID, owner); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || !released {
+		t.Fatalf("compaction operation pin: seen=%v released=%v", seen, released)
+	}
 }
 
 func TestCompactSessionPersistsBeforeOrderedAttributedEvents(t *testing.T) {

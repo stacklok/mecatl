@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -133,7 +133,9 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 	})
 
 	t.Run("toolhive-poll-and-stable-no-reconnect", func(t *testing.T) {
-		th := &reconciliationSource{name: "toolhive(default)", cfgs: []mcp.ServerConfig{{Name: "a", URL: "http://a/mcp"}}}
+		th := &reconciliationSource{name: "toolhive(default)", cfgs: []mcp.ServerConfig{{
+			Name: "a", URL: "http://a/mcp", OAuth: &mcp.OAuthOptions{Presenter: mcp.OAuthPresenterFunc(func(context.Context, string) (*auth.AuthorizationResult, error) { return nil, nil })},
+		}}}
 		ticks := make(chan time.Time, 4)
 		var builds atomic.Int64
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
@@ -189,6 +191,28 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		}
 	})
 
+	t.Run("notification-while-preparing-queues-one-successor", func(t *testing.T) {
+		var builds atomic.Int64
+		r := newMCPSourceReconciler(mcpReconcilerOptions{
+			sources: []mcpsource.Source{&reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "a", URL: "http://a/mcp"}}}},
+			build: func(_ context.Context, configs []mcp.ServerConfig, changed func()) (*mcpReconcileCandidate, error) {
+				n := builds.Add(1)
+				if n == 1 {
+					changed()
+				}
+				return candidateFromConfigs(configs, uint64(n)), nil
+			},
+		})
+		t.Cleanup(r.Close)
+		if _, err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		eventuallyReconcile(t, func() bool { return r.cycles() >= 2 })
+		if got := builds.Load(); got != 2 {
+			t.Fatalf("pre-publication notification builds = %d, want one successor", got)
+		}
+	})
+
 	t.Run("real-notification-refreshes-complete-snapshot", func(t *testing.T) {
 		remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "live", Version: "v1"}, nil)
 		mcpsdk.AddTool(remote, &mcpsdk.Tool{Name: "initial"}, func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
@@ -224,7 +248,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 }
 
 func TestADR_0345_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
-	if maxMCPReconcileSources <= 0 || maxMCPReconcileServers <= 0 || maxMCPActiveListEntries <= 0 || maxMCPCandidatePages <= 0 || maxMCPCandidateBytes <= 0 || maxMCPUnionGrantNames <= 0 || maxMCPHistoricalGrantedNames <= 0 || maxMCPRetainedRuntimes <= 0 || maxMCPReconcileCycleDuration <= 0 {
+	if maxMCPReconcileSources <= 0 || maxMCPReconcileServers <= 0 || maxMCPActiveListEntries <= 0 || maxMCPCandidatePages <= 0 || maxMCPCandidateBytes <= 0 || maxMCPRetainedRuntimes <= 0 || maxMCPReconcileCycleDuration <= 0 {
 		t.Fatal("every reconciliation dimension must have an independent finite bound")
 	}
 	tooMany := make([]mcp.ServerConfig, maxMCPReconcileServers+1)
@@ -261,23 +285,6 @@ func TestADR_0345_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	if err := validateMCPCandidate(&mcpReconcileCandidate{tools: make([]mcpToolMeta, maxMCPActiveListEntries), pages: maxMCPCandidatePages, bytes: maxMCPCandidateBytes}); err != nil {
 		t.Fatalf("candidate boundary rejected: %v", err)
 	}
-	if err := validateMCPGrantBounds(nil, make([]string, maxMCPUnionGrantNames)); err != nil {
-		t.Fatalf("union boundary rejected: %v", err)
-	}
-	if err := validateMCPGrantBounds(nil, make([]string, maxMCPUnionGrantNames+1)); err == nil {
-		t.Fatal("union over-bound accepted")
-	}
-	existing := make([]string, maxMCPHistoricalGrantedNames)
-	for i := range existing {
-		existing[i] = fmt.Sprintf("mcp__s__%d", i)
-	}
-	if err := validateMCPGrantBounds(existing, nil); err != nil {
-		t.Fatalf("historical boundary rejected: %v", err)
-	}
-	if err := validateMCPGrantBounds(existing, []string{"mcp__s__overflow"}); err == nil {
-		t.Fatal("historical over-bound accepted")
-	}
-
 	presenter := mcp.OAuthPresenterFunc(nil)
 	cloned := cloneMCPConfigs([]mcp.ServerConfig{{OAuth: &mcp.OAuthOptions{Presenter: presenter}}})
 	if cloned[0].OAuth == nil || cloned[0].OAuth.Presenter != nil {

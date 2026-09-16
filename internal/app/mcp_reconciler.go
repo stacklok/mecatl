@@ -26,8 +26,6 @@ const (
 	maxMCPActiveListEntries      = 10_000
 	maxMCPCandidatePages         = 256
 	maxMCPCandidateBytes         = 16 << 20
-	maxMCPUnionGrantNames        = 1_024
-	maxMCPHistoricalGrantedNames = 16_384
 	maxMCPRetainedRuntimes       = 4
 	maxMCPDiagnosticBytes        = 512
 	maxMCPReconcileCycleDuration = 45 * time.Second
@@ -124,6 +122,7 @@ type mcpSourceReconciler struct {
 
 	cyclesDone     atomic.Int64
 	nextGen        atomic.Uint64
+	preparingGen   atomic.Uint64
 	candidateDirty atomic.Bool
 }
 
@@ -253,7 +252,7 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 
 	r.mu.Lock()
 	current := r.current
-	unchanged := current != nil && reflect.DeepEqual(current.configs, configs)
+	unchanged := current != nil && equalMCPConfigs(current.configs, configs)
 	r.mu.Unlock()
 	candidateDirty := r.candidateDirty.Swap(false)
 	if unchanged && !stale && !candidateDirty {
@@ -265,17 +264,19 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 	}
 
 	generation := r.nextGen.Add(1)
+	r.preparingGen.Store(generation)
 	dirty := func() {
 		r.mu.Lock()
 		isCurrent := r.current != nil && r.current.generation == generation
 		r.mu.Unlock()
-		if isCurrent {
+		if isCurrent || r.preparingGen.Load() == generation {
 			r.candidateDirty.Store(true)
 			r.invalidate()
 		}
 	}
 	candidate, err := r.build(cycleCtx, configs, dirty)
 	if err != nil {
+		r.preparingGen.CompareAndSwap(generation, 0)
 		result.stale = true
 		result.diagnostics = appendBoundedDiagnostic(result.diagnostics, err.Error())
 		r.mu.Lock()
@@ -284,12 +285,14 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		return result, err
 	}
 	if candidate == nil {
+		r.preparingGen.CompareAndSwap(generation, 0)
 		return result, errors.New("MCP candidate builder returned nil")
 	}
 	candidate.generation = generation
 	candidate.configs = cloneMCPConfigs(configs)
 	candidate.inventory = cloneMCPInventory(inventory)
 	if err := validateMCPCandidate(candidate); err != nil {
+		r.preparingGen.CompareAndSwap(generation, 0)
 		candidate.close()
 		result.stale = true
 		result.diagnostics = appendBoundedDiagnostic(result.diagnostics, err.Error())
@@ -300,6 +303,7 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 	old := r.current
 	r.mu.Unlock()
 	if equalMCPCandidate(old, candidate) {
+		r.preparingGen.CompareAndSwap(generation, 0)
 		candidate.close()
 		result.candidate = old
 		return result, nil
@@ -307,6 +311,7 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 	r.mu.Lock()
 	r.current = candidate
 	r.mu.Unlock()
+	r.preparingGen.CompareAndSwap(generation, 0)
 	if r.publish != nil && !r.publish(old, candidate) {
 		r.mu.Lock()
 		if r.current == candidate {
@@ -441,6 +446,28 @@ func cloneMCPConfigs(in []mcp.ServerConfig) []mcp.ServerConfig {
 	return out
 }
 
+func equalMCPConfigs(a, b []mcp.ServerConfig) bool {
+	return reflect.DeepEqual(comparableMCPConfigs(a), comparableMCPConfigs(b))
+}
+
+func comparableMCPConfigs(in []mcp.ServerConfig) []mcp.ServerConfig {
+	out := cloneMCPConfigs(in)
+	for i := range out {
+		out[i].ListChanged = nil
+		out[i].CandidateBudget = nil
+		out[i].TokenSource = nil
+		out[i].HTTPClient = nil
+		if out[i].OAuth != nil {
+			oauth := *out[i].OAuth
+			oauth.Presenter = nil
+			oauth.CredentialStore = nil
+			oauth.CredentialReader = nil
+			out[i].OAuth = &oauth
+		}
+	}
+	return out
+}
+
 func cloneMCPInventory(in []mcpsource.SourceInfo) []mcpsource.SourceInfo {
 	out := make([]mcpsource.SourceInfo, len(in))
 	for i, info := range in {
@@ -480,7 +507,7 @@ func equalMCPCandidate(a, b *mcpReconcileCandidate) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return reflect.DeepEqual(a.configs, b.configs) && reflect.DeepEqual(a.tools, b.tools) && reflect.DeepEqual(a.resources, b.resources) && reflect.DeepEqual(a.prompts, b.prompts) && reflect.DeepEqual(a.inventory, b.inventory)
+	return equalMCPConfigs(a.configs, b.configs) && reflect.DeepEqual(a.tools, b.tools) && reflect.DeepEqual(a.resources, b.resources) && reflect.DeepEqual(a.prompts, b.prompts) && reflect.DeepEqual(a.inventory, b.inventory)
 }
 
 func toolMetadata(tools []tool.Tool) []mcpToolMeta {
@@ -491,23 +518,6 @@ func toolMetadata(tools []tool.Tool) []mcpToolMeta {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
-}
-
-func validateMCPGrantBounds(existing, additions []string) error {
-	if len(additions) > maxMCPUnionGrantNames {
-		return fmt.Errorf("MCP refresh additions exceed limit %d", maxMCPUnionGrantNames)
-	}
-	seen := make(map[string]struct{}, len(existing)+len(additions))
-	for _, name := range existing {
-		seen[name] = struct{}{}
-	}
-	for _, name := range additions {
-		seen[name] = struct{}{}
-	}
-	if len(seen) > maxMCPHistoricalGrantedNames {
-		return fmt.Errorf("historical MCP grants exceed limit %d", maxMCPHistoricalGrantedNames)
-	}
-	return nil
 }
 
 func buildMCPReconcileCandidate(diagCfg Config) mcpCandidateBuilder {

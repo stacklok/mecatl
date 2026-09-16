@@ -59,6 +59,20 @@ func running(name, url string, tt types.TransportType, proxyMode types.ProxyMode
 	}
 }
 
+func TestToolHiveRejectsRawWorkloadListBeforeFiltering(t *testing.T) {
+	f := &fakeLister{workloads: make([]core.Workload, maxToolHiveWorkloads+1)}
+	got, skips, err := sourceWith("default", f, nil).Servers(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "workload count exceeds limit") {
+		t.Fatalf("Servers = (%v, %v, %v), want bounded source error", got, skips, err)
+	}
+	if got != nil || skips != nil {
+		t.Fatalf("over-limit source materialized derived output: servers=%v skips=%v", got, skips)
+	}
+	if f.calls != 1 {
+		t.Fatalf("ListWorkloads calls = %d, want 1", f.calls)
+	}
+}
+
 func TestToolHiveMapsRunningStreamable(t *testing.T) {
 	f := &fakeLister{workloads: []core.Workload{
 		running("github", "http://127.0.0.1:8080/mcp", types.TransportTypeStreamableHTTP, types.ProxyModeStreamableHTTP, "default"),

@@ -281,9 +281,9 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	}
 	runRuntimes.close()
 
-	// Direct RunTeam builds member engines before RunTeam starts, so team creation
-	// retains the operation pin. A publication between CreateTeam and RunTeam must
-	// not swap a referenced specialist onto the new manager.
+	// Direct teams retain declarations only until RunTeam. Publication between
+	// CreateTeam and RunTeam must retire the old runtime and build every member and
+	// referenced specialist from the operation pin acquired by RunTeam.
 	const teamTool = "mcp__svc__echo"
 	teamRuntimes := newMCPRuntimeSet(nil)
 	teamOldManager := connectMainManager(t, "svc", newMCPTestServerPrefixed(t, "team-old:"))
@@ -346,6 +346,9 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	if !teamRuntimes.publish(teamOld, teamNew) {
 		t.Fatal("publish direct-team revision 2")
 	}
+	if !teamOld.isClosed() {
+		t.Fatal("created-but-unrun direct team retained the retired runtime")
+	}
 	if _, err := teamSvc.RunTeam(context.Background(), teamID, func(agent.TeamEvent) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -353,11 +356,8 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := latestToolResult(member, "team-call"); !strings.Contains(got, "team-old:work") {
-		t.Fatalf("direct RunTeam member did not retain its creation pin: %q", got)
-	}
-	if !teamOld.isClosed() {
-		t.Fatal("direct RunTeam runtime did not retire after team completion")
+	if got := latestToolResult(member, "team-call"); !strings.Contains(got, "team-new:work") {
+		t.Fatalf("direct RunTeam member did not use its run-time pin: %q", got)
 	}
 	newTeamID, _, err := teamSvc.CreateTeamOnDefaultPlacement(context.Background(), "current", "use the current service", 0, []agent.MemberSpec{{
 		Name: "lead", Lead: true, AgentType: "team-ref", InitialPrompt: "call the service once",

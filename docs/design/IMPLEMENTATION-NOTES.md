@@ -6007,18 +6007,26 @@ failed source's last-known-good snapshot, and treats a successful empty snapshot
 as withdrawal. Stable, non-dirty observations stop before candidate connection.
 A dirty current-runtime notification rebuilds a complete candidate and therefore
 re-lists tools, resources, and prompts together; callbacks from displaced
-candidate generations are ignored. `internal/adapter/mcp/mcp.go`
+candidate generations are ignored, while a callback received during candidate
+construction queues exactly one successor after publication. Reconciler-owned
+servers keep their validated tool/resource/prompt projections frozen: notifications
+only invalidate the reconciler, so old and failed candidates cannot lazily mutate a
+published schema. `internal/adapter/mcp/mcp.go`
 (`NewCompleteManager`) connects and lists all desired servers all-or-nothing,
 using one candidate-wide page/byte/cardinality budget and no OAuth presenter.
-Candidate equality covers source/server configuration and bounded tool,
+Concurrent response reads reserve aggregate bytes before touching a body. ToolHive's
+current API still allocates its returned workload slice internally; mecatl rejects a
+raw over-limit slice immediately before group filtering or derived result/diagnostic
+allocation. Candidate equality covers source/server configuration and bounded tool,
 resource, and prompt metadata. `internal/app/mcp_runtime.go` (`mcpRuntimeSet`)
 atomically publishes the complete candidate as one manager/provider/catalog
 contribution. Root runs pin it in `server.Service.beginRunAdmission`; the pin
 context reaches prompt expansion and every Subagent/Parallel/Team/named/reference
-factory built by the one `assembleCatalog` path. Direct `RunTeam` members are
-built during team creation, so that path retains its creation pin until the run,
-explicit cleanup, or Service shutdown and derives its member factory from the
-same pinned manager. Out-of-run resource and prompt provider calls take one
+factory built by the one `assembleCatalog` path. Direct `RunTeam` stores only
+member declarations at creation; at the actual run boundary it acquires one current
+operation pin, then builds the supervisor, every member engine, referenced specialist,
+and root authority from that same context. An unrun Team therefore never fills the
+retirement set. Out-of-run resource and prompt provider calls take one
 call-scoped pin. Shared and cached default, selector, no-FS, client-MCP, mode, specialist, and debug engines carry only a revision tag;
 `server.Service.engineAndEnvironmentFor` rebuilds a mismatch before use, so idle
 engine caches never lease a manager and their close functions never own one.

@@ -33,7 +33,14 @@ import (
 
 // effectiveDefaultGroup is the group name used when the operator did not name one
 // (mirroring ToolHive's own notion of a "default" group). Empty group -> "default".
-const effectiveDefaultGroup = "default"
+const (
+	effectiveDefaultGroup = "default"
+	// ToolHive's current listing API materializes the returned slice before the
+	// caller can filter it. Reject it immediately, before group filtering or any
+	// derived server/diagnostic allocation; the dependency-owned slice allocation
+	// is the unavoidable residual until ToolHive exposes a bounded listing API.
+	maxToolHiveWorkloads = 128
+)
 
 // workloadLister is the minimal slice of the ToolHive library mecatl needs: list
 // the running workloads. Defining our own interface (rather than depending on
@@ -118,6 +125,9 @@ func (s ToolHiveSource) Servers(ctx context.Context) ([]mcp.ServerConfig, []Skip
 	list, err := lister.ListWorkloads(ctx, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing ToolHive workloads: %w", err)
+	}
+	if len(list) > maxToolHiveWorkloads {
+		return nil, nil, fmt.Errorf("ToolHive workload count exceeds limit %d", maxToolHiveWorkloads)
 	}
 
 	// FilterByGroup is a pure in-memory filter over the already-listed workloads:
