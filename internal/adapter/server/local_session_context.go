@@ -47,13 +47,11 @@ func (s *Service) localSessionContextRoot(ctx context.Context, id session.Sessio
 	if persisted.EnvironmentRef.Kind != session.EnvKindLocal {
 		return "", ErrFailedPrecondition
 	}
-	binding, err := s.ReattachPlacement(ctx, persisted.EnvironmentRef)
+	binding, release, err := s.borrowSessionPlacement(ctx, persisted)
 	if err != nil {
 		return "", err
 	}
-	if binding.Close != nil {
-		defer func() { _ = binding.Close() }()
-	}
+	defer release()
 	if binding.Ref != persisted.EnvironmentRef || binding.Environment.Ref() != persisted.EnvironmentRef || binding.Environment.Workspace() == nil {
 		return "", ErrFailedPrecondition
 	}

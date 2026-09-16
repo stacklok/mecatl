@@ -206,7 +206,8 @@ func exerciseSDKScenario11IdentityGate(t *testing.T, script string) {
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
 		t.Helper()
-		output, err := runSDKScenario11Command(t, sdkScenario11CommandTimeout, repo, "git", nil, args...)
+		gitArgs := append([]string{"-c", "tag.gpgSign=false"}, args...)
+		output, err := runSDKScenario11Command(t, sdkScenario11CommandTimeout, repo, "git", nil, gitArgs...)
 		if err != nil {
 			t.Fatal(err)
 		}

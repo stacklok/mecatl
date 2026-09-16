@@ -1,4 +1,4 @@
-package oidc_test
+package server_test
 
 import (
 	"context"

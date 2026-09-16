@@ -74,6 +74,7 @@ func TestLearningAdmissionIsGlobalAcrossConcurrentProviderObservers(t *testing.T
 
 func learningResolverConfig(t *testing.T, operator, workspace string) Config {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg := Config{Workspace: workspace, PermissionsConventional: workspace != ""}
 	if operator != "" {
 		path := filepath.Join(t.TempDir(), "settings.yaml")

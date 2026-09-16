@@ -1,0 +1,575 @@
+package microvm
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/stacklok/mecatl/environment/microvm/control"
+)
+
+// LifecycleProtocolVersion is the local microvmd management protocol version.
+const LifecycleProtocolVersion uint16 = 3
+
+// LifecycleOperation is one closed management operation.
+type LifecycleOperation string
+
+const (
+	// LifecycleInfo returns the authenticated serving daemon identity and loaded policy.
+	LifecycleInfo LifecycleOperation = "info"
+	// LifecycleCreate provisions and durably registers one new generation.
+	LifecycleCreate LifecycleOperation = "create"
+	// LifecycleResolve reattaches one exact ready generation.
+	LifecycleResolve LifecycleOperation = "resolve"
+	// LifecycleInspect verifies one exact ready runtime identity.
+	LifecycleInspect LifecycleOperation = "inspect"
+	// LifecycleDetach drops process-local handles without changing durable state.
+	LifecycleDetach LifecycleOperation = "detach"
+	// LifecycleDelete tombstones and destroys one exact generation.
+	LifecycleDelete LifecycleOperation = "delete"
+	// LifecycleWorkspace proxies bounded guest filesystem calls.
+	LifecycleWorkspace LifecycleOperation = "workspace"
+	// LifecycleExec proxies bounded guest command execution.
+	LifecycleExec LifecycleOperation = "exec"
+	// LifecycleFork creates one isolated child generation from the bound parent.
+	LifecycleFork LifecycleOperation = "fork"
+	// LifecycleMerge conflict-checks and applies one bound child to its parent.
+	LifecycleMerge LifecycleOperation = "merge"
+	// LifecycleMetrics exports the fixed-dimension operations snapshot.
+	LifecycleMetrics LifecycleOperation = "metrics"
+	// LifecycleInventory returns one bounded owner-filtered generation inventory.
+	LifecycleInventory LifecycleOperation = "inventory"
+	// LifecycleChildDelete force-cleans an exact delegated child generation.
+	LifecycleChildDelete LifecycleOperation = "child-delete"
+)
+
+var errLifecycleProtocol = errors.New("invalid microvmd lifecycle protocol request")
+
+// LifecycleRequest is one bounded request on the authenticated daemon socket.
+// Create binds the requested owner/session and returns the allocated ref/generation;
+// every operation on an existing environment requires the complete Binding.
+type LifecycleRequest struct {
+	Version   uint16             `json:"version"`
+	Operation LifecycleOperation `json:"operation"`
+	Binding   control.Binding    `json:"binding"`
+	Provision *ProvisionRequest  `json:"provision,omitempty"`
+	Payload   json.RawMessage    `json:"payload,omitempty"`
+}
+
+// ProvisionRequest is the thin root-module create shape. The daemon expands
+// operator-owned artifact and resource policy before entering Lifecycle.Create.
+type ProvisionRequest struct {
+	Owner          string `json:"owner"`
+	SessionID      string `json:"session_id"`
+	Profile        string `json:"profile"`
+	SourceCheckout string `json:"source_checkout"`
+}
+
+// DaemonInfo is the authenticated identity of the process serving this socket.
+type DaemonInfo struct {
+	ProtocolVersion uint16   `json:"protocol_version"`
+	ReleaseIdentity string   `json:"release_identity"`
+	BinaryIdentity  string   `json:"binary_identity"`
+	ConfigDigest    string   `json:"config_digest"`
+	PolicyRevision  string   `json:"policy_revision"`
+	Profiles        []string `json:"profiles"`
+	Socket          string   `json:"socket"`
+}
+
+// Equal reports an exact compatibility match, including profile order.
+func (d DaemonInfo) Equal(other DaemonInfo) bool {
+	if d.ProtocolVersion != other.ProtocolVersion || d.ReleaseIdentity != other.ReleaseIdentity || d.BinaryIdentity != other.BinaryIdentity || d.ConfigDigest != other.ConfigDigest || d.PolicyRevision != other.PolicyRevision || d.Socket != other.Socket || len(d.Profiles) != len(other.Profiles) {
+		return false
+	}
+	for i := range d.Profiles {
+		if d.Profiles[i] != other.Profiles[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// LifecycleCreated is the non-resource-handle create result carried on the wire.
+type LifecycleCreated struct {
+	Ref          EnvironmentRef `json:"ref"`
+	Generation   uint32         `json:"generation"`
+	HostWorktree string         `json:"host_worktree"`
+	GuestRoot    string         `json:"guest_root"`
+	Profile      string         `json:"profile"`
+	GuestEgress  string         `json:"guest_egress"`
+	HostEgress   string         `json:"host_egress"`
+}
+
+// LifecycleExecStream is one ordered stdout or stderr chunk preceding the final response.
+type LifecycleExecStream struct {
+	Channel string `json:"channel"`
+	Data    []byte `json:"data"`
+}
+
+// LifecycleResponse reports the exact durable generation observed after an operation.
+type LifecycleResponse struct {
+	Binding   control.Binding      `json:"binding,omitempty"`
+	Created   *LifecycleCreated    `json:"created,omitempty"`
+	Stream    *LifecycleExecStream `json:"stream,omitempty"`
+	Payload   json.RawMessage      `json:"payload,omitempty"`
+	ErrorCode string               `json:"error_code,omitempty"`
+	ErrorText string               `json:"error,omitempty"`
+	Err       error                `json:"-"`
+}
+
+// LifecycleGenerationHealth is the operator-facing health of one exact generation.
+type LifecycleGenerationHealth string
+
+const (
+	// GenerationHealthy means the exact runtime identity is live.
+	GenerationHealthy LifecycleGenerationHealth = "healthy"
+	// GenerationStale means the durable generation is not currently reattachable.
+	GenerationStale LifecycleGenerationHealth = "stale"
+	// GenerationError means the runtime health probe itself failed.
+	GenerationError LifecycleGenerationHealth = "error"
+)
+
+const (
+	defaultInventoryPageSize = 50
+	maxInventoryPageSize     = 64
+	maxInventoryTokenBytes   = 1024
+)
+
+// LifecycleInventoryRequest asks for one deterministic owner-scoped page.
+type LifecycleInventoryRequest struct {
+	PageSize     int    `json:"page_size,omitempty"`
+	Continuation string `json:"continuation,omitempty"`
+}
+
+// LifecycleInventoryPage is one bounded page and its opaque continuation.
+type LifecycleInventoryPage struct {
+	Entries      []LifecycleInventoryEntry `json:"entries"`
+	Continuation string                    `json:"continuation,omitempty"`
+}
+
+// LifecycleInventoryEntry is the bounded, non-secret lifecycle projection.
+type LifecycleInventoryEntry struct {
+	Owner         string                    `json:"owner"`
+	SessionID     string                    `json:"session_id"`
+	EnvironmentID string                    `json:"environment_id"`
+	Ref           string                    `json:"ref"`
+	WorktreePath  string                    `json:"worktree_path"`
+	Generation    uint32                    `json:"generation"`
+	State         EnvironmentState          `json:"state"`
+	Health        LifecycleGenerationHealth `json:"health"`
+	Error         string                    `json:"error,omitempty"`
+}
+
+// LifecycleDeleteResult reports whether the exact generation's worktree was removed.
+type LifecycleDeleteResult struct {
+	WorktreePath     string `json:"worktree_path"`
+	WorktreeRetained bool   `json:"worktree_retained"`
+}
+
+// ChildForkPayload is the bounded descriptive input for a child fork.
+type ChildForkPayload struct {
+	Label string `json:"label"`
+}
+
+// ChildMergePayload identifies the exact child generation merged into Binding.
+type ChildMergePayload struct {
+	Child control.Binding `json:"child"`
+}
+
+// RepositoryPlacement contains one repository-scoped logical attachment request.
+// Its artifact snapshot callback is consumed only by the registry's first-launch path.
+type RepositoryPlacement struct {
+	Request LogicalEnvironmentRequest
+	Status  EnforcedProfileStatus
+}
+
+// RepositoryPlacementBuilder resolves daemon-owned profile and immutable artifact
+// policy into one repository-scoped logical attachment request.
+type RepositoryPlacementBuilder func(context.Context, ProvisionRequest) (RepositoryPlacement, error)
+
+// DaemonConfig wires the authenticated protocol to durable lifecycle seams.
+type DaemonConfig struct {
+	Control                *control.Service
+	Observer               *OperationsObserver
+	Info                   DaemonInfo
+	RepositoryAttachments  *RepositoryAttachmentManager
+	RepositoryProvisioner  RepositoryPlacementBuilder
+	RepositoryStartupError error
+}
+
+type repositoryDaemonBinding struct {
+	binding control.Binding
+	status  EnforcedProfileStatus
+}
+
+// Daemon owns the local management protocol. Hypervisor creation remains
+// exclusively behind Lifecycle -> VMRuntime.
+type Daemon struct {
+	control               *control.Service
+	observer              *OperationsObserver
+	info                  DaemonInfo
+	repositoryAttachments *RepositoryAttachmentManager
+	repositoryProvisioner RepositoryPlacementBuilder
+	repositoryStartupErr  error
+	repositoryMu          sync.Mutex
+	repositoryBindings    map[string]repositoryDaemonBinding
+	inventoryKey          [sha256.Size]byte
+}
+
+// NewDaemon constructs the fail-closed local lifecycle service.
+func NewDaemon(cfg DaemonConfig) (*Daemon, error) {
+	if cfg.Control == nil || cfg.RepositoryAttachments == nil {
+		return nil, errors.New("repository microvmd lifecycle service is not fully configured")
+	}
+	daemon := &Daemon{
+		control: cfg.Control, observer: cfg.Observer, info: cfg.Info,
+		repositoryAttachments: cfg.RepositoryAttachments, repositoryProvisioner: cfg.RepositoryProvisioner,
+		repositoryStartupErr: cfg.RepositoryStartupError,
+		repositoryBindings:   make(map[string]repositoryDaemonBinding),
+	}
+	if _, err := rand.Read(daemon.inventoryKey[:]); err != nil {
+		return nil, fmt.Errorf("initialize microvmd inventory pagination: %w", err)
+	}
+	return daemon, nil
+}
+
+type lifecycleServeError struct {
+	operation LifecycleOperation
+	code      string
+	cause     error
+}
+
+func (e *lifecycleServeError) Error() string { return e.cause.Error() }
+func (e *lifecycleServeError) Unwrap() error { return e.cause }
+
+func newLifecycleServeError(operation LifecycleOperation, code string, cause error) error {
+	return &lifecycleServeError{operation: operation, code: code, cause: cause}
+}
+
+// ServeConn authenticates the peer, then reads and writes one bounded lifecycle
+// exchange on a local socket. Exec responses are ordered stream frames followed by
+// one final exit response.
+func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
+	if d == nil || d.control == nil {
+		return errors.New("microvmd lifecycle service is not configured")
+	}
+	if err := d.control.Authenticate(conn); err != nil {
+		return newLifecycleServeError("connection", lifecycleErrorCode(err), err)
+	}
+	codec := control.NewCodec(control.DefaultMaxMessageBytes)
+	var request LifecycleRequest
+	if err := codec.Read(conn, &request); err != nil {
+		return newLifecycleServeError("connection", "transport", err)
+	}
+	requestCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		var probe [1]byte
+		_, _ = conn.Read(probe[:])
+		cancel()
+	}()
+	write := func(response LifecycleResponse) error { return codec.Write(conn, response) }
+	var response LifecycleResponse
+	if request.Operation == LifecycleExec {
+		response = d.handleExecStream(requestCtx, request, func(frame LifecycleExecStream) error {
+			return write(LifecycleResponse{Stream: &frame})
+		})
+	} else {
+		response = d.handleAuthenticated(requestCtx, request)
+	}
+	if err := write(response); err != nil {
+		return newLifecycleServeError(request.Operation, "transport", err)
+	}
+	if response.Err != nil {
+		return newLifecycleServeError(request.Operation, response.ErrorCode, response.Err)
+	}
+	return nil
+}
+
+// Handle authenticates the peer before examining any caller-controlled identity,
+// then binds the operation to the authoritative durable registry record.
+func (d *Daemon) Handle(ctx context.Context, conn net.Conn, request LifecycleRequest) LifecycleResponse {
+	if d == nil || d.control == nil {
+		return lifecycleFailure(errors.New("microvmd lifecycle service is not configured"))
+	}
+	if err := d.control.Authenticate(conn); err != nil {
+		return lifecycleFailure(err)
+	}
+	return d.handleAuthenticated(ctx, request)
+}
+
+func (d *Daemon) handleExecStream(ctx context.Context, request LifecycleRequest, send func(LifecycleExecStream) error) LifecycleResponse {
+	if request.Version != LifecycleProtocolVersion || request.Operation != LifecycleExec {
+		return lifecycleFailure(errLifecycleProtocol)
+	}
+	if !strings.HasPrefix(request.Binding.EnvironmentID, "logical-") {
+		return lifecycleFailure(ErrEnvironmentUnavailable)
+	}
+	response, err := d.repositoryExecStream(ctx, request, send)
+	if err != nil {
+		return lifecycleFailure(err)
+	}
+	return response
+}
+
+func (d *Daemon) handleAuthenticated(ctx context.Context, request LifecycleRequest) LifecycleResponse {
+	if request.Version != LifecycleProtocolVersion {
+		return lifecycleFailure(errLifecycleProtocol)
+	}
+	if response, handled := d.handleRepositoryRequest(ctx, request); handled {
+		return response
+	}
+	return d.handleStandardRequest(ctx, request)
+}
+
+func (d *Daemon) handleStandardRequest(ctx context.Context, request LifecycleRequest) LifecycleResponse {
+	var response LifecycleResponse
+	var err error
+	switch request.Operation {
+	case LifecycleInfo:
+		if request.Binding != (control.Binding{}) || request.Provision != nil || len(request.Payload) != 0 || d.info.ProtocolVersion != LifecycleProtocolVersion {
+			err = errLifecycleProtocol
+			break
+		}
+		if d.repositoryStartupErr != nil {
+			err = d.repositoryStartupErr
+			break
+		}
+		response.Payload, err = json.Marshal(d.info)
+	case LifecycleMetrics:
+		if d.observer == nil || request.Binding != (control.Binding{}) || request.Provision != nil {
+			err = errLifecycleProtocol
+			break
+		}
+		response.Payload, err = json.Marshal(d.observer.Snapshot())
+	case LifecycleInventory:
+		response, err = d.inventory(ctx, request)
+	default:
+		err = errLifecycleProtocol
+	}
+	if err != nil {
+		return lifecycleFailure(err)
+	}
+	return response
+}
+
+func (d *Daemon) inventory(ctx context.Context, request LifecycleRequest) (LifecycleResponse, error) {
+	if err := validateOwnerRequest(request, true); err != nil {
+		return LifecycleResponse{}, err
+	}
+	pageRequest := LifecycleInventoryRequest{PageSize: defaultInventoryPageSize}
+	if len(request.Payload) != 0 {
+		if len(request.Payload) > maxInventoryTokenBytes+128 || json.Unmarshal(request.Payload, &pageRequest) != nil {
+			return LifecycleResponse{}, errLifecycleProtocol
+		}
+	}
+	if pageRequest.PageSize <= 0 {
+		pageRequest.PageSize = defaultInventoryPageSize
+	}
+	if pageRequest.PageSize > maxInventoryPageSize {
+		pageRequest.PageSize = maxInventoryPageSize
+	}
+	cursor, err := d.decodeInventoryCursor(request.Binding.Owner, pageRequest.Continuation)
+	if err != nil {
+		return LifecycleResponse{}, err
+	}
+	return d.repositoryInventory(ctx, request.Binding.Owner, pageRequest.PageSize, cursor)
+}
+
+func (d *Daemon) repositoryInventory(ctx context.Context, owner string, pageSize int, cursor inventoryCursor) (LifecycleResponse, error) {
+	records := d.repositoryAttachments.inventory(owner)
+	sort.Slice(records, func(i, j int) bool {
+		left, right := records[i].binding, records[j].binding
+		if left.SessionID != right.SessionID {
+			return left.SessionID < right.SessionID
+		}
+		if left.Ref != right.Ref {
+			return left.Ref < right.Ref
+		}
+		if left.Generation != right.Generation {
+			return left.Generation < right.Generation
+		}
+		return left.EnvironmentID < right.EnvironmentID
+	})
+	after := func(record repositoryAttachmentRecord) bool {
+		if cursor == (inventoryCursor{}) {
+			return true
+		}
+		binding := record.binding
+		if binding.SessionID != cursor.SessionID {
+			return binding.SessionID > cursor.SessionID
+		}
+		if binding.Ref != cursor.Ref {
+			return binding.Ref > cursor.Ref
+		}
+		if binding.Generation != cursor.Generation {
+			return binding.Generation > cursor.Generation
+		}
+		return binding.EnvironmentID > cursor.EnvironmentID
+	}
+	start := sort.Search(len(records), func(i int) bool { return after(records[i]) })
+	end := min(start+pageSize, len(records))
+	entries := make([]LifecycleInventoryEntry, 0, end-start)
+	type repositoryHealthResult struct{ err error }
+	healthByGeneration := make(map[string]repositoryHealthResult)
+	for _, record := range records[start:end] {
+		binding := record.binding
+		entry := LifecycleInventoryEntry{
+			Owner: binding.Owner, SessionID: binding.SessionID, EnvironmentID: binding.EnvironmentID,
+			Ref: binding.Ref, Generation: record.repository.Generation,
+			WorktreePath: record.worktreePath, State: record.repository.State,
+		}
+		switch {
+		case record.worktreeRetained && !record.deleted:
+			entry.Health = GenerationStale
+			entry.Error = "dirty schedule worktree retained and exact-reattachable for recovery"
+		case record.deleted && record.worktreeRetained:
+			entry.State, entry.Health = EnvironmentDestroyed, GenerationStale
+			entry.Error = "logical attachment was deleted; dirty worktree retained for recovery; repository VM deletion is not supported"
+		case record.deleted:
+			continue
+		case record.repository.State != EnvironmentReady:
+			entry.Health = GenerationStale
+			entry.Error = "repository generation state " + string(record.repository.State) + " is not ready"
+		default:
+			key := fmt.Sprintf("%s\x00%s\x00%d", record.repository.Owner, record.repository.RepositoryKey, record.repository.Generation)
+			health, ok := healthByGeneration[key]
+			if !ok {
+				health.err = d.repositoryAttachments.health(ctx, record.repository)
+				healthByGeneration[key] = health
+			}
+			switch {
+			case health.err == nil:
+				entry.Health = GenerationHealthy
+			case errors.Is(health.err, ErrRepositoryVMInconsistent):
+				entry.Health, entry.Error = GenerationStale, boundedLifecycleError(health.err)
+			default:
+				entry.Health, entry.Error = GenerationError, boundedLifecycleError(health.err)
+			}
+		}
+		entries = append(entries, entry)
+	}
+	page := LifecycleInventoryPage{Entries: entries}
+	if end < len(records) {
+		last := records[end-1].binding
+		var err error
+		page.Continuation, err = d.encodeInventoryCursor(owner, inventoryCursor{
+			SessionID: last.SessionID, Ref: last.Ref,
+			Generation: last.Generation, EnvironmentID: last.EnvironmentID,
+		})
+		if err != nil {
+			return LifecycleResponse{}, err
+		}
+	}
+	payload, err := json.Marshal(page)
+	return LifecycleResponse{Payload: payload}, err
+}
+
+type inventoryCursor struct {
+	Owner         string `json:"owner"`
+	SessionID     string `json:"session_id"`
+	Ref           string `json:"ref"`
+	Generation    uint32 `json:"generation"`
+	EnvironmentID string `json:"environment_id"`
+}
+
+func (d *Daemon) encodeInventoryCursor(owner string, cursor inventoryCursor) (string, error) {
+	cursor.Owner = owner
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, d.inventoryKey[:])
+	_, _ = mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func (d *Daemon) decodeInventoryCursor(owner, token string) (inventoryCursor, error) {
+	if token == "" {
+		return inventoryCursor{}, nil
+	}
+	if len(token) > maxInventoryTokenBytes {
+		return inventoryCursor{}, errLifecycleProtocol
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return inventoryCursor{}, errLifecycleProtocol
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil || base64.RawURLEncoding.EncodeToString(payload) != parts[0] {
+		return inventoryCursor{}, errLifecycleProtocol
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || base64.RawURLEncoding.EncodeToString(signature) != parts[1] {
+		return inventoryCursor{}, errLifecycleProtocol
+	}
+	mac := hmac.New(sha256.New, d.inventoryKey[:])
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return inventoryCursor{}, errLifecycleProtocol
+	}
+	var cursor inventoryCursor
+	if json.Unmarshal(payload, &cursor) != nil || cursor.Owner != owner || cursor.SessionID == "" || cursor.Ref == "" || cursor.Generation == 0 || cursor.EnvironmentID == "" {
+		return inventoryCursor{}, errLifecycleProtocol
+	}
+	return cursor, nil
+}
+
+func validateOwnerRequest(request LifecycleRequest, allowPayload bool) error {
+	want := control.Binding{Owner: request.Binding.Owner}
+	if request.Binding.Owner == "" || request.Binding != want || request.Provision != nil || (!allowPayload && len(request.Payload) != 0) {
+		return control.ErrBindingMismatch
+	}
+	return nil
+}
+
+func boundedLifecycleError(err error) string {
+	text := strings.ToValidUTF8(err.Error(), "�")
+	runes := []rune(text)
+	if len(runes) > 512 {
+		text = string(runes[:512])
+	}
+	return text
+}
+
+func claimValidate(claim control.Binding) error {
+	if claim.Owner == "" || claim.SessionID == "" || claim.EnvironmentID == "" || claim.Ref == "" || claim.Generation == 0 {
+		return control.ErrBindingMismatch
+	}
+	return nil
+}
+
+func lifecycleFailure(err error) LifecycleResponse {
+	if errors.Is(err, ErrRepositoryLogicalRootUnavailable) {
+		return LifecycleResponse{
+			ErrorCode: "repository_logical_root_unavailable",
+			ErrorText: ErrRepositoryLogicalRootUnavailable.Error(),
+			Err:       ErrRepositoryLogicalRootUnavailable,
+		}
+	}
+	return LifecycleResponse{ErrorCode: lifecycleErrorCode(err), ErrorText: err.Error(), Err: err}
+}
+
+func lifecycleErrorCode(err error) string {
+	switch {
+	case errors.Is(err, control.ErrUnauthenticatedPeer):
+		return "unauthenticated"
+	case errors.Is(err, control.ErrBindingMismatch):
+		return "binding_mismatch"
+	case errors.Is(err, ErrEnvironmentUnavailable):
+		return "unavailable"
+	case errors.Is(err, ErrRepositoryLogicalRootUnavailable):
+		return "repository_logical_root_unavailable"
+	default:
+		return "failed_precondition"
+	}
+}

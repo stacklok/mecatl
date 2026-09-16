@@ -39,6 +39,7 @@ const (
 	fieldLastFireAt        = "last_fire_at"
 	fieldFireCount         = "fire_count"
 	fieldEnabled           = "enabled"
+	fieldDeletionID        = "deletion_id"
 	fieldLastFireSessionID = "last_fire_session_id"
 	fieldCreatedAt         = "created_at"
 	// fieldOneShotRetryCount is the durable counter of one-shot re-arms (ADR
@@ -102,13 +103,14 @@ if exists == 0 then
   return 'NOT_FOUND'
 end
 local enabled = redis.call('HGET', KEYS[1], 'enabled')
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
 local nfa = redis.call('HGET', KEYS[1], 'next_fire_at')
 local fc = redis.call('HGET', KEYS[1], 'fire_count')
 local now = tonumber(ARGV[1])
 local nextFire = ARGV[2]
 local pending = ARGV[3]
 local maxFires = tonumber(ARGV[4])
-if enabled == false or enabled == '0' then
+if enabled == false or enabled == '0' or (deleting ~= false and deleting ~= '') then
   return 'NOT_CLAIMABLE'
 end
 if nfa == false or nfa == '' or nfa == '0' then
@@ -152,13 +154,14 @@ if exists == 0 then
   return 'NOT_FOUND'
 end
 local enabled = redis.call('HGET', KEYS[1], 'enabled')
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
 local lfa = redis.call('HGET', KEYS[1], 'last_fire_at')
 local fc = redis.call('HGET', KEYS[1], 'fire_count')
 local now = ARGV[1]
 local nextFire = ARGV[2]
 local pending = ARGV[3]
 local maxFires = tonumber(ARGV[4])
-if enabled == false or enabled == '0' then
+if enabled == false or enabled == '0' or (deleting ~= false and deleting ~= '') then
   return 'NOT_CLAIMABLE'
 end
 if maxFires > 0 and tonumber(fc) >= maxFires then
@@ -198,8 +201,48 @@ var setEnabledScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'NOT_FOUND'
 end
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
+if deleting ~= false and deleting ~= '' then
+  return 'DELETING'
+end
 redis.call('HSET', KEYS[1], 'enabled', ARGV[1])
 return 'OK'
+`)
+
+var saveExistingScheduleScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'NOT_FOUND' end
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
+if deleting ~= false and deleting ~= '' then return 'DELETING' end
+redis.call('HSET', KEYS[1], 'spec', ARGV[1], 'created_at', ARGV[2])
+return 'OK'
+`)
+
+var deleteScheduleScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'OK' end
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
+if deleting ~= false and deleting ~= '' then return 'DELETING' end
+redis.call('DEL', KEYS[1])
+return 'OK'
+`)
+
+var completeDeleteScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'MISMATCH' end
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
+if deleting ~= ARGV[1] then return 'MISMATCH' end
+redis.call('DEL', KEYS[1])
+return 'OK'
+`)
+
+var beginDeleteScript = redis.NewScript(`
+if ARGV[1] == '' then return 'INVALID' end
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'NOT_FOUND' end
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
+if deleting ~= false and deleting ~= '' then return deleting end
+local sid = redis.call('HGET', KEYS[1], 'last_fire_session_id')
+local started = redis.call('HGET', KEYS[1], 'last_fire_started_at')
+if sid == ARGV[2] or (started ~= false and started ~= '' and started ~= '0') then return 'ACTIVE' end
+redis.call('HSET', KEYS[1], 'enabled', '0', 'deletion_id', ARGV[1])
+return ARGV[1]
 `)
 
 // createScheduleScript is the atomic create-only primitive (review finding 5,
@@ -239,6 +282,8 @@ var reArmOneShotScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'NOT_FOUND'
 end
+local deleting = redis.call('HGET', KEYS[1], 'deletion_id')
+if deleting ~= false and deleting ~= '' then return 'DELETING' end
 local fc = redis.call('HGET', KEYS[1], 'one_shot_retry_count')
 if fc == false then fc = '0' end
 redis.call('HSET', KEYS[1],
@@ -313,6 +358,7 @@ var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
 // ScheduleCreator seam (review finding 5, issue #368 — atomic create-only).
 var _ port.ScheduleCreator = (*scheduleStore)(nil)
+var _ port.ScheduleDeletionStore = (*scheduleStore)(nil)
 
 // Create atomically creates a NEW schedule under in.Spec.Name (review finding
 // 5, issue #368) via createScheduleScript: the existence check + the full
@@ -417,12 +463,17 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 		}
 		return nil
 	}
-	// Overwrite: replace only the spec + created_at, PRESERVE the state fields.
-	if err := client.HSet(ctx, key,
-		fieldSpec, specJSON,
-		fieldCreatedAt, nanoStr(in.Spec.CreatedAt),
-	).Err(); err != nil {
+	// Overwrite: replace only the spec + created_at, PRESERVE the state fields,
+	// while atomically refusing a deletion-marked record.
+	res, err := saveExistingScheduleScript.Run(ctx, client, []string{key}, specJSON, nanoStr(in.Spec.CreatedAt)).Text()
+	if err != nil {
 		return fmt.Errorf("redisstore: save schedule %q (overwrite): %w", in.Spec.Name, err)
+	}
+	switch res {
+	case "DELETING":
+		return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
+	case "NOT_FOUND":
+		return fmt.Errorf("%w: %q", ErrScheduleNotFound, in.Spec.Name)
 	}
 	return nil
 }
@@ -445,8 +496,13 @@ func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled boo
 	if err != nil {
 		return fmt.Errorf("redisstore: set enabled %q: %w", name, err)
 	}
-	if s, ok := res.(string); ok && s == "NOT_FOUND" {
-		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	if value, ok := res.(string); ok {
+		switch value {
+		case "NOT_FOUND":
+			return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+		case "DELETING":
+			return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
+		}
 	}
 	return nil
 }
@@ -470,8 +526,13 @@ func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire 
 	if err != nil {
 		return fmt.Errorf("redisstore: re-arm one-shot %q: %w", name, err)
 	}
-	if s, ok := res.(string); ok && s == "NOT_FOUND" {
-		return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	if value, ok := res.(string); ok {
+		switch value {
+		case "NOT_FOUND":
+			return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+		case "DELETING":
+			return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
+		}
 	}
 	return nil
 }
@@ -495,18 +556,64 @@ func (s *scheduleStore) Load(ctx context.Context, name string) (port.Schedule, e
 	return scheduleFromHash(fields)
 }
 
-// Delete removes the schedule stored under name. It is IDEMPOTENT: DEL on a
-// missing key succeeds (the PrunableStore.Delete discipline). It does NOT delete
-// the schedule's fire records (retention is the caller's concern via the
-// existing PrunableStore) — matching memschedulestore / jsonlstore.
+// Delete removes the schedule stored under name. It is IDEMPOTENT on a
+// missing key and atomically refuses a pending deletion tombstone.
 func (s *scheduleStore) Delete(ctx context.Context, name string) error {
 	client, release, err := s.clients.acquire()
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := client.Del(ctx, scheduleKey(name)).Err(); err != nil {
+	res, err := deleteScheduleScript.Run(ctx, client, []string{scheduleKey(name)}).Text()
+	if err != nil {
 		return fmt.Errorf("redisstore: delete schedule %q: %w", name, err)
+	}
+	if res == "DELETING" {
+		return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
+	}
+	return nil
+}
+
+func (s *scheduleStore) BeginDelete(ctx context.Context, name, deletionID string) (port.Schedule, error) {
+	if deletionID == "" {
+		return port.Schedule{}, errors.New("redisstore: empty deletion id")
+	}
+	client, release, err := s.clients.acquire()
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	defer release()
+	res, err := beginDeleteScript.Run(ctx, client, []string{scheduleKey(name)}, deletionID, string(port.PendingFireSessionID)).Text()
+	if err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: begin schedule deletion %q: %w", name, err)
+	}
+	switch res {
+	case "NOT_FOUND":
+		return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
+	case "ACTIVE":
+		return port.Schedule{}, fmt.Errorf("redisstore: %w", port.ErrScheduleActiveFire)
+	case "INVALID":
+		return port.Schedule{}, errors.New("redisstore: empty deletion id")
+	}
+	fields, err := client.HGetAll(ctx, scheduleKey(name)).Result()
+	if err != nil {
+		return port.Schedule{}, fmt.Errorf("redisstore: load deleting schedule %q: %w", name, err)
+	}
+	return scheduleFromHash(fields)
+}
+
+func (s *scheduleStore) CompleteDelete(ctx context.Context, name, deletionID string) error {
+	client, release, err := s.clients.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
+	res, err := completeDeleteScript.Run(ctx, client, []string{scheduleKey(name)}, deletionID).Text()
+	if err != nil {
+		return fmt.Errorf("redisstore: complete schedule deletion %q: %w", name, err)
+	}
+	if res == "MISMATCH" {
+		return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
 	}
 	return nil
 }
@@ -1067,6 +1174,7 @@ func scheduleFromHash(fields map[string]string) (port.Schedule, error) {
 			LastFireAt:         parseNano(fields[fieldLastFireAt]),
 			FireCount:          parseIntOr(fields[fieldFireCount], 0),
 			Enabled:            fields[fieldEnabled] == "1",
+			DeletionID:         fields[fieldDeletionID],
 			LastFireSessionID:  session.SessionID(fields[fieldLastFireSessionID]),
 			OneShotRetryCount:  parseIntOr(fields[fieldOneShotRetryCount], 0),
 			LastFireStartedAt:  parseNano(fields[fieldLastFireStartedAt]),

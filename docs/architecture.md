@@ -63,6 +63,7 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Providers — OpenAI adapter & multi-provider](architecture/providers.md)**
 - **[The API surface](architecture/api-surface.md)**
 - **[Observability, persistence & reliability](architecture/observability.md)**
+- **[Local microVM execution environments](architecture/microvm-environments.md)** — opt-in runtime boundary, path model, artifact/network trust, lifecycle, and operations.
 - **[Context management & the compaction cascade](architecture/context-and-compaction.md)** — token counting, compaction, and the shared configured/live/catalog context-window resolver.
 - **[Memory — cross-session recall & consolidation](architecture/memory.md)**
 - **[Parallelism — fork-join](architecture/parallelism.md)**
@@ -1213,12 +1214,60 @@ fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
 **Server-owned placement.** Trusted composition installs one placement provider and
-scope before listeners serve. `CreateSession` accepts only the provider's deployment
+scope before listeners serve, but service construction validates only that configuration: it
+never calls `Bind` or allocates a provisional placement. `CreateSession` accepts only the provider's deployment
 `default` or explicit `no-fs`; the public request has no workspace, cwd, placement ID,
 or selector. Local embedded and daemon deployments configure their root privately with
 `--workspace`; remote/cloud-native providers may bind another backend without widening
 the public API. ACP's required cwd is only checked against the trusted local binding and
 cannot select authority.
+
+A microVM placement keeps tools and shell in guest `/workspace` while host-owned settings,
+soul, memory, MCP, hooks, identity, provider credentials, and the TUI remain outside the
+guest. Each private placement binding separately carries the trusted host source checkout for
+project instructions, rules, commands, permission learning, and authorization; host composition
+never infers that root from guest `/workspace`, and the value is neither persisted nor exposed.
+No-FS has no host composition root. Sessions persist only exact private `EnvironmentRef` identity; unknown, disabled,
+mismatched, or unavailable generations fail without host-local fallback. Lifecycle
+composition reattaches the exact generation and explicitly detaches or deletes it without
+exposing source, worktree, endpoint, or guest paths on public APIs.
+
+The user-local administration surface is `mecated microvm doctor|status|delete`, scoped
+to the current OS principal and local execution host. Doctor and status are read-only;
+delete requires one exact backend/attachment/ref/generation status row plus confirmation,
+preserves dirty worktrees, and never deletes or resets the repository VM. Daily embedded
+use sets `execution.default_placement` to `microvm-local` once in operator settings and then
+launches bare `mecatui`; remote `mecatui connect` remains client-only. The shared
+provisioning boundary performs
+idempotent readiness immediately before each actual default MicroVM provision attempt; service
+startup and no-FS creation do not run readiness or allocate a validation attachment. The live
+`microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
+ordinary source builds have no authenticated release defaults and fail closed. For source
+development only, [ADR 0346](adr/0346-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
+separately tagged `microvm_dev` mecated and embedded-local mecatui binaries whose
+development activation requires explicit
+acknowledgement and a strict owner-only local release descriptor. Untagged and published
+binaries do not expose this path; release verification and daemon-policy checks remain.
+Readiness
+preflights Git, Python 3, KVM access, and an actual ephemeral unprivileged user-namespace
+creation before downloading or provisioning repository state. One repository-scoped daemon
+is shared across sessions and host processes. Under the manager lock, genuinely fresh state
+is installed and started once; compatible callers reuse it. A desired release or egress-policy
+conflict, corrupt configuration, identity mismatch, stopped daemon, or unhealthy runtime fails
+without rewriting configuration, stopping the daemon, deleting state, or replacing repository
+runtime. Readiness and doctor
+authenticate the daemon serving the owner-only socket and require its protocol,
+release/binary, loaded-config, policy, profile-set, and socket identities to match.
+A mismatch or unhealthy daemon is left untouched and readiness fails with local repair
+guidance. It supports local single-user Git sessions on
+Linux amd64 with KVM. Linux arm64 and Apple Silicon macOS have compile/static coverage only;
+live support is deferred. Remote placement, multi-user enforcement, non-Git
+sources, and unified host+guest egress policy remain out of scope. Schedules reuse one
+exact logical attachment across fires. Before the first claim, deleting an independently
+placed schedule cleans its attachment while preserving dirty state. After the first claim,
+the attachment is retained for historical and resumable fire sessions when the schedule is deleted.
+See the [microVM architecture](architecture/microvm-environments.md) and
+[operator guide](usage/microvm-environments.md) (ADR 0346).
 
 Discovery is source-session scoped. `ListCommands(session_id)` and
 `ListWorktrees(session_id)` first authorize the owner and exactly reattach that source.
@@ -1241,8 +1290,14 @@ In broker mode, each successor receives a fresh broker attachment and persists i
 binding before publication; broker enrollment and authorization are not copied from the
 source. A missing or mismatched binding during later reattachment still fails closed.
 Schedules similarly
-persist their resolved exact ref, durable owner, and placement scope—not a selector or
-"current default" intent—and reauthorize and exactly reattach at each fire.
+persist their resolved exact ref, durable owner, placement scope, and trusted ownership bit—not
+a selector or "current default" intent—and reauthorize and exactly reattach at each fire.
+An origin-backed schedule borrows its session placement. An independent schedule owns a newly
+provisioned placement only when its provider supports exact path-free deletion; legacy records
+without the bit remain conservatively borrowed. Delete disables first, refuses cleanup while a
+claim/run is active, and destroys only the owned logical attachment after the registry delete
+succeeds. MicroVM cleanup preserves dirty worktrees as exact-reattachable and never destroys the
+repository VM/rootfs or sibling attachments.
 
 Delegation never accepts placement input: Team derives the owning session environment;
 Subagent and Parallel share or server-fork the parent Environment. Preserved-fork,

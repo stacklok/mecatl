@@ -35,6 +35,14 @@ var ErrScheduleUnsupported = errors.New("port: scheduled tasks not supported by 
 // named %q already exists"), distinct from an infrastructure failure.
 var ErrScheduleAlreadyExists = errors.New("port: schedule already exists")
 
+// ErrScheduleDeleting reports that a lifecycle mutation was fenced because the
+// schedule is durably pending owned-placement cleanup.
+var ErrScheduleDeleting = errors.New("port: schedule deletion pending")
+
+// ErrScheduleActiveFire reports that atomic deletion could not begin because a
+// claimed or running fire must settle first.
+var ErrScheduleActiveFire = errors.New("port: schedule has an active fire")
+
 // ErrFireNowOverlap is the port-level sentinel a ScheduleManager's FireNow
 // returns (wrapped with %w) when the schedule's singleton guard found a prior
 // fire still running — the manual fire is REJECTED, not run concurrently with
@@ -303,6 +311,12 @@ type ScheduleSpec struct {
 	Profile        string
 	EnvironmentRef session.EnvironmentRef
 	PlacementScope string
+	// PlacementOwned marks an exact placement provisioned exclusively for this
+	// schedule. It is trusted durable host metadata: public schedule mappings
+	// never accept or project it. Legacy records decode false and are therefore
+	// conservatively treated as borrowed, so an ambiguous historical schedule
+	// can never cause placement deletion.
+	PlacementOwned bool
 	Mode           session.PermissionMode
 	Limits         session.Limits
 	Mutating       bool
@@ -402,6 +416,12 @@ type ScheduleState struct {
 	// NextFireAt is in the past. Claim sets Enabled=false when a cron exhausts
 	// MaxFires or a one-shot fires.
 	Enabled bool
+	// DeletionID is the opaque generation token of an owned-placement deletion
+	// transaction. Non-empty means cleanup is pending: Create, Claim, Update,
+	// SetEnabled, and ReArmOneShot must not mutate this record. RecordFire may
+	// still settle a fire that won the race before deletion began. Completion may
+	// remove the record only when this exact token still matches.
+	DeletionID string
 	// LastFireSessionID is the session id of the prior fire. The per-session LEASE
 	// on it is the authoritative cross-replica liveness oracle for the singleton
 	// check: a still-held lease means the prior fire is running (skip the next
@@ -544,8 +564,10 @@ type ScheduleStore interface {
 
 	// Delete removes the schedule stored under name. It is IDEMPOTENT: deleting an
 	// unknown name is success (the PrunableStore.Delete discipline), so callers
-	// tolerate List/Delete races by construction. Any returned error is an
-	// infrastructure failure (or ErrScheduleUnsupported).
+	// tolerate List/Delete races by construction. If DeletionID is non-empty it
+	// MUST leave the record unchanged and return ErrScheduleDeleting; only
+	// ScheduleDeletionStore.CompleteDelete may remove a pending tombstone. Any
+	// other returned error is an infrastructure failure (or ErrScheduleUnsupported).
 	Delete(ctx context.Context, name string) error
 
 	// List returns ALL stored schedules, in no guaranteed order. It applies NO
@@ -782,6 +804,19 @@ type ScheduleOneShotReArmer interface {
 	// primitive the tick loop calls for a crashed one-shot retry. The not-found
 	// case wraps ErrScheduleNotFound.
 	ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error
+}
+
+// ScheduleDeletionStore is the optional atomic lifecycle used when deleting a
+// schedule-owned placement. Stores that do not implement it must not be used for
+// owned-placement cleanup; there is no unsafe multi-call fallback.
+type ScheduleDeletionStore interface {
+	// BeginDelete atomically verifies there is no claimed/running fire, disables
+	// the schedule, and stores deletionID. Repeating with any token returns the
+	// existing deletion-marked record so cleanup resumes against its exact binding.
+	BeginDelete(ctx context.Context, name, deletionID string) (Schedule, error)
+	// CompleteDelete atomically removes the record only when deletionID still
+	// matches. A missing or different incarnation returns ErrScheduleDeleting.
+	CompleteDelete(ctx context.Context, name, deletionID string) error
 }
 
 // ScheduleCreator is the OPTIONAL atomic create-only seam (review finding 5,

@@ -98,6 +98,7 @@ var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
 // ScheduleCreator seam (review finding 5, issue #368 — atomic create-only).
 var _ port.ScheduleCreator = (*scheduleStore)(nil)
+var _ port.ScheduleDeletionStore = (*scheduleStore)(nil)
 
 // Create atomically creates a NEW schedule under in.Spec.Name (review finding
 // 5, issue #368): under the SAME mutex Save/Load already serialize on, it
@@ -141,6 +142,9 @@ func (s *scheduleStore) Save(_ context.Context, in port.Schedule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cur, err := s.loadLocked(in.Spec.Name); err == nil {
+		if cur.Schedule.State.DeletionID != "" {
+			return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
+		}
 		// Preserve firing progress on overwrite.
 		rec.Schedule.State = cur.Schedule.State
 	} else {
@@ -166,6 +170,9 @@ func (s *scheduleStore) SetEnabled(_ context.Context, name string, enabled bool)
 	if err != nil {
 		return err
 	}
+	if rec.Schedule.State.DeletionID != "" {
+		return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
+	}
 	rec.Schedule.State.Enabled = enabled
 	return s.writeScheduleLocked(name, rec)
 }
@@ -183,12 +190,60 @@ func (s *scheduleStore) Load(_ context.Context, name string) (port.Schedule, err
 }
 
 // Delete removes the schedule stored under name. It is IDEMPOTENT: deleting an
-// unknown name is success (the PrunableStore.Delete discipline).
+// unknown name is success (the PrunableStore.Delete discipline). A pending
+// deletion tombstone may only be removed through CompleteDelete.
 func (s *scheduleStore) Delete(_ context.Context, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if errors.Is(err, ErrScheduleNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if rec.Schedule.State.DeletionID != "" {
+		return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
+	}
 	if err := os.Remove(s.schedulePath(name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("jsonlstore: delete schedule %q: %w", name, err)
+	}
+	return nil
+}
+
+func (s *scheduleStore) BeginDelete(_ context.Context, name, deletionID string) (port.Schedule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	if rec.Schedule.State.DeletionID != "" {
+		return rec.Schedule, nil
+	}
+	if rec.Schedule.State.LastFireSessionID == port.PendingFireSessionID || !rec.Schedule.State.LastFireStartedAt.IsZero() {
+		return port.Schedule{}, fmt.Errorf("jsonlstore: %w", port.ErrScheduleActiveFire)
+	}
+	if deletionID == "" {
+		return port.Schedule{}, errors.New("jsonlstore: empty deletion id")
+	}
+	rec.Schedule.State.Enabled = false
+	rec.Schedule.State.DeletionID = deletionID
+	if err := s.writeScheduleLocked(name, rec); err != nil {
+		return port.Schedule{}, err
+	}
+	return rec.Schedule, nil
+}
+
+func (s *scheduleStore) CompleteDelete(_ context.Context, name, deletionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.loadLocked(name)
+	if err != nil || rec.Schedule.State.DeletionID == "" || rec.Schedule.State.DeletionID != deletionID {
+		return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
+	}
+	if err := os.Remove(s.schedulePath(name)); err != nil {
+		return fmt.Errorf("jsonlstore: complete schedule deletion %q: %w", name, err)
 	}
 	return nil
 }
@@ -241,7 +296,7 @@ func (s *scheduleStore) Due(_ context.Context, now time.Time) ([]port.Schedule, 
 		}
 		st := rec.Schedule.State
 		spec := rec.Schedule.Spec
-		if !st.Enabled {
+		if !st.Enabled || st.DeletionID != "" {
 			continue
 		}
 		if st.NextFireAt.IsZero() || st.NextFireAt.After(now) {
@@ -280,7 +335,7 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 	st := rec.Schedule.State
 	spec := rec.Schedule.Spec
 	// Re-check the at-most-once fence: the slot must STILL be due at claim time.
-	if !st.Enabled {
+	if !st.Enabled || st.DeletionID != "" {
 		return port.Schedule{}, ErrScheduleNotFound
 	}
 	if st.NextFireAt.IsZero() || st.NextFireAt.After(now) {
@@ -327,7 +382,7 @@ func (s *scheduleStore) ClaimNow(_ context.Context, name string, now, nextFire t
 	}
 	st := rec.Schedule.State
 	spec := rec.Schedule.Spec
-	if !st.Enabled {
+	if !st.Enabled || st.DeletionID != "" {
 		return port.Schedule{}, ErrScheduleNotFound
 	}
 	if spec.MaxFires > 0 && st.FireCount >= spec.MaxFires {
@@ -697,6 +752,9 @@ func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire ti
 	rec, err := s.loadLocked(name)
 	if err != nil {
 		return err
+	}
+	if rec.Schedule.State.DeletionID != "" {
+		return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
 	}
 	rec.Schedule.State.Enabled = true
 	rec.Schedule.State.NextFireAt = nextFire

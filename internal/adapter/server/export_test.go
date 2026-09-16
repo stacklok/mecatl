@@ -35,10 +35,8 @@ func (a *Authenticator) RejectedTrackedClientCountForTest() int {
 	return len(a.rejectedLimiters.clients)
 }
 
-// SetEngineCloseTimeoutForTest overrides the package-level engineCloseTimeout var
-// for the duration of one test; it returns a restore func (defer it). The override
-// lets a test shrink the timeout so a bounded-engine-close assertion runs in
-// milliseconds, not seconds.
+// SetEngineCloseTimeoutForTest overrides the aggregate shutdown phase timeout
+// for the duration of one test; it returns a restore func (defer it).
 func SetEngineCloseTimeoutForTest(d time.Duration) (restore func()) {
 	prev := engineCloseTimeout
 	engineCloseTimeout = d

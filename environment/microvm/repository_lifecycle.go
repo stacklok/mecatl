@@ -1,0 +1,771 @@
+package microvm
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/stacklok/mecatl/environment/microvm/gitexec"
+)
+
+const (
+	repositoryRegistryVersion = 1
+	repositoryHealthTimeout   = 10 * time.Second
+)
+
+var (
+	// ErrRepositoryVMUnknown means no generation has been admitted for the repository key.
+	ErrRepositoryVMUnknown = errors.New("microvm repository generation is unknown")
+	// ErrRepositoryVMInconsistent means the durable singleton cannot be reattached exactly.
+	ErrRepositoryVMInconsistent = errors.New("microvm repository generation is inconsistent")
+	// ErrRepositoryLogicalRootUnavailable means the authenticated guest could not
+	// attach the assigned repository worktree. It intentionally carries no backend detail.
+	ErrRepositoryLogicalRootUnavailable = errors.New("microvm repository logical root is unavailable")
+)
+
+// RepositoryIdentity is the canonical owner/repository key and its opaque,
+// owner-confined state location.
+type RepositoryIdentity struct {
+	Owner              string
+	GitCommonDirectory string
+	Key                string
+	StateDirectory     string
+}
+
+// ResolveRepositoryIdentity canonicalizes a checkout through Git and derives an
+// opaque state identity. Repository-controlled path components never enter the
+// state-directory suffix.
+func ResolveRepositoryIdentity(ctx context.Context, owner, checkout, stateRoot string) (RepositoryIdentity, error) {
+	if owner == "" {
+		return RepositoryIdentity{}, errors.New("microvm repository owner is required")
+	}
+	canonicalStateRoot, err := canonicalStateRoot(stateRoot)
+	if err != nil {
+		return RepositoryIdentity{}, err
+	}
+	canonicalCheckout, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		return RepositoryIdentity{}, fmt.Errorf("canonicalize microvm checkout: %w", err)
+	}
+	canonicalCheckout, err = filepath.Abs(canonicalCheckout)
+	if err != nil {
+		return RepositoryIdentity{}, fmt.Errorf("make microvm checkout absolute: %w", err)
+	}
+	output, err := gitexec.Run(ctx, canonicalCheckout, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return RepositoryIdentity{}, fmt.Errorf("resolve canonical Git common directory: %w", err)
+	}
+	common := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(common) {
+		return RepositoryIdentity{}, errors.New("git common directory is not absolute")
+	}
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return RepositoryIdentity{}, fmt.Errorf("canonicalize Git common directory: %w", err)
+	}
+	common = filepath.Clean(common)
+	info, err := os.Stat(common)
+	if err != nil || !info.IsDir() {
+		return RepositoryIdentity{}, fmt.Errorf("validate Git common directory: %w", errors.Join(err, errors.New("not a directory")))
+	}
+
+	validated, err := newValidatedRepositoryIdentity(owner, common, canonicalStateRoot)
+	if err != nil {
+		return RepositoryIdentity{}, err
+	}
+	return validated.value, nil
+}
+
+type validatedRepositoryIdentity struct {
+	value      RepositoryIdentity
+	components [4]string
+}
+
+func newValidatedRepositoryIdentity(owner, gitCommonDirectory, stateRoot string) (validatedRepositoryIdentity, error) {
+	ownerKey := framedDigest("mecatl.microvm.owner.v1", owner)
+	repositoryKey := framedDigest("mecatl.microvm.repository.v1", owner, gitCommonDirectory)
+	components := [4]string{"owners", ownerKey, "repositories", repositoryKey}
+	for _, component := range components {
+		if !validOpaquePathComponent(component) {
+			return validatedRepositoryIdentity{}, errors.New("derived microvm repository identity has an invalid path component")
+		}
+	}
+	stateDirectory := filepath.Join(stateRoot, components[0], components[1], components[2], components[3])
+	if !repositoryPathWithin(stateRoot, stateDirectory) {
+		return validatedRepositoryIdentity{}, errors.New("derived microvm repository state path is not confined")
+	}
+	return validatedRepositoryIdentity{
+		value: RepositoryIdentity{
+			Owner:              owner,
+			GitCommonDirectory: gitCommonDirectory,
+			Key:                repositoryKey,
+			StateDirectory:     stateDirectory,
+		},
+		components: components,
+	}, nil
+}
+
+func (r *RepositoryVMRegistry) validateIdentity(identity RepositoryIdentity) (validatedRepositoryIdentity, error) {
+	validated, err := newValidatedRepositoryIdentity(identity.Owner, identity.GitCommonDirectory, r.stateRoot)
+	if err != nil {
+		return validatedRepositoryIdentity{}, err
+	}
+	if identity.Key != validated.value.Key || identity.StateDirectory != validated.value.StateDirectory {
+		return validatedRepositoryIdentity{}, errors.New("microvm repository identity is not canonical")
+	}
+	return validated, nil
+}
+
+func validOpaquePathComponent(component string) bool {
+	return component != "" && component != "." && component != ".." && !strings.ContainsRune(component, filepath.Separator)
+}
+
+func canonicalStateRoot(stateRoot string) (string, error) {
+	if stateRoot == "" {
+		return "", errors.New("microvm repository state root is required")
+	}
+	absolute, err := filepath.Abs(stateRoot)
+	if err != nil {
+		return "", fmt.Errorf("make microvm state root absolute: %w", err)
+	}
+	if err := os.MkdirAll(absolute, 0o700); err != nil {
+		return "", fmt.Errorf("create microvm state root: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize microvm state root: %w", err)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("microvm state root is not a directory")
+	}
+	return filepath.Clean(canonical), nil
+}
+
+func framedDigest(domain string, values ...string) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(domain))
+	for _, value := range values {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+		_, _ = hash.Write(length[:])
+		_, _ = hash.Write([]byte(value))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func repositoryPathWithin(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
+// RepositoryVMRuntime owns the repository generation's VM process. Start is
+// called only after the provisioning record and private rootfs are durable.
+type RepositoryVMRuntime interface {
+	Start(context.Context, RepositoryVMRecord, VerifiedArtifacts, RepositoryBootAuthority) (RuntimeStatus, error)
+	Health(context.Context, RepositoryVMRecord, RepositoryHealthChallenge) (RepositoryHealthResponse, error)
+}
+
+// RepositoryVMRecord is the durable singleton VM/rootfs identity for one key.
+type RepositoryVMRecord struct {
+	State              EnvironmentState `json:"state"`
+	Owner              string           `json:"owner"`
+	RepositoryKey      string           `json:"repository_key"`
+	GitCommonDirectory string           `json:"git_common_directory"`
+	Generation         uint32           `json:"generation"`
+	VMID               string           `json:"vm_id"`
+	Endpoint           string           `json:"endpoint"`
+	RootFSPath         string           `json:"rootfs_path"`
+	AuthorityDigest    string           `json:"authority_digest"`
+	RunnerPID          int              `json:"runner_pid"`
+	ProcessIdentity    string           `json:"process_identity"`
+}
+
+type repositoryRegistryDocument struct {
+	Version int                `json:"version"`
+	Record  RepositoryVMRecord `json:"record"`
+}
+
+// RepositoryArtifactSnapshot returns a privately locked artifact view and its release.
+// On error, the callback owns cleanup for anything it acquired and returns no cleanup
+// responsibility to Ensure. On success, it returns a non-nil release function; Ensure
+// invokes that function exactly once after every later success or failure, after rootfs
+// materialization and runtime startup have finished consuming the snapshot.
+type RepositoryArtifactSnapshot func(context.Context) (VerifiedArtifacts, func(), error)
+
+// RepositoryVMRequest supplies first-use inputs. Artifacts is invoked only when
+// no durable record exists; exact reattachment never validates or copies replacement bytes.
+type RepositoryVMRequest struct {
+	Owner     string
+	Checkout  string
+	Artifacts RepositoryArtifactSnapshot
+}
+
+// RepositoryVMResult reports the exact durable singleton selected by Ensure.
+type RepositoryVMResult struct {
+	Record     RepositoryVMRecord
+	Reattached bool
+}
+
+// RepositoryVMRegistry owns durable singleton admission under one state root.
+type RepositoryVMRegistry struct {
+	stateRoot    string
+	endpointRoot string
+	runtime      RepositoryVMRuntime
+	writeRecord  func(*repositoryDirectory, RepositoryVMRecord) error
+}
+
+// OpenRepositoryVMRegistry opens the repository lifecycle registry without
+// admitting or reconciling any generation. endpointRoots optionally supplies a
+// short owner-private runtime directory for Unix guest endpoints.
+func OpenRepositoryVMRegistry(stateRoot string, runtime RepositoryVMRuntime, endpointRoots ...string) (*RepositoryVMRegistry, error) {
+	if runtime == nil {
+		return nil, errors.New("microvm repository runtime is required")
+	}
+	canonical, err := canonicalStateRoot(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	endpointRoot := canonical
+	if len(endpointRoots) > 1 {
+		return nil, errors.New("microvm repository endpoint root is ambiguous")
+	}
+	if len(endpointRoots) == 1 {
+		endpointRoot, err = canonicalStateRoot(endpointRoots[0])
+		if err != nil {
+			return nil, fmt.Errorf("open microvm repository endpoint root: %w", err)
+		}
+	}
+	return &RepositoryVMRegistry{stateRoot: canonical, endpointRoot: endpointRoot, runtime: runtime, writeRecord: writeRepositoryRecord}, nil
+}
+
+// HasRecords reports whether any durable repository generation predates this
+// registry instance. It reads only the fixed owner/repository hierarchy and
+// fails closed on malformed entries.
+func (r *RepositoryVMRegistry) HasRecords() (bool, error) {
+	ownersRoot := filepath.Join(r.stateRoot, "owners")
+	owners, err := os.ReadDir(ownersRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, owner := range owners {
+		if !owner.IsDir() || owner.Type()&os.ModeSymlink != 0 || !validOpaquePathComponent(owner.Name()) {
+			return false, errors.New("repository owner registry contains an invalid entry")
+		}
+		repositoriesRoot := filepath.Join(ownersRoot, owner.Name(), "repositories")
+		repositories, readErr := os.ReadDir(repositoriesRoot)
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue
+		}
+		if readErr != nil {
+			return false, readErr
+		}
+		for _, repository := range repositories {
+			if !repository.IsDir() || repository.Type()&os.ModeSymlink != 0 || !validOpaquePathComponent(repository.Name()) {
+				return false, errors.New("repository registry contains an invalid entry")
+			}
+			info, statErr := os.Lstat(filepath.Join(repositoriesRoot, repository.Name(), "registry.json"))
+			if statErr == nil {
+				if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+					return false, errors.New("repository registry record is not a regular file")
+				}
+				return true, nil
+			}
+			if !errors.Is(statErr, os.ErrNotExist) {
+				return false, statErr
+			}
+		}
+	}
+	return false, nil
+}
+
+// Ensure admits one generation on first use or reattaches only the exact healthy
+// ready generation. Any partial, missing, or mismatched state fails without
+// replacement or destructive reconciliation.
+func (r *RepositoryVMRegistry) Ensure(ctx context.Context, request RepositoryVMRequest) (RepositoryVMResult, error) { //nolint:gocyclo // first-generation admission is one auditable transaction
+	identity, err := ResolveRepositoryIdentity(ctx, request.Owner, request.Checkout, r.stateRoot)
+	if err != nil {
+		return RepositoryVMResult{}, err
+	}
+	validatedIdentity, err := r.validateIdentity(identity)
+	if err != nil {
+		return RepositoryVMResult{}, err
+	}
+	directory, err := r.openIdentityDirectory(validatedIdentity, true)
+	if err != nil {
+		return RepositoryVMResult{}, err
+	}
+	defer func() { _ = directory.Close() }()
+
+	var result RepositoryVMResult
+	err = r.withIdentityLock(ctx, directory, func() error {
+		record, readErr := readRepositoryRecord(directory)
+		switch {
+		case readErr == nil:
+			if err := r.reattach(ctx, directory, identity, record); err != nil {
+				return err
+			}
+			result = RepositoryVMResult{Record: record, Reattached: true}
+			return nil
+		case !errors.Is(readErr, os.ErrNotExist):
+			return readErr
+		}
+
+		if request.Artifacts == nil {
+			return errors.New("repository first launch requires a locked artifact snapshot")
+		}
+		verified, release, err := request.Artifacts(ctx)
+		if err != nil {
+			return err
+		}
+		if release == nil {
+			return errors.New("repository artifact snapshot omitted release")
+		}
+		defer release()
+		if err := validateRepositoryArtifacts(verified); err != nil {
+			return err
+		}
+		generation, err := randomGeneration()
+		if err != nil {
+			return err
+		}
+		authority, err := newRepositoryBootAuthority()
+		if err != nil {
+			return fmt.Errorf("create repository boot authority: %w", err)
+		}
+		record = RepositoryVMRecord{
+			State: EnvironmentProvisioning, Owner: identity.Owner, RepositoryKey: identity.Key,
+			GitCommonDirectory: identity.GitCommonDirectory, Generation: generation,
+			VMID:       "repository-" + identity.Key[:16] + fmt.Sprintf("-%08x", generation),
+			Endpoint:   r.repositoryEndpoint(identity, generation),
+			RootFSPath: filepath.Join(identity.StateDirectory, "rootfs"), AuthorityDigest: authority.digest(),
+		}
+		if err := r.writeRecord(directory, record); err != nil {
+			return fmt.Errorf("admit repository generation: %w", err)
+		}
+		if err := writeRepositoryBootAuthority(directory, authority); err != nil {
+			return fmt.Errorf("persist repository boot authority: %w", err)
+		}
+		if info, err := directory.Lstat("rootfs"); err == nil || !errors.Is(err, os.ErrNotExist) {
+			_ = info
+			return fmt.Errorf("%w: private repository rootfs already exists", ErrRepositoryVMInconsistent)
+		}
+		materializer := newRepositoryRootFSMaterializer()
+		if err := materializer.Materialize(verified.ExecutionImage.Path, record.RootFSPath, verified.GuestAgent.Path); err != nil {
+			return fmt.Errorf("materialize repository rootfs: %w", err)
+		}
+		if err := unix.Mkdirat(int(directory.file.Fd()), "logical", 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+			return fmt.Errorf("create repository guest mount namespace: %w", err)
+		}
+		status, err := r.runtime.Start(ctx, record, verified, authority)
+		if err != nil {
+			return fmt.Errorf("start admitted repository generation: %w", err)
+		}
+		if err := validateProvisionalRuntime(record, status); err != nil {
+			return errors.Join(err, r.abortStartedRuntime(ctx, record))
+		}
+		record.State = EnvironmentReady
+		record.RunnerPID = status.PID
+		record.ProcessIdentity = status.ProcessIdentity
+		if err := r.writeRecord(directory, record); err != nil {
+			return errors.Join(fmt.Errorf("commit ready repository generation: %w", err), r.abortStartedRuntime(ctx, record))
+		}
+		result = RepositoryVMResult{Record: record}
+		return nil
+	})
+	return result, err
+}
+
+func (r *RepositoryVMRegistry) abortStartedRuntime(ctx context.Context, record RepositoryVMRecord) error {
+	aborter, ok := r.runtime.(repositoryRuntimeAborter)
+	if !ok {
+		return errors.New("started repository runtime cannot be rolled back")
+	}
+	if err := aborter.Abort(ctx, record); err != nil {
+		return fmt.Errorf("abort unpublished repository generation: %w", err)
+	}
+	return nil
+}
+
+func (r *RepositoryVMRegistry) reattach(ctx context.Context, directory *repositoryDirectory, identity RepositoryIdentity, record RepositoryVMRecord) error {
+	if err := r.validateRepositoryRecord(identity, record); err != nil {
+		return err
+	}
+	if err := validateRepositoryRootFS(directory); err != nil {
+		return fmt.Errorf("%w: %v", ErrRepositoryVMInconsistent, err)
+	}
+	authority, err := readRepositoryBootAuthority(directory)
+	if err != nil || record.AuthorityDigest != authority.digest() {
+		return fmt.Errorf("%w: repository boot authority is missing or inconsistent", ErrRepositoryVMInconsistent)
+	}
+	challenge, err := authority.healthChallenge(record)
+	if err != nil {
+		return fmt.Errorf("create repository health challenge: %w", err)
+	}
+	healthCtx, cancelHealth := context.WithTimeoutCause(ctx, repositoryHealthTimeout, errors.New("repository restart health phase timed out"))
+	response, err := r.runtime.Health(healthCtx, record, challenge)
+	cancelHealth()
+	if err != nil {
+		return fmt.Errorf("%w: repository restart health phase: %v", ErrRepositoryVMInconsistent, err)
+	}
+	if err := authority.VerifyHealth(record, challenge, response); err != nil {
+		return fmt.Errorf("%w: repository health response is not authoritative", ErrRepositoryVMInconsistent)
+	}
+	if attacher, ok := r.runtime.(repositoryRuntimeAttacher); ok {
+		if err := attacher.AttachRepository(record, authority); err != nil {
+			return fmt.Errorf("%w: restore repository runtime authority: %v", ErrRepositoryVMInconsistent, err)
+		}
+	}
+	return validateRepositoryRuntime(record, response.Status)
+}
+
+// Lookup returns the exact durable record without inspecting or changing runtime state.
+func (r *RepositoryVMRegistry) Lookup(ctx context.Context, identity RepositoryIdentity) (RepositoryVMRecord, error) {
+	validatedIdentity, err := r.validateIdentity(identity)
+	if err != nil {
+		return RepositoryVMRecord{}, err
+	}
+	directory, err := r.openIdentityDirectory(validatedIdentity, false)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return RepositoryVMRecord{}, ErrRepositoryVMUnknown
+		}
+		return RepositoryVMRecord{}, err
+	}
+	defer func() { _ = directory.Close() }()
+	var record RepositoryVMRecord
+	err = r.withIdentityLock(ctx, directory, func() error {
+		var err error
+		record, err = readRepositoryRecord(directory)
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrRepositoryVMUnknown
+		}
+		if err != nil {
+			return err
+		}
+		return r.validateRepositoryRecord(identity, record)
+	})
+	return record, err
+}
+
+// inspect authenticates the live runtime for an exact durable repository record
+// without attaching handles or creating replacement state.
+func (r *RepositoryVMRegistry) inspect(ctx context.Context, record RepositoryVMRecord) error {
+	identity, err := newValidatedRepositoryIdentity(record.Owner, record.GitCommonDirectory, r.stateRoot)
+	if err != nil || identity.value.Key != record.RepositoryKey {
+		return ErrRepositoryVMInconsistent
+	}
+	directory, err := r.openIdentityDirectory(identity, false)
+	if err != nil {
+		return fmt.Errorf("%w: open repository generation: %v", ErrRepositoryVMInconsistent, err)
+	}
+	defer func() { _ = directory.Close() }()
+	if err := r.validateRepositoryRecord(identity.value, record); err != nil {
+		return err
+	}
+	authority, err := readRepositoryBootAuthority(directory)
+	if err != nil || record.AuthorityDigest != authority.digest() {
+		return fmt.Errorf("%w: repository boot authority is missing or inconsistent", ErrRepositoryVMInconsistent)
+	}
+	challenge, err := authority.healthChallenge(record)
+	if err != nil {
+		return err
+	}
+	healthCtx, cancelHealth := context.WithTimeoutCause(ctx, repositoryHealthTimeout, errors.New("repository inventory health phase timed out"))
+	response, err := r.runtime.Health(healthCtx, record, challenge)
+	cancelHealth()
+	if err != nil {
+		return err
+	}
+	if err := authority.VerifyHealth(record, challenge, response); err != nil {
+		return fmt.Errorf("%w: repository health response is not authoritative", ErrRepositoryVMInconsistent)
+	}
+	return validateRepositoryRuntime(record, response.Status)
+}
+
+type repositoryDirectory struct {
+	file *os.File
+	path string
+}
+
+func (d *repositoryDirectory) Close() error { return d.file.Close() }
+
+func openatOpaque(directoryFD int, component string, flags int, mode uint32) (int, error) {
+	if !validOpaquePathComponent(component) {
+		return -1, fmt.Errorf("openat path component %q is not opaque", component)
+	}
+	return unix.Openat(directoryFD, component, flags, mode)
+}
+
+func (d *repositoryDirectory) Lstat(name string) (os.FileInfo, error) {
+	fd, err := openatOpaque(int(d.file.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: name, Err: err}
+	}
+	file := os.NewFile(uintptr(fd), filepath.Join(d.path, name))
+	defer func() { _ = file.Close() }()
+	return file.Stat()
+}
+
+func (r *RepositoryVMRegistry) openIdentityDirectory(identity validatedRepositoryIdentity, create bool) (*repositoryDirectory, error) {
+	rootFD, err := unix.Open(r.stateRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open repository registry root without symlinks: %w", err)
+	}
+	current := os.NewFile(uintptr(rootFD), r.stateRoot)
+	currentPath := r.stateRoot
+	for _, component := range identity.components {
+		if create {
+			if err := unix.Mkdirat(int(current.Fd()), component, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+				_ = current.Close()
+				return nil, fmt.Errorf("create repository registry namespace %q: %w", component, err)
+			}
+		}
+		nextFD, err := openatOpaque(int(current.Fd()), component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			_ = current.Close()
+			return nil, fmt.Errorf("open repository registry namespace %q without symlinks: %w", component, err)
+		}
+		next := os.NewFile(uintptr(nextFD), currentPath)
+		info, statErr := next.Stat()
+		if statErr != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+			_ = next.Close()
+			_ = current.Close()
+			return nil, fmt.Errorf("repository registry namespace %q is not a private directory", component)
+		}
+		_ = current.Close()
+		currentPath = filepath.Join(currentPath, component)
+		current = next
+	}
+	return &repositoryDirectory{file: current, path: currentPath}, nil
+}
+
+func (*RepositoryVMRegistry) withIdentityLock(ctx context.Context, directory *repositoryDirectory, fn func() error) error {
+	fd, err := openatOpaque(int(directory.file.Fd()), "registry.lock", unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open repository generation lock without symlinks: %w", err)
+	}
+	lock := os.NewFile(uintptr(fd), filepath.Join(directory.path, "registry.lock"))
+	defer func() { _ = lock.Close() }()
+	for {
+		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			return fmt.Errorf("lock repository generation: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	defer func() { _ = unix.Flock(fd, unix.LOCK_UN) }()
+	return fn()
+}
+
+func (r *RepositoryVMRegistry) repositoryEndpoint(identity RepositoryIdentity, generation uint32) string {
+	return filepath.Join(r.endpointRoot, "repository-"+identity.Key[:16]+fmt.Sprintf("-%08x.sock", generation))
+}
+
+func (r *RepositoryVMRegistry) validateRepositoryRecord(identity RepositoryIdentity, record RepositoryVMRecord) error {
+	expectedRootFS := filepath.Join(identity.StateDirectory, "rootfs")
+	expectedEndpoint := r.repositoryEndpoint(identity, record.Generation)
+	if record.State != EnvironmentReady || record.Owner != identity.Owner || record.RepositoryKey != identity.Key ||
+		record.GitCommonDirectory != identity.GitCommonDirectory || record.Generation == 0 || record.VMID == "" ||
+		record.RootFSPath != expectedRootFS || record.Endpoint != expectedEndpoint || record.AuthorityDigest == "" || record.RunnerPID <= 0 || record.ProcessIdentity == "" {
+		return ErrRepositoryVMInconsistent
+	}
+	return nil
+}
+
+func validateRepositoryArtifacts(verified VerifiedArtifacts) error {
+	if verified.ExecutionImage.Kind != ArtifactExecutionImage || verified.GuestAgent.Kind != ArtifactGuestAgent ||
+		verified.ExecutionImage.Digest == "" || verified.GuestAgent.Digest == "" ||
+		!filepath.IsAbs(verified.ExecutionImage.Path) || !filepath.IsAbs(verified.GuestAgent.Path) {
+		return errors.New("verified Brood and guest-agent artifacts are required for first use")
+	}
+	return nil
+}
+
+func validateRepositoryRootFS(directory *repositoryDirectory) error {
+	rootFD, err := openatOpaque(int(directory.file.Fd()), "rootfs", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return errors.New("private repository rootfs is missing or invalid")
+	}
+	root := os.NewFile(uintptr(rootFD), filepath.Join(directory.path, "rootfs"))
+	defer func() { _ = root.Close() }()
+	current := root
+	components := strings.Split(guestAgentInstallPath, string(filepath.Separator))
+	for index, component := range components {
+		flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+		if index < len(components)-1 {
+			flags |= unix.O_DIRECTORY
+		}
+		fd, err := openatOpaque(int(current.Fd()), component, flags, 0)
+		if err != nil {
+			if current != root {
+				_ = current.Close()
+			}
+			return errors.New("private repository rootfs has no executable guest agent")
+		}
+		next := os.NewFile(uintptr(fd), filepath.Join(directory.path, "rootfs", filepath.Join(components[:index+1]...)))
+		if current != root {
+			_ = current.Close()
+		}
+		current = next
+	}
+	defer func() { _ = current.Close() }()
+	info, err := current.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return errors.New("private repository rootfs has no executable guest agent")
+	}
+	return nil
+}
+
+func validateProvisionalRuntime(record RepositoryVMRecord, status RuntimeStatus) error {
+	if !status.Live || status.Generation != record.Generation || status.VMID != record.VMID || status.Endpoint != record.Endpoint || status.PID <= 0 || status.ProcessIdentity == "" {
+		return ErrRepositoryVMInconsistent
+	}
+	return nil
+}
+
+func validateRepositoryRuntime(record RepositoryVMRecord, status RuntimeStatus) error {
+	if err := validateProvisionalRuntime(record, status); err != nil || status.PID != record.RunnerPID || status.ProcessIdentity != record.ProcessIdentity {
+		return ErrRepositoryVMInconsistent
+	}
+	return nil
+}
+
+func randomGeneration() (uint32, error) {
+	var bytes [4]byte
+	for {
+		if _, err := rand.Read(bytes[:]); err != nil {
+			return 0, fmt.Errorf("allocate repository generation: %w", err)
+		}
+		if generation := binary.BigEndian.Uint32(bytes[:]); generation != 0 {
+			return generation, nil
+		}
+	}
+}
+
+func readRepositoryBootAuthority(directory *repositoryDirectory) (RepositoryBootAuthority, error) {
+	fd, err := openatOpaque(int(directory.file.Fd()), "authority.key", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return RepositoryBootAuthority{}, err
+	}
+	file := os.NewFile(uintptr(fd), filepath.Join(directory.path, "authority.key"))
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() != repositoryAuthorityBytes {
+		return RepositoryBootAuthority{}, errors.New("repository boot authority is not a private regular file")
+	}
+	value, err := io.ReadAll(io.LimitReader(file, repositoryAuthorityBytes+1))
+	if err != nil {
+		return RepositoryBootAuthority{}, err
+	}
+	return repositoryBootAuthorityFromBytes(value)
+}
+
+func writeRepositoryBootAuthority(directory *repositoryDirectory, authority RepositoryBootAuthority) error {
+	fd, err := openatOpaque(int(directory.file.Fd()), "authority.key", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(fd), filepath.Join(directory.path, "authority.key"))
+	if _, err := file.Write(authority.bytes()); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return directory.file.Sync()
+}
+
+func readRepositoryRecord(directory *repositoryDirectory) (RepositoryVMRecord, error) {
+	fd, err := openatOpaque(int(directory.file.Fd()), "registry.json", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return RepositoryVMRecord{}, &os.PathError{Op: "open", Path: "registry.json", Err: err}
+	}
+	file := os.NewFile(uintptr(fd), filepath.Join(directory.path, "registry.json"))
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return RepositoryVMRecord{}, fmt.Errorf("repository generation registry is not a regular file: %w", err)
+	}
+	var document repositoryRegistryDocument
+	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
+		return RepositoryVMRecord{}, fmt.Errorf("decode repository generation registry: %w", err)
+	}
+	if document.Version != repositoryRegistryVersion {
+		return RepositoryVMRecord{}, fmt.Errorf("unsupported repository generation registry version %d", document.Version)
+	}
+	return document.Record, nil
+}
+
+func writeRepositoryRecord(directory *repositoryDirectory, record RepositoryVMRecord) error {
+	data, err := json.Marshal(repositoryRegistryDocument{Version: repositoryRegistryVersion, Record: record})
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	var name string
+	var temporary *os.File
+	for attempt := 0; attempt < 100; attempt++ {
+		var random [8]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return err
+		}
+		name = ".registry-" + hex.EncodeToString(random[:])
+		fd, openErr := openatOpaque(int(directory.file.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+		if openErr == nil {
+			temporary = os.NewFile(uintptr(fd), filepath.Join(directory.path, name))
+			break
+		}
+		if !errors.Is(openErr, unix.EEXIST) {
+			return openErr
+		}
+	}
+	if temporary == nil {
+		return errors.New("allocate repository registry temporary file")
+	}
+	defer func() { _ = unix.Unlinkat(int(directory.file.Fd()), name, 0) }()
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := unix.Renameat(int(directory.file.Fd()), name, int(directory.file.Fd()), "registry.json"); err != nil {
+		return err
+	}
+	return directory.file.Sync()
+}

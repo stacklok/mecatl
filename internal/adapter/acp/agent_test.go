@@ -62,7 +62,7 @@ func (p acpPlacementProvider) binding() server.PlacementBinding {
 		panic(err)
 	}
 	env := tool.MustEnvironment(p.ref, ws, memledger.New(), nil)
-	return server.PlacementBinding{Environment: env, Ref: p.ref}
+	return server.PlacementBinding{Environment: env, Ref: p.ref, CompositionRoot: p.root}
 }
 
 func (p acpPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
@@ -991,8 +991,8 @@ func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	if _, err := a.Handle(context.Background(), "session/load", badLoad, true); err == nil || !strings.Contains(err.Error(), "cwd does not match") {
 		t.Fatalf("session/load cwd mismatch = %v", err)
 	}
-	if got := binds.Load(); got != 3 { // startup validation + both session/new calls
-		t.Fatalf("Bind calls = %d, want 3", got)
+	if got := binds.Load(); got != 2 { // both session/new calls
+		t.Fatalf("Bind calls = %d, want 2", got)
 	}
 	if got := reattaches.Load(); got != 4 { // create/load discovery plus both load attempts
 		t.Fatalf("Reattach calls = %d, want 4", got)

@@ -34,6 +34,9 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
   terminal client that can host a local server or connect to a remote one.
 - A Kubernetes-native reference runtime that combines Redis-backed state,
   Kubernetes session leases, drain handling, and disposable replicas.
+- Per-session execution environments, including an opt-in local microVM backend
+  that keeps model providers and credentials on the host while filesystem tools
+  and Bash run inside the VM.
 
 ## Get started
 
@@ -128,6 +131,47 @@ For an embedded deployment, see the
 > loopback, single-user use. Configure authentication and transport protection
 > before binding it off-loopback. The [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
+
+## Local microVM execution
+
+For optional isolated local execution on Linux amd64, install and authenticate the
+release-stamped host binaries: both `mecatui` and `mecated` for interactive use, or
+just `mecated` for headless use. `mecatui` runs the embedded interactive server;
+`mecated` supplies local microVM administration. Follow the
+[verified host-binary installation steps](https://mecatl.dev/docs/building/deployment/microvm-environments#local-microvm-environments)
+before running either command sequence:
+
+```sh
+# Interactive embedded journey: configure the operator-owned deployment setting
+# in ~/.config/mecatl/settings.yaml:
+#
+# execution:
+#   default_placement: microvm-local
+mecated microvm doctor
+mecatui
+
+# Or headless, mecated-only journey:
+mecated microvm doctor
+mecated serve --headless --default-placement microvm-local
+# --headless declares an unattended server, so child asks do not wait for a local UI.
+# Ordinary POST /v1/sessions uses the deployment default; clients send no path or placement.
+```
+
+Release binaries verify and prepare the required runtime when the deployment selects
+`microvm-local`. Source builds do not support this profile; repository developers can
+use the separate [developer source workflow](./docs/usage/microvm-environments.md#developer-source-workflow).
+`microvm doctor` and `microvm status` are read-only `mecated` administration commands.
+Guest IPv4 egress is permissive by default; external IPv6 is unrouted and unsupported.
+The local host operator can instead select `deny-all` or `allowlist` in
+`execution.microvm.guest_egress`, or use `mecated serve`'s
+`--microvm-guest-egress=deny-all` or `--microvm-guest-egress=allowlist` with repeatable
+`--microvm-guest-allow=HOST:PORT/tcp|udp` rules. The allowlist requires at least one
+valid hostname rule; invalid input or enforcement failure stops startup. HTTP/gRPC
+clients and project configuration cannot set or weaken this host-only policy. Agent
+edits live in an isolated session worktree, not in the original checkout. The [local
+microVM operator guide](https://mecatl.dev/docs/building/deployment/microvm-environments) covers
+verified installation, headless use, guest-egress controls, host-versus-guest
+boundaries, and platform limits.
 
 ## User documentation
 

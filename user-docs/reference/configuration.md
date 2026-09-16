@@ -239,6 +239,20 @@ Exact verified OIDC issuer/subject pairs authorized for process-wide storage hea
 | `storage_management.principals[].issuer` | `string` | `(empty)` | Issuer must equal the verified token issuer byte-for-byte. |
 | `storage_management.principals[].subject` | `string` | `(empty)` | Subject must equal the verified token subject byte-for-byte. |
 
+## `execution`
+
+Tier: **operator**
+
+Server-owned execution placement and MicroVM guest-egress policy. Operator-tier only; project values are ignored. Bare mecatui and mecated resolve the same settings.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `execution.default_placement` | `string` | `host-local` | The default_placement setting selects the server-owned default placement backend. |
+| `execution.microvm` | `executionmicrovmsection` | `(absent)` | The microvm block configures local MicroVM execution without creating a public profile. |
+| `execution.microvm.guest_egress` | `executionguestegresssection` | `(absent)` | The guest_egress block controls network destinations reachable from the guest. |
+| `execution.microvm.guest_egress.mode` | `string` | `permissive` | mode accepts permissive, deny-all, or allowlist. Permissive is the default. |
+| `execution.microvm.guest_egress.allow` | `[]string` | `(absent)` | allow lists HOST:PORT/tcp\|udp destinations and is valid only in allowlist mode. |
+
 ## `steer`
 
 Tier: **operator**

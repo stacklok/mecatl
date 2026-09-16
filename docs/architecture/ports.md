@@ -154,6 +154,30 @@ snapshot field, and `server.Config.EnvironmentResolver` reattaches a live
 fake proves the contract). The
 version-aware file-mutation foundation is [ADR 0208](../adr/0208-execution-environment.md).
 
+The production microVM adapter places execution in one repository-scoped VM generation
+per authenticated local operator and canonical Git common directory. Sessions and isolated
+children attach as distinct logical `EnvironmentRef`/worktree pairs inside that generation;
+direct-write children reuse the parent attachment. Closing an attachment unregisters and
+closes only its process-local data-plane handles and worktree lifecycle. It does not stop the
+repository VM, remove the private rootfs or declared caches, or affect sibling attachments.
+
+The built-in hosted topology defaults to unrestricted guest IPv4 egress. The guest IPv6
+stack remains enabled, but go-microvm hosted networking does not route external IPv6, so
+external IPv6 is explicitly unsupported rather than presented as dual-stack connectivity.
+Operators may select deny-all or hostname/port/protocol allowlisting as a tightening: that
+mode filters IPv4, disables guest IPv6, and aborts readiness if either enforcement step fails.
+Guest policy contains guest processes only; host-side LLM providers, WebFetch, WebSearch,
+MCP, hooks, OCI discovery, and telemetry remain outside it.
+
+The daemon persists one flock-serialized singleton registry record and private rootfs per
+repository key, plus private durable metadata for each logical attachment. Live VM,
+hosted-network, listener, capability-issuer, guest-registration, Workspace, and runner
+handles remain process-local. Exact reattachment is therefore supported only while all of
+those dependencies remain live in the current daemon. After daemon restart, readiness and
+resolve fail promptly while preserving the singleton record, rootfs, and worktrees; the MVP
+never silently provisions a replacement or destroys an uncertain resource. Durable
+attachment metadata still supports bounded status and exact logical deletion after restart.
+
 `tool.MemoryStore` and `tool.EnvironmentForker` live alongside it for the same
 layering reason (the tools that need them depend on the interface, not a
 `port`).

@@ -176,6 +176,10 @@ type Config struct {
 	// CommandRunner configures the built-in command interpreter and its narrowly
 	// inherited process-environment names. It is strict and operator-tier only.
 	CommandRunner *CommandRunnerSection `yaml:"command_runner"`
+	// Execution defines the strict OPERATOR-TIER execution-placement policy. Project-tier
+	// values are ignored with a value-free warning. Omission selects host-local
+	// placement with permissive MicroVM guest egress.
+	Execution *ExecutionSection `yaml:"execution"`
 	// TemporaryStorage controls managed command temporary storage. It is strict and
 	// read exclusively from the user-global settings.yaml; project-tier and explicit
 	// CLI configuration values are ignored by the Resolver.
@@ -227,6 +231,86 @@ func (e *CommandRunnerEnvironment) UnmarshalYAML(node ast.Node) error {
 		seen[name] = struct{}{}
 	}
 	return nil
+}
+
+// ExecutionSection is the strict operator-owned placement policy.
+type ExecutionSection struct {
+	// The default_placement setting selects the server-owned default placement backend.
+	DefaultPlacement string `yaml:"default_placement"`
+	// The microvm block configures local MicroVM execution without creating a public profile.
+	MicroVM *ExecutionMicroVMSection `yaml:"microvm"`
+}
+
+// ExecutionMicroVMSection configures the local MicroVM backend.
+type ExecutionMicroVMSection struct {
+	// The guest_egress block controls network destinations reachable from the guest.
+	GuestEgress *ExecutionGuestEgressSection `yaml:"guest_egress"`
+}
+
+// ExecutionGuestEgressSection configures guest network destinations. Allow entries
+// use the MicroVM manager's HOST:PORT/tcp|udp destination grammar.
+type ExecutionGuestEgressSection struct {
+	// mode accepts permissive, deny-all, or allowlist. Permissive is the default.
+	Mode string `yaml:"mode"`
+	// allow lists HOST:PORT/tcp|udp destinations and is valid only in allowlist mode.
+	Allow []string `yaml:"allow"`
+}
+
+// UnmarshalYAML decodes and validates the strict operator-owned execution policy.
+func (s *ExecutionSection) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "execution", s.strictFields()); err != nil {
+		return err
+	}
+	if s.DefaultPlacement == "" {
+		s.DefaultPlacement = "host-local"
+	}
+	if s.DefaultPlacement != "host-local" && s.DefaultPlacement != "microvm-local" {
+		return fmt.Errorf("execution.default_placement: must be host-local or microvm-local")
+	}
+	return nil
+}
+
+func (s *ExecutionSection) strictFields() map[string]any {
+	return map[string]any{
+		"default_placement": &s.DefaultPlacement,
+		"microvm":           newPermconfigNodePointer(&s.MicroVM),
+	}
+}
+
+// UnmarshalYAML decodes the strict MicroVM execution policy.
+func (s *ExecutionMicroVMSection) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "execution.microvm", s.strictFields())
+}
+
+func (s *ExecutionMicroVMSection) strictFields() map[string]any {
+	return map[string]any{"guest_egress": newPermconfigNodePointer(&s.GuestEgress)}
+}
+
+// UnmarshalYAML decodes and validates the strict MicroVM guest egress policy.
+func (s *ExecutionGuestEgressSection) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "execution.microvm.guest_egress", s.strictFields()); err != nil {
+		return err
+	}
+	if s.Mode == "" {
+		s.Mode = "permissive"
+	}
+	switch s.Mode {
+	case "permissive", "deny-all":
+		if len(s.Allow) != 0 {
+			return fmt.Errorf("execution.microvm.guest_egress.allow: valid only in allowlist mode")
+		}
+	case "allowlist":
+		if len(s.Allow) == 0 {
+			return fmt.Errorf("execution.microvm.guest_egress.allow: requires at least one destination in allowlist mode")
+		}
+	default:
+		return fmt.Errorf("execution.microvm.guest_egress.mode: must be permissive, deny-all, or allowlist")
+	}
+	return nil
+}
+
+func (s *ExecutionGuestEgressSection) strictFields() map[string]any {
+	return map[string]any{"mode": &s.Mode, "allow": &s.Allow}
 }
 
 // TemporaryStorageSection is the strict operator policy for command temporary

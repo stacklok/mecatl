@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -103,24 +104,25 @@ func canonicalConfiguredDir(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
-		return filepath.Clean(resolved), nil
-	}
-	// A not-yet-created leaf (and possibly several missing ancestors, e.g. a
-	// completely fresh install) cannot be symlink-aliased; walk up until an
-	// existing ancestor resolves, then rejoin the missing suffix onto it.
-	missing := filepath.Base(abs)
-	dir := filepath.Dir(abs)
+	current := abs
+	var missing []string
 	for {
-		if resolved, resolveErr := filepath.EvalSymlinks(dir); resolveErr == nil {
-			return filepath.Clean(filepath.Join(resolved, missing)), nil
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", err
+		if _, lstatErr := os.Lstat(current); lstatErr == nil || !os.IsNotExist(lstatErr) {
+			return "", resolveErr
 		}
-		missing = filepath.Join(filepath.Base(dir), missing)
-		dir = parent
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
 	}
 }
 

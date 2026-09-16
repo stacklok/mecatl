@@ -27,7 +27,7 @@ for job in test-race-root-a test-race-root-b test-race-ui; do
   fi
 
   case "$job" in
-    test-race-root-a) expected_wrappers=7 ;;
+    test-race-root-a) expected_wrappers=8 ;;
     test-race-root-b|test-race-ui) expected_wrappers=1 ;;
   esac
   wrapper_calls="$(grep -Fc 'race-test.sh' <<<"$block")"

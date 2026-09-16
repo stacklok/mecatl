@@ -83,6 +83,248 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 [ADR 0218](../adr/0218-credential-store.md) and
 [ADR 0221](../adr/0221-read-only-credential-source.md).
 
+## Local microVM redesign contract (ADR 0346)
+
+Tasks 59–65 complete ordinary `microvm-local` readiness, immutable Brood admission with
+in-process `toolhive-core/container/verifier`, the one-shot rootfs materializer,
+repository-scoped lifecycle, logical worktree attachment, and the Linux amd64 MVP journey.
+
+The MVP key is `(authenticated local operator, canonical Git common directory)`. An
+inter-process-locked durable registry admits one VM generation and one rootfs materializer
+for that key. Different keys do not share rootfs, packages, guest home, or declared caches.
+Exact reattachment is allowed only while every owned dependency remains live in-process.
+Daemon restart loses the in-process hosted network provider, so readiness and resolve fail
+promptly with a named phase while preserving the durable record, rootfs, and worktrees; no
+replacement or destructive reconciliation occurs. The registry layer itself does not
+multiplex guest environments. Selecting the backend at service startup performs no Bind and
+allocates no logical attachment. `EnsureReady` runs only when an actual default MicroVM session
+is created; no-FS bypasses it, and readiness failure occurs before session persistence with no
+host-local fallback.
+
+The daemon creates and registers one distinct Git worktree for each session or isolated
+child. A newly accepted guest connection first proves repository-generation boot authority
+for its control/data purpose; no capability or protocol payload is sent before that proof.
+Each logical `EnvironmentRef` then authenticates owner, VM generation, and assigned root;
+filesystem and exec protocol requests are confined to that root and remain
+Workspace/runner-affined. This is logical RPC and Git-state separation, not kernel isolation:
+same-repository Bash may address sibling guest paths, while different repositories remain
+VM-isolated. Sessions reuse the repository VM through distinct refs. Direct-write children
+reuse the parent Environment; read-only Subagents, Parallel branches, and Team members
+receive distinct refs and worktrees. Close detaches handles without destroying shared VM
+state. The existing single-client isolated-child merge behavior is sufficient: no
+crash-durable merge journal, cross-process serialization, or multi-client proof is part of
+the MVP.
+
+Schedules use the repository-scoped lifecycle.
+`internal/adapter/server/schedule_manager.go` (`CreateSchedule`) provisions one logical
+attachment only for an independent schedule and persists `PlacementOwned`; origin-backed,
+no-FS, host-local, and legacy records remain borrowed. Update carries origin, ref, scope,
+profile, owner, and ownership forward unchanged. Fire uses exact reattachment, so interrupted
+or dirty state survives recurring and one-shot runs and harness restart. Before the first claim,
+owned deletion uses the optional `port.ScheduleDeletionStore`: one atomic begin refuses an active
+fire or persists a disabled deleting marker with an opaque incarnation token. `FireCount`, incremented
+by the atomic claim before fire-session publication, is the ownership handoff: after any claim,
+deleting the schedule removes only its record and retains the exact placement for historical and
+resumable fire sessions, including a claim that failed before session publication. The tombstone
+remains listable and retryable through cleanup and restart; every lifecycle mutation is fenced, and
+conditional completion removes only the same marked incarnation. Cleanup failure never restores or
+upserts an old spec. Borrowed, no-FS, host-local, and legacy-ambiguous records retain the prior
+idempotent direct-delete path. The MicroVM
+provider deletes only the logical attachment; `environment/microvm/repository_logical.go`
+(`DeletePreservingDirty`) leaves dirty records exact-reattachable and never removes the repository VM/rootfs or siblings.
+
+The runtime consumes admitted Brood Linux amd64 bytes directly, independently verifies and
+injects the guest agent into the singleton rootfs, and creates no session/child rootfs copy.
+On Linux the backend supplies namespace-side UID/GID 65532 through go-microvm's
+`WithUserNamespaceUID`; go-microvm maps those IDs to the daemon's host UID/GID when it
+creates the unprivileged user namespace, without world-mode widening. The built-in hosted
+network provides unrestricted IPv4; the guest IPv6 stack remains enabled but external IPv6
+is unrouted and unsupported. Optional deny-all or allowlist tightening filters IPv4,
+disables IPv6, and is fail-closed. Linux amd64 KVM is the sole live claim. Qualification used
+OpenRouter `openai/gpt-5-mini` through the public HTTP create/prompt path and observed normal
+Write, Read, and Bash in the Wolfi guest as UID 65532, source isolation, exact same-session
+reattachment after only mecated restarted, and healthy doctor/status results. Microvmd remained
+alive throughout the harness restart, so this evidence does not widen the documented fail-closed
+microvmd-restart boundary.
+
+Two defects found during qualification are fixed at their owning seams. The development descriptor
+check in `internal/adapter/microvmmanager/development_release_microvm_dev.go`
+(`ReadyRequestFromDevelopmentDescriptor`) now distinguishes malformed identity from source-build
+drift and tells developers to regenerate and rebuild, without disclosing either identity. The
+MicroVM Workspace in `internal/adapter/microvm/client.go` (`AuthorityResourcePath`) now implements
+`tool.AuthorityResourceResolver`, projecting authorization resources onto confined guest
+`/workspace` rather than leaving policy without a workspace resource identity. Focused tests pin
+the actionable diagnostic and reject empty, absolute, NUL-containing, and escaping authority
+paths.
+
+Status uses deterministic owner-scoped pages of at most 64 entries with opaque continuation
+tokens. Explicit deferrals are repository-VM deletion UX,
+sophisticated retention, crash-orphan reconciliation beyond safe loud failure,
+crash-durable/cross-process merge, Linux arm64 and macOS live support, upstream Brood
+signing, independent refresh channels, per-session fairness/quotas, dashboards, and
+exhaustive cache-poisoning controls.
+
+### Local microVM development release activation (ADR 0346)
+
+The unsupported source workflow is compile-time absent unless both local roots are built with
+`microvm_dev`. Those tagged roots alone register the descriptor and acknowledgement flags;
+the flags must appear together, are local-context-only, and are rejected when release stamp
+state is present. `internal/adapter/microvmmanager/development_release_microvm_dev.go`
+(`ReadyRequestFromDevelopmentDescriptor`) strictly decodes the owner-only descriptor and
+binds its Linux-amd64 platform, source identity, local bundle/key paths, outer digest,
+public-key identity, and policy revision before readiness. Its result enters
+`internal/adapter/microvmmanager/manager.go` (`EnsureReady`) as the same release/policy
+shape used by embedded production defaults. The only acquisition delta is the private local
+bundle path consumed by `internal/adapter/microvmmanager/default_operations.go` (`Download`);
+the digest check, safe extraction, bundled installer, installed-artifact validation, and
+microvmd signature/provenance admission remain shared. There is no environment, settings,
+HTTP/gRPC, arbitrary-URL, or external-installer path. The developer Taskfile tasks keep tagged
+preparation, binaries, and tests separate from ordinary `task build`, with generated assets
+under `.scratch`.
+
+The same authenticated lifecycle protocol now owns operator inventory and maintenance.
+`environment/microvm/repository_attachment_store.go` durably records each exact repository
+logical owner/session/ref/generation and its confined worktree plus dirty-retention decision;
+a fresh daemon reconstructs the bounded status/delete inventory without restoring live guest
+handles. `environment/microvm/daemon.go` (`inventory`) filters durable records by the
+requested local owner, sorts actionable records by exact session/ref/generation identity,
+and returns at most 64 rows plus an HMAC-authenticated opaque continuation. Tokens bind the
+owner and cursor, so modification or cross-owner reuse fails closed; each page probes only
+its ready runtime identities and projects exact session/ref/generation, lifecycle state,
+host worktree, and `healthy`/`stale`/`error` status. Clean deleted attachments are removed
+from inventory. A dirty attachment is detached but remains a ready durable record with the
+same exact ref, so a persisted session can reattach for recovery instead of being converted
+into an unresumable destroyed tombstone.
+`internal/adapter/microvm/client.go` (`Inventory`)
+rechecks the owner and bound; `internal/adapter/microvmmanager/manager.go` (`Status`)
+never opens registry files. `Status` holds one bounded page and its continuation instead of
+a lifetime inventory. Readiness starts or reuses the verified daemon and never calls Create
+or enables host fallback; status prints one page plus a copyable `--continuation` command. Exact logical-attachment deletion is exposed
+only by `mecated microvm delete`: it validates the exact owner-scoped backend, attachment,
+ref, and generation from status, confirms destructive action, preserves dirty worktrees,
+and never deletes or resets the repository VM. It is not a server API.
+Continuing a preserved chat uses
+`mecatui --resume SESSION_ID`; exact persisted placement is reattached by the server and
+never reselected by the resume request. The local administration surface is
+`mecated microvm doctor|status|delete`, scoped to the current execution host and OS
+principal; doctor and status are read-only. `mecatui connect` never invokes local MicroVM
+administration or readiness. Automatic readiness reports the exact resolved
+manager paths plus download, trust, resource, and egress policy; failures direct the
+operator to correct the reported cause and retry ordinary profile selection. Published
+standalone host binaries are bound by signed checksum manifests and provenance, embed only
+their matching version/platform bundle defaults, and remain separate from the OCI image;
+their verified bundle supplies its own installer. No ambient installer override exists.
+`environment/microvm/daemon.go`
+(`LifecycleInfo`) exposes protocol, release/running-binary/config identities, policy
+revision, sorted profiles, and socket only after Unix peer authentication.
+`internal/adapter/microvmmanager/manager.go` (`EnsureReady`) serializes all callers with the manager lock. It installs and starts only a
+genuinely fresh repository-scoped runtime; subsequent sessions and host processes reuse only
+a serving daemon whose persisted desired release/policy, installed binary/config, protocol,
+profile set, and socket identities all match. Conflicts or unhealthy state fail without stop,
+config rewrite, cache/state deletion, or runtime replacement. The exact `Stop` operation remains
+internal for explicit lifecycle cleanup and is never called by ordinary readiness. Before any
+download or repository provisioning, `internal/adapter/microvmmanager/default_operations.go`
+(`Preflight`) checks Git,
+Python 3, KVM, and actual ephemeral unprivileged-user-namespace creation; disabled controls
+and unavailable host prerequisites fail actionably without changing host policy. `Doctor` repeats that host
+preflight, first queries
+this serving identity, then runs the complete readiness probes against the same
+exact installation rather than validating only newly written files. Guest egress is
+permissive by default. `internal/adapter/microvmmanager/manager.go` (`DefaultPaths`) separates config (`$XDG_CONFIG_HOME/mecatl`), artifacts and
+the daemon binary (`$XDG_DATA_HOME/mecatl/microvm`), durable registry/worktrees
+(`$XDG_STATE_HOME/mecatl/microvm`), and the short owner-only runtime socket; each
+uses the documented home or `/tmp/mecatl-microvm-UID` fallback. The live support scope
+remains local single-user Git sessions on Linux amd64 KVM. Linux arm64 and Apple Silicon
+macOS have compile/static release coverage only; live support, schedules, remote/multi-user
+placement, non-Git sources, and unified host+guest egress are explicit limits.
+
+Artifact launch no longer treats `flock` as a security boundary. After revalidating all
+three cache entries, `environment/microvm/artifact.go` (`LockAndValidate`) copies their
+exact tree identities into one private per-launch snapshot and returns replacement
+`VerifiedArtifacts`; lifecycle and the direct provisioner launcher pass the replacements,
+not the published cache paths, to runtime. A digest check over each completed copy rejects
+a source race. Because go-microvm starts its runner asynchronously, the concrete backend
+copies runtime and firmware once more into generation-owned executable daemon state before
+returning from `Start`; rootfs is already a generation-owned clone. The launch snapshot can
+then be removed without racing the runner's firmware load, while deletion/reconciliation
+remove the owned copies. Release manifest v2
+uses the same `ArtifactTreeDigest` subjects independently for runtime, firmware, and the
+execution image. Because Brood Box does not publish a signed immutable base, the
+release workflow builds its base recipe directly from the pinned upstream commit,
+signs the resulting digest, captures both exact platform manifests, and passes that
+immutable index as the guest-tools Dockerfile's required `FROM`. Guest-tools strips
+the Brood SSH/user surface, injects only the guest agent, and smoke-tests both
+architectures as UID/GID 65532. Its lineage attestation and the packaged
+execution-image provenance both correlate the upstream Git revision with the exact
+platform base manifest. The installer projects those values and strict daemon
+admission verifies both resolved dependencies; missing lineage or a base tag fails
+closed. The release bundle includes a platform-specific artifact-digest binary;
+the manager executes the installer from that digest-verified, safely extracted bundle,
+rather than accepting an ambient external installer or requiring a repository checkout
+or Go toolchain on first run. A development/test override is an explicit absolute path
+paired with the SHA-256 of its exact bytes; the old unrelated installer environment is
+ignored. The release workflow also publishes signed and provenance-attested host
+`mecatui` binaries for Linux amd64/arm64 and Darwin arm64, each embedding only its matching
+version/platform bundle defaults; only the signed Linux-amd64 host binary is the live MVP
+support path, while ordinary source builds intentionally contain no authenticated defaults.
+The release workflow signs those exact statements, the installer
+rechecks archive and tree digests while projecting their evidence paths, and the live
+production E2E signs and consumes the packaged statements rather than manufacturing a
+second provenance shape. The tagged real-hypervisor proof now signs those packaged
+statements in place, runs the packaged installer, and supplies only its projected
+artifact paths/evidence to strict daemon admission.
+
+The guest data plane is one connection, not parallel Workspace and exec sockets.
+`environment/microvm/control/multiplex.go` (`ServeMultiplex`) performs one bounded
+handshake, negotiates both services and the mandatory filesystem/streaming/cancellation/
+generation-binding/message-bound capabilities, then dispatches frames by service,
+method, and monotonic request ID. The former independent `AcceptGuest`/`OpenGuest`
+negotiation path is removed, so lifecycle persists the agreement returned by the live
+production connection and fail-closed capability/version tests exercise that path.
+`environment/microvm/control/capability.go`
+(`CapabilityVerifier`) verifies a transferable HMAC capability bound to the complete
+owner/session/ref/generation tuple using independently provisioned guest key material;
+its bounded nonce set (4096 entries, then fail closed) rejects connection replay
+without a host-shared registry. Every request repeats a compact proof of the
+authenticated capability and duplicate request IDs are rejected. One
+reader demultiplexes replies while serialized bounded writes provide stream
+backpressure; context cancellation is a request-ID frame and the exec handler still
+terminates the guest process group. `environment/microvm/guestagent/guestagent.go`
+(`Connect`) constructs the Workspace and runner over that same client, so no failure
+path can dial a host filesystem or shell fallback. A guest-agent restart uses fresh
+per-boot key material, making capabilities from the previous verifier invalid before
+the in-memory replay set resets.
+
+The guest root process performs only privileged bootstrap and protocol service. On Linux,
+the libkrun backend passes namespace-side workload UID/GID 65532 to go-microvm's
+`WithUserNamespaceUID`; go-microvm maps those IDs to the daemon's host identity in an
+unprivileged single-ID user namespace, so virtio-fs can switch request credentials without
+host `CAP_CHOWN` or sudo. Where guest-root ownership is available,
+`/etc/mecatl/guest-agent.json` remains beneath a mode-0700 parent at mode 0600. Under
+the rootless workload mapping the root agent loads it, verifies that it is the parent's
+only entry, and removes both before any model command starts. It then enables
+`PR_SET_NO_NEW_PRIVS` and starts every model command through
+`environment/microvm/guestexec/server.go` as the fixed UID/GID 65532 with no
+supplementary groups or ambient capabilities. Thus workspace commands remain usable
+while the HMAC key, root agent signals, IPv6 sysctls, and mount policy stay outside the
+workload's authority. `TestInvariant_guest_workload_is_unprivileged` and the real-VM
+`TestMicroVMEnvironments_Scenario8_HostSecretAndSiblingIsolation` pin the structural
+and kernel-observable halves of this boundary.
+
+The repository-only lifecycle is owned by `environment/microvm/repository_lifecycle.go`
+(`RepositoryVMRegistry`). Runtime and doctor compare the durable runner token through
+`environment/microvm/runtime.go` (`ProcessStartIdentity`), which reads the platform
+process-start identity rather than trusting PID liveness or a synthetic token.
+`environment/microvm/operations.go` (`OperationsObserver`) retains process-local counters
+for execs, artifact verification, logical cleanup, and guest-egress denials. Its
+`egressSources` map is keyed by repository generation while that generation is active;
+registration samples a baseline, snapshots accumulate only unseen deltas, and teardown
+samples once before deleting the entry. The map, baselines, and counters die with the daemon
+and are reset by design. Commands, destinations, paths, bindings, and credentials are not
+retained. Metrics never become session state or authority.
+See the [architecture](../architecture/microvm-environments.md) and
+[operator guide](../usage/microvm-environments.md).
+
 ---
 
 ## Provider OIDC lifecycle
@@ -4718,7 +4960,7 @@ isolated-child runner oracles prove provider credentials do not enter command-ru
 environments. Residual boundary: a same-UID Shell process can read a known plaintext
 `auth.yaml` path; mode `0600` is not privilege separation.
 
-### `openaicompat` + `toolhivellm` — ToolHive protocol providers (issue #262, ADR 0064, ADR 0334)
+### `openaicompat` + `toolhivellm` — ToolHive protocol providers (issue #262, ADR 0064, ADR 0345)
 
 One detected ToolHive gateway identity registers TWO protocol-specific entries.
 `toolhive` is unchanged: `openaicompat` discovers `/v1/models` and
@@ -6542,10 +6784,18 @@ Placement is server-owned across embedded, loopback, remote, and cloud-native co
 `internal/app/placement.go` installs the local immutable provider over the operator's private
 configured root plus no-FS attenuation. `server.PlacementBinder` is mandatory and is the single Bind
 choke point; provider authorization and resolution happen in one snapshot and return a complete
-Environment, exact `EnvironmentRef{Kind, ID, Revision}`, and bounded display metadata. Startup
-validates the deployment default without caching it, and ordinary run entry always reattaches a
-fresh Environment so the read ledger resets; after restart, a verified local binding whose workspace
-root differs from the configured default rebuilds its root-scoped per-session engine and policy before
+Environment, exact `EnvironmentRef{Kind, ID, Revision}`, bounded display metadata, and an
+internal host-composition root where applicable. Service construction validates provider/scope
+configuration only and never calls Bind: allocation and backend readiness occur on actual default
+creation, while no-FS bypasses MicroVM readiness. Ordinary run entry always exactly reattaches a
+fresh Environment so the read ledger resets; Reattach never calls Bind or bootstraps replacement
+state. The host-composition root—not `Environment.Workspace().Root()`—selects the shared or
+per-session project policy assembly. Local placement supplies its selected host root; MicroVM
+supplies its configured source checkout after exact repository resolution while tools retain guest
+`/workspace`; no-FS supplies none. This value is process-local binding context, never snapshot or
+public/model-visible data, and missing required MicroVM context fails closed. After restart, a
+verified binding whose host-composition root differs from the configured default rebuilds its
+root-scoped per-session engine and policy before
 running rather than using the shared default-root engine. `sessionEnvironments` remains overrides-only
 (ACP and other explicitly owned overlays). Placement-provider, discovery, and storage failures cross
 public gRPC/HTTP only as stable content-free categories; bounded detailed causes remain on injected

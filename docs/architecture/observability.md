@@ -134,6 +134,17 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   `mecatl_schedule_fire_duration_seconds` (the due→terminal wall-clock, recorded
   only for a fired/failed fire; a skipped fire has no run, duration 0). The
   duration histogram shares the `latencyInstruments` explicit-bucket ladder.
+- **MicroVM runtime operations** (`environment/microvm/operations.go`) - the opt-in
+  daemon runtime has a separate bounded `OperationsObserver`. It counts guest execs,
+  guest-egress denials, artifact-verification outcomes, and logical cleanup outcomes.
+  A generation-keyed `egressSources` map samples cumulative denial sources while their
+  repository generations are active, then removes each source at teardown. Commands,
+  denied destinations, session/environment IDs, paths, credentials, and free text are
+  never retained as labels or diagnostics. The observer and source map are process-local
+  and reset when the daemon exits. Operational failures have no client `session.Event`,
+  so the observer uses the injected `port.Diagnostics`; model-visible facts remain
+  event-owned. `Doctor` runs the hypervisor, artifact, control, network, and profile
+  probes and renders stable actionable PASS/FAIL findings.
   > A broader performance-observability effort lands incrementally on a
   > separate unauthenticated admin listener: `mecated --metrics-addr` remains
   > loopback-only (default `127.0.0.1:9090`), while embedded `mecatui --perf`

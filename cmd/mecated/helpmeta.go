@@ -69,11 +69,14 @@ var flagMetaByFlag = map[string]flagMeta{
 	// Advanced — an operator running mecated by hand never sets them — and
 	// server-boundary, so absent from ACP help (a stdio ACP client already has
 	// its parent's lifetime and needs no socket or readiness barrier).
-	"grpc-unix-socket": {group: groupServer, common: false, acp: acpExclude},
-	"ready-file":       {group: groupServer, common: false, acp: acpExclude},
-	"lifetime-pipe-fd": {group: groupServer, common: false, acp: acpExclude},
-	"lifetime-stdin":   {group: groupServer, common: false, acp: acpExclude},
-	"metrics-addr":     {group: groupServer, common: false, acp: acpExclude},
+	"grpc-unix-socket":     {group: groupServer, common: false, acp: acpExclude},
+	"ready-file":           {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-pipe-fd":     {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-stdin":       {group: groupServer, common: false, acp: acpExclude},
+	"metrics-addr":         {group: groupServer, common: false, acp: acpExclude},
+	"microvm-guest-egress": {group: groupServer, common: false, acp: acpExclude},
+	"microvm-guest-allow":  {group: groupServer, common: false, acp: acpExclude},
+	"default-placement":    {group: groupWorkspaceSession, common: true, acp: acpExclude},
 
 	// ── Security (serve-only) ─────────────────────────────────────────────
 	"auth-token": {group: groupSecurity, common: true, acp: acpExclude},

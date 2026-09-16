@@ -1508,7 +1508,7 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, env, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
+	engine, env, compositionRoot, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1523,7 +1523,7 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), loaded, env, claimed, resolution)
+	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, compositionRoot), loaded, env, claimed, resolution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1637,7 +1637,7 @@ func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+	if _, _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	blockerSession := session.New("blocker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
@@ -1689,7 +1689,7 @@ func TestMCPAuthorizationGrantedCompensationSaveFailureSettlesInsteadOfStranding
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+	if _, _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 		t.Fatal(err)
 	}
 	blockerSession := session.New("blocker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
