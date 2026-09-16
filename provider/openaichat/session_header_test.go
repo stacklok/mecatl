@@ -91,6 +91,27 @@ func TestADR_0294_ProviderSessionHeaderExact(t *testing.T) {
 	}
 }
 
+func TestADR_0294_OpenCodeSessionHeaderExact(t *testing.T) {
+	const id = "session/exact:42?node=a&b=c"
+	headers := make(chan http.Header, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers <- r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, completedChatSSE)
+	}))
+	defer srv.Close()
+	p := New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"), WithOpenCodeSessionHeader())
+	drainSessionHeaderStream(port.WithSessionID(context.Background(), id), t, p, "model")
+
+	header := <-headers
+	if got := header.Get(openCodeSessionIDHeaderName); got != id {
+		t.Errorf("OpenCode session header = %q, want exact %q", got, id)
+	}
+	if got := header.Get(sessionIDHeaderName); got != id {
+		t.Errorf("mecatl session header = %q, want exact %q", got, id)
+	}
+}
+
 func TestADR_0294_ProviderSessionHeaderOptional(t *testing.T) {
 	for _, tc := range []struct {
 		name string
