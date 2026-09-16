@@ -150,6 +150,8 @@ type config struct {
 	anthropicKey         string
 	openCodeKey          string
 	mock                 bool
+	shell                string
+	shellFlagSet         bool
 	noShell              bool
 	// noSteer disables the mid-run steer inbox (steer-while-running, issue #512) on
 	// the embedded server — the opt-OUT of a DEFAULT-ON knob. noSteerFlagSet records
@@ -432,6 +434,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		Mode:    "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Mode,
 	})
 	fs.BoolVar(&cfg.mock, "mock", false, "embedded server only: use the canned offline mock provider instead of OpenAI (no network)")
+	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "embedded server only: disable the mid-run steer inbox (steer-while-running, issue #512): `enter` mid-run then falls back to the client-side terminal merge-queue and ServerCapabilities.steer reads false. Steer is ON by default; this is the opt-OUT. The operator-tier settings.yaml `steer: false` scalar is the YAML twin (CLI out-ranks YAML; a project-tier steer: key is ignored)")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "embedded server only: per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables; large-context reasoning models can take a long time to first token")
@@ -654,6 +657,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.debugFlagSet = true
 	case "posture":
 		cfg.postureFlagSet = true
+	case "shell":
+		cfg.shellFlagSet = true
 	case "subagent-model-router":
 		// Kill-switch (ADR 0042): record that the flag was given so embeddedConfig can
 		// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
@@ -763,6 +768,11 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	cfg.openCodeKey = keys.OpenCode
 
 	if !cfg.listThemes && cfg.transportMode != modeConnect {
+		resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(cfg.shell, cfg.shellFlagSet, true, nil)
+		if err != nil {
+			return fmt.Errorf("command runner configuration: %w", err)
+		}
+		cfg.shell = resolvedShell
 		ws, err := resolveWorkspace(cfg.workspace)
 		if err != nil {
 			return err

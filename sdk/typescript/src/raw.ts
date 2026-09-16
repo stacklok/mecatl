@@ -84,15 +84,23 @@ const transportKinds = new WeakMap<Transport, TransportKind>();
 const transportOperations = new WeakMap<Transport, TransportOperations>();
 const rawJsonValues = new WeakMap<object, JsonValue>();
 const compatibilityInvalidators = new WeakMap<RawClient, () => void>();
+const compatibilityGenerationInvalidators = new WeakMap<RawClient, (generation: number) => void>();
+const compatibilityReaders = new WeakMap<RawClient, CompatibilityReader>();
 
 interface TransportOperations {
   cancelRun(sessionId: string, runId: string, signal: AbortSignal): Promise<void>;
 }
 
 interface CompatibilityResult {
+  generation: number;
   header: Headers;
   message: GetCompatibilityInfoResponse;
   trailer: Headers;
+}
+
+interface CompatibilityReader {
+  ordinary(options?: CallOptions): Promise<CompatibilityResult>;
+  refresh(options?: CallOptions): Promise<CompatibilityResult>;
 }
 
 export function registerTransport(
@@ -129,6 +137,33 @@ export function getRawJson(message: object): JsonValue | undefined {
 /** Clears one raw client's cached compatibility descriptor before a reconnect. */
 export function invalidateRawCompatibility(client: RawClient): void {
   compatibilityInvalidators.get(client)?.();
+}
+
+/** Clears a failed strict projection only while its selected generation is current. */
+export function invalidateRawCompatibilityGeneration(client: RawClient, generation: number): void {
+  const invalidate = compatibilityGenerationInvalidators.get(client);
+  if (invalidate === undefined) throw new TypeError("Unknown raw client");
+  invalidate(generation);
+}
+
+/** Reads the current shared raw compatibility generation for namespace projection. */
+export function readRawCompatibility(
+  client: RawClient,
+  options?: CallOptions,
+): Promise<CompatibilityResult> {
+  const reader = compatibilityReaders.get(client);
+  if (reader === undefined) throw new TypeError("Unknown raw client");
+  return reader.ordinary(options);
+}
+
+/** Starts and installs a fresh raw compatibility generation for namespace projection. */
+export function refreshRawCompatibility(
+  client: RawClient,
+  options?: CallOptions,
+): Promise<CompatibilityResult> {
+  const reader = compatibilityReaders.get(client);
+  if (reader === undefined) throw new TypeError("Unknown raw client");
+  return reader.refresh(options);
 }
 
 /** Transport-neutral, descriptor-driven operations beneath Client/Session/Run. @public */
@@ -177,28 +212,43 @@ function incompatible(cause: unknown, transport: TransportKind): IncompatibleSer
 export function createRawClient(options: RawClientOptions): RawClient {
   const transport = options.transport;
   const transportKind = options.transportKind ?? transportKinds.get(transport) ?? "grpc";
-  let compatibility: Promise<CompatibilityResult> | undefined;
+  let nextGeneration = 0;
+  let compatibility:
+    | { readonly generation: number; readonly promise: Promise<CompatibilityResult> }
+    | undefined;
 
-  const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+  const startCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
     const probeOptions = withoutSessionAffinity(callOptions);
-    compatibility ??= transport
-      .unary(
-        HarnessService.method.getCompatibilityInfo,
-        probeOptions?.signal,
-        probeOptions?.timeoutMs,
-        probeOptions?.headers,
-        {},
-        probeOptions?.contextValues,
-      )
+    const generation = ++nextGeneration;
+    const response = (() => {
+      try {
+        return transport.unary(
+          HarnessService.method.getCompatibilityInfo,
+          probeOptions?.signal,
+          probeOptions?.timeoutMs,
+          probeOptions?.headers,
+          {},
+          probeOptions?.contextValues,
+        );
+      } catch (cause) {
+        return Promise.reject(cause);
+      }
+    })();
+    const promise = response
       .then((response) => {
         const info = response.message;
         if (info.apiMajor !== SUPPORTED_API_MAJOR) throw incompatible(undefined, transportKind);
-        return { header: response.header, message: info, trailer: response.trailer };
+        return {
+          generation,
+          header: response.header,
+          message: info,
+          trailer: response.trailer,
+        };
       })
       .catch((cause: unknown) => {
         // A transient floor failure must not poison this client permanently.
         // Connection monitoring and a later ordinary operation may retry it.
-        compatibility = undefined;
+        if (compatibility?.generation === generation) compatibility = undefined;
         if (cause instanceof IncompatibleServerError) throw cause;
         const normalized = normalizeError(cause, transportKind);
         if (
@@ -211,7 +261,12 @@ export function createRawClient(options: RawClientOptions): RawClient {
         }
         throw normalized;
       });
-    return compatibility;
+    compatibility = { generation, promise };
+    return promise;
+  };
+
+  const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+    return compatibility?.promise ?? startCompatibility(callOptions);
   };
 
   const client: RawClient = {
@@ -274,6 +329,13 @@ export function createRawClient(options: RawClientOptions): RawClient {
   };
   compatibilityInvalidators.set(client, () => {
     compatibility = undefined;
+  });
+  compatibilityGenerationInvalidators.set(client, (generation) => {
+    if (compatibility?.generation === generation) compatibility = undefined;
+  });
+  compatibilityReaders.set(client, {
+    ordinary: ensureCompatibility,
+    refresh: startCompatibility,
   });
   return client;
 }

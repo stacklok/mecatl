@@ -15,26 +15,21 @@ import (
 )
 
 func TestHeadlessCredentialStorage_Scenario1_HelperFailuresFailClosed(t *testing.T) {
-	for _, mode := range []string{"80", "81", "82", "0", "unknown", "crash", "stall", "cancel"} {
+	for _, mode := range []string{"80", "81", "82", "0", "unknown", "crash"} {
 		t.Run(mode, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
 			var command *exec.Cmd
 			factory := func(ctx context.Context, executable string) *exec.Cmd {
-				command = exec.CommandContext(ctx, executable, "-test.run=TestCredentialDetectorProcess")
-				command.Env = append(os.Environ(), "MECATL_TEST_DETECTOR="+mode, "GORACE=atexit_sleep_ms=0")
-				if mode == "cancel" {
-					cancel()
-				}
+				command = exec.CommandContext(ctx, executable, "-test.run=^TestCredentialDetectorProcess$")
+				command.Env = []string{"MECATL_TEST_DETECTOR=" + mode, "GORACE=atexit_sleep_ms=0"}
 				return command
 			}
-			state, err := runSecretServiceDetector(ctx, 100*time.Millisecond, factory)
+			state, err := runSecretServiceDetector(t.Context(), 3*time.Second, factory)
 			switch mode {
 			case "80":
 				if err != nil || state != secretServicePresent {
 					t.Fatalf("state=%v err=%v", state, err)
 				}
-			case "81", "stall":
+			case "81":
 				if err != nil || state != secretServiceAbsent {
 					t.Fatalf("state=%v err=%v", state, err)
 				}
@@ -46,8 +41,33 @@ func TestHeadlessCredentialStorage_Scenario1_HelperFailuresFailClosed(t *testing
 			if command != nil && command.Process != nil && command.ProcessState == nil {
 				t.Fatal("started helper not reaped")
 			}
-			if mode == "cancel" && !errors.Is(err, context.Canceled) {
-				t.Fatal("parent cancellation lost")
+		})
+	}
+}
+
+func TestCredentialDetectorDeadlineAndParentCancellation(t *testing.T) {
+	for _, mode := range []string{"stall", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var command *exec.Cmd
+			state, err := runSecretServiceDetector(ctx, 100*time.Millisecond, func(ctx context.Context, executable string) *exec.Cmd {
+				command = exec.CommandContext(ctx, executable, "-test.run=^TestCredentialDetectorProcess$")
+				command.Env = []string{"MECATL_TEST_DETECTOR=" + mode, "GORACE=atexit_sleep_ms=0"}
+				if mode == "cancel" {
+					cancel()
+				}
+				return command
+			})
+			if mode == "stall" {
+				if err != nil || state != secretServiceAbsent {
+					t.Fatalf("state=%v err=%v", state, err)
+				}
+			} else if !errors.Is(err, context.Canceled) {
+				t.Fatalf("parent cancellation lost: %v", err)
+			}
+			if command != nil && command.Process != nil && command.ProcessState == nil {
+				t.Fatal("started helper not reaped")
 			}
 		})
 	}

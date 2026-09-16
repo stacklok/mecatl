@@ -1,0 +1,43 @@
+redis:
+  endpoint: redis.example.internal:6379
+  credentialsSecret: redis-credentials
+
+replicaCount: 1
+mockProvider: false
+
+oidc:
+  enabled: true
+  issuer: https://idp.example.com
+  audience: mecatl
+
+tls:
+  enabled: true
+  secretName: mecak8s-tls
+
+mcp:
+  broker:
+    callbackURL: https://agent.example.com/oauth/callback
+  servers:
+    - name: github
+      url: https://mcp.example.com/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://github.com/login/oauth/authorize
+              tokenEndpoint: https://github.com/login/oauth/access_token
+          client:
+            mode: preregistered
+            preregistered:
+              id: mecatl
+              secretKeyRef:
+                name: github-oauth
+                key: client-secret
+          scopes:
+            - repo
+          network:
+            additionalOrigins: []
+            privateOrigins: []
+            maxRedirects: 2

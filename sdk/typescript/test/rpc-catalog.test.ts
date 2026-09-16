@@ -28,7 +28,9 @@ class CatalogTransport implements Transport {
     this.calls.push(method.name);
     const message = create(
       method.output,
-      (method.name === "GetCompatibilityInfo" ? { apiMajor: 1 } : {}) as MessageInitShape<O>,
+      (method.name === "GetCompatibilityInfo"
+        ? { apiMajor: 1, capabilities: {}, features: ["server_info"] }
+        : {}) as MessageInitShape<O>,
     );
     return {
       header: new Headers(),

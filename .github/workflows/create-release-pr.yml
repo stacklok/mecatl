@@ -9,7 +9,7 @@
 # THE FLOW (see .claude/skills/cut-release/SKILL.md):
 #   1. a human dispatches THIS workflow and picks a bump type
 #      -> releaseo opens "Release vX.Y.Z" on branch release/vX.Y.Z
-#   2. a human reviews and squash-merges it              -> VERSION changes on main
+#   2. a human reviews and squash-merges it              -> release metadata changes on main
 #   3. create-release-tag.yml tags the merge commit      -> release.yml publishes
 #
 # WHY A GITHUB APP AND NOT GITHUB_TOKEN. GitHub suppresses workflow runs for events triggered
@@ -47,7 +47,8 @@ jobs:
     # environment's deployment-branch policy restricts it to `main`. Without that, anyone with
     # push access could dispatch a modified copy of this workflow from a branch and exfiltrate a
     # contents:write + pull-requests:write App credential — which is exactly the authority this
-    # whole flow exists to keep behind review. Same pattern as deploy-site.yml's `production`.
+    # whole flow exists to keep behind review. This is the same defense-in-depth pattern used
+    # for protected deployment environments.
     environment: release
     permissions:
       contents: write # delete stale release/v* refs left by a failed run
@@ -122,9 +123,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      # Bumps VERSION and nothing else. There is no version_files block: since the sibling
-      # actions moved to `$/` self-repository refs, no workflow file carries a version to
-      # bump, so the release PR is a one-line diff and the App needs no workflows:write.
+      # VERSION remains the source of truth. releaseo propagates its next value to the
+      # published chart metadata and the chart's default mecak8s image tag, matching the
+      # release flow used by ToolHive. No workflow file carries a version, so the App still
+      # needs no workflows:write permission.
       - name: Create the release PR
         id: release
         uses: stacklok/releaseo@80e8d8131d41cf8763254d02360f2c5ce9b7c0df # v0.0.4
@@ -134,26 +136,36 @@ jobs:
           releaseo_version: v0.0.4
           bump_type: ${{ inputs.bump_type }}
           token: ${{ steps.app-token.outputs.token }}
+          version_files: |
+            - file: deploy/helm/mecak8s/Chart.yaml
+              path: version
+            - file: deploy/helm/mecak8s/Chart.yaml
+              path: appVersion
+              prefix: v
+            - file: deploy/helm/mecak8s/values.yaml
+              path: image.tag
+              prefix: v
 
       # releaseo writes to disk before committing through the API, so the working tree still
-      # holds exactly what the PR contains. A release commit is now VERSION and nothing else —
-      # assert that, so anything else riding along is caught before a human reviews it.
+      # holds exactly what the PR contains. Assert every propagated value so an incomplete
+      # release commit is caught before a human reviews it. Do not gate on a fixed file list:
+      # releaseo may gain more version projections or generated output over time.
       - name: Verify the release diff
         env:
           NEW_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only)"
-          if [ "${changed}" != "VERSION" ]; then
-            echo "::error::expected the release commit to change VERSION and nothing else"
-            printf 'got:\n%s\n' "${changed:-<no working-tree changes>}"
+          if [ "$(tr -d '[:space:]' < VERSION)" != "${NEW_VERSION}" ] \
+            || ! grep -Fxq "version: ${NEW_VERSION}" deploy/helm/mecak8s/Chart.yaml \
+            || ! grep -Fxq "appVersion: \"v${NEW_VERSION}\"" deploy/helm/mecak8s/Chart.yaml \
+            || ! grep -Fxq "  tag: \"v${NEW_VERSION}\"" deploy/helm/mecak8s/values.yaml; then
+            echo "::error::release metadata is not synchronized at ${NEW_VERSION}"
             exit 1
           fi
-          echo "Release diff verified: VERSION -> ${NEW_VERSION}"
+          echo "Release diff verified: VERSION, chart, and image -> ${NEW_VERSION}"
 
-      # The 3/3 assertion above is the only thing that catches positional-index corruption, but
-      # it runs on THIS dispatch, not as a status check on the PR — a reviewer looking at the PR
-      # would see nothing wrong. Convert the PR to a draft so the finding is mechanically
+      # The synchronization assertion above runs on THIS dispatch, not as a status check on the
+      # PR. Convert a PR whose verification failed to a draft so the finding is mechanically
       # un-mergeable rather than relying on someone reading this job's log.
       - name: Block the PR if verification failed
         if: failure() && steps.release.outputs.pr_number != ''
@@ -167,7 +179,7 @@ jobs:
             'Release verification failed on the dispatch run — converted to draft. Do not merge; read the job log, close this PR and delete its branch.'
           echo "::warning::PR #${PR} converted to draft"
 
-      # releaseo's body lists the files it changed, which is a two-line version bump. What is
+      # releaseo's body lists the release metadata it changed. What is
       # actually shipping is every commit on main since the last tag, and nothing in the PR shows
       # it. Append the range so the approval gate is a real review rather than a rubber stamp.
       - name: Add the commit range to the PR body

@@ -274,7 +274,11 @@ describe("session projections", () => {
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
           createSession: () => ({ sessionId: "session" }),
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["server_info"],
+          }),
           getSession: () => {
             if (getKind === "missing") return {};
             return {

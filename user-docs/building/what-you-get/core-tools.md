@@ -88,8 +88,12 @@ read-only work.
 
 An operator can disable shell access for the entire deployment.
 `mecated serve --no-shell` removes the `Shell` tool, and `--shell ""` has the
-same effect. This applies whether or not a client requests the `no-fs` session
-profile. See
+same effect. The user-global `command_runner.shell` setting selects the default
+interpreter, while `command_runner.environment.inherit` can grant named external
+variables only to built-in main runners. See
+[Configure Mecatl](/building/deployment/settings.md#configure-the-command-runner)
+for precedence and credential-boundary details. This applies whether or not a
+client requests the `no-fs` session profile. See
 [Run mecated standalone](/building/deployment/mecated.md#flag-reference).
 
 ### Managed temporary storage (Linux and macOS)

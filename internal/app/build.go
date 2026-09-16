@@ -58,10 +58,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
-	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	"github.com/stacklok/mecatl/internal/adapter/flocklease"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
-	"github.com/stacklok/mecatl/internal/adapter/gitenv"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/k8slease"
@@ -196,12 +194,14 @@ type Config struct {
 	RedisAllowPlaintext bool
 	// RedisFollowPoolSize and RedisMaxFollowers bound the isolated blocking
 	// event-follow path. Zero retains redisstore's defaults for non-CLI callers.
-	RedisFollowPoolSize int
-	RedisMaxFollowers   int
-	Shell               string
-	NoShell             bool
-	temporaryStorage    temporaryStorageConfig
-	managedTemp         *managedTemporaryStorage
+	RedisFollowPoolSize        int
+	RedisMaxFollowers          int
+	Shell                      string
+	NoShell                    bool
+	commandEnvironmentInherit  []string
+	commandEnvironmentReserved map[string]struct{}
+	temporaryStorage           temporaryStorageConfig
+	managedTemp                *managedTemporaryStorage
 	// AuthorityEvaluator selects the authority evaluator adapter: "local" enforces
 	// minted sets, while "noop" deliberately disables enforcement. "cedar" loads
 	// CedarAuthorityPolicy at startup and fails closed when it cannot be loaded.
@@ -1570,6 +1570,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var commandRunnerErr error
+	cfg, commandRunnerErr = foldOperatorCommandRunnerEnvironment(cfg)
+	if commandRunnerErr != nil {
+		return nil, fmt.Errorf("command runner configuration: %w", commandRunnerErr)
+	}
 	var temporaryStorageErr error
 	cfg, temporaryStorageErr = foldOperatorTemporaryStorage(cfg)
 	if temporaryStorageErr != nil {
@@ -3208,7 +3213,7 @@ func sessionEngineFactoryWithTools(
 		// Skill tool. A failed authoritative read clears only these partitions.
 		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, assets, projectWorkspace)
 
-		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider:        resolvedProvider,
 			providerID:      resolvedProviderID,
 			model:           resolvedModel,
@@ -3263,6 +3268,17 @@ func sessionEngineFactoryWithTools(
 		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
+		// MODEL-VISIBLE memory self-description: a session that carries project or
+		// user memory must tell the model the ladder exists so it CALLS the tools
+		// rather than improvising. Gated by catalog presence so a no-fs or
+		// store-less session is never told about a store it cannot reach; the Grep
+		// escalation rung is withheld when Grep itself is absent.
+		deps.PromptConfig = applyMemoryPosture(deps.PromptConfig, deps.Catalog)
+		// MODEL-VISIBLE self-knowledge: a question about mecatl itself is not a
+		// codebase search. Unconditional (every session can be asked) with the
+		// workspace-search and depth clauses gated on the catalog, so the note
+		// never claims a reach this session lacks.
+		deps.PromptConfig = applySelfKnowledgePosture(deps.PromptConfig, deps.Catalog)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
 		// front there is no filesystem — and stop the prompt <env> claiming the
 		// SERVER's cwd/shell/git state, none of which this session can touch. The
@@ -3320,8 +3336,9 @@ func sessionEngineFactoryWithTools(
 			// requested). The factory REPORTS; the Service decides whether a partial
 			// mount is acceptable, because its two callers disagree — see the
 			// best-effort comment on the NewManager error above.
-			MountedClientMCP: mountedClientMCP,
-			Close:            closeFn,
+			MountedClientMCP:      mountedClientMCP,
+			MountedClientMCPTools: clientToolNames,
+			Close:                 closeFn,
 		}, nil
 	}
 }
@@ -4168,6 +4185,15 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
+	// MODEL-VISIBLE memory self-description: same gate as the per-session path.
+	// The shared engine must also carry the note so the commonest deployment (a
+	// plain mecatui launch hitting the shared engine) tells the model about its
+	// memory. Withheld when no memory family is wired.
+	deps.PromptConfig = applyMemoryPosture(deps.PromptConfig, deps.Catalog)
+	// Same self-knowledge note on the SHARED engine: the plain mecatui launch
+	// never reaches the per-session factory, so without this second call the
+	// commonest deployment is the one that cannot describe itself.
+	deps.PromptConfig = applySelfKnowledgePosture(deps.PromptConfig, deps.Catalog)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
 	// engine/agent.buildRequest (issue #462 review). The shared engine's
@@ -5186,6 +5212,19 @@ func validToolhiveLLMMode(mode string) bool {
 	return false
 }
 
+// validateDefaultProvider keeps the deployment-wide provider fail-fast contract
+// shared by startup and providers set-default. Model catalog membership belongs
+// only to startup's --default-model validation.
+func validateDefaultProvider(cfg Config, reg *providerRegistry) error {
+	if cfg.UseMock || (cfg.DefaultProvider == "" && cfg.DefaultModel == "") {
+		return nil
+	}
+	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
+		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
+	}
+	return nil
+}
+
 // (Config.DefaultProvider/DefaultModel — --default-provider/--default-model,
 // issue #21) EXACTLY ONCE at build time (called only from Build, fail-fast as
 // early as possible after the registry exists — the build-once
@@ -5212,11 +5251,11 @@ func validToolhiveLLMMode(mode string) bool {
 // fact says so; otherwise it names the EFFECTIVE resolved pair (with
 // --default-provider only, the model is that provider's builtin).
 func validateDefaultModel(cfg Config, reg *providerRegistry) error {
+	if err := validateDefaultProvider(cfg, reg); err != nil {
+		return err
+	}
 	if cfg.UseMock || (cfg.DefaultProvider == "" && cfg.DefaultModel == "") {
 		return nil
-	}
-	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
-		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
 	}
 	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
 		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())
@@ -5685,7 +5724,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	}
 	// The build-time assembly: default provider + model, no client MCP, narrating
 	// the ENABLED/DISABLED composition facts exactly once.
-	cat, assembledClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+	// No clientMgr on this build-time call, so the third return is always nil
+	// (no client MCP tools to name here) -- discarded.
+	cat, assembledClose, _ := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 		provider:   provider,
 		providerID: reg.Default(),
 		model:      cfg.Model,
@@ -6307,7 +6348,7 @@ func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// builds. Unlike the hardened runners, the main runner is NOT git-neutralised
 	// (gitenv) — the operator's own hooks/pager are honoured here, only the secrets
 	// are removed.
-	env := envscrub.Scrub(os.Environ())
+	env := mainCommandEnvironment(cfg)
 	return newCommandRunnerForRoot(cfg, root, env, "could not build command runner; Shell tool disabled")
 }
 
@@ -6472,7 +6513,7 @@ func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// (envscrub — "Finding B"; gitenv only ever removed GIT_*/PAGER, never secrets),
 	// then layer the git-neutralising env on the secret-free base so a sandboxed
 	// child sees neither the operator's secrets nor an untrusted repo's git hooks.
-	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	env := gitSafeEnvironment()
 	return newCommandRunnerForRoot(cfg, root, env, "could not build sandboxed member command runner; team-member Shell disabled")
 }
 
@@ -6951,7 +6992,7 @@ func writableExplorerDeps(cfg Config, provider port.LLMProvider, model, role str
 // childWindowFor. Cross-provider routing by a bare model id is out of scope (the registry is
 // keyed by provider) — same posture as the read-only Subagent + Parallel factories.
 func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) func(model string) (*agent.Engine, bool) {
-	mainRunner := buildCommandRunner(cfg)
+	mainRunner := directWriteCommandRunner(cfg)
 	return func(model string) (*agent.Engine, bool) {
 		model = strings.TrimSpace(model)
 		if model == "" {
@@ -7354,7 +7395,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	//   - no merger: there is nothing to merge — the child already wrote the parent
 	//     tree. (The shared autoMerger stays for Parallel single-branch auto-merge.)
 	// Skipped under no-FS (buildNoFSSubagentTool, above, wires no writable path).
-	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, buildCommandRunner(cfg))
+	writableEngine := buildWritableSubagentChildEngine(cfg, provReg, provider, parentProviderID, parentModel, directWriteCommandRunner(cfg))
 	opts = append(opts, agent.WithWritableChildEngine(writableEngine))
 	// WRITABLE EXPLORER per-call/routed model (mode:"read-write"+`model`, no `agent`;
 	// issue #285): a factory that rebuilds the WRITABLE explorer on the requested model via
@@ -7543,7 +7584,7 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 // preloaded skills, hooks, memory head, reference MCP tools, and direct-write semantics
 // remain identical. Inline MCP defs decline before buildAgentDefEngine can open resources.
 func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) (func(string) (*agent.Engine, bool), func(string, string) (*agent.Engine, bool)) {
-	mainRunner := buildCommandRunner(cfg)
+	mainRunner := directWriteCommandRunner(cfg)
 	build := func(agentName, routedModel string) (*agent.Engine, bool) {
 		agentName = strings.TrimSpace(agentName)
 		routedModel = strings.TrimSpace(routedModel)
@@ -8350,6 +8391,262 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 	return pc
 }
 
+// memoryPostureLead is the opening clause of the memory self-description note. It
+// is always present when at least one memory family is registered, telling the
+// model to CALL the memory tools rather than guess.
+//
+// SCOPE-NEUTRAL: the lead itself does not name "project" or "operator" — either
+// family alone enables it (applyMemoryPosture appends memoryPostureLead whenever
+// hasProject || hasUser), and a single-family deployment naming both scopes here
+// would claim a scope it does not have. The specific scopes are named by
+// memoryPostureProject/memoryPostureUser below, each appended only when its family
+// is actually registered.
+//
+// SCOPE: the trigger is deliberately SAVED FACTS, not "a topic". The broader
+// wording matched "what do you know about mecatl's permission modes?", which the
+// escalation clause below then routed into a workspace Grep — the exact failure
+// applySelfKnowledgePosture exists to prevent. The closing sentence names the
+// exemption rather than leaving the two notes to be reconciled by the reader.
+//
+// The tool names are NOT enumerated here: the catalog advertises exactly the
+// operations it registered, and a prose list goes stale against a base-only store
+// (the lifecycle trio is conditional on tool.MemoryLifecycleStore) or a
+// single-family deployment. The "durable memory store" substring is a stable test key.
+const memoryPostureLead = "You have a durable memory store holding facts saved earlier. When asked " +
+	"what you remember, CALL the memory retrieval tools rather than guessing — read what was actually " +
+	"saved, then answer. Saved facts only: a question about mecatl's own capabilities is answered from " +
+	"the mecatl self-knowledge account, never from a memory lookup or a workspace search."
+
+// memoryPostureProject is appended when the project-scoped family is registered.
+//
+// The storage advice MUST agree with memorytools.rememberDescription, which is the
+// tool's own model-facing contract: "never store credentials, transient state,
+// instructions, or facts rediscoverable from the workspace". This clause used to
+// recommend "workspace-specific findings" and "learned project conventions", which
+// are the rediscoverable and instruction categories that description excludes —
+// two model-facing contracts telling the model opposite things.
+//
+// The tool names are NOT enumerated (see memoryPostureLead).
+// The "Project memory" substring is a stable test key.
+const memoryPostureProject = "Project memory persists project-scoped facts across sessions. Use it for " +
+	"durable facts about this project that are NOT rediscoverable from the workspace. Never store " +
+	"instructions or behavioural rules, credentials, transient state, or anything recoverable by " +
+	"reading the project itself."
+
+// memoryPostureUser is appended when the user-scoped family is registered. Same
+// contract alignment as memoryPostureProject: the user-scope rememberDescription
+// excludes RULES and behavioural instructions explicitly ("those come from the
+// soul"), so this clause names that exclusion rather than inviting it.
+// The "User memory" substring is a stable test key.
+const memoryPostureUser = "User memory persists user-level preferences and cross-project facts. Use it " +
+	"for durable facts about the operator that hold regardless of which project is open. Never store " +
+	"behavioural rules (those come from the soul), credentials, or transient state."
+
+// memoryPostureEscalation is appended when both a memory family AND Grep exist.
+// Without Grep (the no-fs profile) the docs/repo rungs are unreachable and this
+// clause is withheld. The "escalate to workspace search" substring is a stable
+// test key.
+const memoryPostureEscalation = "When a lookup about the OPEN PROJECT returns nothing and you need " +
+	"more context, escalate to workspace search: use Grep to search project documentation, then the " +
+	"broader repository."
+
+// applyMemoryPosture appends the memory self-description note to a prompt.Config
+// when at least one memory family (project or user) is wired into the catalog. It
+// is a no-op when catalog is nil or carries no memory tools, so a no-fs or
+// store-less deployment never tells the model about a store it cannot reach. The Grep-gated escalation clause is similarly withheld
+// on the no-fs profile (DefaultRole fallback first — the applyNoFSPosture idiom).
+func applyMemoryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
+	if catalog == nil {
+		return pc
+	}
+	_, hasProject := catalog.Lookup(memory.RememberToolName)
+	_, hasUser := catalog.Lookup(memory.RememberUserToolName)
+	if !hasProject && !hasUser {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	note := memoryPostureLead
+	if hasProject {
+		note += "\n\n" + memoryPostureProject
+	}
+	if hasUser {
+		note += "\n\n" + memoryPostureUser
+	}
+	if _, ok := catalog.Lookup("Grep"); ok {
+		note += "\n\n" + memoryPostureEscalation
+	}
+	pc.Role += "\n\n" + note
+	return pc
+}
+
+// The MODEL-VISIBLE self-knowledge note. A question about mecatl itself depends
+// on the model knowing three things it cannot derive from the workspace: that the
+// question is not a codebase search, what its own safety axes are, and where the
+// authoritative documentation lives. Without the note the model treats "what are
+// mecatl's permissions in each mode?" as a grep task against whatever repository
+// happens to be open, which is usually somebody else's project.
+//
+// SINGLE SOURCE OF TRUTH: the note carries only the STRUCTURAL facts (the axis
+// names, their value sets, and the doc-tree shape) and names
+// https://mecatl.dev/docs/ as authoritative for everything else. It is
+// deliberately NOT a prose copy of user-docs/, which would drift silently as the
+// documentation is reworded and pages move.
+// TestSelfKnowledgePostureNamesLiveDocPages is the drift gate: every /docs/ path
+// named here must resolve to a live page under user-docs/.
+//
+// COST: Role rides the cache-stable StablePrefix, so this is paid by every session
+// whether or not it is ever asked. That is the deliberate trade — the alternative
+// (an on-demand lookup channel) cannot fire, because a model that does not know it
+// has self-knowledge never reaches for it.
+const (
+	// selfKnowledgePostureLead frames the question TYPE and names the authority.
+	// The "MECATL SELF-KNOWLEDGE" substring is a stable test key.
+	selfKnowledgePostureLead = "MECATL SELF-KNOWLEDGE. A question about mecatl or any of its components " +
+		"(features, configuration, permissions, modes, flags, deployment, documentation) is about YOU, " +
+		"not the open workspace and not a research topic. https://mecatl.dev/docs/ is authoritative for " +
+		"whatever the facts below do not cover."
+
+	// selfKnowledgePostureComponents names the shipped components so a question
+	// saying "mecatui" or "mecak8s" rather than "mecatl" is still recognised as a
+	// question about the model itself. Without it only the project name matched, and
+	// a component-named question fell through to a search.
+	// The "you answer for every component" substring is a stable test key.
+	selfKnowledgePostureComponents = "You are the agent core of the mecatl project and you answer for every " +
+		"component, whichever one is running: mecatl is the project and its importable Go engine; mecatui " +
+		"the terminal client, which starts an embedded server by default or attaches to a remote one via " +
+		"`mecatui connect ADDRESS`; mecated the general-purpose gRPC and HTTP/SSE server; mecak8s the " +
+		"Kubernetes-native server keeping session state in Redis; mecatequi a one-shot CI task returning " +
+		"a patch; mecatl-execution-provider the separate optional Kubernetes execution-provider service " +
+		"and controller, using a private gRPC API and not forming part of mecak8s; mecatl-executor the " +
+		"workload helper that runs inside execution Pods. The native Kubernetes execution lifecycle " +
+		"remains a draft implementation, not a complete production lifecycle."
+
+	// selfKnowledgePostureAxes is the load-bearing content clause: the three safety
+	// axes, kept distinct. Conflating the per-session permission mode with the
+	// deployment-wide posture ladder is the specific wrong answer this prevents. The
+	// mecatui sentence is here rather than in a client-specific clause because "what
+	// are the available modes in mecatui" is the question readers actually ask, and
+	// the answer is this axis plus how the client exposes it.
+	//
+	// The behaviour stays INLINE rather than deferring to a fetch: this is the clause
+	// selfKnowledgePostureDirect answers from, so moving it to the canonical page
+	// turns every mode question back into a WebFetch, which is the reflex this note
+	// was added to stop. The obligation that follows is accuracy, not omission, and
+	// the three claims here that carry BEHAVIOUR (accept-edits auto-allows Edit/Write
+	// only; auto/yolo widen authorization via an allow-all rule; posture raises
+	// project trust on interactive roots only, with other trust sources root-agnostic)
+	// are pinned against the real implementation by
+	// TestSelfKnowledgeBehaviouralClaimsMatchImplementation.
+	//
+	// The posture clause does NOT present --trust-project as the only source of
+	// headless project trust: resolveTrust also admits a declared trustedWorkspaces
+	// entry or remembered trust, neither of which checks Config.Headless (only
+	// applyPosture's floor is root-aware). Naming --trust-project alone would tell a
+	// headless operator using a declared or remembered trust source that they have
+	// no path to trust, which is false.
+	// The "Three SEPARATE safety axes" substring is a stable test key.
+	selfKnowledgePostureAxes = "Three SEPARATE safety axes, never conflated. (1) SESSION PERMISSION MODE: " +
+		"exactly three, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
+		"deny→ask→allow; `plan` denies mutations and expects a plan presented for approval; `acceptEdits` " +
+		"(accept-edits in mecatui) auto-allows Edit and Write only, leaving Shell and every other mutating " +
+		"tool on the normal rules. mecatui shows the mode in its header, takes `--mode` at launch, and " +
+		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide via " +
+		"--posture, rising strict < trusted < auto < yolo. auto and yolo widen what a call is authorized " +
+		"to do, not only how much runs without asking: both set an allow-all rule for every tool call. " +
+		"Posture raises project trust on INTERACTIVE roots only: a HEADLESS deployment does NOT trust the " +
+		"checkout by posture alone. Project ingestion and the read-only child shell follow from project " +
+		"trust however it was granted — an explicit --trust-project flag, a declared trusted workspace, or " +
+		"remembered trust grant it on any root, while posture alone grants it only on an interactive one. " +
+		"(3) GUARDRAILS: an optional model-backed checker over selected " +
+		"tool arguments and results, independent of permissions and inert until an operator configures a " +
+		"checker model. Under every mode and posture a matching deny wins and a configured ask is never " +
+		"suppressed."
+
+	// selfKnowledgePostureMap is the doc-tree shape, so a lookup lands on the right
+	// page instead of the site root. Every path here is pinned by the drift gate.
+	//
+	// These are SITE paths, and the clause says so: no documentation is compiled
+	// into the binary and none is readable locally, so a bare "/docs/intro" is
+	// resolvable ONLY by joining it onto the site base and fetching it. Without
+	// that, a leading slash reads as an absolute filesystem path to a model that
+	// holds Read and Grep, which is a wrong turn the note itself would have caused.
+	// The "/docs/features/permissions-and-posture" substring is a stable test key.
+	selfKnowledgePostureMap = "Documentation map (site paths under https://mecatl.dev/, never local " +
+		"files): /docs/intro, /docs/features/ (running a server), " +
+		"/docs/mecatui/ (the terminal client), /docs/building/ (embed, deploy, extend), /docs/reference/ " +
+		"(configuration, gRPC/HTTP APIs). Modes, postures and permissions in full: " +
+		"/docs/features/permissions-and-posture. Settings file: /docs/reference/configuration."
+
+	// selfKnowledgePostureDirect stops a basic question turning into a research
+	// task. Observed failure: asked "what are the available modes in mecatui", the
+	// model ran a WEB SEARCH, when the answer is three words in the axes clause
+	// above. A search engine is also the wrong instrument for a question whose
+	// authoritative source is one known URL.
+	// The "answer directly with no tool call" substring is a stable test key.
+	selfKnowledgePostureDirect = "When the facts above answer the question, answer directly with no tool " +
+		"call. Never run a web SEARCH for your own product or documentation: it lives at one known " +
+		"address, so read that page instead."
+
+	// selfKnowledgePostureNoWorkspaceSearch is withheld when the session has no
+	// workspace search (the "no-fs" profile has no Grep), where it would describe a
+	// temptation the session cannot act on.
+	// The "Never search the open workspace" substring is a stable test key.
+	selfKnowledgePostureNoWorkspaceSearch = "Never search the open workspace for mecatl's own " +
+		"documentation: it is usually an unrelated project. Search it only when mecatl's own source is " +
+		"what is open."
+
+	// selfKnowledgePostureFetch is the depth path when the session can reach the
+	// web. The closing imperative is the point: a question answered with "see the
+	// documentation" is the failure mode, not the fallback.
+	// The "then ANSWER THE USER" substring is a stable test key.
+	selfKnowledgePostureFetch = "For anything deeper or more current than the facts above, WebFetch the " +
+		"relevant https://mecatl.dev/docs/ page, then ANSWER THE USER from what you read and cite the " +
+		"page. Referring the user to the documentation instead of answering is not an answer."
+
+	// selfKnowledgePostureOffline is the same contract for a session with no
+	// WebFetch: answer to the edge of what is known, mark the edge, cite the page
+	// that settles it, never improvise a flag or a default.
+	// The "cannot fetch web pages" substring is a stable test key.
+	selfKnowledgePostureOffline = "This session cannot fetch web pages: answer from the facts above, say " +
+		"which part you are not certain of, and name the https://mecatl.dev/docs/ page that settles it. " +
+		"Never invent a flag, default, or behaviour."
+)
+
+// applySelfKnowledgePosture appends the self-knowledge note to a prompt.Config.
+// The identity, component, axis, doc-map, and answer-directly clauses are
+// deployment-independent and always present — every session can be asked about
+// mecatl, including a no-fs one. The
+// two tool-dependent clauses are gated on catalog presence so the note never
+// describes a reach the session does not have: the workspace-search warning needs
+// Grep, and the depth path is the WebFetch variant when WebFetch is registered and
+// the offline variant when it is not. A nil catalog (no tool inventory to consult)
+// carries the deployment-independent clauses alone. DefaultRole fallback first —
+// the applyNoFSPosture idiom.
+func applySelfKnowledgePosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	note := selfKnowledgePostureLead +
+		"\n\n" + selfKnowledgePostureComponents +
+		"\n\n" + selfKnowledgePostureAxes +
+		"\n\n" + selfKnowledgePostureMap +
+		"\n\n" + selfKnowledgePostureDirect
+	if catalog != nil {
+		if _, ok := catalog.Lookup("Grep"); ok {
+			note += "\n\n" + selfKnowledgePostureNoWorkspaceSearch
+		}
+		if _, ok := catalog.Lookup("WebFetch"); ok {
+			note += "\n\n" + selfKnowledgePostureFetch
+		} else {
+			note += "\n\n" + selfKnowledgePostureOffline
+		}
+	}
+	pc.Role += "\n\n" + note
+	return pc
+}
+
 // lookupMemberDef resolves spec.AgentType against the registry, returning the def
 // and true on a hit. An empty AgentType or a miss returns false (the caller falls
 // back to the default member catalog); a miss on a NON-empty AgentType also warns,
@@ -8641,7 +8938,7 @@ func gitSnapshot(workspace, shell string, trustProject bool) string {
 	// buildSandboxedCommandRunner) so a repo-local git config cannot run code, layered
 	// over the secret scrub (envscrub) so this harness-internal git snapshot never
 	// exposes the harness credentials to a repo-local git driver either.
-	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	env := gitSafeEnvironment()
 	runner, err := osfs.NewCommandRunnerShell(workspace, shellOr(shell), osfs.WithCommandEnvList(env))
 	if err != nil {
 		return ""
@@ -9138,7 +9435,7 @@ func (g gitWorktreeLister) List(ctx context.Context, root string) ([]server.Work
 	if root == "" {
 		return nil, nil
 	}
-	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
+	env := gitSafeEnvironment()
 	runner, err := osfs.NewCommandRunnerShell(root, g.shell, osfs.WithCommandEnvList(env))
 	if err != nil {
 		return nil, nil // no shell — fail-soft

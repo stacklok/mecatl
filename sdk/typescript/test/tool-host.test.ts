@@ -445,7 +445,7 @@ describe("loopback callback tool host", () => {
 
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
       });
     });
     const client = withToolRegistration(
@@ -487,7 +487,11 @@ describe("loopback callback tool host", () => {
           created.push(input);
           return { sessionId: "hosted-session" };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: ["mcp_servers_on_create"] }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: ["mcp_servers_on_create"],
+        }),
         listMcpSources: () => ({ sources: [] }),
       });
     });

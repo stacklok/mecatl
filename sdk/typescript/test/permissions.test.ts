@@ -40,7 +40,7 @@ describe("permission asks", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-raw" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* () {
           yield ask("run-raw", "ask-raw");
           yield terminal("run-raw");
@@ -74,7 +74,7 @@ describe("permission asks", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-first" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();
@@ -129,7 +129,7 @@ describe("permission asks", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-pending" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();
@@ -180,7 +180,11 @@ describe("permission asks", () => {
       const transport = createRouterTransport((router) => {
         router.service(HarnessService, {
           createSession: () => ({ sessionId: "session-abort" }),
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["server_info"],
+          }),
           converse: async function* (requests) {
             const input = requests[Symbol.asyncIterator]();
             await input.next();
@@ -232,7 +236,7 @@ describe("permission asks", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-late" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();

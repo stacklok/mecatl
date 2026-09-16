@@ -193,6 +193,8 @@ func TestPermconfigNodeDecoderShapeInventory(t *testing.T) {
 		{"StorageManagementPrincipal", func() yaml.NodeUnmarshaler { return &StorageManagementPrincipal{} }},
 		{"RetentionSection", func() yaml.NodeUnmarshaler { return &RetentionSection{} }},
 		{"RetentionLimitSection", func() yaml.NodeUnmarshaler { return &RetentionLimitSection{} }},
+		{"CommandRunnerSection", func() yaml.NodeUnmarshaler { return &CommandRunnerSection{} }},
+		{"CommandRunnerEnvironment", func() yaml.NodeUnmarshaler { return &CommandRunnerEnvironment{} }},
 		{"MCPSection", func() yaml.NodeUnmarshaler { return &MCPSection{} }},
 		{"MCPServerProfile", func() yaml.NodeUnmarshaler { return &MCPServerProfile{} }},
 		{"MCPAuthProfile", func() yaml.NodeUnmarshaler { return &MCPAuthProfile{} }},

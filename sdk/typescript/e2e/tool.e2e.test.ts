@@ -290,24 +290,29 @@ it("the real go mcp client completes the handshake against the sdk host", async 
   }
 });
 
-// Pins the known limitation recorded in the acceptance plan: the root capability
-// set is minted from the process-wide catalog, so a per-session client MCP tool
-// is absent from it and the default evaluator denies the call after the
-// permission ask has already been allowed. Every other test in this file selects
-// the no-op evaluator to exercise the SDK half; this one restores the default so
-// the eventual RootAuthority widening has a failing test to flip.
-it("a callback tool is denied by the default capability-set evaluator", async () => {
+// Previously pinned a known limitation (recorded in the acceptance plan): the
+// root capability set was minted once from the process-wide catalog, with no
+// visibility into a session's own client-mounted MCP tools, so the default
+// evaluator denied the call even after the permission ask had already been
+// allowed. Fixed by threading SessionEngineResult.MountedClientMCPTools
+// through setPerSessionLabels (internal/adapter/server), which folds a
+// session's own mounted tool names into its minted authority -- this test now
+// exercises that widening directly. Every other test in this file selects the
+// no-op evaluator to exercise the SDK half in isolation; this one restores the
+// default specifically to prove the widening authorizes the call, not just
+// that the tool mounts and dispatches.
+it("a callback tool is authorized under the default capability-set evaluator", async () => {
   const instance = await spawnProductFixture("tool-lookup.json", {
     args: ["--authority-evaluator", "local"],
   });
   try {
-    let invoked = false;
+    let argument: unknown;
     instance.client.tool(
       "lookup",
       objectSchema,
-      () => {
-        invoked = true;
-        return "must not run";
+      ({ query: value }) => {
+        argument = value;
+        return `lookup result: ${value}`;
       },
       { readOnly: true },
     );
@@ -315,12 +320,15 @@ it("a callback tool is denied by the default capability-set evaluator", async ()
     const { events, terminal } = await collectRun(
       await session.run("look it up", { onPermissionAsk: () => "allow_once" }),
     );
-    const result = resultFor(events, "lookup-1");
 
-    expect(invoked).toBe(false);
-    expect(result.payload).toMatchObject({ isError: true });
-    expect(result.payload.content).toContain("absent from the capability set");
-    expect(terminal.payload.stop).toBe("end_turn");
+    expect(argument).toBe("aztec calendar");
+    expect(resultFor(events, "lookup-1")).toMatchObject({
+      payload: { content: "lookup result: aztec calendar", isError: false },
+    });
+    expect(terminal.payload).toMatchObject({
+      stop: "end_turn",
+      text: "the lookup result reached the model",
+    });
   } finally {
     await instance.close();
   }

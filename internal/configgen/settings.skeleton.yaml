@@ -246,6 +246,19 @@
 #   # AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup.
 #   acknowledge_main_deletion: false
 
+#| === command_runner === (tier: operator)
+#| Built-in command interpreter and main-runner environment policy. Operator-tier only;
+#| project values are ignored. Explicit --shell overrides shell, and --no-shell disables
+#| Shell.
+# command_runner:
+#   # Shell is the command interpreter path. An explicitly empty value disables Shell.
+#   shell: /bin/sh
+#   # Environment controls named ambient environment inheritance for built-in main
+#   # runners.
+#   environment:
+#     # Inherit lists portable environment names to retain for built-in main runners.
+#     inherit: [GH_TOKEN]
+
 #| === temporary_storage === (tier: operator)
 #| Managed command temporary-storage policy. Read only from user-global settings.yaml;
 #| project and explicit CLI config values are ignored. Managed mode is Linux-only;

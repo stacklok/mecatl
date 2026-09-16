@@ -5,7 +5,7 @@
 **Decision record:** [ADR 0304](../adr/0304-typescript-sdk-public-surface-and-release.md)
 **Related decisions:** [ADR 0248](../adr/0248-sdk-compatibility-and-error-contract.md) and [ADR 0245](../adr/0245-safe-build-diagnostics.md) remain authoritative for compatibility and safe server identity.
 **Phase:** ergonomic TypeScript SDK server discovery
-**Status:** proposed, 2026-09-15. The directing user resolved the public surface, validation, refresh, concurrency, and delivery decisions through the `$grill-me` interview; this contract awaits Plan / Interface review.
+**Status:** landed, 2026-09-15. The stacked implementation candidate satisfies all 13 acceptance criteria and required gates after the directing user explicitly authorized work before Plan / Interface PR #1551 merges; this record becomes authoritative only after #1551 and the Implementation PR merge in order, and neither PR is authorized to merge here.
 **Delivery:** Split. The public SDK additions and compatibility-cache concurrency contract merit approval before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1470](https://github.com/stacklok/mecatl/issues/1470)

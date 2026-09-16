@@ -37,7 +37,10 @@ import (
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
-const sessionIDHeaderName = "X-Mecatl-Session-ID"
+const (
+	sessionIDHeaderName         = "X-Mecatl-Session-ID"
+	openCodeSessionIDHeaderName = "X-OpenCode-Session"
+)
 
 // Provider is a port.LLMProvider backed by the OpenAI Chat Completions API.
 // Construct it with New.
@@ -54,6 +57,9 @@ type Provider struct {
 	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
 	// wire.
 	cacheDialect CacheDialect
+	// openCodeSessionHeader enables the OpenCode-specific session header without
+	// changing the generic adapter's wire behavior.
+	openCodeSessionHeader bool
 	// cacheMemo memoises the last-seen (StablePrefix, hash) pair for
 	// promptCacheKey — see cachekey.go.
 	cacheMemo atomic.Pointer[prefixMemo]
@@ -63,11 +69,12 @@ type Provider struct {
 type Option func(*config)
 
 type config struct {
-	apiKey       string
-	baseURL      string
-	effort       string
-	extra        []option.RequestOption
-	cacheDialect CacheDialect
+	apiKey                string
+	baseURL               string
+	effort                string
+	extra                 []option.RequestOption
+	cacheDialect          CacheDialect
+	openCodeSessionHeader bool
 }
 
 // WithAPIKey sets the API key used to authenticate requests.
@@ -101,6 +108,13 @@ func WithHTTPClient(c *http.Client) Option {
 	}
 }
 
+// WithOpenCodeSessionHeader enables OpenCode Go's required per-conversation
+// x-opencode-session header. It is opt-in so generic OpenAI-compatible endpoints
+// continue to receive only mecatl's correlation header.
+func WithOpenCodeSessionHeader() Option {
+	return func(c *config) { c.openCodeSessionHeader = true }
+}
+
 // WithRequestOption threads an arbitrary openai-go request option through to the
 // client. Multiple are applied in order, after the API key and base URL.
 func WithRequestOption(opts ...option.RequestOption) Option {
@@ -128,15 +142,24 @@ func New(opts ...Option) *Provider {
 	reqOpts = append(reqOpts, c.extra...)
 
 	client := oai.NewClient(reqOpts...)
-	return &Provider{client: client.Chat.Completions, effort: c.effort, cacheDialect: c.cacheDialect}
+	return &Provider{
+		client:                client.Chat.Completions,
+		effort:                c.effort,
+		cacheDialect:          c.cacheDialect,
+		openCodeSessionHeader: c.openCodeSessionHeader,
+	}
 }
 
-func sessionHeaderOptions(ctx context.Context) []option.RequestOption {
+func sessionHeaderOptions(ctx context.Context, openCode bool) []option.RequestOption {
 	id, ok := port.SessionIDFromContext(ctx)
 	if !ok || !validHTTPHeaderValue(string(id)) {
 		return nil
 	}
-	return []option.RequestOption{option.WithHeader(sessionIDHeaderName, string(id))}
+	opts := []option.RequestOption{option.WithHeader(sessionIDHeaderName, string(id))}
+	if openCode {
+		opts = append(opts, option.WithHeader(openCodeSessionIDHeaderName, string(id)))
+	}
+	return opts
 }
 
 func validHTTPHeaderValue(value string) bool {
@@ -163,7 +186,7 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 		return nil, err
 	}
 
-	reqOpts := sessionHeaderOptions(ctx)
+	reqOpts := sessionHeaderOptions(ctx, p.openCodeSessionHeader)
 	stream := p.client.NewStreaming(ctx, params, reqOpts...)
 
 	return func(yield func(port.Chunk, error) bool) {

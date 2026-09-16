@@ -198,6 +198,18 @@ Versioned automatic session cleanup policy. Operator-tier only; project values a
 | `retention.sweep_cadence` | `duration` | `1h` | SweepCadence is the repeat interval; 0 disables repeats while retaining the compatibility startup sweep. |
 | `retention.acknowledge_main_deletion` | `bool` | `false` | AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup. |
 
+## `command_runner`
+
+Tier: **operator**
+
+Built-in command interpreter and main-runner environment policy. Operator-tier only; project values are ignored. Explicit --shell overrides shell, and --no-shell disables Shell.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `command_runner.shell` | `string` | `/bin/sh (command default)` | Shell is the command interpreter path. An explicitly empty value disables Shell. |
+| `command_runner.environment` | `commandrunnerenvironment` | `(absent)` | Environment controls named ambient environment inheritance for built-in main runners. |
+| `command_runner.environment.inherit` | `[]string` | `[]` | Inherit lists portable environment names to retain for built-in main runners. |
+
 ## `temporary_storage`
 
 Tier: **operator**

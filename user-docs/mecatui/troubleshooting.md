@@ -41,8 +41,47 @@ OIDC provider on a host that cannot open a browser, use
 `mecatui providers login PROVIDER --no-browser` and complete the displayed flow.
 
 If the command reports an unknown provider, run `mecatui providers` and use the
-exact configured name. Use `mecatui providers add NAME` to define a new
+exact configured ID. Custom provider IDs contain 1 to 63 lowercase letters,
+numbers, or hyphens. They start with a letter, end with a letter or number, and
+cannot use a built-in ID. For example, use `local-gateway` instead of `Local`,
+`local_gateway`, or `local-`. Run `mecatui providers add local-gateway` to
+define it.
+
+After configuring a custom provider, select it for the embedded server:
+
+```sh
+mecatui providers set-default <PROVIDER_ID> <MODEL_ID>
+```
+
+Use the exact model ID accepted by the gateway. The provider ID and model ID are
+different values.
+
+### Distinguish provider and server login
+
+`mecatui providers setup` configures model access. The built-in Anthropic,
+OpenAI, OpenRouter, and OpenCode providers require API keys. ChatGPT Plus or Pro
+subscriptions cannot sign in to the built-in OpenAI provider.
+
+Custom-provider OIDC works only with an operator-configured gateway that exposes
+the required OIDC details. `mecatui login ADDRESS` instead authenticates the
+client to a remote Mecatl server; it does not configure that server's model
 provider.
+
+### A custom model is listed but requests fail
+
+Listing confirms only that the gateway advertised the model. Confirm that:
+
+- the provider uses the API flavor implemented by the gateway;
+- the selected model ID exactly matches the gateway's identifier;
+- the credential grants access to that model; and
+- the model and gateway support the request features they receive.
+
+Run `mecatui providers status <PROVIDER_ID>` to check local configuration, then
+inspect the gateway logs for its rejection. If the provider cannot report a
+context window, configure the exact value under
+`models.context_windows.<provider-id>.<model-id>` or restore live model
+discovery. See
+[Choose models and providers](/features/choose-models.md#configure-a-custom-provider).
 
 ### Recover OIDC credentials
 

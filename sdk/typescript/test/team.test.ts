@@ -52,7 +52,7 @@ describe("ergonomic teams", () => {
           ],
           teamId: "team-7",
         }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
       });
     });
     const client = connect({ transport });
@@ -91,7 +91,7 @@ describe("ergonomic teams", () => {
           return {};
         },
         createTeam: () => ({ teamId: "team-8" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         sendTeammateMessage: (request) => {
           requests.push({ ...request });
           return {};
@@ -158,7 +158,7 @@ describe("ergonomic teams", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createTeam: (request) => ({ teamId: request.name }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         runTeam: async function* (request) {
           yield {
             event: {
@@ -220,7 +220,7 @@ describe("ergonomic teams", () => {
           received.push(request.maxTeamTokens);
           return { teamId: `team-${received.length}` };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
       });
     });
     const client = connect({ transport });
@@ -239,7 +239,7 @@ describe("ergonomic teams", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createTeam: () => ({ teamId: "team-10" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         runTeam: async function* () {
           yield {
             event: {
@@ -280,7 +280,7 @@ describe("ergonomic teams", () => {
           return {};
         },
         createTeam: () => ({ teamId: "team-11" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         listTeam: () => ({
           members: [
             {

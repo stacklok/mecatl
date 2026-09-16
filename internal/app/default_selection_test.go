@@ -42,11 +42,26 @@ func TestResolveDeploymentDefaultUsesProviderModelFallback(t *testing.T) {
 	}
 }
 
-func TestResolveDeploymentDefaultRejectsUnavailablePair(t *testing.T) {
+func TestResolveDeploymentDefaultRejectsUnavailableProviderAndInvalidModelSelector(t *testing.T) {
 	if _, _, err := ResolveDeploymentDefault(context.Background(), Config{DefaultProvider: "anthropic", ToolhiveLLM: false}); err == nil {
 		t.Fatal("unavailable provider was accepted")
 	}
-	if _, _, err := ResolveDeploymentDefault(context.Background(), Config{DefaultProvider: "openai", DefaultModel: "not-a-model", OpenAIKey: "test-key", ToolhiveLLM: false}); err == nil {
-		t.Fatal("unknown model was accepted")
+	if _, _, err := ResolveDeploymentDefault(context.Background(), Config{DefaultProvider: "openai", DefaultModel: "notamodel", OpenAIKey: "test-key", ToolhiveLLM: false}); err == nil {
+		t.Fatal("unknown model selector was accepted")
+	}
+}
+
+func TestResolveDeploymentDefaultAcceptsUncataloguedConcreteModel(t *testing.T) {
+	provider, model, err := ResolveDeploymentDefault(context.Background(), Config{
+		DefaultProvider: "openai",
+		DefaultModel:    "not-a-model",
+		OpenAIKey:       "test-key",
+		ToolhiveLLM:     false,
+	})
+	if err != nil {
+		t.Fatalf("resolve uncatalogued model: %v", err)
+	}
+	if provider != providerOpenAI || model != "not-a-model" {
+		t.Fatalf("resolved = (%q, %q), want (%q, %q)", provider, model, providerOpenAI, "not-a-model")
 	}
 }

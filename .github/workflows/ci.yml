@@ -61,6 +61,11 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      # macOS runners cost ~10x a Linux minute. These flags gate the three
+      # macos-14 jobs: they default to true (RUN) and flip to false only when the
+      # trusted base-ref classifier proves the change cannot affect that category.
+      macos_go: ${{ steps.classify.outputs.macos_go }}
+      macos_sdk: ${{ steps.classify.outputs.macos_sdk }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,6 +83,9 @@ jobs:
         run: |
           set -euo pipefail
           docs_only=false
+          # Fail closed: run the macOS jobs unless the classifier proves otherwise.
+          macos_go=true
+          macos_sdk=true
           case "$EVENT_NAME" in
             pull_request)
               base="$PR_BASE_SHA"
@@ -105,8 +113,22 @@ jobs:
                 docs_only=true
               fi
             fi
+            # Same trusted-from-base-ref discipline for the macOS relevance flags:
+            # a PR cannot edit the classifier to skip a job it should run, because
+            # the base version is used until it merges. A missing script (the PR
+            # that introduces it) leaves both flags at their fail-closed RUN value.
+            macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"
+            if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then
+              macos_go="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" go)" || macos_go=true
+              macos_sdk="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
+            fi
           fi
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          # One redirect group for all three outputs (shellcheck SC2129).
+          {
+            echo "docs_only=$docs_only"
+            echo "macos_go=$macos_go"
+            echo "macos_sdk=$macos_sdk"
+          } >> "$GITHUB_OUTPUT"
 
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
@@ -336,7 +358,13 @@ jobs:
   sdk-macos-spawn:
     name: TypeScript SDK macOS spawn (macos-14, Node 22)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # macOS is ~10x a Linux minute. The SDK spawns mecated, so both Go and
+    # sdk/typescript changes are relevant (macos_sdk); skip on docs/site-only
+    # changes and on drafts.
+    if: >-
+      needs.changes.outputs.docs_only != 'true'
+      && needs.changes.outputs.macos_sdk == 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -497,6 +525,13 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
+      # Prove the macOS-job cost gate stays sound: the terminal leaf directories
+      # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd
+      # build/test closure of those jobs. Fails if a new import drags one in. Runs
+      # here because it needs resolved modules (unlike the offline shell tests).
+      - name: Verify macOS-job closure allowlist
+        run: bash .github/scripts/macos-closure-guard.sh
+
   # Release archives are cross-compiled for darwin on an ubuntu runner, which
   # cannot execute them, so nothing else in CI ever RUNS a darwin binary. This
   # job is the native Apple Silicon smoke test: it proves the two executables the
@@ -511,7 +546,13 @@ jobs:
   smoke-darwin-arm64:
     name: CLI smoke test (macOS arm64)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # macOS is ~10x a Linux minute. This is a native Go build/run smoke, so gate
+    # on Go relevance (macos_go — skips docs/site/SDK-frontend-only changes) and
+    # on drafts.
+    if: >-
+      needs.changes.outputs.docs_only != 'true'
+      && needs.changes.outputs.macos_go == 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -554,7 +595,12 @@ jobs:
   managed-temp-macos:
     name: Managed temporary storage (macOS)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # macOS is ~10x a Linux minute. Native Go tests, so gate on Go relevance
+    # (macos_go — skips docs/site/SDK-frontend-only changes) and on drafts.
+    if: >-
+      needs.changes.outputs.docs_only != 'true'
+      && needs.changes.outputs.macos_go == 'true'
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-14
     timeout-minutes: 10
     steps:
@@ -609,6 +655,8 @@ jobs:
           bash .github/scripts/race-aggregate-workflow_test.sh
           bash .github/scripts/docs-only-changes_test.sh
           bash .github/scripts/docs-only-workflow_test.sh
+          bash .github/scripts/macos-relevant-changes_test.sh
+          bash .github/scripts/macos-relevant-workflow_test.sh
           bash .github/scripts/deslop-workflow_test.sh
       - name: go test -race (root-a and modules)
         env:

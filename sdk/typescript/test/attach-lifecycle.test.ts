@@ -81,7 +81,7 @@ function scriptedHarness(
       served,
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
-          getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+          getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           watchSessionEvents: async function* (request) {
             requests.push({ cursor: request.cursor, runId: request.runId });
@@ -98,7 +98,7 @@ function scriptedHarness(
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = new URL(String(input));
     if (url.pathname === "/v1/compatibility") {
-      return Response.json({ api_major: 1, features: [watchFeature] });
+      return Response.json({ api_major: 1, capabilities: {}, features: [watchFeature] });
     }
     if (url.pathname === `/v1/sessions/${sessionId}`) {
       return Response.json({ session_id: sessionId });

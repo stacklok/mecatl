@@ -181,6 +181,12 @@ func (e Editor) Value() string { return e.model.Value() }
 // Placeholder returns the configured empty-prompt hint.
 func (e Editor) Placeholder() string { return e.model.Placeholder }
 
+// SetPlaceholder replaces the empty-prompt hint. The hint names live key chords,
+// and one of them (newline) is only knowable after the terminal answers a
+// capability query, which happens well after New — so the hint has to be
+// rewritable rather than fixed at construction.
+func (e *Editor) SetPlaceholder(s string) { e.model.Placeholder = s }
+
 // Empty reports whether the prompt contains no text.
 func (e Editor) Empty() bool { return e.model.Value() == "" }
 

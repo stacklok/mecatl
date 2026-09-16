@@ -64,6 +64,28 @@ func TestResolveThemeAutoDetect(t *testing.T) {
 	}
 }
 
+// TestResolveKeyboardProbe pins the keyboard-capability deadline's gate: armed
+// only when stdout is a real terminal. The deadline exists to interpret silence
+// as "a modified Enter is unconfirmed", and redirected output is silent for a
+// reason that has nothing to do with the terminal — arming it there would
+// downgrade the newline hint for every piped or captured run.
+func TestResolveKeyboardProbe(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stdoutIsTTY bool
+		want        bool
+	}{
+		{name: "real TTY arms the deadline", stdoutIsTTY: true, want: true},
+		{name: "redirected stdout leaves it disarmed", stdoutIsTTY: false, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveKeyboardProbe(tc.stdoutIsTTY); got != tc.want {
+				t.Errorf("resolveKeyboardProbe(stdoutIsTTY=%v) = %v, want %v", tc.stdoutIsTTY, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestEmbeddedConfigWiresMCPProfileLoader pins the fix for the silent-ignore of
 // operator-tier mcp.servers by mecatui's embedded server: embeddedConfig MUST set
 // a non-nil MCPProfileLoader so app.Build loads the operator profiles instead of

@@ -216,7 +216,9 @@ func runWithOptions(argv []string, options runOptions) error {
 	if !ok {
 		fmt.Fprintf(os.Stderr, "mecatui: unknown theme %q, using %q\n", cfg.theme, th.Name)
 	}
-	themeAutoDetect := resolveThemeAutoDetect(cfg, term.IsTerminal(int(os.Stdout.Fd())))
+	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
+	keyboardProbe := resolveKeyboardProbe(stdoutIsTTY)
 	if options.recoveryOnly {
 		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
 	}
@@ -291,50 +293,51 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
-		Conv:                   cl,
-		MCP:                    cl,
-		Cmds:                   cl,
-		ServerInfo:             cl,
-		Skills:                 cl,
-		Agents:                 cl,
-		Soul:                   cl,
-		UserModel:              cl,
-		Reflections:            cl,
-		Dream:                  cl,
-		Models:                 cl,
-		Worktrees:              cl,
-		Sched:                  cl,
-		Sessions:               cl,
-		StorageHealth:          cl,
-		Migration:              cl,
-		Cleanup:                cl,
-		SessionManagement:      cl,
-		Transcript:             cl,
-		Replayer:               cl,
-		LiveStream:             cl,
-		SelectionStore:         store,
-		Learning:               learningSettingsForConfig(cfg),
-		Connect:                savedConnectController{},
-		ConnectOpen:            options.connectOpen,
-		ConnectError:           options.connectError,
-		ConnectReason:          options.connectReason,
-		ConnectTarget:          options.connectTarget,
-		ConnectResumeSessionID: options.connectResumeSessionID,
-		BearerBacked:           dial.AuthToken != "" || dial.TokenSource != nil,
-		InitialModel:           initialSel,
-		WorkspaceDefault:       wsDefault,
-		WorkspaceDefaultSet:    wsDefaultSet,
-		GlobalDefault:          globalDefault,
-		Clipboard:              client.NewClipboard(),
-		Theme:                  th,
-		ThemeAutoDetect:        themeAutoDetect,
-		StatusSource:           statusSource,
-		LocalSessionContext:    cl,
-		Server:                 target,
-		ConnectionMode:         connectionMode,
-		ClientBuild:            buildinfo.BuildID,
-		Embedded:               cfg.transportMode == modeLocal,
+		Session:                 &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
+		Conv:                    cl,
+		MCP:                     cl,
+		Cmds:                    cl,
+		ServerInfo:              cl,
+		Skills:                  cl,
+		Agents:                  cl,
+		Soul:                    cl,
+		UserModel:               cl,
+		Reflections:             cl,
+		Dream:                   cl,
+		Models:                  cl,
+		Worktrees:               cl,
+		Sched:                   cl,
+		Sessions:                cl,
+		StorageHealth:           cl,
+		Migration:               cl,
+		Cleanup:                 cl,
+		SessionManagement:       cl,
+		Transcript:              cl,
+		Replayer:                cl,
+		LiveStream:              cl,
+		SelectionStore:          store,
+		Learning:                learningSettingsForConfig(cfg),
+		Connect:                 savedConnectController{},
+		ConnectOpen:             options.connectOpen,
+		ConnectError:            options.connectError,
+		ConnectReason:           options.connectReason,
+		ConnectTarget:           options.connectTarget,
+		ConnectResumeSessionID:  options.connectResumeSessionID,
+		BearerBacked:            dial.AuthToken != "" || dial.TokenSource != nil,
+		InitialModel:            initialSel,
+		WorkspaceDefault:        wsDefault,
+		WorkspaceDefaultSet:     wsDefaultSet,
+		GlobalDefault:           globalDefault,
+		Clipboard:               client.NewClipboard(),
+		Theme:                   th,
+		ThemeAutoDetect:         themeAutoDetect,
+		ProbeKeyboardCapability: keyboardProbe,
+		StatusSource:            statusSource,
+		LocalSessionContext:     cl,
+		Server:                  target,
+		ConnectionMode:          connectionMode,
+		ClientBuild:             buildinfo.BuildID,
+		Embedded:                cfg.transportMode == modeLocal,
 		// Model is best-effort display only. For an EXTERNAL --server it reflects
 		// the locally-configured --model flag and may NOT match the server's actual
 		// model (the server owns provider config); for an embedded server it is
@@ -523,6 +526,19 @@ func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
 // without a real terminal.
 func resolveThemeAutoDetect(cfg config, stdoutIsTTY bool) bool {
 	return cfg.theme == "" && stdoutIsTTY
+}
+
+// resolveKeyboardProbe decides whether the deadline that bounds the prompt
+// hint's optimistic newline chord is armed for this launch: only when stdout is
+// a real terminal. Bubble Tea asks every terminal for its keyboard enhancements
+// on the first render, but redirected output has nothing to answer with, so
+// silence there says nothing about a terminal and must not downgrade the hint.
+// An explicit negative reply still corrects the hint immediately, armed or not.
+// Extracted as a pure function (stdout's TTY-ness passed in, not read here) for
+// the same reason resolveThemeAutoDetect above is: so the gate's rule is
+// unit-testable without a real terminal.
+func resolveKeyboardProbe(stdoutIsTTY bool) bool {
+	return stdoutIsTTY
 }
 
 func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
@@ -1161,7 +1177,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// models.router: taxonomy. Idempotent: safe to compute on both calls.
 		RouterDisabled:        cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
 		UseMock:               cfg.mock,
-		Shell:                 "/bin/sh",
+		Shell:                 cfg.shell,
 		NoShell:               cfg.noShell,
 		Compaction:            "heuristic",
 		Tokenizer:             "heuristic",

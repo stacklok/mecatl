@@ -1994,9 +1994,8 @@ misdescribe it), and the fix has a nameable knob — a larger `timeout_ms` on th
 call sites (foreground `finishForegroundRun` and background `driveBackground`) go through the one
 gate. The LOADED
 session keeps its STORED Limits; the per-call `max_turns`/`max_tool_calls` only TIGHTEN them (Reopen/
-Interrupt/Recover all reset Counters via `resetToIdle`, so each bound applies afresh); the per-call token budget (`max_run_tokens`,
-the preferred arg; `max_tokens` the deprecated alias for the same budget — `resolveMaxRunTokens` folds the
-two and REJECTS differing positive values with a model-visible error, accepts same-value) rides the same
+Interrupt/Recover all reset Counters via `resetToIdle`, so each bound applies afresh); the per-call token
+budget (`max_run_tokens`, resolved by `resolveMaxRunTokens`) rides the same
 `RunRequest.MaxRunTokensOverride`. An IN-FLIGHT GUARD (`tryAcquireChildID`/`releaseChildID` over a
 mutex-guarded `inFlight` set) registers EVERY child id (fresh AND resume) BEFORE acquiring the
 concurrency slot and rejects a SECOND concurrent run on the SAME id with a model-visible "already
@@ -2543,25 +2542,18 @@ background + per-child cancel (and the child-concurrency default corrected 10→
 `TestFooterCountsCrossTurnBackgroundChild`, `agent.TestSubagentSpecEnumeratesAgents` (the
 widened description guard). Goldens: unchanged (no golden covers a background lane).
 
-**Subagent per-call token budget (`max_run_tokens` preferred, `max_tokens` deprecated alias — Run-scoped
-override, R4 + issue #62).** The PREFERRED arg is `subagentArgs.MaxRunTokens`; `subagentArgs.MaxTokens` is the
-DEPRECATED alias retained for backward compatibility (its name is misleading — it is a cumulative input+output
-RUN budget, the loop-level token ceiling, NOT a provider single-response output ceiling). Both name the SAME
-budget. `resolveMaxRunTokens(args)` collects the positive value from each and REJECTS the call with a
-model-visible error ("set only one of max_run_tokens or the deprecated max_tokens …") when both are present with
-DIFFERENT positive values (same-value is accepted; only-one-set uses that one; neither = inherited/unlimited).
-The conflict guard fires in `run()` alongside `validateFork` (a model-visible `session.NewToolError`, so the
-child never starts); `buildSubagentRunRequest` then reads the resolved value into `RunRequest.MaxRunTokensOverride`
-carried into `Engine.Run`, so a per-call budget bounds the SHARED child engine WITHOUT minting a fresh
-engine. `effectiveMaxRunTokens` folds it TIGHTEN-ONLY with `Deps.MaxRunTokens` (the lower non-zero value wins),
+**Subagent per-call token budget (`max_run_tokens` — Run-scoped override, R4 + issue #62).** The arg is
+`subagentArgs.MaxRunTokens`: a cumulative input+output RUN budget, the loop-level token ceiling, NOT a
+provider single-response output ceiling. `resolveMaxRunTokens(args)` yields its positive value, or 0
+(= inherited/unlimited) when it is absent or non-positive. `buildSubagentRunRequest` reads the resolved
+value into `RunRequest.MaxRunTokensOverride` carried into `Engine.Run`, so a per-call budget bounds the
+SHARED child engine WITHOUT minting a fresh engine. `effectiveMaxRunTokens` folds it TIGHTEN-ONLY with `Deps.MaxRunTokens` (the lower non-zero value wins),
 so a per-call budget can make the child stricter than the operator default, never looser. A budget-stopped child
 ends `StopBudget` (clean terminal) → a success-with-note Subagent result, not an error. **Default is OFF**
-(neither alias set ⇒ inherited/unlimited budget). The `RunRequest` override field is the cleaner of the two R4 options
+(arg unset ⇒ inherited/unlimited budget). The `RunRequest` override field is the cleaner of the two R4 options
 (it generalises and works on the shared engine); a call with no override fields set is the legacy run
-(unchanged). Guards: `agent.TestSubagentMaxRunTokensAliasResolvesToOverride`,
-`agent.TestSubagentMaxTokensDeprecatedAliasStillWorks`, `agent.TestSubagentMaxRunTokensConflictRejected`,
-`agent.TestSubagentMaxRunTokensSameValueAccepted`, `agent.TestSubagentBudgetUnsetByDefault`,
-`agent.TestSubagentMaxRunTokensTightenOnlyCannotLoosen`.
+(unchanged). Guards: `agent.TestSubagentMaxRunTokensResolvesToOverride`,
+`agent.TestSubagentBudgetUnsetByDefault`, `agent.TestSubagentMaxRunTokensTightenOnlyCannotLoosen`.
 
 **Unknown-tool card (dispatch `runOne`).** An unknown/unresolved tool-call name now opens an
 `EvToolCall` card BEFORE its `EvToolResult` error (`unknown tool %q`), preserving the

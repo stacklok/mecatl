@@ -52,6 +52,61 @@ type doubleEscapeExpiryMsg struct{ gen int }
 
 type doubleEscapeTimerFunc func(time.Duration, int) tea.Cmd
 
+// keyboardProbeDeadline bounds how long the prompt hint trusts its optimistic
+// default. Bubble Tea asks the terminal for its keyboard enhancements on the
+// first render, and a terminal that implements them answers within a round trip;
+// a terminal that does not implement them never answers at all, so silence is the
+// only negative signal there is and it needs a clock. The window is generous
+// enough to survive a slow ssh/tmux round trip and short enough that a user on an
+// unsupporting terminal sees a chord that works before typing a first prompt.
+//
+// What the deadline yields is an UNCONFIRMED verdict, not a negative one. The
+// reply mecatui consumes is the Kitty protocol's `CSI ? flags u` response; the
+// pinned Ultraviolet decoder reports xterm's modifyOtherKeys separately, as an
+// event this reducer does not read. A modifyOtherKeys-capable terminal can
+// therefore deliver shift+enter and still let this deadline pass. Falling back
+// costs that user a chord they did not need; NOT falling back costs the user on
+// a legacy terminal a hint that names a keypress their terminal cannot send. The
+// asymmetry is why unconfirmed is treated like unsupported here — and why
+// nothing downstream may claim the chord was proved undeliverable.
+const keyboardProbeDeadline = 1500 * time.Millisecond
+
+// keyboardProbeTimerFunc schedules the probe deadline. Tests substitute it to
+// make the downgrade deterministic instead of wall-clock dependent.
+type keyboardProbeTimerFunc func(time.Duration) tea.Cmd
+
+// keyboardProbeDeadlineMsg fires once, keyboardProbeDeadline after start. It is
+// meaningful ONLY while the probe is unsettled; a reply that already arrived wins.
+type keyboardProbeDeadlineMsg struct{}
+
+func scheduleKeyboardProbeDeadline(after time.Duration) tea.Cmd {
+	return tea.Tick(after, func(time.Time) tea.Msg { return keyboardProbeDeadlineMsg{} })
+}
+
+func (m Model) keyboardProbeDeadlineCmd() tea.Cmd {
+	timer := m.keyboardProbeTimer
+	if timer == nil {
+		timer = scheduleKeyboardProbeDeadline
+	}
+	return timer(keyboardProbeDeadline)
+}
+
+// settleKeyboardProbe records whether a modified Enter is CONFIRMED deliverable
+// and rewrites the prompt hint if that changes which chord to name. It is the ONE
+// place the hint reacts to capability, so the reply path and the deadline path
+// cannot drift apart. legacyOnly true means "not confirmed" — either an explicit
+// reply with no enhancements or an unanswered deadline; see keyboardProbeDeadline
+// for why those two are treated alike despite meaning different things.
+func (m Model) settleKeyboardProbe(legacyOnly bool) Model {
+	m.keyboardProbeSettled = true
+	if legacyOnly == m.newlineHintLegacyOnly {
+		return m
+	}
+	m.newlineHintLegacyOnly = legacyOnly
+	m.prompt.SetPlaceholder(promptPlaceholder(m.keys, legacyOnly))
+	return m
+}
+
 func scheduleDoubleEscapeExpiry(after time.Duration, gen int) tea.Cmd {
 	return tea.Tick(after, func(time.Time) tea.Msg { return doubleEscapeExpiryMsg{gen} })
 }
@@ -316,7 +371,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoScrollMsg:
 		return m.onAutoScroll()
 
-	case tea.KeyboardEnhancementsMsg, tea.KeyReleaseMsg:
+	case tea.KeyboardEnhancementsMsg, tea.KeyReleaseMsg, keyboardProbeDeadlineMsg:
 		return m.onKeyboardProtocolMsg(msg)
 
 	case tea.KeyPressMsg:
@@ -1907,9 +1962,23 @@ func (m Model) onKeyboardProtocolMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyboardEnhancementsMsg:
 		m.keyboardEventTypes = msg.SupportsEventTypes()
+		// An explicit reply settles the hint immediately, in either direction: a
+		// terminal that answers with no enhancements at all cannot deliver a
+		// modified Enter, so it gets the fallback without waiting for the deadline.
+		m = m.settleKeyboardProbe(!msg.SupportsKeyDisambiguation())
 		if !m.keyboardEventTypes {
 			m.doubleEscapeArmed = false
 			m.doubleEscapeReleased = false
+		}
+	case keyboardProbeDeadlineMsg:
+		// Silence leaves the question open: a terminal that implements the Kitty
+		// enhancements has answered by now, so an unsettled probe means this one has
+		// not confirmed it can deliver a modified Enter, and the prompt hint owes the
+		// user a chord that works regardless. It is not proof of the negative — see
+		// keyboardProbeDeadline. A reply that already arrived has settled the probe
+		// and wins.
+		if !m.keyboardProbeSettled {
+			return m.settleKeyboardProbe(true), nil
 		}
 	case tea.KeyReleaseMsg:
 		releasedKey := msg.Key()
@@ -2642,7 +2711,8 @@ func (m Model) pasteGateOpen() bool {
 //	    so builtins dispatch through the same path and workspace rows complete;
 //	    esc is handled by the cancel path below;
 //	(2) esc/Cancel sends Cancel and leaves the draft, staged queue, and steer state intact;
-//	(3) shift+enter (Newline) → insert a newline;
+//	(3) any bound Newline chord (shift+enter, ctrl+j, ctrl+enter, alt+enter by
+//	    default) → insert a newline;
 //	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
 //	    input (which steers when supported);
 //	(5) pgup/pgdn → scroll the viewport;
@@ -2945,8 +3015,9 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 	return m.afterInputEdit(nil)
 }
 
-// onIdleKey handles keys while idle: enter submits the prompt, shift+enter (and
-// ctrl+j) inserts a newline, everything else feeds the textarea (or scrolls).
+// onIdleKey handles keys while idle: enter submits the prompt, any bound Newline
+// chord (shift+enter, ctrl+j, ctrl+enter, alt+enter by default) inserts a
+// newline, everything else feeds the textarea (or scrolls).
 //
 // The slash-command palette is woven in BEFORE the textarea path: while it is
 // open it claims ↑/↓ (move selection), tab/enter (complete), and esc (dismiss)

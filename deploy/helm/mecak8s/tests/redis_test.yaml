@@ -1,0 +1,94 @@
+suite: Redis rendering contracts
+templates:
+  - templates/deployment.yaml
+release:
+  name: unit
+  namespace: test
+set:
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+tests:
+  - it: uses an external TLS Redis endpoint and its projected CA
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-url=redis.example.internal:6379
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-tls-ca=/var/run/secrets/redis/ca.pem
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-plaintext
+      - equal:
+          path: spec.template.spec.volumes[1].secret.secretName
+          value: redis-credentials
+      - equal:
+          path: spec.template.spec.volumes[1].secret.items[0]
+          value:
+            key: ca.pem
+            path: ca.pem
+
+  - it: uses system trust without mounting a Redis Secret
+    set:
+      redis.credentialsSecret: ""
+      redis.caKey: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-tls
+      - equal:
+          path: spec.template.spec.volumes[1].name
+          value: mcp-profile
+      - notExists:
+          path: spec.template.spec.volumes[2]
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: redis-credentials
+            mountPath: /var/run/secrets/redis
+            readOnly: true
+
+  - it: projects external Redis ACL keys without their values
+    set:
+      redis.caKey: ""
+      redis.passwordKey: password
+      redis.usernameKey: username
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-password-file=/var/run/secrets/redis/password
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-username-file=/var/run/secrets/redis/username
+      - equal:
+          path: spec.template.spec.volumes[1].secret.items
+          value:
+            - key: password
+              path: password
+            - key: username
+              path: username
+
+  - it: selects plaintext only for chart-local Redis
+    set:
+      redis.local.enabled: true
+      redis.endpoint: redis:6379
+      redis.credentialsSecret: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-url=redis:6379
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-plaintext
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-tls
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-tls-ca=/var/run/secrets/redis/ca.pem
+      - equal:
+          path: spec.template.spec.volumes[1].name
+          value: mcp-profile
+      - notExists:
+          path: spec.template.spec.volumes[2]

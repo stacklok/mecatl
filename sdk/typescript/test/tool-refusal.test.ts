@@ -88,7 +88,7 @@ async function spawnHarness(options: SpawnHarnessOptions = {}) {
         if (options.createSessionError !== undefined) throw options.createSessionError;
         return { sessionId: `session-${createAttempts}` };
       },
-      getCompatibilityInfo: () => ({ apiMajor: 1, features }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features }),
       listMcpSources: () => ({ sources: [] }),
     });
   });
@@ -141,7 +141,11 @@ describe("callback tool refusals", () => {
     const client = connect({
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
-          getCompatibilityInfo: () => ({ apiMajor: 1, features: [callbackFeature] }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: [callbackFeature],
+          }),
         });
       }),
     });
@@ -158,7 +162,11 @@ describe("callback tool refusals", () => {
   it("the refusal is local and issues no rpc", async () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [callbackFeature] }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: [callbackFeature],
+        }),
       });
     });
     const unary = vi.spyOn(transport, "unary");
@@ -182,7 +190,7 @@ describe("callback tool refusals", () => {
   });
 
   it("an http-enabled spawned client names the missing feature", async () => {
-    const harness = await spawnHarness({ features: [], http: true });
+    const harness = await spawnHarness({ features: ["server_info"], http: true });
     try {
       const error = captureThrow(() => harness.client.tool("lookup", objectSchema, () => "found"));
 

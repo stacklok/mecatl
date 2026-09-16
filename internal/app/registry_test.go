@@ -660,6 +660,33 @@ func TestRegistryOpenCode(t *testing.T) {
 	}
 }
 
+func TestOpenCodeEntrySendsRequiredSessionHeader(t *testing.T) {
+	const sessionID = "opencode-session"
+	header := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header <- r.Header.Get("X-OpenCode-Session")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"finish_reason":"stop","delta":{}}]}`+"\n\n"+"data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	entry := newOpenCodeEntry(Config{LLMMaxAttempts: 1}, providerOpenCode, "test", srv.URL+"/v1")
+	seq, err := entry.provider.Stream(port.WithSessionID(context.Background(), sessionID), port.LLMRequest{
+		Model: "m", Messages: []session.Message{session.NewUserMessage("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for _, err := range seq {
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+	}
+	if got := <-header; got != sessionID {
+		t.Errorf("X-OpenCode-Session = %q, want %q", got, sessionID)
+	}
+}
+
 // TestOpenRouterOpenAIKeyFallbackPreserved is the §4.2 regression tripwire: with
 // ONLY OPENAI_API_KEY set (no OPENROUTER_API_KEY), openrouter must still be
 // available via the composition augmentation — preserving S1 behaviour exactly.

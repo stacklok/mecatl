@@ -26,6 +26,33 @@ inventory.
 
 For the rest of the terminal workflow, see [Use mecatui](/mecatui/index.md).
 
+## Authenticate to a model provider
+
+Model-provider authentication is separate from signing in to a remote Mecatl
+server. The supported paths depend on the provider type:
+
+|Provider type|Authentication path|
+|-|-|
+|Anthropic, OpenAI, OpenRouter, or OpenCode|Provider API key|
+|Custom HTTPS gateway|API key, OIDC, or no authentication, as configured by the gateway operator|
+|ToolHive-managed LLM gateway|ToolHive's external `thv llm` lifecycle|
+|Experimental `openai-codex`|Manually supplied ChatGPT Codex token with no login or refresh flow|
+
+Mecatl does not provide a browser sign-in flow for OpenAI or Anthropic consumer
+accounts. A ChatGPT Plus or Pro subscription cannot replace an OpenAI API key in
+`mecatui providers setup`. Custom-provider OIDC works only with a gateway whose
+operator supplies its issuer, client ID, scopes, and trust configuration.
+
+`mecatui login ADDRESS` is another distinct flow. It authenticates the terminal
+client to a remote `mecated` server and does not grant that server access to a
+model provider.
+
+The experimental `openai-codex` provider uses an undocumented private backend
+and a manually managed token snapshot. It is not an SSO alternative for the
+guided setup. See
+[Configure provider credentials](/building/deployment/settings.md#configure-provider-credentials)
+for its explicit limitations.
+
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
@@ -51,6 +78,41 @@ In embedded mode, local server configuration and credentials determine the
 inventory. In `connect` mode, the remote server determines it.
 
 ## CLI journey
+
+### Configure a custom provider
+
+Use a custom provider when an HTTPS gateway implements OpenAI Responses, OpenAI
+Chat Completions, or Anthropic Messages:
+
+```sh
+mecatui providers setup
+```
+
+Choose **custom**, then enter the gateway's base URL, API flavor, exact default
+model ID, and authentication method. A provider ID must:
+
+- contain 1 to 63 lowercase letters, numbers, or hyphens;
+- start with a lowercase letter;
+- end with a lowercase letter or number; and
+- differ from built-in IDs such as `openai`, `anthropic`, and `openrouter`.
+
+For example, `local-gateway` is valid. `Local`, `local_gateway`, and `local-`
+are not. The provider ID names the gateway configuration; the model ID is the
+exact value that the gateway accepts.
+
+After setup, inspect the provider and make it the embedded server default:
+
+```sh
+mecatui providers status local-gateway
+mecatui providers set-default local-gateway <MODEL_ID>
+```
+
+The setup command cannot determine whether the chosen API flavor matches the
+gateway or whether the model supports the requests Mecatl sends. Before changing
+models, start with the gateway's documented model ID and confirm that it appears
+in `/models`. If discovery or inference fails, use the provider status and
+gateway logs together; see
+[Troubleshoot mecatui](/mecatui/troubleshooting.md#provider-is-not-configured-or-credentials-are-unavailable).
 
 ### Endpoint overrides
 
@@ -114,10 +176,10 @@ See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.
 
-### Select ToolHive gateway models
+### Select models from a ToolHive-managed gateway
 
-When ToolHive gateway discovery is enabled, one configured gateway identity
-appears as two protocol-specific Mecatl providers:
+When Mecatl detects gateway configuration managed by ToolHive, one configured
+gateway identity appears as two protocol-specific Mecatl providers:
 
 |Provider ID|Model discovery|Inference|
 |-|-|-|
@@ -144,7 +206,7 @@ select a fully qualified model slug or ask the administrator to add a route.
 Create a new session after correcting an unresolved default model.
 
 For proxy/direct routing, OIDC setup, TLS constraints, and daemon flags, see
-[Run mecated standalone](/building/deployment/mecated.md#the-toolhive-llm-gateway-no-api-key-needed).
+[Run mecated standalone](/building/deployment/mecated.md#a-toolhive-managed-llm-gateway-no-api-key-needed).
 
 ### Configure aliases, slots, and task routing
 

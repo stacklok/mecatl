@@ -59,11 +59,20 @@ import { createPlanResolution, type PlanApprovalVerdict, type PlanResolution } f
 import {
   createRawClient,
   invalidateRawCompatibility,
+  invalidateRawCompatibilityGeneration,
   type RawClient,
+  readRawCompatibility,
+  refreshRawCompatibility,
   registeredTransportOperations,
   sessionAffinityIfRepresentable,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
+import {
+  createServer,
+  projectServerCompatibility,
+  type Server,
+  type ServerCompatibility,
+} from "./server.js";
 import {
   projectSessionSnapshot,
   projectSessionTranscript,
@@ -336,6 +345,7 @@ export interface Client {
   readonly models: Models;
   readonly reflection: Reflection;
   readonly schedules: Schedules;
+  readonly server: Server;
   readonly sessions: Sessions;
   readonly skills: Skills;
   readonly soul: Soul;
@@ -789,6 +799,7 @@ class ClientImpl implements Client {
   readonly models: Models;
   readonly reflection: Reflection;
   readonly schedules: Schedules;
+  readonly server: Server;
   readonly sessions: Sessions;
   readonly skills: Skills;
   readonly soul: Soul;
@@ -882,6 +893,11 @@ class ClientImpl implements Client {
       unary: (method, input, requestOptions) => this.#unary(method, input, requestOptions),
     });
     this.userModel = operational.userModel;
+    this.server = createServer({
+      compatibility: (requestOptions, refresh) => this.#compatibility(requestOptions, refresh),
+      transportKind: this.#transportKind,
+      unary: (method, input, requestOptions) => this.#unary(method, input, requestOptions),
+    });
     this.sessions = {
       create: async (input, requestOptions) => {
         const lease = this.#toolHost?.beginSessionCreate?.();
@@ -1113,27 +1129,37 @@ class ClientImpl implements Client {
     return new SessionImpl(sessionId, this.#operations, promptCapabilities);
   }
 
+  #withClientSignal(options?: CallOptions): CallOptions {
+    return {
+      ...options,
+      signal:
+        options?.signal === undefined
+          ? this.#abort.signal
+          : AbortSignal.any([this.#abort.signal, options.signal]),
+    };
+  }
+
+  async #observeRequest<T>(request: () => Promise<T>): Promise<T> {
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
+    try {
+      const result = await request();
+      this.#setRequestStatus("online");
+      return result;
+    } catch (error) {
+      this.#observeError(error);
+      throw error;
+    }
+  }
+
   async #unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
     options?: CallOptions,
   ): Promise<MessageShape<O>> {
     this.#assertOpen();
-    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
-    try {
-      const response = await this.#raw.unary(method, input, {
-        ...options,
-        signal:
-          options?.signal === undefined
-            ? this.#abort.signal
-            : AbortSignal.any([this.#abort.signal, options.signal]),
-      });
-      this.#setRequestStatus("online");
-      return response;
-    } catch (error) {
-      this.#observeError(error);
-      throw error;
-    }
+    return this.#observeRequest(() =>
+      this.#raw.unary(method, input, this.#withClientSignal(options)),
+    );
   }
 
   async #cancelRun(sessionId: string, runId: string): Promise<void> {
@@ -1145,27 +1171,35 @@ class ClientImpl implements Client {
     if (cancel === undefined) {
       throw new UnsupportedFeatureError("attached_cancel", { transport: "http" });
     }
-    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
-    try {
-      await cancel(sessionId, runId, this.#abort.signal);
-      this.#setRequestStatus("online");
-    } catch (error) {
-      this.#observeError(error);
-      throw error;
-    }
+    await this.#observeRequest(() => cancel(sessionId, runId, this.#abort.signal));
   }
 
   async #features(): Promise<ReadonlySet<string>> {
     this.#assertOpen();
-    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
-    try {
-      const features = await this.#raw.features({ signal: this.#abort.signal });
-      this.#setRequestStatus("online");
-      return features;
-    } catch (error) {
-      this.#observeError(error);
-      throw error;
-    }
+    return this.#observeRequest(() => this.#raw.features({ signal: this.#abort.signal }));
+  }
+
+  async #compatibility(
+    options: RequestOptions | undefined,
+    refresh: boolean,
+  ): Promise<ServerCompatibility> {
+    this.#assertOpen();
+    const requestOptions = this.#withClientSignal(options);
+    return this.#observeRequest(async () => {
+      const result = await (refresh
+        ? refreshRawCompatibility(this.#raw, requestOptions)
+        : readRawCompatibility(this.#raw, requestOptions));
+      let projection: ServerCompatibility;
+      try {
+        projection = projectServerCompatibility(result.message, this.#transportKind);
+      } catch (error) {
+        invalidateRawCompatibilityGeneration(this.#raw, result.generation);
+        throw error;
+      }
+      requestOptions.onHeader?.(result.header);
+      requestOptions.onTrailer?.(result.trailer);
+      return projection;
+    });
   }
 
   #stream<I extends DescMessage, O extends DescMessage>(
@@ -1174,13 +1208,7 @@ class ClientImpl implements Client {
     options?: CallOptions,
   ): AsyncIterable<MessageShape<O>> {
     this.#assertOpen();
-    const raw = this.#raw.stream(method, input, {
-      ...options,
-      signal:
-        options?.signal === undefined
-          ? this.#abort.signal
-          : AbortSignal.any([this.#abort.signal, options.signal]),
-    });
+    const raw = this.#raw.stream(method, input, this.#withClientSignal(options));
     const observeError = (error: unknown) => this.#observeError(error);
     const publishOnline = () => this.#setRequestStatus("online");
     return (async function* () {
@@ -1209,20 +1237,9 @@ class ClientImpl implements Client {
 
   async #probe(raw: RawClient, signal: AbortSignal = this.#abort.signal): Promise<void> {
     this.#assertOpen();
-    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
-    try {
-      await raw.unary(
-        HarnessService.method.getCompatibilityInfo,
-        {},
-        {
-          signal,
-        },
-      );
-      this.#setRequestStatus("online");
-    } catch (error) {
-      this.#observeError(error);
-      throw error;
-    }
+    await this.#observeRequest(() =>
+      raw.unary(HarnessService.method.getCompatibilityInfo, {}, { signal }),
+    );
   }
 
   #observeError(error: unknown): void {

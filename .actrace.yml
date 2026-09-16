@@ -1,5 +1,11 @@
 resolvers:
+  "api:":
+    command: ["node", "scripts/resolve-task-proof.mjs"]
   "playwright:":
     command: ["node", "scripts/resolve-playwright-proof.mjs"]
+  "site:":
+    command: ["node", "scripts/resolve-task-proof.mjs"]
+  "test:":
+    command: ["node", "scripts/resolve-task-proof.mjs"]
   "vitest:":
     command: ["node", "scripts/resolve-vitest-proof.mjs"]

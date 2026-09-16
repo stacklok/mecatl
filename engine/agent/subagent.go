@@ -408,24 +408,13 @@ type subagentArgs struct {
 	// checked between turns, so an in-flight turn completes before StopBudget. Recovered or
 	// partial output may be returned when available, but a best-effort summary is NOT
 	// guaranteed. A resumed child's cumulative usage is preserved; it may have already spent
-	// the inherited budget and stop before doing new work. This is the same budget as the
-	// deprecated `max_tokens` alias; supplying both with CONFLICTING positive values is a
-	// model-visible error (see resolveMaxRunTokens).
+	// the inherited budget and stop before doing new work.
 	//
 	// FLOOR: the system prompt + AGENTS.md/project instructions are replayed every turn
 	// (~20k+ tokens on turn 1 alone). A positive value below minSubagentRunTokens (25 000)
 	// is silently raised to 25 000 so the child can complete at least one useful turn; the
 	// operator ceiling still wins via the tighten-only fold.
 	MaxRunTokens *int `json:"max_run_tokens,omitempty"`
-	// MaxTokens is the DEPRECATED alias for MaxRunTokens. The name is misleading: it
-	// selects the same cumulative input+output RUN budget, NOT a provider output-token
-	// limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled.
-	// It has the same turn-boundary check, tighten-only and non-positive-ignored semantics,
-	// and MinSubagentRunTokens floor as MaxRunTokens. Resumed usage remains cumulative, so
-	// the inherited budget may stop a resumed child before new work; partial or recovered
-	// output may be available, but no summary is guaranteed. When both aliases are set to
-	// DIFFERENT positive values the call is rejected; the same value is accepted.
-	MaxTokens *int `json:"max_tokens,omitempty"`
 
 	// Background detaches this child: the call returns IMMEDIATELY with a started-
 	// result carrying the agentId, the child keeps driving in its own goroutine, and
@@ -569,11 +558,7 @@ var subagentSchema = json.RawMessage(`{
     },
     "max_run_tokens": {
       "type": "integer",
-      "description": "Optional per-call TIGHTEN-ONLY override for the child's CUMULATIVE input+output run budget; this is NOT a provider output-token limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled. The lower non-zero budget wins, so this can tighten the inherited budget but never loosen it. Positive values below 25 000 are raised to the 25 000 per-call floor; the inherited operator ceiling still wins. The cumulative boundary is checked between turns, so an in-flight turn completes before the child stops. Partial or recovered output may be returned when available, but a best-effort summary is NOT guaranteed. On resume, earlier cumulative usage remains spent; a child may have already exhausted the inherited budget and stop before new work. The deprecated max_tokens field is an alias for this same run budget; do not set the aliases to different values."
-    },
-    "max_tokens": {
-      "type": "integer",
-      "description": "DEPRECATED alias for max_run_tokens: the same CUMULATIVE input+output run budget, NOT a provider output-token limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled. It is TIGHTEN-ONLY, is checked between turns, and has the same 25 000 per-call floor; the inherited operator ceiling still wins. Partial or recovered output may be returned when available, but a best-effort summary is NOT guaranteed. A resumed child keeps its earlier cumulative usage and may stop before new work if the inherited budget is already spent. Setting both aliases to different positive values is rejected."
+      "description": "Optional per-call TIGHTEN-ONLY override for the child's CUMULATIVE input+output run budget; this is NOT a provider output-token limit. Omit it to inherit the operator/engine budget, which may be bounded or disabled. The lower non-zero budget wins, so this can tighten the inherited budget but never loosen it. Positive values below 25 000 are raised to the 25 000 per-call floor; the inherited operator ceiling still wins. The cumulative boundary is checked between turns, so an in-flight turn completes before the child stops. Partial or recovered output may be returned when available, but a best-effort summary is NOT guaranteed. On resume, earlier cumulative usage remains spent; a child may have already exhausted the inherited budget and stop before new work."
     },
     "output_schema": {
       "type": "object",
@@ -891,7 +876,7 @@ type SubagentTool struct {
 // structured-output child effectively up to (1+defaultStructuredOutputRetries)× its
 // per-child turn/tool budget across the whole call. That is BOUNDED (a small constant
 // multiplier), not a runaway. The cross-attempt ceiling is the TOKEN budget
-// (Deps.MaxRunTokens / the per-call max_tokens override): driveChild SUMS usage across
+// (Deps.MaxRunTokens / the per-call max_run_tokens override): driveChild SUMS usage across
 // every drive (usage = usage.Add(u)) and RE-PASSES the same runReq (carrying the
 // tighten-only override) to each Engine.Run, so the token budget genuinely
 // accumulates across attempts and is the real cross-attempt brake.
@@ -1860,29 +1845,14 @@ func (t *SubagentTool) selectWritableSpecialistEngine(callID session.ToolCallID,
 	return eng, limits, session.ToolResult{}, false, true
 }
 
-// resolveMaxRunTokens resolves the per-call cumulative token budget from the two aliases:
-// the preferred `max_run_tokens` and the deprecated `max_tokens`. They name the SAME budget,
-// so it collects the positive value from each (a nil or non-positive value is "unset") and:
-//   - if BOTH are present with DIFFERENT positive values, it reports a conflict (value 0,
-//     conflict true) and ALSO returns the two offending positive values (runVal/legacyVal) so
-//     run() can echo them in the model-visible error — a model repairing its JSON benefits
-//     from seeing the numbers, not just the rule;
-//   - otherwise it returns the single positive value (or, when both agree, that shared value),
-//     and 0 when neither is set (inherit the engine's budget, bounded or disabled).
-func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, legacyVal int) {
+// resolveMaxRunTokens resolves the per-call cumulative token budget from `max_run_tokens`.
+// A nil or non-positive value is "unset": it yields 0, meaning inherit the engine's budget
+// (which may itself be bounded or disabled).
+func resolveMaxRunTokens(args subagentArgs) int {
 	if args.MaxRunTokens != nil && *args.MaxRunTokens > 0 {
-		runVal = *args.MaxRunTokens
+		return *args.MaxRunTokens
 	}
-	if args.MaxTokens != nil && *args.MaxTokens > 0 {
-		legacyVal = *args.MaxTokens
-	}
-	if runVal > 0 && legacyVal > 0 && runVal != legacyVal {
-		return 0, true, runVal, legacyVal
-	}
-	if runVal > 0 {
-		return runVal, false, runVal, legacyVal
-	}
-	return legacyVal, false, runVal, legacyVal
+	return 0
 }
 
 // buildSubagentRunRequest assembles the per-call RunRequest, the synthetic SubmitResult
@@ -1904,10 +1874,8 @@ func resolveMaxRunTokens(args subagentArgs) (value int, conflict bool, runVal, l
 //     ⇒ today's free-text path.
 func buildSubagentRunRequest(args subagentArgs, resuming bool, posture resumePosture, forkAdvisory string) (RunRequest, *submitResultTool, string) {
 	var runReq RunRequest
-	// The conflict (differing positive max_run_tokens vs the deprecated max_tokens) is
-	// rejected earlier in run() as a model-visible error, so here we only need the
-	// resolved positive value (0 = inherit the engine budget, bounded or disabled).
-	if v, _, _, _ := resolveMaxRunTokens(args); v > 0 {
+	// 0 = inherit the engine budget, which may itself be bounded or disabled.
+	if v := resolveMaxRunTokens(args); v > 0 {
 		// Floor: protect against a model self-imposing an unusably small budget. The
 		// system prompt + AGENTS.md + project instructions are replayed every turn and
 		// cost ~20k+ tokens on turn 1 alone; a budget below MinSubagentRunTokens would
@@ -2341,16 +2309,6 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// same canonical lookup key. Normalize once so whitespace cannot select an
 	// engine while bypassing its authority ceiling or changing its identity.
 	args.Agent = strings.TrimSpace(args.Agent)
-
-	// max_run_tokens / max_tokens are the SAME cumulative run budget (the latter is the
-	// deprecated, misleadingly-named alias). Supplying both with different positive values
-	// is ambiguous; reject it as a model-visible error rather than silently picking one
-	// (mirrors the validateFork conflict pattern). The two offending values are echoed so a
-	// model repairing its JSON sees the numbers. Same-value or only-one-set is fine.
-	if _, conflict, runVal, legacyVal := resolveMaxRunTokens(args); conflict {
-		return session.NewToolError(call.ID,
-			fmt.Sprintf("Subagent: set only one of max_run_tokens or the deprecated max_tokens (they are the same budget); they were given conflicting values (max_run_tokens=%d, max_tokens=%d)", runVal, legacyVal)), nil
-	}
 
 	// Precondition guards (D2/D3/D4 mode + issue-#34 fork), evaluated BEFORE engine
 	// selection so the FIRST conflict is the model's signal: validateMode normalizes

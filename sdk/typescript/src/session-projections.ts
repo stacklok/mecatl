@@ -237,7 +237,8 @@ function manualDream(value: ProtoManualDreamCapabilities): ManualDreamCapabiliti
   };
 }
 
-function serverCapabilities(value: ProtoServerCapabilities): ServerCapabilities {
+/** Internal shared projection for server- and session-scoped capability responses. */
+export function projectServerCapabilities(value: ProtoServerCapabilities): ServerCapabilities {
   return {
     agents: value.agents,
     audio: value.audio,
@@ -375,7 +376,7 @@ export function projectSessionSnapshot(
   return {
     ...(value.capabilities === undefined
       ? {}
-      : { capabilities: serverCapabilities(value.capabilities) }),
+      : { capabilities: projectServerCapabilities(value.capabilities) }),
     createdAtUnix: value.createdAtUnix,
     debugMcpServers: [...value.debugMcpServers],
     debugMcpTools: [...value.debugMcpTools],

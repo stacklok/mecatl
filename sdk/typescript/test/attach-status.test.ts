@@ -54,6 +54,7 @@ async function sessionFor(
   }) => AsyncIterable<WatchSessionEventsResponse>,
   compatibility: () => { apiMajor: number; features?: string[] } = () => ({
     apiMajor: 1,
+    capabilities: {},
     features: [WATCH_FEATURE],
   }),
 ): Promise<{ client: Client; session: Awaited<ReturnType<Client["sessions"]["get"]>> }> {
@@ -194,7 +195,7 @@ describe("attachment connection status", () => {
         }
         throw new ConnectError("watch dropped", Code.Unavailable);
       },
-      () => ({ apiMajor, features: [WATCH_FEATURE] }),
+      () => ({ apiMajor, capabilities: {}, features: [WATCH_FEATURE] }),
     );
     const status = observe(client);
 
@@ -250,7 +251,7 @@ describe("attachment connection status", () => {
       },
       () => {
         compatibilityCalls += 1;
-        return { apiMajor: 1, features: [WATCH_FEATURE] };
+        return { apiMajor: 1, capabilities: {}, features: [WATCH_FEATURE] };
       },
     );
     const iterator = (await session.attach("run-heartbeat"))[Symbol.asyncIterator]();
@@ -295,7 +296,7 @@ describe("attachment connection status", () => {
       },
       () => {
         compatibilityCalls += 1;
-        return { apiMajor: 1, features: [WATCH_FEATURE] };
+        return { apiMajor: 1, capabilities: {}, features: [WATCH_FEATURE] };
       },
     );
     const unsubscribe = client.status.subscribe(() => undefined);

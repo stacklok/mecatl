@@ -4,7 +4,7 @@
 **Work classification:** Architectural — native endpoint credential custody and deployment trust boundaries.
 **Decision record:** [ADR 0329](../adr/0329-native-llm-endpoint-gateway-credentials.md)
 **Phase:** Native organizational LLM-gateway authentication
-**Status:** landed, 2026-09-10. Implementation is complete and becomes authoritative when the Implementation PR merges.
+**Status:** superseded, 2026-09-15 by [ADR 0333](../adr/0333-unified-provider-configuration-and-mecatui-provider-commands.md). This historical plan retains the original native-endpoint contract; the shipped provider configuration and `mecatui providers` lifecycle are governed by [unified-provider-configuration-and-mecatui-provider-commands.md](unified-provider-configuration-and-mecatui-provider-commands.md).
 **Delivery:** Split. This changes operator CLI/configuration, provider credential custody, durable secret lifecycle, and the trust boundary between mecatl, ToolHive, and remote callers, so the interface must be approved separately from implementation.
 **Expected tasks:** deferred to orchestration
 
@@ -95,7 +95,7 @@ The host-owned callback pattern comes from [ADR 0277](../adr/0277-remote-mecatui
 - AC4.2: Enrollment uses only the authorization-code exchange `access_token`, requires `token_type=Bearer`, a nonempty refresh token, configured resource audience, and the gateway profile’s validated credential requirements. It never substitutes an `id_token`, promises no generic ID-token detection or RFC 9068 `at+jwt`/`typ` heuristic, and cannot accidentally accept opaque access tokens.
   - verify: `TestNativeLLMGatewayLogin_Scenario4_AccessTokenOnlyProfile`
 - AC4.3: The protected record uses the exact namespace and full bound identity; unknown schema, identity/trust/CA-digest change, corrupt record, unavailable selected key source, or unavailable store fails closed and never falls back to plaintext/environment token persistence/memory, auto-discovery, or migration. Explicit shared environment-key custody preserves encrypted records and their identity; missing/malformed/wrong keys cannot start OAuth or overwrite existing records. Status/logout/serve never initialize key material, and refresh rotation persists before use in both source modes.
-  - verify: `TestNativeLLMGatewayLogin_Scenario4_CredentialIdentityAndStorage`, `TestNativeCredentialKeySchema`, `TestNativeEnvironmentKeyDecoding`, `TestNativeEnvironmentKeyLifecycle`, `TestNativeDefaultKeyringCompatibility`
+  - verify: `TestNativeLLMGatewayLogin_Scenario4_CredentialIdentityAndStorage`, `TestInvariant_native_endpoint_source_requires_exact_record_before_availability`, `TestNativeEnvironmentKeyDecoding`, `TestNativeEnvironmentKeyLifecycle`, `TestNativeDefaultKeyringCompatibility`
 - AC4.4: Standalone mecated uses/refreshes an existing record under the identical configured home, OS identity, and selected encryption key but never opens a browser; remote clients cannot upload tokens/codes/records and no login RPC exists.
   - verify: `TestNativeLLMGatewayLogin_Scenario4_HostOwnershipBoundary`
 - AC4.5: Successful native login emits only secret-free stderr confirmation; tokens, codes, URLs, record keys, raw provider bodies, and trust paths never enter stdout, diagnostics, errors, events, snapshots, model context, or RPCs.

@@ -74,7 +74,7 @@ function harness(records: DurableRecord[]) {
   const requests: WatchRequest[] = [];
   const transport = createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
       getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       watchSessionEvents: async function* (request) {
         requests.push({ cursor: request.cursor, runId: request.runId });

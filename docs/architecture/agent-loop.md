@@ -95,8 +95,7 @@ as its own ceiling; each engine checks only its own persisted session usage. Par
 usage and `EvResult` do not include child spend, so a delegation tree can exceed
 `MaxRunTokens`; cross-tree aggregate observability and enforcement are deferred
 and out of scope. A per-call override
-(`RunRequest.MaxRunTokensOverride`, the Subagent `max_run_tokens` arg — `max_tokens`
-is the deprecated alias for the same budget) may only
+(`RunRequest.MaxRunTokensOverride`, the Subagent `max_run_tokens` arg) may only
 **tighten** it. The team-aggregate counterpart is `--max-team-tokens` ([parallelism](parallelism.md)).
 
 ```mermaid

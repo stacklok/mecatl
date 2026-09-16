@@ -190,11 +190,6 @@ func TestBuildSubagentRunRequestFloor(t *testing.T) {
 			args:         subagentArgs{Prompt: "p"},
 			wantOverride: 0,
 		},
-		{
-			name:         "deprecated max_tokens below floor is also raised",
-			args:         subagentArgs{Prompt: "p", MaxTokens: ptr(100)},
-			wantOverride: MinSubagentRunTokens,
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -46,7 +46,7 @@ describe("run controls", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-controls" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           await input.next();
@@ -87,7 +87,7 @@ describe("run controls", () => {
     const raceTransport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session-race" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: () => ({ session: { sessionId: "session-race" } }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();

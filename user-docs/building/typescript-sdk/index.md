@@ -32,6 +32,8 @@ to run one prompt against a private offline daemon.
   session's cross-run timeline from an application-owned cursor.
 - [Register callback tools](./callback-tools.md) to expose local Node.js or Bun
   handlers to sessions created by a private daemon.
+- [Inspect a server before creating a session](./server-discovery.md) to check
+  compatibility, deployment capabilities, and safe build identity.
 
 The SDK also exposes typed namespaces for models, agents, skills, teams,
 schedules, learning, MCP inventory, and storage operations. See the

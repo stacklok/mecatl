@@ -31,6 +31,44 @@ func chartDir(t *testing.T) string {
 	return "."
 }
 
+func TestMecak8sHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
+	versionData, err := os.ReadFile("../../../VERSION")
+	if err != nil {
+		t.Fatalf("read root VERSION: %v", err)
+	}
+	version := strings.TrimSpace(string(versionData))
+
+	chartData, err := os.ReadFile("Chart.yaml")
+	if err != nil {
+		t.Fatalf("read Chart.yaml: %v", err)
+	}
+	var chart struct {
+		Version    string `yaml:"version"`
+		AppVersion string `yaml:"appVersion"`
+	}
+	if err := yaml.Unmarshal(chartData, &chart); err != nil {
+		t.Fatalf("parse Chart.yaml: %v", err)
+	}
+
+	valuesData, err := os.ReadFile("values.yaml")
+	if err != nil {
+		t.Fatalf("read values.yaml: %v", err)
+	}
+	var values struct {
+		Image struct {
+			Tag string `yaml:"tag"`
+		} `yaml:"image"`
+	}
+	if err := yaml.Unmarshal(valuesData, &values); err != nil {
+		t.Fatalf("parse values.yaml: %v", err)
+	}
+
+	if chart.Version != version || chart.AppVersion != "v"+version || values.Image.Tag != "v"+version {
+		t.Fatalf("release metadata is not synchronized: VERSION=%q chart.version=%q chart.appVersion=%q image.tag=%q",
+			version, chart.Version, chart.AppVersion, values.Image.Tag)
+	}
+}
+
 func helm(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {

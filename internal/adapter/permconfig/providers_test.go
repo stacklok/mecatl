@@ -8,6 +8,34 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 )
 
+func TestValidateProviderID(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		id      string
+		wantErr string
+	}{
+		{"valid", "myprovider", ""},
+		{"valid with hyphen and digits", "my-provider2", ""},
+		{"uppercase rejected", "MYPROVIDER", "lowercase letter"},
+		{"mixed case rejected", "MyProvider", "lowercase letter"},
+		{"reserved rejected", "openai", "reserved"},
+		{"empty rejected", "", "lowercase letter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateProviderID(tc.id)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateProviderID(%q) = %v, want nil", tc.id, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ValidateProviderID(%q) = %v, want error containing %q", tc.id, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestOperatorDefinedLLMProviders_Scenario1_ValidDefinition(t *testing.T) {
 	cfg, err := parseYAML([]byte(`
 providers:

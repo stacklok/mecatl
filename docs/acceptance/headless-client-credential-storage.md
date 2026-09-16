@@ -95,7 +95,7 @@ Legacy installations lack a marker because [ADR 0277](../adr/0277-remote-mecatui
 - AC4.1: A missing marker with a valid registry-reachable legacy row atomically pins keyring before any secret read, even when the credential is missing or the keyring is unavailable; that later failure never selects file.
   - verify: `TestHeadlessCredentialStorage_Scenario4_LegacyKeyringPin`
 - AC4.2: Credential-only crash orphans, an empty encrypted namespace, or a legacy keyring account without valid registry evidence do not pin a root. Existing actual-record-only legacy key copying remains unchanged.
-  - verify: `TestADR_0277_LegacyKeyringMigration`
+  - verify: `TestEmptyRootLogoutWithLegacyGlobalKeyCreatesNoRootAccount`, `TestExistingEmptyLegacyNamespaceDoesNotMigrateGlobalKey`, and `TestRootScopedKeyringMigratesLegacyAndPreservesCredentials`
 - AC4.3: Corrupt/unreadable metadata, unknown backend/schema, malformed/unknown/quarantined registry rows, and ambiguous evidence fail closed before a probe, backend open, or metadata rewrite.
   - verify: `TestHeadlessCredentialStorage_Scenario4_FailClosedLegacyEvidence`
 

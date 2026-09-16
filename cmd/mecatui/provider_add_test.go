@@ -106,6 +106,28 @@ func TestProviderAddNoLoginSavesOnlyDefinitionAndPrintsCommand(t *testing.T) {
 	}
 }
 
+func TestProviderAddRejectsInvalidProviderNameBeforeCollectingDefinition(t *testing.T) {
+	commands := testProviderCommands()
+	commands.terminal.readField = func(context.Context, string) (string, error) {
+		t.Fatal("readField should not be called for an invalid provider name")
+		return "", nil
+	}
+	wrote := false
+	commands.backend.updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
+		wrote = true
+		return authfile.CommitDurable, nil
+	}
+	var stdout, stderr bytes.Buffer
+	res := invocationResolution{mode: modeProviderAdd, providerName: "MYPROVIDER", remaining: []string{"--no-login"}}
+	err := commands.runAdd(context.Background(), res, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "lowercase letter") {
+		t.Fatalf("runAdd error = %v, want a lowercase-letter validation error", err)
+	}
+	if wrote {
+		t.Fatal("runAdd wrote a provider definition for an invalid name")
+	}
+}
+
 func TestProviderAddChainsToSelectedLogin(t *testing.T) {
 	commands := testProviderCommands()
 	commands.terminal.readField = providerInput(t, "https://gateway.example", "1", "model-1", "1")

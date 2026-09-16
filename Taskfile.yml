@@ -551,11 +551,21 @@ tasks:
     cmds:
       # Match ToolHive's cross-Helm install path: Helm 4 verifies plugin
       # signatures by default, while Helm 3 does not expose --verify.
-      - >-
-        helm plugin list | grep -q unittest ||
-        helm plugin install https://github.com/helm-unittest/helm-unittest
-        --version {{.HELM_UNITTEST_VERSION}}
-        $(helm plugin install --help | grep -qE '^[[:space:]]+--verify([=[:space:]]|$)' && echo --verify=false)
+      - cmd: |
+          set -eu
+          expected="{{.HELM_UNITTEST_VERSION}}"
+          expected="${expected#v}"
+          installed=$(helm plugin list | awk '$1 == "unittest" { print $2 }')
+          if [ -n "$installed" ] && [ "$installed" != "$expected" ]; then
+            echo "helm-unittest $installed is installed; version $expected is required" >&2
+            echo "run 'helm plugin uninstall unittest' and retry" >&2
+            exit 1
+          fi
+          if [ -z "$installed" ]; then
+            helm plugin install https://github.com/helm-unittest/helm-unittest \
+              --version {{.HELM_UNITTEST_VERSION}} \
+              $(helm plugin install --help | grep -qE '^[[:space:]]+--verify([=[:space:]]|$)' && echo --verify=false)
+          fi
       - helm unittest --strict deploy/helm/mecak8s
 
   deploy:check:
@@ -1024,19 +1034,19 @@ tasks:
       # module, and a tool directive would force EVERY build of the root module
       # (incl. CI without internal-org access) to resolve it. go run keeps it out
       # of the module graph. (A private-module fetch needs GOPRIVATE set.)
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.3
+      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4
 
   ac-trace-strict:
     desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
     deps: [sdk:install]
     cmds:
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.3 --strict
+      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --strict
 
   ac-trace-matrix:
     desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
     deps: [sdk:install]
     cmds:
-      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.3 --matrix
+      - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --matrix
 
   ci:
     desc: Full local CI gate (tidy, fmt, lint, test, build)

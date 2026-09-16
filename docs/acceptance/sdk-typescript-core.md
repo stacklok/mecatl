@@ -129,9 +129,9 @@ npm untouched) and into `ci.yml` as one job.
   - verify: inspection — the CI job executes exactly these targets from a
     clean runner; `website/` diff is empty in the scaffold PR.
 - AC1.2: The built package is ESM-only with declarations and source maps,
-  and its exports map exposes exactly `.`, `./node`, and `./gen` — a CJS
+  and its exports map exposes exactly `.`, `./node`, `./deno`, and `./gen` — a CJS
   `require()` of the package fails, and no other subpath resolves.
-  - verify: vitest:sdk/typescript/test/package.test.ts#ZXhwb3J0cyBtYXAgZXhwb3NlcyBleGFjdGx5IC4sIC4vbm9kZSwgLi9nZW4 — `sdk/typescript/test/package.test.ts :: "exports map exposes exactly ., ./node, ./gen"`
+  - verify: vitest:sdk/typescript/test/package.test.ts#ZXhwb3J0cyBtYXAgZXhwb3NlcyBleGFjdGx5IC4sIC4vbm9kZSwgLi9kZW5vLCAuL2dlbg — `sdk/typescript/test/package.test.ts :: "exports map exposes exactly ., ./node, ./deno, ./gen"`
 - AC1.3: `pnpm pack` produces a tarball containing the built output, license,
   and package metadata — and no test files, config, or generated-source
   duplicates outside the intended layout; the license field and file are

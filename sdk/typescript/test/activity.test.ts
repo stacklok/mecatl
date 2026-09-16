@@ -121,7 +121,7 @@ function activityTransport(
 ): Transport {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
       getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       watchSessionEvents,
     });

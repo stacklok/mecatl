@@ -80,7 +80,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0340 - Deno owns local daemons through Deno.Command](./0340-typescript-sdk-deno-command.md) *(supersedes ADR 0339 for the Deno public entry-point and local-process decisions)*
 - [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
-- [0343 — Optional native Kubernetes execution provider](./0343-native-kubernetes-execution.md) *(draft; separate service, preserves ADR 0048)*
+- [0346 — Optional native Kubernetes execution provider](./0346-native-kubernetes-execution.md) *(draft; separate service, preserves ADR 0048)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
@@ -138,6 +138,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0259 — Cloud-native learning uses durable, authoritative attempts](./0259-cloud-native-learning.md) *(Accepted)*
 
 ### Core tools & shell
+- [0343 — Operator-configured command runners](./0343-operator-configured-command-runners.md) *(proposed)*
 - [0281 — Managed temporary command leases and deterministic reaping](./0281-managed-temporary-command-leases.md) *(proposed)*
 - [0282 — Managed workspace scratch cache](./0282-managed-workspace-scratch-cache.md) *(proposed; depends on 0281)*
 - [0201 — Background Bash commands](./0201-background-bash.md)
@@ -209,6 +210,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
+- [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed)*
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
 
 ### Performance & diagnostics
@@ -268,6 +270,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0222-mecatui-ask-args-view.md)
 - [0247 — mecatui generated status lines](./0247-mecatui-status-line.md) *(superseded by 0289)*
 - [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
+- [0344 — Mecatui-owned terminal titles](./0344-mecatui-terminal-title-controller.md) *(proposed)*
 - [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
 - [0291 — Server-owned session placement](./0291-server-owned-session-placement.md)
 - [0294 — End-to-end session correlation and affinity](./0294-session-correlation-and-affinity.md) *(proposed)*

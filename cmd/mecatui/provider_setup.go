@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
 const customProviderSetupChoice = "custom"
@@ -28,7 +30,7 @@ func (c providerCommands) runSetup(ctx context.Context, res invocationResolution
 			return fmt.Errorf("providers setup: select provider: %w", err)
 		}
 		if provider == customProviderSetupChoice {
-			provider, err = c.terminal.readField(ctx, "Custom provider name")
+			provider, err = c.terminal.readField(ctx, "Custom provider ID (1-63 lowercase letters, digits, or hyphens; start with a letter and end with a letter or digit)")
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return providerCredentialCancellation(stderr)
@@ -37,6 +39,9 @@ func (c providerCommands) runSetup(ctx context.Context, res invocationResolution
 			}
 			if provider == "" {
 				return errors.New("providers setup: custom provider name cannot be empty")
+			}
+			if err := permconfig.ValidateProviderID(provider); err != nil {
+				return fmt.Errorf("providers setup: %w", err)
 			}
 		}
 	}
