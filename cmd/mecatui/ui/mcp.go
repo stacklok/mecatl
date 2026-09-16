@@ -17,6 +17,29 @@ func (m Model) runMCP() (tea.Model, tea.Cmd)          { return m.openMCP(mcpPane
 func (m Model) runMCPResources() (tea.Model, tea.Cmd) { return m.openMCP(mcpResources) }
 func (m Model) runMCPPrompts() (tea.Model, tea.Cmd)   { return m.openMCP(mcpPrompts) }
 
+func (m Model) runMCPRefresh() (tea.Model, tea.Cmd) {
+	direct := m.caps.MCPRefresh
+	broker := m.caps.WorkspaceEnrollment
+	if direct == broker {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh is unavailable for this server mode")
+		return m, nil
+	}
+	if broker {
+		if m.deps.WorkspaceEnrollment == nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh collaborator is unavailable")
+			return m, nil
+		}
+		return m.runToolsConnect()
+	}
+	refresher, ok := m.deps.MCP.(client.MCPRefresher)
+	if !ok || refresher == nil || m.sessionID == "" || m.phase != phaseIdle {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh is available only for an idle active session")
+		return m, nil
+	}
+	m.statusMsg = m.deps.Theme.Style("muted").Render("refreshing MCP tools…")
+	return m, client.RefreshMcpSourcesCmd(m.deps.Ctx, refresher, m.sessionID)
+}
+
 // openMCP opens the selected MCP surface and starts its initial RPC.
 func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.MCP == nil || (v != mcpPanel && !m.caps.MCP) {
@@ -82,10 +105,13 @@ type mcpState struct {
 	errCls  client.MCPErrorClass
 
 	// Inventory panel.
-	sources    []client.MCPSource
-	groups     []string // ToolHive groups (best-effort; see groupsErr)
-	groupsErr  bool     // the groups fetch failed — degrade quietly, panel still works
-	groupsDone bool     // a groups result (success or error) has arrived
+	sources     []client.MCPSource
+	revision    uint64
+	stale       bool
+	reconciling bool
+	groups      []string // ToolHive groups (best-effort; see groupsErr)
+	groupsErr   bool     // the groups fetch failed — degrade quietly, panel still works
+	groupsDone  bool     // a groups result (success or error) has arrived
 
 	// Broker-only panel state. It is intentionally separate from direct MCP sources:
 	// broker capability must never trigger direct source/resource/prompt/group RPCs.
@@ -473,6 +499,9 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 			s.refreshed = true // panel now shows live-re-probed state, not the startup snapshot
 		}
 		s.sources = msg.Sources
+		s.revision = msg.Revision
+		s.stale = msg.Stale
+		s.reconciling = msg.Reconciling
 		return nil, true, false
 	case client.MCPGroupsMsg:
 		s.groups = msg.Groups
@@ -784,21 +813,22 @@ func brokerCatalogueLabel(state string) string {
 	}
 }
 
-// mcpPanelFooter is the panel's footer hint. Before any manual refresh it carries
-// the startup-snapshot caveat; after a successful re-probe it reads "updated" so
-// the user knows the panel reflects LIVE source status. Both forms advertise the
-// r-refresh and esc-close keys, sourced from the LIVE Refresh/Close markings
-// (issue #457). No wall-clock — the wording is state-driven so the View stays
-// golden-stable.
+// mcpPanelFooter reports cached reconciler status. The r key reloads that cache;
+// explicit direct/broker mutation is the separate /mcp-refresh command.
 func mcpPanelFooter(st mcpState, hk helpKeys) string {
-	refreshClose := hk.refresh + " refresh · " + hk.closeOnly + " close"
+	refreshClose := hk.refresh + " reload status · " + hk.closeOnly + " close"
+	prefix := fmt.Sprintf("revision %d · cached", st.revision)
 	switch {
 	case st.refreshing:
-		return "refreshing… · " + refreshClose
+		return "reloading status… · " + refreshClose
+	case st.reconciling:
+		return prefix + " · reconciling… · " + refreshClose
+	case st.stale:
+		return prefix + " · stale · " + refreshClose
 	case st.refreshed:
-		return "updated — live MCP source status · " + refreshClose
+		return prefix + " · updated · " + refreshClose
 	default:
-		return "snapshot from mecated startup — servers started later won't appear · " + refreshClose
+		return prefix + " · " + refreshClose
 	}
 }
 

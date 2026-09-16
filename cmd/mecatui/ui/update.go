@@ -752,6 +752,15 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case workspaceEnrollmentPollTickMsg:
 		mm, cmd := m.applyWorkspaceEnrollmentPollTick(msg)
 		return mm, cmd, true
+	case client.MCPRefreshMsg:
+		if msg.Err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh failed: " + sanitizeTerminal(msg.Err.Error()))
+		} else if msg.Result.Changed {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools refreshed (revision %d)", msg.Result.Revision))
+		} else {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools already current (revision %d)", msg.Result.Revision))
+		}
+		return m, nil, true
 	case client.SessionCompactedMsg:
 		if msg.RequestToken != m.compactRequestToken || msg.SessionID != m.sessionID || !m.compactPending {
 			return m, nil, true

@@ -13,6 +13,8 @@ type Capabilities struct {
 	// MCPConnectorStatus gates the broker-local connector inventory. It is separate
 	// from MCP: broker-only deployments deliberately expose no direct resources or prompts.
 	MCPConnectorStatus bool
+	// MCPRefresh gates explicit direct/global source reconciliation.
+	MCPRefresh         bool
 	MCP                bool
 	SlashCommands      bool
 	Memory             bool
@@ -106,6 +108,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 	}
 	return Capabilities{
 		MCPConnectorStatus:  c.GetMcpConnectorStatus(),
+		MCPRefresh:          c.GetMcpRefresh(),
 		MCP:                 c.GetMcp(),
 		SlashCommands:       c.GetSlashCommands(),
 		Memory:              c.GetMemory(),

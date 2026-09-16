@@ -726,10 +726,10 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	}
 	t.Run("panel footer", func(t *testing.T) {
 		got := render(mcpState{view: mcpPanel})
-		if !strings.Contains(got, "ctrl+f24 refresh · ctrl+f16 close") {
-			t.Errorf("panel footer should carry live refresh+close: %q", got)
+		if !strings.Contains(got, "ctrl+f24 reload status · ctrl+f16 close") {
+			t.Errorf("panel footer should carry live status-reload+close: %q", got)
 		}
-		if strings.Contains(got, "r refresh · esc close") {
+		if strings.Contains(got, "r reload status · esc close") {
 			t.Errorf("panel footer still shows defaults: %q", got)
 		}
 	})

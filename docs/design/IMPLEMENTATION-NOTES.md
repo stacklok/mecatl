@@ -6029,6 +6029,20 @@ Build shutdown first drains Service operations, then rejects new reconciler wait
 cancels and joins the worker, and closes all remaining runtime managers. Caller
 cancellation only abandons that caller's reconciliation wait.
 
+`server.Service.RefreshMcpSources` is the explicit direct control over that shared
+reconciler. It owner-preflights before reconciliation, then takes `runEntryMu` and
+admits only quiescent idle or completed ordinary roots with no broker binding.
+The request uses the returned candidate's exact revision and active direct tool
+names even if a successor publishes before delivery. Existing names are a zero-write
+no-op with no mutation lease. Additions trigger a fresh authoritative load under
+the real mutation lease, one `Session.GrantToolAuthority` stable union, and at most
+one cancel-detached bounded save. A save error is confirmed by a bounded detached
+reload under the same exclusion: exact candidate succeeds, exact old state fails,
+and mismatch or unavailable reload is uncertain and fails closed. Completed state
+is never reopened. `MCPSourceStatus` projects the reconciler's cached
+published/pre-shadow inventory, revision, stale, and reconciling values; list calls
+never consult a source.
+
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the
 same tools the build-time `buildCatalog`→`connectMCP`+`assembleCatalog` path mounts on the main engine), NOT just core + client

@@ -461,8 +461,9 @@ Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
 second refresh are blocked until the existing operation settles. The existing
 browser flow continues without a reopen-browser action. A running or awaiting
 session does not offer refresh. Setup is destructive and bundle-wide: starting
-it withdraws broker tools, and cancellation or failure leaves them unavailable;
-`/tools-connect` and `/tools-cancel` remain unchanged bare-command shortcuts.
+it withdraws broker tools, and cancellation or failure leaves them unavailable.
+Use `/mcp-refresh` for this broker flow. `/tools-connect` remains a deprecated
+broker-only alias, and `/tools-cancel` cancels pending setup.
 
 ToolHive remains the sole custodian of upstream OAuth presentation, callback
 state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only

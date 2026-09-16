@@ -78,6 +78,7 @@ type catalogAssets struct {
 	// Catalog copies select the operation-pinned manager before assembly; cached
 	// engines retain only the returned revision tag.
 	mcpRuntimes      *mcpRuntimeSet
+	mcpReconciler    *mcpSourceReconciler
 	agentReg         *agents.Registry
 	memStore         tool.MemoryStore
 	userModelStore   tool.MemoryStore

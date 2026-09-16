@@ -2174,6 +2174,26 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	modelsRefreshState := &refreshStaleModelsState{}
 	var modelSwap modelSwapper
+	var mcpRefresh func(context.Context) (server.MCPRefreshSnapshot, error)
+	var mcpStatus func() server.MCPSourceStatus
+	if assets.mcpReconciler != nil {
+		mcpRefresh = func(ctx context.Context) (server.MCPRefreshSnapshot, error) {
+			result, err := assets.mcpReconciler.Reconcile(ctx)
+			if err != nil {
+				return server.MCPRefreshSnapshot{}, err
+			}
+			snapshot := server.MCPRefreshSnapshot{Changed: result.changed}
+			if result.candidate != nil {
+				snapshot.Revision = result.candidate.generation
+				snapshot.ToolNames = make([]string, 0, len(result.candidate.tools))
+				for _, meta := range result.candidate.tools {
+					snapshot.ToolNames = append(snapshot.ToolNames, meta.Name)
+				}
+			}
+			return snapshot, nil
+		}
+		mcpStatus = assets.mcpReconciler.statusSnapshot
+	}
 	svcCfg := server.Config{
 		BuildID:              buildinfo.BuildID,
 		ServerImplementation: cfg.ServerImplementation,
@@ -2239,12 +2259,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// it. nil when the store backs no ScheduleStore (the honest
 		// no-scheduling path).
 		ScheduleManager: scheduleMgr,
-		// Live re-probe: ListMcpSources re-consults the resolved sources on each call
-		// so a TUI panel refresh (ctrl+o → ctrl+r) reflects CURRENT source status,
-		// not just this startup snapshot. nil when MCP is unconfigured (keeps the
-		// empty snapshot). Resolution is idempotent + read-only, like the agent
-		// registry re-resolution below.
-		MCPSourceProber: mcpSourceProber(cfg),
+		// Cached reconciler status and explicit owner refresh. Listing never probes.
+		MCPRefresh: mcpRefresh,
+		MCPStatus:  mcpStatus,
 		// ListAgents snapshot: project the ONE registry resolved by
 		// resolveAgentSeam above (never a second resolution — the per-session
 		// drift class) into the proto form; the snapshot stays a pure read at
@@ -5457,7 +5474,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	// buildSubagentTool can (a) pull a REFERENCED main server's tools out of this manager
 	// and (b) connect their own INLINE servers. mainMgr is nil when no main servers are
 	// configured (reference entries then resolve to a clear "unknown server" diagnostic).
-	mainMgr, mcpProvider, mcpInventory, mcpRuntimes, mcpClose := connectMCP(ctx, cfg)
+	mainMgr, mcpProvider, mcpInventory, mcpRuntimes, mcpReconciler, mcpClose := connectMCP(ctx, cfg)
 
 	// Per-project memory store: opt-in via MemoryStoreURL (a remote gRPC driver;
 	// Phase B) or MemoryDir (the flocked reference adapter, opened ONCE here —
@@ -5681,6 +5698,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	assets := catalogAssets{
 		globalMgr:        mainMgr,
 		mcpRuntimes:      mcpRuntimes,
+		mcpReconciler:    mcpReconciler,
 		agentReg:         agentReg,
 		memStore:         memStore,
 		userModelStore:   userModelStore,
@@ -5792,25 +5810,6 @@ func mcpResolveOptions(cfg Config) mcpsource.ResolveOptions {
 	}
 }
 
-// mcpSourceProber builds the live-inventory prober wired into the server.Service.
-// It re-runs source.InspectSources over the SAME resolved sources on every call,
-// so a client refresh reflects CURRENT source status/diagnostics (a ToolHive
-// workload that crashed or appeared after startup), not the startup snapshot.
-// Resolution is read-only (the ToolHive source queries the container runtime; the
-// static source is in-memory) and fail-soft, matching the rest of MCP wiring. It
-// returns nil when MCP is not configured (no static servers, ToolHive off) so the
-// Service simply keeps using the (empty) startup snapshot.
-func mcpSourceProber(cfg Config) func(ctx context.Context) []mcpsource.SourceInfo {
-	opts := mcpResolveOptions(cfg)
-	if len(opts.StaticServers) == 0 && !opts.ToolHiveEnabled {
-		return nil
-	}
-	sources := mcpsource.ResolveSources(opts)
-	return func(ctx context.Context) []mcpsource.SourceInfo {
-		return mcpsource.InspectSources(ctx, sources, opts)
-	}
-}
-
 // connectMCP RESOLVES the MCP server inventory from the pluggable source list
 // (static MCPServers entries first, then the live ToolHive workload source when
 // ToolHiveEnabled) and connects the merged set. It is non-fatal end to end:
@@ -5822,12 +5821,12 @@ func mcpSourceProber(cfg Config) func(ctx context.Context) []mcpsource.SourceInf
 // the concrete *mcp.Manager (nil when no servers connect) so the per-agent-def
 // wiring can pull a REFERENCED main server's tools out of it; the same value is
 // the mcp.Provider used for resources/prompts.
-func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, *mcpRuntimeSet, func()) {
+func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, *mcpRuntimeSet, *mcpSourceReconciler, func()) {
 	opts := mcpResolveOptions(cfg)
 	if len(opts.StaticServers) == 0 && !opts.ToolHiveEnabled {
 		_, inventory, _ := mcpsource.Resolve(ctx, mcpsource.ResolveSources(opts))
 		cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)", "toolhive", false, "static", 0)
-		return nil, nil, inventory, nil, func() {}
+		return nil, nil, inventory, nil, nil, func() {}
 	}
 	runtimes := newMCPRuntimeSet(nil)
 	reconciler := newMCPSourceReconciler(mcpReconcilerOptions{
@@ -5853,11 +5852,11 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 			cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)",
 				"toolhive", cfg.ToolHiveEnabled, "static", len(cfg.MCPServers))
 		}
-		return nil, runtimes, result.inventory, runtimes, closeRuntime
+		return nil, runtimes, result.inventory, runtimes, reconciler, closeRuntime
 	}
 	mgr := result.candidate.manager
 	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(result.candidate.configs), "tools", len(mgr.Tools()))
-	return mgr, runtimes, result.inventory, runtimes, closeRuntime
+	return mgr, runtimes, result.inventory, runtimes, reconciler, closeRuntime
 }
 
 func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, err error) {

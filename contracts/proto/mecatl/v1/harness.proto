@@ -135,11 +135,13 @@ service HarnessService {
   // server and returns the rendered messages.
   rpc GetMcpPrompt(GetMcpPromptRequest) returns (GetMcpPromptResponse);
 
-  // ListMcpSources returns the resolved MCP source inventory snapshot: each
-  // configured source (static / ToolHive), the servers it contributed, and any
-  // diagnostics it raised. Derived from the resolution snapshot taken at
-  // startup; it performs no live discovery.
+  // ListMcpSources returns the cached published/pre-shadow source inventory and
+  // reconciler status. It performs no independent upstream probe.
   rpc ListMcpSources(ListMcpSourcesRequest) returns (ListMcpSourcesResponse);
+
+  // RefreshMcpSources explicitly reconciles direct MCP sources for an owned
+  // eligible ordinary-root session and unions newly active direct names.
+  rpc RefreshMcpSources(RefreshMcpSourcesRequest) returns (RefreshMcpSourcesResponse);
 
   // ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
   // This read neither probes upstreams nor progresses enrollment.
@@ -794,6 +796,9 @@ message ServerCapabilities {
   // mcp_connector_status requires a wired broker inspector, enforced ownership
   // and a verified caller. It does not enable direct MCP resources or prompts.
   bool mcp_connector_status = 29;
+  // mcp_refresh is true when direct/global MCP source reconciliation is wired.
+  // It is mutually exclusive with workspace_enrollment in a valid deployment.
+  bool mcp_refresh = 30;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -2741,6 +2746,24 @@ message ListMcpSourcesRequest {}
 message ListMcpSourcesResponse {
   // sources are the (possibly empty) resolved sources.
   repeated McpSource sources = 1;
+  // revision is the current published direct-runtime revision.
+  uint64 revision = 2;
+  // stale is true when source or candidate degradation retained an older runtime.
+  bool stale = 3;
+  // reconciling is true while the shared reconciler is processing a cycle.
+  bool reconciling = 4;
+}
+
+// RefreshMcpSourcesRequest names the owned session whose direct-name authority
+// may be widened after reconciliation.
+message RefreshMcpSourcesRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// RefreshMcpSourcesResponse identifies the request-pinned runtime snapshot.
+message RefreshMcpSourcesResponse {
+  uint64 revision = 1;
+  bool changed = 2;
 }
 
 // ListToolHiveGroupsRequest requests the distinct ToolHive groups in the

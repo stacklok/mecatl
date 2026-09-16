@@ -140,6 +140,7 @@ commands supported by the connected server.
 |Task|Open in `mecatui`|More information|
 |-|-|-|
 |Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/building/what-you-get/mcp-client.md)|
+|Refresh direct MCP tools or broker workspace services|`/mcp-refresh`|[Use learning and memory commands](./commands-and-memory.md#workspace-service-enrollment)|
 |Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
 |Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
 |Inspect the user model|`/usermodel`|[Memory](/building/what-you-get/memory.md)|

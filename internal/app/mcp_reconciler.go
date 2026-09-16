@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
+	serveradapter "github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 const (
@@ -118,6 +119,7 @@ type mcpSourceReconciler struct {
 	waiters []chan mcpReconcileReply
 	lkg     map[string]mcpSourceSnapshot
 	current *mcpReconcileCandidate
+	status  serveradapter.MCPSourceStatus
 	closed  bool
 
 	cyclesDone     atomic.Int64
@@ -142,6 +144,14 @@ func newMCPSourceReconciler(opts mcpReconcilerOptions) *mcpSourceReconciler {
 
 func (r *mcpSourceReconciler) polling() bool { return r.toolHive }
 func (r *mcpSourceReconciler) cycles() int64 { return r.cyclesDone.Load() }
+
+func (r *mcpSourceReconciler) statusSnapshot() serveradapter.MCPSourceStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	status := r.status
+	status.Sources = cloneMCPInventory(status.Sources)
+	return status
+}
 
 func (r *mcpSourceReconciler) Reconcile(ctx context.Context) (mcpReconcileResult, error) {
 	reply := make(chan mcpReconcileReply, 1)
@@ -184,7 +194,18 @@ func (r *mcpSourceReconciler) loop() {
 			poll = r.after(mcpPollDelay())
 		case <-r.trigger:
 			waiters := r.takeWaiters()
+			r.mu.Lock()
+			r.status.Reconciling = true
+			r.mu.Unlock()
 			result, err := r.cycle()
+			r.mu.Lock()
+			r.status.Sources = cloneMCPInventory(result.inventory)
+			r.status.Stale = result.stale
+			r.status.Reconciling = false
+			if result.candidate != nil {
+				r.status.Revision = result.candidate.generation
+			}
+			r.mu.Unlock()
 			r.cyclesDone.Add(1)
 			replyMCPWaiters(waiters, result, err)
 		}
@@ -304,7 +325,7 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		old.close()
 	}
 	result.candidate = candidate
-	result.changed = old != nil
+	result.changed = true
 	return result, nil
 }
 

@@ -375,22 +375,16 @@ type Config struct {
 	// catalog-level inspection RPCs. Optional and nil-safe: when nil, the list
 	// RPCs return empty and the read/get RPCs return ErrNoMCPProvider.
 	MCPProvider mcp.Provider
-	// MCPSources is the resolved MCP source inventory snapshot taken at startup.
-	// It backs ListMcpSources and ListToolHiveGroups when MCPSourceProber is nil;
-	// in that case both derive purely from this snapshot and perform no live
-	// discovery. May be empty.
+	// MCPSources is the startup inventory fallback used only when MCPStatus is nil.
+	// Production direct MCP composition supplies the reconciler's cached status.
 	MCPSources []source.SourceInfo
-	// MCPSourceProber, when non-nil, re-consults the resolved MCP sources on each
-	// ListMcpSources/ListToolHiveGroups call and returns a FRESH inventory — so a
-	// client refresh reflects CURRENT source status/diagnostics (e.g. a ToolHive
-	// workload that crashed or appeared after startup), not the startup snapshot.
-	// It is the live-discovery seam: the composition root supplies a prober that
-	// closes over the resolved []source.Source and re-runs source.InspectSources.
-	// When nil, ListMcpSources falls back to the cached MCPSources snapshot. The
-	// prober is read-only (streaming-HTTP / container queries only; never spawns a
-	// process) and fail-soft: on any failure the Service falls back to the cached
-	// snapshot so the panel always renders.
-	MCPSourceProber func(ctx context.Context) []source.SourceInfo
+	// MCPRefresh reconciles direct MCP sources and returns the exact immutable
+	// runtime snapshot considered by this request. It is nil when direct refresh
+	// is unavailable. Shared reconciliation outlives caller cancellation.
+	MCPRefresh func(ctx context.Context) (MCPRefreshSnapshot, error)
+	// MCPStatus returns the reconciler's cached publication/source status without
+	// consulting an upstream source. It is nil when direct MCP is unavailable.
+	MCPStatus func() MCPSourceStatus
 	// Commands lists the available slash commands for a workspace, backing the
 	// ListCommands RPC (the client's in-input command palette). It is the
 	// composition-injected discovery seam: the composition root (internal/app)
@@ -2656,6 +2650,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		SessionDebug:        s.cfg.DebugSessionEngine != nil,
 		DebugMcp:            s.cfg.DebugMCP,
 		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
+		McpRefresh:          s.cfg.MCPRefresh != nil,
 	}
 }
 
@@ -8178,37 +8173,34 @@ func classifyMCPError(err error) error {
 	return fmt.Errorf("%w: %v", ErrInternal, err)
 }
 
-// ListMcpSources returns the MCP source inventory (possibly empty). When a
-// MCPSourceProber is configured it RE-CONSULTS the resolved sources for live
-// status/diagnostics on every call (so a client refresh reflects current state,
-// not the startup snapshot); on a prober that returns nil it falls back to the
-// cached startup snapshot so the panel always renders. With no prober it is a
-// pure read of the injected snapshot (no live discovery).
-func (s *Service) ListMcpSources(ctx context.Context) []source.SourceInfo {
-	return s.liveSources(ctx)
+// ListMcpSources returns a detached cached published/pre-shadow inventory and
+// reconciler status. It never consults an upstream source.
+func (s *Service) ListMcpSources(_ context.Context) MCPSourceStatus {
+	if s.cfg.MCPStatus != nil {
+		cached := s.cfg.MCPStatus()
+		cached.Sources = cloneMCPSourceInfos(cached.Sources)
+		return cached
+	}
+	return MCPSourceStatus{Sources: cloneMCPSourceInfos(s.cfg.MCPSources)}
 }
 
-// liveSources returns the freshest inventory available: the prober's result when
-// it is configured and yields anything, otherwise the cached startup snapshot.
-// Centralising this keeps ListMcpSources and ListToolHiveGroups consistent — a
-// refresh that re-probes sources is reflected in both the panel and the groups.
-func (s *Service) liveSources(ctx context.Context) []source.SourceInfo {
-	if s.cfg.MCPSourceProber != nil {
-		if probed := s.cfg.MCPSourceProber(ctx); probed != nil {
-			return probed
-		}
+func cloneMCPSourceInfos(in []source.SourceInfo) []source.SourceInfo {
+	out := make([]source.SourceInfo, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Servers = append([]source.ServerInfo(nil), in[i].Servers...)
+		out[i].Diagnostics = append([]string(nil), in[i].Diagnostics...)
 	}
-	return s.cfg.MCPSources
+	return out
 }
 
 // ListToolHiveGroups derives the distinct, non-empty ToolHive groups from the
-// inventory (the live re-probe when a MCPSourceProber is set, else the startup
-// snapshot — see liveSources). It considers only sources whose Kind is
-// "toolhive". Output is sorted for deterministic results.
+// same cached inventory as ListMcpSources. It considers only sources whose Kind
+// is "toolhive". Output is sorted for deterministic results.
 func (s *Service) ListToolHiveGroups(ctx context.Context) []string {
 	seen := make(map[string]struct{})
 	var groups []string
-	for _, src := range s.liveSources(ctx) {
+	for _, src := range s.ListMcpSources(ctx).Sources {
 		if src.Kind != "toolhive" || src.Group == "" {
 			continue
 		}

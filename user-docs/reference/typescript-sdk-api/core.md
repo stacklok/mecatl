@@ -2782,7 +2782,7 @@ MCP resource, prompt, source, and ToolHive-group inventory operations.
 export interface McpInventory
 ```
 
-Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature), [`listPrompts()`](#api-mcpinventory-listprompts-methodsignature), [`listResources()`](#api-mcpinventory-listresources-methodsignature), [`listSources()`](#api-mcpinventory-listsources-methodsignature), [`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature), [`readResource()`](#api-mcpinventory-readresource-methodsignature)
+Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature), [`listPrompts()`](#api-mcpinventory-listprompts-methodsignature), [`listResources()`](#api-mcpinventory-listresources-methodsignature), [`listSources()`](#api-mcpinventory-listsources-methodsignature), [`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature), [`readResource()`](#api-mcpinventory-readresource-methodsignature), [`refresh()`](#api-mcpinventory-refresh-methodsignature)
 
 <Heading as="h4" id="api-mcpinventory-getprompt-methodsignature"><code>McpInventory.getPrompt</code></Heading>
 
@@ -2873,6 +2873,21 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<ReadMcpResourceResponse>`
+
+<Heading as="h4" id="api-mcpinventory-refresh-methodsignature"><code>McpInventory.refresh</code></Heading>
+
+Refreshes direct MCP sources for one eligible owned session.
+
+```ts
+refresh(request: RefreshMcpSourcesRequest, options?: RequestOptions): Promise<RefreshMcpSourcesResponse>;
+```
+
+Parameters:
+
+- `request` (`RefreshMcpSourcesRequest`)
+- `options` (`RequestOptions`, optional)
+
+Returns: `Promise<RefreshMcpSourcesResponse>`
 
 <Heading as="h3" id="api-mecatlerroroptions-interface"><code>MecatlErrorOptions</code></Heading>
 

@@ -320,20 +320,14 @@ func TestGRPCListToolHiveGroups(t *testing.T) {
 	}
 }
 
-// TestServiceMcpSourceProberReflectsLiveStatus asserts that when a MCPSourceProber
-// is configured, ListMcpSources/ListToolHiveGroups re-consult it on every call —
-// so a source whose status changed since startup (a server reconnected, a new
-// group appeared) is reflected, not the cached startup snapshot.
-func TestServiceMcpSourceProberReflectsLiveStatus(t *testing.T) {
-	startup := cannedSources()
-	// The "live" inventory differs: the toolhive(default) diagnostic cleared and a
-	// brand-new toolhive group ("staging") appeared.
-	live := []source.SourceInfo{
+// TestServiceMcpSourceStatusIsCached proves listing reads the reconciler cache and
+// performs no independent source probe.
+func TestServiceMcpSourceStatusIsCached(t *testing.T) {
+	cached := []source.SourceInfo{
 		{Name: "static", Kind: "static", Enabled: true, Servers: []source.ServerInfo{{Name: "alpha", URL: "http://a", Transport: "streamable-http"}}},
 		{Name: "toolhive(default)", Kind: "toolhive", Enabled: true, Group: "default", Servers: []source.ServerInfo{{Name: "beta", URL: "http://b", Transport: "streamable-http", Group: "default"}}},
 		{Name: "toolhive(staging)", Kind: "toolhive", Enabled: true, Group: "staging"},
 	}
-	var probeCalls int
 	engine := agent.NewEngine(agent.Deps{
 		LLM:     mockllm.New(),
 		Catalog: tool.NewCatalog(),
@@ -343,37 +337,26 @@ func TestServiceMcpSourceProberReflectsLiveStatus(t *testing.T) {
 	svc, err := newPlacementTestService(server.Config{
 		Engine: engine,
 		Store:  memstore.New(),
-
-		Now:        func() time.Time { return time.Unix(0, 0) },
-		MCPSources: startup, // cached fallback
-		MCPSourceProber: func(_ context.Context) []source.SourceInfo {
-			probeCalls++
-			return live
+		Now:    func() time.Time { return time.Unix(0, 0) },
+		MCPStatus: func() server.MCPSourceStatus {
+			return server.MCPSourceStatus{Sources: cached, Revision: 3, Stale: true}
 		},
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-
 	got := svc.ListMcpSources(context.Background())
-	if len(got) != 3 {
-		t.Fatalf("live sources = %d, want 3 (prober result, not the 5-source snapshot)", len(got))
-	}
-	if len(got[1].Diagnostics) != 0 {
-		t.Fatalf("toolhive diagnostic not cleared on re-probe: %#v", got[1].Diagnostics)
-	}
 	groups := svc.ListToolHiveGroups(context.Background())
-	if len(groups) != 2 || groups[0] != "default" || groups[1] != "staging" {
-		t.Fatalf("live groups = %v, want [default staging]", groups)
+	if len(got.Sources) != 3 || len(groups) != 2 || groups[0] != "default" || groups[1] != "staging" || got.Revision != 3 || !got.Stale {
+		t.Fatalf("sources=%d groups=%v status=%+v", len(got.Sources), groups, got)
 	}
-	if probeCalls != 2 { // once per List call — re-consulted every time
-		t.Fatalf("prober called %d times, want 2", probeCalls)
+	got.Sources[0].Name = "mutated"
+	if again := svc.ListMcpSources(context.Background()); again.Sources[0].Name != "static" {
+		t.Fatalf("cached status was aliased: %+v", again.Sources[0])
 	}
 }
 
-// TestServiceMcpSourceProberFailSoft asserts a prober that returns nil (a failed
-// re-probe) falls back to the cached startup snapshot, so the panel still renders.
-func TestServiceMcpSourceProberFailSoft(t *testing.T) {
+func TestServiceMcpSourceStatusFallsBackToStartupSnapshot(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{
 		LLM:     mockllm.New(),
 		Catalog: tool.NewCatalog(),
@@ -381,18 +364,16 @@ func TestServiceMcpSourceProberFailSoft(t *testing.T) {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: engine,
-		Store:  memstore.New(),
-
-		Now:             func() time.Time { return time.Unix(0, 0) },
-		MCPSources:      cannedSources(),
-		MCPSourceProber: func(_ context.Context) []source.SourceInfo { return nil },
+		Engine:     engine,
+		Store:      memstore.New(),
+		Now:        func() time.Time { return time.Unix(0, 0) },
+		MCPSources: cannedSources(),
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	if got := svc.ListMcpSources(context.Background()); len(got) != 5 {
-		t.Fatalf("fail-soft sources = %d, want 5 (cached snapshot)", len(got))
+	if got := svc.ListMcpSources(context.Background()); len(got.Sources) != 5 {
+		t.Fatalf("fallback sources = %d, want 5", len(got.Sources))
 	}
 }
 
