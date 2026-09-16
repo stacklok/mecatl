@@ -288,8 +288,9 @@ func TestSoulWheelConsumedWhileOpen(t *testing.T) {
 	}
 }
 
-// TestSoulDriftedLabel asserts a drifted user soul renders the DRIFTED marker in the
-// metadata line (the soulTrustLabel drift branch is otherwise uncovered).
+// TestSoulDriftedLabel asserts a drifted personal-instructions file explains that it
+// changed since it was trusted (the soulTrustLabel drift branch is otherwise
+// uncovered).
 func TestSoulDriftedLabel(t *testing.T) {
 	fs := &fakeSoul{soul: client.Soul{
 		Content:    "You are terse.",
@@ -302,14 +303,14 @@ func TestSoulDriftedLabel(t *testing.T) {
 	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
-	if !strings.Contains(stripANSIstr(m.View().Content), "DRIFTED") {
-		t.Errorf("a drifted soul should render the DRIFTED marker, got:\n%s", stripANSIstr(m.View().Content))
+	if !strings.Contains(stripANSIstr(m.View().Content), "changed since it was trusted") {
+		t.Errorf("a drifted soul should explain that it changed, got:\n%s", stripANSIstr(m.View().Content))
 	}
 }
 
 // TestSoulUntrustedProjectLabel asserts a dropped untrusted project soul (present
-// false, trusted false) renders the UNTRUSTED label — the trust-gate state the
-// operator must see (the soulTrustLabel untrusted-project branch).
+// false, trusted false) explains that the project is not trusted — the trust-gate
+// state the user must see (the soulTrustLabel untrusted-project branch).
 func TestSoulUntrustedProjectLabel(t *testing.T) {
 	fs := &fakeSoul{soul: client.Soul{
 		SizeBytes:  120,
@@ -321,8 +322,8 @@ func TestSoulUntrustedProjectLabel(t *testing.T) {
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
 	body := stripANSIstr(m.View().Content)
-	if !strings.Contains(body, "UNTRUSTED") {
-		t.Errorf("a dropped untrusted project soul should render the UNTRUSTED label, got:\n%s", body)
+	if !strings.Contains(body, "not loaded because this workspace is not trusted") {
+		t.Errorf("a dropped untrusted project soul should explain why it is unavailable, got:\n%s", body)
 	}
 }
 
@@ -411,4 +412,46 @@ func TestSoulPanelEmptyEnabledGolden(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul_empty_enabled.golden", got)
+}
+
+// TestSoulPanelProjectGolden locks the provenance-aware project copy. In
+// particular, a project source must never be labelled as personal instructions.
+func TestSoulPanelProjectGolden(t *testing.T) {
+	project := &fakeSoul{soul: client.Soul{
+		Content:    "Follow this repository's conventions.",
+		SizeBytes:  37,
+		SHA256:     "fedcba9876543210",
+		Present:    true,
+		Provenance: client.SoulProvenanceProject,
+		Trusted:    true,
+	}}
+	m := newSoulModel(t, project, client.Capabilities{Soul: true})
+	mm, cmd := m.runSoul()
+	m = feedCmd(t, mm.(Model), cmd)
+	got := stripANSI([]byte(m.View().Content))
+	compareGolden(t, "soul_project.golden", got)
+}
+
+func TestSoulPanelOwnershipCopyFollowsProvenance(t *testing.T) {
+	hk := helpKeys{scroll: "pgup/pgdn", closeOnly: "esc"}
+	for _, tc := range []struct {
+		name, title, footer string
+		soul                client.Soul
+	}{
+		{"personal", "Personal instructions", "you control these instructions", client.Soul{Provenance: client.SoulProvenanceUser}},
+		{"project", "Project instructions", "controlled by this project", client.Soul{Provenance: client.SoulProvenanceProject, Present: true, Trusted: true}},
+		{"untrusted project", "Project instructions", "controlled by this project", client.Soul{Provenance: client.SoulProvenanceProject, Present: false, Trusted: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := soulPanelTitle(tc.soul); got != tc.title {
+				t.Fatalf("title = %q, want %q", got, tc.title)
+			}
+			if got := soulPanelFooter(tc.soul, hk); !strings.Contains(got, tc.footer) {
+				t.Fatalf("footer = %q, want %q", got, tc.footer)
+			}
+		})
+	}
+	if got := soulTrustLabel(client.Soul{Provenance: client.SoulProvenanceProject, Present: false, Trusted: false}); got != "project · not loaded because this workspace is not trusted" {
+		t.Fatalf("untrusted project label = %q", got)
+	}
 }

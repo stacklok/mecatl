@@ -5,15 +5,15 @@
 
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                 ┃
-┃  User model (operator facts)                                                                    ┃
-┃                                                                                                 ┃
-┃  The user model is empty — no operator facts saved yet.                                         ┃
-┃                                                                                                 ┃
-┃  ↑/↓ select · enter inspect · the agent curates this · Recall loads a fact's value · esc close  ┃
-┃                                                                                                 ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+       ┃                                                                                    ┃
+       ┃  Saved memory                                                                      ┃
+       ┃                                                                                    ┃
+       ┃  No saved memory yet.                                                              ┃
+       ┃                                                                                    ┃
+       ┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close  ┃
+       ┃                                                                                    ┃
+       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

@@ -88,7 +88,7 @@ func TestLearnedSkillDetailSanitizesAndShowsLifecycleActions(t *testing.T) {
 	skill := client.LearnedSkill{ID: "id", Name: "review\x1b[31m", OwnerAgent: "agent", State: "staged", Version: "v2", Revision: "r2", Supersedes: "v1", Body: "body\nforged", EvidenceCount: 2, Evaluations: []client.SkillEvaluation{{Verdict: "pass", FixtureIDs: []string{"f1"}}}, Receipts: []client.SkillChange{{Operation: "stage", FromState: "evaluated", ToState: "staged"}}}
 	body, _ := (&skillsState{view: skillsDetail, detail: &skill, deps: surfaceDeps{theme: th, caps: client.Capabilities{LearnedSkills: true}, marks: defaultHelpKeys()}}).Render(100, 40)
 	out := stripANSIstr(body)
-	for _, want := range []string{"owner: agent", "evaluation: pass", "history receipts: 1", "a activate", "r rollback"} {
+	for _, want := range []string{"created by: agent", "latest evaluation: pass", "change history: 1", "a activate", "r restore previous version"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("detail omitted %q:\n%s", want, out)
 		}
@@ -100,7 +100,7 @@ func TestLearnedSkillDetailSanitizesAndShowsLifecycleActions(t *testing.T) {
 
 func TestLearnedSkillDetailLabelsActivationAssurance(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	for operation, want := range map[string]string{"activate_validated": "state: active(validated)", "activate": "state: active(evaluated)"} {
+	for operation, want := range map[string]string{"activate_validated": "status: active(validated)", "activate": "status: active(evaluated)"} {
 		skill := client.LearnedSkill{Name: "learned", State: "active", Receipts: []client.SkillChange{{Operation: operation, ToState: "active"}}}
 		out := stripANSIstr(renderLearnedSkillDetail(th, skill, "", 100))
 		if !strings.Contains(out, want) {

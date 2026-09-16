@@ -124,7 +124,7 @@ func TestUserModelDetailHistoryUnavailableAndSanitized(t *testing.T) {
 	}
 	m = feedCmd(t, mm.(Model), cmd)
 	view := stripANSIstr(m.View().Content)
-	if m.userModel.view != userModelDetail || !strings.Contains(view, "History unavailable") {
+	if m.userModel.view != userModelDetail || !strings.Contains(view, "Earlier versions are unavailable") {
 		t.Fatalf("detail/history-unavailable not rendered:\n%s", view)
 	}
 	if strings.ContainsAny(view, "\x1b\a\u0085\u202e\u2066\u200b\ufeff") {
@@ -133,8 +133,13 @@ func TestUserModelDetailHistoryUnavailableAndSanitized(t *testing.T) {
 	if !strings.Contains(view, "Alice 日本語") || !strings.Contains(view, "�") {
 		t.Fatalf("detail sanitizer lost ordinary Unicode or invalid-UTF8 repair:\n%q", view)
 	}
-	if !strings.Contains(view, "ForgetUserMemory or UndoUserMemory") {
-		t.Fatal("detail must guide permission-gated model-facing lifecycle tools")
+	if !strings.Contains(view, "ask the agent to remove or restore this saved fact") {
+		t.Fatal("detail must explain how to change saved memory")
+	}
+	for _, internalName := range []string{"ForgetUserMemory", "UndoUserMemory"} {
+		if strings.Contains(view, internalName) {
+			t.Fatalf("detail exposed internal tool name %q:\n%s", internalName, view)
+		}
 	}
 }
 

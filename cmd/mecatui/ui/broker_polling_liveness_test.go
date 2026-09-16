@@ -257,7 +257,7 @@ func TestMecatuiBrokerPollingLiveness_Scenario1_AmbiguousTimeoutFailsClosed(t *t
 		t.Fatalf("ambiguous timeout lost correlation or fabricated state: %+v", m.enrollment)
 	}
 	message := stripANSIstr(m.workspaceEnrollmentNotice)
-	if !strings.Contains(message, "outcome may be uncertain") {
+	if !strings.Contains(message, "result may be uncertain") {
 		t.Fatalf("timeout notice = %q, want uncertain outcome", message)
 	}
 	for _, fabricated := range []string{"connected", "failed", "declined", "expired"} {
@@ -296,7 +296,7 @@ func TestMecatuiBrokerPollingLiveness_Scenario1_TimeoutRequiresFreshSessionRecov
 				t.Fatalf("%s timeout made %d calls, want no automatic follow-up", action, control.callCount())
 			}
 			message := stripANSIstr(m.workspaceEnrollmentNotice)
-			if !strings.Contains(message, "/clear") || !strings.Contains(message, "/tools-connect") || !strings.Contains(message, "replacement session") {
+			if !strings.Contains(message, "/clear") || !strings.Contains(message, "/tools-connect") || !strings.Contains(message, "new session") {
 				t.Fatalf("%s timeout notice is not actionable: %q", action, message)
 			}
 		})

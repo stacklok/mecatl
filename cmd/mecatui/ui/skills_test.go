@@ -429,7 +429,7 @@ func TestSkillsFilterEscClears(t *testing.T) {
 }
 
 // TestSkillsFilterNoMatchNote asserts the filter-no-match note renders (and the
-// empty-state "No skills configured" copy does NOT — the inventory is non-empty,
+// empty-state "No skills are available" copy does NOT — the inventory is non-empty,
 // just unmatched).
 func TestSkillsFilterNoMatchNote(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
@@ -444,7 +444,7 @@ func TestSkillsFilterNoMatchNote(t *testing.T) {
 	if !strings.Contains(body, `no skills match "zzzzz" — esc to clear`) {
 		t.Errorf("body should carry the no-match note, got:\n%s", body)
 	}
-	if strings.Contains(body, "No skills configured") {
+	if strings.Contains(body, "No skills are available") {
 		t.Errorf("body should NOT carry the empty-state copy (inventory is non-empty), got:\n%s", body)
 	}
 }
@@ -875,8 +875,8 @@ func TestSkillsEmptyStateNotEnabled(t *testing.T) {
 	if strings.Contains(enabled, "not enabled") {
 		t.Errorf("enabled empty copy should not say 'not enabled', got %q", enabled)
 	}
-	if !strings.Contains(enabled, "No skills configured") {
-		t.Errorf("enabled empty copy = %q, want 'No skills configured'", enabled)
+	if !strings.Contains(enabled, "No skills are available") {
+		t.Errorf("enabled empty copy = %q, want 'No skills are available'", enabled)
 	}
 }
 

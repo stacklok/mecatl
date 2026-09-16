@@ -57,6 +57,67 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	}
 }
 
+// TestWorkspaceEnrollmentUserCopy covers the concise user-facing states around
+// /tools-connect so each remedy stays tied to its actual condition.
+func TestWorkspaceEnrollmentUserCopy(t *testing.T) {
+	if got := builtinCommands(client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}); !hasBuiltinDescription(got, "tools-connect", "require your approval") {
+		t.Fatalf("/tools-connect built-in = %#v, want approval-focused description", got)
+	}
+
+	for _, tc := range []struct {
+		name, want string
+		setup      func() Model
+	}{
+		{"unavailable", "cannot be connected on this server", func() Model { return New(Deps{Ctx: context.Background()}) }},
+		{"no session", "no active session", func() Model {
+			return New(Deps{Ctx: context.Background(), WorkspaceEnrollment: &workspaceEnrollmentControlFake{}})
+		}},
+		{"busy", "already connecting", func() Model {
+			m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: &workspaceEnrollmentControlFake{}})
+			m.sessionID = "session-1"
+			m.phase = phaseIdle
+			m.enrollment.busy = true
+			return m
+		}},
+		{"non-idle", "before sending a prompt", func() Model {
+			m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: &workspaceEnrollmentControlFake{}})
+			m.sessionID = "session-1"
+			m.phase = phaseRunning
+			return m
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.setup()
+			mm, cmd := m.runToolsConnect()
+			m = mm.(Model)
+			if cmd != nil || !strings.Contains(m.workspaceEnrollmentNotice, tc.want) {
+				t.Fatalf("notice = %q, command=%v; want %q", m.workspaceEnrollmentNotice, cmd != nil, tc.want)
+			}
+		})
+	}
+
+	if terminal, _, got := terminalWorkspaceEnrollmentNotice(client.WorkspaceEnrollmentDenied); !terminal || !strings.Contains(got, "declined") || !strings.Contains(got, "/tools-connect") {
+		t.Fatalf("denied notice = terminal:%t copy:%q", terminal, got)
+	}
+	if got := friendlyWorkspaceEnrollmentRejection("workspace services must be connected before prompting"); !strings.Contains(got, "enable protected tools") || !strings.Contains(got, "/tools-connect") {
+		t.Fatalf("rejection = %q", got)
+	}
+	for _, phrase := range []string{"timed out", "uncertain", "/clear", "/tools-connect"} {
+		if !strings.Contains(workspaceEnrollmentTimeoutNotice, phrase) {
+			t.Fatalf("timeout notice missing %q: %q", phrase, workspaceEnrollmentTimeoutNotice)
+		}
+	}
+}
+
+func hasBuiltinDescription(builtins []builtin, name, want string) bool {
+	for _, b := range builtins {
+		if b.name == name {
+			return strings.Contains(b.desc, want)
+		}
+	}
+	return false
+}
+
 func TestWorkspaceEnrollmentConnectedRechecksAndResubmitsOnce(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{
 		ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, PresentationURL: "https://authorization.example/",
@@ -222,7 +283,7 @@ func TestWorkspaceEnrollmentPollCompletesWithoutManualRecheck(t *testing.T) {
 	}
 	control.connect = client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentConnected}
 	m = applyAll(m, cmd())
-	if control.connectCalls != 1 || m.enrollment.ID != "" || m.statusMsg != "workspace services connected" {
+	if control.connectCalls != 1 || m.enrollment.ID != "" || m.statusMsg != "workspace tools connected" {
 		t.Fatalf("automatic completion = calls %d, enrollment %+v, status %q", control.connectCalls, m.enrollment, m.statusMsg)
 	}
 }

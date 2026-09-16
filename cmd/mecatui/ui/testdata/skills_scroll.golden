@@ -1,30 +1,30 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                                  ┃
-┃  Skills inventory                                                                                                ┃
-┃                                                                                                                  ┃
-┃  > filter skills…                                                                                                ┃
-┃                                                                                                                  ┃
-┃  skill-01                                                                                                        ┃
-┃  skill-02                                                                                                        ┃
-┃  skill-03                                                                                                        ┃
-┃  skill-04                                                                                                        ┃
-┃  skill-05                                                                                                        ┃
-┃  skill-06                                                                                                        ┃
-┃  skill-07                                                                                                        ┃
-┃  skill-08                                                                                                        ┃
-┃  skill-09                                                                                                        ┃
-┃  skill-10                                                                                                        ┃
-┃  skill-11                                                                                                        ┃
-┃  skill-12                                                                                                        ┃
-┃  skill-13                                                                                                        ┃
-┃  skill-14                                                                                                        ┃
-┃  lines 2–15 of 30                                                                                                ┃
-┃                                                                                                                  ┃
-┃  skills activate automatically when relevant · type to filter · ↑/↓/pgup/pgdn scroll · esc clear filter / close  ┃
-┃                                                                                                                  ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                          ┃
+┃  Skills inventory                                                                                        ┃
+┃                                                                                                          ┃
+┃  > filter skills…                                                                                        ┃
+┃                                                                                                          ┃
+┃  skill-01                                                                                                ┃
+┃  skill-02                                                                                                ┃
+┃  skill-03                                                                                                ┃
+┃  skill-04                                                                                                ┃
+┃  skill-05                                                                                                ┃
+┃  skill-06                                                                                                ┃
+┃  skill-07                                                                                                ┃
+┃  skill-08                                                                                                ┃
+┃  skill-09                                                                                                ┃
+┃  skill-10                                                                                                ┃
+┃  skill-11                                                                                                ┃
+┃  skill-12                                                                                                ┃
+┃  skill-13                                                                                                ┃
+┃  skill-14                                                                                                ┃
+┃  lines 2–15 of 30                                                                                        ┃
+┃                                                                                                          ┃
+┃  the agent uses skills when relevant · type to filter · ↑/↓/pgup/pgdn scroll · esc clear filter / close  ┃
+┃                                                                                                          ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

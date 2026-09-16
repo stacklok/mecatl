@@ -308,7 +308,7 @@ func TestSoulSlashCommandEndToEnd(t *testing.T) {
 	if !strings.Contains(body, "terse and direct") {
 		t.Errorf("the rendered panel should carry the persona content, got:\n%s", body)
 	}
-	if !strings.Contains(body, "user ·") {
+	if !strings.Contains(body, "personal ·") {
 		t.Errorf("the rendered panel should carry the provenance/trust metadata, got:\n%s", body)
 	}
 }

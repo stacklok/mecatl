@@ -64,14 +64,14 @@ func TestSkillsEmptyStateCapsAware(t *testing.T) {
 	if !strings.Contains(offOut, "Skills are not enabled on this server") {
 		t.Errorf("skills off: want 'not enabled' copy in:\n%s", offOut)
 	}
-	if !strings.Contains(offOut, "Run a mecated") {
+	if !strings.Contains(offOut, "Start or connect to a server") {
 		t.Errorf("skills off copy should carry the remedy:\n%s", offOut)
 	}
 
 	onPanel := &skillsState{view: skillsPanel, deps: surfaceDeps{theme: th, caps: on, marks: defaultHelpKeys()}}
 	onBody, _ := onPanel.Render(100, 24)
 	onOut := stripANSIstr(onBody)
-	if !strings.Contains(onOut, "No skills configured on this server") {
+	if !strings.Contains(onOut, "No skills are available on this server") {
 		t.Errorf("skills on-but-empty: want 'none configured' copy in:\n%s", onOut)
 	}
 	if strings.Contains(onOut, "not enabled") {

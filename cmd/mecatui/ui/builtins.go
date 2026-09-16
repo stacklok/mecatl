@@ -241,8 +241,8 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.WorkspaceEnrollment && w.Workspace {
 		out = append(out,
-			builtin{name: "tools-connect", desc: "connect the bundled protected-tool workspace services", run: Model.runToolsConnect},
-			builtin{name: "tools-cancel", desc: "cancel a pending workspace-services connection", run: Model.runToolsCancel},
+			builtin{name: "tools-connect", desc: "connect workspace tools that require your approval", run: Model.runToolsConnect},
+			builtin{name: "tools-cancel", desc: "cancel a workspace tool connection", run: Model.runToolsCancel},
 		)
 	}
 	out = appendLearningBuiltin(out, w)

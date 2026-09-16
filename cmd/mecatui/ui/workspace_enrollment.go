@@ -21,7 +21,7 @@ const workspaceEnrollmentPollInterval = 3 * time.Second
 // It is a variable only so tests can exercise the fixed production duration.
 var workspaceEnrollmentTimeout = 30 * time.Second
 
-const workspaceEnrollmentTimeoutNotice = "workspace services request timed out; the server outcome may be uncertain — run /clear, then /tools-connect in the replacement session"
+const workspaceEnrollmentTimeoutNotice = "connecting workspace tools timed out; the result may be uncertain — start a new session with /clear, then run /tools-connect"
 
 // workspaceEnrollmentPollTickMsg is bound to the session and pending enrollment
 // it observes, so stale timer deliveries cannot affect a replacement session.
@@ -165,19 +165,19 @@ func (m Model) startWorkspaceEnrollmentControl(action string) (tea.Model, tea.Cm
 // starting a second bundle.
 func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
 	if m.deps.WorkspaceEnrollment == nil {
-		m.workspaceEnrollmentNotice = "/tools-connect is not available on this server"
+		m.workspaceEnrollmentNotice = "workspace tools cannot be connected on this server"
 		return m, nil
 	}
 	if m.sessionID == "" {
-		m.workspaceEnrollmentNotice = "cannot connect workspace services: no active session"
+		m.workspaceEnrollmentNotice = "cannot connect workspace tools: no active session"
 		return m, nil
 	}
 	if m.phase != phaseIdle {
-		m.workspaceEnrollmentNotice = "workspace services connection is available only while the session is idle"
+		m.workspaceEnrollmentNotice = "connect workspace tools before sending a prompt or after the current response finishes"
 		return m, nil
 	}
 	if m.enrollment.busy {
-		m.workspaceEnrollmentNotice = "workspace services connection is already in progress"
+		m.workspaceEnrollmentNotice = "workspace tools are already connecting"
 		return m, nil
 	}
 	action := connectAction
@@ -193,24 +193,24 @@ func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
 	// priority over statusMsg (issue: a /tools-connect outcome written to
 	// statusMsg renders invisibly whenever the ambient "not connected" notice
 	// is also set — which it always is, right up until this call clears it).
-	m.workspaceEnrollmentNotice = "connecting workspace services…"
+	m.workspaceEnrollmentNotice = "connecting workspace tools…"
 	return m.startWorkspaceEnrollmentControl(action)
 }
 
 // runToolsCancel cancels the caller-owned pending bundle.
 func (m Model) runToolsCancel() (tea.Model, tea.Cmd) {
 	if m.deps.WorkspaceEnrollment == nil || m.enrollment.ID == "" {
-		m.workspaceEnrollmentNotice = "no pending workspace-services connection to cancel"
+		m.workspaceEnrollmentNotice = "there is no workspace tool connection to cancel"
 		return m, nil
 	}
 	if m.enrollment.busy {
-		m.workspaceEnrollmentNotice = "workspace services connection is already in progress"
+		m.workspaceEnrollmentNotice = "workspace tools are already connecting"
 		return m, nil
 	}
 	m.enrollment.busy = true
 	m.enrollment.err = ""
 	// workspaceEnrollmentNotice, not statusMsg — see runToolsConnect.
-	m.workspaceEnrollmentNotice = "cancelling workspace services connection…"
+	m.workspaceEnrollmentNotice = "cancelling workspace tool connection…"
 	return m.startWorkspaceEnrollmentControl("cancel")
 }
 
@@ -305,13 +305,13 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 func terminalWorkspaceEnrollmentNotice(status client.WorkspaceEnrollmentStatus) (terminal bool, notice, statusMsg string) {
 	switch status {
 	case client.WorkspaceEnrollmentCancelled:
-		return true, "", "workspace services connection cancelled"
+		return true, "", "workspace tool connection cancelled"
 	case client.WorkspaceEnrollmentDenied:
-		return true, "", "workspace services connection was declined — run /tools-connect to try again"
+		return true, "", "workspace tool connection was declined — run /tools-connect to try again"
 	case client.WorkspaceEnrollmentExpired:
-		return true, "", "workspace services connection expired — run /tools-connect to try again"
+		return true, "", "workspace tool connection expired — run /tools-connect to try again"
 	case client.WorkspaceEnrollmentFailed:
-		return true, "", "workspace services connection failed — run /tools-connect to retry"
+		return true, "", "workspace tool connection failed — run /tools-connect to retry"
 	default:
 		return false, "", ""
 	}
@@ -330,7 +330,7 @@ func (m Model) finalizeWorkspaceEnrollmentConnected() (tea.Model, tea.Cmd) {
 	m.enrollment = workspaceEnrollmentState{Status: client.WorkspaceEnrollmentConnected, controlGen: m.enrollment.controlGen}
 	m.workspaceEnrollmentNotice = ""
 	focusCmd := m.prompt.Focus()
-	m.statusMsg = "workspace services connected"
+	m.statusMsg = "workspace tools connected"
 	cmd := tea.Batch(focusCmd, (&m).armLiveFeed())
 	if r := m.promptRecovery; r != nil {
 		// The recovered draft must still be the source-session draft. A changed
@@ -354,7 +354,7 @@ func (m Model) finalizeWorkspaceEnrollmentConnected() (tea.Model, tea.Cmd) {
 // rejection with the built-in command that resolves it.
 func friendlyWorkspaceEnrollmentRejection(raw string) string {
 	if isWorkspaceEnrollmentRejection(raw) {
-		return "workspace services aren't connected — run /tools-connect to enable protected tools before prompting"
+		return "workspace tools aren't connected — run /tools-connect before sending a prompt to enable protected tools"
 	}
 	return raw
 }

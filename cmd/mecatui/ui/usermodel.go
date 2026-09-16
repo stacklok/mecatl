@@ -165,8 +165,8 @@ func renderUserModelOverlay(th theme.Theme, st userModelState, caps client.Capab
 
 // userModelDisabledNote is the empty-state copy when the user model is NOT enabled
 // on the connected server (caps.UserModel == false), with the remedy.
-const userModelDisabledNote = "The user model is not enabled on this server.\n" +
-	"Run a mecated without --no-user-model (and with an XDG/home to resolve the store)."
+const userModelDisabledNote = "Saved memory is not enabled on this server.\n" +
+	"Start or connect to a server with memory enabled."
 
 // userModelEmptyCopy returns the empty-state line: the "not enabled" note (with
 // remedy) when caps.UserModel is false, else the "enabled but empty" note.
@@ -174,7 +174,7 @@ func userModelEmptyCopy(caps client.Capabilities) string {
 	if !caps.UserModel {
 		return userModelDisabledNote
 	}
-	return "The user model is empty — no operator facts saved yet."
+	return "No saved memory yet."
 }
 
 // renderUserModelPanel renders the read-only inventory: a title, a dim aggregate
@@ -183,7 +183,7 @@ func userModelEmptyCopy(caps client.Capabilities) string {
 // terminal-sanitized.
 func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("User model (operator facts)") + "\n\n")
+	b.WriteString(th.Style("askTitle").Render("Saved memory") + "\n\n")
 
 	budget := cardTextWidth(width)
 	var lines []string
@@ -218,7 +218,7 @@ func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabil
 	window := userModelWindowLines(height, len(lines))
 	scroll := clampScroll(selectedLine-window/2, len(lines), window)
 	b.WriteString(windowRenderedLines(th, lines, scroll, window))
-	b.WriteString("\n" + th.Style("muted").Render("↑/↓ select · enter inspect · the agent curates this · Recall loads a fact's value · "+hk.closeOnly+" close"))
+	b.WriteString("\n" + th.Style("muted").Render("↑/↓ select · enter inspect · the agent saves and updates these facts · "+hk.closeOnly+" close"))
 	return b.String()
 }
 
@@ -249,7 +249,7 @@ func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width
 	} else if st.detail != nil {
 		rev := st.detail.Current
 		lines = append(lines, renderToolCardText(th.Style("toolName"), sanitizeTerminal(rev.Key), budget))
-		for _, row := range []struct{ label, value string }{{"status", rev.Status}, {"version", rev.Version}, {"writer", rev.Writer}, {"origin", rev.Origin}, {"source session", rev.SourceSessionID}, {"proposal", rev.SourceProposalID}} {
+		for _, row := range []struct{ label, value string }{{"status", rev.Status}, {"version", rev.Version}, {"saved by", rev.Writer}, {"source", rev.Origin}, {"session", rev.SourceSessionID}, {"proposal", rev.SourceProposalID}} {
 			if row.value != "" {
 				lines = append(lines, th.Style("muted").Render(row.label+": ")+wrap(row.value))
 			}
@@ -264,9 +264,9 @@ func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width
 		lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(rev.Value), cardTextWidth(width))), "\n")...)
 		lines = append(lines, "")
 		if !st.detail.HistoryAvailable {
-			lines = append(lines, th.Style("muted").Render("History unavailable from this store/driver."))
+			lines = append(lines, th.Style("muted").Render("Earlier versions are unavailable on this server."))
 		} else {
-			lines = append(lines, th.Style("muted").Render(fmt.Sprintf("History: %d bounded revisions", len(st.detail.History))))
+			lines = append(lines, th.Style("muted").Render(fmt.Sprintf("Earlier versions: %d", len(st.detail.History))))
 			for _, prior := range st.detail.History {
 				line := fmt.Sprintf("%s · %s · %s", prior.Version, prior.Status, prior.UpdatedAt.UTC().Format("2006-01-02"))
 				lines = append(lines, th.Style("toolArgs").Render(sanitizeTerminal(line)))
@@ -275,7 +275,7 @@ func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width
 	}
 	window := userModelWindowLines(height, len(lines))
 	b.WriteString(windowRenderedLines(th, lines, clampScroll(st.scroll, len(lines), window), window))
-	b.WriteString("\n" + th.Style("muted").Render(hk.scroll+" scroll · read-only · ask the model to use ForgetUserMemory or UndoUserMemory · "+hk.closeOnly+" back"))
+	b.WriteString("\n" + th.Style("muted").Render(hk.scroll+" scroll · read-only · ask the agent to remove or restore this saved fact · "+hk.closeOnly+" back"))
 	return b.String()
 }
 

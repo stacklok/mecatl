@@ -95,6 +95,9 @@ type trustOutcome struct {
 	persisted bool
 }
 
+const trustDisclosure = "Trust enables project instructions and project ALLOW grants. Project DENY and ASK rules always apply."
+const untrustedDisclosure = "Project instructions and project ALLOW grants stay disabled. Project DENY and ASK rules still apply."
+
 // resolveTrustForRun runs the pre-TUI trust gate and returns the per-run trust
 // outcome. It NEVER errors out of band and NEVER blocks: a Remember write failure
 // is logged to errw and the run still proceeds trusted (fail-soft); a non-TTY
@@ -122,7 +125,7 @@ func resolveTrustForRun(seam trustSeam, workspace string, stdin io.Reader, errw 
 	// Otherwise (piped / headless) we CANNOT ask: fail-safe to UNTRUSTED for this
 	// run. Never block on input; never auto-trust.
 	if !isTTY {
-		_, _ = fmt.Fprintf(errw, "mecatui: workspace %s is not trusted and stdin is not a terminal; proceeding UNTRUSTED (project soul/agents/commands/skills/allows are withheld). Run interactively, pass --trust-project, or declare it in trustedWorkspaces to trust it.\n", sanitizeTrustEcho(workspace))
+		_, _ = fmt.Fprintf(errw, "mecatui: workspace %s is not trusted and stdin is not a terminal; continuing without trusting it. %s Run interactively, pass --trust-project, or add it to trustedWorkspaces to trust it.\n", sanitizeTrustEcho(workspace), untrustedDisclosure)
 		return trustOutcome{trusted: false}
 	}
 
@@ -138,12 +141,12 @@ func askTrust(seam trustSeam, workspace string, drifted bool, stdin io.Reader, e
 	pf("\n")
 	if drifted {
 		pf("mecatui: this workspace CHANGED since you trusted it:\n  %s\n", safe)
-		pf("Its project soul/agents/commands/skills (the identity surface) were edited. Re-confirm trust?\n")
+		pf("Its project instructions, agents, commands, or skills changed. %s\nTrust them again?\n", trustDisclosure)
 	} else {
 		pf("mecatui: do you trust the project files in this workspace?\n  %s\n", safe)
-		pf("Trusting honours this project's soul, agents, commands, skills, and ALLOW rules. Its deny/ask rules apply regardless.\n")
+		pf("%s\n", trustDisclosure)
 	}
-	pf("[t]rust (persist) / [o]nce (this run only) / [n]o (default): ")
+	pf("[t]rust and remember / [o]nce (this run only) / [n]o (default): ")
 
 	answer := readLine(stdin)
 	switch answer {
@@ -164,7 +167,7 @@ func askTrust(seam trustSeam, workspace string, drifted bool, stdin io.Reader, e
 	default:
 		// "n", "no", empty (just Enter), or anything unrecognised ⇒ the safe
 		// default: untrusted this run, nothing persisted.
-		pf("mecatui: workspace NOT trusted; project soul/agents/commands/skills/allows are withheld. The agent still runs with user-tier config and built-in tools.\n")
+		pf("mecatui: workspace not trusted. %s The agent can still use your configuration and built-in tools.\n", untrustedDisclosure)
 		return trustOutcome{trusted: false, prompted: true}
 	}
 }

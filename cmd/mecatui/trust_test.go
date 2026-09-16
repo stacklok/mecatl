@@ -204,6 +204,38 @@ func TestResolveTrustForRunNonTTYDriftUntrusted(t *testing.T) {
 	}
 }
 
+// TestTrustPromptCopyCoversEveryOperatorOutcome ensures the same concise trust
+// boundary is visible whether the operator accepts, declines, reconsents after
+// drift, or cannot be prompted on a non-TTY.
+func TestTrustPromptCopyCoversEveryOperatorOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer string
+		drifted, tty bool
+		want         string
+	}{
+		{"remember", "t\n", false, ttyOn, "workspace trusted and remembered"},
+		{"once", "o\n", false, ttyOn, "this run only (not remembered)"},
+		{"decline", "n\n", false, ttyOn, "project ALLOW grants stay disabled"},
+		{"drift", "n\n", true, ttyOn, "CHANGED since you trusted it"},
+		{"non-tty", "t\n", false, ttyOff, "stdin is not a terminal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeSeam{decision: app.TrustDecision{Source: app.TrustNone, Drifted: tc.drifted}, hasAuthority: true}
+			var errw bytes.Buffer
+			resolveTrustForRun(f.seam(), "/ws", strings.NewReader(tc.answer), &errw, tc.tty)
+			got := errw.String()
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("output missing outcome %q: %q", tc.want, got)
+			}
+			for _, phrase := range []string{"project instructions", "project ALLOW grants", "Project DENY and ASK rules"} {
+				if !strings.Contains(strings.ToLower(got), strings.ToLower(phrase)) {
+					t.Fatalf("output missing disclosure %q: %q", phrase, got)
+				}
+			}
+		})
+	}
+}
+
 // TestResolveTrustForRunRememberFailureFailSoft asserts a persist failure on "trust"
 // is fail-soft: the run still proceeds trusted (persisted=false), a warning printed.
 func TestResolveTrustForRunRememberFailureFailSoft(t *testing.T) {

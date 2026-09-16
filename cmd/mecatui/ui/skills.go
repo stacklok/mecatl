@@ -415,27 +415,27 @@ func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff st
 	}
 	budget := cardTextWidth(width)
 	write := func(line string) { b.WriteString(wrapCardText(line, budget) + "\n") }
-	for _, line := range []string{"name: " + skill.Name, "owner: " + skill.OwnerAgent, "state: " + state, "version: " + skill.Version, "revision: " + skill.Revision, "evidence: " + strconv.Itoa(skill.EvidenceCount), "description: " + skill.Description, "body: " + skill.Body} {
+	for _, line := range []string{"name: " + skill.Name, "created by: " + skill.OwnerAgent, "status: " + state, "version: " + skill.Version, "latest change: " + skill.Revision, "supporting examples: " + strconv.Itoa(skill.EvidenceCount), "what it does: " + skill.Description, "instructions: " + skill.Body} {
 		write(line)
 	}
 	if len(skill.Evaluations) > 0 {
 		e := skill.Evaluations[len(skill.Evaluations)-1]
-		write("evaluation: " + e.Verdict + " fixtures=" + strings.Join(e.FixtureIDs, ","))
+		write("latest evaluation: " + e.Verdict + " examples=" + strings.Join(e.FixtureIDs, ","))
 		if e.Baseline != "" {
-			write("baseline: " + e.Baseline)
+			write("compared with: " + e.Baseline)
 		}
 		if e.Treatment != "" {
-			write("treatment: " + e.Treatment)
+			write("candidate: " + e.Treatment)
 		}
 	}
-	write("history receipts: " + strconv.Itoa(len(skill.Receipts)))
+	write("change history: " + strconv.Itoa(len(skill.Receipts)))
 	for _, receipt := range skill.Receipts {
 		write("  " + receipt.Operation + " " + receipt.FromState + " → " + receipt.ToState)
 	}
 	if diff != "" {
-		b.WriteString("\nversion diff:\n" + wrapCardText(diff, budget) + "\n")
+		b.WriteString("\nchanges from this version:\n" + wrapCardText(diff, budget) + "\n")
 	}
-	b.WriteString("\nesc back   v diff   a activate   x reject   d archive   r rollback")
+	b.WriteString("\n" + wrapCardText("esc back · v show changes · a activate · x reject · d archive · r restore previous version", budget))
 	return b.String()
 }
 
@@ -543,7 +543,7 @@ func indentWrap(s string, budget int) string {
 // panel, the relayed caps let the ui distinguish "not enabled" from "enabled but
 // empty", which a ui-local guess never could for an external server.
 const skillsDisabledNote = "Skills are not enabled on this server.\n" +
-	"Run a mecated with a skills dir configured (or pass --server to one) to use them."
+	"Start or connect to a server with skills enabled."
 
 // skillsEmptyCopy returns the empty-state line: the "not enabled" note (with
 // remedy) when caps.Skills is false, else the "enabled but empty" note.
@@ -551,7 +551,7 @@ func skillsEmptyCopy(caps client.Capabilities) string {
 	if !caps.Skills {
 		return skillsDisabledNote
 	}
-	return "No skills configured on this server."
+	return "No skills are available on this server."
 }
 
 // skillsRowLines builds the rendered (ANSI-carrying) inventory body rows: per
@@ -625,6 +625,6 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 	// keys (msg.String, not key.Matches), so they are genuinely fixed. The pgup/pgdn
 	// scroll pair and the close chord ARE keymap-bound (ScrollU/ScrollD/Close) so
 	// they read the LIVE markings (issue #457).
-	b.WriteString("\n" + th.Style("muted").Render("skills activate automatically when relevant · type to filter · ↑/↓/"+hk.scroll+" scroll · "+hk.closeOnly+" clear filter / close"))
+	b.WriteString("\n" + th.Style("muted").Render("the agent uses skills when relevant · type to filter · ↑/↓/"+hk.scroll+" scroll · "+hk.closeOnly+" clear filter / close"))
 	return b.String()
 }
