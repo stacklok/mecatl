@@ -221,7 +221,7 @@ func TestSubagentAgentModelUnroutableModelErrors(t *testing.T) {
 	}
 }
 
-// TestSubagentPerCallMaxTokensHitsBudgetTerminal is the MODEL-FACING e2e + ADVERSARIAL: a
+// TestSubagentPerCallMaxRunTokensHitsBudgetTerminal is the MODEL-FACING e2e + ADVERSARIAL: a
 // runaway child (never stops on its own) with a tighten-only per-call max_run_tokens hits the
 // token-budget terminal. StopBudget is a clean terminal, so the Subagent RESULT is a SUCCESS
 // (best-effort), annotated with the budget note. The Run-scoped override works on the
@@ -229,7 +229,7 @@ func TestSubagentAgentModelUnroutableModelErrors(t *testing.T) {
 //
 // The per-call budget is set above agent.MinSubagentRunTokens (the floor) so it is passed
 // through verbatim. Each turn spends 15 000 tokens, so the budget trips after a few turns.
-func TestSubagentPerCallMaxTokensHitsBudgetTerminal(t *testing.T) {
+func TestSubagentPerCallMaxRunTokensHitsBudgetTerminal(t *testing.T) {
 	// 15 000 tokens/turn; a per-call budget of MinSubagentRunTokens+1000 = 26 000 trips
 	// after turn 2 (30 000 > 26 000). Using a value above the floor so it is not silently
 	// raised — the test proves the per-call path, not the floor mechanics.
@@ -266,11 +266,11 @@ func TestSubagentPerCallMaxTokensHitsBudgetTerminal(t *testing.T) {
 	}
 }
 
-// TestSubagentPerCallMaxTokensTightenOnly proves the per-call max_run_tokens is TIGHTEN-ONLY: a
+// TestSubagentPerCallMaxRunTokensTightenOnly proves the per-call max_run_tokens is TIGHTEN-ONLY: a
 // per-call value HIGHER than the engine's operator default does NOT loosen it — the
 // engine's lower budget still trips. The child runs on an engine with a TIGHT operator
 // budget and a generous per-call max_run_tokens; the operator budget must win.
-func TestSubagentPerCallMaxTokensTightenOnly(t *testing.T) {
+func TestSubagentPerCallMaxRunTokensTightenOnly(t *testing.T) {
 	childLLM := &runawayProvider{perTurn: session.Usage{InputTokens: 60, OutputTokens: 40}}
 	childEngine := agent.NewEngine(agent.Deps{
 		LLM:          childLLM,

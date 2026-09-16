@@ -534,7 +534,7 @@ func TestSubagentConcurrentResumeGuard(t *testing.T) {
 	<-results
 }
 
-// TestSubagentResumeBudgetTightenOnly mirrors TestSubagentPerCallMaxTokensTightenOnly for
+// TestSubagentResumeBudgetTightenOnly mirrors TestSubagentPerCallMaxRunTokensTightenOnly for
 // the resume path: a tight operator budget still trips even with a generous per-call
 // max_run_tokens on the resume call.
 func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
