@@ -185,77 +185,7 @@ type flags struct {
 func parseFlags(argv []string) (flags, error) {
 	fs := flag.NewFlagSet("mecatequi", flag.ContinueOnError)
 	var f flags
-
-	cwd, _ := os.Getwd()
-
-	fs.StringVar(&f.prompt, "prompt", "", "the prompt to run (the agent's task). At least one of --prompt / --prompt-file is required; both may be given (literal first)")
-	fs.StringVar(&f.promptFile, "prompt-file", "", "path to a file whose contents are the prompt body. At least one of --prompt / --prompt-file is required")
-	fs.BoolVar(&f.untrustedPrompt, "untrusted-prompt", false, "treat the prompt body as UNTRUSTED data (e.g. a task description fetched from an external source): wrap it in the harness untrusted-data fence so the model treats it as data to act on, not instructions to obey. Default off (the prompt is the operator's own trusted task)")
-	fs.StringVar(&f.instructions, "instructions", "", "TRUSTED operator framing emitted OUTSIDE the untrusted-prompt fence (never fenced): high-level instructions such as how to format the final message or to self-verify before finishing. Empty (default) omits it; NOTE the mecatequi GitHub Action sets a NON-EMPTY default (PR-description + self-verify framing — see its `instructions` input), so a CI run injects framing even though this binary's default is empty. Distinct from --prompt/--prompt-file, which carry the task and ARE fenced under --untrusted-prompt")
-
-	fs.StringVar(&f.outSummary, "out-summary", "-", "where to write the run-summary JSON (\"-\" = stdout, the default). The summary is the machine-readable result Pipeline 2 consumes; pipe it to jq. Passing --out-summary=- EXPLICITLY selects the stdout-COMPACT mode: the Summary is emitted as a SINGLE compact JSON line as the FINAL stdout line (nothing follows it), so a scheduler tailing logs can parse the last line; the unset default keeps the indented JSON")
-	fs.StringVar(&f.outDiff, "out-diff", "", "where to write the working-tree git diff the run produced (\"-\" = stdout). EMPTY (default) disables it — the summary already carries non_empty_diff and diff_bytes; opt in with a path when you want the patch. Cannot share a sink with --out-summary/--out-events")
-	fs.StringVar(&f.outEvents, "out-events", "", "path for the durable event log (JSONL, one redacted session.Event per line). EMPTY (default) disables it. Cannot share a sink with --out-diff/--out-summary")
-	fs.DurationVar(&f.timeout, "timeout", 0, "wall-clock bound on the whole run (e.g. 5m); a run that exceeds it is cancelled and exits 1 with a \"timed out\" message. 0 (default) = no timeout. Defense-in-depth for CI — orthogonal to --max-run-tokens")
-
-	fs.StringVar(&f.workspace, "workspace", cwd, "session workspace root (must be a git repository so the diff can be computed)")
-	fs.StringVar(&f.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default). PER-SESSION PASSTHROUGH: accepts any model the provider serves, including ids newer than the embedded catalog. Prefer this over --default-model for a newer/uncatalogued model")
-	fs.StringVar(&f.defaultProvider, "default-provider", "", "deployment default provider id (e.g. openai, openrouter, anthropic); validated at startup")
-	fs.StringVar(&f.defaultModel, "default-model", "", "deployment default model id for the default provider; validated against the embedded model catalog at startup and REJECTED if not in the snapshot — for a newer/uncatalogued model use --model instead, which passes through")
-	fs.BoolVar(&f.useOpenAI, "openai", false, "use the OpenAI Responses provider (key from OPENAI_API_KEY)")
-	// Shared provider base-URL flags + credential reads (cliconfig). Registers
-	// --openai-base-url / --openrouter-base-url / --anthropic-base-url and reads
-	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — so mecatequi can run Anthropic
-	// (ANTHROPIC_API_KEY + --default-provider anthropic) and OpenRouter explicitly,
-	// like its siblings. Default (mecated) help wording.
-	f.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{})
-	// ToolHive LLM gateway (issue #262): a CI runner pod naturally has no
-	// ToolHive config file, so this is inert unless the operator explicitly
-	// points --toolhive-llm-base-url at a reachable proxy.
-	f.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
-	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
-	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecak8s.
-	f.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
-	fs.Var(&f.permissionConfigs, "permission-config", "explicit operator settings YAML (repeatable); uses the same precedence and strict parser as conventional settings")
-	fs.BoolVar(&f.useMock, "mock", false, "use a canned offline mock provider (no network; smoke tests only)")
-	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
-	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell")
-	fs.BoolVar(&f.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
-	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
-	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
-	fs.IntVar(&f.maxTurns, "max-turns", 0, "max model calls (turns) for the run; a run that crosses it ends cleanly with stop=max_turns. 0 (default) uses the deployment default; a positive value caps this single-shot run. Orthogonal to --max-run-tokens (turns vs tokens; both compose)")
-
-	fs.BoolVar(&f.headless, "headless", true, "run NON-interactive (DEFAULT on, inverted from mecated): a single-shot CI run has no human approver, so a child subagent/member/branch permission ask is auto-denied / routed to the opt-in --subagent-ask-reviewer rather than parked until run-end. Pass --headless=false only when driving from something that can answer asks")
-
-	fs.StringVar(&f.guardrailsModel, "guardrails-model", "", "GUARDRAILS (issue #27): tool-less checker model id / alias inspecting outbound args + inbound results. Configuring a model here OR via a bound `guardrail` model slot (models.slots.guardrail) ENABLES guardrails (configure = enable, ADR 0046); empty + no slot disables them. A bound `guardrail` slot SUPERSEDES this flag's model. The rule list lives in the operator-tier settings.yaml guardrails: subtree")
-	fs.StringVar(&f.guardrailsMode, "guardrails", "", "GUARDRAILS KILL-SWITCH only: pass --guardrails=off to force the checker OFF regardless of --guardrails-model / the `guardrail` slot / the YAML config. The positive enable path is configuring a checker model (--guardrails-model OR the `guardrail` slot), NOT this flag")
-
-	fs.StringVar(&f.subagentAskReviewer, "subagent-ask-reviewer", "", "OPT-IN headless ask reviewer (issue #31): model id / alias of a tool-less one-turn reviewer adjudicating a child permission ask the headless auto-deny would otherwise reject. Empty disables it")
-	fs.BoolVar(&f.subagentModelRouter, "subagent-model-router", false, "Semantic model router KILL-SWITCH (ADR 0042, superseding 0031's enable model): the router is ENABLED by an operator-tier models.router: category taxonomy (configure = enable, guardrails-parity), NOT by this flag. Pass --subagent-model-router=false to force it OFF despite a taxonomy (also models.router.disabled: true in YAML). When enabled, a tiny classifier on the `router` slot picks the child model per plain Subagent delegation before the child is minted (decide-once, same-provider); fail-soft to the inherited model on any miss")
-	fs.IntVar(&f.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "circuit breaker for --subagent-ask-reviewer: consecutive non-allow outcomes that disable the reviewer for the rest of the run; <=0 uses the default (3)")
-	fs.StringVar(&f.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a TRUSTED policy rubric file for --subagent-ask-reviewer; its CONTENT replaces the built-in rubric. Read once at startup; an unreadable file fails startup")
-
-	fs.StringVar(&f.posture, "posture", "", "OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate — and a headless single-shot run has NO approver, so a main-agent ask CANCELS the run (exit 1). For an autonomous CI run use --posture auto (allow-all, child injection-defense ON) or trusted/yolo. trusted honours a project's ALLOW rules; auto adds allow-all + main substitution loosening; yolo additionally auto-runs $()/backtick/heredoc in children. An unknown value fails closed to strict")
-	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN")
-	fs.BoolVar(&f.trustProject, "trust-project", false, "trust the workspace for this run: admit BOTH project steering (AGENTS.md/CLAUDE.md, project rules/agents/skills/soul/commands/git snapshot) and the read-only child worktree shell. On this HEADLESS root posture never grants trust. DEFAULT OFF: without explicit, declared, or remembered trust a cloned repo gets neither steering nor child shell. TRUST BOUNDARY: only pass it for a repo whose content and .git you trust")
-
-	// Headless telemetry (issue #343, ADR 0098): OPT-IN OTLP trace + metrics push.
-	// Both endpoints empty (the default) leaves the pipeline off — no metrics, no
-	// tracing, byte-identical to the pre-telemetry posture. A metrics endpoint
-	// installs a PeriodicReader (push) alongside the always-on prometheus reader.
-	fs.StringVar(&f.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint (empty disables tracing). e.g. \"localhost:4317\" for gRPC or a host for HTTP. OPT-IN: mecatequi PUSHES a single run's spans here")
-	fs.StringVar(&f.otlpProtocol, "otlp-protocol", "grpc", "OTLP transport for traces: \"grpc\" (default) or \"http\"")
-	fs.BoolVar(&f.otlpInsecure, "otlp-insecure", false, "skip TLS when dialing the OTLP collector (development only)")
-	fs.StringVar(&f.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP METRICS collector endpoint (empty disables metrics push). A single-shot run is too short for a Prometheus scrape, so mecatequi PUSHES the run's counters/histograms here and flushes before exit. OPT-IN")
-	fs.StringVar(&f.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
-	fs.DurationVar(&f.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at exit (so a dead collector cannot hang the run). 0 disables the bound (flush until it completes); the flush runs BEFORE the diff/summary emit defer unwinds")
-
-	fs.BoolVar(&f.productMetrics, "product-metrics", true,
-		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
-	fs.BoolVar(&f.productMetricsDryRun, "product-metrics-dry-run", false,
-		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
-
-	fs.Usage = usageEpilogue(fs)
+	configureFlags(fs, &f)
 
 	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
 		return flags{}, err
@@ -343,6 +273,82 @@ func parseFlags(argv []string) (flags, error) {
 	return f, nil
 }
 
+// configureFlags registers mecatequi's flags on fs. Keeping registration separate
+// lets help-output tests exercise the same flag descriptions that users see.
+func configureFlags(fs *flag.FlagSet, f *flags) {
+
+	cwd, _ := os.Getwd()
+
+	fs.StringVar(&f.prompt, "prompt", "", "Task text. Provide --prompt, --prompt-file, or both; --prompt is placed first.")
+	fs.StringVar(&f.promptFile, "prompt-file", "", "File containing task text. Provide --prompt, --prompt-file, or both.")
+	fs.BoolVar(&f.untrustedPrompt, "untrusted-prompt", false, "Treat task text as untrusted external data and fence it before the model receives it. Default: false.")
+	fs.StringVar(&f.instructions, "instructions", "", "Trusted operator instructions prepended to the task. With --untrusted-prompt, they remain outside the data fence. Default: empty.")
+
+	fs.StringVar(&f.outSummary, "out-summary", "-", "Destination for run-summary JSON. \"-\" writes to stdout and is the default. An explicit --out-summary=- writes one compact JSON line as the final stdout line; the default stdout summary is indented.")
+	fs.StringVar(&f.outDiff, "out-diff", "", "Destination for the working-tree Git diff. \"-\" writes to stdout. Default: empty, which disables diff output. Choose a sink that differs from the summary and event outputs.")
+	fs.StringVar(&f.outEvents, "out-events", "", "Destination for the durable JSONL event log. Each line is a redacted session event. Default: empty, which disables event output. Choose a sink that differs from the summary and diff outputs.")
+	fs.DurationVar(&f.timeout, "timeout", 0, "Maximum wall-clock duration for the run, for example 5m. A timeout cancels the run and exits 1. Default: 0, no timeout.")
+
+	fs.StringVar(&f.workspace, "workspace", cwd, "Git repository root used for the run and generated diff. Default: the current directory.")
+	fs.StringVar(&f.model, "model", "", "Model identifier for this run. Empty uses the provider default. Accepts any model identifier supported by the provider.")
+	fs.StringVar(&f.defaultProvider, "default-provider", "", "Default provider identifier, for example openai, openrouter, or anthropic. Validated at startup.")
+	fs.StringVar(&f.defaultModel, "default-model", "", "Default model identifier for the default provider. It must be in the embedded model catalog. Use --model for an identifier outside that catalog.")
+	fs.BoolVar(&f.useOpenAI, "openai", false, "Use the OpenAI Responses provider. Reads OPENAI_API_KEY.")
+	// Shared provider base-URL flags + credential reads (cliconfig). Registers
+	// --openai-base-url / --openrouter-base-url / --anthropic-base-url and reads
+	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — so mecatequi can run Anthropic
+	// (ANTHROPIC_API_KEY + --default-provider anthropic) and OpenRouter explicitly,
+	// like its siblings. Default (mecated) help wording.
+	f.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{})
+	// ToolHive LLM gateway (issue #262): a CI runner pod naturally has no
+	// ToolHive config file, so this is inert unless the operator explicitly
+	// points --toolhive-llm-base-url at a reachable proxy.
+	f.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
+	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
+	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecak8s.
+	f.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
+	fs.Var(&f.permissionConfigs, "permission-config", "Operator settings YAML file. Repeat the flag for multiple files. Uses standard settings precedence and strict validation.")
+	fs.BoolVar(&f.useMock, "mock", false, "Use the offline mock provider. It does not make network requests.")
+	fs.StringVar(&f.storeDir, "store-dir", "", "Directory for the JSONL session store. Default: in-memory store.")
+	fs.StringVar(&f.shell, "shell", "/bin/sh", "Shell for Shell tool commands. An empty value disables the Shell tool.")
+	fs.BoolVar(&f.noShell, "no-shell", false, "Disable the Shell tool. Overrides --shell.")
+	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens for the run. Crossing the limit ends with stop_reason=budget. Default: 0, unlimited.")
+	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "Maximum cumulative input and output tokens for an agent team run. Default: 0, unlimited.")
+	fs.IntVar(&f.maxTurns, "max-turns", 0, "Maximum model calls for the run. Crossing the limit ends with stop_reason=max_turns. Default: 0, use the deployment default.")
+
+	fs.BoolVar(&f.headless, "headless", true, "Run without a human approver. Unresolved child subagent, team member, and branch permission requests are denied or sent to --subagent-ask-reviewer. Default: true. Set false only when an external approver can respond.")
+
+	fs.StringVar(&f.guardrailsModel, "guardrails-model", "", "Model identifier or alias for the tool-free guardrails checker. Setting this flag enables guardrails unless --guardrails=off. A guardrail model slot takes precedence. Default: empty.")
+	fs.StringVar(&f.guardrailsMode, "guardrails", "", "Set to off to disable guardrails, including configured checker models. Other values leave guardrails controlled by the configured checker model.")
+
+	fs.StringVar(&f.subagentAskReviewer, "subagent-ask-reviewer", "", "Model identifier or alias for the tool-free reviewer of child permission requests in headless runs. Default: empty, which disables the reviewer.")
+	fs.BoolVar(&f.subagentModelRouter, "subagent-model-router", false, "Set false to disable configured subagent model routing. A configured models.router taxonomy enables routing; this flag does not enable it.")
+	fs.IntVar(&f.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "Consecutive non-allow reviewer outcomes before the reviewer is disabled for the rest of the run. Values less than or equal to 0 use the default: 3.")
+	fs.StringVar(&f.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "Trusted policy rubric file for --subagent-ask-reviewer. Its contents replace the built-in rubric. An unreadable file fails startup.")
+
+	fs.StringVar(&f.posture, "posture", "", "Permission posture: strict (default), trusted, auto, or yolo. In a headless strict run, a main-agent permission request cancels the run with exit 1. trusted honors project allow rules; auto allows tools by default and relaxes main command substitutions while retaining child injection defenses; yolo also automatically runs $(), backticks, and here-documents in children. Deny rules and configured ask rules still apply. Unknown values use strict.")
+	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "Reasoning effort: auto, low, medium, high, xhigh, or max. Empty uses the provider or operator setting. OpenAI maps xhigh and max to high. Unknown values use the provider or operator setting.")
+	fs.BoolVar(&f.trustProject, "trust-project", false, "Allow workspace content to provide project instructions, rules, agents, skills, souls, commands, Git snapshots, and the read-only child worktree shell. Default: false. Enable only for a repository and Git metadata you trust.")
+
+	// Headless telemetry (issue #343, ADR 0098): OPT-IN OTLP trace + metrics push.
+	// Both endpoints empty (the default) leaves the pipeline off — no metrics, no
+	// tracing, byte-identical to the pre-telemetry posture. A metrics endpoint
+	// installs a PeriodicReader (push) alongside the always-on prometheus reader.
+	fs.StringVar(&f.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint. Empty disables trace export. For example, localhost:4317 for gRPC.")
+	fs.StringVar(&f.otlpProtocol, "otlp-protocol", "grpc", "OTLP trace transport: grpc (default) or http.")
+	fs.BoolVar(&f.otlpInsecure, "otlp-insecure", false, "Disable TLS for the OTLP collector connection. Use only for development.")
+	fs.StringVar(&f.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP metrics collector endpoint. Empty disables metrics export. Metrics are flushed before exit.")
+	fs.StringVar(&f.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP metrics transport: grpc (default) or http.")
+	fs.DurationVar(&f.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "Maximum telemetry flush duration at exit. Default: 5s. Set to 0 to wait until flushing completes.")
+
+	fs.BoolVar(&f.productMetrics, "product-metrics", true,
+		"Report anonymous product-adoption metrics to Stacklok: version, OS and architecture, enabled features, and coarse session, run, and tool-call counts. Excludes prompts, file paths, tool names, and model identifiers. Default: true. Disable with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml.")
+	fs.BoolVar(&f.productMetricsDryRun, "product-metrics-dry-run", false,
+		"Write each product-metrics observation to stderr instead of sending it.")
+
+	fs.Usage = usageEpilogue(fs)
+}
+
 // validateOutputs rejects a configuration where two of {out-summary, out-diff,
 // out-events} resolve to the SAME non-empty sink. Two writers on one stream
 // (stdout, or one file) interleave and corrupt each other (a patch + JSON on stdout
@@ -378,33 +384,32 @@ func validateOutputs(f flags) error {
 	return nil
 }
 
-// usageEpilogue returns a fs.Usage func that prints the default flag listing PLUS an
-// exit-code / outcome-class section, so `--help` explains what an exit code MEANS — the
-// no_progress/budget "exit 0 ≠ task accomplished" trap especially. It writes to the
-// FlagSet's configured output.
+// usageEpilogue returns a fs.Usage func that adds output-routing and exit-status
+// reference to the default flag listing. It writes to the FlagSet's configured output.
 func usageEpilogue(fs *flag.FlagSet) func() {
 	return func() {
 		out := fs.Output()
-		_, _ = fmt.Fprintf(out, "mecatequi — single-shot, headless mecatl runner for CI / batch use.\n\n")
+		_, _ = fmt.Fprintf(out, "mecatequi: single-shot, headless Mecatl runner for CI and batch use.\n\n")
 		_, _ = fmt.Fprintf(out, "Usage: mecatequi --prompt <text> [flags]\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
 		flaghelp.PrintDefaults(out, fs)
 		_, _ = fmt.Fprintln(out, "\nVersion: mecatequi --version prints the build version and exits.")
 		_, _ = fmt.Fprintf(out, `
 Output routing:
-  --out-summary defaults to stdout ("-"); --out-diff and --out-events are opt-in
-  (empty = disabled). No two outputs may share a sink. Operational logs and the
-  per-event human trace go to stderr, so a piped summary stays clean.
+  --out-summary writes JSON to stdout by default. --out-diff and --out-events are
+  disabled by default. Each enabled output must use a distinct sink. Operational
+  diagnostics, the event trace, and the final verdict are written to stderr. An
+  explicit --out-summary=- writes one compact JSON line last; the default is indented.
 
-Exit codes (read stop_reason in the summary — the code alone is coarse):
-  0  CLEAN terminal. Includes end_turn AND the "model did not finish" terminals
-     no_progress / budget / max_turns / max_tool_calls / max_consecutive_failures /
-     structured_output. EXIT 0 IS NOT "task accomplished" — check stop_reason and
-     non_empty_diff to judge whether real work landed.
-  1  RUN failure: a model error, a cancelled run, the no-approver cancel-on-ask
-     (posture=strict + headless), or a --timeout. stop_reason tells error vs cancelled.
-  2  SETUP failure: bad flags, missing prompt, build error, a non-git --workspace,
-     a colliding output sink, or a write failure.
+Exit status:
+  0  A clean terminal: end_turn, no_progress, budget, max_turns, max_tool_calls,
+     max_consecutive_failures, structured_output, plan_approved, or plan_iterate.
+     Exit 0 does not confirm that the requested task was accomplished. Read
+     stop_reason and inspect non_empty_diff and the emitted artifacts.
+  1  Run failure, cancellation, or an absent or unknown terminal, including a timeout
+     or an unanswered main-agent permission request in a headless strict run.
+  2  Setup or output failure, including invalid flags, a missing prompt, a build
+     failure, an invalid workspace, colliding output sinks, or a write failure.
 `)
 	}
 }
