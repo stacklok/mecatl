@@ -4,7 +4,7 @@
 **Work classification:** Architectural — this adds durable public protobuf, HTTP, generated Go, and TypeScript SDK contracts for mutating an explicitly addressed run without owning its event stream.
 **Decision record:** [ADR 0347](../adr/0347-run-id-addressed-prompt-free-controls.md)
 **Phase:** ergonomic detached run controls
-**Status:** in-progress, 2026-09-16. The human-approved contract is being implemented on the stacked `impl/sdk-run-controls` branch above Plan / Interface PR #1635.
+**Status:** landed, 2026-09-16. Implemented on the stacked `impl/sdk-run-controls` candidate above Plan / Interface PR #1635; merge remains subject to Implementation PR review and CI.
 **Delivery:** Split. The new wire methods, bounded rehydration behavior, stale-run rule, and exported SDK resource need human review before implementation changes public contracts.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1630](https://github.com/stacklok/mecatl/issues/1630).
