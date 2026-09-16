@@ -258,6 +258,107 @@ func (h *HarnessServer) CloseSession(ctx context.Context, req *mecatlv1.CloseSes
 	return &mecatlv1.CloseSessionResponse{}, nil
 }
 
+// ResolveRunAsk resolves one ordinary permission ask on the exact addressed run.
+func (h *HarnessServer) ResolveRunAsk(ctx context.Context, req *mecatlv1.ResolveRunAskRequest) (*mecatlv1.ResolveRunAskResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetExpectedRunId() == "" || req.GetAskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id, expected_run_id, and ask_id are required")
+	}
+	switch req.GetVerdict() {
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+		mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
+	default:
+		return nil, status.Error(codes.InvalidArgument, "verdict must be deny, allow_once, or allow_always")
+	}
+	ack, err := h.svc.ResolveRunAsk(
+		ctx,
+		session.SessionID(req.GetSessionId()),
+		req.GetExpectedRunId(),
+		req.GetAskId(),
+		verdictFromResumeApproval(req.GetVerdict(), false),
+	)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ResolveRunAskResponse{RunId: ack.RunID, AskId: ack.AskID}, nil
+}
+
+// CancelRun cancels the exact addressed live run.
+func (h *HarnessServer) CancelRun(ctx context.Context, req *mecatlv1.CancelRunRequest) (*mecatlv1.CancelRunResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetExpectedRunId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id and expected_run_id are required")
+	}
+	ack, err := h.svc.CancelRun(ctx, session.SessionID(req.GetSessionId()), req.GetExpectedRunId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.CancelRunResponse{RunId: ack.RunID}, nil
+}
+
+// SteerRun injects content into the exact addressed live run without promotion.
+func (h *HarnessServer) SteerRun(ctx context.Context, req *mecatlv1.SteerRunRequest) (*mecatlv1.SteerRunResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetExpectedRunId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id and expected_run_id are required")
+	}
+	if req.GetText() == "" && len(req.GetParts()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "text or parts is required")
+	}
+	parts, err := contentFromProto(req.GetParts())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := validateSteerMessageID(req.GetMessageId()); err != nil {
+		return nil, toStatus(err)
+	}
+	ack, err := h.svc.SteerRun(
+		ctx,
+		session.SessionID(req.GetSessionId()),
+		req.GetExpectedRunId(),
+		req.GetText(),
+		parts,
+		req.GetMessageId(),
+	)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.SteerRunResponse{
+		Outcome:   steerOutcomeToProto(ack.Outcome),
+		RunId:     ack.RunID,
+		MessageId: valid(ack.MessageID),
+	}, nil
+}
+
+// CancelRunSteer retracts pending steering from the exact addressed live run.
+func (h *HarnessServer) CancelRunSteer(ctx context.Context, req *mecatlv1.CancelRunSteerRequest) (*mecatlv1.CancelRunSteerResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetExpectedRunId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id and expected_run_id are required")
+	}
+	if err := validateSteerMessageID(req.GetMessageId()); err != nil {
+		return nil, toStatus(err)
+	}
+	ack, err := h.svc.CancelRunSteer(ctx, session.SessionID(req.GetSessionId()), req.GetExpectedRunId(), req.GetMessageId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.CancelRunSteerResponse{
+		Outcome:   steerOutcomeToProto(ack.Outcome),
+		RunId:     ack.RunID,
+		MessageId: valid(ack.MessageID),
+	}, nil
+}
+
 // RenameSession explicitly replaces an idle main session's persisted title.
 func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameSessionRequest) (*mecatlv1.RenameSessionResponse, error) {
 	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {

@@ -68,6 +68,7 @@ func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T)
 		"ClearSession": true, "ListCommands": true, "ListWorktrees": true, "StreamSessionEvents": true,
 		"StreamSessionLive": true, "WatchSessionEvents": true, "ReflectSession": true,
 		"ApprovePlan": true, "CreateTeam": true,
+		"ResolveRunAsk": true, "CancelRun": true, "SteerRun": true, "CancelRunSteer": true,
 		"GetMcpAuthorizationPresentation": true, "RecheckMcpAuthorization": true, "CancelMcpAuthorization": true,
 		"ListSessionMcpConnectors": true,
 		"ConnectWorkspaceServices": true, "RetryWorkspaceEnrollment": true, "CancelWorkspaceEnrollment": true,
@@ -176,6 +177,25 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 				return err
 			}
 			_, err = stream.Recv()
+			return err
+		}},
+		{"ResolveRunAsk", func() error {
+			_, err := client.ResolveRunAsk(ctx, &mecatlv1.ResolveRunAskRequest{
+				SessionId: requestID, ExpectedRunId: "run", AskId: "ask",
+				Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+			})
+			return err
+		}},
+		{"CancelRun", func() error {
+			_, err := client.CancelRun(ctx, &mecatlv1.CancelRunRequest{SessionId: requestID, ExpectedRunId: "run"})
+			return err
+		}},
+		{"SteerRun", func() error {
+			_, err := client.SteerRun(ctx, &mecatlv1.SteerRunRequest{SessionId: requestID, ExpectedRunId: "run", Text: "steer"})
+			return err
+		}},
+		{"CancelRunSteer", func() error {
+			_, err := client.CancelRunSteer(ctx, &mecatlv1.CancelRunSteerRequest{SessionId: requestID, ExpectedRunId: "run"})
 			return err
 		}},
 		{"ConnectWorkspaceServices", func() error {

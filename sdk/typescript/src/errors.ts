@@ -4,6 +4,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 /** Stable server error codes, kept in parity with the Go registry. @public */
 export const MECATL_ERROR_CODES = [
   "activity_gap",
+  "ask_not_pending",
   "attempt_live_claim_conflict",
   "attempt_terminal_conflict",
   "attempt_version_conflict",
@@ -52,6 +53,7 @@ export const MECATL_ERROR_CODES = [
   "placement_selector_not_found",
   "placement_selector_stale",
   "placement_unavailable",
+  "plan_resolution_required",
   "proposal_conflict",
   "reflection_cancelled",
   "reflection_deadline",

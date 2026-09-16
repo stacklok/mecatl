@@ -80,6 +80,8 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrCleanupUnsupported, Code: "cleanup_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Session cleanup is not supported"},
 	{Sentinel: ErrCleanupBackend, Code: "cleanup_backend", GRPC: codes.Internal, HTTPStatus: http.StatusInternalServerError, Title: "Storage maintenance failed"},
 	{Sentinel: ErrStaleRunControl, Code: "stale_run_control", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Control targets a run that is no longer current"},
+	{Sentinel: ErrAskNotPending, Code: "ask_not_pending", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Permission ask is not pending"},
+	{Sentinel: ErrPlanResolutionRequired, Code: "plan_resolution_required", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Plan resolution is required"},
 	{Sentinel: ErrInvalidPlacementSelection, Code: "placement_selector_invalid", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Placement selector is invalid"},
 	{Sentinel: ErrPlacementNotFound, Code: "placement_selector_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Placement selector was not found"},
 	{Sentinel: ErrPlacementStale, Code: "placement_selector_stale", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Placement selector is stale"},

@@ -46,6 +46,12 @@ var (
 	// client can distinguish "retry against the current run" from "fix your
 	// arguments".
 	ErrStaleRunControl = errors.New("server: control targets a run that is no longer current")
+	// ErrAskNotPending means an exact run is live/rehydratable but the addressed
+	// ordinary ask is unknown or was already consumed.
+	ErrAskNotPending = errors.New("server: permission ask is not pending")
+	// ErrPlanResolutionRequired keeps plan asks on their dedicated choreography;
+	// detached ordinary controls must never consume or continue them.
+	ErrPlanResolutionRequired = errors.New("server: plan ask requires plan resolution")
 	// ErrInvalidArgument signals a malformed or missing required field.
 	ErrInvalidArgument = errors.New("server: invalid argument")
 	// ErrNotFound signals an unknown session id.

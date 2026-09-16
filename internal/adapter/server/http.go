@@ -87,6 +87,10 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
 		{"POST /v1/sessions/{id}/steer", h.steer},
 		{"POST /v1/sessions/{id}/cancel-steer", h.cancelSteer},
+		{"POST /v1/sessions/{id}/controls/resolve-ask", h.resolveRunAsk},
+		{"POST /v1/sessions/{id}/controls/cancel", h.cancelRun},
+		{"POST /v1/sessions/{id}/controls/steer", h.steerRun},
+		{"POST /v1/sessions/{id}/controls/cancel-steer", h.cancelRunSteer},
 		{"POST /v1/sessions/{id}/fork", h.forkSession},
 		{"POST /v1/sessions/{id}/clear", h.clearSession},
 		{"POST /v1/sessions/{id}/reflect", h.reflectSession},
@@ -1608,6 +1612,146 @@ func (h *HTTPHandler) cancelSteer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, steerResponse{Outcome: string(outcome), MessageID: body.MessageID})
+}
+
+type resolveRunAskBody struct {
+	ExpectedRunID string `json:"expected_run_id"`
+	AskID         string `json:"ask_id"`
+	Verdict       string `json:"verdict"`
+}
+
+type cancelRunBody struct {
+	ExpectedRunID string `json:"expected_run_id"`
+}
+
+type steerRunBody struct {
+	ExpectedRunID string              `json:"expected_run_id"`
+	Text          string              `json:"text"`
+	Parts         []promptContentBody `json:"parts"`
+	MessageID     string              `json:"message_id"`
+}
+
+type cancelRunSteerBody struct {
+	ExpectedRunID string `json:"expected_run_id"`
+	MessageID     string `json:"message_id"`
+}
+
+type resolveRunAskResponse struct {
+	RunID string `json:"run_id"`
+	AskID string `json:"ask_id"`
+}
+
+type cancelRunResponse struct {
+	RunID string `json:"run_id"`
+}
+
+type steerRunResponse struct {
+	Outcome   string `json:"outcome"`
+	RunID     string `json:"run_id"`
+	MessageID string `json:"message_id"`
+}
+
+func strictRunAskVerdict(value string) (session.ApprovalVerdict, bool) {
+	switch value {
+	case "deny":
+		return session.VerdictDeny, true
+	case "allow_once":
+		return session.VerdictAllowOnce, true
+	case "allow_always":
+		return session.VerdictAllowAlways, true
+	default:
+		return session.VerdictDeny, false
+	}
+}
+
+func decodeStrictRunControlJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeSteerControlJSON(w, r, dst, false)
+}
+
+// resolveRunAsk is the strict acknowledgement-only HTTP mirror of ResolveRunAsk.
+func (h *HTTPHandler) resolveRunAsk(w http.ResponseWriter, r *http.Request) {
+	var body resolveRunAskBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	verdict, ok := strictRunAskVerdict(body.Verdict)
+	if body.ExpectedRunID == "" || body.AskID == "" || !ok {
+		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
+		return
+	}
+	ack, err := h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resolveRunAskResponse(ack))
+}
+
+// cancelRun is the strict exact-run HTTP mirror of CancelRun.
+func (h *HTTPHandler) cancelRun(w http.ResponseWriter, r *http.Request) {
+	var body cancelRunBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	if body.ExpectedRunID == "" {
+		writeError(w, http.StatusBadRequest, "expected_run_id is required")
+		return
+	}
+	ack, err := h.svc.CancelRun(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cancelRunResponse(ack))
+}
+
+// steerRun is the strict exact-run HTTP mirror of SteerRun and never promotes.
+func (h *HTTPHandler) steerRun(w http.ResponseWriter, r *http.Request) {
+	var body steerRunBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	if body.ExpectedRunID == "" || body.Text == "" && len(body.Parts) == 0 {
+		writeError(w, http.StatusBadRequest, "expected_run_id and text or parts are required")
+		return
+	}
+	parts, err := toContentParts(body.Parts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateSteerMessageID(body.MessageID); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	ack, err := h.svc.SteerRun(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.Text, parts, body.MessageID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, steerRunResponse{Outcome: string(ack.Outcome), RunID: ack.RunID, MessageID: ack.MessageID})
+}
+
+// cancelRunSteer is the strict exact-run HTTP mirror of CancelRunSteer.
+func (h *HTTPHandler) cancelRunSteer(w http.ResponseWriter, r *http.Request) {
+	var body cancelRunSteerBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	if body.ExpectedRunID == "" {
+		writeError(w, http.StatusBadRequest, "expected_run_id is required")
+		return
+	}
+	if err := validateSteerMessageID(body.MessageID); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	ack, err := h.svc.CancelRunSteer(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.MessageID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, steerRunResponse{Outcome: string(ack.Outcome), RunID: ack.RunID, MessageID: ack.MessageID})
 }
 
 // --- team request bodies -----------------------------------------------------

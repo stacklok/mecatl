@@ -64,6 +64,10 @@ const (
 	// ADR 0237).
 	FeatureMCPServersOnCreate = "mcp_servers_on_create"
 
+	// FeaturePromptFreeControls is the run-ID-addressed unary control family:
+	// resolve-ask, cancel, steer, and cancel-steer (ADR 0346).
+	FeaturePromptFreeControls = "prompt_free_controls"
+
 	// FeatureSessionActivityInventory reports that ListSessions pages carry the
 	// atomically persisted activity projection.
 	FeatureSessionActivityInventory = "session_activity_inventory"
@@ -101,6 +105,7 @@ type FeatureScope struct {
 var allFeatures = []string{
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
+	FeaturePromptFreeControls,
 	FeatureServerInfo,
 	FeatureSessionActivityInventory,
 	FeatureWatchSessionEvents,

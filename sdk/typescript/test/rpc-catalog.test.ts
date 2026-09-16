@@ -70,7 +70,7 @@ async function* singleValue<T>(value: T): AsyncIterable<T> {
 }
 
 describe("RPC transport catalog", () => {
-  it("all 84 raw RPCs are callable through the public raw seam", async () => {
+  it("all 88 raw RPCs are callable through the public raw seam", async () => {
     const transport = new CatalogTransport();
     const raw = createRawClient({ transport });
 
@@ -88,7 +88,7 @@ describe("RPC transport catalog", () => {
       }
     }
 
-    expect(transport.calls).toHaveLength(84);
+    expect(transport.calls).toHaveLength(88);
     expect(transport.calls.sort()).toEqual(
       Object.values(RPC_CATALOG)
         .map(({ method }) => method)
@@ -101,7 +101,7 @@ describe("RPC transport catalog", () => {
       ...Object.values(HarnessService.method).map((method) => `HarnessService.${method.name}`),
       ...Object.values(ScheduleService.method).map((method) => `ScheduleService.${method.name}`),
     ];
-    expect(descriptorKeys).toHaveLength(84);
+    expect(descriptorKeys).toHaveLength(88);
     expect(Object.keys(RPC_CATALOG).sort()).toEqual(descriptorKeys.sort());
 
     const omitted = "HarnessService.GetSession";

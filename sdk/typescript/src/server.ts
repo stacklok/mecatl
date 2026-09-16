@@ -20,6 +20,7 @@ import { projectServerCapabilities, type ServerCapabilities } from "./session-pr
 export const ServerFeature = {
   HttpSteer: "http_steer",
   McpServersOnCreate: "mcp_servers_on_create",
+  PromptFreeControls: "prompt_free_controls",
   ServerInfo: "server_info",
   SessionActivityInventory: "session_activity_inventory",
   WatchSessionEvents: "watch_session_events",
