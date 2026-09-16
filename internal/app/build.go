@@ -2980,6 +2980,26 @@ func mountedClientMCPNames(mgr *mcp.Manager) []string {
 	return names
 }
 
+// mountedClientMCPToolNames names the individual model-facing tools (e.g.
+// "mcp__sdk__get_diagnostics") exposed by mgr's connected servers -- the
+// per-tool counterpart to mountedClientMCPNames' per-server names. Threaded
+// onto SessionEngineResult.MountedClientMCPTools so setPerSessionLabels can
+// authorize these session-specific tools the same way it already does for
+// a debug session's DebugMCPTools; see that field's doc comment for why the
+// build-time root authority cannot see them on its own.
+func mountedClientMCPToolNames(mgr *mcp.Manager) []string {
+	if mgr == nil {
+		return nil
+	}
+	var names []string
+	for _, srv := range mgr.Servers() {
+		for _, t := range srv.Tools() {
+			names = append(names, t.Spec().Name)
+		}
+	}
+	return names
+}
+
 func sessionEngineFactory(
 	cfg Config,
 	reg *providerRegistry,
@@ -3314,8 +3334,9 @@ func sessionEngineFactoryWithTools(
 			// requested). The factory REPORTS; the Service decides whether a partial
 			// mount is acceptable, because its two callers disagree — see the
 			// best-effort comment on the NewManager error above.
-			MountedClientMCP: mountedClientMCP,
-			Close:            closeFn,
+			MountedClientMCP:      mountedClientMCP,
+			MountedClientMCPTools: mountedClientMCPToolNames(mgr),
+			Close:                 closeFn,
 		}, nil
 	}
 }
