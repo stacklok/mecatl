@@ -982,12 +982,17 @@ by new/unseen workspaces; it is control-modified so a bare `g` stays typeable in
 filter. The pick is persisted **client-side** to a state file:
 `$XDG_STATE_HOME/mecatui/models.yaml` (fallback `~/.local/state/mecatui/models.yaml`)
 — a per-workspace map (realpath-keyed) plus a global `default:` block. A workspace
-inside a git **linked worktree** keys on its MAIN checkout's root instead of its own
-path — a worktree switch is no more a model-relevant event than a branch switch in
-one checkout, so a pick made in any worktree of a repo lands on the same entry as
-every other worktree of that repo (resolved by reading git's on-disk worktree
-pointer files, no `git` subprocess). An ordinary (non-worktree) checkout keys on its
-own realpath, unchanged. Read precedence on launch (highest → lowest): an in-session
+inside a git **linked worktree** keys on its MAIN checkout's root (plus its own
+offset below the worktree root, so a nested launch directory keeps the same
+identity it would have under the main checkout) instead of its own path — a
+worktree switch is no more a model-relevant event than a branch switch in one
+checkout, so a pick made in any worktree of a repo lands on the same entry as every
+other worktree of that repo (resolved by reading git's on-disk worktree pointer
+files, no `git` subprocess). A worktree of a **bare** repository keeps its own
+realpath instead — there is no working-tree root to unify onto, and unifying
+anyway would collide unrelated bare repos sharing one parent directory. An
+ordinary (non-worktree) checkout keys on its own realpath, unchanged. Read
+precedence on launch (highest → lowest): an in-session
 restart pick → the `--model` flag → the per-workspace entry → the client global
 default → the server's configured (`--default-provider`/`--default-model`) or
 built-in default. A pick is scoped to its repo only; an unseen/new repo falls

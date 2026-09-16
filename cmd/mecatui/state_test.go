@@ -185,6 +185,12 @@ func writeGitWorktreeLayout(t *testing.T, mainRoot, worktreeRoot, name string) {
 	if err := os.MkdirAll(mainGitDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// A real git checkout always has a "config" file; a NON-bare one carries
+	// "bare = false" (or omits the key). Without this, isBareGitDir fails closed
+	// on the missing file and treats the checkout as bare.
+	if err := os.WriteFile(filepath.Join(mainGitDir, "config"), []byte("[core]\n\tbare = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	adminDir := filepath.Join(mainGitDir, "worktrees", name)
 	if err := os.MkdirAll(adminDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -244,6 +250,98 @@ func TestSelectionStoreWorktreesShareRepoIdentity(t *testing.T) {
 	}
 	if strings.Count(string(data), "providerId:") != 1 {
 		t.Fatalf("expected exactly one persisted entry (shared identity), got:\n%s", data)
+	}
+}
+
+// writeBareGitWorktreeLayout lays out a linked worktree of a BARE repository:
+// bareRepoDir is the repo's own directory (no working tree, "config" marked
+// bare=true), containing worktrees/<name>/commondir pointing back to itself.
+func writeBareGitWorktreeLayout(t *testing.T, bareRepoDir, worktreeRoot, name string) {
+	t.Helper()
+	if err := os.MkdirAll(bareRepoDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bareRepoDir, "config"), []byte("[core]\n\tbare = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adminDir := filepath.Join(bareRepoDir, "worktrees", name)
+	if err := os.MkdirAll(adminDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktreeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pointer := "gitdir: " + adminDir + "\n"
+	if err := os.WriteFile(filepath.Join(worktreeRoot, ".git"), []byte(pointer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSelectionStoreBareRepoWorktreeDoesNotUnify asserts a worktree of a BARE
+// repository does NOT unify onto its common-dir's parent directory — a naive
+// "parent of the shared .git" identity would collide every worktree of every
+// bare repo sharing that parent (e.g. two bare repos both cloned under
+// /repos), since a bare repo has no working-tree root of its own.
+func TestSelectionStoreBareRepoWorktreeDoesNotUnify(t *testing.T) {
+	stateHome := t.TempDir()
+	reposParent := t.TempDir()
+	bareA := filepath.Join(reposParent, "a.git")
+	bareB := filepath.Join(reposParent, "b.git")
+	wtA := filepath.Join(t.TempDir(), "wt-a")
+	wtB := filepath.Join(t.TempDir(), "wt-b")
+	writeBareGitWorktreeLayout(t, bareA, wtA, "wt-a")
+	writeBareGitWorktreeLayout(t, bareB, wtB, "wt-b")
+	store := newSelectionStore(fakeStateEnv(stateHome))
+
+	selA := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
+	if err := store.Save(wtA, selA); err != nil {
+		t.Fatalf("Save(wtA): %v", err)
+	}
+
+	store2 := newSelectionStore(fakeStateEnv(stateHome))
+	if got := store2.Load(wtB); got != (client.ModelSelection{}) {
+		t.Fatalf("Load(wtB) = %+v, want the zero selection — worktrees of DIFFERENT bare repos under the same parent must not collide", got)
+	}
+	if got := store2.Load(wtA); got != selA {
+		t.Fatalf("Load(wtA) = %+v, want %+v (its own pick, unaffected)", got, selA)
+	}
+}
+
+// TestSelectionStoreWorktreeNestedSubdirPreservesOffset asserts that a
+// workspace nested below a linked worktree's root (e.g. mecatui launched from
+// a subdirectory) resolves to the SAME entry as the identical subdirectory
+// under the main checkout — not the bare repo root, which would collapse
+// every nested subdirectory in a worktree onto one entry.
+func TestSelectionStoreWorktreeNestedSubdirPreservesOffset(t *testing.T) {
+	stateHome := t.TempDir()
+	mainRoot := t.TempDir()
+	worktreeRoot := filepath.Join(t.TempDir(), "wt")
+	writeGitWorktreeLayout(t, mainRoot, worktreeRoot, "wt")
+	for _, dir := range []string{
+		filepath.Join(mainRoot, "service-a"),
+		filepath.Join(worktreeRoot, "service-a"),
+		filepath.Join(worktreeRoot, "service-b"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := newSelectionStore(fakeStateEnv(stateHome))
+
+	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
+	if err := store.Save(filepath.Join(worktreeRoot, "service-a"), sel); err != nil {
+		t.Fatalf("Save(worktree/service-a): %v", err)
+	}
+
+	store2 := newSelectionStore(fakeStateEnv(stateHome))
+	if got := store2.Load(filepath.Join(mainRoot, "service-a")); got != sel {
+		t.Fatalf("Load(main/service-a) = %+v, want %+v (offset preserved across the worktree boundary)", got, sel)
+	}
+	if got := store2.Load(filepath.Join(worktreeRoot, "service-b")); got != (client.ModelSelection{}) {
+		t.Fatalf("Load(worktree/service-b) = %+v, want the zero selection — a DIFFERENT nested subdirectory must not collapse onto the same entry", got)
 	}
 }
 

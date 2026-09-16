@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 
@@ -55,8 +56,13 @@ import (
 // identity, not the literal workspace path: for a workspace inside a git linked
 // worktree, the key resolves to the MAIN checkout's root (derived by reading the
 // worktree's ".git" pointer file back to the shared common ".git" directory — no
-// `git` subprocess), so a pick made in ANY worktree of a repo lands on the SAME entry
-// as the main checkout. A plain checkout (ordinary ".git" directory, no worktree
+// `git` subprocess) PLUS the workspace's own offset below the worktree root, so a
+// pick made in ANY worktree of a repo lands on the SAME entry as the identical
+// nested path under the main checkout — never collapsing every nested workspace
+// in a worktree onto one bare root. A worktree of a BARE repository does NOT
+// unify (there is no working-tree root to unify onto; unifying anyway would
+// collide unrelated bare repos sharing one parent directory) and keeps its own
+// realpath instead. A plain checkout (ordinary ".git" directory, no worktree
 // layer) keys on its own realpath exactly as before — unchanged, so existing entries
 // for a main checkout are not invalidated by this. A non-git directory falls back to
 // its own realpath too. Realpath canonicalization (filepath.Abs + EvalSymlinks)
@@ -310,7 +316,7 @@ func stateKey(workspace string) (string, error) {
 	return realpathState(workspace)
 }
 
-// gitCommonWorktreeRoot returns the MAIN checkout's root directory when
+// gitCommonWorktreeRoot returns the MAIN checkout's identity for workspace when
 // workspace sits inside a git LINKED worktree, and ok=false otherwise (ordinary
 // checkout, bare repo, or no git layout found at all — every such case falls
 // through to stateKey's plain-realpath behavior, unchanged from before this
@@ -320,8 +326,13 @@ func stateKey(workspace string) (string, error) {
 // worktree, so ok=false); a FILE ".git" is a worktree pointer
 // ("gitdir: <main>/.git/worktrees/<name>") whose "commondir" sibling names the
 // shared ".git" relative to it — its parent directory is the main checkout
-// root. Any unreadable/malformed layout fails closed (ok=false) so a pick still
-// persists per-checkout rather than being silently dropped.
+// root. The result REJOINS workspace's own offset below the discovered
+// worktree root onto that main root, so a nested workspace keeps the SAME
+// identity it would have under the main checkout directly (e.g.
+// "<worktree>/service-a" and "<main>/service-a" resolve to the same key,
+// rather than every nested path collapsing onto the bare main root). Any
+// unreadable/malformed layout fails closed (ok=false) so a pick still persists
+// per-checkout rather than being silently dropped.
 func gitCommonWorktreeRoot(workspace string) (string, bool) {
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
@@ -338,7 +349,15 @@ func gitCommonWorktreeRoot(workspace string) (string, bool) {
 			if !info.Mode().IsRegular() {
 				return "", false
 			}
-			return mainRootFromWorktreeGitFile(gitPath)
+			mainRoot, ok := mainRootFromWorktreeGitFile(gitPath)
+			if !ok {
+				return "", false
+			}
+			rel, err := filepath.Rel(dir, abs)
+			if err != nil {
+				return "", false
+			}
+			return filepath.Join(mainRoot, rel), true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -350,6 +369,11 @@ func gitCommonWorktreeRoot(workspace string) (string, bool) {
 
 // mainRootFromWorktreeGitFile reads a linked worktree's ".git" pointer file and
 // its "commondir" sibling to recover the main checkout's root directory.
+// ok=false when the shared ".git" resolves into a BARE repository: a bare
+// repo's directory has no working tree of its own, so its parent is just an
+// arbitrary containing folder (e.g. "/repos" for "/repos/foo.git") — treating
+// that as the "main root" would collide every worktree of every bare repo
+// sharing that parent onto one entry.
 func mainRootFromWorktreeGitFile(gitFile string) (string, bool) {
 	data, err := os.ReadFile(gitFile) //nolint:gosec // path derived from a filesystem walk, not user/network input
 	if err != nil {
@@ -382,7 +406,29 @@ func mainRootFromWorktreeGitFile(gitFile string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	if isBareGitDir(resolvedCommonDir) {
+		return "", false
+	}
 	return filepath.Dir(resolvedCommonDir), true
+}
+
+// bareTrueRE matches git's own "bare = true" marker (case/space-tolerant) in a
+// repository's `config` file — the same field `git rev-parse --is-bare-repository`
+// reads, so this agrees with git's own notion of bareness rather than guessing
+// from directory naming (a bare repo need not be named "*.git").
+var bareTrueRE = regexp.MustCompile(`(?im)^\s*bare\s*=\s*true\s*$`)
+
+// isBareGitDir reports whether dir (a resolved shared ".git" directory) belongs
+// to a bare repository, by reading its "config" file. Fails closed (true, i.e.
+// "treat as bare, don't unify") on any read error — an unreadable config is
+// exactly the situation where guessing "it's a normal checkout" risks the
+// collision this check exists to prevent.
+func isBareGitDir(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "config")) //nolint:gosec // path derived from a filesystem walk, not user/network input
+	if err != nil {
+		return true
+	}
+	return bareTrueRE.MatchString(string(data))
 }
 
 // readStateFile reads the state file with O_NOFOLLOW, so a symlink at the final
