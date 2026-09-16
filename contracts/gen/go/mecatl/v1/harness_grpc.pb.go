@@ -55,6 +55,10 @@ const (
 	HarnessService_ClearSession_FullMethodName                    = "/mecatl.v1.HarnessService/ClearSession"
 	HarnessService_ForkSession_FullMethodName                     = "/mecatl.v1.HarnessService/ForkSession"
 	HarnessService_Converse_FullMethodName                        = "/mecatl.v1.HarnessService/Converse"
+	HarnessService_ResolveRunAsk_FullMethodName                   = "/mecatl.v1.HarnessService/ResolveRunAsk"
+	HarnessService_CancelRun_FullMethodName                       = "/mecatl.v1.HarnessService/CancelRun"
+	HarnessService_SteerRun_FullMethodName                        = "/mecatl.v1.HarnessService/SteerRun"
+	HarnessService_CancelRunSteer_FullMethodName                  = "/mecatl.v1.HarnessService/CancelRunSteer"
 	HarnessService_ListMcpResources_FullMethodName                = "/mecatl.v1.HarnessService/ListMcpResources"
 	HarnessService_ReadMcpResource_FullMethodName                 = "/mecatl.v1.HarnessService/ReadMcpResource"
 	HarnessService_ListMcpPrompts_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpPrompts"
@@ -183,6 +187,16 @@ type HarnessServiceClient interface {
 	// `result` event, then closes the stream; controls still in transit may instead
 	// observe normal stream completion. A context cancel from the client aborts the run.
 	Converse(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConverseRequest, ConverseResponse], error)
+	// ResolveRunAsk resolves one ordinary permission ask on the exact addressed
+	// run without opening or owning its event stream.
+	ResolveRunAsk(ctx context.Context, in *ResolveRunAskRequest, opts ...grpc.CallOption) (*ResolveRunAskResponse, error)
+	// CancelRun cancels the exact addressed live run without opening Converse.
+	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*CancelRunResponse, error)
+	// SteerRun injects an instruction into the exact addressed live run. Unlike
+	// the legacy Converse control, it never promotes a late steer to a successor.
+	SteerRun(ctx context.Context, in *SteerRunRequest, opts ...grpc.CallOption) (*SteerRunResponse, error)
+	// CancelRunSteer retracts the pending steer on the exact addressed live run.
+	CancelRunSteer(ctx context.Context, in *CancelRunSteerRequest, opts ...grpc.CallOption) (*CancelRunSteerResponse, error)
 	// ListMcpResources returns the static resource snapshots advertised by the
 	// connected MCP servers. An empty `server` returns the union across every
 	// server; a specific name returns just that server's. Catalog-level
@@ -651,6 +665,46 @@ func (c *harnessServiceClient) Converse(ctx context.Context, opts ...grpc.CallOp
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_ConverseClient = grpc.BidiStreamingClient[ConverseRequest, ConverseResponse]
+
+func (c *harnessServiceClient) ResolveRunAsk(ctx context.Context, in *ResolveRunAskRequest, opts ...grpc.CallOption) (*ResolveRunAskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveRunAskResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ResolveRunAsk_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*CancelRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelRunResponse)
+	err := c.cc.Invoke(ctx, HarnessService_CancelRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) SteerRun(ctx context.Context, in *SteerRunRequest, opts ...grpc.CallOption) (*SteerRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SteerRunResponse)
+	err := c.cc.Invoke(ctx, HarnessService_SteerRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) CancelRunSteer(ctx context.Context, in *CancelRunSteerRequest, opts ...grpc.CallOption) (*CancelRunSteerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelRunSteerResponse)
+	err := c.cc.Invoke(ctx, HarnessService_CancelRunSteer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *harnessServiceClient) ListMcpResources(ctx context.Context, in *ListMcpResourcesRequest, opts ...grpc.CallOption) (*ListMcpResourcesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -1378,6 +1432,16 @@ type HarnessServiceServer interface {
 	// `result` event, then closes the stream; controls still in transit may instead
 	// observe normal stream completion. A context cancel from the client aborts the run.
 	Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error
+	// ResolveRunAsk resolves one ordinary permission ask on the exact addressed
+	// run without opening or owning its event stream.
+	ResolveRunAsk(context.Context, *ResolveRunAskRequest) (*ResolveRunAskResponse, error)
+	// CancelRun cancels the exact addressed live run without opening Converse.
+	CancelRun(context.Context, *CancelRunRequest) (*CancelRunResponse, error)
+	// SteerRun injects an instruction into the exact addressed live run. Unlike
+	// the legacy Converse control, it never promotes a late steer to a successor.
+	SteerRun(context.Context, *SteerRunRequest) (*SteerRunResponse, error)
+	// CancelRunSteer retracts the pending steer on the exact addressed live run.
+	CancelRunSteer(context.Context, *CancelRunSteerRequest) (*CancelRunSteerResponse, error)
 	// ListMcpResources returns the static resource snapshots advertised by the
 	// connected MCP servers. An empty `server` returns the union across every
 	// server; a specific name returns just that server's. Catalog-level
@@ -1752,6 +1816,18 @@ func (UnimplementedHarnessServiceServer) ForkSession(context.Context, *ForkSessi
 }
 func (UnimplementedHarnessServiceServer) Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Converse not implemented")
+}
+func (UnimplementedHarnessServiceServer) ResolveRunAsk(context.Context, *ResolveRunAskRequest) (*ResolveRunAskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolveRunAsk not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelRun(context.Context, *CancelRunRequest) (*CancelRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelRun not implemented")
+}
+func (UnimplementedHarnessServiceServer) SteerRun(context.Context, *SteerRunRequest) (*SteerRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SteerRun not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelRunSteer(context.Context, *CancelRunSteerRequest) (*CancelRunSteerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelRunSteer not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListMcpResources(context.Context, *ListMcpResourcesRequest) (*ListMcpResourcesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListMcpResources not implemented")
@@ -2179,6 +2255,78 @@ func _HarnessService_Converse_Handler(srv interface{}, stream grpc.ServerStream)
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_ConverseServer = grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]
+
+func _HarnessService_ResolveRunAsk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveRunAskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ResolveRunAsk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ResolveRunAsk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ResolveRunAsk(ctx, req.(*ResolveRunAskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_CancelRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).CancelRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_CancelRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).CancelRun(ctx, req.(*CancelRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_SteerRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SteerRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).SteerRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_SteerRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).SteerRun(ctx, req.(*SteerRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_CancelRunSteer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelRunSteerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).CancelRunSteer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_CancelRunSteer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).CancelRunSteer(ctx, req.(*CancelRunSteerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _HarnessService_ListMcpResources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListMcpResourcesRequest)
@@ -3275,6 +3423,22 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForkSession",
 			Handler:    _HarnessService_ForkSession_Handler,
+		},
+		{
+			MethodName: "ResolveRunAsk",
+			Handler:    _HarnessService_ResolveRunAsk_Handler,
+		},
+		{
+			MethodName: "CancelRun",
+			Handler:    _HarnessService_CancelRun_Handler,
+		},
+		{
+			MethodName: "SteerRun",
+			Handler:    _HarnessService_SteerRun_Handler,
+		},
+		{
+			MethodName: "CancelRunSteer",
+			Handler:    _HarnessService_CancelRunSteer_Handler,
 		},
 		{
 			MethodName: "ListMcpResources",

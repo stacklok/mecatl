@@ -102,6 +102,20 @@ service HarnessService {
   // observe normal stream completion. A context cancel from the client aborts the run.
   rpc Converse(stream ConverseRequest) returns (stream ConverseResponse);
 
+  // ResolveRunAsk resolves one ordinary permission ask on the exact addressed
+  // run without opening or owning its event stream.
+  rpc ResolveRunAsk(ResolveRunAskRequest) returns (ResolveRunAskResponse);
+
+  // CancelRun cancels the exact addressed live run without opening Converse.
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+
+  // SteerRun injects an instruction into the exact addressed live run. Unlike
+  // the legacy Converse control, it never promotes a late steer to a successor.
+  rpc SteerRun(SteerRunRequest) returns (SteerRunResponse);
+
+  // CancelRunSteer retracts the pending steer on the exact addressed live run.
+  rpc CancelRunSteer(CancelRunSteerRequest) returns (CancelRunSteerResponse);
+
   // ListMcpResources returns the static resource snapshots advertised by the
   // connected MCP servers. An empty `server` returns the union across every
   // server; a specific name returns just that server's. Catalog-level
@@ -1780,6 +1794,67 @@ enum SteerOutcome {
   // (the inbox was closed). The server promoted the text to a fresh follow-up
   // run (promoted=true on the event) rather than dropping it.
   STEER_OUTCOME_TOO_LATE = 5;
+}
+
+// ResolveRunAskRequest addresses one ordinary permission ask on one exact run.
+message ResolveRunAskRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+  string ask_id = 3 [(buf.validate.field).string.min_len = 1];
+  ApprovalVerdict verdict = 4 [(buf.validate.field).enum = {in: [1, 2, 3]}];
+}
+
+// ResolveRunAskResponse acknowledges only the accepted run/ask correlation.
+message ResolveRunAskResponse {
+  string run_id = 1;
+  string ask_id = 2;
+}
+
+// CancelRunRequest addresses one exact live run.
+message CancelRunRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// CancelRunResponse acknowledges only the run accepted for cancellation.
+message CancelRunResponse {
+  string run_id = 1;
+}
+
+// SteerRunRequest injects text and/or media into one exact live run.
+message SteerRunRequest {
+  option (buf.validate.message).cel = {
+    id: "steer_run.content"
+    message: "text and parts cannot both be empty"
+    expression: "this.text != '' || size(this.parts) > 0"
+  };
+
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+  string text = 3;
+  repeated Content parts = 4 [(buf.validate.field).repeated.max_items = 16];
+  string message_id = 5 [(buf.validate.field).string.max_len = 64];
+}
+
+// SteerRunResponse reports the authoritative exact-run inbox transition.
+message SteerRunResponse {
+  SteerOutcome outcome = 1;
+  string run_id = 2;
+  string message_id = 3;
+}
+
+// CancelRunSteerRequest retracts pending steering from one exact live run.
+message CancelRunSteerRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+  string message_id = 3 [(buf.validate.field).string.max_len = 64];
+}
+
+// CancelRunSteerResponse reports the authoritative exact-run retraction result.
+message CancelRunSteerResponse {
+  SteerOutcome outcome = 1;
+  string run_id = 2;
+  string message_id = 3;
 }
 
 // GetMcpAuthorizationPresentationRequest carries only owner-scoped correlation.
