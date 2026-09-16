@@ -6519,12 +6519,12 @@ func (s *Service) cancelLiveRun(id session.SessionID, target *agent.Run, expecte
 // its admission context. expected, when non-nil, prevents a stale relay from
 // cancelling a successor. admissionOnly limits Drain's early gate to provisional
 // entries; active runs are left for GracefulDrain/Close.
-func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, expected *agent.Run, admissionOnly bool) bool {
+func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, expected *agent.Run, admissionOnly bool) {
 	if st == nil {
 		if expected != nil {
 			expected.Cancel()
 		}
-		return false
+		return
 	}
 	st.persistMu.Lock()
 	s.mu.Lock()
@@ -6536,7 +6536,7 @@ func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, e
 		if expected != nil && (!current || run != expected) {
 			expected.Cancel()
 		}
-		return false
+		return
 	}
 	st.cancelSignaled = true
 	s.mu.Unlock()
@@ -6547,7 +6547,6 @@ func (s *Service) cancelRegisteredRunState(id session.SessionID, st *runState, e
 	if run != nil {
 		run.Cancel()
 	}
-	return true
 }
 
 func (s *Service) cancelRegisteredRun(id session.SessionID, run *agent.Run) {
