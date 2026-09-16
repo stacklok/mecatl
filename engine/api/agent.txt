@@ -44,6 +44,7 @@
     method func (*Run).EnqueueSteerWithMessageID(text string, parts []session.Content, messageID string) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
     method func (*Run).Outcome() RunOutcome
+    method func (*Run).ResolveOrdinaryAsk(askID string, v session.ApprovalVerdict) AskResolution
     method func (*Run).RetractPermissionAsk(askID string) bool
     method func (*Run).RunID() string
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
@@ -86,6 +87,9 @@
     method func (ShellTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (ShellTool).ReadOnly() bool
     method func (ShellTool).Spec() tool.ToolSpec
+const AskResolutionNotPending AskResolution = 0
+const AskResolutionPlanOriginated AskResolution = 2
+const AskResolutionResolved AskResolution = 1
 const DefaultAskReviewMaxDenies untyped int = 3
 const DefaultPreservedForkCap untyped int = 8
 const DispositionDone MemberDisposition = "done"
@@ -215,6 +219,7 @@ func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
 type ArtifactHandle string
+type AskResolution uint8
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
 type BranchSummary struct{Label string; Summary string; Failed bool}
 type CascadeCompactor struct{Counter TokenCounter; BudgetTokens int; KeepLastTurns int; StripToolBodyChars int; MaxCollapseChars int; LLM port.LLMProvider; Model string; SummaryMaxTokens int}

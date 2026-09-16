@@ -574,6 +574,20 @@ const (
 	RunOutcomeAuthorizationPending
 )
 
+// AskResolution reports the atomic result of resolving an ordinary permission
+// ask through Run.ResolveOrdinaryAsk.
+type AskResolution uint8
+
+const (
+	// AskResolutionNotPending means the ask is unknown or already resolved.
+	AskResolutionNotPending AskResolution = iota
+	// AskResolutionResolved means this call delivered the verdict exactly once.
+	AskResolutionResolved
+	// AskResolutionPlanOriginated means the ask belongs to the dedicated plan
+	// resolution choreography and remains pending.
+	AskResolutionPlanOriginated
+)
+
 // Run is the handle to one in-flight prompt. It exposes the Event stream plus the
 // out-of-band controls the bidi API needs (Approve resolves a permission.ask;
 // Cancel aborts the run). The Events channel is closed exactly once, when the run
@@ -920,6 +934,22 @@ func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
 		return
 	}
 	r.asks.resolve(askID, v)
+}
+
+// ResolveOrdinaryAsk atomically resolves one pending non-plan permission ask
+// owned by this run or surfaced from a child. It reports plan-originated asks
+// without consuming them, leaving the dedicated plan-resolution choreography
+// authoritative. Unknown and already-resolved ask IDs report not pending.
+//
+// Approve remains the source-compatible all-origin wrapper for callers that do
+// not need to distinguish these outcomes.
+func (r *Run) ResolveOrdinaryAsk(askID string, v session.ApprovalVerdict) AskResolution {
+	if r.childAsks != nil {
+		if result, found := r.childAsks.resolveOrdinary(askID, v); found {
+			return result
+		}
+	}
+	return r.asks.resolveOrdinary(askID, v)
 }
 
 // RetractPermissionAsk withdraws this run's own pending permission ask without

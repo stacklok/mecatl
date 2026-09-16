@@ -716,7 +716,7 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 // be ignored. The EvApproval is emitted here ONLY on a real verdict (ok), exactly as
 // before — a cancelled await emits none.
 func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, ask session.PendingAsk) (res approval, ok, paused bool) {
-	ch := r.asks.register(ask.AskID)
+	ch := r.asks.registerPending(ask)
 	if err := sess.PauseForApproval(ask); err != nil {
 		r.asks.discard(ask.AskID)
 		return approval{}, false, false

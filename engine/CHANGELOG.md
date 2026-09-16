@@ -15,6 +15,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
+- **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
+  its closed not-pending/resolved/plan-originated outcomes, and
+  `agent.Run.ResolveOrdinaryAsk`. Embedders can now resolve a root or surfaced
+  child policy/hook ask exactly once while leaving plan-originated asks pending
+  for the dedicated plan-resolution choreography. `Run.Approve` remains the
+  all-origin compatibility path. Added (minor).
+
 - **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
 
 - **Event-follow capacity classification** — adds

@@ -29,21 +29,36 @@ type approval struct {
 // concurrent use.
 type askRegistry struct {
 	mu      sync.Mutex
-	pending map[string]chan approval
+	pending map[string]pendingApproval
+}
+
+// pendingApproval keeps the resolution channel and the one provenance bit the
+// ordinary-ask control must inspect at the same linearization point. Plan asks
+// remain owned by the dedicated plan-resolution choreography.
+type pendingApproval struct {
+	ch             chan approval
+	planOriginated bool
 }
 
 // newAskRegistry constructs an empty registry.
 func newAskRegistry() *askRegistry {
-	return &askRegistry{pending: make(map[string]chan approval)}
+	return &askRegistry{pending: make(map[string]pendingApproval)}
 }
 
 // register creates and stores a resolution channel for askID before the loop
 // emits the permission.ask Event, so an Approve that races in immediately after
 // the event is observed cannot be lost. It returns the channel the loop awaits.
 func (r *askRegistry) register(askID string) <-chan approval {
+	return r.registerPending(session.PendingAsk{AskID: askID})
+}
+
+// registerPending is the provenance-carrying registration path used by the
+// live ask spine. The legacy ID-only helper remains for internal callers that
+// construct an ordinary ask directly.
+func (r *askRegistry) registerPending(ask session.PendingAsk) <-chan approval {
 	ch := make(chan approval, 1)
 	r.mu.Lock()
-	r.pending[askID] = ch
+	r.pending[ask.AskID] = pendingApproval{ch: ch, planOriginated: ask.PlanOriginated}
 	r.mu.Unlock()
 	return ch
 }
@@ -56,13 +71,35 @@ func (r *askRegistry) resolve(askID string, v session.ApprovalVerdict) {
 	r.resolveWith(askID, approval{verdict: v})
 }
 
+// resolveOrdinary atomically classifies and resolves askID. A plan-originated
+// ask is deliberately left in the registry for the dedicated plan control.
+func (r *askRegistry) resolveOrdinary(askID string, v session.ApprovalVerdict) AskResolution {
+	r.mu.Lock()
+	pending, ok := r.pending[askID]
+	if !ok {
+		r.mu.Unlock()
+		return AskResolutionNotPending
+	}
+	if pending.planOriginated {
+		r.mu.Unlock()
+		return AskResolutionPlanOriginated
+	}
+	delete(r.pending, askID)
+	r.mu.Unlock()
+
+	// The channel is buffered (cap 1) and this entry was removed while locked,
+	// so exactly one caller can reach this send and it cannot block.
+	pending.ch <- approval{verdict: v}
+	return AskResolutionResolved
+}
+
 // resolveWith delivers a full approval (verdict + optional accurate deny message) for
 // askID. It is the message-bearing variant resolve delegates to; the headless subagent
 // auto-deny uses it to carry childAutoDenyMessage so the model sees the accurate cause
 // rather than the misleading "denied by user".
 func (r *askRegistry) resolveWith(askID string, a approval) {
 	r.mu.Lock()
-	ch, ok := r.pending[askID]
+	pending, ok := r.pending[askID]
 	if ok {
 		delete(r.pending, askID)
 	}
@@ -72,7 +109,7 @@ func (r *askRegistry) resolveWith(askID string, a approval) {
 	}
 	// ch is buffered (cap 1) and only ever written once per ask, so this never
 	// blocks.
-	ch <- a
+	pending.ch <- a
 }
 
 // discard drops a pending ask without resolving it and reports whether it was
@@ -135,6 +172,27 @@ func (r *childAskRouter) route(askID string, v session.ApprovalVerdict) bool {
 	}
 	child.Approve(askID, v)
 	return true
+}
+
+// resolveOrdinary resolves one surfaced child ask while holding the route and
+// child-registry decision in a single critical section. A plan-originated ask
+// leaves both entries pending so the compatibility plan choreography can still
+// reach it. The found result distinguishes a child route from a parent-registry
+// miss even when the child ask was resolved concurrently.
+func (r *childAskRouter) resolveOrdinary(askID string, v session.ApprovalVerdict) (result AskResolution, found bool) {
+	r.mu.Lock()
+	child, ok := r.byAskID[askID]
+	if !ok {
+		r.mu.Unlock()
+		return AskResolutionNotPending, false
+	}
+
+	result = child.asks.resolveOrdinary(askID, v)
+	if result != AskResolutionPlanOriginated {
+		delete(r.byAskID, askID)
+	}
+	r.mu.Unlock()
+	return result, true
 }
 
 // unregister drops a surfaced child ask from the router without routing a
