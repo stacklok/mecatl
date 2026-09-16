@@ -76,6 +76,21 @@ The same loop can support local terminal work, remote services, embedded
 applications, and Kubernetes deployments. A client does not need to own the
 agent's filesystem, credentials, or durable session state to interact with it.
 
+### Can external harnesses use Mecatl as their runtime?
+
+Mecatl provides both the agent harness and its runtime. A separate client can
+use Mecatl as its backend when it speaks the [gRPC or HTTP/SSE
+contracts](/building/deployment/grpc-http.md) or uses the [TypeScript
+SDK](/building/getting-started/typescript-sdk.md).
+
+Existing products such as Claude Desktop and Codex Desktop already own their
+agent loop, context, and tool invocation. To use Mecatl as their runtime, they
+would need to expose a replaceable backend and add an integration that speaks
+Mecatl's contracts. Mecatl is not a drop-in runtime for an existing harness.
+
+When the Mecatl roadmap refers to a desktop client, it means a client built to
+connect to the Mecatl runtime.
+
 ## Where this is going
 
 Mecatl is early, and the cloud-native harness is a direction as well as a
