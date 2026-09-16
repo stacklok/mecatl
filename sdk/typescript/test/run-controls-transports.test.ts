@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { ApprovalVerdict, HarnessService, SteerOutcome } from "../src/gen/mecatl/v1/harness_pb.js";
 import {
   connect,
+  createHttpTransport,
   InvalidStateError,
   imagePart,
   PromptValidationError,
@@ -18,6 +19,8 @@ import {
   SESSION_ID_HEADER_NAME,
   ServerError,
 } from "../src/index.js";
+import { createRawClient, withSessionAffinity } from "../src/raw.js";
+import { createRunControls } from "../src/run-controls.js";
 
 const feature = "prompt_free_controls";
 const sessionId = "session-transport-controls";
@@ -143,42 +146,77 @@ describe("run control transports", () => {
     const httpCalls: Array<{ headers: Headers; path: string; signal: AbortSignal | null }> = [];
     const httpHeaders: string[] = [];
     const httpTrailers: string[] = [];
-    const httpClient = connect({
+    const httpController = new AbortController();
+    const httpOptions = {
+      headers: { "x-caller": "http-kept" },
+      onHeader: (value: Headers) => httpHeaders.push(value.get("x-response") ?? ""),
+      onTrailer: (value: Headers) => httpTrailers.push(value.get("x-response") ?? ""),
+      signal: httpController.signal,
+      timeoutMs: 4_321,
+    };
+    const httpTransport = createHttpTransport({
       baseUrl: "http://mecatl.test",
       fetch: async (input, init) => {
         const path = new URL(String(input)).pathname;
-        if (path === "/v1/compatibility") {
-          return Response.json({ api_major: 1, capabilities: {}, features: [feature] });
-        }
-        if (path === `/v1/sessions/${sessionId}`) {
-          return Response.json({ session_id: sessionId });
-        }
         httpCalls.push({
           headers: new Headers(init?.headers),
           path,
           signal: init?.signal ?? null,
         });
-        return Response.json({ run_id: runId }, { headers: { "x-response": "http-header" } });
+        const response = (() => {
+          switch (path) {
+            case "/v1/compatibility":
+              return { api_major: 1, capabilities: {}, features: [feature] };
+            case `/v1/sessions/${sessionId}/controls/resolve-ask`:
+              return { ask_id: "ask-1", run_id: runId };
+            case `/v1/sessions/${sessionId}/controls/cancel`:
+              return { run_id: runId };
+            case `/v1/sessions/${sessionId}/controls/steer`:
+              return { message_id: "message-1", outcome: "accepted", run_id: runId };
+            case `/v1/sessions/${sessionId}/controls/cancel-steer`:
+              return { message_id: "message-1", outcome: "retracted", run_id: runId };
+            default:
+              throw new Error(`unexpected HTTP run-control path ${path}`);
+          }
+        })();
+        return Response.json(response, { headers: { "x-response": path } });
       },
     });
-    const httpController = new AbortController();
-    await (await httpClient.sessions.get(sessionId)).controls(runId).cancel({
-      headers: { "x-caller": "http-kept" },
-      onHeader: (value) => httpHeaders.push(value.get("x-response") ?? ""),
-      onTrailer: (value) => httpTrailers.push(value.get("x-response") ?? ""),
-      signal: httpController.signal,
-      timeoutMs: 4_321,
+    const httpRaw = createRawClient({ transport: httpTransport, transportKind: "http" });
+    const httpControls = createRunControls(sessionId, runId, {
+      assertOpen: () => undefined,
+      features: (requestOptions) => httpRaw.features(requestOptions),
+      promptCapabilities: () => ({ audio: true, image: true }),
+      transportKind: "http",
+      unary: (method, input, requestOptions) =>
+        httpRaw.unary(method, input, withSessionAffinity(sessionId, requestOptions)),
     });
-    expect(httpCalls).toHaveLength(1);
-    expect(httpCalls[0]).toMatchObject({
-      path: `/v1/sessions/${sessionId}/controls/cancel`,
-    });
-    expect(httpCalls[0]?.headers.get("x-caller")).toBe("http-kept");
-    expect(httpCalls[0]?.headers.get(SESSION_ID_HEADER_NAME)).toBe(sessionId);
-    expect(httpCalls[0]?.signal).toBeInstanceOf(AbortSignal);
-    expect(httpHeaders).toEqual(["http-header"]);
-    expect(httpTrailers).toEqual([""]);
-    await httpClient.close();
+    await httpControls.resolveAsk("ask-1", "allow_once", httpOptions);
+    await httpControls.cancel(httpOptions);
+    await httpControls.steer("turn", { messageId: "message-1" }, httpOptions);
+    await httpControls.cancelSteer({ messageId: "message-1" }, httpOptions);
+
+    expect(httpCalls.map((call) => call.path)).toEqual([
+      "/v1/compatibility",
+      `/v1/sessions/${sessionId}/controls/resolve-ask`,
+      `/v1/sessions/${sessionId}/controls/cancel`,
+      `/v1/sessions/${sessionId}/controls/steer`,
+      `/v1/sessions/${sessionId}/controls/cancel-steer`,
+    ]);
+    expect(httpCalls.every((call) => call.headers.get("x-caller") === "http-kept")).toBe(true);
+    expect(httpCalls[0]?.headers.has(SESSION_ID_HEADER_NAME)).toBe(false);
+    expect(
+      httpCalls.slice(1).every((call) => call.headers.get(SESSION_ID_HEADER_NAME) === sessionId),
+    ).toBe(true);
+    expect(httpCalls.every((call) => call.signal instanceof AbortSignal)).toBe(true);
+    expect(httpCalls.every((call) => call.signal !== httpController.signal)).toBe(true);
+    expect(httpHeaders).toEqual([
+      `/v1/sessions/${sessionId}/controls/resolve-ask`,
+      `/v1/sessions/${sessionId}/controls/cancel`,
+      `/v1/sessions/${sessionId}/controls/steer`,
+      `/v1/sessions/${sessionId}/controls/cancel-steer`,
+    ]);
+    expect(httpTrailers).toEqual(["", "", "", ""]);
 
     for (const invoke of [
       (missing: ReturnType<typeof connect>) =>
@@ -279,6 +317,7 @@ describe("run control transports", () => {
     const abort = new AbortController();
     abort.abort();
     await expect(cancelledControls.cancel({ signal: abort.signal })).rejects.toBeDefined();
+    await cancelledClient.close();
 
     const malformed = [
       {},
@@ -299,6 +338,35 @@ describe("run control transports", () => {
       });
       const controls = (await client.sessions.get(sessionId)).controls(runId);
       await expect(controls.steer("turn")).rejects.toBeInstanceOf(ProtocolError);
+      await client.close();
+    }
+
+    const malformedCancelSteer = [
+      {},
+      { messageId: "message-1", outcome: SteerOutcome.RETRACTED },
+      { outcome: SteerOutcome.RETRACTED, runId },
+      { messageId: "message-1", outcome: SteerOutcome.UNSPECIFIED, runId },
+      { messageId: "message-1", outcome: SteerOutcome.ACCEPTED, runId },
+      { messageId: "message-1", outcome: SteerOutcome.APPENDED, runId },
+      { messageId: "message-1", outcome: SteerOutcome.TOO_LATE, runId },
+      { messageId: "message-1", outcome: 999 as SteerOutcome, runId },
+      { messageId: "message-1", outcome: SteerOutcome.RETRACTED, runId: "wrong" },
+      { messageId: "wrong", outcome: SteerOutcome.RETRACTED, runId },
+    ];
+    for (const response of malformedCancelSteer) {
+      const client = connect({
+        transport: createRouterTransport((router) => {
+          router.service(HarnessService, {
+            cancelRunSteer: () => response as never,
+            getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [feature] }),
+            getSession: () => ({ session: { sessionId } }),
+          });
+        }),
+      });
+      const controls = (await client.sessions.get(sessionId)).controls(runId);
+      await expect(controls.cancelSteer({ messageId: "message-1" })).rejects.toBeInstanceOf(
+        ProtocolError,
+      );
       await client.close();
     }
   });

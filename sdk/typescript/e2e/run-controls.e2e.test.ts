@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { describe, expect, it } from "vitest";
@@ -121,6 +121,18 @@ async function waitForCompleted(session: Session): Promise<void> {
 }
 
 async function exerciseLiveControls(testCase: WireCase, daemon: Daemon): Promise<void> {
+  if (testCase.name === "grpc tcp") {
+    expect((await stat(daemon.userModelDirectory)).isDirectory()).toBe(true);
+    await expect(readFile(daemon.ambientUserModelPath, "utf8")).resolves.toBe(
+      "ambient user-model poison\n",
+    );
+  }
+  if (testCase.name === "grpc uds") {
+    const socketPath = daemon.ready.socket_path ?? "";
+    expect(basename(dirname(socketPath))).toBe(".scratch");
+    expect(basename(socketPath)).toMatch(/^[A-Za-z0-9]{6}\.sock$/u);
+    expect(Buffer.byteLength(socketPath)).toBeLessThan(104);
+  }
   const client = testCase.connect(daemon.ready);
   const transport = testCase.name === "http" ? "http" : "grpc";
   try {
@@ -157,14 +169,6 @@ async function exerciseLiveControls(testCase: WireCase, daemon: Daemon): Promise
     const cancelledSession = await client.sessions.create({});
     const cancelledRun = await cancelledSession.run("hold for cancellation");
     const cancelledControls = cancelledSession.controls(cancelledRun.id);
-    const controller = new AbortController();
-    controller.abort();
-    const cancelledRequest = await cancelledControls
-      .cancel({ signal: controller.signal })
-      .catch((error: unknown) => error);
-    expect(cancelledRequest).toBeInstanceOf(MecatlError);
-    expect(cancelledRequest).toMatchObject({ transport });
-    expect(["transport", "unknown"]).toContain((cancelledRequest as MecatlError).code);
     await expect(
       cancelledControls.cancelSteer(undefined, { timeoutMs: 10_000 }),
     ).resolves.toMatchObject({ outcome: "none_pending", runId: cancelledRun.id });
@@ -270,6 +274,79 @@ async function exerciseLiveControls(testCase: WireCase, daemon: Daemon): Promise
   }
 }
 
+function rejectWhenAborted(signal: AbortSignal | null): Promise<never> {
+  if (signal === null) throw new Error("HTTP control request omitted its cancellation signal");
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((_, reject) => {
+    const guard = setTimeout(
+      () => reject(new Error("HTTP control deadline did not reach fetch")),
+      1_000,
+    );
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(guard);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
+}
+
+async function exerciseRequestCancellationAndDeadline(daemon: Daemon): Promise<void> {
+  if (daemon.ready.http_address === undefined) throw new Error("mecated omitted its HTTP address");
+  const cancellation = new AbortController();
+  let boundedControlRequests = 0;
+  const client = connectHttp({
+    baseUrl: `http://${daemon.ready.http_address}`,
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      if (new URL(String(input)).pathname.endsWith("/controls/cancel-steer")) {
+        boundedControlRequests += 1;
+        if (boundedControlRequests === 1) {
+          cancellation.abort(new Error("cancel after real-wire acknowledgement"));
+          init?.signal?.throwIfAborted();
+        }
+        if (boundedControlRequests === 2) {
+          await rejectWhenAborted(init?.signal ?? null);
+        }
+      }
+      return response;
+    },
+  });
+  try {
+    const session = await client.sessions.create({});
+    const run = await session.run("hold while request lifetime expires");
+    const controls = session.controls(run.id);
+
+    await expect(
+      controls.cancelSteer(undefined, { signal: cancellation.signal }),
+    ).rejects.toBeInstanceOf(MecatlError);
+    expect(boundedControlRequests).toBe(1);
+    await expect(controls.cancelSteer(undefined, { timeoutMs: 20 })).rejects.toBeInstanceOf(
+      MecatlError,
+    );
+    expect(boundedControlRequests).toBe(2);
+
+    await expect(controls.cancelSteer()).resolves.toMatchObject({
+      outcome: "none_pending",
+      runId: run.id,
+    });
+    expect(boundedControlRequests).toBe(3);
+    await controls.cancel();
+    const events: Event[] = [];
+    for await (const event of run) events.push(event);
+    expect(events.at(-1)).toMatchObject({
+      kind: "result",
+      payload: { stop: "cancelled" },
+      runId: run.id,
+    });
+    await session.delete();
+  } finally {
+    await client.close();
+  }
+}
+
 async function exerciseRestartedResolve(testCase: WireCase): Promise<void> {
   await withDaemon(
     {
@@ -329,5 +406,9 @@ describe("offline run-control wire", () => {
       );
       await exerciseRestartedResolve(testCase);
     }
+    await withDaemon(
+      { http: true, script: fixture("cancel.json") },
+      exerciseRequestCancellationAndDeadline,
+    );
   }, 120_000);
 });
