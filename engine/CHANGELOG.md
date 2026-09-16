@@ -28,6 +28,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   for the dedicated plan-resolution choreography. `Run.Approve` remains the
   all-origin compatibility path. Added (minor).
 
+- **`session.Session.GrantToolAuthority`** — stable-unions bounded, control-free tool names into an idle or completed session's existing name authority without reopening it or changing unrelated aggregate state. Added (minor).
+
 - **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
 
 - **Event-follow capacity classification** — adds

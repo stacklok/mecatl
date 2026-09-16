@@ -79,6 +79,18 @@ func (s *Session) PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool
 	return *s.pendingWorkspaceEnrollment, true
 }
 
+func validToolAuthorityName(name string) bool {
+	if name == "" || len(name) > maxWorkspaceEnrollmentToolNameBytes || !utf8.ValidString(name) {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidWorkspaceEnrollmentToolNames reports whether names is an exact,
 // duplicate-free enrollment tool set. Names are opaque catalogue identifiers:
 // the boundary imposes only framing and size safety, not a provider-specific
@@ -90,13 +102,8 @@ func ValidWorkspaceEnrollmentToolNames(names []string) bool {
 	seen := make(map[string]struct{}, len(names))
 	totalBytes := 0
 	for _, name := range names {
-		if name == "" || len(name) > maxWorkspaceEnrollmentToolNameBytes || !utf8.ValidString(name) {
+		if !validToolAuthorityName(name) {
 			return false
-		}
-		for _, r := range name {
-			if unicode.IsControl(r) {
-				return false
-			}
 		}
 		if _, duplicate := seen[name]; duplicate {
 			return false

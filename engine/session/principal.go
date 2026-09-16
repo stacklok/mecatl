@@ -292,3 +292,41 @@ func (s *Session) BoundAuthority() (Authority, bool) {
 	}
 	return s.Authority.Clone(), true
 }
+
+// GrantToolAuthority adds valid tool names to an already-bound authority while
+// preserving their existing order and every other aggregate field.
+func (s *Session) GrantToolAuthority(names []string) error {
+	if s.State != StateIdle && s.State != StateCompleted {
+		return fmt.Errorf("%w: GrantToolAuthority from %q", ErrIllegalTransition, s.State)
+	}
+	if s.pending != nil || s.pendingAuthorization != nil || s.pendingWorkspaceEnrollment != nil {
+		return errors.New("session: cannot grant tool authority while a control is pending")
+	}
+	if !s.authorityBound {
+		return errors.New("session: tool authority is not bound")
+	}
+
+	seen := make(map[string]struct{}, len(s.Authority.CapabilitySet.Tools)+len(names))
+	for _, name := range s.Authority.CapabilitySet.Tools {
+		seen[name] = struct{}{}
+	}
+	additions := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		if !validToolAuthorityName(name) {
+			return errors.New("session: invalid tool authority name")
+		}
+		seen[name] = struct{}{}
+		additions = append(additions, name)
+	}
+	if len(additions) == 0 {
+		return nil
+	}
+	tools := make([]string, 0, len(s.Authority.CapabilitySet.Tools)+len(additions))
+	tools = append(tools, s.Authority.CapabilitySet.Tools...)
+	tools = append(tools, additions...)
+	s.Authority.CapabilitySet.Tools = tools
+	return nil
+}
