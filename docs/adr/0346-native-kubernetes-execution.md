@@ -1,4 +1,4 @@
-# ADR 0343 — Optional native Kubernetes execution environments
+# ADR 0346 — Optional native Kubernetes execution environments
 
 - Status: Draft
 - Date: 2026-09-15
