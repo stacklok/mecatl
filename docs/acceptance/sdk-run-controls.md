@@ -8,7 +8,7 @@
 **Delivery:** Split. The new wire methods, bounded rehydration behavior, stale-run rule, and exported SDK resource need human review before implementation changes public contracts.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1630](https://github.com/stacklok/mecatl/issues/1630).
-**Plan PR:** added when opened
+**Plan PR:** [#1635](https://github.com/stacklok/mecatl/pull/1635)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 Let an SDK consumer that knows a session ID and run ID resolve an ordinary permission ask, cancel the run, steer with text or ordered media, or retract pending steering without owning or creating an event stream. The client binds every operation to that exact run, carries normal request options, and receives bounded typed acknowledgements over both gRPC and HTTP.
