@@ -263,6 +263,15 @@ func resolveMCPSubcommand(args []string) commandResolution {
 			return nil
 		})}
 	}
+	if len(args) >= 3 && args[2] == "add" {
+		return commandResolution{handled: true, run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error { return runMCPAdd(args[3:], stdout) })}
+	}
+	if len(args) >= 3 && args[2] == "list" {
+		return commandResolution{handled: true, run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error { return runMCPList(args[3:], stdout) })}
+	}
+	if len(args) >= 3 && args[2] == "remove" {
+		return commandResolution{handled: true, run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error { return runMCPRemove(args[3:], stdout) })}
+	}
 	if len(args) >= 3 && args[2] == "login" {
 		return commandResolution{
 			handled: true,
@@ -275,7 +284,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 }
 
 func writeMCPHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "Usage: "+strings.TrimPrefix(mcpLoginUsage, "usage: ")+"\n\nAuthorize one operator-configured OAuth MCP server. --permission-config selects trusted operator settings only; it never supplies OAuth values. DCR recovery modifiers are mutually exclusive and perform an explicit registration operation before login.")
+	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  login SERVER [--no-browser] [--permission-config PATH ...]\n  remove NAME [--file PATH]\n\nThe add custody modes are intentionally incomplete in this local spike. Login keeps its existing behavior.")
 }
 
 func mcpUsageError(argv []string) error {
