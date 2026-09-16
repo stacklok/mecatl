@@ -46,7 +46,7 @@ func TestFetchMcpResourcePresentInBothCatalogProfiles(t *testing.T) {
 		t.Fatalf("shared catalog carries a non-production WebFetch spec: %q", description)
 	}
 
-	noFSCat, noFSClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
+	noFSCat, noFSClose, _ := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
 		provider: oa, providerID: providerOpenAI, model: cfg.Model, narrate: false, noFS: true,
 	})
 	defer func() { _ = noFSClose() }()

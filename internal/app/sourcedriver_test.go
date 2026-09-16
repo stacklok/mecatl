@@ -196,7 +196,7 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 		t.Fatalf("production Read schema advertises retired skill roots: %s", schema)
 	}
 
-	noFSCat, noFSClose := assembleCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), memstore.New(), hookexec.New(nil), &assets, catalogSession{
+	noFSCat, noFSClose, _ := assembleCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), memstore.New(), hookexec.New(nil), &assets, catalogSession{
 		provider: provider, providerID: providerMock, model: cfg.Model, noFS: true,
 	})
 	defer func() { _ = noFSClose() }()

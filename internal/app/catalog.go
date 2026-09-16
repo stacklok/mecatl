@@ -203,7 +203,11 @@ type catalogSession struct {
 // includes a.globalMgr (Build owns that lifecycle; a per-session CloseSession
 // closing it would kill MCP for every other session). The close is always
 // non-nil and safe to call.
-func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error) {
+// The third return value names the client MCP tools this call actually mounted
+// into the returned catalog (see the clientToolNames comment inline below for
+// why it must come from the catalog itself rather than a second manager
+// read) -- nil whenever s.clientMgr is nil, i.e. every build-time/shared call.
+func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error, []string) {
 	if profile, ok := a.userModelStore.(prompt.OperatorProfileSource); ok {
 		cfg.operatorProfileSource = profile
 	}
@@ -255,6 +259,23 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	clientClose := mountClientMCP(ctx, cfg, cat, s)
 	classified.classifyAdded(clientBefore, server.ClassificationEntry{Kind: server.KindDerived,
 		Rationale: "client MCP tools are derived from the already authorized session and cannot select another session"})
+	// The exact names mountClientMCP just added to THIS catalog -- diffed from
+	// the SAME classified.names() snapshot classifyAdded uses above, not a
+	// second independent read of s.clientMgr.Tools(). Server.Tools() lazily
+	// refreshes on a tools/list_changed notification, so a second read here
+	// could disagree with what the catalog above actually has: the catalog
+	// could still advertise tool A (this pass's snapshot) while a fresh read
+	// reports tool B, and setPerSessionLabels would then authorize B while the
+	// model can only ever see A -- recreating this fix's original bug for any
+	// client MCP server whose tool list changes between catalog assembly and
+	// authority minting. Reading the diff off `cat` itself is authoritative by
+	// construction: it cannot drift from what the model is actually offered.
+	var clientToolNames []string
+	for name := range classified.names() {
+		if _, existed := clientBefore[name]; !existed {
+			clientToolNames = append(clientToolNames, name)
+		}
+	}
 
 	// refMgr is the mainMgr for Subagent/member defs' MCP `reference:` resolution:
 	// prefer the SHARED global manager (parity with the build-time path), falling
@@ -299,7 +320,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	if closeFn == nil {
 		closeFn = func() error { return nil }
 	}
-	return cat, closeFn
+	return cat, closeFn, clientToolNames
 }
 
 // mountGlobalMCP mounts the server-global MCP tools (cfg.MCPServers + ToolHive),

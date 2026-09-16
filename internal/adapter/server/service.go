@@ -157,6 +157,14 @@ type SessionEngineResult struct {
 	// created. setPerSessionLabels folds this into the minted authority's
 	// CapabilitySet the same way it already does for DebugMCPTools, so a tool
 	// this session's own client just mounted is authorized to actually run.
+	//
+	// A factory MUST derive this from the exact same tool snapshot it put in
+	// the session's Catalog (internal/app's assembleCatalog does, via a
+	// before/after name diff), never from a second independent read of the
+	// client MCP manager: a manager's tool list can change (a
+	// tools/list_changed notification) between catalog assembly and this
+	// value being read, which would authorize a DIFFERENT tool than the one
+	// the model was actually offered.
 	MountedClientMCPTools []string
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error

@@ -2980,26 +2980,6 @@ func mountedClientMCPNames(mgr *mcp.Manager) []string {
 	return names
 }
 
-// mountedClientMCPToolNames names the individual model-facing tools (e.g.
-// "mcp__sdk__get_diagnostics") exposed by mgr's connected servers -- the
-// per-tool counterpart to mountedClientMCPNames' per-server names. Threaded
-// onto SessionEngineResult.MountedClientMCPTools so setPerSessionLabels can
-// authorize these session-specific tools the same way it already does for
-// a debug session's DebugMCPTools; see that field's doc comment for why the
-// build-time root authority cannot see them on its own.
-func mountedClientMCPToolNames(mgr *mcp.Manager) []string {
-	if mgr == nil {
-		return nil
-	}
-	var names []string
-	for _, srv := range mgr.Servers() {
-		for _, t := range srv.Tools() {
-			names = append(names, t.Spec().Name)
-		}
-	}
-	return names
-}
-
 func sessionEngineFactory(
 	cfg Config,
 	reg *providerRegistry,
@@ -3213,7 +3193,7 @@ func sessionEngineFactoryWithTools(
 		// Skill tool. A failed authoritative read clears only these partitions.
 		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, assets, workspace)
 
-		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider:        resolvedProvider,
 			providerID:      resolvedProviderID,
 			model:           resolvedModel,
@@ -3335,7 +3315,7 @@ func sessionEngineFactoryWithTools(
 			// mount is acceptable, because its two callers disagree — see the
 			// best-effort comment on the NewManager error above.
 			MountedClientMCP:      mountedClientMCP,
-			MountedClientMCPTools: mountedClientMCPToolNames(mgr),
+			MountedClientMCPTools: clientToolNames,
 			Close:                 closeFn,
 		}, nil
 	}
@@ -5689,7 +5669,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	}
 	// The build-time assembly: default provider + model, no client MCP, narrating
 	// the ENABLED/DISABLED composition facts exactly once.
-	cat, assembledClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+	// No clientMgr on this build-time call, so the third return is always nil
+	// (no client MCP tools to name here) -- discarded.
+	cat, assembledClose, _ := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 		provider:   provider,
 		providerID: reg.Default(),
 		model:      cfg.Model,
