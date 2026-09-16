@@ -1185,9 +1185,15 @@ func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.
 	if err != nil {
 		return nil, fmt.Errorf("osfs: invalid grep pattern: %w", err)
 	}
+	prefix, _ := re.LiteralPrefix()
+	var literal []byte
+	if prefix != "" && utf8.ValidString(prefix) && !strings.ContainsRune(prefix, utf8.RuneError) {
+		literal = []byte(prefix)
+	}
 	search := grepSearch{
 		ctx:      ctx,
 		re:       re,
+		literal:  literal,
 		maxFiles: maxGrepFiles,
 		maxBytes: maxGrepBytes,
 	}
@@ -1208,6 +1214,7 @@ func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.
 type grepSearch struct {
 	ctx       context.Context
 	re        *regexp.Regexp
+	literal   []byte
 	matches   []tool.GrepMatch
 	files     int
 	readBytes int64
@@ -1234,16 +1241,30 @@ func (s *grepSearch) scan(w *Workspace, rel string, info fs.FileInfo) error {
 	if bytes.IndexByte(data, 0) >= 0 {
 		return nil // binary file
 	}
-	for lineNo, line := range strings.Split(string(data), "\n") {
+	if len(s.literal) > 0 && !bytes.Contains(data, s.literal) {
+		return s.ctx.Err()
+	}
+	for lineNo, start := 1, 0; ; lineNo++ {
 		if err := s.ctx.Err(); err != nil {
 			return err
 		}
-		if s.re.MatchString(line) {
-			s.matches = append(s.matches, tool.GrepMatch{Path: rel, Line: lineNo + 1, Text: line})
+		end := bytes.IndexByte(data[start:], '\n')
+		var line []byte
+		if end < 0 {
+			line = data[start:]
+		} else {
+			line = data[start : start+end]
+		}
+		if s.re.Match(line) {
+			s.matches = append(s.matches, tool.GrepMatch{Path: rel, Line: lineNo, Text: string(line)})
 			if len(s.matches) == grepMatchLimit {
 				return errGrepMatchLimit
 			}
 		}
+		if end < 0 {
+			break
+		}
+		start += end + 1
 	}
 	return nil
 }
