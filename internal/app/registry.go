@@ -85,6 +85,12 @@ var builtinDefaultModel = map[string]string{
 	providerOpenCode: "glm-5.2",
 }
 
+// BuiltinDefaultModelFor returns the runtime fallback model for a stock provider,
+// or "" when the provider has no fixed fallback.
+func BuiltinDefaultModelFor(id string) string {
+	return builtinDefaultModel[id]
+}
+
 // openRouterDefaultBaseURL is the OpenRouter Responses-compatible API base URL.
 // OpenRouter rides the SAME stateless openai adapter (it speaks the Responses
 // API) with this base URL substituted — there is NO separate wire adapter in P0.
@@ -395,7 +401,7 @@ func (r *providerRegistry) DefaultModelFor(id string) string {
 	if entry, ok := r.Lookup(id); ok && entry.defaultModel != "" {
 		return entry.defaultModel
 	}
-	return builtinDefaultModel[id]
+	return BuiltinDefaultModelFor(id)
 }
 
 // healDefaultModel fills a still-empty defaultModel for an INTENT-DRIVEN

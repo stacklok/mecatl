@@ -54,102 +54,39 @@ and keybinding details.
 
 ### Set up a local provider
 
-Run `mecatui providers setup [PROVIDER]` explicitly to configure the embedded
-server. Without a name, choose from the numbered, capability-labelled list.
-Setup never starts a server or opens the TUI automatically. Remote
-`mecatui connect ADDRESS` remains governed by the remote server's configuration.
+Run `mecatui providers setup [PROVIDER]` to configure the embedded server. Without
+a name, choose from the listed providers. It does not start a server or open the
+TUI. `mecatui connect ADDRESS` always uses the remote server's configuration.
 
-For an API-key provider, setup offers reuse of an effective existing credential
-or replacement. Reuse is a no-op: an environment key is not copied to disk.
-Replacement shows provider-specific guidance before hidden terminal entry:
+For API-key providers, setup can reuse an effective credential without copying an
+environment value to disk, or accept a replacement through hidden terminal input.
+It explains where to obtain provider-specific keys; API use may incur charges.
+Keys are never command arguments, and empty, invalid, or control-character values
+are rejected before saving. Saving requires confirmation.
 
-- **Anthropic:** create a developer key in the
-  [Anthropic console](https://console.anthropic.com/settings/keys). A Claude
-  consumer subscription does not include API usage.
-- **OpenAI API:** create a key in the
-  [OpenAI platform](https://platform.openai.com/api-keys). ChatGPT subscriptions
-  and manual Codex subscription tokens are separate identities.
-- **OpenRouter:** create a key in
-  [OpenRouter settings](https://openrouter.ai/settings/keys) and arrange API
-  credits or billing; consumer chat subscriptions do not fund the API.
-- **OpenCode:** the configured integration is
-  [OpenCode Go](https://opencode.ai/go), requiring Go access. A Zen key,
-  subscription, or endpoint is not interchangeable.
-- **Custom providers:** follow your operator's or service's documentation. Setup
-  does not guess a console or change the configured transport.
+Environment credentials or an operator-selected owner-only API-key file supply
+API keys. The file is plaintext, so its permissions are not encryption: same-UID
+processes, including permitted agent Shell commands, can read it. Do not put a
+secret in flags, prompts, settings, or logs. Use an environment variable or the
+operator-managed credential file when interactive entry is unsuitable. See
+[Run mecated standalone](/building/deployment/mecated.md#configure-providers) for
+credential-file and daemon configuration details.
 
-API use may incur charges. Keys are entered with standard hidden terminal input and
-are never command arguments. Empty, invalid, or control-character values are
-rejected before saving. Saving requires a separate confirmation. The owner-only
-API-key file is **plaintext**, readable by same-UID processes, including permitted
-agent Shell commands; private permissions are not an encryption boundary. If
-interactive entry is unavailable or unsuitable, set the provider's API-key
-environment variable or manually configure the owner-only credential file without
-putting a secret in a command argument.
+After setup, you may set the embedded default with
+`mecatui providers set-default PROVIDER [MODEL]`; declining leaves the current
+default unchanged. `mecatui providers` and `mecatui providers status [PROVIDER]`
+report local configuration without revealing credentials. Presence does not prove
+model access, billing, or account health.
 
-Provider commands use the operator-global `credential_store.api_key.file`, or
-`auth.yaml` in the Mecatl configuration directory when it is unset. They accept
-neither `--api-key-file` nor the removed `--auth-file`; `--api-key-file` remains
-a startup flag. Project configuration cannot redirect credential custody. Login
-and setup can create a missing configured API-key file after save consent,
-subject to the existing private-parent and safe-writer requirements. Passive
-status still reports a missing explicitly configured file; malformed, unsafe, or
-unreadable existing files must be fixed before enrollment. Matching built-in
-environment keys win over file keys. OpenRouter uses its own environment key,
-then its own file key, then only the **environment** `OPENAI_API_KEY` fallback;
-an OpenAI file key is not a fallback. Custom API keys are file-only. Replacing a
-file key warns when an environment key will still win.
+`openai-codex` is distinct from the public `openai` API-key provider. Setup can
+reuse a locally usable manual Codex subscription token for default selection but
+never requests, writes, refreshes, imports, or removes that token. See the
+[manual subscription-token deployment guidance](/building/deployment/mecated.md#provider-and-model).
 
-After API-key save or reuse, successful custom-provider creation/login, or
-no-auth setup, setup separately offers to set the deployment default through
-`mecatui providers set-default PROVIDER [MODEL]`. Declining leaves the default
-unchanged. A later cancellation or default error does not undo already saved
-credentials or definitions. If default replacement reports
-`replacement_applied_durability_unknown`, the default may already be active:
-inspect passive `providers status` and operator settings before manually
-retrying. Direct `add` does not offer the optional default prompt. Direct
-`login PROVIDER` means replacement with save consent; direct `set-default`
-remains an explicit non-wizard action. An omitted model preserves the current
-selector for the same provider, otherwise resolving its declared default;
-providers without a default need an explicit selector. Known aliases and
-declared provider defaults use ordinary startup validation, not a live
-model-health or entitlement check.
-
-`mecatui providers` and `mecatui providers status [PROVIDER]` report passive
-local facts: credential source, shadowed file presence, selected default and
-model, and `verification: not checked`. Missing, malformed, and unreadable
-credential inputs have distinct diagnostics. Presence is not proof of account
-health, credit, or access to a model. OIDC status reads the existing protected
-local store without initializing it or refreshing tokens; ToolHive
-authentication is externally managed by `thv llm` tooling.
-
-### Reuse a manual OpenAI Codex token
-
-`openai-codex` is distinct from the public `openai` API-key provider. Status
-reports a manual subscription token as missing, locally usable, or
-invalid/expired using the same configured-file validator as runtime, without
-displaying the token, account ID, expiry, or fingerprint. A locally usable token
-can be reused by setup for optional default selection; setup never asks for a
-Codex token or writes its credential. Preserve an existing model selector or
-supply an explicit one: there is no synthetic Codex default or offline
-entitlement inventory.
-
-There is no Codex browser/device login, refresh, import, or credential removal
-in these commands. See the
-[manual subscription-token deployment guidance](/building/deployment/mecated.md#provider-and-model)
-for the supported manual configuration and lifecycle.
-
-`providers add PROVIDER` normally saves the custom definition and chains its
-capability-specific login; `--no-login` skips enrollment. `logout PROVIDER`
-removes only locally managed credentials. `remove PROVIDER` confirms removal of
-both a custom definition and its managed credentials, even when it is the
-selected default, without choosing a replacement. Inspect status and explicitly
-select another default before restarting. After an uncertain write, inspect
-local state rather than retrying blindly; separate settings and key writes are
-not a transaction. Cancelling OIDC enrollment does not prove that local or
-remote credential state is unchanged. A newly prepared credential directory may
-remain even if `add` restores its provider definition; the command reports this
-without recursively removing credential storage.
+Use `providers add PROVIDER` to define a custom provider, `login PROVIDER` to
+manage its locally owned credential, and `logout` or `remove` to remove it.
+Custom OIDC login can use `--no-browser` on a headless host. ToolHive credentials
+and lifecycle are external: use `thv llm` tooling, not these provider commands.
 
 ### Endpoint overrides
 

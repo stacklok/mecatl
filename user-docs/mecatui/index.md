@@ -31,18 +31,16 @@ mecatui providers setup
 mecatui providers
 ```
 
-`setup` guides first-time configuration. To define a custom provider explicitly,
-run `mecatui providers add NAME`; it collects its HTTPS endpoint, API flavor,
-default model, and authentication method. Use `mecatui providers login NAME` or
-`logout NAME` for locally managed credentials, and `mecatui providers set-default
-NAME [MODEL]` to select the embedded default. The [standalone deployment guide](/building/deployment/mecated.md#configure-providers)
-documents the operator `providers` and `credential_store` schema, including
-`--api-key-file` for provider-credentials YAML.
+`setup` configures an embedded server; `add NAME` defines a custom provider, and
+`login`, `logout`, and `set-default` manage it. For credential sources, secret
+safety, and provider selection, see
+[Choose models and providers](/features/choose-models.md). The [standalone
+deployment guide](/building/deployment/mecated.md#configure-providers) owns the
+operator `providers` and `credential_store` schema.
 
-`mecatui login ADDRESS` is different: it authenticates this client to a remote
-server. It neither configures nor enrolls that server's providers. ToolHive is
-external and owns its LLM credentials and lifecycle; use `thv llm` tooling for
-ToolHive setup rather than treating it as a locally managed provider credential.
+`mecatui login ADDRESS` authenticates this client to a remote server; it does
+not configure that server's providers. ToolHive is external and owns its LLM
+credentials and lifecycle; use `thv llm` tooling for ToolHive setup.
 
 Follow [Connect to a server](./remote-servers.md) when you are ready to move the
 server out of your local process.

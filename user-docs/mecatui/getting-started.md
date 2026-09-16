@@ -52,28 +52,14 @@ Replace `<PROVIDER_API_KEY>` with the variable for your provider.
 
 ## Manage embedded providers
 
-`mecatui providers` displays local provider status without contacting a provider
-or revealing credentials. Use `mecatui providers setup` for guided first-time
-setup, or manage a named provider directly:
+`mecatui providers` shows local provider status without revealing credentials.
+Use `mecatui providers setup` for guided setup, or `add`, `login`, and
+`set-default` for a named provider. Setup does not launch a session; matching
+environment credentials take precedence over locally managed ones. Remote
+`mecatui connect ADDRESS` uses the remote server's provider configuration.
 
-```sh
-mecatui providers add example --no-login
-mecatui providers login example
-mecatui providers set-default example MODEL
-```
-
-Provider commands use operator-global `credential_store.api_key.file` (default
-`auth.yaml` under the Mecatl configuration directory); `--api-key-file` is a
-startup flag, not a provider-command option. Matching environment credentials
-take precedence. Setup offers reuse or hidden replacement, separate save
-consent, and an independently optional default selection; it does not launch a
-session. See
-[local provider setup](/features/choose-models.md#set-up-a-local-provider) for
-console, billing, plaintext-custody, and manual Codex guidance. `logout` clears
-locally managed credentials but keeps the provider definition. `remove` confirms
-removal of a custom definition and its managed credentials, even when selected
-as default, without choosing a replacement. Remote `mecatui connect ADDRESS`
-uses the remote server's provider configuration instead.
+For credential sources, secret safety, custom providers, and manual Codex
+support, see [local provider setup](/features/choose-models.md#set-up-a-local-provider).
 
 The welcome screen shows your workspace and active model. To use a different
 model, enter `/models`, select one, and press `enter`. A small, low-cost model

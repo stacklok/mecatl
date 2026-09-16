@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -345,7 +346,7 @@ func builtinAPIKeyStatus(provider stockAPIKeyProvider, shadowed bool, keys clico
 	return providerStatus{
 		Name: provider.id, Class: providerClassBuiltin, AuthMethod: providerAuthAPIKey,
 		Configured: available, Auth: configuredSource(available, shadowed),
-		DefaultModel: provider.defaultModel, Next: nextForAPIKey(available),
+		DefaultModel: app.BuiltinDefaultModelFor(provider.id), Next: nextForAPIKey(available),
 	}
 }
 
