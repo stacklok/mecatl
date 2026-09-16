@@ -8,7 +8,7 @@
 **Delivery:** Split. The command, configuration, credential, and trust-bootstrap contracts need human review before implementation changes the host or performs OAuth.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1613](https://github.com/stacklok/mecatl/issues/1613).
-**Plan PR:** absent until opened.
+**Plan PR:** [#1626](https://github.com/stacklok/mecatl/pull/1626).
 **Approved baseline:** absent until the Plan / Interface PR merges.
 
 Make the currently supported direct-DCR profile a URL-first host operation. One attended command writes a validated operator profile, safely discovers and pins its sole issuer, selects durable credential custody without asking the operator to handle an encryption key, completes browser authorization, and verifies the MCP connection. Matching list, login, and removal commands replace routine YAML surgery.
