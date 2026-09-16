@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -29,9 +30,21 @@ func defaultProviderSettingsPath() string {
 }
 
 func readProviderFieldFromTerminal(ctx context.Context, prompt string) (string, error) {
-	value, err := readProviderTerminalLine(ctx, os.Stdin, os.Stderr, prompt, false)
+	return readProviderField(ctx, bufio.NewReader(os.Stdin), prompt)
+}
+
+func readProviderField(ctx context.Context, input *bufio.Reader, prompt string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprint(os.Stderr, prompt+": "); err != nil {
+		return "", providerTerminalError("could not write terminal prompt")
+	}
+	value, err := input.ReadString('\n')
 	if errors.Is(err, io.EOF) {
 		err = context.Canceled
+	} else if err != nil {
+		err = providerTerminalError("could not read terminal input")
 	}
 	return strings.TrimSpace(value), err
 }

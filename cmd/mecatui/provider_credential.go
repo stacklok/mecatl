@@ -37,18 +37,9 @@ func currentProviderCredentialConfig() (providerCredentialConfig, error) {
 	return providerCredentialConfig{definitions: definitions, authPath: path}, nil
 }
 
-func readHiddenProviderAPIKey(ctx context.Context, provider string) (string, error) {
-	return readProviderTerminalLine(ctx, os.Stdin, os.Stderr, "API key for "+providerDisplay(provider), true)
-}
-
-type providerTerminalError string
-
-func (e providerTerminalError) Error() string { return string(e) }
-
 var (
 	errProviderCredentialCancelled = errors.New("provider credential prompt cancelled")
 	errProviderSaveDeclined        = errors.New("provider API key save declined")
-	errProviderInputTooLong        = errors.New("provider input exceeds the 8 KiB acceptance limit")
 )
 
 func (c providerCommands) runCredential(ctx context.Context, res invocationResolution, stdout, stderr io.Writer) (err error) {
@@ -91,12 +82,8 @@ func (c providerCommands) runCredential(ctx context.Context, res invocationResol
 }
 
 func isBuiltinAPIKeyProvider(provider string) bool {
-	switch provider {
-	case providerAnthropicID, providerOpenAIID, providerOpenCodeID, providerOpenRouterID:
-		return true
-	default:
-		return false
-	}
+	_, ok := stockAPIKeyProviderFor(provider)
+	return ok
 }
 
 func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolution, authPath string, stdout, stderr io.Writer) error {
@@ -167,9 +154,6 @@ func (c providerCommands) providerKeyReadError(err error, stderr io.Writer) erro
 	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
 		return c.credentialCancellation(stderr)
 	}
-	if errors.Is(err, errProviderInputTooLong) {
-		return errProviderInputTooLong
-	}
 	var safeError providerTerminalError
 	if errors.As(err, &safeError) {
 		return safeError
@@ -180,9 +164,6 @@ func (c providerCommands) providerKeyReadError(err error, stderr io.Writer) erro
 func validateProviderAPIKey(key string) error {
 	if strings.TrimSpace(key) == "" {
 		return errors.New("providers login: API key cannot be empty")
-	}
-	if len(key) > 8*1024 {
-		return errProviderInputTooLong
 	}
 	if !utf8.ValidString(key) || strings.ContainsFunc(key, func(r rune) bool { return !unicode.IsPrint(r) || isTrustControl(r) }) {
 		return errors.New("providers login: API key contains unsupported control characters or invalid text")
@@ -240,15 +221,8 @@ func (c providerCommands) runOIDC(ctx context.Context, res invocationResolution,
 
 func writeProviderKeyGuidance(out io.Writer, provider string) error {
 	guidance := "Custom provider: obtain an API key from your operator or service documentation; use the configured transport, not a guessed console."
-	switch provider {
-	case providerAnthropicID:
-		guidance = "Anthropic API: create a developer key at https://console.anthropic.com/settings/keys . Claude consumer subscriptions do not include API usage."
-	case providerOpenAIID:
-		guidance = "OpenAI API key (not the manual OpenAI Codex subscription token): https://platform.openai.com/api-keys . ChatGPT consumer subscriptions do not include developer API usage."
-	case providerOpenRouterID:
-		guidance = "OpenRouter API: create a key at https://openrouter.ai/settings/keys and arrange API credits/billing. Consumer chat subscriptions do not fund this API."
-	case providerOpenCodeID:
-		guidance = "OpenCode Go API: obtain a key with an active Go subscription at https://opencode.ai/go . Go is not interchangeable with a Zen key, subscription, or endpoint; unrelated consumer subscriptions do not grant Go API access."
+	if stock, ok := stockAPIKeyProviderFor(provider); ok {
+		guidance = stock.guidance
 	}
 	_, err := fmt.Fprintln(out, guidance+"\nAPI use may incur charges; check the service's billing terms. No browser is opened.\nSaving is optional and requires separate consent. The configured credential_store.api_key.file is owner-only plaintext, readable by same-UID processes, including permitted agent Shell commands. Never paste a key into a command argument.")
 	return err

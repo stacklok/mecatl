@@ -265,7 +265,10 @@ func samePath(abs, conventional string) bool {
 
 func ownerUID(info os.FileInfo) (uint32, bool) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	return stat.Uid, ok
+	if !ok {
+		return 0, false
+	}
+	return stat.Uid, true
 }
 
 func fileIdentity(info os.FileInfo) (uint64, uint64, bool) {

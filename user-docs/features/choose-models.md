@@ -78,15 +78,14 @@ Replacement shows provider-specific guidance before hidden terminal entry:
 - **Custom providers:** follow your operator's or service's documentation. Setup
   does not guess a console or change the configured transport.
 
-API use may incur charges. Both input and prompt output must be local terminals;
-keys are hidden, never command arguments. Empty, invalid/control-character, and
-larger-than-8-KiB values are rejected before saving. Saving requires a separate
-confirmation. The owner-only API-key file is **plaintext**, readable by same-UID
-processes, including permitted agent Shell commands; private permissions are not
-an encryption boundary. Ctrl-C or Ctrl-D cancels entry and restores terminal
-state. Local terminal entry is supported on Linux and macOS; on other platforms,
-use the provider's API-key environment variable or manually configure the
-owner-only credential file without putting a secret in a command argument.
+API use may incur charges. Keys are entered with standard hidden terminal input and
+are never command arguments. Empty, invalid, or control-character values are
+rejected before saving. Saving requires a separate confirmation. The owner-only
+API-key file is **plaintext**, readable by same-UID processes, including permitted
+agent Shell commands; private permissions are not an encryption boundary. If
+interactive entry is unavailable or unsuitable, set the provider's API-key
+environment variable or manually configure the owner-only credential file without
+putting a secret in a command argument.
 
 Provider commands use the operator-global `credential_store.api_key.file`, or
 `auth.yaml` in the Mecatl configuration directory when it is unset. They accept

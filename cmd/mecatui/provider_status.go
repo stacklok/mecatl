@@ -21,10 +21,7 @@ import (
 )
 
 const (
-	providerOpenAIID      = "openai"
 	providerOpenRouterID  = "openrouter"
-	providerOpenCodeID    = "opencode"
-	providerAnthropicID   = "anthropic"
 	providerClassBuiltin  = "built-in"
 	openAICodexEndpointID = "openai-codex"
 )
@@ -237,7 +234,7 @@ func inspectLocalProviders() (providerInspection, error) {
 		selectedProvider, selectedModel = policy.DefaultProvider, policy.Default
 	}
 	path, explicit := flags.AuthFilePath()
-	known := []string{providerAnthropicID, providerOpenAIID, providerOpenRouterID, providerOpenCodeID, openAICodexEndpointID}
+	known := append(stockAPIKeyProviderIDs(), openAICodexEndpointID)
 	for id := range definitions {
 		known = append(known, id)
 	}
@@ -253,11 +250,9 @@ func inspectLocalProviders() (providerInspection, error) {
 		return providerInspection{}, err
 	}
 	envKeys := cliconfig.ReadProviderKeys()
-	shadowed := map[string]bool{
-		providerAnthropicID:  envKeys.Anthropic != "" && file.APIKey("anthropic") != "",
-		providerOpenAIID:     envKeys.OpenAI != "" && file.APIKey(providerOpenAIID) != "",
-		providerOpenCodeID:   envKeys.OpenCode != "" && file.APIKey(providerOpenCodeID) != "",
-		providerOpenRouterID: envKeys.OpenRouter != "" && file.APIKey(providerOpenRouterID) != "",
+	shadowed := make(map[string]bool, len(stockAPIKeyProviders))
+	for _, provider := range stockAPIKeyProviders {
+		shadowed[provider.id] = provider.credential(envKeys) != "" && file.APIKey(provider.id) != ""
 	}
 	sources := make(map[string]string)
 	for _, id := range known {
@@ -265,9 +260,9 @@ func inspectLocalProviders() (providerInspection, error) {
 			sources[id] = "credential_store.api_key.file"
 		}
 	}
-	for id, key := range map[string]string{providerAnthropicID: envKeys.Anthropic, providerOpenAIID: envKeys.OpenAI, providerOpenCodeID: envKeys.OpenCode, providerOpenRouterID: envKeys.OpenRouter} {
-		if key != "" {
-			sources[id] = strings.ToUpper(id) + "_API_KEY (environment)"
+	for _, provider := range stockAPIKeyProviders {
+		if provider.credential(envKeys) != "" {
+			sources[provider.id] = provider.environmentVar + " (environment)"
 		}
 	}
 	if credentials.OpenRouter == "" && envKeys.OpenAI != "" {
@@ -328,13 +323,11 @@ func (c providerCommands) oidcStatus(ctx context.Context, definition permconfig.
 }
 
 func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[string]bool) []providerStatus {
-	return []providerStatus{
-		builtinAPIKeyStatus(providerAnthropicID, keys.Anthropic != "", shadowed[providerAnthropicID], "claude-sonnet-4-6"),
-		builtinAPIKeyStatus(providerOpenAIID, keys.OpenAI != "", shadowed[providerOpenAIID], "gpt-5"),
-		codexProviderStatus(keys),
-		builtinAPIKeyStatus(providerOpenCodeID, keys.OpenCode != "", shadowed[providerOpenCodeID], "glm-5.2"),
-		builtinAPIKeyStatus(providerOpenRouterID, keys.OpenRouter != "", shadowed[providerOpenRouterID], "openai/gpt-5"),
+	statuses := make([]providerStatus, 0, len(stockAPIKeyProviders)+1)
+	for _, provider := range stockAPIKeyProviders {
+		statuses = append(statuses, builtinAPIKeyStatus(provider, shadowed[provider.id], keys))
 	}
+	return append(statuses, codexProviderStatus(keys))
 }
 
 func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
@@ -347,11 +340,12 @@ func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
 	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: "see manual OpenAI Codex token guidance at https://mecatl.dev/docs/features/choose-models#reuse-a-manual-openai-codex-token; no login, refresh, import, or removal here"}
 }
 
-func builtinAPIKeyStatus(name string, available, shadowed bool, defaultModel string) providerStatus {
+func builtinAPIKeyStatus(provider stockAPIKeyProvider, shadowed bool, keys cliconfig.ResolvedCredentials) providerStatus {
+	available := provider.credential(keys) != ""
 	return providerStatus{
-		Name: name, Class: providerClassBuiltin, AuthMethod: providerAuthAPIKey,
+		Name: provider.id, Class: providerClassBuiltin, AuthMethod: providerAuthAPIKey,
 		Configured: available, Auth: configuredSource(available, shadowed),
-		DefaultModel: defaultModel, Next: nextForAPIKey(available),
+		DefaultModel: provider.defaultModel, Next: nextForAPIKey(available),
 	}
 }
 

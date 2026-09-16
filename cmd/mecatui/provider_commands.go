@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"io"
+	"os"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
@@ -10,8 +12,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 )
 
-// providerTerminal is the complete interactive input boundary for provider
-// commands. Each operation must stop promptly when ctx is cancelled.
+// providerTerminal is the interactive input boundary for provider commands.
 type providerTerminal struct {
 	readField   func(context.Context, string) (string, error)
 	readAPIKey  func(context.Context, string) (string, error)
@@ -48,9 +49,12 @@ var executeToolHiveLogin = func(ctx context.Context, skipBrowser bool) error {
 }
 
 func newProviderCommands() providerCommands {
+	input := bufio.NewReader(os.Stdin)
 	return providerCommands{
 		terminal: providerTerminal{
-			readField:   readProviderFieldFromTerminal,
+			readField: func(ctx context.Context, prompt string) (string, error) {
+				return readProviderField(ctx, input, prompt)
+			},
 			readAPIKey:  readHiddenProviderAPIKey,
 			readRemoval: readProviderRemovalConfirmationFromTerminal,
 		},

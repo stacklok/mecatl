@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -241,9 +242,38 @@ func TestProviderSetupFollowup_Scenario4_UnifiedLifecyclePreserved(t *testing.T)
 			}
 		})
 	}
-	for _, args := range [][]string{{"llm", "status"}, {"providers", "login", "openai", "--api-key-file", "key"}, {"providers", "setup", "--auth-file", "key"}} {
-		if res := resolveInvocation(append([]string{"mecatui"}, args...)); res.err == nil {
-			t.Fatalf("legacy grammar accepted: %v", args)
+	// The registered top-level catalog is the command surface: llm must not
+	// silently return as an accepted compatibility route.
+	for _, command := range topLevelCommands {
+		if command.name == "llm" {
+			t.Fatal("retired llm command is registered")
+		}
+	}
+	if res := resolveInvocation([]string{"mecatui", "llm", llmActionStatus}); res.err == nil {
+		t.Fatal("legacy llm command accepted")
+	}
+
+	// Provider lifecycle commands own their grammar. Every transport flag
+	// registered for an embedded invocation must be rejected after such a command.
+	flags, _, err := parseTransportFlagsTest(t, modeLocal, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	flags.VisitAll(func(f *flag.Flag) {
+		if !isHelpMetaFlag("--" + f.Name) {
+			names = append(names, f.Name)
+		}
+	})
+	for _, command := range [][]string{{"providers", providerActionLogin, "openai"}, {"providers", providerActionSetup}} {
+		for _, name := range names {
+			t.Run(strings.Join(command, "/")+"/--"+name, func(t *testing.T) {
+				args := append([]string{"mecatui"}, command...)
+				args = append(args, "--"+name)
+				if res := resolveInvocation(args); res.err == nil {
+					t.Fatalf("transport flag accepted by provider lifecycle command: %v", args)
+				}
+			})
 		}
 	}
 }

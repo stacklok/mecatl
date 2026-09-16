@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -22,6 +23,16 @@ func TestProviderTerminalReadsPropagateAlreadyCancelledContext(t *testing.T) {
 	}
 	if _, err := readHiddenProviderAPIKey(ctx, "provider"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("API-key read error = %v", err)
+	}
+}
+
+func TestProviderFieldReaderRetainsBufferedLines(t *testing.T) {
+	input := bufio.NewReader(strings.NewReader("first\nsecond\n"))
+	for _, want := range []string{"first", "second"} {
+		got, err := readProviderField(context.Background(), input, "field")
+		if err != nil || got != want {
+			t.Fatalf("read field = %q, %v; want %q, nil", got, err, want)
+		}
 	}
 }
 
