@@ -772,7 +772,7 @@ func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 			if rl.sendErr == nil {
 				rl.sendErr = err
 			}
-			run.Cancel()
+			h.svc.cancelRegisteredRun(rl.id, run)
 		case ev, ok := <-events:
 			if !ok {
 				events = nil // the run ended
@@ -780,7 +780,7 @@ func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 			}
 			h.sendEvent(rl, ev)
 			if rl.sendErr != nil {
-				run.Cancel() // first error: drain-to-discard from here
+				h.svc.cancelRegisteredRun(rl.id, run) // first error: drain-to-discard from here
 			}
 		case ack, ok := <-acks:
 			if !ok {
@@ -795,7 +795,7 @@ func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 				SteerOutcome: ack,
 			}}); err != nil {
 				rl.sendErr = err
-				run.Cancel()
+				h.svc.cancelRegisteredRun(rl.id, run)
 			}
 		}
 	}
@@ -982,7 +982,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 			}
 			target := ct.active()
 			if err := h.svc.cancelLiveRun(id, target, ""); err != nil {
-				target.Cancel() // protocol-fault backstop: never leave the bad stream running
+				h.svc.cancelRegisteredRun(id, target) // protocol-fault backstop: never leave the bad stream running
 			}
 			return
 		default:
@@ -1702,7 +1702,7 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 	parkedOnAsk := false
 	strand := func() {
 		if sendErr != nil && parkedOnAsk {
-			result.Run.Cancel()
+			h.svc.cancelRegisteredRun(id, result.Run)
 		}
 	}
 
@@ -1723,7 +1723,7 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 					}
 				} else if frame.cancel != nil {
 					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
-						result.Run.Cancel()
+						h.svc.cancelRegisteredRun(id, result.Run)
 					}
 				}
 			}

@@ -955,7 +955,7 @@ func (h *HTTPHandler) relayMCPAuthorizationControlSSE(w http.ResponseWriter, r *
 			return
 		}
 		failed = true
-		result.Run.Cancel()
+		h.svc.cancelRegisteredRun(id, result.Run)
 	}
 	writeEvent := func(event session.Event) bool {
 		if _, err := w.Write([]byte("data: ")); err != nil {
@@ -1124,7 +1124,7 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	// If the client disconnects, cancel the run.
 	go func() {
 		<-r.Context().Done()
-		run.Cancel()
+		h.svc.cancelRegisteredRun(id, run)
 	}()
 
 	// Relay events; the channel closes when the run ends. On the FIRST write
@@ -1145,7 +1145,7 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	failed := false
 	fail := func() {
 		failed = true
-		run.Cancel()
+		h.svc.cancelRegisteredRun(id, run)
 	}
 	for ev := range run.Events() {
 		if failed {

@@ -86,15 +86,11 @@ func (s *Service) cancelAndAwaitClearSource(ctx context.Context, id session.Sess
 		s.mu.Unlock()
 		return nil
 	}
-	run, admissionCancel, settled := st.run, st.admissionCancel, st.settled
+	settled := st.settled
 	st.cancelling = true
 	s.mu.Unlock()
 
-	if run != nil {
-		run.Cancel()
-	} else if admissionCancel != nil {
-		admissionCancel()
-	}
+	s.cancelRegisteredRunState(id, st, nil, false)
 	select {
 	case <-settled:
 		return nil
