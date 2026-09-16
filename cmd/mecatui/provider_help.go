@@ -16,74 +16,61 @@ func writeProviderHelp(out io.Writer, action string) error {
 	case "":
 		text = `Usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]
 
-Manage provider configuration for the embedded mecated that bare mecatui starts. These commands do not configure a remote mecated; use its operator configuration instead.
+Manage providers and credentials used by the embedded server. These commands do not change a remote mecated server.
 
 Commands:
-  status [PROVIDER]              inspect local provider state without changing it
-  setup [PROVIDER]               choose a provider, log in, or start custom setup
-  add PROVIDER [--no-login]      create a custom provider definition
-  login PROVIDER [--no-browser]  save a locally managed API key or enroll OIDC
-  logout PROVIDER                remove locally managed credentials
+  status [PROVIDER]              show provider readiness
+  setup [PROVIDER]               configure a provider interactively
+  add PROVIDER [--no-login]      add a custom provider
+  login PROVIDER [--no-browser]  save an API key or sign in with OIDC
+  logout PROVIDER                remove saved credentials
   set-default PROVIDER [MODEL]   set the embedded deployment default
-  remove PROVIDER                remove a custom definition and its managed credentials
+  remove PROVIDER                remove a custom provider and its credentials
 
-Classes, authentication, and custody:
-  Built-in providers use locally managed API keys; openai-codex is manually managed.
-  Custom providers declare api_key, oidc, or no authentication in operator settings.
-  ToolHive is external: its lifecycle and credentials remain with ` + "`thv llm`" + ` tooling.
-  API keys and OIDC enrollments stay in local operator-managed credential storage. Environment credentials can take precedence; status reports that fact without revealing a secret.
+API keys and OIDC credentials are stored locally and are never printed. Environment credentials may take precedence. Manage ToolHive providers with ` + "`thv llm`" + `.
 
-No-provider recovery:
-  Run ` + "`mecatui providers status`" + ` to inspect what is available. Run ` + "`mecatui providers setup`" + ` to choose a built-in provider or create a custom one, then use ` + "`mecatui providers set-default PROVIDER [MODEL]`" + ` before starting the embedded server.
+Start with ` + "`mecatui providers status`" + ` or ` + "`mecatui providers setup`" + `.
 `
 	case providerActionStatus:
 		text = `Usage: mecatui providers status [PROVIDER]
 
-Inspect providers available to the embedded mecated without changing configuration, credentials, or enrollment. Output identifies each provider's class, authentication state, default model, and next recovery action; it never prints credential values.
-
-Built-in and custom providers are locally configured for embedded mecatui. ToolHive is external and remains managed through ` + "`thv llm`" + `. If no provider is ready, run ` + "`mecatui providers setup`" + ` or ` + "`mecatui providers add PROVIDER`" + `, then select it with ` + "`mecatui providers set-default PROVIDER [MODEL]`" + `.
+Show provider readiness, authentication state, default model, and suggested next action. This command changes nothing and never prints credential values.
 `
 	case providerActionSetup:
 		text = `Usage: mecatui providers setup [PROVIDER]
 
-Interactively choose a built-in, external, or custom provider. Naming a configured provider starts its local login flow; an unknown name starts custom-provider setup. Custom provider IDs use 1 to 63 lowercase letters, digits, or hyphens; they start with a letter and end with a letter or digit. Setup can write operator configuration and, when authentication is needed, locally managed credentials or OIDC enrollment.
+Configure a provider interactively. Select a built-in provider, sign in to a configured provider, or create a custom provider.
 
-ToolHive remains externally managed and delegates its lifecycle to ` + "`thv llm`" + `. Use ` + "`mecatui providers status`" + ` first when recovering from a no-provider installation.
+Custom provider IDs contain 1–63 lowercase letters, digits, or hyphens; they must start with a letter and end with a letter or digit. Manage ToolHive providers with ` + "`thv llm`" + `.
 `
 	case providerActionAdd:
 		text = `Usage: mecatui providers add PROVIDER [--no-login]
 
-Create a custom provider definition in local operator settings. PROVIDER uses 1 to 63 lowercase letters, digits, or hyphens; it starts with a letter and ends with a letter or digit. You will supply its HTTPS base URL, API flavor, default model, and authentication method (api_key, oidc, or none); OIDC also collects issuer and trust settings. Without --no-login, add then starts the selected local credential or OIDC enrollment flow.
+Add a custom provider to local settings, then collect its credentials. Use --no-login to save the provider without collecting credentials.
 
---no-login saves only the definition and prints the follow-up login command. This command does not configure remote mecated instances. If no provider is usable afterward, run ` + "`mecatui providers login PROVIDER`" + ` and ` + "`mecatui providers set-default PROVIDER [MODEL]`" + `.
+This command does not change a remote mecated server.
 `
 	case providerActionLogin:
 		text = `Usage: mecatui providers login PROVIDER [--no-browser]
 
-For built-in and api_key custom providers, securely enter and save a locally managed API key. For OIDC custom providers, enroll locally; --no-browser prints the authorization URL instead of opening a browser. ToolHive login is delegated to its externally managed ` + "`thv llm`" + ` lifecycle.
+Save an API key or sign in with OIDC for PROVIDER. Use --no-browser to print the OIDC URL instead of opening it.
 
-Credentials remain in local operator-managed storage and are never printed. Login does not start or configure a remote mecated. Use ` + "`mecatui providers status PROVIDER`" + ` to verify readiness, then set an embedded default if needed.
+Credentials are stored locally and never printed. Manage ToolHive credentials with ` + "`thv llm`" + `.
 `
 	case providerActionLogout:
 		text = `Usage: mecatui providers logout PROVIDER
 
-Remove only locally managed API-key or OIDC credentials for PROVIDER. The provider definition and embedded deployment default are not changed. ToolHive credentials are externally managed and must be handled with ` + "`thv llm`" + ` tooling.
-
-This is a side-effecting local operation. To recover a provider afterward, run ` + "`mecatui providers login PROVIDER`" + `; use status to distinguish local credentials from environment-provided credentials.
+Remove locally stored credentials for PROVIDER. The provider configuration and default selection are unchanged. Environment credentials are not removed.
 `
 	case providerActionSetDefault:
 		text = `Usage: mecatui providers set-default PROVIDER [MODEL]
 
-Set the operator deployment default used by the embedded mecated started by bare mecatui. PROVIDER must be usable under the current local provider configuration; MODEL is optional and otherwise resolves to that provider's default. This writes local operator settings and does not alter a remote mecated.
-
-When no provider is usable, first run ` + "`mecatui providers setup`" + ` or ` + "`mecatui providers add PROVIDER`" + `, authenticate it if required, and confirm with ` + "`mecatui providers status`" + `.
+Set the default provider and optional model for the embedded server. PROVIDER must be ready to use. This command does not change a remote mecated server.
 `
 	case providerActionRemove:
 		text = `Usage: mecatui providers remove PROVIDER
 
-Remove a custom provider definition after an explicit confirmation. For locally managed api_key or oidc providers, this also removes the corresponding local credential or enrollment. Built-in providers and externally managed ToolHive cannot be removed.
-
-This is a side-effecting local operation and does not change a remote mecated. If it leaves no usable provider, recover with ` + "`mecatui providers setup`" + ` or ` + "`mecatui providers add PROVIDER`" + `, then set an embedded default.
+Remove a custom provider and its locally stored credentials after confirmation. Built-in and ToolHive providers cannot be removed. This command does not change a remote mecated server.
 `
 	}
 	_, err := fmt.Fprint(out, text)

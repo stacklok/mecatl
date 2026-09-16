@@ -345,12 +345,11 @@ func TestServerOwnedSessionPlacement_EmbeddedWorkspaceConfiguresComposition(t *t
 // TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRejectedLocally pins rejection before workspace resolution or session creation.
 func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRejectedLocally(t *testing.T) {
 	const explicitWorkspace = "must-not-resolve"
-	_, parsed, err := parseTransportFlags(modeConnect, io.Discard, []string{"--workspace", explicitWorkspace})
-	if err != nil {
-		t.Fatalf("parse transport flags: %v", err)
-	}
-	if parsed.workspace != explicitWorkspace {
-		t.Fatalf("parsed workspace = %q, want unresolved input %q", parsed.workspace, explicitWorkspace)
+	_, _, err := parseTransportFlags(modeConnect, io.Discard, []string{"--workspace", explicitWorkspace})
+	if err == nil {
+		t.Fatal("remote explicit workspace was accepted by the transport parser")
+	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "not applicable") {
+		t.Fatalf("parse rejection = %q, want clear connect-mode --workspace error", err)
 	}
 	_, err = parseRunConfig(invocationResolution{
 		mode: modeConnect, address: "203.0.113.10:8080",
@@ -358,11 +357,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRej
 	})
 	if err == nil {
 		t.Fatal("remote explicit workspace was accepted")
-	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "embedded") {
+	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "not applicable") {
 		t.Fatalf("rejection = %q, want clear remote --workspace error", err)
-	}
-	if parsed.workspace != explicitWorkspace {
-		t.Fatalf("rejected workspace = %q, want unresolved input %q", parsed.workspace, explicitWorkspace)
 	}
 }
 
@@ -971,7 +967,7 @@ func TestResolveMemoryDirPrecedence(t *testing.T) {
 // flip (connect rejecting --auth-token) would stay green without it.
 func TestConnectExplicitAuthTokenParses(t *testing.T) {
 	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{},
-		[]string{"--auth-token", "explicit-tok", "--workspace", "/abs"})
+		[]string{"--auth-token", "explicit-tok"})
 	if err != nil {
 		t.Fatalf("parseTransportFlags(connect, --auth-token explicit-tok): %v", err)
 	}
@@ -1199,7 +1195,7 @@ func TestConnectSkipsLocalAuthFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("providers:\n  openai:\n    api_key: must-not-be-retained\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, []string{"--workspace", "/abs"})
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, nil)
 	if err != nil {
 		t.Fatalf("parseTransportFlags(connect): %v", err)
 	}

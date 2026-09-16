@@ -383,7 +383,7 @@ func TestParseTransportFlagsLocalModeIsLocal(t *testing.T) {
 }
 
 func TestParseTransportFlagsConnectModeIsConnect(t *testing.T) {
-	_, cfg, err := parseTransportFlagsTest(t, modeConnect, []string{"--workspace", "/abs"})
+	_, cfg, err := parseTransportFlagsTest(t, modeConnect, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -596,6 +596,7 @@ func TestMecatuiConventionalMissingAuthFileWarnsWithoutProvider(t *testing.T) {
 // embedded-only flags rejected in connect mode.
 func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 	embeddedOnly := []string{
+		"workspace",
 		"mock", "no-shell", "trust-project", "yolo", "posture",
 		"openai-base-url", "openrouter-base-url", "anthropic-base-url", "opencode-base-url", "api-key-file",
 		"toolhive-llm", "toolhive-llm-base-url",
@@ -612,9 +613,9 @@ func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 	}
 	for _, name := range embeddedOnly {
 		t.Run(name, func(t *testing.T) {
-			// connect mode parses only shared + remote flags; pass the embedded flag
-			// alongside a valid workspace and assert it is rejected BY NAME.
-			_, _, err := parseTransportFlagsTest(t, modeConnect, []string{"--" + name, flagValueForTest(name), "--workspace", "/abs"})
+			// Connect mode parses only shared + remote flags. Assert that each
+			// embedded flag is rejected by name.
+			_, _, err := parseTransportFlagsTest(t, modeConnect, []string{"--" + name, flagValueForTest(name)})
 			if err == nil {
 				t.Errorf("embedded-only flag --%s must be rejected in connect mode", name)
 			} else if !strings.Contains(err.Error(), name) {
@@ -641,7 +642,7 @@ func TestRejectRemoteOnlyFlagsInBare(t *testing.T) {
 
 // shared flags valid in BOTH modes (no rejection).
 func TestSharedFlagsValidInBothModes(t *testing.T) {
-	shared := []string{"workspace", "mode", "theme", "theme-dir", "no-alt-screen", "inline", "no-mouse", "no-banner", "keymap"}
+	shared := []string{"mode", "theme", "theme-dir", "no-alt-screen", "inline", "no-mouse", "no-banner", "keymap"}
 	for _, mode := range []transportMode{modeLocal, modeConnect} {
 		for _, name := range shared {
 			t.Run(string(mode)+"/"+name, func(t *testing.T) {
@@ -808,7 +809,7 @@ func TestLocalCanonicalOfflineWithMock(t *testing.T) {
 
 // connect mode skips the provider check (never embeds).
 func TestConnectSkipsProviderCheck(t *testing.T) {
-	if _, cfg, err := parseTransportFlagsTest(t, modeConnect, []string{"--workspace", "/abs"}); err != nil {
+	if _, cfg, err := parseTransportFlagsTest(t, modeConnect, nil); err != nil {
 		t.Fatalf("parse: %v", err)
 	} else if err := cfg.validate(); err != nil {
 		t.Errorf("connect must skip the provider/posture checks (never embeds): %v", err)
@@ -885,7 +886,7 @@ func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
 	var buf strings.Builder
 	writeTopLevelHelp(&buf)
 	out := buf.String()
-	for _, want := range []string{"Usage: mecatui [flags]", "mecatui <command> [flags]", "hosts an embedded mecated"} {
+	for _, want := range []string{"Usage: mecatui [flags]", "mecatui <command> [flags]", "start an embedded server and open the TUI"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("top-level help (real renderer) missing %q\n--- output ---\n%s", want, out)
 		}
@@ -904,8 +905,8 @@ func TestBareHelpFlagsRealRendererShowsCommonFlags(t *testing.T) {
 	if !strings.Contains(out, "Usage: mecatui --help-flags") {
 		t.Errorf("bare help-flags missing usage:\n%s", out)
 	}
-	if !strings.Contains(out, "NEVER probes loopback") {
-		t.Errorf("bare help missing the no-probe note:\n%s", out)
+	if !strings.Contains(out, "Common flags for the embedded server") {
+		t.Errorf("bare help missing its purpose:\n%s", out)
 	}
 	assertCatalogCommandsRendered(t, out)
 	// Embedded flags appear in the bare common help (--mock is common+local), and
@@ -932,7 +933,7 @@ func TestSessionsHelpUsesLaunchGrammarAndOmitsConflicts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := helpRenderOutForLaunch(t, tc.mode, true, []string{"--help"})
-			if !strings.Contains(out, tc.want) || !strings.Contains(out, "without creating a session") {
+			if !strings.Contains(out, tc.want) || !strings.Contains(out, "without starting a new chat") {
 				t.Fatalf("sessions help missing launch contract:\n%s", out)
 			}
 			for _, conflict := range []string{"prompt", "p", "prompt-file", "resume", "resume-latest"} {
@@ -949,8 +950,8 @@ func TestConnectHelpRealRendererShowsCommonFlags(t *testing.T) {
 	if !strings.Contains(out, "Usage: mecatui connect ADDRESS [flags]") {
 		t.Errorf("connect help missing 'Usage: mecatui connect ADDRESS [flags]':\n%s", out)
 	}
-	if !strings.Contains(out, "NEVER probes loopback") {
-		t.Errorf("connect help missing the no-probe note:\n%s", out)
+	if !strings.Contains(out, "Connect to a running mecated server") {
+		t.Errorf("connect help missing its purpose:\n%s", out)
 	}
 	// Remote flags appear in connect common help (--server is NOT applicable in
 	// connect — connect takes ADDRESS — so it must NOT appear; --auth-token IS).
@@ -960,8 +961,10 @@ func TestConnectHelpRealRendererShowsCommonFlags(t *testing.T) {
 			t.Errorf("connect help missing remote --%s flag header:\n%s", name, out)
 		}
 	}
-	if hasFlagHeader(out, "mock") {
-		t.Errorf("connect help leaked embedded-only --mock as a flag header:\n%s", out)
+	for _, name := range []string{"mock", "workspace"} {
+		if hasFlagHeader(out, name) {
+			t.Errorf("connect help leaked embedded-only --%s as a flag header:\n%s", name, out)
+		}
 	}
 }
 
@@ -986,6 +989,11 @@ func TestBareHelpAllRendersFullRealFlagSet(t *testing.T) {
 	if !hasFlagHeader(out, "perf-goroutine-warn-threshold") {
 		t.Errorf("bare --help-all missing an advanced flag header:\n%s", out)
 	}
+	for _, remote := range []string{"anonymous", "auth-token", "tls", "tls-ca", "insecure"} {
+		if hasFlagHeader(out, remote) {
+			t.Errorf("bare --help-all leaked remote-only --%s as a header:\n%s", remote, out)
+		}
+	}
 }
 
 func TestConnectHelpAllExcludesEmbeddedFlags(t *testing.T) {
@@ -994,7 +1002,7 @@ func TestConnectHelpAllExcludesEmbeddedFlags(t *testing.T) {
 		t.Errorf("connect --help-all missing usage:\n%s", out)
 	}
 	// Embedded-only flags are excluded from connect --help-all.
-	for _, embedded := range []string{"mock", "trust-project", "posture", "perf"} {
+	for _, embedded := range []string{"mock", "trust-project", "posture", "perf", "workspace"} {
 		if hasFlagHeader(out, embedded) {
 			t.Errorf("connect --help-all leaked embedded flag --%s as a header:\n%s", embedded, out)
 		}
@@ -1002,6 +1010,102 @@ func TestConnectHelpAllExcludesEmbeddedFlags(t *testing.T) {
 	// Remote flags appear.
 	if !hasFlagHeader(out, "auth-token") {
 		t.Errorf("connect --help-all missing remote --auth-token flag header:\n%s", out)
+	}
+}
+
+func TestTransportHelpAdvertisesOnlyApplicableFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		mode           transportMode
+		browseSessions bool
+		args           []string
+	}{
+		{name: "embedded common", mode: modeLocal, args: []string{"--help-flags"}},
+		{name: "embedded all", mode: modeLocal, args: []string{"--help-all"}},
+		{name: "embedded sessions all", mode: modeLocal, browseSessions: true, args: []string{"--help-all"}},
+		{name: "connect common", mode: modeConnect, args: []string{"--help"}},
+		{name: "connect all", mode: modeConnect, args: []string{"--help-all"}},
+		{name: "connect sessions all", mode: modeConnect, browseSessions: true, args: []string{"--help-all"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := helpRenderOutForLaunch(t, tc.mode, tc.browseSessions, tc.args)
+			for name := range flagApplicabilityByFlag {
+				if hasFlagHeader(out, name) && !applicableIn(name, tc.mode) {
+					t.Errorf("help for %s advertises inapplicable --%s:\n%s", tc.mode, name, out)
+				}
+			}
+		})
+	}
+}
+
+func TestCommonFlagDescriptionsAreSingleParagraphs(t *testing.T) {
+	fs, _, err := parseTransportFlags(modeLocal, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range commonFlagNames(modeLocal) {
+		if usage := fs.Lookup(name).Usage; strings.ContainsAny(usage, "\r\n") {
+			t.Errorf("common --%s description is not a single paragraph: %q", name, usage)
+		}
+	}
+}
+
+var developmentHelpTerms = []string{
+	"ADR ", "issue #", "composition layer", "zero-selector", "FAIL-SOFT",
+	"FAIL-FAST", "ServerCapabilities", "decision ",
+}
+
+func developmentHelpTerm(text string) string {
+	for _, term := range developmentHelpTerms {
+		if strings.Contains(text, term) {
+			return term
+		}
+	}
+	return ""
+}
+
+func TestCLIHelpOmitsDevelopmentHistoryAndImplementationNotes(t *testing.T) {
+	var topLevel, debugLocal, debugConnect strings.Builder
+	writeTopLevelHelp(&topLevel)
+	writeDebugHelp(&debugLocal, false)
+	writeDebugHelp(&debugConnect, true)
+
+	outputs := map[string]string{
+		"top level":             topLevel.String(),
+		"debug local":           debugLocal.String(),
+		"debug connect":         debugConnect.String(),
+		"embedded common":       helpRenderOut(t, modeLocal, []string{"--help-flags"}),
+		"embedded all":          helpRenderOut(t, modeLocal, []string{"--help-all"}),
+		"embedded sessions":     helpRenderOutForLaunch(t, modeLocal, true, []string{"--help"}),
+		"embedded sessions all": helpRenderOutForLaunch(t, modeLocal, true, []string{"--help-all"}),
+		"connect common":        helpRenderOut(t, modeConnect, []string{"--help"}),
+		"connect all":           helpRenderOut(t, modeConnect, []string{"--help-all"}),
+		"connect sessions":      helpRenderOutForLaunch(t, modeConnect, true, []string{"--help"}),
+		"connect sessions all":  helpRenderOutForLaunch(t, modeConnect, true, []string{"--help-all"}),
+	}
+	for _, action := range []string{
+		"", providerActionStatus, providerActionSetup, providerActionAdd,
+		providerActionLogin, providerActionLogout, providerActionSetDefault,
+		providerActionRemove,
+	} {
+		var out strings.Builder
+		if err := writeProviderHelp(&out, action); err != nil {
+			t.Fatal(err)
+		}
+		outputs["providers "+action] = out.String()
+	}
+	for name, out := range outputs {
+		if forbidden := developmentHelpTerm(out); forbidden != "" {
+			t.Errorf("%s help contains development detail %q:\n%s", name, forbidden, out)
+		}
+	}
+}
+
+func TestDevelopmentHelpTermDetectsForbiddenFixture(t *testing.T) {
+	for _, term := range developmentHelpTerms {
+		if got := developmentHelpTerm("user-facing help with " + term + "inside"); got != term {
+			t.Errorf("developmentHelpTerm did not detect planted %q, got %q", term, got)
+		}
 	}
 }
 
@@ -1020,11 +1124,11 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 	summary := out.String()
 
 	for _, want := range []string{
-		"  sessions\n    browse stored sessions before creating or continuing a chat\n",
-		"  debug TARGET [flags]\n    diagnose by an exact session ID or displayed 12-column short handle; exact\n    identity wins, a unique handle resolves automatically, and ambiguity asks\n    for the full exact ID\n",
-		"  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
+		"  sessions\n    browse saved sessions before opening or starting a chat\n",
+		"  debug TARGET [flags]\n    diagnose a session by its ID or displayed short handle\n",
+		"  connect ADDRESS [sessions | debug TARGET] [flags]\n    connect to a running mecated server\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
-		"  providers [command]\n    inspect and manage embedded provider configuration and locally managed\n    credentials\n",
+		"  providers [command]\n    manage providers and credentials for the embedded server\n",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("command summary missing indented, wrapped description %q:\n%s", want, summary)
@@ -1117,7 +1221,7 @@ func runHelpCase(t *testing.T, argv []string, wantSubstring string) string {
 func TestRunBareHelpShowsOnlyCommandIndex(t *testing.T) {
 	out := runHelpCase(t, []string{"mecatui", "--help"}, "Usage: mecatui [flags]")
 	assertCatalogCommandsRendered(t, out)
-	if !strings.Contains(out, "mecatui --version prints the build version and exits") {
+	if !strings.Contains(out, "mecatui --version       print the version") {
 		t.Errorf("run bare help omitted the global version action:\n%s", out)
 	}
 	for _, group := range []string{"Session:", "UI:", "Provider:", "Permissions:"} {
@@ -1281,7 +1385,7 @@ func TestRunRemoteSessionsHelpUsesLaunchGrammarAndApplicableFlags(t *testing.T) 
 	for _, help := range []string{"--help", "--help-all"} {
 		t.Run(help, func(t *testing.T) {
 			out := runHelpCase(t, []string{"mecatui", "connect", "127.0.0.1:8080", "sessions", help}, "Usage: mecatui connect ADDRESS sessions [flags]")
-			if help == "--help" && !strings.Contains(out, "without creating a session") {
+			if help == "--help" && !strings.Contains(out, "without starting a new chat") {
 				t.Errorf("remote sessions %s missing launch contract:\n%s", help, out)
 			}
 			if !hasFlagHeader(out, "auth-token") {

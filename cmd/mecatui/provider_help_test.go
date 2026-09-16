@@ -18,42 +18,42 @@ func TestProviderHelpCommandsSucceedWithoutProviderOrSideEffects(t *testing.T) {
 		{
 			name: "providers",
 			args: []string{"mecatui", "providers", "--help"},
-			want: []string{"Usage: mecatui providers", "embedded mecated", "remote mecated", "Classes, authentication, and custody:", "No-provider recovery:"},
+			want: []string{"Usage: mecatui providers", "embedded server", "remote mecated server", "never printed", "providers setup"},
 		},
 		{
 			name: "status",
 			args: []string{"mecatui", "providers", "status", "--help"},
-			want: []string{"Usage: mecatui providers status [PROVIDER]", "without changing", "never prints credential values", "no provider is ready"},
+			want: []string{"Usage: mecatui providers status [PROVIDER]", "provider readiness", "changes nothing", "never prints credential values"},
 		},
 		{
 			name: "setup",
 			args: []string{"mecatui", "providers", "setup", "--help"},
-			want: []string{"Usage: mecatui providers setup [PROVIDER]", "custom provider", "locally managed credentials", "ToolHive remains externally managed"},
+			want: []string{"Usage: mecatui providers setup [PROVIDER]", "Configure a provider interactively", "Custom provider IDs", "thv llm"},
 		},
 		{
 			name: "add",
 			args: []string{"mecatui", "providers", "add", "--help"},
-			want: []string{"Usage: mecatui providers add PROVIDER [--no-login]", "operator settings", "--no-login saves only the definition", "does not configure remote mecated"},
+			want: []string{"Usage: mecatui providers add PROVIDER [--no-login]", "local settings", "--no-login", "does not change a remote mecated"},
 		},
 		{
 			name: "login",
 			args: []string{"mecatui", "providers", "login", "--help"},
-			want: []string{"Usage: mecatui providers login PROVIDER [--no-browser]", "locally managed API key", "OIDC", "never printed"},
+			want: []string{"Usage: mecatui providers login PROVIDER [--no-browser]", "API key", "OIDC", "never printed"},
 		},
 		{
 			name: "logout",
 			args: []string{"mecatui", "providers", "logout", "--help"},
-			want: []string{"Usage: mecatui providers logout PROVIDER", "locally managed", "ToolHive credentials are externally managed", "side-effecting local operation"},
+			want: []string{"Usage: mecatui providers logout PROVIDER", "locally stored credentials", "configuration", "Environment credentials are not removed"},
 		},
 		{
 			name: "set default",
 			args: []string{"mecatui", "providers", "set-default", "--help"},
-			want: []string{"Usage: mecatui providers set-default PROVIDER [MODEL]", "embedded mecated", "writes local operator settings", "no provider is usable"},
+			want: []string{"Usage: mecatui providers set-default PROVIDER [MODEL]", "embedded server", "must be ready", "does not change a remote mecated"},
 		},
 		{
 			name: "remove",
 			args: []string{"mecatui", "providers", "remove", "--help"},
-			want: []string{"Usage: mecatui providers remove PROVIDER", "explicit confirmation", "locally managed", "does not change a remote mecated"},
+			want: []string{"Usage: mecatui providers remove PROVIDER", "after confirmation", "locally stored credentials", "does not change a remote mecated"},
 		},
 	}
 

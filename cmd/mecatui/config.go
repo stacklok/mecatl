@@ -379,46 +379,46 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	cfg.browseSessions = len(browseSessions) > 0 && browseSessions[0]
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&cfg.workspace, "workspace", "", "embedded server only: absolute deployment workspace root (default: cwd); not accepted by connect")
-	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
-	fs.Func("debug-mcp", "debug sessions only: select one already-configured server-global streaming-HTTP MCP server by name (repeatable)", func(value string) error {
+	fs.StringVar(&cfg.workspace, "workspace", "", "set the embedded server workspace to DIR (default: current directory)")
+	fs.StringVar(&cfg.mode, "mode", "default", "start sessions in permission mode: default, plan, or accept-edits")
+	fs.Func("debug-mcp", "attach configured streaming-HTTP MCP server NAME to debug sessions (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
 		return nil
 	})
-	fs.StringVar(&cfg.resumeID, "resume", "", "start by continuing the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session (mutually exclusive with --resume-latest)")
-	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "start by continuing the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions (mutually exclusive with --resume); when none exists, start a new chat instead of failing")
-	fs.StringVar(&cfg.prompt, "prompt", "", "seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both --prompt and --prompt-file may be given (literal first)")
+	fs.StringVar(&cfg.resumeID, "resume", "", "continue the main chat with SESSION_ID (conflicts with --resume-latest)")
+	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "continue the most recent resumable main chat, or start a new chat if none is available (conflicts with --resume)")
+	fs.StringVar(&cfg.prompt, "prompt", "", "submit TEXT when the session is ready; the TUI remains open for follow-ups")
 	fs.StringVar(&cfg.prompt, "p", "", "short form of --prompt")
-	fs.StringVar(&cfg.promptFile, "prompt-file", "", "path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after --prompt when both are given")
+	fs.StringVar(&cfg.promptFile, "prompt-file", "", "submit the contents of FILE when the session is ready; appended after --prompt when both are set")
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
-	fs.BoolVar(&cfg.anonymous, "anonymous", false, "bypass saved OIDC enrollment and send no bearer unless --auth-token or MECATL_AUTH_TOKEN supplies one")
-	fs.BoolVar(&cfg.useTLS, "tls", false, "use verified TLS for an external server (default for non-loopback targets; --tls=false explicitly permits plaintext)")
+	fs.BoolVar(&cfg.anonymous, "anonymous", false, "connect without saved OIDC credentials; an explicit auth token is still sent")
+	fs.BoolVar(&cfg.useTLS, "tls", false, "use verified TLS (default for non-loopback targets; set false to allow plaintext)")
 	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
 	fs.BoolVar(&cfg.listThemes, "list-themes", false, "list available themes and exit")
-	fs.BoolVar(&cfg.debug, "debug", false, "enable client-side diagnostic surfaces: mouse mapping, steer correlation, and debug-only built-ins")
+	fs.BoolVar(&cfg.debug, "debug", false, "enable client diagnostics and debug-only commands")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
-	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
-	fs.BoolVar(&cfg.noBanner, "no-banner", false, "disable the welcome splash (mascot + gradient wordmark); the plain prompt hint and affordance list are still shown. Also forced on under --quiet or a non-interactive stdin")
-	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "dynamic terminal window/tab title: on (default — shows \"<session title> — <status word> mecatui\") or off (bare \"mecatui\", the escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts on/off/true/false/1/0. Or set MECATUI_NO_TERMINAL_TITLE=1")
+	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable in-app mouse handling and use the terminal's native text selection; keyboard scrolling remains available")
+	fs.BoolVar(&cfg.noBanner, "no-banner", false, "hide the welcome illustration; prompt hints remain visible")
+	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "update the terminal title with session status: on or off (also true/false/1/0)")
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)
 	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, ExpandTools, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
 
-	fs.StringVar(&cfg.model, "model", "", "model identifier for the embedded server (empty: use the provider-appropriate default; ignored when dialling an external server)")
-	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "embedded server only: deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selection still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
-	fs.StringVar(&cfg.defaultModel, "default-model", "", "embedded server only: deployment-wide default model id for the default provider; sits BELOW client-side defaults and ABOVE the per-provider built-in default. Validated FAIL-FAST at startup: a model not catalogued for the default provider refuses to start")
-	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "embedded server only: global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (the analogue of CLAUDE_CODE_SUBAGENT_MODEL); the Parallel judge stays on the session model. Same provider as the session. Empty inherits --model; a value that does not resolve to a usable model id FAILS STARTUP. settings.yaml home: `models.subagent:` (operator-tier); this flag wins when both are set")
+	fs.StringVar(&cfg.model, "model", "", "use MODEL for sessions on the embedded server (default: provider default)")
+	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "use PROVIDER when a session does not select one; unavailable providers prevent startup")
+	fs.StringVar(&cfg.defaultModel, "default-model", "", "use MODEL as the default for --default-provider; unknown models prevent startup")
+	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "use MODEL for delegated agents that do not select one (default: session model)")
 	// Shared model alias/slot flags (cliconfig); mecatui keeps its own help wording.
 	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{
-		ModelAlias: "embedded server only: model alias mapping as name=model-id (repeatable), e.g. --model-alias cheap=gpt-4o-mini. Aliases are resolved in the composition layer; a --model-slot selector and an agent def's `model: <alias>` resolve through this map",
-		ModelSlot:  "embedded server only: per-slot model binding as slot=selector (repeatable), e.g. --model-slot compaction=cheap (ADR 0030). A SLOT routes an internal lightweight LLM call to its own model: under mecatui the wired slots are `compaction` (the compaction summary call), `guardrail` (the content checker), and `title` (automatic session-title generation). `title` is explicit opt-in and has NO default-tier or session-model fallback: without a compatible binding it makes no title-model call. The `ask-reviewer` slot is INERT here (mecatui runs INTERACTIVE, so the headless child-ask reviewer never engages — that slot only routes on a headless `mecated --headless`). A TIER key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (each routed slot except `title` defaults to `cheap`). The selector is an alias (--model-alias / built-ins) or a concrete id. Empty keeps every call on the session model. FAIL-SOFT on a typo/inherit. Operator-tier only",
+		ModelAlias: "define NAME=MODEL as a reusable model alias (repeatable)",
+		ModelSlot:  "assign SLOT=MODEL_OR_ALIAS for compaction, guardrail, title, or a default tier (repeatable)",
 	})
-	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "embedded server only: Semantic model router KILL-SWITCH (ADR 0042, superseding 0031's enable model): the router is ENABLED by an operator-tier models.router: category taxonomy in the user-global settings.yaml (configure = enable, guardrails-parity), NOT by this flag. Pass --subagent-model-router=false to force it OFF despite a taxonomy (also models.router.disabled: true in YAML). When enabled, a tiny classifier on the `router` slot picks the child model per plain Subagent delegation before the child is minted (decide-once, same-provider); fail-soft to the inherited model on any miss. The router IS meaningful under mecatui — it picks a child's model before the child runs, in both interactive and headless modes")
+	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "leave configured delegated-agent routing unchanged; set =false to disable it (true has no effect)")
 	// Shared provider base-URL flags (cliconfig); mecatui keeps its own help wording.
 	cfg.providerFlags = cliconfig.RegisterProviderFlags(fs, cliconfig.ProviderFlagHelp{
 		OpenAIBaseURL:     "override the OpenAI API base URL for the embedded server (compatible endpoints)",
@@ -429,33 +429,33 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	// ToolHive LLM gateway (issue #262): embedded-server-only, like every other
 	// provider knob on this main.
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.ToolhiveLLMFlagHelp{
-		Enable:  "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Enable,
-		BaseURL: "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.BaseURL,
-		Mode:    "embedded server only: " + cliconfig.DefaultToolhiveLLMFlagHelp.Mode,
+		Enable:  "use an automatically detected local ToolHive LLM gateway; set false to disable",
+		BaseURL: "use URL for the local ToolHive LLM proxy; URL must resolve to loopback",
+		Mode:    "connect to ToolHive using auto, proxy, or direct mode; direct requires configured OIDC",
 	})
 	fs.BoolVar(&cfg.mock, "mock", false, "embedded server only: use the canned offline mock provider instead of OpenAI (no network)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
-	fs.BoolVar(&cfg.noSteer, "no-steer", false, "embedded server only: disable the mid-run steer inbox (steer-while-running, issue #512): `enter` mid-run then falls back to the client-side terminal merge-queue and ServerCapabilities.steer reads false. Steer is ON by default; this is the opt-OUT. The operator-tier settings.yaml `steer: false` scalar is the YAML twin (CLI out-ranks YAML; a project-tier steer: key is ignored)")
-	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "embedded server only: per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables; large-context reasoning models can take a long time to first token")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "embedded server only: max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
-	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "embedded server only: override the model's context window in tokens for BOTH the compaction trigger (compaction fires at 80% of it) AND the footer context-meter denominator echoed to clients. Set this to the model's ACTUAL window when a model under-reports its window or sits behind a proxy that does. 0 (default) keeps the configured/live/catalogued/128k resolution unchanged. A small value (below a few thousand tokens) forces the agent to compact on nearly every turn — degraded, only useful for stress-testing compaction.")
-	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "embedded server only: disable provider-side prompt caching (ADR 0100): every adapter's cache dialect degrades to None, reproducing the pre-caching wire exactly. Caching is ON by default")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "embedded server only: TTL stamped on every Anthropic ephemeral cache_control breakpoint: \"5m\" or \"1h\". Empty (default) omits the ttl field — the API's own 5m default applies. Any other value is ignored with a WARN")
-	fs.BoolVar(&cfg.trustProject, "trust-project", false, "embedded server only: honour a discovered PROJECT's ALLOW rules AND its project-scoped soul (.mecatl/soul.md) (its deny/ask rules are always honoured regardless). Default OFF (the safe stance, unified with mecated): an untrusted repo's permission grants and project soul are ignored. TRUST BOUNDARY: enabling this lets a checked-in .mecatl/settings.yaml auto-approve tool calls and a checked-in project soul steer the model — only pass it for a repo you trust")
+	fs.BoolVar(&cfg.noSteer, "no-steer", false, "queue mid-turn input as a follow-up instead of steering the active run")
+	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "maximum time to connect and receive the first model response chunk; 0 disables the timeout")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
+	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens; 0 uses the detected or configured value")
+	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider prompt caching")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h; other values are ignored with a warning")
+	fs.BoolVar(&cfg.trustProject, "trust-project", false, "enable project instructions, persona, skills, commands, and allow rules; use only with projects you trust")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
-		"embedded server only; ALIAS for --posture yolo (dangerous): allow-all AND loosen the CHILD substitution floor (a subagent's $()/backtick/heredoc AUTO-RUNS — prompt-injection defense OFF). Deny in any scope and configured Ask still apply. Isolated/single-tenant ONLY. Refused as root unless MECATL_SANDBOX=1 (or IS_SANDBOX=1).")
+		"use yolo posture: allow tools by default and disable delegated-agent command-injection safeguards; explicit deny and ask rules still apply")
 	fs.StringVar(&cfg.posture, "posture", "",
-		"embedded server only: OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted = --trust-project; auto adds allow-all + main substitution loosening (child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF). --yolo/--trust-project are aliases. auto/yolo refused as root outside MECATL_SANDBOX. Unknown value fails closed to strict.")
+		"set the permission posture: strict, trusted, auto, or yolo (default: strict); auto and yolo reduce safeguards and are refused as root outside a sandbox")
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
-		"embedded server only: OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). A per-session /effort out-ranks it. Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
+		"set the default reasoning effort: auto, low, medium, high, xhigh, or max")
 	fs.BoolVar(&cfg.quiet, "quiet", false,
-		"discard the embedded server's operational diagnostics instead of writing them to $XDG_STATE_HOME/mecatl/mecatui.log (fallback ~/.local/state/mecatl/mecatui.log). Diagnostics NEVER go to stderr (that corrupts the TUI alt-screen); --quiet drops them entirely")
+		"discard embedded-server diagnostics instead of writing the diagnostics log")
 	fs.StringVar(&cfg.diagnosticsLog, "diagnostics-log", "",
-		"embedded server only: override the diagnostics log file. Empty (default) writes to the shared per-user $XDG_STATE_HOME/mecatl/mecatui.log; a non-empty value is the exact file to open (created mode 0600, parent dir 0700). Use to give one mecatui instance its own diagnostics file (e.g. multi-instance testing) instead of sharing the per-user log. Ignored under --quiet")
+		"write embedded-server diagnostics to FILE (default: $XDG_STATE_HOME/mecatl/mecatui.log)")
 	fs.StringVar(&cfg.memoryDir, "memory-dir", "", "embedded server only: per-project memory store directory (empty = a per-project default under $XDG_DATA_HOME/mecatui/memory)")
-	fs.BoolVar(&cfg.noMemory, "no-memory", false, "embedded server only: disable cross-session memory (Remember/Recall) entirely")
-	fs.StringVar(&cfg.storeDir, "store-dir", "", "embedded server only: durable JSONL session/event store directory (empty = a per-workspace default under $XDG_STATE_HOME/mecatui/sessions, so sessions survive restart and can be inspected after the fact). PRIVACY: stores the RAW conversation (prompts, model output, tool args/results) in PLAINTEXT; the dir is created mode 0700 (owner-only). Tool args/results include file contents and command output the agent read, so secrets it touched (e.g. a .env it opened) are persisted too")
+	fs.BoolVar(&cfg.noMemory, "no-memory", false, "disable cross-session project memory")
+	fs.StringVar(&cfg.storeDir, "store-dir", "", "store session history in DIR; prompts and tool data are stored as plaintext in an owner-only directory")
 	fs.BoolVar(&cfg.noStore, "no-store", false, "embedded server only: disable the durable session store (use an in-memory store instead, so nothing is persisted to disk)")
 	fs.DurationVar(&cfg.childRetention, "child-retention", 168*time.Hour, "embedded server only: child-session maximum age; 0 disables the age limit")
 	fs.IntVar(&cfg.childRetentionCount, "child-retention-max-per-family", 500, "embedded server only: child-session count cap per family; 0 disables the cap")
@@ -463,29 +463,29 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.IntVar(&cfg.mainRetentionCount, "main-retention-max-total", 0, "embedded server only: main-session store-wide count cap; 0 disables destructive main count cleanup")
 	fs.DurationVar(&cfg.scheduledRetention, "schedule-fire-retention", 7*24*time.Hour, "embedded server only: scheduled-fire session maximum age; 0 disables the age limit")
 	fs.IntVar(&cfg.scheduledRetentionCount, "schedule-fire-retention-max-total", 0, "embedded server only: scheduled-fire session count cap; 0 disables the cap")
-	fs.DurationVar(&cfg.retentionSweepCadence, "retention-sweep-cadence", time.Hour, "embedded server only: automatic retention sweep cadence; 0 disables repeat cadence (startup sweep remains for flag compatibility)")
+	fs.DurationVar(&cfg.retentionSweepCadence, "retention-sweep-cadence", time.Hour, "interval between automatic retention sweeps; 0 runs only the startup sweep")
 	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "embedded server only: explicitly acknowledge destructive main-session cleanup after reviewing the policy summary")
-	fs.StringVar(&cfg.soulFile, "soul-file", "", "embedded server only: path to a user-scoped, agent-READ-ONLY persona/\"soul\" file injected as turn-0 context (empty = the conventional $XDG_CONFIG_HOME/mecatl/soul.md, fallback ~/.config/mecatl/soul.md; fail-soft if absent)")
+	fs.StringVar(&cfg.soulFile, "soul-file", "", "load the user persona from FILE (default: $XDG_CONFIG_HOME/mecatl/soul.md)")
 	fs.BoolVar(&cfg.noSoul, "no-soul", false, "embedded server only: disable the user-scoped persona/soul fragment entirely")
-	fs.BoolVar(&cfg.approveSoul, "approve-soul", false, "embedded server only: (re)write the soul DRIFT BASELINE to the current soul's content hash, accepting the file as-is. The baseline is a harness-owned sidecar next to the soul (<soul-path>.sha256); a later run whose hash differs logs a drift WARN")
-	fs.BoolVar(&cfg.soulStrict, "soul-strict", false, "embedded server only: refuse a DRIFTED soul — if its content hash differs from the recorded baseline, contribute NO soul fragment this run (instead of the default warn-and-load). Pair with --approve-soul to accept an edit")
-	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "embedded server only: directory for the user-scoped, CROSS-PROJECT user-model store of durable FACTS about the operator (empty = the conventional $XDG_CONFIG_HOME/mecatl/usermodel, fallback ~/.config/mecatl/usermodel). Exposes explicit user-memory lifecycle tools and a live bounded operator profile")
+	fs.BoolVar(&cfg.approveSoul, "approve-soul", false, "accept the current persona file and record its hash for future change detection")
+	fs.BoolVar(&cfg.soulStrict, "soul-strict", false, "do not load the persona if it changed since approval")
+	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "store the cross-project user model in DIR (default: $XDG_CONFIG_HOME/mecatl/usermodel)")
 	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "embedded server only: disable the user model entirely (explicit tools and live operator profile)")
-	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "embedded server only: DEPRECATED compatibility alias for operator settings learning.mode: auto (one release window); conflicts with an explicit non-auto mode. Eligible completions use the bounded staged-reflection coordinator; no direct reviewer writes")
-	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "embedded server only: process-wide completion debounce for learning.mode: auto and the deprecated --user-model-review alias (1 = every eligible completion)")
+	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "deprecated alias for learning.mode: auto")
+	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "review every N eligible completed sessions when automatic learning is enabled")
 	fs.StringVar(&cfg.commandsDir, "commands-dir", "", "embedded server only: directory of slash-command templates (<name>.md); empty = the conventional dirs (.mecatl/commands, .claude/commands)")
 	fs.BoolVar(&cfg.noCommands, "no-commands", false, "embedded server only: disable slash-command expansion entirely")
 	fs.StringVar(&cfg.skillsDir, "skills-dir", "", "embedded server only: directory of skill units (<name>/SKILL.md); empty = the conventional dirs (e.g. .claude/skills)")
-	fs.BoolVar(&cfg.noSkills, "no-skills", false, "embedded server only: disable skill discovery (the Skill tool) entirely")
+	fs.BoolVar(&cfg.noSkills, "no-skills", false, "disable skill discovery")
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
-		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+		"send anonymous usage counts to Stacklok; never sends prompts, file paths, tool names, or model IDs")
 	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
-		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
+		"print product-metrics events instead of sending them")
 
-	fs.BoolVar(&cfg.perf, "perf", false, "embedded server only: expose the private perf-observability admin surface (/metrics, /debug/pprof, /debug/vars, /debug/flightrecorder) and wire domain metrics into the engine. OFF by default. Empty --perf-addr uses a per-instance UNIX socket. SECURITY: UNAUTHENTICATED — its output can embed prompt text/file paths/goroutine stacks")
-	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: explicit loopback host:port for the --perf admin surface (empty = private per-instance UNIX socket, or ephemeral 127.0.0.1 TCP with --perf-mcp). Use 127.0.0.1:0 for explicit ephemeral TCP. Non-loopback addresses are refused. Only consulted with --perf")
-	fs.IntVar(&cfg.perfGoroutineWarnThreshold, "perf-goroutine-warn-threshold", 0, "embedded server only: arm the live goroutine-leak watchdog — log a Warn whenever runtime.NumGoroutine() exceeds this count (decision 10). 0 (default) disables the alarm; the /metrics goroutine-count series is exported regardless. Only consulted with --perf")
-	fs.BoolVar(&cfg.perfMCP, "perf-mcp", false, "embedded server only: mount the read-only streaming-HTTP perf MCP server at /mcp. With empty --perf-addr this selects ephemeral 127.0.0.1 TCP and logs the resolved URL; stdio is never used. Only meaningful with --perf. SECURITY: loopback-bound, UNAUTHENTICATED")
+	fs.BoolVar(&cfg.perf, "perf", false, "enable unauthenticated local performance endpoints; output may contain prompts, file paths, and stack traces")
+	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "listen for --perf on loopback HOST:PORT (default: private local socket; with --perf-mcp: ephemeral loopback TCP)")
+	fs.IntVar(&cfg.perfGoroutineWarnThreshold, "perf-goroutine-warn-threshold", 0, "warn when the goroutine count exceeds N; 0 disables warnings")
+	fs.BoolVar(&cfg.perfMCP, "perf-mcp", false, "serve read-only performance tools over unauthenticated loopback HTTP; requires --perf")
 	fs.BoolVar(&cfg.helpAll, "help-all", false, "print the exhaustive flag reference for this command and exit")
 	fs.BoolVar(&cfg.helpFlags, "help-flags", false, "print the common embedded-mode flag reference and exit (bare invocation only)")
 

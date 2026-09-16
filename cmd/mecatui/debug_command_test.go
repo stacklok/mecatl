@@ -59,15 +59,15 @@ func TestResolveDebugRejectsMissingAndExtraOperands(t *testing.T) {
 func TestPredictableSessionHandles_Scenario3_CommandHelpUsesOneTargetFlow(t *testing.T) {
 	var out bytes.Buffer
 	writeTopLevelHelp(&out)
+	writeDebugHelp(&out, false)
 	text := out.String()
 	words := strings.Join(strings.Fields(text), " ")
 	for _, want := range []string{
 		"mecatui debug TARGET [flags]",
 		"mecatui connect ADDRESS debug TARGET [flags]",
-		"exact session ID or displayed 12-column short handle",
-		"exact identity wins",
-		"unique handle resolves automatically",
-		"full exact ID",
+		"full session ID or the short handle",
+		"unique short handle is resolved automatically",
+		"copy the full ID",
 	} {
 		if !strings.Contains(words, want) {
 			t.Fatalf("help missing %q:\n%s", want, text)
@@ -144,14 +144,12 @@ func TestDebugHelpRoutesRenderDedicatedContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runHelpCase(t, tc.argv, tc.usage)
 			for _, want := range []string{
-				"TARGET is either the exact session ID",
-				"ID printed on exit",
-				"Exact identity wins automatically",
-				"unique short handle resolves",
-				"copy the full exact ID",
-				"pass it as TARGET to the same command",
-				"inventory is unavailable or no handle matches",
-				"sent unchanged",
+				"Diagnose the session identified by TARGET",
+				"full session ID or the short handle",
+				"Full IDs are used as-is",
+				"unique short handle is resolved automatically",
+				"copy the full ID",
+				"treated as a full session ID",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("debug help missing %q:\n%s", want, out)

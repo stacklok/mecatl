@@ -67,7 +67,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"insecure":   {group: groupTransport, common: false, local: false, connect: true},
 
 	// ── Session (shared) ──────────────────────────────────────────────────
-	"workspace":     {group: groupSession, common: true, local: true, connect: true},
+	"workspace":     {group: groupSession, common: true, local: true, connect: false},
 	"mode":          {group: groupSession, common: true, local: true, connect: true},
 	"debug-mcp":     {group: groupSession, common: true, local: true, connect: true},
 	"resume":        {group: groupSession, common: true, local: true, connect: true},
@@ -285,9 +285,8 @@ func validateFlagApplicability(fs *flag.FlagSet) error {
 // `mecatui --help-flags`.
 func writeBareCommonHelp(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui --help-flags\n\n")
-	_, _ = fmt.Fprintf(out, "Common flags for the embedded mecated server. Bare mecatui NEVER probes loopback —\n")
-	_, _ = fmt.Fprintf(out, "it always embeds. Run 'mecatui --help-all' for the full exhaustive reference\n")
-	_, _ = fmt.Fprintf(out, "including every embedded-server tuning knob.\n\n")
+	_, _ = fmt.Fprintf(out, "Common flags for the embedded server started by mecatui.\n")
+	_, _ = fmt.Fprintf(out, "Run 'mecatui --help-all' to list every available flag.\n\n")
 	writeCommandSummary(out)
 	_, _ = fmt.Fprintln(out)
 	renderGroupedCommon(out, fs, commonFlagNames(modeLocal))
@@ -297,10 +296,8 @@ func writeBareCommonHelp(out io.Writer, fs *flag.FlagSet) {
 // `mecatui connect --help`.
 func writeConnectCommonHelp(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui connect ADDRESS [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Dial a running mecated at ADDRESS (host:port). mecatui NEVER probes loopback and\n")
-	_, _ = fmt.Fprintf(out, "NEVER embeds a server in this mode — the target must already be serving. Embedded-\n")
-	_, _ = fmt.Fprintf(out, "server flags (--mock, --trust-project, provider knobs, …) are rejected here. Run\n")
-	_, _ = fmt.Fprintf(out, "'mecatui connect --help-all' for the full reference.\n\n")
+	_, _ = fmt.Fprintf(out, "Connect to a running mecated server at ADDRESS (host:port).\n")
+	_, _ = fmt.Fprintf(out, "Run 'mecatui connect --help-all' to list every available flag.\n\n")
 	renderGroupedCommon(out, fs, commonFlagNames(modeConnect))
 }
 
@@ -310,9 +307,8 @@ func writeSessionsCommonHelp(out io.Writer, fs *flag.FlagSet, mode transportMode
 		usage = "mecatui connect ADDRESS sessions [flags]"
 	}
 	_, _ = fmt.Fprintf(out, "Usage: %s\n\n", usage)
-	_, _ = fmt.Fprintf(out, "Browse stored sessions without creating a session. Press enter to continue or\n")
-	_, _ = fmt.Fprintf(out, "inspect, n to create a new chat, or esc to quit. Prompt and resume flags conflict\n")
-	_, _ = fmt.Fprintf(out, "with this launch mode.\n\n")
+	_, _ = fmt.Fprintf(out, "Open the session browser without starting a new chat. Press Enter to open the\n")
+	_, _ = fmt.Fprintf(out, "selected session, n for a new chat, or Esc to quit.\n\n")
 	common := commonFlagNames(mode)
 	for name := range sessionsLaunchConflictingFlags {
 		delete(common, name)
@@ -379,18 +375,21 @@ func writeSessionsHelpAll(out io.Writer, fs *flag.FlagSet, mode transportMode) {
 		usage = "mecatui connect ADDRESS sessions [flags]"
 	}
 	_, _ = fmt.Fprintf(out, "Usage: %s\n\nFlags:\n", usage)
-	exclude := make(map[string]bool, len(sessionsLaunchConflictingFlags))
+	exclude := inapplicableFlagNames(mode)
 	for name := range sessionsLaunchConflictingFlags {
 		exclude[name] = true
 	}
-	if mode == modeConnect {
-		for name, m := range flagApplicabilityByFlag {
-			if !m.connect {
-				exclude[name] = true
-			}
+	flaghelp.PrintDefaultsExcluding(out, fs, exclude)
+}
+
+func inapplicableFlagNames(mode transportMode) map[string]bool {
+	exclude := make(map[string]bool)
+	for name := range flagApplicabilityByFlag {
+		if !applicableIn(name, mode) {
+			exclude[name] = true
 		}
 	}
-	flaghelp.PrintDefaultsExcluding(out, fs, exclude)
+	return exclude
 }
 
 // writeBareHelpAll renders the exhaustive flag list for the bare `mecatui
@@ -399,7 +398,7 @@ func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
 	writeCommandSummary(out)
 	_, _ = fmt.Fprintln(out, "\nFlags:")
-	flaghelp.PrintDefaultsExcluding(out, fs, nil)
+	flaghelp.PrintDefaultsExcluding(out, fs, inapplicableFlagNames(modeLocal))
 }
 
 // writeConnectHelpAll renders the exhaustive connect-applicable flag list for
@@ -407,11 +406,5 @@ func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
 // via the single cliconfig formatter.
 func writeConnectHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui connect ADDRESS [flags]\n\nFlags:\n")
-	exclude := make(map[string]bool)
-	for name, m := range flagApplicabilityByFlag {
-		if !m.connect {
-			exclude[name] = true
-		}
-	}
-	flaghelp.PrintDefaultsExcluding(out, fs, exclude)
+	flaghelp.PrintDefaultsExcluding(out, fs, inapplicableFlagNames(modeConnect))
 }

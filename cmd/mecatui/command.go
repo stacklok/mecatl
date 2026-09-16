@@ -75,7 +75,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "sessions",
 		synopsis: "sessions",
-		purpose:  "browse stored sessions before creating or continuing a chat",
+		purpose:  "browse saved sessions before opening or starting a chat",
 		resolve: func(args []string) invocationResolution {
 			return invocationResolution{mode: modeLocal, browseSessions: true, remaining: args}
 		},
@@ -83,7 +83,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "debug",
 		synopsis: "debug TARGET [flags]",
-		purpose:  "diagnose by an exact session ID or displayed 12-column short handle; exact identity wins, a unique handle resolves automatically, and ambiguity asks for the full exact ID",
+		purpose:  "diagnose a session by its ID or displayed short handle",
 		resolve: func(args []string) invocationResolution {
 			return resolveDebugCommand(modeLocal, "", args)
 		},
@@ -91,7 +91,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "connect",
 		synopsis: "connect ADDRESS [sessions | debug TARGET] [flags]",
-		purpose:  "dial a running mecated at ADDRESS (host:port), optionally browsing or debugging a stored session",
+		purpose:  "connect to a running mecated server",
 		resolve:  resolveConnectCommand,
 	},
 	{
@@ -109,7 +109,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "providers",
 		synopsis: "providers [command]",
-		purpose:  "inspect and manage embedded provider configuration and locally managed credentials",
+		purpose:  "manage providers and credentials for the embedded server",
 		resolve:  resolveProvidersCommand,
 	},
 }
@@ -450,15 +450,14 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "       mecatui connect ADDRESS debug TARGET [flags]")
 	_, _ = fmt.Fprintln(out, "       mecatui <command> [flags]")
 	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
+	_, _ = fmt.Fprintln(out, "Run mecatui with no command to start an embedded server and open the TUI.")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
-	_, _ = fmt.Fprintln(out, "Provider configuration and lifecycle: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]")
-	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and manual openai-codex authentication are separate.")
-	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
-	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
-	_, _ = fmt.Fprintln(out, "      mecatui --version prints the build version and exits")
-	_, _ = fmt.Fprintln(out, "\nRun 'mecatui --help-flags' for common embedded-mode flags or '--help-all' for the exhaustive bare reference.")
+	_, _ = fmt.Fprintln(out, "\nHelp:")
+	_, _ = fmt.Fprintln(out, "  mecatui help COMMAND    show help for a command")
+	_, _ = fmt.Fprintln(out, "  mecatui --help-flags    show common embedded-server flags")
+	_, _ = fmt.Fprintln(out, "  mecatui --help-all      show all embedded-server flags")
+	_, _ = fmt.Fprintln(out, "  mecatui --version       print the version")
 }
 
 // writeDebugHelp renders the debug command contract without falling through to
@@ -469,10 +468,11 @@ func writeDebugHelp(out io.Writer, connect bool) {
 		usage = "mecatui connect ADDRESS debug TARGET [flags]"
 	}
 	_, _ = fmt.Fprintf(out, "Usage: %s\n\n", usage)
-	_, _ = fmt.Fprintln(out, "TARGET is either the exact session ID (including the ID printed on exit) or the displayed 12-column short handle.")
-	_, _ = fmt.Fprintln(out, "Exact identity wins automatically. A unique short handle resolves from the caller-visible session inventory.")
-	_, _ = fmt.Fprintln(out, "If a handle is ambiguous, open /session, copy the full exact ID, and pass it as TARGET to the same command.")
-	_, _ = fmt.Fprintln(out, "If inventory is unavailable or no handle matches, TARGET is sent unchanged for the server to authorize or reject as an exact ID.")
+	_, _ = fmt.Fprintln(out, "Diagnose the session identified by TARGET.")
+	_, _ = fmt.Fprintln(out, "TARGET may be a full session ID or the short handle shown in mecatui.")
+	_, _ = fmt.Fprintln(out, "Full IDs are used as-is; a unique short handle is resolved automatically.")
+	_, _ = fmt.Fprintln(out, "If a short handle matches more than one session, use /session to copy the full ID.")
+	_, _ = fmt.Fprintln(out, "If no short handle matches, TARGET is treated as a full session ID.")
 }
 
 // unknownCommandError builds the concise error message for an unknown leading bare word.
