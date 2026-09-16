@@ -322,6 +322,10 @@ type Deps struct {
 	// the per-phase churn is unwanted).
 	NoWindowTitle bool
 
+	// TerminalTitle receives the display-safe snapshot during View. Its implementation
+	// writes only through Bubble Tea's configured output writer.
+	TerminalTitle func(statusline.Input)
+
 	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,
 	// and DebugAsk remain narrow compatibility aliases for their original surfaces.
 	Debug bool

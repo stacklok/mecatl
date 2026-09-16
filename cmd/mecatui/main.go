@@ -143,6 +143,25 @@ func prepareStatusSource(cfg config) (statusline.Source, error) {
 	return buildStatusSource(customization), nil
 }
 
+func prepareTerminalTitle(cfg config) (*terminalTitleController, error) {
+	settings, err := readClientSettings()
+	if err != nil {
+		return nil, err
+	}
+	renderer, err := newTitleRenderer(settings.TerminalTitle)
+	if err != nil {
+		return nil, fmt.Errorf("terminal_title.template: %w", err)
+	}
+	controller := newTerminalTitleController(os.Stdout, terminalTitleEnabled(cfg, settings.TerminalTitle), renderer)
+	controller.debug = cfg.debugTarget != ""
+	return controller, nil
+}
+
+func newMecatuiProgram(ctx context.Context, deps ui.Deps, title *terminalTitleController) *tea.Program {
+	deps.TerminalTitle = title.Set
+	return tea.NewProgram(ui.New(deps), tea.WithContext(ctx), tea.WithOutput(title))
+}
+
 func run(argv []string) error {
 	return runWithOptions(argv, runOptions{})
 }
@@ -192,6 +211,11 @@ func runWithOptions(argv []string, options runOptions) error {
 	if err != nil {
 		return err
 	}
+	title, err := prepareTerminalTitle(cfg)
+	if err != nil {
+		_ = statusSource.Close(context.Background())
+		return err
+	}
 	emitDebugPrivacyWarning(os.Stderr, cfg.debugTarget, cfg.debugMCP...)
 
 	// UNIVERSAL global-slog floor: redirect the stdlib default to io.Discard (or, under
@@ -220,7 +244,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
 	keyboardProbe := resolveKeyboardProbe(stdoutIsTTY)
 	if options.recoveryOnly {
-		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
+		defer func() { _ = statusSource.Close(context.Background()) }()
+		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, title, options)
 	}
 
 	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
@@ -388,9 +413,14 @@ func runWithOptions(argv []string, options runOptions) error {
 		return err
 	}
 
-	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
+	prog := newMecatuiProgram(ctx, deps, title)
 	finalModel, runErr := prog.Run()
 	interrupted := ctx.Err() != nil
+	if runErr == nil && !interrupted {
+		if err := title.Close(); err != nil {
+			runErr = err
+		}
+	}
 
 	runCleanup(forceExit, func() {
 		_ = cl.Close()
@@ -541,10 +571,15 @@ func resolveKeyboardProbe(stdoutIsTTY bool) bool {
 	return stdoutIsTTY
 }
 
-func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
+func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, title *terminalTitleController, options runOptions) error {
 	deps := ui.Deps{Ctx: ctx, Theme: th, ThemeAutoDetect: themeAutoDetect, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
-	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
+	prog := newMecatuiProgram(ctx, deps, title)
 	finalModel, runErr := prog.Run()
+	if runErr == nil && ctx.Err() == nil {
+		if err := title.Close(); err != nil {
+			runErr = err
+		}
+	}
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, options.connectTransport)
 	}
