@@ -536,7 +536,7 @@ func TestSubagentConcurrentResumeGuard(t *testing.T) {
 
 // TestSubagentResumeBudgetTightenOnly mirrors TestSubagentPerCallMaxTokensTightenOnly for
 // the resume path: a tight operator budget still trips even with a generous per-call
-// max_tokens on the resume call.
+// max_run_tokens on the resume call.
 func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
 	store := memstore.New()
 	// Seed a completed child.
@@ -558,7 +558,7 @@ func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
 	})
 	task := agent.NewSubagentTool(childEngine, agent.WithSubagentStore(store))
 
-	res := runOneSubagent(t, task, "p2", `{"resume":"subagent-p1","prompt":"run forever","max_tokens":100000}`)
+	res := runOneSubagent(t, task, "p2", `{"resume":"subagent-p1","prompt":"run forever","max_run_tokens":100000}`)
 	if res.IsError {
 		t.Fatalf("budget-stopped resume should be a clean result, got %+v", res)
 	}
@@ -566,7 +566,7 @@ func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
 		t.Fatalf("the tight operator budget must still trip on resume (tighten-only), got %q", res.Content)
 	}
 	if got := childLLM.calls.Load(); got > 10 {
-		t.Fatalf("resumed child made %d model calls; per-call max_tokens must not loosen the operator budget", got)
+		t.Fatalf("resumed child made %d model calls; per-call max_run_tokens must not loosen the operator budget", got)
 	}
 }
 

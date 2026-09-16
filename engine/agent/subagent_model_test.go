@@ -222,7 +222,7 @@ func TestSubagentAgentModelUnroutableModelErrors(t *testing.T) {
 }
 
 // TestSubagentPerCallMaxTokensHitsBudgetTerminal is the MODEL-FACING e2e + ADVERSARIAL: a
-// runaway child (never stops on its own) with a tighten-only per-call max_tokens hits the
+// runaway child (never stops on its own) with a tighten-only per-call max_run_tokens hits the
 // token-budget terminal. StopBudget is a clean terminal, so the Subagent RESULT is a SUCCESS
 // (best-effort), annotated with the budget note. The Run-scoped override works on the
 // SHARED child engine (which carries NO operator budget of its own).
@@ -235,7 +235,7 @@ func TestSubagentPerCallMaxTokensHitsBudgetTerminal(t *testing.T) {
 	// raised — the test proves the per-call path, not the floor mechanics.
 	budget := agent.MinSubagentRunTokens + 1000
 	childLLM := &runawayProvider{perTurn: session.Usage{InputTokens: 15_000}}
-	// The shared child engine has NO MaxRunTokens; the per-call max_tokens is the only brake.
+	// The shared child engine has NO MaxRunTokens; the per-call max_run_tokens is the only brake.
 	childEngine := agent.NewEngine(agent.Deps{
 		LLM:     childLLM,
 		Catalog: catalogWith(t, loopTool()),
@@ -246,7 +246,7 @@ func TestSubagentPerCallMaxTokensHitsBudgetTerminal(t *testing.T) {
 
 	results, _ := subagentParentResults(t, task,
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent",
-			fmt.Sprintf(`{"prompt":"run forever","max_tokens":%d}`, budget))),
+			fmt.Sprintf(`{"prompt":"run forever","max_run_tokens":%d}`, budget))),
 		mockllm.TextTurn("parent done"),
 	)
 	if len(results) != 1 {
@@ -262,14 +262,14 @@ func TestSubagentPerCallMaxTokensHitsBudgetTerminal(t *testing.T) {
 	// The child must have run multiple turns before the per-call budget tripped (proving
 	// the Run-scoped override bound the SHARED engine that has no operator budget).
 	if got := childLLM.calls.Load(); got < 2 {
-		t.Fatalf("child made %d model calls, want >= 2 (per-call max_tokens must bound a runaway on a shared engine)", got)
+		t.Fatalf("child made %d model calls, want >= 2 (per-call max_run_tokens must bound a runaway on a shared engine)", got)
 	}
 }
 
-// TestSubagentPerCallMaxTokensTightenOnly proves the per-call max_tokens is TIGHTEN-ONLY: a
+// TestSubagentPerCallMaxTokensTightenOnly proves the per-call max_run_tokens is TIGHTEN-ONLY: a
 // per-call value HIGHER than the engine's operator default does NOT loosen it — the
 // engine's lower budget still trips. The child runs on an engine with a TIGHT operator
-// budget and a generous per-call max_tokens; the operator budget must win.
+// budget and a generous per-call max_run_tokens; the operator budget must win.
 func TestSubagentPerCallMaxTokensTightenOnly(t *testing.T) {
 	childLLM := &runawayProvider{perTurn: session.Usage{InputTokens: 60, OutputTokens: 40}}
 	childEngine := agent.NewEngine(agent.Deps{
@@ -282,8 +282,8 @@ func TestSubagentPerCallMaxTokensTightenOnly(t *testing.T) {
 	task := agent.NewSubagentTool(childEngine)
 
 	results, _ := subagentParentResults(t, task,
-		// A generous per-call max_tokens that must NOT loosen the tight operator budget.
-		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run forever","max_tokens":100000}`)),
+		// A generous per-call max_run_tokens that must NOT loosen the tight operator budget.
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"run forever","max_run_tokens":100000}`)),
 		mockllm.TextTurn("parent done"),
 	)
 	if len(results) != 1 || results[0].IsError {
@@ -294,6 +294,6 @@ func TestSubagentPerCallMaxTokensTightenOnly(t *testing.T) {
 	}
 	// ~3 turns to cross 250 at 100/turn; assert it did NOT run away to the 100000 ceiling.
 	if got := childLLM.calls.Load(); got > 10 {
-		t.Fatalf("child made %d model calls; the per-call max_tokens must not loosen the tight operator budget", got)
+		t.Fatalf("child made %d model calls; the per-call max_run_tokens must not loosen the tight operator budget", got)
 	}
 }
