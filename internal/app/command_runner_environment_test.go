@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -16,11 +17,18 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
+// Resolved at init: a lazy lookup would run after a test has pinned PATH to a
+// sentinel that need not contain env(1).
+var envBinPath, envBinPathErr = exec.LookPath("env")
+
 func commandRunnerEnv(t *testing.T, runner interface {
 	Run(context.Context, string) (tool.CommandResult, error)
 }) string {
 	t.Helper()
-	result, err := runner.Run(context.Background(), "env")
+	if envBinPathErr != nil {
+		t.Fatalf("locate env(1) for the environment probe: %v", envBinPathErr)
+	}
+	result, err := runner.Run(context.Background(), envBinPath)
 	if err != nil {
 		t.Fatalf("run env: %v", err)
 	}
