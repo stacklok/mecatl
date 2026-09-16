@@ -2,10 +2,14 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -116,12 +120,16 @@ func TestMCPSourceReconciliation_Scenario2_AllOrNothingPublication(t *testing.T)
 }
 
 func TestMCPSourceReconciliation_Scenario2_ProductionEngineRevisionMatrix(t *testing.T) {
-	provider := mockllm.New()
+	var requests []port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		requests = append(requests, req)
+	})}, mockllm.TextTurn("done"), mockllm.TextTurn("done"), mockllm.TextTurn("done"), mockllm.TextTurn("done"), mockllm.TextTurn("done"))
 	reg := regForTest(provider, providerOpenAI, "test-model")
 	store := memstore.New()
 	policy := permpolicy.NewPolicy(defaultRules(), nil)
 	runtimes := newMCPRuntimeSet(nil)
-	first := runtimeTestCandidate(1)
+	mainManager := connectMainManager(t, "main", newMCPTestServer(t))
+	first := &mcpReconcileCandidate{manager: mainManager, generation: 1, tools: toolMetadata(mainManager.Tools())}
 	if !runtimes.publish(nil, first) {
 		t.Fatal("publish first runtime")
 	}
@@ -147,13 +155,44 @@ func TestMCPSourceReconciliation_Scenario2_ProductionEngineRevisionMatrix(t *tes
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			result, buildErr := factory(ctx, row.sel, row.specs, row.profile, "", row.mode)
+			before := len(requests)
+			result, buildErr := factory(ctx, row.sel, row.specs, row.profile, "/ws", row.mode)
 			if buildErr != nil {
 				t.Fatal(buildErr)
 			}
 			defer result.Close()
 			if result.RuntimeRevision != 1 {
 				t.Fatalf("runtime revision = %d, want 1", result.RuntimeRevision)
+			}
+			ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+			env := memEnvironment("/ws")
+			if row.profile == server.ProfileNoFS {
+				ref = session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
+				env = testEnvironment(nofs.New(), nil)
+			}
+			sess := session.New(session.SessionID("matrix-"+row.name), row.mode, ref, session.Limits{}, time.Unix(0, 0))
+			if err := sess.BindAuthority(session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__main__echo", "mcp__client__echo", "Read", "PresentPlan"}, FileSystem: row.profile != server.ProfileNoFS}, Provenance: "test", DefinitionIdentity: "test"}); err != nil {
+				t.Fatal(err)
+			}
+			run := result.Engine.Run(ctx, sess, env, agent.RunRequest{Text: "inspect catalog"})
+			for range run.Events() {
+			}
+			if len(requests) != before+1 {
+				t.Fatalf("provider requests = %d, want one production engine request", len(requests)-before)
+			}
+			req := requests[before]
+			if row.mode == session.ModePlan {
+				if requestHasTool(req, "mcp__main__echo") || !requestHasTool(req, "PresentPlan") {
+					t.Fatal("plan-mode catalog did not replace mutating MCP availability with PresentPlan")
+				}
+			} else if !requestHasTool(req, "mcp__main__echo") {
+				t.Fatal("production catalog omitted the pinned global MCP tool")
+			}
+			if row.profile == server.ProfileNoFS && requestHasTool(req, "Read") {
+				t.Fatal("no-FS production catalog retained Read")
+			}
+			if row.name == "client-mcp" && !requestHasTool(req, "mcp__client__echo") {
+				t.Fatal("client-MCP production catalog omitted its session-local tool")
 			}
 		})
 	}
@@ -378,6 +417,175 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	teamRuntimes.close()
 }
 
+func TestMCPSourceReconciliation_Scenario2_OutOfRunReadPinsManager(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	oldManager := connectMainManager(t, "svc", newRuntimeSurfaceServer(t, "old-op", started, release))
+	newManager := connectMainManager(t, "svc", newRuntimeSurfaceServer(t, "new-op", nil, nil))
+	runtimes := newMCPRuntimeSet(nil)
+	oldRuntime := &mcpReconcileCandidate{manager: oldManager, generation: 1, tools: toolMetadata(oldManager.Tools())}
+	if !runtimes.publish(nil, oldRuntime) {
+		t.Fatal("publish old runtime")
+	}
+	svc, err := newTestServerService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
+		Store:  memstore.New(), MCPProvider: runtimes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	readDone := make(chan mcp.ResourceContents, 1)
+	readErr := make(chan error, 1)
+	go func() {
+		contents, callErr := svc.ReadMcpResource(context.Background(), "svc", "test://doc")
+		readDone <- contents
+		readErr <- callErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("out-of-run read did not reach old manager")
+	}
+	newRuntime := &mcpReconcileCandidate{manager: newManager, generation: 2, tools: toolMetadata(newManager.Tools())}
+	if !runtimes.publish(oldRuntime, newRuntime) {
+		t.Fatal("publish replacement during out-of-run read")
+	}
+	if oldRuntime.isClosed() {
+		t.Fatal("out-of-run operation pin did not retain old manager")
+	}
+	close(release)
+	if contents, callErr := <-readDone, <-readErr; callErr != nil || contents.Text != "old-op-resource-body" {
+		t.Fatalf("paused out-of-run read = (%+v, %v), want old manager", contents, callErr)
+	}
+	if !oldRuntime.isClosed() {
+		t.Fatal("out-of-run operation pin did not drain after return")
+	}
+	contents, err := svc.ReadMcpResource(context.Background(), "svc", "test://doc")
+	if err != nil || contents.Text != "new-op-resource-body" {
+		t.Fatalf("next out-of-run read = (%+v, %v), want new manager", contents, err)
+	}
+	runtimes.close()
+}
+
+func TestMCPSourceReconciliation_Scenario2_InheritedRootPinCoversResourceAndPromptSurfaces(t *testing.T) {
+	oldReadStarted := make(chan struct{})
+	oldReadRelease := make(chan struct{})
+	oldManager := connectMainManager(t, "svc", newRuntimeSurfaceServer(t, "old", oldReadStarted, oldReadRelease))
+	newManager := connectMainManager(t, "svc", newRuntimeSurfaceServer(t, "new", nil, nil))
+	runtimes := newMCPRuntimeSet(nil)
+	oldRuntime := &mcpReconcileCandidate{
+		manager: oldManager, generation: 1, tools: toolMetadata(oldManager.Tools()),
+		resources: []mcp.Resource{{Server: "svc", URI: "test://doc", Description: "old-resource"}},
+		prompts:   []mcp.Prompt{{Server: "svc", Name: "version", Description: "old-prompt"}},
+	}
+	if !runtimes.publish(nil, oldRuntime) {
+		t.Fatal("publish old runtime")
+	}
+	svc, err := newTestServerService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
+		Store:  memstore.New(), MCPProvider: runtimes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	pinned, releaseRoot, err := runtimes.pin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan struct {
+		contents mcp.ResourceContents
+		err      error
+	}, 1)
+	go func() {
+		contents, readErr := svc.ReadMcpResource(pinned, "svc", "test://doc")
+		readDone <- struct {
+			contents mcp.ResourceContents
+			err      error
+		}{contents, readErr}
+	}()
+	select {
+	case <-oldReadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("old resource operation did not reach the manager")
+	}
+
+	newRuntime := &mcpReconcileCandidate{
+		manager: newManager, generation: 2, tools: toolMetadata(newManager.Tools()),
+		resources: []mcp.Resource{{Server: "svc", URI: "test://doc", Description: "new-resource"}},
+		prompts:   []mcp.Prompt{{Server: "svc", Name: "version", Description: "new-prompt"}},
+	}
+	if !runtimes.publish(oldRuntime, newRuntime) {
+		t.Fatal("publish new runtime while old operation is paused")
+	}
+	if oldRuntime.isClosed() {
+		t.Fatal("publication closed the manager used by a paused operation")
+	}
+	close(oldReadRelease)
+	oldRead := <-readDone
+	if oldRead.err != nil || oldRead.contents.Text != "old-resource-body" {
+		t.Fatalf("paused read = (%+v, %v), want old runtime", oldRead.contents, oldRead.err)
+	}
+
+	resources, err := svc.ListMcpResources(pinned, "svc")
+	if err != nil || len(resources) != 1 || resources[0].Description != "old-resource" {
+		t.Fatalf("root-pinned resource list = (%+v, %v), want old runtime", resources, err)
+	}
+	prompts, err := svc.ListMcpPrompts(pinned, "svc")
+	if err != nil || len(prompts) != 1 || prompts[0].Description != "old-prompt" {
+		t.Fatalf("root-pinned prompt list = (%+v, %v), want old runtime", prompts, err)
+	}
+	gotPrompt, err := svc.GetMcpPrompt(pinned, "svc", "version", nil)
+	if err != nil || len(gotPrompt.Messages) != 1 || gotPrompt.Messages[0].Text != "old-prompt-body" {
+		t.Fatalf("root-pinned prompt get = (%+v, %v), want old runtime", gotPrompt, err)
+	}
+	if oldRuntime.isClosed() {
+		t.Fatal("inherited root pin drained before the root operation ended")
+	}
+	releaseRoot()
+	if !oldRuntime.isClosed() {
+		t.Fatal("old manager did not close after the inherited root pin drained")
+	}
+
+	resources, err = svc.ListMcpResources(context.Background(), "svc")
+	if err != nil || len(resources) != 1 || resources[0].Description != "new-resource" {
+		t.Fatalf("next resource list = (%+v, %v), want new runtime", resources, err)
+	}
+	gotPrompt, err = svc.GetMcpPrompt(context.Background(), "svc", "version", nil)
+	if err != nil || len(gotPrompt.Messages) != 1 || gotPrompt.Messages[0].Text != "new-prompt-body" {
+		t.Fatalf("next prompt get = (%+v, %v), want new runtime", gotPrompt, err)
+	}
+	runtimes.close()
+}
+
+func newRuntimeSurfaceServer(t *testing.T, version string, readStarted chan<- struct{}, readRelease <-chan struct{}) string {
+	t.Helper()
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: version, Version: "v1"}, nil)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "echo"}, func(context.Context, *mcpsdk.CallToolRequest, mcpEchoArgs) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{}, nil, nil
+	})
+	srv.AddResource(&mcpsdk.Resource{URI: "test://doc", Name: "doc", Description: version + "-resource"}, func(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+		if readStarted != nil {
+			close(readStarted)
+			select {
+			case <-readRelease:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return &mcpsdk.ReadResourceResult{Contents: []*mcpsdk.ResourceContents{{URI: req.Params.URI, Text: version + "-resource-body"}}}, nil
+	})
+	srv.AddPrompt(&mcpsdk.Prompt{Name: "version", Description: version + "-prompt"}, func(context.Context, *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
+		return &mcpsdk.GetPromptResult{Messages: []*mcpsdk.PromptMessage{{Role: "user", Content: &mcpsdk.TextContent{Text: version + "-prompt-body"}}}}, nil
+	})
+	httpServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
+	t.Cleanup(httpServer.Close)
+	return httpServer.URL
+}
+
 func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *testing.T) {
 	const (
 		name        = "mcp__svc__echo"
@@ -407,7 +615,7 @@ func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *te
 		mockllm.TextTurn("removed observed"),
 		mockllm.ToolCallTurn(session.NewToolCall("unknown", "mcp__svc__never-granted", []byte(`{}`))),
 		mockllm.TextTurn("unknown observed"),
-		mockllm.ToolCallTurn(session.NewToolCall("reappeared", name, []byte(`{"text":"again"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("reappeared", name, []byte(`{"text":7}`))),
 		mockllm.TextTurn("reappeared observed"),
 	)
 	reg := regForTest(provider, providerOpenAI, "test-model")
@@ -476,7 +684,7 @@ func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *te
 	if err := sess.Reopen(); err != nil {
 		t.Fatal(err)
 	}
-	secondManager := connectMainManager(t, "svc", newMCPTestServerPrefixed(t, "second"))
+	secondManager := connectMainManager(t, "svc", newMCPContractDriftServer(t))
 	second := &mcpReconcileCandidate{manager: secondManager, generation: 3, tools: toolMetadata(secondManager.Tools())}
 	if !runtimes.publish(empty, second) {
 		t.Fatal("publish exact-name reappearance")
@@ -492,10 +700,47 @@ func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *te
 	if !reappearedAdvertised {
 		t.Fatal("reappeared exact name was not restored to model specs")
 	}
+	var driftedMeta *mcpToolMeta
+	for i := range second.tools {
+		if second.tools[i].Name == name {
+			driftedMeta = &second.tools[i]
+		}
+	}
+	if driftedMeta == nil || !driftedMeta.ReadOnly || driftedMeta.Description != "drifted contract" || !strings.Contains(driftedMeta.Schema, "integer") {
+		t.Fatalf("same-name schema/read-only drift was not published: %+v", driftedMeta)
+	}
+	for _, req := range requests[beforeReappearance:] {
+		if requestHasTool(req, "mcp__svc__fresh") {
+			t.Fatal("automatic publication advertised a newly named tool outside durable authority")
+		}
+		for _, spec := range req.Tools {
+			if spec.Name == name && (spec.Description != "drifted contract" || !strings.Contains(string(spec.Schema), "integer")) {
+				t.Fatalf("model saw stale same-name contract after publication: %+v", spec)
+			}
+		}
+	}
 	if got := sess.Authority.CapabilitySet.Tools; len(got) != 1 || got[0] != name {
 		t.Fatalf("same-name endpoint drift changed durable grant: %v", got)
 	}
 	runtimes.close()
+}
+
+func newMCPContractDriftServer(t *testing.T) string {
+	t.Helper()
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "drift", Version: "v2"}, nil)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name: "echo", Description: "drifted contract",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "integer"}}},
+		Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: true},
+	}, func(_ context.Context, _ *mcpsdk.CallToolRequest, _ any) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "second contract"}}}, nil, nil
+	})
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "fresh", Description: "new ungranted name"}, func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{}, nil, nil
+	})
+	httpServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
+	t.Cleanup(httpServer.Close)
+	return httpServer.URL
 }
 
 func requestHasTool(req port.LLMRequest, name string) bool {

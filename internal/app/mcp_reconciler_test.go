@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -309,6 +310,54 @@ func TestADR_0345_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	case <-joined:
 	case <-time.After(time.Second):
 		t.Fatal("shutdown did not join reconciliation")
+	}
+}
+
+func TestMCPSourceReconciliation_Scenario2_FailedCompleteCandidateKeepsPreviousRuntime(t *testing.T) {
+	healthyURL, deletes := newMCPTestServerCounting(t)
+	source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "healthy", URL: healthyURL}}}
+	runtimes := newMCPRuntimeSet(nil)
+	reconciler := newMCPSourceReconciler(mcpReconcilerOptions{
+		sources: []mcpsource.Source{source},
+		build:   buildMCPReconcileCandidate(Config{}),
+		publish: runtimes.publish,
+	})
+	runtimes.setRetry(reconciler.invalidate)
+	t.Cleanup(func() {
+		reconciler.Close()
+		runtimes.close()
+	})
+
+	first, err := reconciler.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("healthy candidate: %v", err)
+	}
+	if first.candidate == nil || runtimes.currentRevision() != first.candidate.generation {
+		t.Fatalf("healthy candidate not published: result=%+v revision=%d", first, runtimes.currentRevision())
+	}
+	previous := first.candidate
+
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not an MCP response", http.StatusBadGateway)
+	}))
+	t.Cleanup(broken.Close)
+	source.set([]mcp.ServerConfig{{Name: "healthy", URL: healthyURL}, {Name: "broken", URL: broken.URL}}, nil)
+	failed, err := reconciler.Reconcile(context.Background())
+	if err == nil || !failed.stale {
+		t.Fatalf("failed complete candidate = (%+v, %v), want stale error", failed, err)
+	}
+	if reconciler.current != previous || runtimes.currentRevision() != previous.generation {
+		t.Fatalf("failed candidate replaced previous runtime: current=%p previous=%p revision=%d", reconciler.current, previous, runtimes.currentRevision())
+	}
+	if previous.isClosed() {
+		t.Fatal("failed candidate closed the previous usable runtime")
+	}
+	if atomic.LoadInt32(deletes) == 0 {
+		t.Fatal("partial healthy connection from failed candidate was not closed")
+	}
+	result, err := runtimes.CallTool(context.Background(), "healthy", "echo", []byte(`{"text":"still-live"}`))
+	if err != nil || len(result.Content) != 1 || !strings.Contains(result.Content[0].Text, "still-live") {
+		t.Fatalf("previous runtime unusable after candidate failure: result=%+v err=%v", result, err)
 	}
 }
 
