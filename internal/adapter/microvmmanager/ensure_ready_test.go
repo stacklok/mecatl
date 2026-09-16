@@ -48,7 +48,7 @@ func TestMicroVMRedesign_Scenario1_EnsureReadyConvergesUnderManagerLock(t *testi
 	}
 }
 
-func TestEnsureReadyPreservesExistingAdmissionStateOnMismatch(t *testing.T) {
+func TestEnsureReadyPreservesExistingConfigurationOnMismatch(t *testing.T) {
 	root := t.TempDir()
 	paths := testPaths(root)
 	if err := preparePaths(paths); err != nil {
@@ -68,7 +68,7 @@ func TestEnsureReadyPreservesExistingAdmissionStateOnMismatch(t *testing.T) {
 	request := ReadyRequest{Release: Release{URL: "https://example.invalid/release.tar.gz", SHA256: strings.Repeat("c", 64)}, Policy: testPolicy(root)}
 	ops := &fakeOps{}
 	if _, err := New(paths, ops).EnsureReady(context.Background(), request); err == nil || !strings.Contains(err.Error(), "configuration is incompatible") {
-		t.Fatalf("admission mismatch error = %v", err)
+		t.Fatalf("configuration mismatch error = %v", err)
 	}
 	if got, err := os.ReadFile(paths.ConfigFile); err != nil || string(got) != string(oldConfig) {
 		t.Fatalf("existing config changed: %q, err=%v", got, err)

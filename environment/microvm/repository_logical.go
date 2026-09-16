@@ -41,7 +41,7 @@ type RepositoryGuestRegistrar interface {
 type LogicalEnvironmentRequest struct {
 	Owner        string
 	Checkout     string
-	Verified     VerifiedArtifacts
+	Artifacts    RepositoryArtifactSnapshot
 	BaseRevision string
 }
 
@@ -175,7 +175,7 @@ func NewRepositoryLogicalManager(registry *RepositoryVMRegistry, preparer *workt
 // index, worktree, and assigned guest root.
 func (m *RepositoryLogicalManager) Create(ctx context.Context, request LogicalEnvironmentRequest) (_ *LogicalEnvironment, retErr error) {
 	result, err := m.registry.Ensure(ctx, RepositoryVMRequest{
-		Owner: request.Owner, Checkout: request.Checkout, Verified: request.Verified,
+		Owner: request.Owner, Checkout: request.Checkout, Artifacts: request.Artifacts,
 	})
 	if err != nil {
 		return nil, repositoryLogicalFailure(repositoryLogicalStageEnsure, err)

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/environment/microvm/control"
 )
 
@@ -49,8 +48,6 @@ const (
 	LifecycleMetrics LifecycleOperation = "metrics"
 	// LifecycleInventory returns one bounded owner-filtered generation inventory.
 	LifecycleInventory LifecycleOperation = "inventory"
-	// LifecycleReconcile re-drives durable cleanup without provisioning a generation.
-	LifecycleReconcile LifecycleOperation = "reconcile"
 	// LifecycleChildDelete force-cleans an exact delegated child generation.
 	LifecycleChildDelete LifecycleOperation = "child-delete"
 )
@@ -64,7 +61,6 @@ type LifecycleRequest struct {
 	Version   uint16             `json:"version"`
 	Operation LifecycleOperation `json:"operation"`
 	Binding   control.Binding    `json:"binding"`
-	Create    *CreateRequest     `json:"create,omitempty"`
 	Provision *ProvisionRequest  `json:"provision,omitempty"`
 	Payload   json.RawMessage    `json:"payload,omitempty"`
 }
@@ -122,7 +118,6 @@ type LifecycleExecStream struct {
 // LifecycleResponse reports the exact durable generation observed after an operation.
 type LifecycleResponse struct {
 	Binding   control.Binding      `json:"binding,omitempty"`
-	Record    *EnvironmentRecord   `json:"record,omitempty"`
 	Created   *LifecycleCreated    `json:"created,omitempty"`
 	Stream    *LifecycleExecStream `json:"stream,omitempty"`
 	Payload   json.RawMessage      `json:"payload,omitempty"`
@@ -190,40 +185,20 @@ type ChildMergePayload struct {
 	Child control.Binding `json:"child"`
 }
 
-// ChildLifecycle owns daemon-side child creation and conflict-aware merge.
-type ChildLifecycle interface {
-	Fork(context.Context, EnvironmentRecord, string) (EnvironmentRecord, error)
-	Merge(context.Context, EnvironmentRecord, EnvironmentRecord) error
-}
-
-// EnvironmentCreator is the lifecycle transaction used by the create RPC.
-type EnvironmentCreator interface {
-	Create(context.Context, CreateRequest) (CreatedEnvironment, error)
-}
-
-// PlacementBuilder expands the thin root request using daemon-owned policy.
-type PlacementBuilder func(context.Context, ProvisionRequest) (CreateRequest, error)
-
-// LifecycleReconciler repairs durable lifecycle state without provisioning.
-type LifecycleReconciler interface {
-	Reconcile(context.Context) error
+// RepositoryPlacement contains one repository-scoped logical attachment request.
+// Its artifact snapshot callback is consumed only by the registry's first-launch path.
+type RepositoryPlacement struct {
+	Request LogicalEnvironmentRequest
+	Status  EnforcedProfileStatus
 }
 
 // RepositoryPlacementBuilder resolves daemon-owned profile and immutable artifact
 // policy into one repository-scoped logical attachment request.
-type RepositoryPlacementBuilder func(context.Context, ProvisionRequest) (LogicalEnvironmentRequest, EnforcedProfileStatus, error)
+type RepositoryPlacementBuilder func(context.Context, ProvisionRequest) (RepositoryPlacement, error)
 
 // DaemonConfig wires the authenticated protocol to durable lifecycle seams.
 type DaemonConfig struct {
 	Control                *control.Service
-	Creator                EnvironmentCreator
-	Provisioner            PlacementBuilder
-	Registry               ReconcileRegistry
-	Runtime                LifecycleRuntime
-	Worktrees              WorktreeRetention
-	Admission              *AdmissionController
-	Children               ChildLifecycle
-	Reconciler             LifecycleReconciler
 	Observer               *OperationsObserver
 	Info                   DaemonInfo
 	RepositoryAttachments  *RepositoryAttachmentManager
@@ -240,14 +215,6 @@ type repositoryDaemonBinding struct {
 // exclusively behind Lifecycle -> VMRuntime.
 type Daemon struct {
 	control               *control.Service
-	creator               EnvironmentCreator
-	provisioner           PlacementBuilder
-	registry              ReconcileRegistry
-	runtime               LifecycleRuntime
-	manager               *EnvironmentManager
-	children              ChildLifecycle
-	reconciler            LifecycleReconciler
-	admission             *AdmissionController
 	observer              *OperationsObserver
 	info                  DaemonInfo
 	repositoryAttachments *RepositoryAttachmentManager
@@ -256,23 +223,15 @@ type Daemon struct {
 	repositoryMu          sync.Mutex
 	repositoryBindings    map[string]repositoryDaemonBinding
 	inventoryKey          [sha256.Size]byte
-	mergeLocks            [mergeLockStripes]sync.Mutex
 }
 
 // NewDaemon constructs the fail-closed local lifecycle service.
 func NewDaemon(cfg DaemonConfig) (*Daemon, error) {
-	repositoryOnly := cfg.RepositoryAttachments != nil
-	if cfg.Control == nil || (!repositoryOnly && (cfg.Registry == nil || cfg.Runtime == nil || cfg.Worktrees == nil)) {
-		return nil, errors.New("microvmd lifecycle service is not fully configured")
-	}
-	var manager *EnvironmentManager
-	if !repositoryOnly {
-		manager = NewEnvironmentManagerWithAdmission(cfg.Registry, cfg.Runtime, cfg.Worktrees, cfg.Admission, cfg.Observer)
+	if cfg.Control == nil || cfg.RepositoryAttachments == nil {
+		return nil, errors.New("repository microvmd lifecycle service is not fully configured")
 	}
 	daemon := &Daemon{
-		control: cfg.Control, creator: cfg.Creator, provisioner: cfg.Provisioner, registry: cfg.Registry, runtime: cfg.Runtime,
-		manager:  manager,
-		children: cfg.Children, reconciler: cfg.Reconciler, admission: cfg.Admission, observer: cfg.Observer, info: cfg.Info,
+		control: cfg.Control, observer: cfg.Observer, info: cfg.Info,
 		repositoryAttachments: cfg.RepositoryAttachments, repositoryProvisioner: cfg.RepositoryProvisioner,
 		repositoryStartupErr: cfg.RepositoryStartupError,
 		repositoryBindings:   make(map[string]repositoryDaemonBinding),
@@ -352,18 +311,10 @@ func (d *Daemon) handleExecStream(ctx context.Context, request LifecycleRequest,
 	if request.Version != LifecycleProtocolVersion || request.Operation != LifecycleExec {
 		return lifecycleFailure(errLifecycleProtocol)
 	}
-	if d.repositoryAttachments != nil && strings.HasPrefix(request.Binding.EnvironmentID, "logical-") {
-		response, err := d.repositoryExecStream(ctx, request, send)
-		if err != nil {
-			return lifecycleFailure(err)
-		}
-		return response
+	if !strings.HasPrefix(request.Binding.EnvironmentID, "logical-") {
+		return lifecycleFailure(ErrEnvironmentUnavailable)
 	}
-	record, err := d.boundRecord(ctx, request.Binding)
-	if err != nil {
-		return lifecycleFailure(err)
-	}
-	response, err := d.proxyExecStream(ctx, request, record, send)
+	response, err := d.repositoryExecStream(ctx, request, send)
 	if err != nil {
 		return lifecycleFailure(err)
 	}
@@ -380,19 +331,12 @@ func (d *Daemon) handleAuthenticated(ctx context.Context, request LifecycleReque
 	return d.handleStandardRequest(ctx, request)
 }
 
-func (d *Daemon) handleStandardRequest(ctx context.Context, request LifecycleRequest) LifecycleResponse { //nolint:gocyclo // closed protocol routing is clearest as one switch
-	if d.repositoryAttachments != nil {
-		switch request.Operation {
-		case LifecycleInfo, LifecycleInventory, LifecycleReconcile, LifecycleMetrics:
-		default:
-			return lifecycleFailure(ErrEnvironmentUnavailable)
-		}
-	}
+func (d *Daemon) handleStandardRequest(ctx context.Context, request LifecycleRequest) LifecycleResponse {
 	var response LifecycleResponse
 	var err error
 	switch request.Operation {
 	case LifecycleInfo:
-		if request.Binding != (control.Binding{}) || request.Create != nil || request.Provision != nil || len(request.Payload) != 0 || d.info.ProtocolVersion != LifecycleProtocolVersion {
+		if request.Binding != (control.Binding{}) || request.Provision != nil || len(request.Payload) != 0 || d.info.ProtocolVersion != LifecycleProtocolVersion {
 			err = errLifecycleProtocol
 			break
 		}
@@ -401,24 +345,14 @@ func (d *Daemon) handleStandardRequest(ctx context.Context, request LifecycleReq
 			break
 		}
 		response.Payload, err = json.Marshal(d.info)
-	case LifecycleCreate:
-		response, err = d.create(ctx, request)
-	case LifecycleResolve, LifecycleInspect, LifecycleDetach, LifecycleDelete, LifecycleChildDelete, LifecycleWorkspace, LifecycleExec:
-		response, err = d.existing(ctx, request)
-	case LifecycleFork:
-		response, err = d.fork(ctx, request)
-	case LifecycleMerge:
-		response, err = d.merge(ctx, request)
 	case LifecycleMetrics:
-		if d.observer == nil || request.Binding != (control.Binding{}) || request.Create != nil || request.Provision != nil {
+		if d.observer == nil || request.Binding != (control.Binding{}) || request.Provision != nil {
 			err = errLifecycleProtocol
 			break
 		}
 		response.Payload, err = json.Marshal(d.observer.Snapshot())
 	case LifecycleInventory:
 		response, err = d.inventory(ctx, request)
-	case LifecycleReconcile:
-		err = d.reconcile(ctx, request)
 	default:
 		err = errLifecycleProtocol
 	}
@@ -448,46 +382,7 @@ func (d *Daemon) inventory(ctx context.Context, request LifecycleRequest) (Lifec
 	if err != nil {
 		return LifecycleResponse{}, err
 	}
-	if d.repositoryAttachments != nil {
-		return d.repositoryInventory(ctx, request.Binding.Owner, pageRequest.PageSize, cursor)
-	}
-	records, err := d.registry.List(ctx)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	records = ownerInventoryRecords(records, request.Binding.Owner)
-	sort.Slice(records, func(i, j int) bool { return inventoryRecordLess(records[i], records[j]) })
-	start := sort.Search(len(records), func(i int) bool { return inventoryRecordAfter(records[i], cursor) })
-	end := min(start+pageRequest.PageSize, len(records))
-	entries := make([]LifecycleInventoryEntry, 0, end-start)
-	for _, record := range records[start:end] {
-		entry := LifecycleInventoryEntry{
-			Owner: record.Owner, SessionID: record.SessionID, EnvironmentID: record.EnvironmentID,
-			Ref: record.Ref.ID, Generation: record.Generation, WorktreePath: record.WorktreePath, State: record.State,
-		}
-		if record.State == EnvironmentDestroyed || record.Tombstone {
-			entry.Health = GenerationStale
-			entry.Error = "orphan generation was identity-checked and destroyed; dirty worktree retained for recovery; explicitly create a new session to continue"
-		} else if record.State != EnvironmentReady {
-			entry.Health, entry.Error = GenerationStale, "durable generation state "+string(record.State)+" is not ready"
-		} else if status, inspectErr := d.runtime.Inspect(ctx, record); inspectErr != nil {
-			entry.Health, entry.Error = GenerationError, boundedLifecycleError(inspectErr)
-		} else if validateRuntimeIdentity(record, status) != nil {
-			entry.Health, entry.Error = GenerationStale, "runtime identity does not match the durable generation"
-		} else {
-			entry.Health = GenerationHealthy
-		}
-		entries = append(entries, entry)
-	}
-	page := LifecycleInventoryPage{Entries: entries}
-	if end < len(records) {
-		page.Continuation, err = d.encodeInventoryCursor(request.Binding.Owner, records[end-1])
-		if err != nil {
-			return LifecycleResponse{}, err
-		}
-	}
-	payload, err := json.Marshal(page)
-	return LifecycleResponse{Payload: payload}, err
+	return d.repositoryInventory(ctx, request.Binding.Owner, pageRequest.PageSize, cursor)
 }
 
 func (d *Daemon) repositoryInventory(ctx context.Context, owner string, pageSize int, cursor inventoryCursor) (LifecycleResponse, error) {
@@ -567,9 +462,9 @@ func (d *Daemon) repositoryInventory(ctx context.Context, owner string, pageSize
 	if end < len(records) {
 		last := records[end-1].binding
 		var err error
-		page.Continuation, err = d.encodeInventoryCursor(owner, EnvironmentRecord{
-			SessionID: last.SessionID, EnvironmentID: last.EnvironmentID,
-			Ref: EnvironmentRef{ID: last.Ref}, Generation: last.Generation,
+		page.Continuation, err = d.encodeInventoryCursor(owner, inventoryCursor{
+			SessionID: last.SessionID, Ref: last.Ref,
+			Generation: last.Generation, EnvironmentID: last.EnvironmentID,
 		})
 		if err != nil {
 			return LifecycleResponse{}, err
@@ -587,40 +482,9 @@ type inventoryCursor struct {
 	EnvironmentID string `json:"environment_id"`
 }
 
-func ownerInventoryRecords(records []EnvironmentRecord, owner string) []EnvironmentRecord {
-	out := records[:0]
-	for _, record := range records {
-		if record.Owner != owner || ((record.State == EnvironmentDestroyed || record.Tombstone) && !record.PreserveWorktree) {
-			continue
-		}
-		out = append(out, record)
-	}
-	return out
-}
-
-func inventoryRecordLess(left, right EnvironmentRecord) bool {
-	if left.SessionID != right.SessionID {
-		return left.SessionID < right.SessionID
-	}
-	if left.Ref.ID != right.Ref.ID {
-		return left.Ref.ID < right.Ref.ID
-	}
-	if left.Generation != right.Generation {
-		return left.Generation < right.Generation
-	}
-	return left.EnvironmentID < right.EnvironmentID
-}
-
-func inventoryRecordAfter(record EnvironmentRecord, cursor inventoryCursor) bool {
-	if cursor == (inventoryCursor{}) {
-		return true
-	}
-	key := EnvironmentRecord{SessionID: cursor.SessionID, Ref: EnvironmentRef{ID: cursor.Ref}, Generation: cursor.Generation, EnvironmentID: cursor.EnvironmentID}
-	return inventoryRecordLess(key, record)
-}
-
-func (d *Daemon) encodeInventoryCursor(owner string, record EnvironmentRecord) (string, error) {
-	payload, err := json.Marshal(inventoryCursor{Owner: owner, SessionID: record.SessionID, Ref: record.Ref.ID, Generation: record.Generation, EnvironmentID: record.EnvironmentID})
+func (d *Daemon) encodeInventoryCursor(owner string, cursor inventoryCursor) (string, error) {
+	cursor.Owner = owner
+	payload, err := json.Marshal(cursor)
 	if err != nil {
 		return "", err
 	}
@@ -660,22 +524,9 @@ func (d *Daemon) decodeInventoryCursor(owner, token string) (inventoryCursor, er
 	return cursor, nil
 }
 
-func (d *Daemon) reconcile(ctx context.Context, request LifecycleRequest) error {
-	if err := validateOwnerRequest(request, false); err != nil {
-		return err
-	}
-	if d.repositoryAttachments != nil {
-		return d.repositoryStartupErr
-	}
-	if d.reconciler == nil {
-		return ErrEnvironmentUnavailable
-	}
-	return d.reconciler.Reconcile(ctx)
-}
-
 func validateOwnerRequest(request LifecycleRequest, allowPayload bool) error {
 	want := control.Binding{Owner: request.Binding.Owner}
-	if request.Binding.Owner == "" || request.Binding != want || request.Create != nil || request.Provision != nil || (!allowPayload && len(request.Payload) != 0) {
+	if request.Binding.Owner == "" || request.Binding != want || request.Provision != nil || (!allowPayload && len(request.Payload) != 0) {
 		return control.ErrBindingMismatch
 	}
 	return nil
@@ -690,193 +541,11 @@ func boundedLifecycleError(err error) string {
 	return text
 }
 
-func (d *Daemon) fork(ctx context.Context, request LifecycleRequest) (LifecycleResponse, error) {
-	if d.children == nil {
-		return LifecycleResponse{}, ErrEnvironmentUnavailable
-	}
-	parent, err := d.boundRecord(ctx, request.Binding)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	var payload ChildForkPayload
-	if json.Unmarshal(request.Payload, &payload) != nil || payload.Label == "" || len(payload.Label) > 256 {
-		return LifecycleResponse{}, errLifecycleProtocol
-	}
-	child, err := d.children.Fork(ctx, parent, payload.Label)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	if child.ParentRef != parent.Ref || child.State != EnvironmentReady {
-		return LifecycleResponse{}, ErrInvalidFork
-	}
-	return LifecycleResponse{Binding: bindingForRecord(child), Record: recordPointer(child)}, nil
-}
-
-func (d *Daemon) merge(ctx context.Context, request LifecycleRequest) (LifecycleResponse, error) {
-	if d.children == nil {
-		return LifecycleResponse{}, ErrEnvironmentUnavailable
-	}
-	if err := claimValidate(request.Binding); err != nil {
-		return LifecycleResponse{}, control.ErrBindingMismatch
-	}
-	parentRef := session.EnvironmentRef{Kind: session.EnvironmentKind(Kind), ID: request.Binding.Ref}
-	lock := &d.mergeLocks[parentMergeLock(parentRef)]
-	lock.Lock()
-	defer lock.Unlock()
-
-	// Binding lookup, child validation, conflict discovery, patch construction,
-	// revalidation, and apply are one daemon-owned transaction across clients.
-	parent, err := d.boundRecord(ctx, request.Binding)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	var payload ChildMergePayload
-	if json.Unmarshal(request.Payload, &payload) != nil {
-		return LifecycleResponse{}, errLifecycleProtocol
-	}
-	child, err := d.boundRecord(ctx, payload.Child)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	if child.ParentRef != parent.Ref {
-		return LifecycleResponse{}, ErrInvalidFork
-	}
-	if err := d.children.Merge(ctx, parent, child); err != nil {
-		return LifecycleResponse{}, err
-	}
-	return LifecycleResponse{Binding: bindingForRecord(parent), Record: recordPointer(parent)}, nil
-}
-
-func (d *Daemon) create(ctx context.Context, request LifecycleRequest) (LifecycleResponse, error) {
-	if (request.Create == nil) == (request.Provision == nil) || request.Binding.Owner == "" || request.Binding.SessionID == "" {
-		return LifecycleResponse{}, errLifecycleProtocol
-	}
-	if request.Binding.EnvironmentID != "" || request.Binding.Ref != "" || request.Binding.Generation != 0 {
-		return LifecycleResponse{}, control.ErrBindingMismatch
-	}
-	created, err := d.performCreate(ctx, request)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	environmentID, generation, err := parseEnvironmentRef(created.Ref)
-	if err != nil || generation != created.Generation {
-		return LifecycleResponse{}, ErrEnvironmentStale
-	}
-	record, err := d.registry.Lookup(ctx, environmentID)
-	if err != nil {
-		return LifecycleResponse{}, fmt.Errorf("load created microvm generation: %w", err)
-	}
-	binding := bindingForRecord(record)
-	if binding.Owner != request.Binding.Owner || binding.SessionID != request.Binding.SessionID ||
-		binding.Ref != created.Ref.ID || binding.Generation != created.Generation {
-		return LifecycleResponse{}, control.ErrBindingMismatch
-	}
-	wireCreated := LifecycleCreated{
-		Ref: created.Ref, Generation: created.Generation,
-		HostWorktree: created.HostWorktree, GuestRoot: created.GuestRoot,
-		Profile: record.ProfileStatus.Profile, GuestEgress: record.ProfileStatus.GuestEgress, HostEgress: record.ProfileStatus.HostEgress,
-	}
-	return LifecycleResponse{Binding: binding, Record: recordPointer(record), Created: &wireCreated}, nil
-}
-
-func (d *Daemon) performCreate(ctx context.Context, request LifecycleRequest) (CreatedEnvironment, error) {
-	if request.Provision == nil {
-		if d.creator == nil || request.Create.Owner != request.Binding.Owner || request.Create.SessionID != request.Binding.SessionID {
-			return CreatedEnvironment{}, control.ErrBindingMismatch
-		}
-		return d.creator.Create(ctx, *request.Create)
-	}
-	if d.provisioner == nil || d.creator == nil || request.Provision.Owner != request.Binding.Owner || request.Provision.SessionID != request.Binding.SessionID {
-		return CreatedEnvironment{}, control.ErrBindingMismatch
-	}
-	expanded, err := d.provisioner(ctx, *request.Provision)
-	if err != nil {
-		return CreatedEnvironment{}, err
-	}
-	return d.creator.Create(ctx, expanded)
-}
-
-func (d *Daemon) existing(ctx context.Context, request LifecycleRequest) (LifecycleResponse, error) {
-	var response LifecycleResponse
-	record, err := d.boundRecord(ctx, request.Binding)
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	if request.Operation == LifecycleWorkspace || request.Operation == LifecycleExec {
-		return d.proxy(ctx, request, record)
-	}
-	switch request.Operation {
-	case LifecycleResolve:
-		record, err = NewReattachingResolver(d.registry, d.runtime).Resolve(ctx, record.Ref, record.Owner)
-	case LifecycleInspect:
-		var status RuntimeStatus
-		status, err = d.runtime.Inspect(ctx, record)
-		if err == nil {
-			err = validateRuntimeIdentity(record, status)
-		}
-	case LifecycleDetach:
-		err = d.manager.Detach(ctx, record.Ref, record.Owner)
-		if d.observer != nil {
-			outcome := OutcomeSuccess
-			if err != nil {
-				outcome = OutcomeFailure
-			}
-			d.observer.DetachFinished(outcome)
-		}
-	case LifecycleDelete, LifecycleChildDelete:
-		if request.Operation == LifecycleChildDelete {
-			err = d.manager.DeleteChild(ctx, record.Ref, record.Owner)
-		} else {
-			err = d.manager.Delete(ctx, record.Ref, record.Owner, DeleteExplicit)
-		}
-		if err == nil {
-			record, err = d.registry.Lookup(ctx, record.EnvironmentID)
-			if err == nil {
-				response.Payload, err = json.Marshal(LifecycleDeleteResult{WorktreePath: record.WorktreePath, WorktreeRetained: record.PreserveWorktree || !record.WorktreeDeleted})
-			}
-		}
-	}
-	if err != nil {
-		return LifecycleResponse{}, err
-	}
-	response.Binding, response.Record = bindingForRecord(record), recordPointer(record)
-	return response, nil
-}
-
-func (d *Daemon) boundRecord(ctx context.Context, claim control.Binding) (EnvironmentRecord, error) {
-	if err := claimValidate(claim); err != nil {
-		return EnvironmentRecord{}, control.ErrBindingMismatch
-	}
-	record, err := d.registry.Lookup(ctx, claim.EnvironmentID)
-	if err != nil {
-		return EnvironmentRecord{}, err
-	}
-	if bindingForRecord(record) != claim {
-		return EnvironmentRecord{}, control.ErrBindingMismatch
-	}
-	if record.State == EnvironmentDestroyed || record.Tombstone {
-		return EnvironmentRecord{}, ErrEnvironmentDestroyed
-	}
-	if record.State != EnvironmentReady {
-		return EnvironmentRecord{}, ErrEnvironmentStale
-	}
-	return record, nil
-}
-
-func bindingForRecord(record EnvironmentRecord) control.Binding {
-	return control.Binding{Owner: record.Owner, SessionID: record.SessionID, EnvironmentID: record.EnvironmentID, Ref: record.Ref.ID, Generation: record.Generation}
-}
-
 func claimValidate(claim control.Binding) error {
 	if claim.Owner == "" || claim.SessionID == "" || claim.EnvironmentID == "" || claim.Ref == "" || claim.Generation == 0 {
 		return control.ErrBindingMismatch
 	}
 	return nil
-}
-
-func recordPointer(record EnvironmentRecord) *EnvironmentRecord {
-	cloned := cloneEnvironmentRecord(record)
-	return &cloned
 }
 
 func lifecycleFailure(err error) LifecycleResponse {
@@ -894,13 +563,9 @@ func lifecycleErrorCode(err error) string {
 	switch {
 	case errors.Is(err, control.ErrUnauthenticatedPeer):
 		return "unauthenticated"
-	case errors.Is(err, control.ErrBindingMismatch), errors.Is(err, ErrEnvironmentForeign), errors.Is(err, ErrEnvironmentStale):
+	case errors.Is(err, control.ErrBindingMismatch):
 		return "binding_mismatch"
-	case errors.Is(err, ErrEnvironmentUnknown):
-		return "not_found"
-	case errors.Is(err, ErrEnvironmentDestroyed):
-		return "destroyed"
-	case errors.Is(err, ErrEnvironmentUnavailable), errors.Is(err, ErrRuntimeIdentityMismatch):
+	case errors.Is(err, ErrEnvironmentUnavailable):
 		return "unavailable"
 	case errors.Is(err, ErrRepositoryLogicalRootUnavailable):
 		return "repository_logical_root_unavailable"

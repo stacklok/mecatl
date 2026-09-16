@@ -89,7 +89,7 @@ func TestReadyRequestFromDefaultsOverlaysOnlyGuestEgress(t *testing.T) {
 	if request.Policy.GuestEgressMode != GuestEgressAllowlist || len(request.Policy.GuestAllow) != 1 {
 		t.Fatalf("egress overlay = %#v", request.Policy)
 	}
-	if request.Policy.PolicyRevision != "release-policy" || request.Policy.CertificateIdentity != "release-identity" || request.Policy.Resources["memory"] != "4GiB" || len(request.Policy.RequiredAttestations) != 4 {
+	if request.Policy.PolicyRevision != "release-policy" || request.Policy.CertificateIdentity != "release-identity" || len(request.Policy.RequiredAttestations) != 4 {
 		t.Fatalf("release defaults changed = %#v", request.Policy)
 	}
 

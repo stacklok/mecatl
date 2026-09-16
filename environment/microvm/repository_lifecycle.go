@@ -198,12 +198,19 @@ type repositoryRegistryDocument struct {
 	Record  RepositoryVMRecord `json:"record"`
 }
 
-// RepositoryVMRequest supplies first-use inputs. Verified artifacts are required
-// only when no durable record exists; reattachment never consumes replacement bytes.
+// RepositoryArtifactSnapshot returns a privately locked artifact view and its release.
+// On error, the callback owns cleanup for anything it acquired and returns no cleanup
+// responsibility to Ensure. On success, it returns a non-nil release function; Ensure
+// invokes that function exactly once after every later success or failure, after rootfs
+// materialization and runtime startup have finished consuming the snapshot.
+type RepositoryArtifactSnapshot func(context.Context) (VerifiedArtifacts, func(), error)
+
+// RepositoryVMRequest supplies first-use inputs. Artifacts is invoked only when
+// no durable record exists; exact reattachment never validates or copies replacement bytes.
 type RepositoryVMRequest struct {
-	Owner    string
-	Checkout string
-	Verified VerifiedArtifacts
+	Owner     string
+	Checkout  string
+	Artifacts RepositoryArtifactSnapshot
 }
 
 // RepositoryVMResult reports the exact durable singleton selected by Ensure.
@@ -290,7 +297,7 @@ func (r *RepositoryVMRegistry) HasRecords() (bool, error) {
 // Ensure admits one generation on first use or reattaches only the exact healthy
 // ready generation. Any partial, missing, or mismatched state fails without
 // replacement or destructive reconciliation.
-func (r *RepositoryVMRegistry) Ensure(ctx context.Context, request RepositoryVMRequest) (RepositoryVMResult, error) {
+func (r *RepositoryVMRegistry) Ensure(ctx context.Context, request RepositoryVMRequest) (RepositoryVMResult, error) { //nolint:gocyclo // first-generation admission is one auditable transaction
 	identity, err := ResolveRepositoryIdentity(ctx, request.Owner, request.Checkout, r.stateRoot)
 	if err != nil {
 		return RepositoryVMResult{}, err
@@ -319,7 +326,18 @@ func (r *RepositoryVMRegistry) Ensure(ctx context.Context, request RepositoryVMR
 			return readErr
 		}
 
-		if err := validateRepositoryArtifacts(request.Verified); err != nil {
+		if request.Artifacts == nil {
+			return errors.New("repository first launch requires a locked artifact snapshot")
+		}
+		verified, release, err := request.Artifacts(ctx)
+		if err != nil {
+			return err
+		}
+		if release == nil {
+			return errors.New("repository artifact snapshot omitted release")
+		}
+		defer release()
+		if err := validateRepositoryArtifacts(verified); err != nil {
 			return err
 		}
 		generation, err := randomGeneration()
@@ -348,13 +366,13 @@ func (r *RepositoryVMRegistry) Ensure(ctx context.Context, request RepositoryVMR
 			return fmt.Errorf("%w: private repository rootfs already exists", ErrRepositoryVMInconsistent)
 		}
 		materializer := newRepositoryRootFSMaterializer()
-		if err := materializer.Materialize(request.Verified.ExecutionImage.Path, record.RootFSPath, request.Verified.GuestAgent.Path); err != nil {
+		if err := materializer.Materialize(verified.ExecutionImage.Path, record.RootFSPath, verified.GuestAgent.Path); err != nil {
 			return fmt.Errorf("materialize repository rootfs: %w", err)
 		}
 		if err := unix.Mkdirat(int(directory.file.Fd()), "logical", 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
 			return fmt.Errorf("create repository guest mount namespace: %w", err)
 		}
-		status, err := r.runtime.Start(ctx, record, request.Verified, authority)
+		status, err := r.runtime.Start(ctx, record, verified, authority)
 		if err != nil {
 			return fmt.Errorf("start admitted repository generation: %w", err)
 		}

@@ -92,7 +92,7 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 		sessionID, _ := provision["session_id"].(string)
 		d.mu.Lock()
 		d.next++
-		environmentID := fmt.Sprintf("worktree-%d", d.next)
+		environmentID := fmt.Sprintf("logical-%d", d.next)
 		guestRoot := filepath.Join(d.root, environmentID)
 		d.guests[environmentID] = guestRoot
 		d.mu.Unlock()
@@ -139,7 +139,7 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 		}
 		d.mu.Lock()
 		d.next++
-		childID := fmt.Sprintf("worktree-%d", d.next)
+		childID := fmt.Sprintf("logical-%d", d.next)
 		childRoot := filepath.Join(d.root, childID)
 		d.guests[childID] = childRoot
 		d.mu.Unlock()
@@ -147,8 +147,18 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 			response = map[string]any{"error_code": "fork_failed", "error": "child root unavailable"}
 			break
 		}
+		var forkPayload struct {
+			Label string `json:"label"`
+		}
+		encoded, _ := json.Marshal(request["payload"])
+		var raw json.RawMessage
+		_ = json.Unmarshal(encoded, &raw)
+		if json.Unmarshal(raw, &forkPayload) != nil || forkPayload.Label == "" {
+			response = map[string]any{"error_code": "invalid", "error": "invalid fork label"}
+			break
+		}
 		response["binding"] = map[string]any{
-			"owner": binding["owner"], "session_id": binding["session_id"],
+			"owner": binding["owner"], "session_id": fmt.Sprint(binding["session_id"]) + ":" + forkPayload.Label,
 			"environment_id": childID, "ref": childID + "@7", "generation": 7,
 		}
 	case "child-delete":
@@ -398,7 +408,7 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 		first.Close()
 		t.Fatalf("sessions lack distinct exact microVM refs: one=%+v two=%+v", one.EnvironmentRef, two.EnvironmentRef)
 	}
-	if one.EnvironmentRef.Revision != "7" || two.EnvironmentRef.Revision != "7" || !strings.Contains(one.EnvironmentRef.ID, "worktree-1") || !strings.Contains(two.EnvironmentRef.ID, "worktree-2") {
+	if one.EnvironmentRef.Revision != "7" || two.EnvironmentRef.Revision != "7" || !strings.Contains(one.EnvironmentRef.ID, "logical-1") || !strings.Contains(two.EnvironmentRef.ID, "logical-2") {
 		first.Close()
 		t.Fatalf("logical worktree identities are not exact/distinct: one=%+v two=%+v", one.EnvironmentRef, two.EnvironmentRef)
 	}
@@ -409,14 +419,14 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	forksBefore := daemon.operationCount("fork")
 	assertSuccessfulRun(t, first.Service, one.ID, "delegate a direct-write change")
 	bindings := daemon.executedBindings()
-	if daemon.operationCount("fork") != forksBefore || len(bindings) == 0 || bindings[len(bindings)-1] != "worktree-1" {
+	if daemon.operationCount("fork") != forksBefore || len(bindings) == 0 || bindings[len(bindings)-1] != "logical-1" {
 		first.Close()
 		t.Fatalf("direct-write child did not use the parent environment: forks=%d bindings=%v", daemon.operationCount("fork"), bindings)
 	}
 
 	assertSuccessfulRun(t, first.Service, one.ID, "delegate isolated inspection")
 	bindings = daemon.executedBindings()
-	if daemon.operationCount("fork") != forksBefore+1 || len(bindings) == 0 || bindings[len(bindings)-1] == "worktree-1" {
+	if daemon.operationCount("fork") != forksBefore+1 || len(bindings) == 0 || bindings[len(bindings)-1] == "logical-1" {
 		first.Close()
 		t.Fatalf("isolated child did not use a distinct logical worktree: forks=%d bindings=%v", daemon.operationCount("fork"), bindings)
 	}

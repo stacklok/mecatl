@@ -39,9 +39,8 @@ type Asset struct {
 	SourcePath string
 }
 
-// GoMicroVMRuntime is the legacy test seam for the mount plan. Production uses
-// GoMicroVMMounts and go-microvm v0.0.40's host-enforced ReadOnly field directly.
-type GoMicroVMRuntime interface {
+// MountRuntime is the narrow test seam for applying a validated mount plan.
+type MountRuntime interface {
 	SetGuestVirtioFSMount(tag, guestPath string) error
 	AddVirtioFS(tag, hostPath string) error
 	AddVirtioFS3(tag, hostPath string, daxWindowSize uint64, readOnly bool) error
@@ -129,7 +128,7 @@ func (p MountPlan) GoMicroVMMounts() []gomicrovm.VirtioFSMount {
 // Configure registers every guest target and creates its libkrun device. A
 // read-only device always uses krun_add_virtiofs3 with read_only=true; it never
 // falls back to go-microvm's guest-only ReadOnly flag.
-func (p MountPlan) Configure(runtime GoMicroVMRuntime) error {
+func (p MountPlan) Configure(runtime MountRuntime) error {
 	if runtime == nil {
 		return errors.New("virtio-fs runtime is nil")
 	}

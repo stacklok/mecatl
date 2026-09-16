@@ -50,7 +50,7 @@ func TestRepositoryLogicalManagerRegisterFailureIsClosedAndClassified(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := LogicalEnvironmentRequest{Owner: "operator", Checkout: fixture.repo, Verified: fixture.verified}
+	request := LogicalEnvironmentRequest{Owner: "operator", Checkout: fixture.repo, Artifacts: testArtifactSnapshot(fixture.verified)}
 
 	_, err = manager.Create(t.Context(), request)
 	assertLogicalRootUnavailable(t, err, secret)
@@ -351,7 +351,7 @@ func newLogicalRepositoryFixture(t *testing.T) *logicalRepositoryFixture {
 
 func (f *logicalRepositoryFixture) create(t *testing.T) *LogicalEnvironment {
 	t.Helper()
-	environment, err := f.manager.Create(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: f.repo, Verified: f.verified})
+	environment, err := f.manager.Create(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: f.repo, Artifacts: testArtifactSnapshot(f.verified)})
 	if err != nil {
 		t.Fatalf("create logical environment: %v", err)
 	}

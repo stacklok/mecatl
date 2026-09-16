@@ -1,6 +1,8 @@
 package microvm
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,7 +34,7 @@ func TestMicroVMMVP_Scenario2_DurableSingletonRegistryReattachesOrFailsLoudly(t 
 				t.Errorf("open registry: %v", err)
 				return
 			}
-			result, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Verified: verified})
+			result, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 			if err != nil {
 				t.Errorf("concurrent ensure: %v", err)
 				return
@@ -71,7 +73,7 @@ func TestMicroVMMVP_Scenario2_DurableSingletonRegistryReattachesOrFailsLoudly(t 
 	runtime.mu.Lock()
 	delete(runtime.statuses, admitted.VMID)
 	runtime.mu.Unlock()
-	if _, err := restarted.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Verified: verified}); err == nil {
+	if _, err := restarted.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(verified)}); err == nil {
 		t.Fatal("missing runtime state minted a replacement")
 	}
 	if runtime.startCount() != 1 {
@@ -138,6 +140,40 @@ func TestMicroVMMVP_Scenario5_SessionsAndChildrenReuseRepositoryVM(t *testing.T)
 	}
 }
 
+func TestRepositoryForkCapturesDirtyParentSnapshot(t *testing.T) {
+	fixture := newRepositoryAttachmentFixture(t)
+	parent := fixture.attach(t)
+	defer parent.Close()
+	parentRoot := parent.Logical.WorktreePath
+	if err := os.WriteFile(filepath.Join(parentRoot, "tracked.txt"), []byte("unstaged parent bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentRoot, "staged.txt"), []byte("staged parent bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitexecForLogicalTest(t.Context(), parentRoot, "add", "staged.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentRoot, "untracked.txt"), []byte("untracked parent bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	child, cleanup, _, err := fixture.composition.Attachments.Fork(t.Context(), parent.Environment, "dirty-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	childRoot := fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath
+	for name, want := range map[string]string{
+		"tracked.txt": "unstaged parent bytes\n", "staged.txt": "staged parent bytes\n", "untracked.txt": "untracked parent bytes\n",
+	} {
+		got, readErr := os.ReadFile(filepath.Join(childRoot, name))
+		if readErr != nil || string(got) != want {
+			t.Fatalf("forked %s = %q, %v; want dirty snapshot bytes %q", name, got, readErr, want)
+		}
+	}
+}
+
 func TestMicroVMMVP_Scenario5_CloseDetachesWithoutDestroyingRepositoryVM(t *testing.T) {
 	t.Parallel()
 	fixture := newRepositoryAttachmentFixture(t)
@@ -186,11 +222,24 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath, "child.txt"), []byte("applied\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	childRoot := fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath
+	if err := os.WriteFile(filepath.Join(childRoot, "tracked.txt"), []byte("replaced\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(childRoot, "README.md")); err != nil {
+		t.Fatal(err)
+	}
 	if err := fixture.composition.Attachments.Merge(t.Context(), child, parent.Environment); err != nil {
 		t.Fatalf("merge non-conflicting child: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(parent.Logical.WorktreePath, "child.txt")); err != nil || string(got) != "applied\n" {
 		t.Fatalf("merged parent bytes = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parent.Logical.WorktreePath, "tracked.txt")); err != nil || string(got) != "replaced\n" {
+		t.Fatalf("merged replacement = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(parent.Logical.WorktreePath, "README.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("merged deletion remains: %v", err)
 	}
 	if err := cleanup(); err != nil {
 		t.Fatal(err)
@@ -205,14 +254,70 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(conflictAttachment.Logical.WorktreePath, "tracked.txt"), []byte("child\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent.Logical.WorktreePath, "tracked.txt"), []byte("parent\n"), 0o600); err != nil {
+	parentConflictPath := filepath.Join(parent.Logical.WorktreePath, "tracked.txt")
+	if err := os.WriteFile(parentConflictPath, []byte("parent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parentBefore, err := os.ReadFile(parentConflictPath)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.composition.Attachments.Merge(t.Context(), conflict, parent.Environment); !errors.Is(err, ErrMergeConflict) {
 		t.Fatalf("conflicting merge = %v, want ErrMergeConflict", err)
 	}
+	parentAfter, err := os.ReadFile(parentConflictPath)
+	if err != nil || !bytes.Equal(parentAfter, parentBefore) {
+		t.Fatalf("conflicting merge changed parent bytes: before=%q after=%q err=%v", parentBefore, parentAfter, err)
+	}
 	if _, err := os.Stat(conflictAttachment.Logical.WorktreePath); err != nil {
 		t.Fatalf("conflict did not preserve child: %v", err)
+	}
+}
+
+func TestRepositoryMergeSerializesConcurrentCalls(t *testing.T) {
+	fixture := newRepositoryAttachmentFixture(t)
+	parent := fixture.attach(t)
+	defer parent.Close()
+	first, cleanupFirst, _, err := fixture.composition.Attachments.Fork(t.Context(), parent.Environment, "serial-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupFirst()
+	second, cleanupSecond, _, err := fixture.composition.Attachments.Fork(t.Context(), parent.Environment, "serial-second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupSecond()
+
+	manager := fixture.composition.Attachments
+	attempted := make(chan struct{}, 2)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{}, 2)
+	manager.beforeMergeLock = func() { attempted <- struct{}{} }
+	manager.mergeWorktrees = func(context.Context, string, string, string) error {
+		entered <- struct{}{}
+		<-release
+		return nil
+	}
+	errs := make(chan error, 2)
+	go func() { errs <- manager.Merge(t.Context(), first, parent.Environment) }()
+	<-attempted
+	<-entered
+	go func() { errs <- manager.Merge(t.Context(), second, parent.Environment) }()
+	<-attempted
+	select {
+	case <-entered:
+		t.Fatal("second same-process merge entered while first merge was active")
+	default:
+	}
+	release <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatalf("first merge: %v", err)
+	}
+	<-entered
+	release <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatalf("second merge: %v", err)
 	}
 }
 
@@ -257,7 +362,7 @@ func newRepositoryAttachmentFixture(t *testing.T) *repositoryAttachmentFixture {
 
 func (f *repositoryAttachmentFixture) attach(t *testing.T) *RepositoryAttachment {
 	t.Helper()
-	attachment, err := f.composition.Attachments.Attach(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: f.repository, Verified: f.verified})
+	attachment, err := f.composition.Attachments.Attach(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: f.repository, Artifacts: testArtifactSnapshot(f.verified)})
 	if err != nil {
 		t.Fatalf("attach repository session: %v", err)
 	}

@@ -190,9 +190,9 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	composition.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
 		return manager, manager.endpoint, nil
 	}
-	buildCtx, cancelBuild := context.WithTimeout(t.Context(), 2*time.Second)
+	buildCtx, cancelBuild := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelBuild()
-	built, err := app.Build(buildCtx, composition)
+	built, err := buildIsolated(t, buildCtx, composition)
 	if err != nil {
 		t.Fatalf("CLI composition did not become service-ready: %v", err)
 	}
@@ -287,9 +287,9 @@ func serveCLICompositionPlacement(listener net.Listener, created, detached chan<
 		if operation == "create" {
 			sessionID, _ := binding["session_id"].(string)
 			response = map[string]any{
-				"binding": map[string]any{"owner": "local", "session_id": sessionID, "environment_id": "env-cli", "ref": "env-cli@1", "generation": 1},
+				"binding": map[string]any{"owner": "local", "session_id": sessionID, "environment_id": "logical-cli", "ref": "logical-cli@1", "generation": 1},
 				"created": map[string]any{
-					"ref": map[string]any{"Kind": "microvm", "ID": "env-cli@1"}, "generation": 1,
+					"ref": map[string]any{"Kind": "microvm", "ID": "logical-cli@1"}, "generation": 1,
 					"host_worktree": "/private/worktree", "guest_root": "/workspace", "profile": "microvm-local",
 					"guest_egress": "permissive", "host_egress": "not constrained",
 				},

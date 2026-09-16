@@ -16,9 +16,9 @@ func TestMicroVMLifecycleUX_ClientInventoryAndDeleteStayGenerationBound(t *testi
 	}
 	defer listener.Close()
 
-	requests := make(chan lifecycleRequest, 4)
+	requests := make(chan lifecycleRequest, 3)
 	go func() {
-		for i := 0; i < 4; i++ {
+		for i := 0; i < 3; i++ {
 			conn, acceptErr := listener.Accept()
 			if acceptErr != nil {
 				return
@@ -37,8 +37,6 @@ func TestMicroVMLifecycleUX_ClientInventoryAndDeleteStayGenerationBound(t *testi
 					}
 					payload, _ := json.Marshal(page)
 					_ = writeFrame(conn, lifecycleResponse{Payload: payload})
-				case "reconcile":
-					_ = writeFrame(conn, lifecycleResponse{})
 				case "delete":
 					payload, _ := json.Marshal(DeleteResult{WorktreePath: "/worktrees/s1", WorktreeRetained: true})
 					_ = writeFrame(conn, lifecycleResponse{Payload: payload})
@@ -60,18 +58,15 @@ func TestMicroVMLifecycleUX_ClientInventoryAndDeleteStayGenerationBound(t *testi
 	if err != nil || len(lastPage.Entries) != 1 || lastPage.Continuation != "" {
 		t.Fatalf("Inventory(next) = %+v, %v", lastPage, err)
 	}
-	if err := client.Reconcile(context.Background(), "local"); err != nil {
-		t.Fatal(err)
-	}
 	claim := GenerationBinding{Owner: "local", SessionID: "s1", EnvironmentID: "env-1", Ref: "env-1@7", Generation: 7}
 	deleted, err := client.DeleteGeneration(context.Background(), claim)
 	if err != nil || !deleted.WorktreeRetained || deleted.WorktreePath != "/worktrees/s1" {
 		t.Fatalf("DeleteGeneration() = %+v, %v", deleted, err)
 	}
 
-	firstInventoryRequest, nextInventoryRequest, reconcileRequest, deleteRequest := <-requests, <-requests, <-requests, <-requests
-	if firstInventoryRequest.Binding != (binding{Owner: "local"}) || nextInventoryRequest.Binding != (binding{Owner: "local"}) || reconcileRequest.Binding != (binding{Owner: "local"}) {
-		t.Fatalf("owner scope drifted: inventory=%+v next=%+v reconcile=%+v", firstInventoryRequest.Binding, nextInventoryRequest.Binding, reconcileRequest.Binding)
+	firstInventoryRequest, nextInventoryRequest, deleteRequest := <-requests, <-requests, <-requests
+	if firstInventoryRequest.Binding != (binding{Owner: "local"}) || nextInventoryRequest.Binding != (binding{Owner: "local"}) {
+		t.Fatalf("owner scope drifted: inventory=%+v next=%+v", firstInventoryRequest.Binding, nextInventoryRequest.Binding)
 	}
 	var nextPageRequest InventoryRequest
 	if err := json.Unmarshal(nextInventoryRequest.Payload, &nextPageRequest); err != nil || nextPageRequest.Continuation != "opaque-next" || nextPageRequest.PageSize != 1 {

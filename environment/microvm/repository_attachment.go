@@ -71,15 +71,18 @@ type repositoryAttachmentRecord struct {
 // RepositoryAttachmentManager adapts repository logical worktrees to session
 // attachment and the engine's existing isolated-child fork/merge seams.
 type RepositoryAttachmentManager struct {
-	logical *RepositoryLogicalManager
-	mu      sync.Mutex
-	active  map[session.EnvironmentRef]*repositoryChildAttachment
-	records map[string]*repositoryAttachmentRecord
+	logical         *RepositoryLogicalManager
+	mu              sync.Mutex
+	mergeMu         sync.Mutex
+	beforeMergeLock func()
+	mergeWorktrees  func(context.Context, string, string, string) error
+	active          map[session.EnvironmentRef]*repositoryChildAttachment
+	records         map[string]*repositoryAttachmentRecord
 }
 
 func newRepositoryAttachmentManager(logical *RepositoryLogicalManager) (*RepositoryAttachmentManager, error) {
 	manager := &RepositoryAttachmentManager{
-		logical: logical,
+		logical: logical, mergeWorktrees: mergeRepositoryWorktrees,
 		active:  make(map[session.EnvironmentRef]*repositoryChildAttachment),
 		records: make(map[string]*repositoryAttachmentRecord),
 	}
@@ -193,23 +196,24 @@ func (m *RepositoryAttachmentManager) Fork(ctx context.Context, parent tool.Envi
 // Merge reuses the established conflict-aware isolated-child patch path. A
 // conflict never closes or removes the child attachment.
 func (m *RepositoryAttachmentManager) Merge(ctx context.Context, child, parent tool.Environment) error {
+	if m == nil {
+		return ErrInvalidFork
+	}
+	if m.beforeMergeLock != nil {
+		m.beforeMergeLock()
+	}
+	m.mergeMu.Lock()
+	defer m.mergeMu.Unlock()
 	parentAttachment := m.lookupChild(parent.Ref())
 	childAttachment := m.lookupChild(child.Ref())
 	if parentAttachment == nil || childAttachment == nil || childAttachment.parent != parent.Ref() || childAttachment.forkBase == "" {
 		return ErrInvalidFork
 	}
-	toRef := func(ref session.EnvironmentRef) EnvironmentRef {
-		return EnvironmentRef{Kind: string(ref.Kind), ID: ref.ID}
-	}
-	parentRecord := EnvironmentRecord{
-		State: EnvironmentReady, Ref: toRef(parent.Ref()),
-		WorktreePath: parentAttachment.attachment.Logical.WorktreePath,
-	}
-	childRecord := EnvironmentRecord{
-		State: EnvironmentReady, Ref: toRef(child.Ref()), ParentRef: parentRecord.Ref,
-		WorktreePath: childAttachment.attachment.Logical.WorktreePath, ForkBase: childAttachment.forkBase,
-	}
-	return (&LifecycleChildren{}).Merge(ctx, parentRecord, childRecord)
+	return m.mergeWorktrees(ctx,
+		parentAttachment.attachment.Logical.WorktreePath,
+		childAttachment.attachment.Logical.WorktreePath,
+		childAttachment.forkBase,
+	)
 }
 
 func (m *RepositoryAttachmentManager) lookup(ref session.EnvironmentRef) *RepositoryAttachment {

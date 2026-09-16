@@ -55,7 +55,7 @@ func TestRepositoryGuestAuthenticationRejectsCompetingConnectorBeforeDisclosure(
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	started := time.Now()
-	logical, err := composition.Logical.Create(ctx, LogicalEnvironmentRequest{Owner: "operator", Checkout: repository, Verified: repositoryVerifiedArtifacts(t, root)})
+	logical, err := composition.Logical.Create(ctx, LogicalEnvironmentRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(repositoryVerifiedArtifacts(t, root))})
 	if err != nil {
 		t.Fatalf("real repository guest did not establish after stalled connector: %v", err)
 	}
@@ -112,11 +112,11 @@ func TestRepositoryProductionCompositionBootsOnceAndRoutesGuestMounts(t *testing
 	}
 	verified := repositoryVerifiedArtifacts(t, root)
 	createCtx, cancelCreate := context.WithCancel(t.Context())
-	first, err := composition.Logical.Create(createCtx, LogicalEnvironmentRequest{Owner: "operator", Checkout: repository, Verified: verified})
+	first, err := composition.Logical.Create(createCtx, LogicalEnvironmentRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := composition.Logical.Create(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: repository, Verified: verified})
+	second, err := composition.Logical.Create(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestRepositoryProductionInventoryPaginationAndLogicalDelete(t *testing.T) {
 	verified := repositoryVerifiedArtifacts(t, root)
 	attachments := make([]*RepositoryAttachment, 0, 2)
 	for _, sessionID := range []string{"session-a", "session-b"} {
-		attachment, attachErr := composition.Attachments.Attach(t.Context(), LogicalEnvironmentRequest{Owner: "local", Checkout: repository, Verified: verified})
+		attachment, attachErr := composition.Attachments.Attach(t.Context(), LogicalEnvironmentRequest{Owner: "local", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 		if attachErr != nil {
 			t.Fatal(attachErr)
 		}
@@ -372,12 +372,14 @@ func TestRepositoryProductionInventoryPaginationAndLogicalDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	daemon, err := NewDaemon(DaemonConfig{Control: auth, RepositoryAttachments: composition.Attachments})
+	daemon, err := NewDaemon(DaemonConfig{
+		Control: auth, RepositoryAttachments: composition.Attachments,
+		RepositoryProvisioner: func(context.Context, ProvisionRequest) (RepositoryPlacement, error) {
+			return RepositoryPlacement{}, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if daemon.manager != nil || daemon.registry != nil || daemon.reconciler != nil {
-		t.Fatal("repository production daemon composed a legacy lifecycle authority")
 	}
 	inventory := func(continuation string) LifecycleInventoryPage {
 		payload, marshalErr := json.Marshal(LifecycleInventoryRequest{PageSize: 1, Continuation: continuation})
@@ -435,7 +437,7 @@ func TestRepositoryProductionInventoryPaginationAndLogicalDelete(t *testing.T) {
 	if len(retained.Entries) != 1 || retained.Entries[0].State != EnvironmentReady || retained.Entries[0].Health != GenerationStale || retained.Entries[0].Error == "" {
 		t.Fatalf("retained logical inventory = %+v", retained)
 	}
-	reattached, err := composition.Attachments.Reattach(t.Context(), LogicalEnvironmentRequest{Owner: "local", Checkout: repository, Verified: verified}, attachments[1].Environment.Ref())
+	reattached, err := composition.Attachments.Reattach(t.Context(), LogicalEnvironmentRequest{Owner: "local", Checkout: repository, Artifacts: testArtifactSnapshot(verified)}, attachments[1].Environment.Ref())
 	if err != nil {
 		t.Fatalf("reattach retained dirty logical environment: %v", err)
 	}
@@ -681,9 +683,6 @@ func (b *rollbackRuntimeBackend) Start(_ context.Context, launch GoMicroVMLaunch
 	}
 	return b.instance, nil
 }
-func (*rollbackRuntimeBackend) Open(context.Context, EnvironmentRecord) (GoMicroVMInstance, error) {
-	return nil, ErrEnvironmentUnavailable
-}
 
 type rollbackRuntimeInstance struct {
 	stage                             string
@@ -789,7 +788,7 @@ func (b *repositoryCompositionBackend) Start(_ context.Context, launch GoMicroVM
 	defer b.mu.Unlock()
 	b.starts++
 	b.launch = launch
-	if !launch.RepositoryRootFS || len(launch.Mounts) != 2 || launch.Mounts[0].Tag != repositoryMountTag ||
+	if len(launch.Mounts) != 2 || launch.Mounts[0].Tag != repositoryMountTag ||
 		launch.Mounts[1].Tag != repositoryObjectMountTag || !launch.Mounts[1].ReadOnly {
 		return nil, errors.New("repository launch contract missing")
 	}
@@ -816,10 +815,6 @@ func (b *repositoryCompositionBackend) Start(_ context.Context, launch GoMicroVM
 	}
 	b.status = RuntimeStatus{Live: true, Generation: launch.Generation, VMID: launch.VMID, PID: 4242, ProcessIdentity: "fake-hypervisor-boot", Endpoint: launch.Endpoint}
 	return repositoryCompositionInstance{status: b.status}, nil
-}
-
-func (*repositoryCompositionBackend) Open(context.Context, EnvironmentRecord) (GoMicroVMInstance, error) {
-	return nil, ErrEnvironmentUnavailable
 }
 
 func (b *repositoryCompositionBackend) dialControl(ctx context.Context, _ string) (io.ReadWriteCloser, error) {

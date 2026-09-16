@@ -46,7 +46,6 @@ const (
 	StageInstall   ReadinessStage = "install"
 	StageDaemon    ReadinessStage = "daemon"
 	StageSocket    ReadinessStage = "socket"
-	StageReconcile ReadinessStage = "reconcile"
 	StageHealth    ReadinessStage = "health"
 	StageReady     ReadinessStage = "ready"
 )
@@ -73,8 +72,6 @@ func readinessText(stage ReadinessStage) (string, bool) {
 		return "Starting or reusing the microVM daemon", true
 	case StageSocket:
 		return "Waiting for the microVM daemon socket", true
-	case StageReconcile:
-		return "Reconciling existing microVM state", true
 	case StageHealth:
 		return "Running microVM health checks", true
 	case StageReady:
@@ -178,8 +175,6 @@ type Policy struct {
 	RequiredAttestations                            map[string]string
 	GuestEgressMode                                 string
 	GuestAllow                                      []EgressRule
-	Admission                                       map[string]int64
-	Resources                                       map[string]string
 }
 
 // EgressRule is one daemon-enforced guest destination allowance.
@@ -236,7 +231,6 @@ type Operations interface {
 
 type lifecycleClient interface {
 	Inventory(context.Context, string, ...microvmclient.InventoryRequest) (microvmclient.InventoryPage, error)
-	Reconcile(context.Context, string) error
 	DeleteGeneration(context.Context, microvmclient.GenerationBinding) (microvmclient.DeleteResult, error)
 }
 
@@ -257,9 +251,8 @@ func New(paths Paths, ops Operations, lifecycle ...lifecycleClient) *Manager {
 	return manager
 }
 
-// EnsureReady idempotently installs or validates the configured release, starts
-// or reuses the exact compatible daemon, and reconciles its durable state. The
-// inter-process manager lock serializes the complete transaction. Readiness is
+// EnsureReady idempotently installs or validates the configured release and starts
+// or reuses the exact compatible daemon. The inter-process manager lock serializes the complete transaction. Readiness is
 // observed state: this method never edits the operator settings file.
 func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string, error) { //nolint:gocyclo // ordered readiness transaction
 	ReportReadinessStage(ctx, StagePrepare)
@@ -364,12 +357,6 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 	if err := m.ops.WaitSocket(ctx, m.paths.Socket); err != nil {
 		return "", readinessError(StageSocket, fmt.Errorf("wait for owner-only microvmd socket: %w", err))
 	}
-	if m.lifecycle != nil {
-		ReportReadinessStage(ctx, StageReconcile)
-		if err := m.lifecycle.Reconcile(ctx, "local"); err != nil {
-			return "", readinessError(StageReconcile, fmt.Errorf("reconcile existing microVM state: %w", err))
-		}
-	}
 	ReportReadinessStage(ctx, StageHealth)
 	if _, err := m.ops.Doctor(ctx, m.paths); err != nil {
 		return "", readinessError(StageHealth, fmt.Errorf("microvmd doctor: %w", err))
@@ -424,7 +411,7 @@ func ClassifyReadinessFailure(err error, fallback ReadinessStage) ReadinessFailu
 	case stage == StageInstall:
 		failure.Category = "artifact_install"
 		failure.Cause = "verified microVM artifacts could not be installed"
-	case stage == StageDaemon || stage == StageSocket || stage == StageReconcile || stage == StageHealth || stage == StageReady:
+	case stage == StageDaemon || stage == StageSocket || stage == StageHealth || stage == StageReady:
 		failure.Category = "daemon_policy_identity"
 		failure.Cause = "the microVM daemon, policy, or identity check failed, inspect doctor and diagnostics before retrying"
 	default:
@@ -452,8 +439,7 @@ func configuredRequestCompatible(path string, release Release, policy Policy) er
 		"policy_revision":       policy.PolicyRevision,
 		"required_attestations": policy.RequiredAttestations,
 		"guest_egress":          map[string]any{"Mode": policy.GuestEgressMode, "Allow": policy.GuestAllow},
-		"admission":             policy.Admission,
-		"profiles":              map[string]any{Alias: map[string]any{"resources": policy.Resources}},
+		"profiles":              map[string]any{Alias: map[string]any{}},
 	}
 	if policy.CertificateIdentity != "" {
 		desired["certificate_identity"], desired["oidc_issuer"] = policy.CertificateIdentity, policy.OIDCIssuer
@@ -849,8 +835,8 @@ func writeDaemonConfig(path string, paths Paths, release Release, policy Policy,
 		"release_identity": "sha256:" + release.SHA256, "binary_identity": binaryIdentity,
 		"policy_revision": policy.PolicyRevision, "artifact_cache": filepath.Join(paths.DataDir, "cache"), "runtime_dir": filepath.Join(paths.RuntimeDir, "generations"),
 		"required_attestations": policy.RequiredAttestations, "artifacts": artifacts,
-		"guest_egress": map[string]any{"Mode": policy.GuestEgressMode, "Allow": policy.GuestAllow}, "admission": policy.Admission,
-		"profiles": map[string]any{Alias: map[string]any{"resources": policy.Resources}},
+		"guest_egress": map[string]any{"Mode": policy.GuestEgressMode, "Allow": policy.GuestAllow},
+		"profiles":     map[string]any{Alias: map[string]any{}},
 	}
 	if policy.CertificateIdentity != "" {
 		cfg["certificate_identity"], cfg["oidc_issuer"] = policy.CertificateIdentity, policy.OIDCIssuer

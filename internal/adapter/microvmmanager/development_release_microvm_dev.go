@@ -92,7 +92,7 @@ func ReadyRequestFromDevelopmentDescriptor(path, sourceBuildIdentity string, egr
 		Release: Release{bundlePath: filepath.Clean(descriptor.BundlePath), bundleFile: bundle, SHA256: descriptor.BundleSHA256},
 		Policy: Policy{
 			PolicyRevision: descriptor.PolicyRevision, PublicKeyIdentity: descriptor.PublicKeyIdentity, publicKey: key,
-			RequiredAttestations: requiredMicroVMAttestations(), GuestEgressMode: GuestEgressPermissive, Resources: defaultMicroVMResources(),
+			RequiredAttestations: requiredMicroVMAttestations(), GuestEgressMode: GuestEgressPermissive,
 		},
 	}
 	if err := applyGuestEgress(&request, egress); err != nil {

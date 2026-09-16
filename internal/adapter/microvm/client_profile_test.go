@@ -34,8 +34,8 @@ func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 		}
 		requestSeen <- request
 		_ = writeFrame(conn, lifecycleResponse{
-			Binding: binding{Owner: "local", SessionID: request.Provision.SessionID, EnvironmentID: "env-1", Ref: "env-1@7", Generation: 7},
-			Created: &created{Ref: environmentRef{Kind: "microvm", ID: "env-1@7"}, Generation: 7, HostWorktree: "/private/worktree", GuestRoot: "/workspace", Profile: "microvm-local", GuestEgress: "deny-all", HostEgress: "not constrained"},
+			Binding: binding{Owner: "local", SessionID: request.Provision.SessionID, EnvironmentID: "logical-1", Ref: "logical-1@7", Generation: 7},
+			Created: &created{Ref: environmentRef{Kind: "microvm", ID: "logical-1@7"}, Generation: 7, HostWorktree: "/private/worktree", GuestRoot: "/workspace", Profile: "microvm-local", GuestEgress: "deny-all", HostEgress: "not constrained"},
 		})
 	}()
 
@@ -51,7 +51,7 @@ func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 	if request.Provision == nil || request.Provision.Profile != "microvm-local" || request.Provision.SourceCheckout != "/source" || request.Provision.SessionID == "" {
 		t.Fatalf("opaque provision request = %+v", request.Provision)
 	}
-	if placed.Ref.Kind != "microvm" || placed.Ref.Revision != "7" || !strings.HasSuffix(placed.Ref.ID, ".env-1") {
+	if placed.Ref.Kind != "microvm" || placed.Ref.Revision != "7" || !strings.HasSuffix(placed.Ref.ID, ".logical-1") {
 		t.Fatalf("exact placement ref = %+v", placed.Ref)
 	}
 	if placed.Metadata.Label != "Local microVM" || strings.Contains(placed.Metadata.Label, "/private/") {

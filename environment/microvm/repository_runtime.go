@@ -36,6 +36,7 @@ type RepositoryRuntimeConfig struct {
 	EndpointRoot string
 	Network      *NetworkController
 	GuestEgress  GuestEgressPolicy
+	Observer     *OperationsObserver
 }
 
 type repositoryRuntimeGeneration struct {
@@ -64,6 +65,7 @@ type RepositoryRuntime struct {
 	unixEndpoint    bool
 	network         *NetworkController
 	guestEgress     GuestEgressPolicy
+	observer        *OperationsObserver
 	rollbackTimeout time.Duration
 	mu              sync.Mutex
 	vms             map[string]*repositoryRuntimeGeneration
@@ -76,7 +78,7 @@ func NewRepositoryRuntime(cfg RepositoryRuntimeConfig) (*RepositoryRuntime, erro
 	if cfg.Backend == nil || cfg.Network == nil || (cfg.UnixEndpoint && (cfg.DialGuest != nil || cfg.DialControl != nil)) || (!cfg.UnixEndpoint && (cfg.DialGuest == nil || cfg.DialControl == nil)) {
 		return nil, errors.New("repository microvm runtime is not fully configured")
 	}
-	runtime := &RepositoryRuntime{backend: cfg.Backend, dial: cfg.DialGuest, controlDial: cfg.DialControl, unixEndpoint: cfg.UnixEndpoint, network: cfg.Network, guestEgress: cfg.GuestEgress, rollbackTimeout: repositoryRollbackTimeout, vms: make(map[string]*repositoryRuntimeGeneration), listeners: make(map[string]*net.UnixListener)}
+	runtime := &RepositoryRuntime{backend: cfg.Backend, dial: cfg.DialGuest, controlDial: cfg.DialControl, unixEndpoint: cfg.UnixEndpoint, network: cfg.Network, guestEgress: cfg.GuestEgress, observer: cfg.Observer, rollbackTimeout: repositoryRollbackTimeout, vms: make(map[string]*repositoryRuntimeGeneration), listeners: make(map[string]*net.UnixListener)}
 	if cfg.UnixEndpoint {
 		runtime.dial = runtime.acceptGuest
 		runtime.controlDial = runtime.acceptGuest
@@ -124,6 +126,9 @@ func (r *RepositoryRuntime) Start(ctx context.Context, record RepositoryVMRecord
 		return RuntimeStatus{}, err
 	}
 	owned.network = network
+	if source, ok := network.Provider.(egressDenialSource); ok && r.observer != nil {
+		r.observer.trackEgressDenials(record.VMID, source)
+	}
 	launch := GoMicroVMLaunch{
 		EnvironmentID: record.VMID, VMID: record.VMID, Endpoint: record.Endpoint, Generation: record.Generation,
 		RepositoryOwner: record.Owner, RepositoryKey: record.RepositoryKey,
@@ -135,7 +140,7 @@ func (r *RepositoryRuntime) Start(ctx context.Context, record RepositoryVMRecord
 			{Tag: repositoryObjectMountTag, HostPath: objectSnapshot, ReadOnly: true},
 		},
 		CapabilityKey: authority.bytes(), Verified: true, HostReadOnly: true,
-		DisableIPv6: r.guestEgress.tightened(), RepositoryRootFS: true,
+		DisableIPv6: r.guestEgress.tightened(),
 	}
 	instance, err = r.backend.Start(ctx, launch)
 	if err != nil {
@@ -223,6 +228,9 @@ func (r *RepositoryRuntime) rollback(parent context.Context, record RepositoryVM
 	}
 	r.mu.Unlock()
 	if owned.network.Provider != nil {
+		if r.observer != nil {
+			r.observer.untrackEgressDenials(record.VMID)
+		}
 		owned.network.Provider.Stop()
 	}
 	var cleanupErr error

@@ -71,11 +71,14 @@ func runCommand(ctx context.Context, dir string, extraFiles []*os.File, prefix [
 	cmd.ExtraFiles = extraFiles
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Env = commandEnvironment(environment)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, bytes.TrimSpace(out))
+	var stdout bytes.Buffer
+	stderr := &limitedBuffer{remaining: 64 << 10}
+	cmd.Stdout = &stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, bytes.TrimSpace(stderr.Bytes()))
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
 func commandArguments(prefix, args []string) []string {

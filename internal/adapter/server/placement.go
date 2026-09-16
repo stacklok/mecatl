@@ -45,7 +45,7 @@ func (*placementReadinessError) Unwrap() error { return ErrPlacementUnavailable 
 // placement readiness failure. Unknown values fail closed to generic placement
 // unavailability rather than carrying provider text across the server boundary.
 func NewPlacementReadinessError(stage, category, cause string) error {
-	stages := map[string]bool{"prepare": true, "preflight": true, "download": true, "verify": true, "install": true, "daemon": true, "socket": true, "reconcile": true, "health": true, "ready": true}
+	stages := map[string]bool{"prepare": true, "preflight": true, "download": true, "verify": true, "install": true, "daemon": true, "socket": true, "health": true, "ready": true}
 	causes := map[string]string{
 		"unsupported_platform":    "microvm-local requires Linux amd64 with KVM, use host-local on this host",
 		"host_prerequisite":       "a required host prerequisite is unavailable, run microvm doctor for host remediation",

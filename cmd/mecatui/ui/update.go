@@ -43,7 +43,7 @@ func safeMicroVMReadinessMessage(detail string) (string, bool) {
 	stage := strings.TrimPrefix(parts[0], "stage=")
 	category := strings.TrimPrefix(parts[1], "category=")
 	cause := strings.TrimPrefix(parts[2], "cause=")
-	stages := map[string]bool{"prepare": true, "preflight": true, "download": true, "verify": true, "install": true, "daemon": true, "socket": true, "reconcile": true, "health": true, "ready": true}
+	stages := map[string]bool{"prepare": true, "preflight": true, "download": true, "verify": true, "install": true, "daemon": true, "socket": true, "health": true, "ready": true}
 	causes := map[string]string{
 		"unsupported_platform":    "microvm-local requires Linux amd64 with KVM, use host-local on this host",
 		"host_prerequisite":       "a required host prerequisite is unavailable, run microvm doctor for host remediation",

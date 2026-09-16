@@ -115,7 +115,7 @@ state. The existing single-client isolated-child merge behavior is sufficient: n
 crash-durable merge journal, cross-process serialization, or multi-client proof is part of
 the MVP.
 
-Schedules use the same repository-scoped lifecycle rather than a session-per-VM variant.
+Schedules use the repository-scoped lifecycle.
 `internal/adapter/server/schedule_manager.go` (`CreateSchedule`) provisions one logical
 attachment only for an independent schedule and persists `PlacementOwned`; origin-backed,
 no-FS, host-local, and legacy records remain borrowed. Update carries origin, ref, scope,
@@ -162,8 +162,7 @@ tokens. Explicit deferrals are repository-VM deletion UX,
 sophisticated retention, crash-orphan reconciliation beyond safe loud failure,
 crash-durable/cross-process merge, Linux arm64 and macOS live support, upstream Brood
 signing, independent refresh channels, per-session fairness/quotas, dashboards, and
-exhaustive cache-poisoning controls. The historical subsection below records the superseded
-accumulator implementation only; it is not target architecture.
+exhaustive cache-poisoning controls.
 
 ### Local microVM development release activation (ADR 0345)
 
@@ -183,28 +182,6 @@ HTTP/gRPC, arbitrary-URL, or external-installer path. The developer Taskfile tas
 preparation, binaries, and tests separate from ordinary `task build`, with generated assets
 under `.scratch`.
 
-### Historical accumulator implementation (superseded)
-
-The opt-in nested runtime keeps observability separate from the engine event stream.
-`environment/microvm/operations.go` (`OperationsObserver`) owns a mutex-protected,
-fixed-dimension snapshot: fixed boot-latency buckets, active/booting VM and aggregate
-vCPU/memory/disk gauges, plus exec, guest-egress-denial, artifact-verification,
-cleanup/reconciliation, and quota-rejection counters. `ArtifactKind`, `Outcome`, and
-`QuotaKind` are closed dimensions; invalid values are ignored. Exec command content
-and denied destinations are accepted only at the producer method boundary and
-immediately discarded, making the absence contract executable rather than relying on
-a caller to redact. Diagnostics use fixed messages and bounded outcome/kind/quota
-attributes. These daemon lifecycle facts have no client `session.Event`, so using the
-injected `port.Diagnostics` follows the event-owns-client-facts rule.
-
-The same file's `Doctor` runs the complete readiness set even after one probe fails:
-hypervisor access; runtime and firmware verification; control-socket peer
-authentication; selected network-provider readiness; non-empty operator profile
-availability; and stale registry resources. Findings are stable PASS/WARN/FAIL lines
-with a fixed remediation for every check. Stale resources WARN without hiding other
-failures. Platform composition supplies real probes; ordinary tests supply deterministic
-offline probes and do not require KVM or HVF.
-
 The same authenticated lifecycle protocol now owns operator inventory and maintenance.
 `environment/microvm/repository_attachment_store.go` durably records each exact repository
 logical owner/session/ref/generation and its confined worktree plus dirty-retention decision;
@@ -221,10 +198,8 @@ into an unresumable destroyed tombstone.
 `internal/adapter/microvm/client.go` (`Inventory`)
 rechecks the owner and bound; `internal/adapter/microvmmanager/manager.go` (`Status`)
 never opens registry files. `Status` holds one bounded page and its continuation instead of
-a lifetime inventory. Readiness starts or reuses the verified daemon, invokes `Daemon.reconcile`, and
-walks bounded inventory pages without retaining prior rows; status prints one page plus a
-copyable `--continuation` command. Startup and readiness share the existing reconciler and
-never call Create or enable host fallback. Exact logical-attachment deletion is exposed
+a lifetime inventory. Readiness starts or reuses the verified daemon and never calls Create
+or enables host fallback; status prints one page plus a copyable `--continuation` command. Exact logical-attachment deletion is exposed
 only by `mecated microvm delete`: it validates the exact owner-scoped backend, attachment,
 ref, and generation from status, confirms destructive action, preserves dirty worktrees,
 and never deletes or resets the repository VM. It is not a server API.
@@ -251,12 +226,11 @@ internal for explicit lifecycle cleanup and is never called by ordinary readines
 download or repository provisioning, `internal/adapter/microvmmanager/default_operations.go`
 (`Preflight`) checks Git,
 Python 3, KVM, and actual ephemeral unprivileged-user-namespace creation; disabled controls
-and exhausted quota fail actionably without changing host policy. `Doctor` repeats that host
+and unavailable host prerequisites fail actionably without changing host policy. `Doctor` repeats that host
 preflight, first queries
 this serving identity, then runs the complete readiness probes against the same
-exact installation rather than validating only newly written files. Initialization
-defaults to 2 vCPUs, 4 GiB RAM, and permissive guest
-egress. `internal/adapter/microvmmanager/manager.go` (`DefaultPaths`) separates config (`$XDG_CONFIG_HOME/mecatl`), artifacts and
+exact installation rather than validating only newly written files. Guest egress is
+permissive by default. `internal/adapter/microvmmanager/manager.go` (`DefaultPaths`) separates config (`$XDG_CONFIG_HOME/mecatl`), artifacts and
 the daemon binary (`$XDG_DATA_HOME/mecatl/microvm`), durable registry/worktrees
 (`$XDG_STATE_HOME/mecatl/microvm`), and the short owner-only runtime socket; each
 uses the documented home or `/tmp/mecatl-microvm-UID` fallback. The live support scope
@@ -337,19 +311,17 @@ workload's authority. `TestInvariant_guest_workload_is_unprivileged` and the rea
 `TestMicroVMEnvironments_Scenario8_HostSecretAndSiblingIsolation` pin the structural
 and kernel-observable halves of this boundary.
 
-The durable lifecycle itself remains in `environment/microvm/registry.go`
-(`FileRegistry`) and `environment/microvm/reconcile.go` (`Reconciler`). Runtime,
-reconciliation, and doctor all compare the durable runner token through
+The repository-only lifecycle is owned by `environment/microvm/repository_lifecycle.go`
+(`RepositoryVMRegistry`). Runtime and doctor compare the durable runner token through
 `environment/microvm/runtime.go` (`ProcessStartIdentity`), which reads the platform
 process-start identity rather than trusting PID liveness or a synthetic token.
-Operational counters remain reset-by-design process observations, while startup reconstructs
-active/booting VM and aggregate resource gauges from the authoritative registry
-before reconciliation. The registry observer keys by generation, so repeated saves
-and delete checkpoints do not double-count; a committed destroyed tombstone removes
-the generation exactly once. Active hosted-network cumulative denial totals are
-sampled as per-generation deltas; repeated snapshots are idempotent, final teardown
-captures only an unseen delta, and a restarted observer establishes a fresh baseline
-before counting new denials. Metrics never become session state or credentials.
+`environment/microvm/operations.go` (`OperationsObserver`) retains process-local counters
+for execs, artifact verification, logical cleanup, and guest-egress denials. Its
+`egressSources` map is keyed by repository generation while that generation is active;
+registration samples a baseline, snapshots accumulate only unseen deltas, and teardown
+samples once before deleting the entry. The map, baselines, and counters die with the daemon
+and are reset by design. Commands, destinations, paths, bindings, and credentials are not
+retained. Metrics never become session state or authority.
 See the [architecture](../architecture/microvm-environments.md) and
 [operator guide](../usage/microvm-environments.md).
 
@@ -6547,177 +6519,6 @@ the scoped WRITE path is deferred** (see below).
   discipline (distinct dir from the project/user-model stores). The grpcdriver agent-source client
   constructs `AgentDef`s from wire metadata — `Memory` is **NOT** carried on the wire in v1 (no proto
   change); a driver-served def stays cold-start.
-
-### Historical environment placement implementation (superseded by ADR 0345 redesign)
-
-This subsection describes the existing accumulator code and its test seams. Its
-session-per-VM lifecycle, derived image, deny-default networking, explicit init/recover,
-`--microvm`, external cosign, mode widening, and per-generation rootfs clone are removal
-inputs, not target decisions. The authoritative target is the redesign contract under
-[Local microVM redesign contract](#local-microvm-redesign-contract-adr-0345), the living
-[architecture](../architecture/microvm-environments.md), and ADR 0345.
-
-`environment_profile` is independent from the existing tool-surface `profile`. The
-request carries only an alias resolved against `permconfig.Resolver`'s operator-only
-`environment_profiles` registry; project blocks are WARN-ignored. The host registry
-owns only enabled/disabled state and the daemon endpoint. The create protocol sends
-the alias, owner/session, and source checkout; `mecatl-microvmd` is the single policy
-authority for artifacts, fixed mounts, resources, egress, seccomp, lifecycle,
-quotas, signer, and attestation. Host profile keys that would restate those values
-are strict parse errors, so they cannot be silently dropped or echoed as if enforced.
-Unknown, disabled, unavailable, malformed, or provisioner-failed aliases return a
-loud create error with no local fallback.
-
-The preparation seam returns four distinct roles: source checkout, prepared host
-worktree, guest `/workspace`, and opaque `EnvironmentRef`. `Session.Workspace` stores
-the prepared host worktree and the complete live Environment carries the guest root
-and ref. gRPC/HTTP responses project only the alias and first three paths; privileged
-policy and control endpoints never cross the response mapper. Root composition now
-constructs the thin authenticated UDS client for enabled aliases and wires provision,
-session-aware exact-generation resolve, detach, and permanent delete. When no enabled
-alias exists those seams remain nil, preserving the default path byte-for-byte.
-
-The nested microVM adapter owns guest networking. Each environment starts an
-explicit go-microvm hosted provider with a deny-default policy: either no guest
-destination is allowed, or only configured hostname/port/protocol triples are.
-Provider startup, endpoint validation, and policy enforcement are creation gates;
-none may fall back to libkrun's implicit network. The module-pinned go-microvm release enforces
-`VirtioFSMount.ReadOnly` at both libkrun and guest mount layers; its network filter
-remains IPv4-only, so the preboot guest agent disables IPv6 on
-all/current/future interfaces and creation fails if that cannot be enforced.
-
-This boundary is guest-only. Session responses expose separate `guest_egress` and
-`host_egress` status returned by microvmd from the policy it enforced; the host
-never derives those strings from a second profile copy. Guest deny-all does **not** constrain host-side LLM providers,
-WebFetch, WebSearch, MCP, hooks, OCI pulls, or telemetry.
-
-The environment generation is session-lifetime and restart-stable. The local daemon
-exposes one bounded management protocol in `environment/microvm/daemon.go`
-(`Daemon`): create, resolve/attach, inspect, detach, and delete authenticate the
-Unix peer before examining caller identifiers. Create binds the requested owner/session
-to the allocator-selected durable ref/generation; all later operations compare the full
-owner/session/environment/ref/generation tuple with `FileRegistry` before invoking any
-runtime method. Responses repeat that authoritative binding. A mismatch therefore cannot
-reattach, inspect, detach, or tombstone another generation.
-
-`environment/microvm/lifecycle.go` (`GuestPrebootArtifact`) is the runtime-independent
-preboot seam. Before `VMRuntime.Create`, lifecycle constructs the rootfs artifact for
-`/etc/mecatl/guest-agent.json` with IPv6 disablement, the exact control binding, endpoint,
-required guest capabilities, and message bound before calling the runtime; the runtime
-contract requires installation before guest workload services start and must fail creation
-if it cannot install the complete artifact.
-This replaces any post-workload IPv6 setup as a creation guarantee while keeping
-hypervisor construction behind `VMRuntime` for offline tests. The OCI execution-image
-resolver in `environment/microvm/oci_execution_image.go` (`OCIExecutionImageResolver`)
-accepts only canonical `repo@sha256` references. It wraps the module-pinned go-microvm release's
-platform-specific remote fetch, hardened layer extraction, and OCI cache with an exact
-manifest/platform check, then returns the extracted directory to the existing mecatl
-materialized-tree digest, Sigstore, atomic verified-cache, and private launch-snapshot
-admission. `ArtifactRequest.ManifestDigest` and `VerifiedArtifact.ManifestDigest` keep
-the OCI identity distinct from `Digest`, which remains the signed extracted-tree
-identity; both persist in `EnvironmentRecord` and `SessionPlacement`. Cold pulls are
-serialized per resolver, warm/concurrent requests use go-microvm's manifest cache, and
-runtime never receives an OCI reference.
-
-The concrete
-`environment/microvm/runtime.go` (`GoMicroVMRuntime`) passes the three verified
-artifact paths to go-microvm's libkrun runtime/firmware sources and clones the
-verified execution image into a private per-generation rootfs before installing
-the secret capability (never mutating the verified cache), projects the validated mount plan onto v0.0.40's real
-host-enforced `ReadOnly`, starts one uniquely rooted hosted provider per generation,
-creates the owner-only host Unix listener before boot, binds vsock, explicitly starts
-the verified `/usr/local/bin/mecatl-guest-agent`, and retains the transferable-capability
-issuer plus unified guest services. The Linux guest entrypoint mounts the three fixed
-virtio-fs tags without mutating host ownership, configures the standard hosted network
-before disabling IPv6, and reconnects after a data-plane detach. Per-generation
-network and go-microvm data directories prevent concurrent sessions from sharing a
-socket or runtime state. The
-`environment/microvm/composition.go` (`NewRuntimeDaemon`) is the daemon
-composition root used by `environment/microvm/cmd/mecatl-microvmd`; ordinary
-tests replace only the hypervisor backend and network provider.
-
-The nested adapter's `environment/microvm/registry.go` (`FileRegistry`) reloads a versioned JSON registry under
-an inter-process flock on every operation and commits updates by file fsync, atomic rename,
-and directory fsync. An environment id cannot be overwritten by another generation, and
-lifecycle state/tombstones/cleanup checkpoints only advance, so a stale second daemon cannot
-resurrect a deleted generation. The record includes the process-start identity in addition
-to PID; runtime reattach/destroy must match generation, VM id, endpoint, and process identity
-before touching a process or socket.
-
-`environment/microvm/reconcile.go` (`EnvironmentManager`) keeps detach and destruction
-separate. Detach verifies and releases process-local handles without changing the ready
-record. Explicit and retention deletion first persist `EnvironmentDeleting` plus a tombstone,
-then idempotently destroy the generation's VM, endpoint, and descendants. Clean worktrees
-are removed; dirty worktrees are marked preserved. Cleanup checkpoints and the final destroyed
-tombstone are durable, so disk-full or process death leaves retryable work rather than an
-untracked resource. `Reconciler` handles provisioning, cleanup-pending, deleting, missing
-runtime, PID reuse, and stale-generation states without ever calling Create. On startup,
-a ready generation that cannot reattach is durably moved to cleanup-pending and destroyed
-only through its exact persisted PID/start token, VM, endpoint, and generation identity;
-an identity mismatch leaves the foreign resource untouched and fails startup. The destroyed
-tombstone commits before reconstructed admission is released, so stale ready quota cannot
-persist indefinitely. A restarted resolver uses `NewReattachingResolver`; unavailable or
-identity-mismatched generations return an actionable error and never mint an empty replacement. This resolver path remains
-independent from `Service.rehydrateSession`: reattaching a microVM does not itself rebuild the
-per-session engine.
-
-Same-repository sessions allocate opaque, collision-resistant names through
-`environment/microvm/names.go` (`OpaqueIdentityAllocator`): caller-controlled session and
-repository strings never become a path, socket, VM id, or Git ref. Each allocation carries a
-distinct generation, endpoint, worktree, reconstructed metadata directory, and branch. The
-worktrees share only the validated common object store, mounted through the host-enforced
-read-only virtio-fs plan; files, indexes, refs, config, hooks, and guest metadata remain
-session-owned.
-
-Delegated read-only children use `environment/microvm/forker.go`
-(`EnvironmentForker`) as both the complete-environment fork seam and the merger.
-Fork writes the parent worktree's exact dirty state into an immutable Git tree with an
-isolated temporary index, verifies two consecutive captures agree, and asks worktree
-preparation to materialize that tree rather than rereading a mutable parent. The daemon
-persists the resulting non-empty tree id with `EnvironmentRecord.ParentRef`/`ForkBase` and
-validates both-or-neither on every registry save. Merge is generation-fenced and serialized
-inside `Daemon` by a fixed parent-ref lock stripe, so independent harness clients share the
-same lock. The driver contract compares the child with that immutable base, classifies
-additions/replacements/deletions, checks every changed path against the current parent,
-constructs and checks the patch, then revalidates immediately before one atomic apply; a
-conflict preserves the child. Process-local quota and
-collision maps reset after a harness restart, while the registry parent/base
-binding remains authoritative for resume and exact-generation reconciliation.
-Cleanup always uses a cancellation-detached context, so cancellation, timeout,
-and background drain release the intended child without crossing into its
-parent; cleanup-pending child records use the same idempotent tombstone/checkpoint
-reconciler as parent generations.
-
-`environment/microvm/artifact.go` (`VerifiedCache`) binds trust evidence to the
-actual executable bytes: after copying a resolver source into private staging it
-computes the canonical tree digest (paths, modes, and bytes), requires it to equal
-the signed/attested subject digest, and only then atomically renames the entry.
-Cache reload repeats both the tree/metadata comparison and evidence verification.
-The launch path then reacquires all three content-addressed entry locks, repeats
-those checks, and holds the locks until the runtime consumes the paths; otherwise-valid
-evidence placed beside bytes altered after `Verify` therefore cannot launch. Admission
-and release use one provenance/bundle format. Release and GitHub live cells verify
-keyless Sigstore bundles under an exact workflow certificate identity and OIDC issuer;
-the mutually-exclusive public-key mode binds the exact public-key bytes by SHA-256 for
-private/offline operation. The local live E2E generates that key only in private scratch
-state and still exercises signed provenance, wrong-key/identity/predicate failures, and
-the launch-time byte recheck. The
-root release workflow creates the GitHub Release before its matrix uploads, gives
-each platform uniquely named checksum and payload assets, builds dependency-bearing
-SPDX SBOMs with Syft, signs the provenance statements, and identifies the reused module-pinned go-microvm runtime and firmware. Ordinary pull-request CI independently builds, races, lints, vets, caches,
-and runs `GOWORK=off` over every nested package.
-
-`environment/microvm/admission.go` (`AdmissionController`) atomically enforces positive
-per-owner and deployment bounds for booting/active VMs, worktrees, CPU, RAM, disk, inodes,
-execs, forks, pulls, and rolling boot rates. Lifecycle acquisition occurs before identity or
-resource creation, transitions booting to active without an accounting gap, and persists the
-retained reservation in the generation record. Daemon startup reconstructs reservations from
-the registry before reconciliation and before accepting requests; destruction releases capacity
-only after the destroyed tombstone commits. `AdmissionError` is the stable actionable rejection
-projection. Public clients receive only bounded `PlacementMetadata`; exact refs,
-host worktrees, guest roots, and daemon endpoints remain private. Per-session composition
-reattaches the exact persisted ref through the deployment-owned provider before resolving
-project inputs through the resulting Workspace.
 
 ### Session profiles — `"no-fs"` (issue #55)
 

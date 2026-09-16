@@ -23,6 +23,8 @@ func (d *Daemon) handleRepositoryRequest(ctx context.Context, request LifecycleR
 		response, err = d.repositoryCreate(ctx, request)
 	case strings.HasPrefix(request.Binding.EnvironmentID, "logical-"):
 		response, err = d.repositoryOperation(ctx, request)
+	case request.Operation == LifecycleExec:
+		response, err = LifecycleResponse{}, ErrEnvironmentUnavailable
 	default:
 		return LifecycleResponse{}, false
 	}
@@ -36,11 +38,11 @@ func (d *Daemon) repositoryCreate(ctx context.Context, request LifecycleRequest)
 	if d.repositoryProvisioner == nil || request.Provision == nil || request.Binding.Owner == "" || request.Binding.SessionID == "" || request.Provision.Owner != request.Binding.Owner || request.Provision.SessionID != request.Binding.SessionID {
 		return LifecycleResponse{}, control.ErrBindingMismatch
 	}
-	logicalRequest, status, err := d.repositoryProvisioner(ctx, *request.Provision)
+	placement, err := d.repositoryProvisioner(ctx, *request.Provision)
 	if err != nil {
 		return LifecycleResponse{}, err
 	}
-	attachment, err := d.repositoryAttachments.Attach(ctx, logicalRequest)
+	attachment, err := d.repositoryAttachments.Attach(ctx, placement.Request)
 	if err != nil {
 		return LifecycleResponse{}, err
 	}
@@ -55,11 +57,11 @@ func (d *Daemon) repositoryCreate(ctx context.Context, request LifecycleRequest)
 		return LifecycleResponse{}, err
 	}
 	d.repositoryMu.Lock()
-	d.repositoryBindings[binding.Ref] = repositoryDaemonBinding{binding: binding, status: status}
+	d.repositoryBindings[binding.Ref] = repositoryDaemonBinding{binding: binding, status: placement.Status}
 	d.repositoryMu.Unlock()
 	created := &LifecycleCreated{
 		Ref: attachment.Logical.Ref, Generation: generation, HostWorktree: attachment.Logical.WorktreePath,
-		GuestRoot: worktree.GuestWorkspace, Profile: status.Profile, GuestEgress: status.GuestEgress, HostEgress: status.HostEgress,
+		GuestRoot: worktree.GuestWorkspace, Profile: placement.Status.Profile, GuestEgress: placement.Status.GuestEgress, HostEgress: placement.Status.HostEgress,
 	}
 	return LifecycleResponse{Binding: binding, Created: created}, nil
 }
@@ -70,6 +72,13 @@ func (d *Daemon) repositoryOperation(ctx context.Context, request LifecycleReque
 	}
 	if request.Operation == LifecycleDelete || request.Operation == LifecycleChildDelete {
 		result, err := d.repositoryAttachments.delete(ctx, request.Binding)
+		if d.observer != nil {
+			outcome := OutcomeSuccess
+			if err != nil {
+				outcome = OutcomeFailure
+			}
+			d.observer.CleanupFinished(outcome)
+		}
 		if err != nil {
 			return LifecycleResponse{}, err
 		}
@@ -166,7 +175,8 @@ func (d *Daemon) repositoryMerge(ctx context.Context, request LifecycleRequest, 
 	return LifecycleResponse{Binding: request.Binding}, nil
 }
 
-func (*Daemon) repositoryExec(ctx context.Context, request LifecycleRequest, attachment *RepositoryAttachment) (LifecycleResponse, error) {
+func (d *Daemon) repositoryExec(ctx context.Context, request LifecycleRequest, attachment *RepositoryAttachment) (_ LifecycleResponse, retErr error) {
+	defer func() { d.observeExec(retErr) }()
 	var input struct {
 		Command        string              `json:"command"`
 		TemporaryScope tool.TemporaryScope `json:"temporary_scope,omitempty"`
@@ -195,7 +205,8 @@ func (*Daemon) repositoryExec(ctx context.Context, request LifecycleRequest, att
 	return LifecycleResponse{Binding: request.Binding, Payload: payload}, err
 }
 
-func (d *Daemon) repositoryExecStream(ctx context.Context, request LifecycleRequest, send func(LifecycleExecStream) error) (LifecycleResponse, error) {
+func (d *Daemon) repositoryExecStream(ctx context.Context, request LifecycleRequest, send func(LifecycleExecStream) error) (_ LifecycleResponse, retErr error) {
+	defer func() { d.observeExec(retErr) }()
 	attachment := d.repositoryAttachment(request.Binding)
 	if attachment == nil {
 		return LifecycleResponse{}, control.ErrBindingMismatch
@@ -221,6 +232,17 @@ func (d *Daemon) repositoryExecStream(ctx context.Context, request LifecycleRequ
 		ExitCode int `json:"exit_code"`
 	}{exit})
 	return LifecycleResponse{Binding: request.Binding, Payload: payload}, err
+}
+
+func (d *Daemon) observeExec(err error) {
+	if d == nil || d.observer == nil {
+		return
+	}
+	outcome := OutcomeSuccess
+	if err != nil {
+		outcome = OutcomeFailure
+	}
+	d.observer.ExecFinished(outcome, "")
 }
 
 func (d *Daemon) repositoryAttachment(claim control.Binding) *RepositoryAttachment {

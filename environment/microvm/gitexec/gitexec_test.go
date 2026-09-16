@@ -66,6 +66,22 @@ func TestRunDisablesRepositoryAndAmbientExecutionHooks(t *testing.T) {
 	}
 }
 
+func TestRunKeepsMachineStdoutSeparateFromStderr(t *testing.T) {
+	root := t.TempDir()
+	git := filepath.Join(root, "git")
+	if err := os.WriteFile(git, []byte("#!/bin/sh\nprintf 'machine-output\\n'\nprintf 'diagnostic-noise\\n' >&2\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	output, err := Run(t.Context(), root, nil, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != "machine-output\n" {
+		t.Fatalf("stdout = %q, want machine output only", output)
+	}
+}
+
 func rawGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

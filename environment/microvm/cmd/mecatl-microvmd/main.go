@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,7 +27,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/environment/microvm"
 	"github.com/stacklok/mecatl/environment/microvm/control"
-	"github.com/stacklok/mecatl/environment/microvm/worktree"
 )
 
 type daemonConfig struct {
@@ -44,14 +42,11 @@ type daemonConfig struct {
 	Attestations        map[microvm.ArtifactKind]string `json:"required_attestations"`
 	Artifacts           []artifactConfig                `json:"artifacts"`
 	GuestEgress         microvm.GuestEgressPolicy       `json:"guest_egress"`
-	Admission           microvm.AdmissionLimits         `json:"admission"`
 	Profiles            map[string]profileConfig        `json:"profiles"`
 	loadedConfigDigest  string
 }
 
-type profileConfig struct {
-	Resources map[string]string `json:"resources"`
-}
+type profileConfig struct{}
 
 type artifactConfig struct {
 	Kind               microvm.ArtifactKind `json:"kind"`
@@ -184,34 +179,29 @@ func run(stateDir, socketPath, configPath string) error { //nolint:gocyclo // ex
 	backend := microvm.NewLibkrunBackend(runtimeArtifactDir)
 	network := microvm.NewHostedBootNetworkController()
 	repositories, err := microvm.NewRepositoryComposition(filepath.Join(stateDir, "repositories"), microvm.RepositoryRuntimeConfig{
-		Backend: backend, Network: network, GuestEgress: cfg.GuestEgress, UnixEndpoint: true, EndpointRoot: runtimeDir,
+		Backend: backend, Network: network, GuestEgress: cfg.GuestEgress, Observer: observer, UnixEndpoint: true, EndpointRoot: runtimeDir,
 	})
 	if err != nil {
 		return err
 	}
-	repositoryProvisioner := func(ctx context.Context, request microvm.ProvisionRequest) (microvm.LogicalEnvironmentRequest, microvm.EnforcedProfileStatus, error) {
+	repositoryProvisioner := func(_ context.Context, request microvm.ProvisionRequest) (microvm.RepositoryPlacement, error) {
 		if request.Owner == "" || request.SessionID == "" || request.Profile == "" || request.SourceCheckout == "" {
-			return microvm.LogicalEnvironmentRequest{}, microvm.EnforcedProfileStatus{}, errors.New("incomplete microvm provision request")
+			return microvm.RepositoryPlacement{}, errors.New("incomplete microvm provision request")
 		}
-		profile, ok := cfg.Profiles[request.Profile]
-		if !ok {
-			return microvm.LogicalEnvironmentRequest{}, microvm.EnforcedProfileStatus{}, errors.New("unknown microvm environment profile")
+		if _, ok := cfg.Profiles[request.Profile]; !ok {
+			return microvm.RepositoryPlacement{}, errors.New("unknown microvm environment profile")
 		}
 		if _, ok := artifactRequests[microvm.ArtifactExecutionImage]; !ok {
-			return microvm.LogicalEnvironmentRequest{}, microvm.EnforcedProfileStatus{}, errors.New("microvm daemon has no execution image")
+			return microvm.RepositoryPlacement{}, errors.New("microvm daemon has no execution image")
 		}
 		if _, ok := artifactRequests[microvm.ArtifactGuestAgent]; !ok {
-			return microvm.LogicalEnvironmentRequest{}, microvm.EnforcedProfileStatus{}, errors.New("microvm daemon has no independently admitted guest agent")
-		}
-		if _, err := profileResourceUsage(profile.Resources); err != nil {
-			return microvm.LogicalEnvironmentRequest{}, microvm.EnforcedProfileStatus{}, err
-		}
-		verified, _, err := artifactVerifier.Verify(ctx, artifactRequests)
-		if err != nil {
-			return microvm.LogicalEnvironmentRequest{}, microvm.EnforcedProfileStatus{}, err
+			return microvm.RepositoryPlacement{}, errors.New("microvm daemon has no independently admitted guest agent")
 		}
 		status := microvm.EnforcedProfileStatus{Profile: request.Profile, GuestEgress: cfg.GuestEgress.Status(), HostEgress: "not constrained: LLM providers, WebFetch, WebSearch, MCP, hooks, OCI pulls, telemetry"}
-		return microvm.LogicalEnvironmentRequest{Owner: request.Owner, Checkout: request.SourceCheckout, Verified: verified}, status, nil
+		return microvm.RepositoryPlacement{
+			Request: microvm.LogicalEnvironmentRequest{Owner: request.Owner, Checkout: request.SourceCheckout, Artifacts: repositoryArtifactSnapshot(artifactVerifier, artifactRequests)},
+			Status:  status,
+		}, nil
 	}
 	root, err := microvm.NewRuntimeDaemon(microvm.RuntimeDaemonConfig{
 		Control: controlService, Observer: observer, Info: info,
@@ -240,82 +230,19 @@ func run(stateDir, socketPath, configPath string) error { //nolint:gocyclo // ex
 	return root.Serve(ctx, listener)
 }
 
-func newPlacementBuilder(resources *microvm.OpaqueIdentityAllocator, artifactRequests map[microvm.ArtifactKind]microvm.ArtifactRequest, profiles map[string]profileConfig, egress microvm.GuestEgressPolicy) microvm.PlacementBuilder {
-	return func(_ context.Context, request microvm.ProvisionRequest) (microvm.CreateRequest, error) {
-		if request.Owner == "" || request.SessionID == "" || request.Profile == "" || request.SourceCheckout == "" {
-			return microvm.CreateRequest{}, errors.New("incomplete microvm provision request")
-		}
-		profile, ok := profiles[request.Profile]
-		if !ok {
-			return microvm.CreateRequest{}, errors.New("unknown microvm environment profile")
-		}
-		if _, ok := artifactRequests[microvm.ArtifactExecutionImage]; !ok {
-			return microvm.CreateRequest{}, errors.New("microvm daemon has no execution image")
-		}
-		if _, ok := artifactRequests[microvm.ArtifactGuestAgent]; !ok {
-			return microvm.CreateRequest{}, errors.New("microvm daemon has no independently admitted guest agent")
-		}
-		names, err := resources.AllocateResources(request.SessionID, filepath.Base(request.SourceCheckout))
-		if err != nil {
-			return microvm.CreateRequest{}, err
-		}
-		usage, err := profileResourceUsage(profile.Resources)
-		if err != nil {
-			return microvm.CreateRequest{}, err
-		}
-		return microvm.CreateRequest{Owner: request.Owner, SessionID: request.SessionID, Profile: request.Profile,
-			Worktree:         worktree.Request{Source: request.SourceCheckout, WorktreePath: names.WorktreePath, MetadataPath: names.MetadataPath, Branch: names.Branch},
-			ArtifactRequests: artifactRequests, Resources: usage,
-			ProfileStatus: microvm.EnforcedProfileStatus{Profile: request.Profile, GuestEgress: egress.Status(), HostEgress: "not constrained: LLM providers, WebFetch, WebSearch, MCP, hooks, OCI pulls, telemetry"}}, nil
-	}
+type repositoryArtifactVerifier interface {
+	Verify(context.Context, map[microvm.ArtifactKind]microvm.ArtifactRequest) (microvm.VerifiedArtifacts, string, error)
+	LockAndValidate(context.Context, microvm.VerifiedArtifacts) (microvm.VerifiedArtifacts, func(), error)
 }
 
-func profileResourceUsage(values map[string]string) (microvm.ResourceUsage, error) {
-	var usage microvm.ResourceUsage
-	var err error
-	if raw := values["cpus"]; raw != "" {
-		usage.CPU, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || usage.CPU <= 0 {
-			return usage, errors.New("invalid microvm CPU resource")
-		}
-	}
-	if raw := values["memory"]; raw != "" {
-		usage.RAMBytes, err = parseResourceBytes(raw)
+func repositoryArtifactSnapshot(verifier repositoryArtifactVerifier, requests map[microvm.ArtifactKind]microvm.ArtifactRequest) microvm.RepositoryArtifactSnapshot {
+	return func(ctx context.Context) (microvm.VerifiedArtifacts, func(), error) {
+		verified, _, err := verifier.Verify(ctx, requests)
 		if err != nil {
-			return usage, err
+			return microvm.VerifiedArtifacts{}, nil, err
 		}
+		return verifier.LockAndValidate(ctx, verified)
 	}
-	if raw := values["disk"]; raw != "" {
-		usage.DiskBytes, err = parseResourceBytes(raw)
-		if err != nil {
-			return usage, err
-		}
-	}
-	if raw := values["inodes"]; raw != "" {
-		usage.Inodes, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || usage.Inodes <= 0 {
-			return usage, errors.New("invalid microvm inode resource")
-		}
-	}
-	return usage, nil
-}
-
-func parseResourceBytes(raw string) (int64, error) {
-	multipliers := map[string]int64{"": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30}
-	for suffix, multiplier := range multipliers {
-		if !strings.HasSuffix(raw, suffix) {
-			continue
-		}
-		number := strings.TrimSuffix(raw, suffix)
-		if number == "" {
-			continue
-		}
-		value, err := strconv.ParseInt(number, 10, 64)
-		if err == nil && value > 0 && value <= (1<<63-1)/multiplier {
-			return value * multiplier, nil
-		}
-	}
-	return 0, errors.New("invalid microvm byte resource")
 }
 
 type doctorChecker struct {
@@ -332,7 +259,6 @@ type doctorChecker struct {
 	controlPeerProbe func(context.Context) error
 	networkProbe     func(context.Context) error
 	profileProbe     func(context.Context) ([]string, error)
-	staleProbe       func(context.Context) (int, error)
 }
 
 func runDoctor(stateDir, socketPath, configPath string) error {
@@ -504,42 +430,17 @@ func (d *doctorChecker) Profiles(ctx context.Context) ([]string, error) {
 			return nil, errors.New("daemon execution image lacks exact Brood discovery resolution evidence")
 		}
 	}
-	if _, err := microvm.NewAdmissionController(d.cfg.Admission, nil); err != nil {
-		return nil, fmt.Errorf("daemon profile admission policy: %w", err)
-	}
 	if len(d.cfg.Profiles) == 0 {
 		return nil, errors.New("no daemon environment profiles are configured")
 	}
 	profiles := make([]string, 0, len(d.cfg.Profiles))
-	for name, profile := range d.cfg.Profiles {
+	for name := range d.cfg.Profiles {
 		if name == "" {
 			return nil, errors.New("daemon environment profile name is empty")
-		}
-		if _, err := profileResourceUsage(profile.Resources); err != nil {
-			return nil, fmt.Errorf("daemon environment profile %q: %w", name, err)
 		}
 		profiles = append(profiles, name)
 	}
 	return profiles, nil
-}
-
-func (d *doctorChecker) StaleResources(ctx context.Context) (int, error) {
-	if d.staleProbe != nil {
-		return d.staleProbe(ctx)
-	}
-	// Repository generation health is owned by authenticated daemon info and
-	// repository inventory. The superseded session-per-VM registry is not a
-	// production health authority.
-	return 0, nil
-}
-
-func staleReadyGeneration(ctx context.Context, record microvm.EnvironmentRecord) bool {
-	identity, err := microvm.ProcessStartIdentity(ctx, record.RunnerPID)
-	if err != nil || identity != record.ProcessIdentity {
-		return true
-	}
-	info, err := os.Lstat(record.Endpoint)
-	return err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0
 }
 
 func servingDaemonInfo(cfg daemonConfig, socketPath string) (microvm.DaemonInfo, error) {
@@ -622,15 +523,23 @@ func validateArtifactConfig(entry artifactConfig) (bool, error) {
 	return isOCI, nil
 }
 
+func decodeDaemonConfig(data []byte) (daemonConfig, error) {
+	var cfg daemonConfig
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return daemonConfig{}, err
+	}
+	return cfg, nil
+}
+
 func loadDaemonConfig(path string) (daemonConfig, *configuredResolver, microvm.TrustPolicy, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- explicit operator-owned absolute configuration path.
 	if err != nil {
 		return daemonConfig{}, nil, microvm.TrustPolicy{}, err
 	}
-	var cfg daemonConfig
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	cfg, err := decodeDaemonConfig(data)
+	if err != nil {
 		return daemonConfig{}, nil, microvm.TrustPolicy{}, err
 	}
 	digest := sha256.Sum256(data)

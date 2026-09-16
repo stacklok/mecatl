@@ -12,6 +12,98 @@ import (
 	"github.com/stacklok/mecatl/environment/microvm/gitexec"
 )
 
+func TestRepositoryFirstLaunchArtifactSnapshotIsSingleUse(t *testing.T) {
+	root := t.TempDir()
+	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
+	verified := repositoryVerifiedArtifacts(t, root)
+	runtime := newFakeRepositoryVMRuntime()
+	registry, err := OpenRepositoryVMRegistry(filepath.Join(root, "state"), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, releases := 0, 0
+	snapshot := func(context.Context) (VerifiedArtifacts, func(), error) {
+		calls++
+		return verified, func() { releases++ }, nil
+	}
+	if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: snapshot}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || releases != 1 {
+		t.Fatalf("first launch snapshot calls/releases = %d/%d, want 1/1", calls, releases)
+	}
+	if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: func(context.Context) (VerifiedArtifacts, func(), error) {
+		t.Fatal("healthy repository reuse requested another artifact snapshot")
+		return VerifiedArtifacts{}, nil, nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || runtime.startCount() != 1 {
+		t.Fatalf("reuse snapshot calls/starts = %d/%d, want 1/1", calls, runtime.startCount())
+	}
+}
+
+func TestRepositoryArtifactSnapshotErrorRetainsCleanupOwnership(t *testing.T) {
+	root := t.TempDir()
+	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
+	registry, err := OpenRepositoryVMRegistry(filepath.Join(root, "state"), newFakeRepositoryVMRuntime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired, cleaned := false, false
+	snapshotErr := errors.New("snapshot acquisition failed")
+	_, err = registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: func(context.Context) (VerifiedArtifacts, func(), error) {
+		acquired = true
+		cleaned = true
+		return VerifiedArtifacts{}, func() { t.Fatal("Ensure invoked release returned with an acquisition error") }, snapshotErr
+	}})
+	if !errors.Is(err, snapshotErr) || !acquired || !cleaned {
+		t.Fatalf("snapshot error ownership = acquired:%v cleaned:%v err:%v", acquired, cleaned, err)
+	}
+}
+
+func TestRepositoryArtifactSnapshotReleaseFollowsBackendConsumption(t *testing.T) {
+	root := t.TempDir()
+	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
+	verified := repositoryVerifiedArtifacts(t, root)
+	releases := 0
+	runtime := &artifactConsumingRuntime{fakeRepositoryVMRuntime: newFakeRepositoryVMRuntime(), consume: func(got VerifiedArtifacts) {
+		if releases != 0 {
+			t.Fatal("artifact snapshot was released before backend consumption")
+		}
+		for _, path := range []string{got.Runtime.Path, got.Firmware.Path, got.ExecutionImage.Path, got.GuestAgent.Path} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("backend consumed unavailable snapshot path %q: %v", path, err)
+			}
+		}
+	}}
+	registry, err := OpenRepositoryVMRegistry(filepath.Join(root, "state"), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: func(context.Context) (VerifiedArtifacts, func(), error) {
+		return verified, func() { releases++ }, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if releases != 1 {
+		t.Fatalf("artifact snapshot releases = %d, want exactly one after backend consumption", releases)
+	}
+}
+
+func TestRepositoryFirstLaunchRejectsMissingArtifactSnapshot(t *testing.T) {
+	root := t.TempDir()
+	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
+	registry, err := OpenRepositoryVMRegistry(filepath.Join(root, "state"), newFakeRepositoryVMRuntime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository}); err == nil {
+		t.Fatal("first repository launch accepted no artifact validator")
+	}
+}
+
 func TestMicroVMMVP_Scenario2_CanonicalRepositoryIdentitySelectsSingletonVM(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -51,7 +143,7 @@ func TestMicroVMMVP_Scenario2_CanonicalRepositoryIdentitySelectsSingletonVM(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := registry.Ensure(ctx, RepositoryVMRequest{Owner: "operator-a", Checkout: repository, Verified: verified})
+	first, err := registry.Ensure(ctx, RepositoryVMRequest{Owner: "operator-a", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 	if err != nil {
 		t.Fatalf("ensure repository VM: %v", err)
 	}
@@ -73,7 +165,7 @@ func TestRepositoryHealthRejectsForeignExactStatusWithoutBootAuthority(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Verified: repositoryVerifiedArtifacts(t, root)}); err != nil {
+	if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(repositoryVerifiedArtifacts(t, root))}); err != nil {
 		t.Fatal(err)
 	}
 	runtime.mu.Lock()
@@ -101,7 +193,7 @@ func TestRepositoryVMRegistryReadyCommitFailureAbortsUnpublishedRuntime(t *testi
 		}
 		return writeRecord(directory, record)
 	}
-	_, err = registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Verified: repositoryVerifiedArtifacts(t, root)})
+	_, err = registry.Ensure(t.Context(), RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(repositoryVerifiedArtifacts(t, root))})
 	if !errors.Is(err, persistErr) {
 		t.Fatalf("ready commit failure = %v, want injected persistence error", err)
 	}
@@ -158,7 +250,7 @@ func TestRepositoryVMRegistryConcurrentEnsureConvergesAndPersistsRecord(t *testi
 				errorsCh <- err
 				return
 			}
-			result, err := registry.Ensure(ctx, RepositoryVMRequest{Owner: "operator", Checkout: repository, Verified: verified})
+			result, err := registry.Ensure(ctx, RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 			if err != nil {
 				errorsCh <- err
 				return
@@ -351,7 +443,7 @@ func TestRepositoryVMRegistryRejectsSymlinksAtEveryStateComponent(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: identity.Owner, Checkout: repository, Verified: repositoryVerifiedArtifacts(t, root)}); err == nil {
+			if _, err := registry.Ensure(t.Context(), RepositoryVMRequest{Owner: identity.Owner, Checkout: repository, Artifacts: testArtifactSnapshot(repositoryVerifiedArtifacts(t, root))}); err == nil {
 				t.Fatalf("Ensure followed %s symlink", target)
 			}
 			if target == "registry.lock" || target == "registry.json" {
@@ -377,7 +469,7 @@ func TestRepositoryVMRegistryMaterializesRootFSOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := registry.Ensure(ctx, RepositoryVMRequest{Owner: "operator", Checkout: repository, Verified: verified})
+	first, err := registry.Ensure(ctx, RepositoryVMRequest{Owner: "operator", Checkout: repository, Artifacts: testArtifactSnapshot(verified)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,6 +497,16 @@ func TestRepositoryVMRegistryMaterializesRootFSOnce(t *testing.T) {
 	if got := runtime.startCount(); got != 1 {
 		t.Fatalf("fake runtime starts = %d, want one", got)
 	}
+}
+
+type artifactConsumingRuntime struct {
+	*fakeRepositoryVMRuntime
+	consume func(VerifiedArtifacts)
+}
+
+func (r *artifactConsumingRuntime) Start(ctx context.Context, record RepositoryVMRecord, artifacts VerifiedArtifacts, authority RepositoryBootAuthority) (RuntimeStatus, error) {
+	r.consume(artifacts)
+	return r.fakeRepositoryVMRuntime.Start(ctx, record, artifacts, authority)
 }
 
 type fakeRepositoryVMRuntime struct {

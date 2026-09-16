@@ -3,6 +3,7 @@ package microvmmanager
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,80 @@ import (
 
 	microvmclient "github.com/stacklok/mecatl/internal/adapter/microvm"
 )
+
+func TestWrittenDaemonConfigsMatchStrictDecoderContracts(t *testing.T) {
+	for _, tc := range []struct {
+		name, fixture string
+		policy        Policy
+	}{
+		{name: "release keyless", fixture: "daemon-config-keyless.json", policy: Policy{PolicyRevision: "release-policy", CertificateIdentity: "identity", OIDCIssuer: "issuer", RequiredAttestations: requiredMicroVMAttestations(), GuestEgressMode: GuestEgressPermissive}},
+		{name: "development public key", fixture: "daemon-config-development.json", policy: Policy{PolicyRevision: "development-policy", PublicKey: "/data/development.pub", PublicKeyIdentity: "sha256:" + strings.Repeat("d", 64), RequiredAttestations: requiredMicroVMAttestations(), GuestEgressMode: GuestEgressPermissive}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			paths := testPaths(root)
+			if err := os.MkdirAll(filepath.Dir(paths.DaemonBinary), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(paths.ConfigFile), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(paths.DaemonBinary, []byte("microvmd"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			installed := InstalledArtifacts{Artifacts: []Artifact{{Kind: "runtime", Reference: "registry.example/runtime", Digest: "sha256:" + strings.Repeat("c", 64), Path: "/data/runtime", Provenance: "/data/runtime.provenance.json", SigstoreBundle: "/data/runtime.sigstore.json"}}}
+			if err := writeDaemonConfig(paths.ConfigFile, paths, Release{SHA256: strings.Repeat("a", 64)}, tc.policy, installed); err != nil {
+				t.Fatal(err)
+			}
+			generated, err := decodeJSONFile(paths.ConfigFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contract, err := decodeJSONFile(filepath.Join("testdata", tc.fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(jsonShape(generated), jsonShape(contract)) {
+				t.Fatalf("generated config shape does not match %s\ngenerated: %#v\ncontract: %#v", tc.fixture, jsonShape(generated), jsonShape(contract))
+			}
+			if _, present := generated["admission"]; present {
+				t.Fatal("generated config retained removed admission field")
+			}
+			profile, ok := generated["profiles"].(map[string]any)[Alias].(map[string]any)
+			if !ok || len(profile) != 0 {
+				t.Fatalf("generated profile = %#v, want empty strict profile", generated["profiles"])
+			}
+		})
+	}
+}
+
+func decodeJSONFile(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var value map[string]any
+	err = json.Unmarshal(data, &value)
+	return value, err
+}
+
+func jsonShape(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		shape := make(map[string]any, len(typed))
+		for key, child := range typed {
+			shape[key] = jsonShape(child)
+		}
+		return shape
+	case []any:
+		if len(typed) == 0 {
+			return []any{}
+		}
+		return []any{jsonShape(typed[0])}
+	default:
+		return fmt.Sprintf("%T", value)
+	}
+}
 
 func TestMicroVMUserBootstrap_Scenario1_SafeXDGDefaults(t *testing.T) {
 	home := t.TempDir()
@@ -128,7 +203,7 @@ func TestEnsureReadyReportsBoundedSecretFreeStagesInOrder(t *testing.T) {
 	if _, err := New(testPaths(root), &fakeOps{}, &fakeLifecycleClient{}).EnsureReady(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-	want := []ReadinessStage{StagePrepare, StagePreflight, StageDownload, StageVerify, StageInstall, StageDaemon, StageSocket, StageReconcile, StageHealth, StageReady}
+	want := []ReadinessStage{StagePrepare, StagePreflight, StageDownload, StageVerify, StageInstall, StageDaemon, StageSocket, StageHealth, StageReady}
 	if !reflect.DeepEqual(stages, want) {
 		t.Fatalf("stages = %v, want %v", stages, want)
 	}
@@ -155,7 +230,6 @@ func TestEnsureReadyFailureStopsAtExactReportedStage(t *testing.T) {
 		{name: "install", failAt: "install", wantStage: StageInstall},
 		{name: "daemon", failAt: "start", wantStage: StageDaemon},
 		{name: "socket", failAt: "wait", wantStage: StageSocket},
-		{name: "reconcile", lifecycle: &fakeLifecycleClient{reconcileErr: errors.New("reconcile failed")}, wantStage: StageReconcile},
 		{name: "health", failAt: "doctor", wantStage: StageHealth},
 	}
 	for _, tc := range tests {
@@ -193,7 +267,7 @@ func TestReadinessStageProjectionIsClosedAndUnknownIsSilent(t *testing.T) {
 		StagePrepare: "Preparing local microVM readiness", StagePreflight: "Checking host prerequisites",
 		StageDownload: "Downloading microVM components (up to about 2 GiB)", StageVerify: "Verifying downloaded components",
 		StageInstall: "Installing and configuring the local microVM", StageDaemon: "Starting or reusing the microVM daemon",
-		StageSocket: "Waiting for the microVM daemon socket", StageReconcile: "Reconciling existing microVM state",
+		StageSocket: "Waiting for the microVM daemon socket",
 		StageHealth: "Running microVM health checks", StageReady: "Local microVM is ready",
 	}
 	for stage, text := range want {
@@ -485,8 +559,8 @@ func TestRepositoryManagerInventoryPagesAndExactLogicalDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.WorktreeRetained || daemon.deleted.EnvironmentID != "logical-b" || daemon.reconcileCalls != 0 {
-		t.Fatalf("logical delete=%+v binding=%+v legacy reconcile calls=%d", result, daemon.deleted, daemon.reconcileCalls)
+	if !result.WorktreeRetained || daemon.deleted.EnvironmentID != "logical-b" {
+		t.Fatalf("logical delete=%+v binding=%+v", result, daemon.deleted)
 	}
 }
 
@@ -495,8 +569,6 @@ type fakeLifecycleClient struct {
 	continuation     string
 	inventoryRequest microvmclient.InventoryRequest
 	deleted          microvmclient.GenerationBinding
-	reconcileCalls   int
-	reconcileErr     error
 }
 
 func (f *fakeLifecycleClient) Inventory(_ context.Context, _ string, requests ...microvmclient.InventoryRequest) (microvmclient.InventoryPage, error) {
@@ -504,10 +576,6 @@ func (f *fakeLifecycleClient) Inventory(_ context.Context, _ string, requests ..
 		f.inventoryRequest = requests[0]
 	}
 	return microvmclient.InventoryPage{Entries: f.entries, Continuation: f.continuation}, nil
-}
-func (f *fakeLifecycleClient) Reconcile(context.Context, string) error {
-	f.reconcileCalls++
-	return f.reconcileErr
 }
 func (f *fakeLifecycleClient) DeleteGeneration(_ context.Context, binding microvmclient.GenerationBinding) (microvmclient.DeleteResult, error) {
 	f.deleted = binding

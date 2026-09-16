@@ -51,7 +51,7 @@ func ReadyRequestFromDefaults(encoded, version string, egress ...GuestEgressSele
 			PolicyRevision:      defaults.PolicyRevision,
 			CertificateIdentity: defaults.CertificateIdentity, OIDCIssuer: defaults.OIDCIssuer,
 			RequiredAttestations: requiredMicroVMAttestations(),
-			GuestEgressMode:      GuestEgressPermissive, Resources: defaultMicroVMResources(),
+			GuestEgressMode:      GuestEgressPermissive,
 		},
 	}
 	if err := applyGuestEgress(&request, egress); err != nil {
@@ -62,10 +62,6 @@ func ReadyRequestFromDefaults(encoded, version string, egress ...GuestEgressSele
 
 func requiredMicroVMAttestations() map[string]string {
 	return map[string]string{"runtime": "https://slsa.dev/provenance/v1", "firmware": "https://slsa.dev/provenance/v1", "execution-image": "https://slsa.dev/provenance/v1", "guest-agent": "https://slsa.dev/provenance/v1"}
-}
-
-func defaultMicroVMResources() map[string]string {
-	return map[string]string{"cpus": "2", "memory": "4GiB"}
 }
 
 func applyGuestEgress(request *ReadyRequest, egress []GuestEgressSelection) error {

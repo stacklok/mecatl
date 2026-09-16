@@ -1267,7 +1267,7 @@ exact logical attachment across fires. Before the first claim, deleting an indep
 placed schedule cleans its attachment while preserving dirty state. After the first claim,
 the attachment is retained for historical and resumable fire sessions when the schedule is deleted.
 See the [microVM architecture](architecture/microvm-environments.md) and
-[operator guide](usage/microvm-environments.md) (ADR 0108).
+[operator guide](usage/microvm-environments.md) (ADR 0345).
 
 Discovery is source-session scoped. `ListCommands(session_id)` and
 `ListWorktrees(session_id)` first authorize the owner and exactly reattach that source.

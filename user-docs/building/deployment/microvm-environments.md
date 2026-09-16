@@ -1,6 +1,7 @@
 ---
 sidebar_position: 7
 title: Local microVM environments
+description: Run filesystem and shell tools in a repository-scoped local microVM.
 ---
 
 # Local microVM environments
@@ -180,7 +181,10 @@ mecated microvm delete --backend microvm-local \
 ```
 
 The command confirms before deletion, preserves dirty worktrees, and never deletes or resets
-the repository VM. Administration exists only in local `mecated`, not mecatui or remote
+the repository VM. If placement creation or child forking returns invalid metadata and automatic
+cleanup cannot confirm removal, run `mecated microvm status` first. Delete only the exact matching
+row with the command above; do not infer missing identifiers from the failed response.
+Administration exists only in local `mecated`, not mecatui or remote
 connect mode. One repository-scoped daemon is shared across sessions and host processes. First use installs
 and starts only genuinely fresh state. A conflicting requested release or egress policy,
 corrupt configuration, process identity mismatch, stopped daemon, or unhealthy runtime

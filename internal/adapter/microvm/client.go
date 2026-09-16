@@ -38,6 +38,7 @@ const (
 	defaultInventoryPageSize                        = 50
 	maxInventoryTokenBytes                          = 1024
 	resolvePhaseTimeout                             = 15 * time.Second
+	cleanupPhaseTimeout                             = 5 * time.Second
 	kindMicroVM                                     = session.EnvironmentKind("microvm")
 	publicGuestRoot                                 = "/workspace"
 	repositoryLogicalRootUnavailableCategory        = "repository_logical_root_unavailable"
@@ -54,7 +55,10 @@ func (repositoryLogicalRootUnavailableError) EnvironmentLifecycleCategory() stri
 
 // ErrRepositoryLogicalRootUnavailable is returned when an authenticated guest
 // cannot attach the prepared repository worktree. It carries no daemon detail.
-var ErrRepositoryLogicalRootUnavailable error = repositoryLogicalRootUnavailableError{}
+var (
+	ErrRepositoryLogicalRootUnavailable error = repositoryLogicalRootUnavailableError{}
+	errRollbackRetained                       = errors.New("microvmd retained dirty unpublished placement for recovery")
+)
 
 type binding struct {
 	Owner         string `json:"owner"`
@@ -99,7 +103,6 @@ type execStreamFrame struct {
 
 type lifecycleResponse struct {
 	Binding   binding          `json:"binding,omitempty"`
-	Record    json.RawMessage  `json:"record,omitempty"`
 	Created   *created         `json:"created,omitempty"`
 	Stream    *execStreamFrame `json:"stream,omitempty"`
 	Payload   json.RawMessage  `json:"payload,omitempty"`
@@ -115,6 +118,7 @@ type Client struct {
 	profile        string
 	scope          server.PlacementScope
 	readiness      func(context.Context) error
+	cleanupTimeout time.Duration
 }
 
 // New validates endpoint and constructs a thin lifecycle client.
@@ -123,7 +127,7 @@ func New(endpoint string) (*Client, error) {
 	if err != nil || u.Scheme != "unix" || u.Host != "" || u.Path == "" {
 		return nil, errors.New("microvmd endpoint must be an absolute unix:// path")
 	}
-	return &Client{endpoint: u.Path}, nil
+	return &Client{endpoint: u.Path, cleanupTimeout: cleanupPhaseTimeout}, nil
 }
 
 // NewPlacementProvider constructs a deployment-owned microVM default placement.
@@ -195,7 +199,7 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 	if response.Binding != claim {
 		return server.PlacementBinding{}, errors.New("microvmd resolved a different environment generation")
 	}
-	closePlacement := func() error { return c.operate(context.WithoutCancel(ctx), "detach", claim) }
+	closePlacement := func() error { return c.boundedOperate(ctx, "detach", claim) }
 	return c.placementBinding(request.Ref, claim, closePlacement, nil), nil
 }
 
@@ -222,22 +226,23 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 	if err != nil {
 		return server.PlacementBinding{}, err
 	}
-	rollbackResponse := func() {
-		if response.Binding.Owner == owner && response.Binding.SessionID == placementID && response.Binding.EnvironmentID != "" && response.Binding.Ref != "" && response.Binding.Generation != 0 {
-			_ = c.rollbackPlacement(context.WithoutCancel(ctx), response.Binding)
+	safeCleanupTarget := response.Binding.Owner == owner && response.Binding.SessionID == placementID &&
+		strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
+	primary := errors.New("microvmd create returned incomplete or inconsistent placement metadata")
+	if response.Created == nil || response.Created.Ref.Kind != string(kindMicroVM) || response.Created.Ref.ID != response.Binding.Ref ||
+		response.Created.Generation != response.Binding.Generation || response.Created.HostWorktree == "" || response.Created.GuestRoot != publicGuestRoot ||
+		response.Created.Profile != c.profile || response.Created.GuestEgress == "" || response.Created.HostEgress == "" {
+		if safeCleanupTarget {
+			return server.PlacementBinding{}, invalidPlacementResponseError(primary, c.boundedRollbackPlacement(ctx, response.Binding))
 		}
+		return server.PlacementBinding{}, unsafePlacementResponseError(primary)
 	}
-	if response.Created == nil || response.Created.Profile != c.profile || response.Created.GuestEgress == "" || response.Created.HostEgress == "" {
-		rollbackResponse()
-		return server.PlacementBinding{}, errors.New("microvmd create returned incomplete placement metadata")
-	}
-	if response.Binding.Owner != owner || response.Binding.SessionID != placementID || response.Binding.EnvironmentID == "" || response.Binding.Generation == 0 {
-		rollbackResponse()
-		return server.PlacementBinding{}, errors.New("microvmd create binding mismatch")
+	if !safeCleanupTarget {
+		return server.PlacementBinding{}, unsafePlacementResponseError(errors.New("microvmd create binding mismatch"))
 	}
 	ref := refForBinding(response.Binding)
-	closePlacement := func() error { return c.operate(context.WithoutCancel(ctx), "detach", response.Binding) }
-	rollbackPlacement := func() error { return c.rollbackPlacement(context.WithoutCancel(ctx), response.Binding) }
+	closePlacement := func() error { return c.boundedOperate(ctx, "detach", response.Binding) }
+	rollbackPlacement := func() error { return c.boundedRollbackPlacement(ctx, response.Binding) }
 	return c.placementBinding(ref, response.Binding, closePlacement, rollbackPlacement), nil
 }
 
@@ -254,9 +259,45 @@ func (c *Client) rollbackPlacement(ctx context.Context, claim binding) error {
 		return fmt.Errorf("decode microvmd rollback result: %w", err)
 	}
 	if result.WorktreeRetained {
-		return errors.New("microvmd retained dirty unpublished placement for recovery")
+		return errRollbackRetained
 	}
 	return nil
+}
+
+func (c *Client) boundedOperate(parent context.Context, operation string, claim binding) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.cleanupTimeout)
+	defer cancel()
+	return c.operate(ctx, operation, claim)
+}
+
+func (c *Client) boundedRollbackPlacement(parent context.Context, claim binding) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.cleanupTimeout)
+	defer cancel()
+	return c.rollbackPlacement(ctx, claim)
+}
+
+const placementRecoveryCommand = "run 'mecated microvm status', then delete only the matching row with 'mecated microvm delete --backend microvm-local --attachment-id ATTACHMENT_ID --ref REF --generation GENERATION'"
+
+func unsafePlacementResponseError(primary error) error {
+	return fmt.Errorf("%w; automatic cleanup was not authorized because the response did not safely identify only the new placement; %s", primary, placementRecoveryCommand)
+}
+
+func invalidPlacementResponseError(primary, cleanupErr error) error {
+	switch {
+	case cleanupErr == nil:
+		return fmt.Errorf("%w; automatic cleanup of the exact new placement completed", primary)
+	case errors.Is(cleanupErr, errRollbackRetained):
+		return fmt.Errorf("%w; automatic cleanup retained the exact new worktree for recovery; %s", primary, placementRecoveryCommand)
+	case errors.Is(cleanupErr, context.DeadlineExceeded):
+		return fmt.Errorf("%w; automatic cleanup of the exact new placement timed out and its status is unknown; %s", primary, placementRecoveryCommand)
+	default:
+		return fmt.Errorf("%w; automatic cleanup of the exact new placement failed and its status is unknown; %s", primary, placementRecoveryCommand)
+	}
+}
+
+func canonicalBinding(claim binding) bool {
+	return claim.Owner != "" && claim.SessionID != "" && claim.EnvironmentID != "" &&
+		claim.Ref == claim.EnvironmentID+"@"+strconv.FormatUint(uint64(claim.Generation), 10) && claim.Generation != 0
 }
 
 func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, closePlacement, rollbackPlacement func() error) server.PlacementBinding {
@@ -452,15 +493,6 @@ func validateInventoryPage(page InventoryPage, request InventoryRequest, owner s
 	return nil
 }
 
-// Reconcile repairs durable daemon state without creating a generation.
-func (c *Client) Reconcile(ctx context.Context, owner string) error {
-	if owner == "" {
-		return errors.New("microvmd reconcile owner is required")
-	}
-	_, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "reconcile", Binding: binding{Owner: owner}})
-	return err
-}
-
 // DeleteGeneration permanently deletes one exact owner/session/ref/generation binding.
 func (c *Client) DeleteGeneration(ctx context.Context, claim GenerationBinding) (DeleteResult, error) {
 	if claim.Owner == "" || claim.SessionID == "" || claim.EnvironmentID == "" || claim.Ref == "" || claim.Generation == 0 {
@@ -556,13 +588,20 @@ func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) 
 	if err != nil {
 		return tool.Environment{}, nil, "", err
 	}
-	childRef := refForBinding(response.Binding)
-	if response.Binding.Owner != claim.Owner || response.Binding.EnvironmentID == "" || response.Binding.Generation == 0 {
-		return tool.Environment{}, nil, "", errors.New("microvmd fork returned an invalid child binding")
+	validChild := response.Binding.Owner == claim.Owner && response.Binding.SessionID == claim.SessionID+":"+label &&
+		response.Binding.Generation == claim.Generation && response.Binding.Ref != claim.Ref &&
+		strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding) &&
+		response.Created == nil && response.Stream == nil && len(response.Payload) == 0
+	if !validChild {
+		// The protocol has no request-scoped creation proof. A malformed response can
+		// name a pre-existing sibling (labels are reusable), so its tuple grants no
+		// destructive rollback authority.
+		return tool.Environment{}, nil, "", unsafePlacementResponseError(errors.New("microvmd fork returned an invalid child binding"))
 	}
+	childRef := refForBinding(response.Binding)
 	child := c.environment(childRef, response.Binding)
 	cleanup := func() error {
-		return c.operate(context.WithoutCancel(ctx), "child-delete", response.Binding)
+		return c.boundedOperate(ctx, "child-delete", response.Binding)
 	}
 	return child, cleanup, "", nil
 }
@@ -804,13 +843,22 @@ func (w *workspace) CreateFile(ctx context.Context, path string, data []byte) (t
 	if e != nil {
 		return tool.FileVersion{}, e
 	}
+	if !r.VersionValid {
+		return tool.FileVersion{}, errors.New("microvm workspace omitted version")
+	}
 	return tool.NewFileVersion(r.Version), nil
 }
 func (w *workspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
 	token, encodeErr := tool.EncodeFileVersion(old)
-	r, e := w.rpc(ctx, workspaceRequest{Operation: "replace", Path: path, Data: data, Version: token, VersionValid: encodeErr == nil})
+	if encodeErr != nil {
+		return tool.FileVersion{}, encodeErr
+	}
+	r, e := w.rpc(ctx, workspaceRequest{Operation: "replace", Path: path, Data: data, Version: token, VersionValid: true})
 	if e != nil {
 		return tool.FileVersion{}, e
+	}
+	if !r.VersionValid {
+		return tool.FileVersion{}, errors.New("microvm workspace omitted version")
 	}
 	return tool.NewFileVersion(r.Version), nil
 }

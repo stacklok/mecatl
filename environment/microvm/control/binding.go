@@ -23,7 +23,7 @@ type Binding struct {
 	Ref           string `json:"ref"`
 	Generation    uint32 `json:"generation"`
 	// AssignedRoot is the guest-visible root authenticated for repository-logical
-	// environments. Legacy session-per-VM bindings leave it empty.
+	// environments. Protocol inputs without it are not valid logical bindings.
 	AssignedRoot string `json:"assigned_root,omitempty"`
 }
 
