@@ -139,7 +139,7 @@ func TestResolveLeadingHelpRendersTopLevelHelp(t *testing.T) {
 		if !strings.Contains(out.String(), "Usage: mecated <command> [flags]") {
 			t.Errorf("%s: rendered help missing the top-level usage header:\n%s", help, out.String())
 		}
-		if !strings.Contains(out.String(), "serve                   start the network daemon") {
+		if !strings.Contains(out.String(), "serve                   run the Mecatl network daemon") {
 			t.Errorf("%s: rendered help missing the serve command entry:\n%s", help, out.String())
 		}
 		if strings.Contains(out.String(), "Exhaustive") {
@@ -167,7 +167,7 @@ func TestResolveLeadingHelpAllRendersExhaustiveReference(t *testing.T) {
 	for _, want := range []string{
 		"Usage: mecated <command> [flags]",
 		"Global: mecated --version prints the build version and exits.",
-		"Exhaustive serve-compatible flag reference",
+		"All flags accepted by `mecated serve`",
 		"-workspace",
 		"mecated acp --help-all",
 	} {
@@ -329,13 +329,13 @@ func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"Usage: mecated <command> [flags]",
-		"serve                   start the network daemon",
-		"acp                     serve the Agent Client Protocol over stdio",
+		"serve                   run the Mecatl network daemon",
+		"acp                     run the Agent Client Protocol over standard input/output",
 		"import                  import a Codex or Claude Code session",
-		"config init             write/print the operator settings.yaml skeleton",
+		"config init             write or print an operator settings.yaml template",
 		"config validate         validate operator settings.yaml without writing",
-		"skills promote          promote a model-authored candidate skill",
-		"perf-mcp print-config   print a paste-ready client",
+		"skills promote          promote a candidate skill from quarantine",
+		"perf-mcp print-config   print perf MCP client configuration",
 		"mecated <command> --help",
 	} {
 		if !strings.Contains(out, want) {
@@ -674,7 +674,7 @@ func TestTopLevelHelpAllProvidesExhaustiveReference(t *testing.T) {
 	// The --help-all flag description promises an EXHAUSTIVE reference, so the
 	// top-level form must provide the serve-compatible flag reference, not only
 	// pointers.
-	if !strings.Contains(out, "Exhaustive serve-compatible flag reference") {
+	if !strings.Contains(out, "All flags accepted by `mecated serve`") {
 		t.Errorf("top-level --help-all missing the exhaustive flag-reference header:\n%s", out)
 	}
 	if !strings.Contains(out, "Flags:") {
@@ -688,9 +688,10 @@ func TestTopLevelHelpAllProvidesExhaustiveReference(t *testing.T) {
 	if !strings.Contains(out, "mecated acp --help-all") {
 		t.Errorf("top-level --help-all missing the ACP note:\n%s", out)
 	}
-	// The compatibility paragraph (deprecated bare spellings) is gone.
-	if strings.Contains(out, "deprecated") {
-		t.Errorf("top-level --help-all still carries the deprecated-spellings note:\n%s", out)
+	// The removed bare-invocation compatibility paragraph is absent. A distinct
+	// OIDC flag is itself deprecated and remains correctly listed in help-all.
+	if strings.Contains(out, "Compatibility: bare 'mecated") {
+		t.Errorf("top-level --help-all still carries the bare-invocation compatibility note:\n%s", out)
 	}
 }
 

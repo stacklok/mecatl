@@ -346,8 +346,7 @@ func validateFlagMeta(fs *flag.FlagSet) error {
 // `mecated serve --help`.
 func writeServeCommonHelp(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated serve [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Common flags grouped by task.  Run 'mecated serve --help-all' for the\n")
-	_, _ = fmt.Fprintf(out, "full exhaustive reference including every advanced tuning knob.\n\n")
+	_, _ = fmt.Fprintf(out, "Common flags grouped by task. Run 'mecated serve --help-all' for all flags.\n\n")
 
 	renderGroupedCommon(out, fs, commonFlagNames(modeServe))
 }
@@ -357,9 +356,8 @@ func writeServeCommonHelp(out io.Writer, fs *flag.FlagSet) {
 func writeAcpCommonHelp(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated acp [flags]\n\n")
 	_, _ = fmt.Fprintf(out, "Common flags for ACP (Agent Client Protocol over stdio) sessions.\n")
-	_, _ = fmt.Fprintf(out, "Server-boundary flags (listener, TLS, metrics, drivers, scheduling)\n")
-	_, _ = fmt.Fprintf(out, "are not shown here.  Run 'mecated acp --help-all' for the full ACP flag\n")
-	_, _ = fmt.Fprintf(out, "reference.\n\n")
+	_, _ = fmt.Fprintf(out, "Listener, TLS, metrics, driver, and scheduling flags do not apply to ACP.\n")
+	_, _ = fmt.Fprintf(out, "Run 'mecated acp --help-all' for all ACP flags.\n\n")
 
 	renderGroupedCommon(out, fs, commonFlagNames(modeACP))
 }
@@ -447,21 +445,10 @@ func writeAcpHelpAll(out io.Writer, fs *flag.FlagSet) {
 // ACP-scoped subset.
 func writeTopLevelHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated <command> [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Commands:\n")
-	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
-	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
-	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
-	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton\n")
-	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton\n")
-	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml\n")
-	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill\n")
-	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json\n")
+	writeTopLevelCommands(out)
 	_, _ = fmt.Fprintf(out, "\nGlobal: mecated --version prints the build version and exits.\n")
-	_, _ = fmt.Fprintf(out, "\nExhaustive serve-compatible flag reference (every public flag a\n")
-	_, _ = fmt.Fprintf(out, "`mecated serve` invocation accepts):\n\n")
+	_, _ = fmt.Fprintf(out, "\nAll flags accepted by `mecated serve`:\n\n")
 	_, _ = fmt.Fprintf(out, "Flags:\n")
 	flaghelp.PrintDefaultsExcluding(out, fs, nil)
-	_, _ = fmt.Fprintf(out, "\nNote: `mecated acp --help-all` lists the ACP-scoped subset\n")
-	_, _ = fmt.Fprintf(out, "(server-boundary flags such as --grpc-addr/--tls-*/--metrics-addr\n")
-	_, _ = fmt.Fprintf(out, "and the scheduler/driver knobs are omitted there).\n")
+	_, _ = fmt.Fprintf(out, "\n`mecated acp --help-all` lists flags that apply to ACP sessions.\n")
 }

@@ -230,24 +230,30 @@ func stripCommandWord(argv []string) []string {
 // duplicate it in a test helper.
 func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated <command> [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Commands:\n")
-	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
-	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
-	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize an operator-configured OAuth MCP server\n")
-	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
-	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
-	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing (--file, --learning-patch)\n")
-	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
-	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
-	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
-	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
+	writeTopLevelCommands(out)
 	_, _ = fmt.Fprintf(out, "\nGlobal: mecated --version prints the build version and exits.\n")
 	_, _ = fmt.Fprintf(out, "\nRun 'mecated <command> --help' for common flags and 'mecated <command> --help-all' for the exhaustive reference.\n")
 }
 
+func writeTopLevelCommands(out io.Writer) {
+	_, _ = fmt.Fprintf(out, "Commands:\n")
+	_, _ = fmt.Fprintf(out, "  serve                   run the Mecatl network daemon over gRPC and HTTP/SSE\n")
+	_, _ = fmt.Fprintf(out, "  acp                     run the Agent Client Protocol over standard input/output\n")
+	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize a configured OAuth MCP server\n")
+	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
+	_, _ = fmt.Fprintf(out, "  config init             write or print an operator settings.yaml template\n")
+	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing\n")
+	_, _ = fmt.Fprintf(out, "  config daemon init      write or print a daemon.yaml template\n")
+	_, _ = fmt.Fprintf(out, "  config daemon validate  validate daemon.yaml without writing\n")
+	_, _ = fmt.Fprintf(out, "  skills promote          promote a candidate skill from quarantine\n")
+	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print perf MCP client configuration\n")
+}
+
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  mcp      MCP OAuth login\n  import   import Codex or Claude Code data\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
+	var commands strings.Builder
+	writeTopLevelCommands(&commands)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n%s\nRun 'mecated <command> --help' for command-specific flags", arg, strings.TrimPrefix(commands.String(), "Commands:\n"))
 }
 
 func resolveMCPSubcommand(args []string) commandResolution {
@@ -293,9 +299,9 @@ func configUsageError(argv []string) error {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("config: missing subcommand\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config validate         validate operator settings.yaml without writing\n  config daemon <init|validate>  manage the daemon.yaml listener topology")
+		return errors.New("config: missing subcommand\navailable subcommands:\n  config init                     write or print an operator settings.yaml template\n  config validate                 validate operator settings.yaml without writing\n  config daemon <init|validate>   manage daemon listener configuration")
 	}
-	return fmt.Errorf("config: unknown subcommand %q\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config validate         validate operator settings.yaml without writing\n  config daemon <init|validate>  manage the daemon.yaml listener topology", sub)
+	return fmt.Errorf("config: unknown subcommand %q\navailable subcommands:\n  config init                     write or print an operator settings.yaml template\n  config validate                 validate operator settings.yaml without writing\n  config daemon <init|validate>   manage daemon listener configuration", sub)
 }
 
 // configDaemonUsageError builds the error message for a bare/unknown
@@ -306,9 +312,9 @@ func configDaemonUsageError(argv []string) error {
 		sub = argv[3]
 	}
 	if sub == "" {
-		return errors.New("config daemon: missing subcommand\navailable subcommands:\n  config daemon init      write/print the daemon.yaml skeleton (--print, --force)\n  config daemon validate  strictly validate a daemon.yaml (--file PATH; default conventional path)")
+		return errors.New("config daemon: missing subcommand\navailable subcommands:\n  config daemon init      write or print a daemon.yaml template\n  config daemon validate  validate daemon.yaml without writing")
 	}
-	return fmt.Errorf("config daemon: unknown subcommand %q\navailable subcommands:\n  config daemon init      write/print the daemon.yaml skeleton (--print, --force)\n  config daemon validate  strictly validate a daemon.yaml (--file PATH; default conventional path)", sub)
+	return fmt.Errorf("config daemon: unknown subcommand %q\navailable subcommands:\n  config daemon init      write or print a daemon.yaml template\n  config daemon validate  validate daemon.yaml without writing", sub)
 }
 
 // skillsUsageError builds the error message for a bare/unknown `skills` invocation.
@@ -318,9 +324,9 @@ func skillsUsageError(argv []string) error {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("skills: missing subcommand\navailable subcommands:\n  skills promote    promote a model-authored candidate skill out of quarantine")
+		return errors.New("skills: missing subcommand\navailable subcommands:\n  skills promote    promote a candidate skill from quarantine")
 	}
-	return fmt.Errorf("skills: unknown subcommand %q\navailable subcommands:\n  skills promote    promote a model-authored candidate skill out of quarantine", sub)
+	return fmt.Errorf("skills: unknown subcommand %q\navailable subcommands:\n  skills promote    promote a candidate skill from quarantine", sub)
 }
 
 // perfMCPUsageError builds the error message for a bare/unknown `perf-mcp` invocation.
@@ -330,7 +336,7 @@ func perfMCPUsageError(argv []string) error {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("perf-mcp: missing subcommand\navailable subcommands:\n  perf-mcp print-config    print a paste-ready client .mcp.json for the perf MCP server")
+		return errors.New("perf-mcp: missing subcommand\navailable subcommands:\n  perf-mcp print-config    print perf MCP client configuration")
 	}
-	return fmt.Errorf("perf-mcp: unknown subcommand %q\navailable subcommands:\n  perf-mcp print-config    print a paste-ready client .mcp.json for the perf MCP server", sub)
+	return fmt.Errorf("perf-mcp: unknown subcommand %q\navailable subcommands:\n  perf-mcp print-config    print perf MCP client configuration", sub)
 }

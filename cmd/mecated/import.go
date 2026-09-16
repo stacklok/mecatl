@@ -105,8 +105,8 @@ func parseImportFlags(argv []string, out io.Writer) (importFlags, error) {
 	fs.StringVar(&sourceWorkspace, "source-workspace", "", "source project directory for --copy-files and project skills (default: the session cwd)")
 	fs.StringVar(&id, "id", "", "Mecatl session id (default: import-<source>-<external-id>)")
 	fs.BoolVar(&copyFiles, "copy-files", false, "copy regular workspace files into --workspace without overwriting existing paths (.git and symlinks are skipped)")
-	fs.BoolVar(&includeSkills, "skills", false, "import conventional project and user skill bundles into <workspace>/.mecatl/skills. TRUST BOUNDARY: imported SKILL.md files steer the model like AGENTS.md/CLAUDE.md — only import from trusted sources")
-	fs.Var(&skillSources, "skills-dir", "additional skill source laid out as <dir>/<name>/SKILL.md (repeatable). TRUST BOUNDARY: a SKILL.md steers the model like AGENTS.md/CLAUDE.md — point this only at directories you trust")
+	fs.BoolVar(&includeSkills, "skills", false, "import conventional project and user skill bundles into <workspace>/.mecatl/skills. Skill instructions steer the model, so import only from trusted sources.")
+	fs.Var(&skillSources, "skills-dir", "additional skill source arranged as <dir>/<name>/SKILL.md. Repeatable. Skill instructions steer the model, so use only trusted directories.")
 	if err := fs.Parse(argv); err != nil {
 		return importFlags{}, err
 	}

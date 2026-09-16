@@ -115,17 +115,17 @@ const DefaultMaxJWKSStaleness = time.Hour
 // mains call it so the names and help text are identical.
 func RegisterOIDCFlags(fs *flag.FlagSet, c *OIDCConfig) {
 	fs.StringVar(&c.Issuer, "oidc-issuer", "",
-		"OIDC issuer URL (the `iss` claim, byte-exact) whose tokens identify callers. Setting it turns caller identity ON: every request must present a bearer the IdP vouches for, and the verified (iss, sub) is recorded as the session owner. Empty (default) disables it — requests are processed unauthenticated exactly as before. Requires --oidc-audience; a validator that cannot be constructed is FATAL, never a silent fall-back to unauthenticated")
+		"OIDC issuer URL whose tokens identify callers. Each request must present a valid bearer token, and the verified issuer and subject become the session owner. Requires --oidc-audience. Empty disables caller identity.")
 	fs.StringVar(&c.JWKSURI, "oidc-jwks-uri", "",
-		"STATIC JWKS endpoint for --oidc-issuer; short-circuits OIDC discovery (the air-gapped / pinned-key deployment). Empty derives it from the issuer's discovery document")
+		"static JWKS endpoint for --oidc-issuer. Empty uses the issuer discovery document.")
 	fs.BoolVar(&c.InsecureAllowPrivateIssuer, "oidc-insecure-allow-private-issuer", false,
-		"DEPRECATED TEST-ONLY legacy escape hatch. Permits BOTH an http:// OIDC issuer/JWKS URL and private, loopback, or link-local addresses, disabling the cloud-metadata SSRF guard. Use --oidc-allow-private-https-issuer with --oidc-ca-cert-file for a private HTTPS issuer; never set this in production")
+		"deprecated insecure compatibility option. Allows HTTP issuer and JWKS URLs and private, loopback, and link-local addresses. This disables cloud-metadata SSRF protection. Use --oidc-allow-private-https-issuer with --oidc-ca-cert-file for private HTTPS issuers.")
 	fs.BoolVar(&c.AllowPrivateHTTPSIssuer, "oidc-allow-private-https-issuer", false,
-		"Permit an HTTPS OIDC issuer/JWKS URL to resolve to a private, loopback, or link-local address. Requires --oidc-ca-cert-file; HTTPS, CA and hostname validation, redirect refusal, and DNS-pinned dialing remain enforced")
+		"allow an HTTPS issuer or JWKS URL to resolve to a private, loopback, or link-local address. Requires --oidc-ca-cert-file; TLS, CA, hostname, redirect, and DNS-pinned-dial checks remain enabled.")
 	fs.StringVar(&c.TrustedCAFile, "oidc-ca-cert-file", "",
 		"PEM CA bundle for --oidc-allow-private-https-issuer; required when private HTTPS issuer admission is enabled")
 	fs.StringVar(&c.Audience, "oidc-audience", "",
-		"audience (`aud`) this deployment accepts, REQUIRED with --oidc-issuer: an audience-less verifier would accept tokens minted for a different service")
+		"accepted OIDC audience (`aud`). Required with --oidc-issuer to reject tokens for other services.")
 	fs.Var(oidcStringValue{value: &c.Resource, set: &c.resourceSet}, "oidc-resource",
 		"canonical external HTTPS URL of the OAuth protected resource")
 	fs.Var(oidcStringValue{value: &c.ClientID, set: &c.clientIDSet}, "oidc-client-id",

@@ -17,18 +17,13 @@ import (
 // three mains' --help identical.
 const DefaultMCPServerFlagHelp = "remote MCP server as name=URL (repeatable); auth token read from MCP_<NAME>_TOKEN. " +
 	"The name must match [A-Za-z0-9_]+ and be case-insensitively unique across entries (it derives the token env var); " +
-	"a token-bearing URL must be https, or http to a loopback host (see --mcp-server-insecure-http for the explicit per-server opt-out)"
+	"a token-bearing URL must use HTTPS, or HTTP to a loopback host. --mcp-server-insecure-http is the explicit per-server opt-out."
 
 // DefaultMCPServerInsecureHTTPFlagHelp is the shared --mcp-server-insecure-http
 // help text (issue #358, ADR 0090). Unlike --mcp-server it is NOT overridable
 // per-main: the acknowledgment wording is the point of the flag, so all three
 // mains state it identically.
-const DefaultMCPServerInsecureHTTPFlagHelp = "EXPLICIT PER-SERVER OPT-IN (repeatable): name of a --mcp-server entry whose " +
-	"MCP_<NAME>_TOKEN bearer may ride plain http to a NON-loopback host. This acknowledges the token travels CLEARTEXT " +
-	"on the network path to that server — you are relying on network-layer controls (NetworkPolicy / namespace trust) " +
-	"plus short-lived tokens as the mitigations. It relaxes ONLY the http scheme gate, ONLY for the named server, " +
-	"order-independently of where its --mcp-server appears; naming a server that is not registered, or whose URL is " +
-	"already https / loopback / non-http, is an error (a stale acknowledgment is loud, never silently inert)"
+const DefaultMCPServerInsecureHTTPFlagHelp = "name of an MCP server entry allowed to send its MCP_<NAME>_TOKEN bearer token over plain HTTP to a non-loopback host. The token travels in cleartext on the network path. The flag can appear before or after the matching server entry. The name must identify an HTTP non-loopback server entry."
 
 // mcpServerName is the allowed shape of an --mcp-server name (ADR 0082
 // hardening, CWE-178): the name derives the MCP_<NAME>_TOKEN env var by ASCII

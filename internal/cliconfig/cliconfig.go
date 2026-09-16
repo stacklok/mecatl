@@ -540,8 +540,8 @@ type ModelFlagHelp struct {
 // passed ModelFlagHelp is empty. It mirrors the help text the mecated twin
 // carried before the extraction.
 var DefaultModelFlagHelp = ModelFlagHelp{
-	ModelAlias: "model alias mapping as name=model-id (repeatable), e.g. --model-alias fast=gpt-4o-mini. Aliases are resolved only in the composition layer; an agent def's `model: <alias>` resolves through this map (then the built-in sonnet/opus/haiku aliases)",
-	ModelSlot:  "per-slot model binding as slot=selector (repeatable), e.g. --model-slot compaction=cheap --model-slot cheap=gpt-4o-mini (ADR 0030). A SLOT routes an internal lightweight LLM call to its own model: the wired slots are `compaction` (the compaction summary call), `ask-reviewer` (the headless child-ask reviewer), and `guardrail` (the content checker); a TIER key (`cheap`/`fast`/`reasoning`) gives a default a slot falls through to (each routed slot defaults to `cheap`). The selector is an alias (resolved through --model-alias / the built-ins) or a concrete id. Empty (no --model-slot) keeps every call on the session model (byte-identical default). FAIL-SOFT: a typo'd slot or an alias meaning inherit WARNs and keeps the session model. For ask-reviewer/guardrail the slot supersedes the model of --subagent-ask-reviewer/--guardrails-model but does NOT enable them (those flags stay the on/off gate). Operator-tier only; the YAML twin is the user-global settings.yaml `models.slots:` subtree",
+	ModelAlias: "model alias mapping as name=model-id. Repeatable; for example, --model-alias fast=gpt-4o-mini. Agent definitions can use these aliases in their `model` field.",
+	ModelSlot:  "model binding as slot=selector. Repeatable; for example, --model-slot compaction=cheap. Slots `compaction`, `ask-reviewer`, and `guardrail` select models for those operations. The selector is a --model-alias or model identifier. An invalid selector uses the session model. `ask-reviewer` and `guardrail` slots do not enable those features.",
 }
 
 // RegisterModelFlags registers --model-alias / --model-slot on fs, each bound
