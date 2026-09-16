@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 const mcpLifecycleUsage = "mecated mcp {add NAME URL [--file PATH] [--credential-store auto|keyring|file] | list [--file PATH] | remove NAME [--file PATH]}"
@@ -83,8 +84,8 @@ func parseMCPLifecycleArgs(command string, args []string) (mcpLifecycleArgs, err
 }
 
 func defaultMCPSettingsFile() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
+	base := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
+	if base == "" {
 		return "", errors.New("operator settings path is unavailable")
 	}
 	return filepath.Join(base, permconfig.UserSettingsRelPath), nil
@@ -307,11 +308,12 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 	}
 	issuer := discovery.Issuer
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: updating settings")
-	configDir, err := os.UserConfigDir()
-	if err != nil {
+	configDir := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
+	stateDir := xdgconfig.UserStateDir(xdgconfig.OSEnv)
+	if configDir == "" || stateDir == "" {
 		return errors.New("MCP credential path is unavailable")
 	}
-	credentialRoot := filepath.Join(configDir, "mecatl", "mcp-credentials")
+	credentialRoot := filepath.Join(stateDir, "mecatl", "mcp-credentials")
 	keyPath := filepath.Join(configDir, "mecatl", "mcp-credential-key")
 	selected, err := mcpcredential.Resolve(context.Background(), credentialRoot, mcpcredential.Options{Requested: parsed.custody, FilePath: keyPath})
 	if err != nil {

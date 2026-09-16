@@ -99,3 +99,25 @@ func TestMCPSettingsRejectsSymlinkedParent(t *testing.T) {
 		t.Fatal("write followed symlinked parent")
 	}
 }
+
+// TestMCPAddDefaultSettingsPathFollowsXDGNotOSNative pins the exact bug this
+// fixed: mecated's own xdgconfig convention (XDG_CONFIG_HOME, or ~/.config on
+// every OS including macOS) is the ONE location every mecatl command must
+// agree on. The stdlib os.UserConfigDir() resolves somewhere else entirely on
+// macOS (~/Library/Application Support) — using it here would silently split
+// "mcp add"'s default settings file from every other command's, per
+// test-isolation.md's default-discovery-test discipline this is
+// nonparallel and uses a synthetic HOME/XDG_CONFIG_HOME.
+func TestMCPAddDefaultSettingsPathFollowsXDGNotOSNative(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	path, err := defaultMCPSettingsFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(xdg, "mecatl", "settings.yaml")
+	if path != want {
+		t.Fatalf("defaultMCPSettingsFile() = %q, want %q (an OS-native os.UserConfigDir() path would diverge from every other mecatl command's default)", path, want)
+	}
+}
+
