@@ -148,6 +148,45 @@ still take precedence over eligible built-in endpoint overrides. See the
 [provider configuration reference](/reference/configuration.md#providers) for
 the accepted flavors and fields.
 
+### Select OpenRouter models
+
+One OpenRouter API key registers two protocol-specific providers, the same
+split the ToolHive gateway uses:
+
+|Provider ID|Inference|
+|-|-|
+|`openrouter`|`POST /v1/responses`|
+|`openrouter-anthropic`|`POST /v1/messages`|
+
+Both providers cache. Mecatl asks for a prompt cache on every request, using
+the Responses protocol's own `prompt_cache_breakpoint`, so a model that caches
+only when asked is covered on any endpoint. That includes the ToolHive gateway
+and any OpenAI-compatible endpoint you configure yourself.
+
+Select Anthropic models under `openrouter-anthropic` when you want more than
+the floor. That endpoint speaks the Anthropic Messages protocol, which carries
+four cache breakpoints instead of one and lets you set a cache lifetime with
+`--anthropic-cache-ttl` (`5m` or `1h`). The Responses protocol expresses
+neither.
+
+This matters for cost. Anthropic caches a prompt only when the caller asks, and
+cache reads bill at a tenth of uncached input, so a long session on an unasked
+path pays the full price every turn. Mecatl therefore prefers
+`openrouter-anthropic` when the default model is an Anthropic model. An explicit
+`--default-provider` or an operator `models.default_provider` still wins.
+
+`openrouter-anthropic` lists Anthropic models only, because OpenRouter's
+Anthropic endpoint does not serve other vendors' models.
+
+In `/models`, a row marked `no-cache` is one Mecatl will not ask to cache. With
+default settings no row is marked; the marker appears when you run with
+`--no-prompt-cache`.
+
+To turn provider-side prompt caching off everywhere, run with
+`--no-prompt-cache`. Enabling a cache also asks the provider to retain your
+prompt prefix for the cache lifetime, so `--no-prompt-cache` is the right
+setting for a deployment relying on a zero-retention arrangement.
+
 ### Configure aliases, slots, and task routing
 
 For a deployment with several kinds of work, use the operator-global

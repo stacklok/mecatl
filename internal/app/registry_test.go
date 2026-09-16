@@ -49,7 +49,8 @@ func TestRegistryNProviders(t *testing.T) {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 	got := reg.Available()
-	want := []string{"openai", "openrouter"}
+	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	want := []string{"openai", "openrouter", "openrouter-anthropic"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Available() = %v, want %v", got, want)
 	}
@@ -250,8 +251,9 @@ func TestRegistryEnvDetectionSingle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	if got := reg.Available(); !reflect.DeepEqual(got, []string{"openrouter"}) {
-		t.Fatalf("Available() = %v, want [openrouter]", got)
+	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	if got := reg.Available(); !reflect.DeepEqual(got, []string{"openrouter", "openrouter-anthropic"}) {
+		t.Fatalf("Available() = %v, want [openrouter openrouter-anthropic]", got)
 	}
 	if _, ok := reg.Lookup("openai"); ok {
 		t.Error("openai should be UNAVAILABLE: OPENROUTER_API_KEY is not in its env[] list")
@@ -268,8 +270,9 @@ func TestRegistryEnvDetectionOpenRouterFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	if got := reg.Available(); !reflect.DeepEqual(got, []string{"openrouter"}) {
-		t.Fatalf("Available() = %v, want [openrouter]", got)
+	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	if got := reg.Available(); !reflect.DeepEqual(got, []string{"openrouter", "openrouter-anthropic"}) {
+		t.Fatalf("Available() = %v, want [openrouter openrouter-anthropic]", got)
 	}
 	if reg.Default() != "openrouter" {
 		t.Errorf("Default() = %q, want openrouter (only available provider)", reg.Default())
@@ -286,7 +289,8 @@ func TestRegistryEnvDetectionMultiVar(t *testing.T) {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 	got := reg.Available()
-	want := []string{"openai", "openrouter"}
+	// ADR 0346: one OpenRouter credential registers BOTH protocol entries.
+	want := []string{"openai", "openrouter", "openrouter-anthropic"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Available() = %v, want %v (openrouter falls back to OPENAI_API_KEY)", got, want)
 	}

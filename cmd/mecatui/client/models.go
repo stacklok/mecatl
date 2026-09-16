@@ -24,6 +24,12 @@ type ModelInfo struct {
 	Image        bool   // accepts image input
 	Reasoning    bool   // emits reasoning
 	ContextLimit int64  // total context window in tokens; 0 = unknown
+	// PromptCached is true when a session on this (provider, model) pair caches
+	// its conversation prefix (ADR 0346). False means mecatl emits NO cache
+	// breakpoint for it — decisive for an Anthropic model, which caches only on
+	// an explicit ask, and conservative for an unclassified OpenAI-compatible
+	// endpoint that might still cache implicitly upstream.
+	PromptCached bool
 }
 
 // ModelSelection is the chosen (provider, model) the client sends on
@@ -157,6 +163,7 @@ func mapModelInfo(m *mecatlv1.ModelInfo) ModelInfo {
 		Image:        m.GetImage(),
 		Reasoning:    m.GetReasoning(),
 		ContextLimit: m.GetContextLimit(),
+		PromptCached: m.GetPromptCached(),
 	}
 }
 

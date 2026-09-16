@@ -43,7 +43,15 @@ const (
 	// billing identity with a fixed, policy-enforced backend endpoint.
 	providerOpenAICodex = "openai-codex"
 	providerOpenRouter  = "openrouter"
-	providerAnthropic   = "anthropic"
+	// providerOpenRouterAnthropic is the native Anthropic Messages surface exposed
+	// by the same OpenRouter credential (ADR 0346), the sibling of
+	// providerToolhiveAnthropic. It is deliberately a distinct provider: models
+	// listed here execute through OpenRouter's Anthropic endpoint, never the
+	// OpenAI Responses adapter used by providerOpenRouter. It exists because
+	// Anthropic caches only on an explicit ask, and the Messages surface carries
+	// the breakpoints (and a TTL) that the Responses path cannot express.
+	providerOpenRouterAnthropic = "openrouter-anthropic"
+	providerAnthropic           = "anthropic"
 	// providerOpenCode is OpenCode Go (https://opencode.ai/zen/go/v1), an
 	// OpenAI-compatible subscription gateway that speaks the Chat Completions wire
 	// protocol uniformly. Unlike openai/openrouter (Responses API) it rides the
@@ -74,6 +82,9 @@ const (
 var builtinDefaultModel = map[string]string{
 	providerOpenAI:     "gpt-5",
 	providerOpenRouter: "openai/gpt-5",
+	// openrouter-anthropic serves ONLY Anthropic-family ids, so its default must
+	// be one; the OpenRouter-namespaced form of the anthropic entry's default.
+	providerOpenRouterAnthropic: "anthropic/claude-sonnet-4-6",
 	// anthropic: the current GA Sonnet (verified against the live Anthropic models
 	// overview, 2026-06-06): the best speed/intelligence balance and a cheaper
 	// default than Opus. It is catalogued in providercatalog (resolves cleanly
@@ -174,6 +185,15 @@ type providerEntry struct {
 	provider  port.LLMProvider // resilience-wrapped, ready to hand to an engine
 	available bool             // ≥1 of the provider's env[] keys resolved
 	baseURL   string           // for logging/diagnostics ONLY; never wired
+	// anthropicProtocol marks an entry served by the NATIVE Anthropic Messages
+	// adapter (provider/anthropic) rather than the OpenAI Responses adapter. Set
+	// at construction by newAnthropicEntryFor, so it is true for anthropic,
+	// toolhive-anthropic, openrouter-anthropic AND a custom
+	// api_flavor: anthropic-messages definition — never inferred from the id,
+	// which cannot see a custom provider's flavor. Read by promptCachedFor
+	// (ADR 0346): Anthropic's cache_control is native to Messages, so those
+	// entries cache on EVERY endpoint.
+	anthropicProtocol bool
 	// nativeEndpoint marks a deployment-wide native gateway. Its credentialed
 	// live listing is on-demand only; Build publishes the configured model floor.
 	nativeEndpoint bool
@@ -267,6 +287,12 @@ type providerRegistry struct {
 	// contextWindows is the operator-tier exact provider/model override map. It is
 	// immutable after Build and read by the picker projection as well as resolvers.
 	contextWindows map[string]map[string]int
+	// promptCached answers ModelInfo.prompt_cached for a (provider, model) pair
+	// (ADR 0346). A CLOSURE over the build's Config so the picker projection
+	// reads the SAME resolution the adapters were constructed with, instead of
+	// growing a second copy of the dialect precedence. nil on a hand-built test
+	// registry, which projects false.
+	promptCached func(providerID, modelID string) bool
 	// contextWindowOverride is the process-wide CLI escape hatch mirrored from Config.
 	// Keeping it beside contextWindows lets model-list projection use the same resolver
 	// as engines and echoes instead of growing a second precedence implementation.
@@ -629,6 +655,25 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		// inject a mock transport). KEYLESS: the lister never receives the key.
 		entry.lister = openRouterLister{inner: openrouter.NewLister(cfg.liveModelHTTPClient)}
 		entries[providerOpenRouter] = entry
+
+		// openrouter-anthropic (ADR 0346): the SAME credential also reaches
+		// OpenRouter's native Anthropic Messages surface, and Anthropic caches
+		// ONLY on an explicit ask. Routing Claude there gets the ADR 0100
+		// breakpoint budget plus a TTL — neither expressible over Responses —
+		// because newAnthropicEntryFor applies conversation caching on EVERY
+		// endpoint. Registered on credential presence (no opt-in), mirroring
+		// ADR 0334's register-on-intent, so an existing OpenRouter user's Claude
+		// default starts caching on upgrade with no config change.
+		if anthropicBase := openRouterAnthropicBaseURL(baseURL); anthropicBase != "" {
+			arEntry := newAnthropicEntryFor(cfg, providerOpenRouterAnthropic, key, anthropicBase, meta, false)
+			// Anthropic-family ids ONLY: the skin rejects non-Anthropic models.
+			// Reuses OpenRouter's own /models rather than probing the skin's
+			// undocumented /v1/models.
+			arEntry.lister = openRouterAnthropicLister{
+				inner: openRouterLister{inner: openrouter.NewLister(cfg.liveModelHTTPClient)},
+			}
+			entries[providerOpenRouterAnthropic] = arEntry
+		}
 	}
 
 	// opencode (OpenCode Go): the native Chat Completions adapter (openaichat, NOT
@@ -701,6 +746,19 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui providers login "+id+"`")
 	}
 	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta, outcomes: outcomes}
+	// Bind the prompt-cache projection AFTER entries exist (it looks an entry up)
+	// and over THIS build's cfg, so --no-prompt-cache and the ADR 0100 dialect
+	// precedence are read once, in one place.
+	reg.promptCached = func(providerID, modelID string) bool {
+		return promptCachedFor(reg, cfg, providerID, modelID)
+	}
+	// BUILD-ONCE posture line (ADR 0346 decision 7). Logged here, where the
+	// registry is assembled, and NEVER from the per-engine deps builders — the
+	// same rule that keeps normaliseAnthropicCacheTTL's WARN off every
+	// per-session and heal re-mint.
+	if line := promptCachePostureLine(reg, cfg); line != "" {
+		cfg.diag().Log(context.Background(), port.LevelInfo, line)
+	}
 	reg.defaultID, reg.defaultModel = resolveDefaultModel(cfg, reg)
 	// Seed the live-metadata store from the embedded catalog for every available
 	// provider — the t=0 floor every resolver reads before the background live swap.
@@ -1031,6 +1089,24 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		// closure (not the outer call site) so every per-session/heal re-mint
 		// carries it, not just the initial build.
 		opts = append(opts, openai.WithCacheDialect(cacheDialectFor(id, baseURL, cfg)))
+		// Prompt-cache key salt (ADR 0346): the SAME per-process value on every
+		// entry. Inside the closure for the same reason the dialect is — a
+		// per-session/heal re-mint must not silently drop it and start emitting
+		// the unsalted, cross-principal-stable key.
+		opts = append(opts, openai.WithCacheKeySalt(cfg.promptCacheKeySalt))
+		// Protocol-native breakpoint (ADR 0346 decision 1): armed for EVERY
+		// endpoint, governed only by --no-prompt-cache. Deliberately not tied
+		// to the dialect above — an endpoint the dialect cannot classify is
+		// exactly where an explicit-ask upstream needs the ask.
+		opts = append(opts, openai.WithPromptCacheBreakpoints(!cfg.PromptCacheDisabled))
+		// Redirect refusal (ADR 0346 Scenario 5, applying ADR 0334's existing
+		// gateway decision consistently): the SDK's default client follows up to
+		// 10 redirects and re-sends the body on a 307/308. Go strips
+		// Authorization cross-domain so the key does not travel, but the system
+		// prompt, file contents and tool results do. Prepended BEFORE extra, so a
+		// caller that passes its own WithHTTPClient (the gateway entries, which
+		// already refuse redirects and additionally inject a bearer) still wins.
+		opts = append(opts, openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1142,6 +1218,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 			available: true,
 			baseURL:   baseURL,
 		}
+		entry.anthropicProtocol = true
 		if liveListing {
 			entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
 		}
@@ -1228,7 +1305,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		"stream_idle_timeout", cfg.LLMStreamIdleTimeout,
 		"breaker_threshold", cfg.LLMBreakerThreshold,
 		"breaker_cooldown", cfg.LLMBreakerCooldown)
-	entry := providerEntry{id: id, provider: llm, available: true, baseURL: baseURL, remint: construct}
+	entry := providerEntry{id: id, provider: llm, available: true, baseURL: baseURL, remint: construct, anthropicProtocol: true}
 	if liveListing {
 		entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
 	}
@@ -1282,22 +1359,91 @@ func anthropicOutputLimit(model string) int {
 // keeping the pair coherent.
 func resolveDefaultModel(cfg Config, reg *providerRegistry) (providerID, modelID string) {
 	defID := preferredDefaultProvider(reg)
+	explicitProvider := false
 	if cfg.DefaultProvider != "" {
 		if _, ok := reg.Lookup(cfg.DefaultProvider); ok {
 			defID = cfg.DefaultProvider
+			explicitProvider = true
 		}
 	}
-	// (1) --model flag: an EXPLICIT override wins, paired with the default provider.
-	if cfg.Model != "" {
-		return defID, cfg.Model
+	var model string
+	switch {
+	case cfg.Model != "":
+		// (1) --model flag: an EXPLICIT override wins, paired with the default provider.
+		model = cfg.Model
+	case cfg.DefaultModel != "":
+		// (2) server-configured deployment-wide default (--default-model).
+		model = cfg.DefaultModel
+	default:
+		// (3) client last-used: S4.
+		// (4) per-provider default model from the table (no entry => "" => endpoint default).
+		model = reg.DefaultModelFor(defID)
 	}
-	// (2) server-configured deployment-wide default (--default-model).
-	if cfg.DefaultModel != "" {
-		return defID, cfg.DefaultModel
+	// ADR 0346 decision 3: never DEFAULT onto a protocol sibling that cannot cache
+	// the default model. An explicitly configured provider still wins — the
+	// operator named it.
+	if !explicitProvider {
+		defID = preferAnthropicProtocolSibling(reg, defID, model)
 	}
-	// (3) client last-used: S4.
-	// (4) per-provider default model from the table (no entry => "" => endpoint default).
-	return defID, reg.DefaultModelFor(defID)
+	return defID, model
+}
+
+// anthropicProtocolSibling maps an OpenAI-Responses provider id to the
+// Anthropic-Messages entry registered from the SAME credential, for providers
+// whose two surfaces SHARE a model-id namespace.
+//
+// Only the OpenRouter pair qualifies (ADR 0346 decision 6). The ToolHive pair
+// is deliberately ABSENT: measured on staging, that gateway exposes one Claude
+// Opus 4.8 as `anthropic/claude-opus-4.8` on its OpenRouter downstream,
+// `claude-opus-4-8` on its Anthropic downstream and
+// `us.anthropic.claude-opus-4-8` on Bedrock. Switching the provider while
+// carrying the id verbatim would therefore produce a pair that cannot resolve.
+// That fails safe rather than misrouting, but it delivers nothing, so claiming
+// it would be false comfort. The gateway case is covered by the protocol-native
+// breakpoint instead, which needs no id translation at all.
+var anthropicProtocolSibling = map[string]string{
+	providerOpenRouter: providerOpenRouterAnthropic,
+}
+
+// preferAnthropicProtocolSibling redirects a DEFAULT provider selection to its
+// Anthropic-Messages sibling when the default model is an Anthropic-family id
+// (ADR 0346 decision 3).
+//
+// Why this exists: Anthropic caches only on an explicit ask, and the Responses
+// entry emits no breakpoints, so defaulting a Claude model onto it silently
+// re-pays full uncached input every turn. That is exactly how the reported
+// incident happened — preferredDefaultProvider ranks intent-driven entries by
+// SORTED ORDER, and "toolhive" sorts before "toolhive-anthropic".
+//
+// The model id is carried VERBATIM, which is why anthropicProtocolSibling only
+// lists pairs whose surfaces share an id namespace. For OpenRouter that is
+// exact: its Anthropic surface takes the same namespaced id as its Responses
+// API. A pair that does not share one is not listed at all rather than being
+// switched and hoped for.
+//
+// Returns id unchanged when the model is not Anthropic-family, when there is no
+// sibling for id, or when the sibling is not registered.
+func preferAnthropicProtocolSibling(reg *providerRegistry, id, model string) string {
+	if !isAnthropicFamilyModel(model) {
+		return id
+	}
+	sibling, ok := anthropicProtocolSibling[id]
+	if !ok {
+		return id
+	}
+	if _, registered := reg.Lookup(sibling); !registered {
+		return id
+	}
+	return sibling
+}
+
+// isAnthropicFamilyModel reports whether a model id names an Anthropic model, in
+// either the OpenRouter-namespaced form ("anthropic/claude-...") or the bare
+// vendor form ("claude-..."). Deliberately narrow: it matches the vendor
+// namespace and the product name, never a substring anywhere in the id.
+func isAnthropicFamilyModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(m, openRouterAnthropicSegment) || strings.HasPrefix(m, "claude")
 }
 
 // preferredDefaultProvider picks the default provider id from explicit tiers.

@@ -318,6 +318,11 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 	b.WriteString("\n" + th.Style("muted").Render("type to filter · ↑/↓/"+hk.scrollUp+" move · "+hk.choose+" use · "+hk.setGlobalDefault+" set global default · "+hk.closeOnly+" clear filter / close"))
 	b.WriteString("\n" + th.Style("muted").Render("● current  ★ global default"))
 	b.WriteString("\n" + th.Style("muted").Render("reason = emits reasoning · set its effort tier with /effort"))
+	// The no-cache legend is CONDITIONAL: explaining a marker nobody can see is
+	// noise, and a deployment where everything caches should read clean.
+	if anyUncachedModel(catalog.models) {
+		b.WriteString("\n" + th.Style("muted").Render("no-cache = no prompt-cache breakpoint sent; costly for Claude models"))
+	}
 	return b.String()
 }
 
@@ -363,5 +368,41 @@ func modelCapSegments(mi client.ModelInfo) []string {
 	if mi.ContextLimit > 0 {
 		segs = append(segs, humanizeTokens(mi.ContextLimit))
 	}
+	// ADR 0346: mark a row mecatl sends no cache breakpoint for. The row stays
+	// SELECTABLE — an operator may deliberately want the Responses path — but an
+	// Anthropic model here re-pays full uncached input every turn, which is how
+	// the reported incident happened. Marking, not hiding, was the explicit
+	// decision recorded in the acceptance plan.
+	//
+	// Scoped to Anthropic-family ids because that is where PromptCached=false is
+	// DECISIVE: Anthropic caches only on an explicit ask, so no breakpoint means
+	// no cache. For every other vendor false merely means mecatl sends no hint,
+	// and an implicit-caching upstream (OpenAI, Gemini, DeepSeek, Grok) may well
+	// cache anyway — marking those would be a false alarm.
+	if !mi.PromptCached && modelLooksAnthropic(mi.ID) {
+		segs = append(segs, "no-cache")
+	}
 	return segs
+}
+
+// anyUncachedModel reports whether any row in the catalog would carry the
+// no-cache marker, gating its legend line (ADR 0346). It must apply the SAME
+// predicate modelCapSegments does, or the legend and the markers disagree.
+func anyUncachedModel(models []client.ModelInfo) bool {
+	for _, mi := range models {
+		if !mi.PromptCached && modelLooksAnthropic(mi.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+// modelLooksAnthropic is a DISPLAY-ONLY test for an Anthropic-family model id,
+// in either the namespaced ("anthropic/claude-...") or bare ("claude-...")
+// form. It decides whether to render a warning glyph, never what the harness
+// sends, so a renderer-local heuristic is the right altitude — capability and
+// cache truth stay composition-computed and arrive on ModelInfo.
+func modelLooksAnthropic(id string) bool {
+	m := strings.ToLower(strings.TrimSpace(id))
+	return strings.HasPrefix(m, "anthropic/") || strings.HasPrefix(m, "claude")
 }

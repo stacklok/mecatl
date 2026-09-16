@@ -147,7 +147,7 @@ func BenchmarkBuildInput(b *testing.B) {
 			b.ReportAllocs()
 			var params paramsSink
 			for b.Loop() {
-				out, err := buildInput(msgs, port.ProviderCapabilities{Image: true, EmbeddedContext: true})
+				out, err := buildInput(msgs, port.ProviderCapabilities{Image: true, EmbeddedContext: true}, -1)
 				if err != nil {
 					b.Fatalf("buildInput: %v", err)
 				}

@@ -82,8 +82,13 @@ func TestCacheDialectOpenRouterSendsCacheControlNoRetention(t *testing.T) {
 	// CacheDialectOpenAI, to prove the OpenRouter arm never even consults
 	// retentionFor.
 	raw := marshalParams(t, p, cacheReq("gpt-5.2"))
-	if !strings.Contains(raw, `"cache_control":{"type":"ephemeral"}`) {
-		t.Errorf("CacheDialectOpenRouter must send the request-root cache_control field: %s", raw)
+	// ADR 0346 decision 3: root cache_control is RETIRED. It was an
+	// OpenRouter-private extension, which is exactly why it had to be gated on
+	// endpoint identity — and that gate silently disabled caching on three
+	// other endpoint shapes. The protocol-native prompt_cache_breakpoint
+	// replaces it on every endpoint.
+	if strings.Contains(raw, "cache_control") {
+		t.Errorf("root cache_control must no longer be emitted by any dialect: %s", raw)
 	}
 	if !strings.Contains(raw, `"prompt_cache_key":"mecatl-`) {
 		t.Errorf("CacheDialectOpenRouter must send prompt_cache_key: %s", raw)

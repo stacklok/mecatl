@@ -49,7 +49,9 @@ func buildParams(req port.LLMRequest) (responses.ResponseNewParams, error) {
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
-	items, err := buildInput(req.Messages, port.ProviderCapabilities{Image: true, EmbeddedContext: true})
+	// -1: the free buildParams is the pre-existing default-path form and stays
+	// byte-identical, the same scoping ADR 0100 used for its cache hints.
+	items, err := buildInput(req.Messages, port.ProviderCapabilities{Image: true, EmbeddedContext: true}, -1)
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
@@ -89,7 +91,7 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 	// free buildParams above uses the static transmit caps (the byte-identical
 	// pre-T7 default); only the method (the live Stream path) carries the session
 	// intersection.
-	items, err := buildInput(req.Messages, p.sessionCaps())
+	items, err := buildInput(req.Messages, p.sessionCaps(), p.breakpointIndex(req))
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
@@ -121,10 +123,10 @@ func (p *Provider) buildParams(req port.LLMRequest) (responses.ResponseNewParams
 //
 //   - CacheDialectOpenAI: prompt_cache_key always; prompt_cache_retention
 //     only on an allow-listed model (retentionFor) — never guessed.
-//   - CacheDialectOpenRouter: prompt_cache_key, plus the OpenRouter-only
-//     request-root cache_control field (via SetExtraFields — there is no
-//     typed field for it; sending it to real OpenAI would 400). NEVER
-//     prompt_cache_retention, an OpenAI-only field.
+//   - CacheDialectOpenRouter: prompt_cache_key only. NEVER
+//     prompt_cache_retention (an OpenAI-only field), and since ADR 0346 no
+//     root cache_control either — the explicit prompt_cache_breakpoint
+//     buildInput places is the protocol-native ask, on every endpoint.
 func (p *Provider) applyCacheDialect(params *responses.ResponseNewParams, req port.LLMRequest) {
 	switch p.cacheDialect {
 	case CacheDialectOpenAI:
@@ -134,9 +136,13 @@ func (p *Provider) applyCacheDialect(params *responses.ResponseNewParams, req po
 		}
 	case CacheDialectOpenRouter:
 		params.PromptCacheKey = oai.String(p.promptCacheKey(req.System.StablePrefix, req.Messages))
-		params.SetExtraFields(map[string]any{
-			"cache_control": map[string]any{"type": "ephemeral"},
-		})
+		// Root cache_control is RETIRED (ADR 0346 decision 3). It was an
+		// OpenRouter-private extension, so it had to be gated on endpoint
+		// identity — and that gate is what silently disabled caching on three
+		// other endpoint shapes. OpenRouter converts an explicit
+		// prompt_cache_breakpoint for Anthropic and Google, so the protocol
+		// field subsumes it, and emitting both would be two mechanisms for one
+		// intent (the root field self-advances; explicit markers name a block).
 	default:
 		// CacheDialectNone, or an unrecognised token: emit nothing.
 	}
@@ -221,9 +227,11 @@ func buildTools(specs []tool.ToolSpec) ([]responses.ToolUnionParam, error) {
 // function_call_output items in subsequent tool messages). User/system text
 // become message items; tool messages become function_call_output items keyed by
 // call_id.
-func buildInput(msgs []session.Message, caps port.ProviderCapabilities) (responses.ResponseInputParam, error) {
+// breakpointIdx names the message that carries the explicit prompt-cache
+// breakpoint, or -1 for none. See breakpointIndex.
+func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpointIdx int) (responses.ResponseInputParam, error) {
 	items := make(responses.ResponseInputParam, 0, len(msgs))
-	for _, m := range msgs {
+	for i, m := range msgs {
 		switch m.Role {
 		case session.RoleSystem:
 			items = append(items, responses.ResponseInputItemParamOfMessage(
@@ -231,15 +239,23 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities) (respons
 		case session.RoleUser:
 			// Text-only fast path: keep the EXACT simple-string message form so the
 			// byte-stable prompt prefix and every existing fixture are unchanged.
-			if len(m.Parts) == 0 {
+			// A marked message cannot take it: prompt_cache_breakpoint lives on an
+			// input_text BLOCK (ADR 0346), so the marked message is promoted to a
+			// one-element content list. That shifts its bytes once, then it is
+			// stable again.
+			if len(m.Parts) == 0 && i != breakpointIdx {
 				items = append(items, responses.ResponseInputItemParamOfMessage(
 					m.Text, responses.EasyInputMessageRoleUser))
 				break
 			}
-			// Multimodal: build a content-list message (input_text + per-part media).
+			// Multimodal, or the marked message: build a content-list message
+			// (input_text + per-part media).
 			content, perr := userContentList(m)
 			if perr != nil {
 				return nil, perr
+			}
+			if i == breakpointIdx {
+				markPromptCacheBreakpoint(content)
 			}
 			items = append(items, responses.ResponseInputItemParamOfMessage(
 				content, responses.EasyInputMessageRoleUser))

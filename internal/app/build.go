@@ -1127,6 +1127,11 @@ type Config struct {
 	// composition detail, not an operator knob (the YAML is the sole source in v1 —
 	// no CLI flag).
 	openRouterRoutes map[string]openai.OpenRouterProviderPreferences
+	// promptCacheKeySalt is the per-process random value folded into every
+	// openai-adapter prompt_cache_key (ADR 0346). Minted once in Build when
+	// empty; NEVER persisted, logged, or sent as itself. A test may set it to
+	// pin a deterministic key.
+	promptCacheKeySalt string
 
 	// liveModelHTTPClient is the composition-only test seam for the LIVE model
 	// listers' HTTP transport (mirroring envDetector/providerConstructor). Production
@@ -1441,6 +1446,13 @@ func validateMCPAuthority(cfg Config) error {
 //
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
+	// Prompt-cache key salt (ADR 0346): one value per process, minted before the
+	// provider registry so every entry's construct closure captures the same one.
+	// A crypto/rand failure is NOT fatal — an empty salt degrades to ADR 0100's
+	// unsalted derivation, which is a correlation weakness, never a broken run.
+	if cfg.promptCacheKeySalt == "" {
+		cfg.promptCacheKeySalt = newPromptCacheKeySalt()
+	}
 	mcpProfileLifecycle := cfg.MCPProfileLifecycle
 	providerCredentialLifecycle := cfg.ProviderCredentialLifecycle
 	nativeEndpointCredentialLifecycle := cfg.NativeEndpointCredentialLifecycle

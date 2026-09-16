@@ -70,6 +70,18 @@ type Provider struct {
 	// promptCacheKey — see cachekey.go. A pointer (not embedded by value) so
 	// the zero-value Provider needs no initialisation.
 	cacheMemo atomic.Pointer[prefixMemo]
+	// cacheKeySalt is a per-process random value folded into the prompt_cache_key
+	// prefix hash (ADR 0346). "" (the Option unset) reproduces ADR 0100's exact
+	// derivation byte-for-byte, so a consumer that passes no Option is unchanged.
+	cacheKeySalt string
+	// breakpoints arms the protocol-native explicit prompt-cache breakpoint
+	// (ADR 0346). DELIBERATELY independent of cacheDialect: the dialect is an
+	// endpoint-identity gate, and gating the breakpoint on it would reproduce
+	// the exact bug ADR 0346 fixes — composition resolves an unrecognised
+	// endpoint (the ToolHive gateway included) to CacheDialectNone, which is
+	// where an explicit-ask model most needs the ask. Governed only by
+	// --no-prompt-cache.
+	breakpoints bool
 	// providerPrefs resolves the OpenRouter downstream-provider routing object
 	// for a request's model (issue #480); nil for every non-openrouter entry, so
 	// the `provider` body key is only ever stamped for OpenRouter.
@@ -90,6 +102,8 @@ type config struct {
 	extra          []option.RequestOption
 	httpClient     *http.Client
 	cacheDialect   CacheDialect
+	cacheKeySalt   string
+	breakpoints    bool
 	providerPrefs  func(model string) *OpenRouterProviderPreferences
 	metadataHeader bool
 }
@@ -239,6 +253,8 @@ func New(opts ...Option) *Provider {
 		effort:         c.effort,
 		caps:           c.caps,
 		cacheDialect:   c.cacheDialect,
+		cacheKeySalt:   c.cacheKeySalt,
+		breakpoints:    c.breakpoints,
 		providerPrefs:  c.providerPrefs,
 		metadataHeader: c.metadataHeader,
 	}
