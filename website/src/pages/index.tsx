@@ -2,26 +2,45 @@ import React from 'react';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
+import {
+  Activity,
+  Blocks,
+  Cloud,
+  CloudCog,
+  Fingerprint,
+  Package,
+  Plug,
+  RefreshCw,
+  ShieldCheck,
+  Split,
+  type LucideIcon,
+} from 'lucide-react';
 import styles from './index.module.css';
 import {
   useParallax,
   useRevealRoot,
 } from '../components/home/hooks';
 
-const outcomes = [
-  {icon: '☁', title: 'Get your harness off the desktop', body: 'Start locally, then deploy a fleet of agents on Kubernetes with your choice of cloud and model provider.'},
-  {icon: '⌘', title: 'Separate the agent loop from the sandbox', body: 'Separate control from execution to keep bad code outside your trust boundary.'},
-  {icon: '⬡', title: 'Pick and choose what you need', body: 'Use Mecatl\'s library of components to assemble a custom harness.'},
-  {icon: '✓', title: 'Control what your agents can do', body: 'Set permissions and choose which tool calls require your approval.'},
+type HomepageItem = {
+  icon: LucideIcon;
+  title: string;
+  body: React.ReactNode;
+};
+
+const outcomes: HomepageItem[] = [
+  {icon: Cloud, title: 'Get your harness off the desktop', body: 'Start locally, then deploy a fleet of agents on Kubernetes with your choice of cloud and model provider.'},
+  {icon: Split, title: 'Separate the agent loop from the sandbox', body: 'Separate control from execution to keep bad code outside your trust boundary.'},
+  {icon: Blocks, title: 'Pick and choose what you need', body: 'Use Mecatl\'s library of components to assemble a custom harness.'},
+  {icon: ShieldCheck, title: 'Control what your agents can do', body: 'Set permissions and choose which tool calls require your approval.'},
 ];
 
-const capabilities: {icon: string; title: string; body: React.ReactNode}[] = [
-  {icon: '⟳', title: 'Complete agent loop', body: 'Multi-turn reasoning, tool dispatch, compaction, permission gating, and event streaming are built in.'},
-  {icon: '⬡', title: 'Port model', body: 'Modular design. Swap LLM backends, persistence, distributed locks, or permission logic without touching the engine. Reference adapters included for every port.'},
-  {icon: '☁', title: 'Cloud-native by design', body: <>Disposable process, externalized state, durable event record. <code>mecak8s</code> pre-wires Redis and Kubernetes leases so you can scale stateless pods from day one.</>},
-  {icon: '◈', title: 'Importable engine', body: <><code>github.com/stacklok/mecatl/engine</code> is its own Go module with a tiny dependency closure. Embed the loop directly, no server required.</>},
-  {icon: '⚙', title: 'Full observability', body: 'OpenTelemetry traces, LLM resilience decorator, slow-turn ring buffer, and an MCP-accessible perf server.'},
-  {icon: '✓', title: 'Identity at the core', body: 'Every agent acts under a verifiable identity. Mecatl stamps identity at every agent action, not just at the login gate.'},
+const capabilities: HomepageItem[] = [
+  {icon: RefreshCw, title: 'Complete agent loop', body: 'Multi-turn reasoning, tool dispatch, compaction, permission gating, and event streaming are built in.'},
+  {icon: Plug, title: 'Port model', body: 'Modular design. Swap LLM backends, persistence, distributed locks, or permission logic without touching the engine. Reference adapters included for every port.'},
+  {icon: CloudCog, title: 'Cloud-native by design', body: <>Disposable process, externalized state, durable event record. <code>mecak8s</code> pre-wires Redis and Kubernetes leases so you can scale stateless pods from day one.</>},
+  {icon: Package, title: 'Importable engine', body: <><code>github.com/stacklok/mecatl/engine</code> is its own Go module with a tiny dependency closure. Embed the loop directly, no server required.</>},
+  {icon: Activity, title: 'Full observability', body: 'OpenTelemetry traces, LLM resilience decorator, slow-turn ring buffer, and an MCP-accessible perf server.'},
+  {icon: Fingerprint, title: 'Identity at the core', body: 'Every agent acts under a verifiable identity. Mecatl stamps identity at every agent action, not just at the login gate.'},
 ];
 
 const deployments: {label: string; desc: React.ReactNode; link: string}[] = [
@@ -32,6 +51,10 @@ const deployments: {label: string; desc: React.ReactNode; link: string}[] = [
 ];
 
 const delay = (ms: number) => ({'--d': `${ms}ms`}) as React.CSSProperties;
+
+function ItemIcon({icon: Icon}: {icon: LucideIcon}) {
+  return <span className={styles.itemIcon} aria-hidden="true"><Icon size={24} strokeWidth={2} /></span>;
+}
 
 function Hero() {
   return (
@@ -85,7 +108,7 @@ function Outcomes() {
         <ul className={styles.olist}>
           {outcomes.map((outcome) => (
             <li key={outcome.title} className={styles.oitem}>
-              <span className={styles.itemIcon} aria-hidden="true">{outcome.icon}</span>
+              <ItemIcon icon={outcome.icon} />
               <div data-reveal="">
                 <h3 className={styles.itemTitle}>{outcome.title}</h3>
                 <p className={styles.itemBody}>{outcome.body}</p>
@@ -127,7 +150,7 @@ function Capabilities() {
         <ul className={styles.capList}>
           {capabilities.map((capability, i) => (
             <li key={capability.title} className={styles.capItem}>
-              <span className={styles.itemIcon} aria-hidden="true">{capability.icon}</span>
+              <ItemIcon icon={capability.icon} />
               <div data-reveal="" style={delay((i % 2) * 90)}>
                 <h3 className={styles.itemTitle}>{capability.title}</h3>
                 <p className={styles.itemBody}>{capability.body}</p>
