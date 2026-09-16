@@ -32,6 +32,18 @@ job_if() {
   ' "$workflow"
 }
 
+# Print a job's whole body (from its `  <name>:` header to the next top-level job
+# header). Used to scope an assertion to ONE job when the text it greps for also
+# appears in a sibling job (e.g. the identical GO_RELEVANT early-exit in both the
+# `test` and `lint` aggregators).
+job_block() {
+  awk -v header="  $1:" '
+    $0 == header { inj = 1; print; next }
+    inj && /^  [a-zA-Z0-9_-]+:$/ { exit }
+    inj { print }
+  ' "$workflow"
+}
+
 # Assert a job's `if:` contains (or, with "!", does not contain) a substring.
 assert_if() {
   local job="$1" mode="$2" needle="$3" line
@@ -112,6 +124,20 @@ done
 assert_if user-docs has "needs.changes.outputs.site_relevant == 'true'"
 assert_if user-docs hasnot "docs_only"
 
+# Drift guard: pin the number of job-level `if:` gates carrying go_relevant so
+# adding or removing a Go-gated job forces a conscious update to the job lists
+# above. Unlike the macOS jobs (which share the `runs-on: macos-14` marker the
+# sibling test counts), Linux Go jobs share `runs-on: ubuntu-24.04` with
+# legitimately-ungated jobs (changes, docs, domain-model, the always() aggregators,
+# sdk, user-docs), so there is no runner marker to count — this pins the gate set
+# instead. Expected 15 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs.
+# The residual this cannot catch is a NEW Go job shipped with NO gate at all; the
+# job lists above are the record for that.
+go_gate_count="$(grep -cF "needs.changes.outputs.go_relevant == 'true'" "$workflow" || true)"
+if [[ "$go_gate_count" -ne 15 ]]; then
+  fail "expected 15 job if: gates on go_relevant (11 go-family + 4 go||sdk), found $go_gate_count — update the job lists in this test when gating/ungating a job"
+fi
+
 # --- required-check aggregators tolerate the new skips -------------------------
 # test and lint are the required checks; both must gain a go_relevant branch or a
 # non-Go PR (which legitimately skips the race shards / analysis) fails them.
@@ -120,7 +146,16 @@ env_count="$(grep -cF "$go_relevant_env" "$workflow" || true)"
 if [[ "$env_count" -lt 2 ]]; then
   fail "both test and lint aggregators must read go_relevant (found $env_count of 2)"
 fi
-require 'if [[ "$GO_RELEVANT" != true ]]; then' 'the test aggregator must skip the shard requirement for a non-Go change'
+# The identical GO_RELEVANT early-exit appears in BOTH aggregators, so a whole-file
+# grep cannot tell which one has it. Pin each within its own job body: the test
+# aggregator's shard-requirement skip, and the lint aggregator's analysis-skipped
+# requirement (its message is already unique to lint).
+if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block test)"; then
+  fail 'the test aggregator must skip the shard requirement for a non-Go change'
+fi
+if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block lint)"; then
+  fail 'the lint aggregator must branch on go_relevant for a non-Go change'
+fi
 require 'non-go-relevant analysis job was not skipped' 'the lint aggregator must require analysis skipped for a non-Go change'
 
 if [[ "$failures" -ne 0 ]]; then

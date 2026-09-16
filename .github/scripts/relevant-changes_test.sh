@@ -63,6 +63,12 @@ run "sdk: cmd change skips" sdk false cmd/mecated/main.go
 run "sdk: website + user-docs skip" sdk false website/a.tsx user-docs/intro.md
 run "sdk: docs skip" sdk false docs/x.md
 run "sdk: mixed SDK + Go runs" sdk true sdk/typescript/src/a.ts engine/b.go
+# CI-control files that DEFINE the sdk job / its task recipes must RUN it, even
+# with no frontend change (the false-SKIP a positive allowlist would otherwise
+# introduce for orchestration-only changes).
+run "sdk: ci.yml (job definition) runs" sdk true .github/workflows/ci.yml
+run "sdk: Taskfile (task recipes) runs" sdk true Taskfile.yml
+run "sdk: .github/scripts change runs" sdk true .github/scripts/relevant-changes.sh
 
 # --- site category: the Docusaurus build (`user-docs`) --------------------------
 # Relevant to website/ and user-docs/ (site content) and sdk/typescript/ (the
@@ -73,6 +79,9 @@ run "site: SDK declarations run (task sdk:docs:check)" site true sdk/typescript/
 run "site: Go engine change skips" site false engine/agent/loop.go
 run "site: internal docs (matlatl corpus) skip" site false docs/adr/0093-provider-modules.md
 run "site: mixed site + Go runs" site true website/a.tsx internal/b.go
+# CI-control files that DEFINE the user-docs job / its task recipes must RUN it.
+run "site: ci.yml (job definition) runs" site true .github/workflows/ci.yml
+run "site: Taskfile (task recipes) runs" site true Taskfile.yml
 
 # --- fail-closed / safety across categories ------------------------------------
 for cat in go sdk site; do

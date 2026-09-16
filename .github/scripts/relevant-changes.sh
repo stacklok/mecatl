@@ -17,24 +17,30 @@
 #          macos-relevant-changes.sh, whose `go` category excludes leaf dirs that
 #          are outside the darwin build closure but INSIDE this one.)
 #   sdk  — the pure-TypeScript SDK unit job (the `sdk` Node matrix). It runs
-#          against the COMMITTED sdk/typescript/src/gen, so it is relevant only to
-#          sdk/typescript/ changes and to contracts/ (the proto that gen is
-#          generated from). The SDK jobs that spawn/build mecated (sdk-integration,
-#          sdk-deno, sdk-browser, slack-bot-example) are gated on go OR sdk in the
-#          workflow, not on this category alone.
+#          against the COMMITTED sdk/typescript/src/gen, so it is relevant to
+#          sdk/typescript/ changes, to contracts/ (the proto that gen is generated
+#          from), and to the CI-control files that DEFINE the job and the task
+#          recipes it runs (.github/, Taskfile.yml) — a change there can alter the
+#          job with no frontend change, so it fails closed and RUNs. The SDK jobs
+#          that spawn/build mecated (sdk-integration, sdk-deno, sdk-browser,
+#          slack-bot-example) are gated on go OR sdk in the workflow, not on this
+#          category alone.
 #   site — the Docusaurus build (the `user-docs` job). Relevant to website/ and
-#          user-docs/ (the site content) and to sdk/typescript/ (the job's
+#          user-docs/ (the site content), to sdk/typescript/ (the job's
 #          `task sdk:docs:check` verifies committed SDK reference pages generated
-#          from the TS declarations). Everything else is irrelevant.
+#          from the TS declarations), and to the CI-control files that define the
+#          job and its task recipes (.github/, Taskfile.yml). Everything else is
+#          irrelevant.
 #
 # The classification is fail-closed. Any malformed, empty, or unterminated input
 # prints "true" (RUN the family) regardless of category, and an unknown category
 # treats nothing as provably irrelevant. For the `go` category, any path outside
 # the small irrelevant allowlist also prints "true" (RUN) — the expensive/critical
 # path defaults to running. The `sdk` and `site` categories use small positive
-# allowlists: their only inputs are committed files under structurally bounded
-# directories, so a well-formed path outside the allowlist genuinely cannot affect
-# them; the category-independent malformed-input backstop below still fails to RUN.
+# allowlists covering both their content directories AND the CI-control files
+# (.github/, Taskfile.yml) that define the job and its task recipes, so a
+# well-formed path outside the allowlist cannot affect them; the
+# category-independent malformed-input backstop below still fails to RUN.
 # The script prints "false" (SKIP) only when the input is well-formed, non-empty,
 # and EVERY path is irrelevant. It never evaluates a path as shell code.
 #
@@ -58,20 +64,21 @@ irrelevant() {
       return 1
       ;;
     sdk)
-      # Pure-TS unit suite: relevant only to the SDK frontend and the proto
-      # contracts its committed bindings are generated from. Everything else is
-      # irrelevant.
+      # Pure-TS unit suite: relevant to the SDK frontend, the proto contracts its
+      # committed bindings are generated from, and the CI-control files that define
+      # the job and the task recipes it runs (a change there can alter the job with
+      # no frontend change — fail closed and RUN).
       case "$1" in
-        sdk/typescript/*|contracts/*) return 1 ;;
+        sdk/typescript/*|contracts/*|.github/*|Taskfile.yml) return 1 ;;
       esac
       return 0
       ;;
     site)
-      # Docusaurus build: relevant to the site content and the SDK declarations
-      # its generated reference pages are checked against. Everything else is
-      # irrelevant.
+      # Docusaurus build: relevant to the site content, the SDK declarations its
+      # generated reference pages are checked against, and the CI-control files
+      # that define the job and the task recipes it runs.
       case "$1" in
-        website/*|user-docs/*|sdk/typescript/*) return 1 ;;
+        website/*|user-docs/*|sdk/typescript/*|.github/*|Taskfile.yml) return 1 ;;
       esac
       return 0
       ;;
