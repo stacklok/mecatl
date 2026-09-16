@@ -56,6 +56,13 @@ func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 	}
 }
 
+func TestModelCapSegmentsDescribeImageInput(t *testing.T) {
+	got := modelCapSegments(client.ModelInfo{Image: true})
+	if len(got) != 1 || got[0] != "image input" {
+		t.Fatalf("image capability segment = %v, want [image input]", got)
+	}
+}
+
 func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()

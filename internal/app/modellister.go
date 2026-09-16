@@ -390,19 +390,18 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
 		out = append(out, modelEntry{
-			ID:           m.ID,
-			DisplayName:  m.DisplayName,
-			ContextLimit: m.ContextLimit,
+			ID:              m.ID,
+			DisplayName:     m.DisplayName,
+			ContextLimit:    m.ContextLimit,
+			InputModalities: m.InputModalities,
 			// ToolCall:true — a coding-agent gateway fronts tool-capable models;
 			// the local gate is not authoritative (the openrouter-image-caps
 			// lesson: an over-permissive local flag fails safe via the
 			// provider's own 4xx, never a silent wrong local guess).
 			ToolCall: true,
-			// The generic OpenAI-shaped /v1/models envelope carries no
-			// modality/reasoning metadata. Keep InputModalities nil: omitted
-			// metadata is unknown, so resolution falls through to the exact
-			// catalog row and then adapter caps. An absent context_window decodes
-			// to 0, so that resolver similarly falls back to catalog then 128k.
+			// An absent input declaration remains nil (unknown), preserving the
+			// catalog then adapter-capability fallback. A non-nil declaration,
+			// including [], is authoritative for this model.
 		})
 	}
 	return out, nil

@@ -355,7 +355,7 @@ func modelLabel(mi client.ModelInfo) string {
 func modelCapSegments(mi client.ModelInfo) []string {
 	var segs []string
 	if mi.Image {
-		segs = append(segs, "img")
+		segs = append(segs, "image input")
 	}
 	if mi.Reasoning {
 		segs = append(segs, "reason")

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -65,10 +66,35 @@ func TestListModels_MappingFromFixture(t *testing.T) {
 	if got := byID["claude-sonnet-4-6"].ContextLimit; got != 1_000_000 {
 		t.Errorf("ContextLimit = %d, want 1000000", got)
 	}
+	if got := byID["claude-sonnet-4-6"].InputModalities; got != nil {
+		t.Errorf("InputModalities = %v, want nil when the response omits input metadata", got)
+	}
 	// display_name and context_window absent ⇒ their zero values pass through
 	// (display falls back to id and context to catalog/default in composition).
 	if m, ok := byID["no-display-name"]; !ok || m.DisplayName != "" || m.ContextLimit != 0 {
 		t.Errorf("no-display-name entry: %+v, ok=%v", m, ok)
+	}
+}
+
+func TestListModels_PreservesDeclaredInputModalities(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return newResp(http.StatusOK, `{"data":[{"id":"text-only","input":["text"]},{"id":"no-input","input":[]}]}`), nil
+	})}
+
+	models, err := NewLister(testBaseURL, "", client).ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("got %d models, want 2", len(models))
+	}
+	if got, want := models[0].InputModalities, []string{"text"}; !slices.Equal(got, want) {
+		t.Errorf("text-only InputModalities = %v, want %v", got, want)
+	}
+	if models[1].InputModalities == nil {
+		t.Error("explicit empty input declaration became nil (unknown)")
+	} else if len(models[1].InputModalities) != 0 {
+		t.Errorf("empty input declaration = %v, want []", models[1].InputModalities)
 	}
 }
 
