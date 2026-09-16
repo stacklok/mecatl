@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this establishes a substantive package-private TUI interaction contract across existing client surfaces without changing a public API, persistence boundary, protocol, or system architecture.
 **Decision record:** None — the control remains confined to `cmd/mecatui/ui`; its local ownership and interaction choices belong in this plan rather than a durable architecture record.
 **Phase:** bounded scroll-cursor convergence, slice 1
-**Status:** in-progress, 2026-09-15. Implementation began from approved PR #1593.
+**Status:** landed in this implementation candidate, 2026-09-15. Authoritative when the implementation PR merges; the operator authorized opening without rebasing for repository-wide ac-trace fixes already present on current `origin/main`.
 **Amendment:** 2026-09-15 — after the early package-private API checkpoint, the operator explicitly waived a separate amendment PR and authorized this implementation-branch amendment for stable item identity, independent viewport/cursor anchors, caller-owned selected styling, and tiny-width behavior.
 **Delivery:** Split. Shared cursor, layout, style, and pointer semantics need human interface review before implementation changes multiple surfaces.
 **Expected tasks:** 2
