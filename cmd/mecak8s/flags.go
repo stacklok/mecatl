@@ -342,21 +342,21 @@ func parseFlags(argv []string) (config, error) {
 	logLevelFlags := cliconfig.RegisterLogLevelFlag(fs)
 
 	fs.StringVar(&cfg.grpcAddr, "grpc-addr", defaultGRPCAddr,
-		"gRPC listen address (a pod binds 0.0.0.0; set --auth-token and/or --tls-cert for a non-mesh deployment)")
+		"gRPC listen address. Pods bind 0.0.0.0; configure caller authentication outside a service mesh")
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
-		"HTTP/SSE listen address (carries /healthz and /readyz outside auth; the API mux inside auth)")
+		"HTTP/SSE listen address. Health and readiness endpoints do not require authentication")
 	fs.StringVar(&cfg.drainAddr, "drain-addr", defaultDrainAddr,
-		"plaintext drain-only listen address (GET /drain for the kubelet preStop hook)")
-	positiveDurationFlag(fs, &cfg.drainTimeout, "drain-timeout", defaultDrainTimeout, "maximum time to cancel, join, and persist Service runs during shutdown")
-	positiveDurationFlag(fs, &cfg.grpcStopTimeout, "grpc-stop-timeout", defaultGRPCStopTimeout, "maximum time for gRPC GracefulStop before a hard stop")
-	positiveDurationFlag(fs, &cfg.httpShutdownTimeout, "http-shutdown-timeout", defaultHTTPShutdownTimeout, "maximum time for HTTP and metrics graceful shutdown")
-	positiveDurationFlag(fs, &cfg.closeTimeout, "close-timeout", defaultCloseTimeout, "maximum time allowed for final app resource cleanup")
-	fs.StringVar(&cfg.workspace, "workspace", "", "optional shared agent workspace root, e.g. a mounted PVC path. Empty (the default) is a FILE-LESS deployment: every session is no-FS. A non-empty ABSOLUTE path selects a server-assigned filesystem deployment rooted there — the operator vouches for the mount and clients cannot select another root (ADR 0237)")
-	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default)")
-	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id (e.g. openai, openrouter, anthropic); validated FAIL-FAST at startup")
-	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider; validated FAIL-FAST at startup")
-	fs.BoolVar(&cfg.useOpenAI, "openai", false, "use the OpenAI Responses provider (key from OPENAI_API_KEY or --openai-bearer-token-file)")
-	fs.StringVar(&cfg.openAIBearerTokenFile, "openai-bearer-token-file", "", "path to a rotating OpenAI bearer token (mecak8s only; requires --openai-base-url and is mutually exclusive with OPENAI_API_KEY)")
+		"Unauthenticated HTTP address for GET /drain, typically used by a kubelet preStop hook")
+	positiveDurationFlag(fs, &cfg.drainTimeout, "drain-timeout", defaultDrainTimeout, "Maximum time to cancel, join, and persist runs during shutdown")
+	positiveDurationFlag(fs, &cfg.grpcStopTimeout, "grpc-stop-timeout", defaultGRPCStopTimeout, "Maximum time for graceful gRPC shutdown before a hard stop")
+	positiveDurationFlag(fs, &cfg.httpShutdownTimeout, "http-shutdown-timeout", defaultHTTPShutdownTimeout, "Maximum time for graceful HTTP and metrics shutdown")
+	positiveDurationFlag(fs, &cfg.closeTimeout, "close-timeout", defaultCloseTimeout, "Maximum time for final application cleanup")
+	fs.StringVar(&cfg.workspace, "workspace", "", "Shared agent workspace root, such as a mounted PVC. Empty gives every session a shell-less, file-less workspace; clients cannot choose another root")
+	fs.StringVar(&cfg.model, "model", "", "Model identifier sent to the provider. Empty uses the provider default")
+	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "Deployment-wide default provider ID, such as openai, openrouter, or anthropic. Invalid values prevent startup")
+	fs.StringVar(&cfg.defaultModel, "default-model", "", "Deployment-wide default model ID for the default provider. Invalid values prevent startup")
+	fs.BoolVar(&cfg.useOpenAI, "openai", false, "Use the OpenAI Responses provider. Reads OPENAI_API_KEY or --openai-bearer-token-file")
+	fs.StringVar(&cfg.openAIBearerTokenFile, "openai-bearer-token-file", "", "Path to a rotating OpenAI bearer token. Requires --openai-base-url and excludes OPENAI_API_KEY")
 	// Shared provider base-URL flags + credential reads (cliconfig): registers
 	// --openai-base-url / --openrouter-base-url / --anthropic-base-url and reads
 	// OPENAI/OPENROUTER/ANTHROPIC_API_KEY — the SAME helper mecated/mecatequi
@@ -372,131 +372,131 @@ func parseFlags(argv []string) (config, error) {
 	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
-	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
-	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
-	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Shell-tool commands; empty disables Shell (shell-less mode)")
-	fs.BoolVar(&cfg.noShell, "no-shell", false, "disable the Shell tool entirely (shell-less mode); overrides --shell")
+	fs.BoolVar(&cfg.useMock, "mock", false, "Use an offline mock provider without network access or an API key")
+	fs.StringVar(&cfg.mockScript, "mock-script", "", "Path to an offline JSON mock script. Implies --mock")
+	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "Shell for Shell tool commands. An empty value disables the tool")
+	fs.BoolVar(&cfg.noShell, "no-shell", false, "Disable the Shell tool. Overrides --shell")
 
 	// Storage-free state (ADR 0048): --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).
-	fs.StringVar(&cfg.redisURL, "redis-url", "", "Redis address (host:port) for the session store + durable event log (ADR 0048, storage-free). Secure Redis uses mounted file paths")
-	fs.BoolVar(&cfg.redisFilesystem, "redis-filesystem", false, "use a principal-scoped, persistent, shell-less Redis workspace; mutually exclusive with --workspace")
-	fs.BoolVar(&cfg.redisReadLedger, "redis-read-ledger", false, "persist each session's read-before-write ledger in Redis independently of workspace storage")
-	fs.BoolVar(&cfg.redisAllowPlaintext, "redis-allow-plaintext", false, "EXPLICITLY allow unauthenticated plaintext Redis for a disposable local/Kind fixture; production Redis must use CA-verified TLS")
-	fs.StringVar(&cfg.redisUsernameFile, "redis-username-file", "", "path to optional Redis ACL username in a mounted Secret; requires a password and verified TLS")
-	fs.StringVar(&cfg.redisPasswordFile, "redis-password-file", "", "path to optional Redis password in a mounted Secret; never pass the password as an argument; requires verified TLS")
-	fs.BoolVar(&cfg.redisTLS, "redis-tls", false, "verify Redis TLS against the host system trust store; use for a managed Redis whose certificate chains to a public CA. Use --redis-tls-ca instead for a private CA")
-	fs.StringVar(&cfg.redisTLSCAFile, "redis-tls-ca", "", "path to a PEM CA bundle in a mounted Secret used to verify Redis TLS, REPLACING the system trust store. Either this or --redis-tls is required whenever ACL credentials are configured")
-	fs.IntVar(&cfg.redisFollowPoolSize, "redis-follow-pool-size", defaultRedisFollowPoolSize, "maximum Redis connections reserved for blocking event followers")
-	fs.IntVar(&cfg.redisMaxFollowers, "redis-max-followers", defaultRedisMaxFollowers, "maximum number of event followers admitted by this process")
-	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host:port of one distributed learning gRPC driver providing AttemptRepositoryService, ProposalRepositoryService, and SkillRepositoryService. The complete set must be explicitly advertised at startup; a partial or legacy driver fails closed with no local-repository fallback. Repository partitions are opaque on this transport")
-	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
-	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on store-driver connections")
-	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")
-	fs.StringVar(&cfg.driverTLSCert, "driver-tls-cert", "", "PEM client certificate for mutual TLS to the store driver (with --driver-tls and --driver-tls-key)")
-	fs.StringVar(&cfg.driverTLSKey, "driver-tls-key", "", "PEM client private key (paired with --driver-tls-cert)")
+	fs.StringVar(&cfg.redisURL, "redis-url", "", "Redis host:port for the session store and durable event log")
+	fs.BoolVar(&cfg.redisFilesystem, "redis-filesystem", false, "Use a principal-scoped, persistent, shell-less Redis workspace. Excludes --workspace")
+	fs.BoolVar(&cfg.redisReadLedger, "redis-read-ledger", false, "Store each session's read-before-write ledger in Redis")
+	fs.BoolVar(&cfg.redisAllowPlaintext, "redis-allow-plaintext", false, "Allow unauthenticated plaintext Redis for a disposable local or Kind fixture. Production Redis requires CA-verified TLS")
+	fs.StringVar(&cfg.redisUsernameFile, "redis-username-file", "", "Path to an optional Redis ACL username in a mounted Secret. Requires a password and verified TLS")
+	fs.StringVar(&cfg.redisPasswordFile, "redis-password-file", "", "Path to an optional Redis password in a mounted Secret. Requires verified TLS; do not pass the password as an argument")
+	fs.BoolVar(&cfg.redisTLS, "redis-tls", false, "Verify Redis TLS with the system trust store. Use --redis-tls-ca for a private CA")
+	fs.StringVar(&cfg.redisTLSCAFile, "redis-tls-ca", "", "Path to a PEM CA bundle in a mounted Secret for Redis TLS verification. Replaces the system trust store; required with ACL credentials unless --redis-tls is set")
+	fs.IntVar(&cfg.redisFollowPoolSize, "redis-follow-pool-size", defaultRedisFollowPoolSize, "Maximum Redis connections reserved for blocking event followers")
+	fs.IntVar(&cfg.redisMaxFollowers, "redis-max-followers", defaultRedisMaxFollowers, "Maximum event followers admitted by this process")
+	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "Host:port of a distributed learning gRPC driver. It must provide attempt, proposal, and skill repositories or startup fails")
+	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "Bearer token for store-driver RPCs. Reads MECATL_DRIVER_AUTH_TOKEN when empty; cleartext remote connections are refused")
+	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "Use TLS for store-driver connections")
+	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle for the store-driver server certificate. Requires --driver-tls; empty uses system roots")
+	fs.StringVar(&cfg.driverTLSCert, "driver-tls-cert", "", "PEM client certificate for store-driver mutual TLS. Pair with the matching private-key flag and enable TLS")
+	fs.StringVar(&cfg.driverTLSKey, "driver-tls-key", "", "PEM client private key for --driver-tls-cert")
 
 	// Session leasing: coordination.k8s.io Lease per session. DEFAULT "mecatl".
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", defaultK8sLeaseNamespace,
-		"Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica single-writer path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace. Empty = no leasing")
-	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long")
-	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3")
+		"Kubernetes namespace for session leases. The ServiceAccount needs get, create, update, and delete permissions on coordination.k8s.io leases; empty disables leasing")
+	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "Session lease lifetime. Another replica can claim a lease after this period when its holder stops")
+	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "Interval for renewing held session leases. Zero uses one third of --session-lease-ttl")
 
 	// Scheduled tasks (issue #189, Phase 1f): mecak8s is the multi-replica home.
-	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "SCHEDULED TASKS: disable the in-process scheduler that ticks the durable ScheduleStore (the --redis-url backend) and fires due schedules. The scheduler is ON by default when the store exposes a ScheduleStore — a fire mints a fresh \"sched--\" top-level session driven to completion with subagent-grade defaults; with --no-scheduler the create/list/fire API still works. The leader-lease reuses the k8s session-lease backend on a distinct id, electing one ticker across replicas. See ADR 0059 + ADR 0073")
-	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "SCHEDULED TASKS: how often the tick loop polls the ScheduleStore for due schedules; 0 = the 30s default. Inert under --no-scheduler or a store with no ScheduleStore")
-	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "SCHEDULED TASKS: the frequency floor the create-seam enforces (a tighter cadence is rejected, fail-closed — by BOTH the Schedule tool's create and the REST/gRPC create). Defaults to 1m so an on-by-default scheduler + the floor-Allow Schedule tool cannot mint an unbounded tight-cadence recurring fire out of the box; set explicitly to tighten, or to 0 to disable the floor")
-	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "SCHEDULED TASKS: max schedules fired in parallel per tick")
+	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "Disable scheduled-task execution. Schedule management APIs remain available; one replica runs the scheduler when leasing is enabled")
+	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "Interval for polling due schedules. Zero uses the default interval; inactive when scheduling is unavailable or disabled")
+	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "Minimum accepted schedule interval. Shorter intervals are rejected; zero disables the limit")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum schedules started concurrently in one scheduler tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "max LLM stream-establish attempts (initial call plus retries)")
-	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
-	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "consecutive LLM failures that open the circuit breaker (0 disables)")
-	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "how long the LLM circuit breaker stays open before half-opening")
-	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per agent run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
-	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "Maximum attempts to establish an LLM stream, including the initial attempt")
+	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "Timeout for connecting to an LLM stream and receiving its first chunk. Does not stop an active stream; zero disables the timeout")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. A longer gap ends the turn; zero disables the timeout")
+	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "Consecutive LLM failures that open the circuit breaker. Zero disables it")
+	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "How long the LLM circuit breaker remains open before retrying")
+	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per agent run. Runs exceeding it end with stop=budget; zero is unlimited")
+	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "Maximum cumulative input and output tokens per team run. Zero is unlimited")
 
-	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching (ADR 0100): every adapter's cache dialect degrades to None, reproducing the pre-caching wire exactly. Caching is ON by default")
-	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "TTL stamped on every Anthropic ephemeral cache_control breakpoint: \"5m\" or \"1h\". Empty (default) omits the ttl field — the API's own 5m default applies. Any other value is ignored with a WARN")
+	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "Disable provider-side prompt caching")
+	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "Anthropic prompt-cache TTL: 5m or 1h. Empty uses the API default; other values are ignored")
 
 	// Headless: DEFAULT true (mecak8s is a headless daemon — no human approver).
-	fs.BoolVar(&cfg.headless, "headless", true, "run NON-interactive (DEFAULT on): a child subagent/member/branch permission ask is auto-denied / routed to the opt-in --subagent-ask-reviewer rather than parked until run-end. Pass --headless=false only if a client (mecatui, an IDE) answers asks")
+	fs.BoolVar(&cfg.headless, "headless", true, "Run without an interactive permission approver. Child permission requests are denied unless --subagent-ask-reviewer handles them")
 
 	// Headless ask reviewer (issue #31).
-	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "OPT-IN headless ask reviewer: model id / alias of a tool-less one-turn reviewer adjudicating a child permission ask the headless auto-deny would otherwise reject. Empty disables it")
-	fs.IntVar(&cfg.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "circuit breaker for --subagent-ask-reviewer: consecutive non-allow outcomes that disable the reviewer for the rest of the run; <=0 uses the default (3)")
-	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a TRUSTED policy rubric file for --subagent-ask-reviewer; its CONTENT replaces the built-in rubric. Read once at startup; an unreadable file fails startup")
+	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "Model ID or alias for reviewing child permission requests in headless mode. Empty disables the reviewer")
+	fs.IntVar(&cfg.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "Consecutive non-allow outcomes that disable the reviewer for the run. Values less than or equal to zero use the default")
+	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "Path to a trusted policy rubric for --subagent-ask-reviewer. Replaces the built-in rubric; an unreadable file prevents startup")
 
 	// Guardrails (issue #27).
-	fs.StringVar(&cfg.guardrailsModel, "guardrails-model", "", "GUARDRAILS: tool-less checker model id / alias inspecting outbound args + inbound results. Configuring a model here OR via a bound `guardrail` model slot ENABLES guardrails; empty + no slot disables them")
-	fs.StringVar(&cfg.guardrailsMode, "guardrails", "", "GUARDRAILS KILL-SWITCH only: pass --guardrails=off to force the checker OFF regardless of --guardrails-model / the `guardrail` slot / the YAML config")
+	fs.StringVar(&cfg.guardrailsModel, "guardrails-model", "", "Model ID or alias for checking outbound arguments and inbound results. A configured model or guardrail model slot enables checks")
+	fs.StringVar(&cfg.guardrailsMode, "guardrails", "", "Set to off to disable guardrails regardless of other configuration")
 
 	// Subagent model router (ADR 0042): kill-switch.
-	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "Semantic model router KILL-SWITCH (ADR 0042): the router is ENABLED by an operator-tier models.router: taxonomy, NOT by this flag. Pass --subagent-model-router=false to force it OFF despite a taxonomy")
-	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model; empty inherits the parent --model")
+	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "Disable a configured subagent model router by setting false")
+	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "Default model for child agents without their own model. Empty inherits --model")
 
 	// Posture: DEFAULT "auto" (the recommended UNATTENDED single-tenant tier).
-	fs.StringVar(&cfg.posture, "posture", "auto", "OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict prompts every mutate; trusted honours a project's ALLOW rules; auto adds allow-all + main substitution loosening (the DEFAULT, recommended UNATTENDED single-tenant tier, child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in children. auto/yolo are refused as root outside MECATL_SANDBOX. An unknown value fails closed to strict with a WARN")
+	fs.StringVar(&cfg.posture, "posture", "auto", "Permission posture: strict prompts for mutations; trusted honors project allow rules; auto allows tools by default and relaxes main shell substitutions while child injection defenses remain enabled; yolo also runs child command substitutions automatically. Deny rules and configured ask rules still apply. auto and yolo require MECATL_SANDBOX when running as root")
 
 	// Reasoning-effort tier (ADR 0055): operator-tier only; help text verbatim from mecated.
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
-		"OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider's own default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only, so xhigh/max are clamped down to high (with a WARN); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key if present). A per-session CreateSession reasoning_effort out-ranks this default. A model with no reasoning support drops it. Operator-tier only; a project-tier reasoning-effort: key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
+		"Default reasoning effort: auto, low, medium, high, xhigh, or max. Empty or auto uses configured or provider defaults; unsupported or invalid values fall back to a supported default")
 
 	// Security (no rate-limit: a pod is fronted by the Service/mesh).
-	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token required on every RPC/request (empty disables auth; or MECATL_AUTH_TOKEN). Enable before binding a non-mesh address")
-	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "PEM server certificate; enables TLS on gRPC + HTTP when set with --tls-key")
-	fs.StringVar(&cfg.tlsKey, "tls-key", "", "PEM server private key (paired with --tls-cert)")
-	fs.StringVar(&cfg.clientCA, "client-ca", "", "PEM client CA bundle; enables mutual TLS (require+verify client certs)")
+	fs.StringVar(&cfg.authToken, "auth-token", "", "Bearer token required for every RPC and API request. Empty disables authentication; reads MECATL_AUTH_TOKEN when unset")
+	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "PEM server certificate. Enables TLS for gRPC and HTTP with --tls-key")
+	fs.StringVar(&cfg.tlsKey, "tls-key", "", "PEM server private key for --tls-cert")
+	fs.StringVar(&cfg.clientCA, "client-ca", "", "PEM client CA bundle. Requires and verifies client certificates")
 	cliconfig.RegisterOIDCFlags(fs, &cfg.oidc)
 
 	// Child/main retention over the (prunable) Redis store — mirrors mecated.
-	fs.DurationVar(&cfg.childRetention, "child-retention", 168*time.Hour, "how long persisted CHILD session snapshots are retained before the GC sweep deletes them; 0 disables the age pass")
-	fs.IntVar(&cfg.childRetentionMaxPerFamily, "child-retention-max-per-family", 500, "max persisted child session snapshots kept per delegation family; 0 disables the cap")
-	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = startup only")
-	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "how long persisted MAIN session snapshots are retained; 0 (default) disables the main age pass")
-	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN session snapshots kept store-wide; 0 (default) disables the cap")
-	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. Defaults to 7d/168h when unset (the scheduler is ON by default); an explicit 0 disables the pass — fire sessions are never swept")
-	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "max persisted \"sched--\"-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of --main-retention-max-total: the age horizon bounds the tail, this cap bounds the head. 0 (default) disables the cap")
-	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "explicitly acknowledge destructive automatic cleanup of MAIN sessions after reviewing the logged planner summary")
+	fs.DurationVar(&cfg.childRetention, "child-retention", 168*time.Hour, "Retention period for persisted child-session snapshots. Older snapshots are deleted; zero disables age-based cleanup")
+	fs.IntVar(&cfg.childRetentionMaxPerFamily, "child-retention-max-per-family", 500, "Maximum persisted child-session snapshots per delegation family. Older snapshots are deleted; zero disables the limit")
+	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "Interval for session-retention cleanup after the startup sweep. Zero runs only the startup sweep")
+	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "Retention period for persisted main-session snapshots. Older snapshots are deleted; requires --acknowledge-main-retention. Zero disables age-based cleanup")
+	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "Maximum persisted main-session snapshots. Older snapshots are deleted; requires --acknowledge-main-retention. Zero disables the limit")
+	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "Retention period for scheduled-run snapshots. Older completed snapshots are deleted; zero disables cleanup. An unset value uses 168h when scheduling is enabled")
+	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "Maximum persisted scheduled-run snapshots. Older completed snapshots are deleted; zero disables the limit")
+	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "Acknowledge automatic deletion of main sessions when main retention is configured")
 
 	// Skills / agents / soul / user-model (default OFF / conventional, like mecated).
-	fs.Var(&cfg.skillsDirs, "skills-dir", "directory to discover progressive-disclosure skills from (repeatable; highest precedence). TRUST BOUNDARY: a SKILL.md steers the model — point this only at directories you trust")
-	fs.BoolVar(&cfg.skillsConventional, "skills-conventional", false, "also discover skills from the conventional locations (lower precedence than --skills-dir). Default OFF")
-	fs.Var(&cfg.agentsDirs, "agents-dir", "directory to discover named agent definitions from (repeatable; highest precedence). TRUST BOUNDARY: a def body steers the model — point this only at directories you trust")
-	fs.BoolVar(&cfg.agentsConventional, "agents-conventional", true, "also discover agent definitions from the conventional locations. ON by default and INERT when no such dir exists")
-	fs.StringVar(&cfg.soulFile, "soul-file", "", "path to a user-scoped persona/\"soul\" file (empty = the conventional location, fail-soft if absent)")
-	fs.BoolVar(&cfg.noSoul, "no-soul", false, "disable the soul fragment entirely")
-	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "disable the user-model entirely")
-	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "directory for the user-scoped user-model store (empty = the conventional location)")
+	fs.Var(&cfg.skillsDirs, "skills-dir", "Directory to search for skills. Repeatable and highest precedence; skill instructions affect model behavior, so use only trusted directories")
+	fs.BoolVar(&cfg.skillsConventional, "skills-conventional", false, "Also search conventional skill directories, after --skills-dir")
+	fs.Var(&cfg.agentsDirs, "agents-dir", "Directory to search for agent definitions. Repeatable and highest precedence; agent instructions affect model behavior, so use only trusted directories")
+	fs.BoolVar(&cfg.agentsConventional, "agents-conventional", true, "Also search conventional agent-definition directories")
+	fs.StringVar(&cfg.soulFile, "soul-file", "", "Path to a user persona file. Empty uses the conventional location")
+	fs.BoolVar(&cfg.noSoul, "no-soul", false, "Disable the persona fragment")
+	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "Disable the user model")
+	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "Directory for the user model. Empty uses the conventional location")
 
 	// Permission config (issue #13).
-	fs.Var(&cfg.permissionConfigs, "permission-config", "explicit operator-pointed permission YAML file (repeatable, fully trusted)")
-	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "auto-discover the per-project .mecatl/settings.yaml + the user-global file (re-resolved per session). ON by default")
-	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "also import Claude-Code settings.json (with the lossy fail-safe table)")
-	fs.BoolVar(&cfg.trustProject, "trust-project", false, "honour a discovered project's ALLOW rules (a project's deny/ask is always honoured). Default OFF (the safe stance); an alias for --posture=trusted")
+	fs.Var(&cfg.permissionConfigs, "permission-config", "Trusted permission YAML file. Repeatable")
+	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "Discover project and user permission settings for each session")
+	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "Import compatible Claude Code permission settings")
+	fs.BoolVar(&cfg.trustProject, "trust-project", false, "Honor a discovered project's allow rules. Deny and ask rules are always honored; equivalent to --posture=trusted")
 
 	// Fan-out / teams toggles.
-	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "enable the Parallel fan-out tool (parallel isolated child branches)")
-	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "enable the experimental agent-teams capability (CreateTeam / SpawnTeammate / RunTeam)")
+	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "Enable the Parallel tool for isolated child branches")
+	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "Enable the experimental agent-team capability")
 
 	// Headless telemetry (issue #343, ADR 0098): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).
 	// --otlp-* push traces/metrics to a collector (the opt-in twin for non-scrape
 	// deployments). All empty (default) leaves the pipeline off.
-	fs.StringVar(&cfg.metricsAddr, "metrics-addr", "", "Prometheus /metrics listen address for a SEPARATE loopback admin listener (empty disables it). MUST be loopback — a non-loopback bind is REJECTED at parse time (ADR 0018 decision 6: pprof/expvar/metrics output is secret-shaped). e.g. \"127.0.0.1:9090\"")
-	fs.StringVar(&cfg.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint (empty disables tracing). OPT-IN push to a collector")
-	fs.StringVar(&cfg.otlpProtocol, "otlp-protocol", "grpc", "OTLP transport for traces: \"grpc\" (default) or \"http\"")
-	fs.BoolVar(&cfg.otlpInsecure, "otlp-insecure", false, "skip TLS when dialing the OTLP collector (development only)")
-	fs.StringVar(&cfg.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP METRICS collector endpoint (empty disables metrics push). An opt-in twin to --metrics-addr for non-scrape deployments; the prometheus reader stays on either way")
-	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
-	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). 0 disables the bound")
-	fs.StringVar(&cfg.installationID, "telemetry-installation-id", os.Getenv("MECATL_INSTALLATION_ID"), "stable canonical UUID exported as the optional mecatl.installation.id OTel resource attribute (default: MECATL_INSTALLATION_ID; empty omits it)")
+	fs.StringVar(&cfg.metricsAddr, "metrics-addr", "", "Loopback listen address for Prometheus metrics. Empty disables metrics; non-loopback addresses are rejected because output can contain sensitive data")
+	fs.StringVar(&cfg.otlpEndpoint, "otlp-endpoint", "", "OTLP trace collector endpoint. Empty disables trace export")
+	fs.StringVar(&cfg.otlpProtocol, "otlp-protocol", "grpc", "OTLP transport for traces: grpc or http")
+	fs.BoolVar(&cfg.otlpInsecure, "otlp-insecure", false, "Skip TLS for the OTLP collector. For development only")
+	fs.StringVar(&cfg.otlpMetricsEndpoint, "otlp-metrics-endpoint", "", "OTLP metrics collector endpoint. Empty disables metrics export")
+	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: grpc or http")
+	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "Maximum time to flush telemetry on shutdown. Zero disables the limit")
+	fs.StringVar(&cfg.installationID, "telemetry-installation-id", os.Getenv("MECATL_INSTALLATION_ID"), "Stable UUID for the optional mecatl.installation.id OpenTelemetry resource attribute. Empty omits it")
 
 	fs.BoolVar(&cfg.productMetrics, "product-metrics", true,
-		"report anonymous product-adoption metrics to Stacklok (version, OS/arch, enabled features, coarse session/run/tool-call counts — never a prompt, file path, tool name, or model id). ON by default; opt out with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled: false in settings.yaml")
+		"Report anonymous product-adoption metrics to Stacklok. Reports version, OS/architecture, enabled features, and aggregate counts, never prompts, file paths, tool names, or model IDs; disable with --product-metrics=false, MECATL_PRODUCT_METRICS=false, DO_NOT_TRACK=1, or telemetry.productMetrics.enabled=false")
 	fs.BoolVar(&cfg.productMetricsDryRun, "product-metrics-dry-run", false,
-		"print every product-metrics observation to stderr instead of sending it — verify the no-PII claim yourself before enabling --product-metrics for real")
+		"Print product-metrics observations to stderr instead of sending them")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")
