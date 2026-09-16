@@ -146,7 +146,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
-- [0345 — Local microVM execution environments and developer-only release activation](./0345-microvm-execution-environments.md)
+- [0346 — Local microVM execution environments and developer-only release activation](./0346-microvm-execution-environments.md)
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*

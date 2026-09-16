@@ -83,7 +83,7 @@ a future Kubernetes Secret `resourceVersion` CAS backend. See
 [ADR 0218](../adr/0218-credential-store.md) and
 [ADR 0221](../adr/0221-read-only-credential-source.md).
 
-## Local microVM redesign contract (ADR 0345)
+## Local microVM redesign contract (ADR 0346)
 
 Tasks 59–65 complete ordinary `microvm-local` readiness, immutable Brood admission with
 in-process `toolhive-core/container/verifier`, the one-shot rootfs materializer,
@@ -164,7 +164,7 @@ crash-durable/cross-process merge, Linux arm64 and macOS live support, upstream 
 signing, independent refresh channels, per-session fairness/quotas, dashboards, and
 exhaustive cache-poisoning controls.
 
-### Local microVM development release activation (ADR 0345)
+### Local microVM development release activation (ADR 0346)
 
 The unsupported source workflow is compile-time absent unless both local roots are built with
 `microvm_dev`. Those tagged roots alone register the descriptor and acknowledgement flags;

@@ -79,7 +79,7 @@ tasks:
       # authn/oidc is the opt-in caller-identity adapter module (ADR 0206),
       # separate from both the dependency-free engine and provider modules.
       - cd authn/oidc && go build ./...
-      # environment/microvm is the opt-in local microVM runtime module (ADR 0345).
+      # environment/microvm is the opt-in local microVM runtime module (ADR 0346).
       # It remains isolated from the root and engine dependency graphs.
       - cd environment/microvm && go build ./...
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each its
