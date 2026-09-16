@@ -12,8 +12,8 @@ import (
 // It preserves unrelated settings mappings and uses an atomic, checked replacement.
 // A nil update.Definition removes update.Provider.
 func UpdateProviderMap(ctx context.Context, path string, update ProviderMapUpdate) (privatefile.CommitState, error) {
-	if !providerIDPattern.MatchString(update.Provider) || isReservedProviderID(update.Provider) {
-		return privatefile.CommitNotApplied, errors.New("settings provider update: invalid or reserved provider")
+	if err := ValidateProviderID(update.Provider); err != nil {
+		return privatefile.CommitNotApplied, fmt.Errorf("settings provider update: %w", err)
 	}
 	state, err := privatefile.Update(ctx, path, settingsPath(), maxConfigBytes, func(data []byte) ([]byte, bool, error) {
 		return mutateProviderMap(data, update)

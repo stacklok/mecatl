@@ -88,6 +88,23 @@ func TestNoProviderRecoveryIsStructuredAndLocalOnly(t *testing.T) {
 	}
 }
 
+func TestProviderSetupRejectsInvalidCustomProviderNameBeforeCollectingDefinition(t *testing.T) {
+	commands := setupCommands(t, providerInspection{}, "5", "MYPROVIDER")
+	wrote := false
+	commands.backend.updateProviderMap = func(context.Context, string, permconfig.ProviderMapUpdate) (authfile.CommitState, error) {
+		wrote = true
+		return authfile.CommitDurable, nil
+	}
+	var stdout, stderr bytes.Buffer
+	err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "lowercase letter") {
+		t.Fatalf("runSetup error = %v, want a lowercase-letter validation error", err)
+	}
+	if wrote {
+		t.Fatal("runSetup wrote a provider definition for an invalid name")
+	}
+}
+
 func TestProviderSetupRollsBackDefinitionWhenLoginIsCancelled(t *testing.T) {
 	commands := setupCommands(t, providerInspection{}, "https://gateway.example", "1", "model-1", "1")
 	commands.backend.settingsPath = func() string { return "/safe/settings.yaml" }

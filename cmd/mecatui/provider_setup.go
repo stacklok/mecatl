@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
 const customProviderSetupChoice = "custom"
@@ -37,6 +39,9 @@ func (c providerCommands) runSetup(ctx context.Context, res invocationResolution
 			}
 			if provider == "" {
 				return errors.New("providers setup: custom provider name cannot be empty")
+			}
+			if err := permconfig.ValidateProviderID(provider); err != nil {
+				return fmt.Errorf("providers setup: %w", err)
 			}
 		}
 	}
