@@ -5786,19 +5786,41 @@ func mcpSourceProber(cfg Config) func(ctx context.Context) []mcpsource.SourceInf
 // the mcp.Provider used for resources/prompts.
 func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, func()) {
 	opts := mcpResolveOptions(cfg)
-	sources := mcpsource.ResolveSources(opts)
-
-	configs, inventory, skips := mcpsource.Resolve(ctx, sources)
-	for _, s := range skips {
-		cfg.diag().Log(ctx, port.LevelWarn, "MCP server skipped", "name", s.Server, "reason", s.Reason)
-	}
-	if len(configs) == 0 {
-		cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)",
-			"toolhive", cfg.ToolHiveEnabled, "static", len(cfg.MCPServers))
+	if len(opts.StaticServers) == 0 && !opts.ToolHiveEnabled {
+		_, inventory, _ := mcpsource.Resolve(ctx, mcpsource.ResolveSources(opts))
+		cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)", "toolhive", false, "static", 0)
 		return nil, nil, inventory, func() {}
 	}
+	reconciler := newMCPSourceReconciler(mcpReconcilerOptions{
+		sources:  mcpsource.ResolveSources(opts),
+		toolHive: opts.ToolHiveEnabled,
+		build:    buildMCPReconcileCandidate(cfg),
+		// Task 03 replaces this bridge with immutable runtime publication and
+		// retirement. Until then, changed candidates are safely discarded rather
+		// than closing the manager already borrowed by assembled catalogs.
+		publish: func(old, _ *mcpReconcileCandidate) bool { return old == nil },
+	})
+	result, err := reconciler.Reconcile(ctx)
+	for _, diagnostic := range result.diagnostics {
+		cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", diagnostic)
+	}
+	if err != nil || result.candidate == nil || len(result.candidate.configs) == 0 {
+		if err != nil {
+			logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, err)
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP manager construction failed; continuing without MCP tools", "reason", "unavailable")
+		} else {
+			cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)",
+				"toolhive", cfg.ToolHiveEnabled, "static", len(cfg.MCPServers))
+		}
+		return nil, nil, result.inventory, reconciler.Close
+	}
+	mgr := result.candidate.manager
+	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(result.candidate.configs), "tools", len(mgr.Tools()))
+	return mgr, mgr, result.inventory, reconciler.Close
+}
 
-	onError := func(sc mcp.ServerConfig, err error) {
+func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, err error) {
+	for _, sc := range configs {
 		switch mcp.OAuthDCRRecoveryCategoryOf(err) {
 		case mcp.OAuthDCRRecoveryResetRequired:
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth DCR valid ready registration identity differs from current profile, principal, canonical resource, or exact issuer", "name", sc.Name, "remedy", "run "+mcpLoginRemedy(sc)+" --reset-dcr-registration")
@@ -5814,19 +5836,6 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		if sc.OAuth != nil && sc.OAuth.CredentialReader != nil && errors.Is(err, mcp.ErrOAuthUnavailable) {
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth environment credential unavailable", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
 			return
-		}
-		cfg.diag().Log(ctx, port.LevelWarn, "MCP server unreachable; skipping", "name", sc.Name, "reason", "unavailable")
-	}
-	mgr, err := mcp.NewManager(ctx, configs, onError, cfg.diag())
-	if err != nil {
-		cfg.diag().Log(ctx, port.LevelWarn, "MCP manager construction failed; continuing without MCP tools", "reason", "unavailable")
-		return nil, nil, inventory, func() {}
-	}
-	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(configs), "tools", len(mgr.Tools()))
-
-	return mgr, mgr, inventory, func() {
-		if err := mgr.Close(); err != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "MCP manager close", "err", err)
 		}
 	}
 }

@@ -219,32 +219,24 @@ func TestToolHiveEmptyGroupDefaults(t *testing.T) {
 	}
 }
 
-func TestToolHiveNoRuntimeDegrades(t *testing.T) {
-	// Constructor error (no container runtime) -> (nil, one diagnostic, nil).
+func TestToolHiveNoRuntimeIsConsultationFailure(t *testing.T) {
 	got, skips, err := sourceWith("default", nil, errors.New("no socket")).Servers(context.Background())
-	if err != nil {
-		t.Fatalf("no-runtime must NOT be a fatal error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "runtime unavailable") {
+		t.Fatalf("no-runtime error = %v, want consultation failure", err)
 	}
-	if got != nil {
-		t.Errorf("no-runtime should yield zero servers, got %v", got)
-	}
-	if len(skips) != 1 || skips[0].Server != "toolhive" || !strings.Contains(skips[0].Reason, "runtime unavailable") {
-		t.Fatalf("expected one runtime-unavailable diagnostic, got %v", skips)
+	if got != nil || skips != nil {
+		t.Fatalf("failed consultation must not masquerade as authoritative empty: got=%v skips=%v", got, skips)
 	}
 }
 
-func TestToolHiveListErrorDegrades(t *testing.T) {
-	// Runtime present but list call fails -> degrade, not fatal.
+func TestToolHiveListErrorIsConsultationFailure(t *testing.T) {
 	f := &fakeLister{err: errors.New("daemon down")}
 	got, skips, err := sourceWith("default", f, nil).Servers(context.Background())
-	if err != nil {
-		t.Fatalf("list error must NOT be fatal, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "listing ToolHive workloads") {
+		t.Fatalf("list error = %v, want consultation failure", err)
 	}
-	if got != nil {
-		t.Errorf("list error should yield zero servers, got %v", got)
-	}
-	if len(skips) != 1 || !strings.Contains(skips[0].Reason, "listing ToolHive workloads failed") {
-		t.Fatalf("expected one list-failed diagnostic, got %v", skips)
+	if got != nil || skips != nil {
+		t.Fatalf("failed consultation must not masquerade as authoritative empty: got=%v skips=%v", got, skips)
 	}
 }
 

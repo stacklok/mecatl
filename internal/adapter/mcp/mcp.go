@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -128,6 +129,91 @@ const (
 	clientVersion = "v0"
 )
 
+// CandidateListBudget bounds aggregate list ingestion across every server in one
+// all-or-nothing reconciliation candidate. A single shared value is attached to
+// every candidate ServerConfig so pages, bytes, and entries cannot multiply by
+// server count.
+type CandidateListBudget struct {
+	mu         sync.Mutex
+	maxEntries int
+	maxPages   int
+	maxBytes   int
+	entries    int
+	pages      int
+	bytes      int
+	sealed     bool
+}
+
+// NewCandidateListBudget creates one candidate-wide list budget.
+func NewCandidateListBudget(maxEntries, maxPages, maxBytes int) *CandidateListBudget {
+	return &CandidateListBudget{maxEntries: maxEntries, maxPages: maxPages, maxBytes: maxBytes}
+}
+
+func (b *CandidateListBudget) consumePage(entries int) error {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.entries+entries > b.maxEntries {
+		return fmt.Errorf("mcp: active list entries exceed limit %d", b.maxEntries)
+	}
+	if b.pages+1 > b.maxPages {
+		return fmt.Errorf("mcp: candidate list pages exceed limit %d", b.maxPages)
+	}
+	b.entries += entries
+	b.pages++
+	return nil
+}
+
+func (b *CandidateListBudget) readResponse(body io.Reader, p []byte) (int, error) {
+	b.mu.Lock()
+	if b.sealed {
+		b.mu.Unlock()
+		return body.Read(p)
+	}
+	remaining := b.maxBytes - b.bytes
+	b.mu.Unlock()
+	if remaining <= 0 {
+		return 0, fmt.Errorf("mcp: candidate response bytes exceed limit %d", b.maxBytes)
+	}
+	if len(p) > remaining+1 {
+		p = p[:remaining+1]
+	}
+	n, err := body.Read(p)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.sealed {
+		return n, err
+	}
+	if b.bytes+n > b.maxBytes {
+		return 0, fmt.Errorf("mcp: candidate response bytes exceed limit %d", b.maxBytes)
+	}
+	b.bytes += n
+	return n, err
+}
+
+// Seal ends construction-time response accounting. The retained runtime may
+// then serve ordinary calls without spending its one-time candidate budget.
+func (b *CandidateListBudget) Seal() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.sealed = true
+	b.mu.Unlock()
+}
+
+// Stats returns the successfully consumed aggregate counts.
+func (b *CandidateListBudget) Stats() (entries, pages, bytes int) {
+	if b == nil {
+		return 0, 0, 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.entries, b.pages, b.bytes
+}
+
 // ServerConfig describes a single remote MCP server to connect to over the
 // Streamable HTTP transport.
 type ServerConfig struct {
@@ -158,6 +244,13 @@ type ServerConfig struct {
 	// operator-configured servers, so the operator path keeps Go's default
 	// behaviour byte-for-byte. See newMCPHTTPClient for why the two differ.
 	NoRedirects bool
+	// ListChanged is an optional non-blocking invalidation callback for the
+	// Build-owned direct-source reconciler. Notification handlers invoke it after
+	// marking adapter-local state dirty; it must not perform network work.
+	ListChanged func()
+	// CandidateBudget is set only for complete reconciliation candidates. It is
+	// shared by every server in that candidate and bounds aggregate list input.
+	CandidateBudget *CandidateListBudget
 }
 
 // ValidateClientURL validates a CLIENT-PROVIDED Streamable HTTP MCP endpoint
@@ -642,6 +735,41 @@ func prepareOAuthServerConfig(ctx context.Context, cfg ServerConfig) (ServerConf
 	return cfg, controller, err
 }
 
+type candidateBudgetRoundTripper struct {
+	base   http.RoundTripper
+	budget *CandidateListBudget
+}
+
+func (t candidateBudgetRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	res, err := t.base.RoundTrip(req)
+	if err != nil || res == nil || res.Body == nil {
+		return res, err
+	}
+	res.Body = &candidateBudgetBody{ReadCloser: res.Body, budget: t.budget}
+	return res, nil
+}
+
+type candidateBudgetBody struct {
+	io.ReadCloser
+	budget *CandidateListBudget
+}
+
+func (b *candidateBudgetBody) Read(p []byte) (int, error) {
+	return b.budget.readResponse(b.ReadCloser, p)
+}
+
+func withCandidateBudget(client *http.Client, budget *CandidateListBudget) *http.Client {
+	if budget == nil {
+		return client
+	}
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	client.Transport = candidateBudgetRoundTripper{base: base, budget: budget}
+	return client
+}
+
 func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 	client := &http.Client{}
 	if cfg.HTTPClient != nil {
@@ -683,7 +811,7 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 		client.Transport = &bearerRoundTripper{base: client.Transport, origin: origin, source: cfg.TokenSource}
 	}
 	if len(cfg.Headers) == 0 {
-		return client
+		return withCandidateBudget(client, cfg.CandidateBudget)
 	}
 	base := client.Transport
 	if base == nil {
@@ -698,7 +826,7 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 		origin = requestOrigin(parsed)
 	}
 	client.Transport = &headerRoundTripper{base: base, headers: headers, origin: origin}
-	return client
+	return withCandidateBudget(client, cfg.CandidateBudget)
 }
 
 // Connect establishes a Streamable HTTP session to the configured MCP server,
@@ -721,11 +849,19 @@ func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	// The alternative — asking each consumer to call RedactError — was tried and
 	// demonstrably does not hold: of three NewManager callers, one logged the raw
 	// error and the raw URL, and the audit that was supposed to find it missed it.
-	srv, err := connect(ctx, cfg, diag)
+	srv, err := connect(ctx, cfg, diag, false)
 	return srv, RedactErrorValue(err)
 }
 
-func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Server, error) {
+// ConnectComplete is the reconciliation candidate variant of Connect. It
+// requires every capability advertised by the server to list successfully, so a
+// candidate can never publish a partial tool/resource/prompt snapshot.
+func ConnectComplete(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Server, error) {
+	srv, err := connect(ctx, cfg, diag, true)
+	return srv, RedactErrorValue(err)
+}
+
+func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics, requireComplete bool) (*Server, error) {
 	// Wrap the sink so no log line from this package — nor from the *Server it
 	// builds, which inherits this diag — can carry a credential-bearing URL. See
 	// redactingDiagnostics for why this is a sink decoration rather than a fix at
@@ -792,7 +928,12 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	}
 	srv.session = sess
 
-	tools, err := listTools(connectCtx, cfg.Name, srv, sess)
+	var tools []tool.Tool
+	if requireComplete {
+		tools, err = listToolsBounded(connectCtx, cfg.Name, srv, sess, cfg.CandidateBudget)
+	} else {
+		tools, err = listTools(connectCtx, cfg.Name, srv, sess)
+	}
 	if err != nil {
 		_ = sess.Close()
 		_ = oauthController.Close()
@@ -809,7 +950,19 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	// tools are already usable.
 	caps := serverCapabilities(sess)
 	if caps != nil && caps.Resources != nil {
-		if res, rerr := srv.listResources(connectCtx); rerr != nil {
+		var res []Resource
+		var rerr error
+		if requireComplete {
+			res, rerr = srv.listResourcesBounded(connectCtx, sess, cfg.CandidateBudget)
+		} else {
+			res, rerr = srv.listResources(connectCtx)
+		}
+		if rerr != nil {
+			if requireComplete {
+				_ = sess.Close()
+				_ = oauthController.Close()
+				return nil, fmt.Errorf("mcp: list resources on server %q: %w", cfg.Name, rerr)
+			}
 			diag.Log(connectCtx, port.LevelWarn, "mcp: listing resources failed; continuing without them",
 				"server", cfg.Name, "err", rerr)
 		} else {
@@ -817,7 +970,19 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 		}
 	}
 	if caps != nil && caps.Prompts != nil {
-		if pr, perr := srv.listPrompts(connectCtx); perr != nil {
+		var pr []Prompt
+		var perr error
+		if requireComplete {
+			pr, perr = srv.listPromptsBounded(connectCtx, sess, cfg.CandidateBudget)
+		} else {
+			pr, perr = srv.listPrompts(connectCtx)
+		}
+		if perr != nil {
+			if requireComplete {
+				_ = sess.Close()
+				_ = oauthController.Close()
+				return nil, fmt.Errorf("mcp: list prompts on server %q: %w", cfg.Name, perr)
+			}
 			diag.Log(connectCtx, port.LevelWarn, "mcp: listing prompts failed; continuing without them",
 				"server", cfg.Name, "err", perr)
 		} else {
@@ -919,6 +1084,39 @@ func listTools(ctx context.Context, serverName string, srv *Server, sess *mcpsdk
 	return tools, nil
 }
 
+func listToolsBounded(ctx context.Context, serverName string, srv *Server, sess *mcpsdk.ClientSession, budget *CandidateListBudget) ([]tool.Tool, error) {
+	var out []tool.Tool
+	cursor := ""
+	seen := make(map[string]struct{})
+	for {
+		page, err := sess.ListTools(ctx, &mcpsdk.ListToolsParams{Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			return nil, errors.New("mcp: nil tools list page")
+		}
+		if err := budget.consumePage(len(page.Tools)); err != nil {
+			return nil, err
+		}
+		for _, remote := range page.Tools {
+			wrapped, err := newRemoteTool(serverName, srv, remote)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, wrapped)
+		}
+		if page.NextCursor == "" {
+			return out, nil
+		}
+		if _, duplicate := seen[page.NextCursor]; duplicate {
+			return nil, errors.New("mcp: tools list cursor cycle")
+		}
+		seen[page.NextCursor] = struct{}{}
+		cursor = page.NextCursor
+	}
+}
+
 // HasOAuthCredential reports whether this connected OAuth server restored or
 // durably stored a credential. It exposes readiness only and never reads or
 // returns token data.
@@ -1014,6 +1212,9 @@ func (s *Server) handleListChanged(ctx context.Context, list string) {
 		s.promptsGen++
 	}
 	s.mu.Unlock()
+	if s.cfg.ListChanged != nil {
+		s.cfg.ListChanged()
+	}
 	if !already {
 		s.diag.Log(ctx, port.LevelWarn, "mcp server list changed", "server", s.name, "list", list)
 	}
@@ -1287,6 +1488,47 @@ func NewManager(ctx context.Context, configs []ServerConfig, onError func(cfg Se
 		// belt on the braces, so a future change to this message cannot reintroduce a
 		// URL without the wrapper catching it.
 		return m, RedactErrorValue(fmt.Errorf("mcp: no servers could be connected: %w", lastErr))
+	}
+	return m, nil
+}
+
+// NewCompleteManager constructs an all-or-nothing reconciliation candidate.
+// Unlike NewManager's startup-compatible fail-soft behavior, one failed server
+// closes every successfully-created peer and rejects the complete candidate.
+func NewCompleteManager(ctx context.Context, configs []ServerConfig, diag port.Diagnostics) (*Manager, error) {
+	diag = redactDiagnostics(diag)
+	m := &Manager{}
+	if len(configs) == 0 {
+		return m, nil
+	}
+	type result struct {
+		srv *Server
+		err error
+	}
+	results := make([]result, len(configs))
+	sem := make(chan struct{}, maxConnectConcurrency)
+	var wg sync.WaitGroup
+	for i, cfg := range configs {
+		wg.Add(1)
+		go func(i int, cfg ServerConfig) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i].srv, results[i].err = ConnectComplete(ctx, cfg, diag)
+		}(i, cfg)
+	}
+	wg.Wait()
+	var candidateErr error
+	for i, result := range results {
+		if result.err != nil {
+			candidateErr = errors.Join(candidateErr, fmt.Errorf("mcp: candidate server %q: %w", configs[i].Name, result.err))
+			continue
+		}
+		m.servers = append(m.servers, result.srv)
+	}
+	if candidateErr != nil {
+		_ = m.Close()
+		return nil, RedactErrorValue(candidateErr)
 	}
 	return m, nil
 }

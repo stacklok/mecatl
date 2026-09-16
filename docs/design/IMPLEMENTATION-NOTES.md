@@ -5998,6 +5998,26 @@ without affinity or a durable-broker decision. Guards include `internal/adapter/
 `internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
 `internal/adapter/mcpbroker/toolhive_process_test.go`.
 
+**Ordered direct MCP source reconciliation (ADR 0345, Task 02):**
+`internal/app/mcp_reconciler.go` (`mcpSourceReconciler`) is the one Build-owned,
+serialized/coalesced path for initial resolution, manual requests, current-server
+list-change notifications, and ToolHive-only bounded jittered polling. It consults
+the existing static-before-ToolHive source order once per cycle, retains each
+failed source's last-known-good snapshot, and treats a successful empty snapshot
+as withdrawal. Stable, non-dirty observations stop before candidate connection.
+A dirty current-runtime notification rebuilds a complete candidate and therefore
+re-lists tools, resources, and prompts together; callbacks from displaced
+candidate generations are ignored. `internal/adapter/mcp/mcp.go`
+(`NewCompleteManager`) connects and lists all desired servers all-or-nothing,
+using one candidate-wide page/byte/cardinality budget and no OAuth presenter.
+Candidate equality covers source/server configuration and bounded tool,
+resource, and prompt metadata. Build shutdown rejects new waits, cancels and
+joins the worker, then closes its current candidate. Caller cancellation only
+abandons that caller's wait. The current `connectMCP` publication bridge accepts
+the initial candidate and safely closes/discards later changed candidates while
+retaining the manager borrowed by existing catalogs; immutable runtime
+publication, revision pins, and retirement replace that bridge in Task 03.
+
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the
 same tools the build-time `buildCatalog`→`connectMCP`+`assembleCatalog` path mounts on the main engine), NOT just core + client
