@@ -24,18 +24,24 @@ type mcpRuntimePin struct {
 // retirement set. Engines only retain a revision tag; operation contexts retain
 // the pin that keeps a displaced manager alive.
 type mcpRuntimeSet struct {
-	mu       sync.Mutex
-	current  *mcpReconcileCandidate
-	empty    *mcpReconcileCandidate
-	pins     map[*mcpReconcileCandidate]int
-	retired  []*mcpReconcileCandidate
-	deferred bool
-	retry    func()
-	closed   bool
+	mu        sync.Mutex
+	current   *mcpReconcileCandidate
+	empty     *mcpReconcileCandidate
+	pins      map[*mcpReconcileCandidate]int
+	retired   []*mcpReconcileCandidate
+	deferred  bool
+	retry     func()
+	closed    bool
+	drained   chan struct{}
+	drain     sync.Once
+	closeDone chan struct{}
 }
 
 func newMCPRuntimeSet(retry func()) *mcpRuntimeSet {
-	return &mcpRuntimeSet{empty: &mcpReconcileCandidate{}, pins: make(map[*mcpReconcileCandidate]int), retry: retry}
+	return &mcpRuntimeSet{
+		empty: &mcpReconcileCandidate{}, pins: make(map[*mcpReconcileCandidate]int),
+		retry: retry, drained: make(chan struct{}), closeDone: make(chan struct{}),
+	}
 }
 
 func (s *mcpRuntimeSet) setRetry(retry func()) {
@@ -113,6 +119,9 @@ func (s *mcpRuntimeSet) release(candidate *mcpReconcileCandidate) {
 			retry = s.retry
 		}
 	}
+	if s.closed && len(s.pins) == 0 {
+		s.drain.Do(func() { close(s.drained) })
+	}
 	s.mu.Unlock()
 	closeCandidate.close()
 	if retry != nil {
@@ -163,10 +172,20 @@ func (s *mcpRuntimeSet) currentResourceServers() []string {
 func (s *mcpRuntimeSet) close() {
 	s.mu.Lock()
 	if s.closed {
+		closeDone := s.closeDone
 		s.mu.Unlock()
+		<-closeDone
 		return
 	}
 	s.closed = true
+	if len(s.pins) == 0 {
+		s.drain.Do(func() { close(s.drained) })
+	}
+	drained := s.drained
+	s.mu.Unlock()
+
+	<-drained
+	s.mu.Lock()
 	current := s.current
 	retired := append([]*mcpReconcileCandidate(nil), s.retired...)
 	s.current = nil
@@ -176,6 +195,7 @@ func (s *mcpRuntimeSet) close() {
 	for _, candidate := range retired {
 		candidate.close()
 	}
+	close(s.closeDone)
 }
 
 func mcpRuntimeCandidate(ctx context.Context) *mcpReconcileCandidate {

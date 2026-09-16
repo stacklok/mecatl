@@ -614,6 +614,9 @@ type Config struct {
 	// catalog (read-only base + MemberTools, plus mutating tools only for a
 	// Mutating member) and the provider/model.
 	MemberEngine MemberEngineFactory
+	// MemberEngineForOperation resolves the direct RunTeam member factory from the
+	// same operation-pinned context retained by the team. Nil uses MemberEngine.
+	MemberEngineForOperation func(context.Context) MemberEngineFactory
 	// TeamGoalUntrusted, when true, re-fences the gRPC/HTTP CreateTeam goal as
 	// UNTRUSTED data in member and synthesis prompts (threaded to
 	// agent.WithUntrustedGoal). DEFAULT false: the goal is the team's TRUSTED
@@ -3083,7 +3086,31 @@ func (s *Service) Close() {
 	for id := range s.heldLeases {
 		leasedIDs = append(leasedIDs, id)
 	}
+	teamOperationReleases := make([]func(), 0, len(s.teams))
+	for _, ts := range s.teams {
+		// A running direct Team owns its operation pin until Supervisor.Run
+		// returns. Releasing it here would let Build close the manager under live
+		// member calls; the RunTeam defer performs the release after drain.
+		if ts.phase != teamRunning && ts.operationRelease != nil {
+			teamOperationReleases = append(teamOperationReleases, ts.operationRelease)
+			ts.operationRelease = nil
+			ts.operationCtx = nil
+		}
+	}
+	runOperationReleases := make([]func(), 0, len(s.runs))
+	for _, rs := range s.runs {
+		if rs.operationRelease != nil {
+			runOperationReleases = append(runOperationReleases, rs.operationRelease)
+			rs.operationRelease = nil
+		}
+	}
 	s.mu.Unlock()
+	for _, release := range teamOperationReleases {
+		release()
+	}
+	for _, release := range runOperationReleases {
+		release()
+	}
 
 	// Close every per-session engine in a goroutine with a BOUNDED timeout so a
 	// stuck engine close (e.g. a wedged MCP transport) cannot stall shutdown

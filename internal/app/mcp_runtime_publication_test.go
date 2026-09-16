@@ -80,6 +80,38 @@ func TestMCPSourceReconciliation_Scenario2_AllOrNothingPublication(t *testing.T)
 	if equalMCPCandidate(equalLeft, equalRight) {
 		t.Fatal("prompt-only change did not require publication")
 	}
+
+	shutdown := newMCPRuntimeSet(nil)
+	shutdownCandidate := runtimeTestCandidate(1, "mcp__shutdown__tool")
+	if !shutdown.publish(nil, shutdownCandidate) {
+		t.Fatal("publish shutdown runtime")
+	}
+	_, releaseShutdownPin, err := shutdown.pin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeDone := make(chan struct{})
+	go func() {
+		shutdown.close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+		t.Fatal("runtime shutdown completed before its operation pin drained")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if shutdownCandidate.isClosed() {
+		t.Fatal("runtime shutdown closed a manager before operation drain")
+	}
+	releaseShutdownPin()
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("runtime shutdown did not complete after operation drain")
+	}
+	if !shutdownCandidate.isClosed() {
+		t.Fatal("runtime shutdown did not close the drained manager")
+	}
 	runtimes.close()
 }
 
@@ -248,6 +280,102 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 		t.Fatal("root runtime pin did not drain at FinishRun")
 	}
 	runRuntimes.close()
+
+	// Direct RunTeam builds member engines before RunTeam starts, so team creation
+	// retains the operation pin. A publication between CreateTeam and RunTeam must
+	// not swap a referenced specialist onto the new manager.
+	const teamTool = "mcp__svc__echo"
+	teamRuntimes := newMCPRuntimeSet(nil)
+	teamOldManager := connectMainManager(t, "svc", newMCPTestServerPrefixed(t, "team-old:"))
+	teamOld := &mcpReconcileCandidate{manager: teamOldManager, generation: 1, tools: toolMetadata(teamOldManager.Tools())}
+	if !teamRuntimes.publish(nil, teamOld) {
+		t.Fatal("publish direct-team revision 1")
+	}
+	teamProvider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("team-call", teamTool, []byte(`{"text":"work"}`))),
+		mockllm.TextTurn("member done"),
+		mockllm.TextTurn("team report"),
+		mockllm.ToolCallTurn(session.NewToolCall("team-call-new", teamTool, []byte(`{"text":"work"}`))),
+		mockllm.TextTurn("new member done"),
+		mockllm.TextTurn("new team report"),
+	)
+	teamReg := regForTest(teamProvider, providerOpenAI, "test-model")
+	teamCfg := teamCfg(t)
+	teamCfg.EnableTeams = true
+	teamCfg.Model = "test-model"
+	teamCfg.authorityEvaluator, _, err = selectAuthorityEvaluator("local", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDefs := agents.NewRegistry([]agents.AgentDef{{
+		Name: "team-ref", Description: "uses the pinned referenced service", Origin: tool.AgentOriginExplicit,
+		MCPServers: []agents.AgentMCPServer{{Name: "svc"}},
+	}})
+	teamAssets := catalogAssets{mcpRuntimes: teamRuntimes, agentReg: teamDefs}
+	var teamServerCfg server.Config
+	applyTeamConfig(&teamServerCfg, teamCfg, teamReg, teamProvider, teamOldManager, teamDefs, nil, teamAssets)
+	teamStore := memstore.New()
+	rootNames := []string{teamTool}
+	for name := range agent.MemberToolNames() {
+		rootNames = append(rootNames, name)
+	}
+	teamServerCfg.Engine = initial
+	teamServerCfg.Store = teamStore
+	teamServerCfg.SharedEngineRoot = teamCfg.Workspace
+	teamServerCfg.OperationPin = teamRuntimes.pin
+	teamServerCfg.OperationRevision = mcpRuntimeRevision
+	teamServerCfg.RootAuthority = func(session.SessionKind) session.Authority {
+		return session.Authority{
+			CapabilitySet: governance.CapabilitySet{Tools: rootNames, FileSystem: true},
+			Provenance:    "test", DefinitionIdentity: "test",
+		}
+	}
+	teamSvc, err := newTestServerService(teamServerCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer teamSvc.Close()
+	teamID, _, err := teamSvc.CreateTeamOnDefaultPlacement(context.Background(), "pinned", "use the service", 0, []agent.MemberSpec{{
+		Name: "lead", Lead: true, AgentType: "team-ref", InitialPrompt: "call the service once",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamNewManager := connectMainManager(t, "svc", newMCPTestServerPrefixed(t, "team-new:"))
+	teamNew := &mcpReconcileCandidate{manager: teamNewManager, generation: 2, tools: toolMetadata(teamNewManager.Tools())}
+	if !teamRuntimes.publish(teamOld, teamNew) {
+		t.Fatal("publish direct-team revision 2")
+	}
+	if _, err := teamSvc.RunTeam(context.Background(), teamID, func(agent.TeamEvent) {}); err != nil {
+		t.Fatal(err)
+	}
+	member, err := teamStore.Load(context.Background(), agent.MemberSessionID(teamID, "lead"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := latestToolResult(member, "team-call"); !strings.Contains(got, "team-old:work") {
+		t.Fatalf("direct RunTeam member did not retain its creation pin: %q", got)
+	}
+	if !teamOld.isClosed() {
+		t.Fatal("direct RunTeam runtime did not retire after team completion")
+	}
+	newTeamID, _, err := teamSvc.CreateTeamOnDefaultPlacement(context.Background(), "current", "use the current service", 0, []agent.MemberSpec{{
+		Name: "lead", Lead: true, AgentType: "team-ref", InitialPrompt: "call the service once",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := teamSvc.RunTeam(context.Background(), newTeamID, func(agent.TeamEvent) {}); err != nil {
+		t.Fatal(err)
+	}
+	newMember, err := teamStore.Load(context.Background(), agent.MemberSessionID(newTeamID, "lead"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := latestToolResult(newMember, "team-call-new"); !strings.Contains(got, "team-new:work") {
+		t.Fatalf("post-publication direct RunTeam member did not use the active runtime: %q", got)
+	}
+	teamRuntimes.close()
 }
 
 func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *testing.T) {

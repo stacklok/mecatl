@@ -7781,6 +7781,17 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 	// no-FS team exists only inside a no-fs session's in-catalog Team tool.
 	factory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
 	svcCfg.MemberEngine = factory
+	if a.mcpRuntimes != nil {
+		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory {
+			runtimeAssets := mcpCatalogAssets(ctx, a)
+			candidate := mcpRuntimeCandidate(ctx)
+			if candidate == nil {
+				return nil
+			}
+			operationFactory, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
+			return operationFactory
+		}
+	}
 	svcCfg.Forker = fk
 	svcCfg.ReadOnlyForker = roFk
 	svcCfg.SharedBaseWorkspace = sharedBaseWorkspace

@@ -6015,9 +6015,11 @@ resource, and prompt metadata. `internal/app/mcp_runtime.go` (`mcpRuntimeSet`)
 atomically publishes the complete candidate as one manager/provider/catalog
 contribution. Root runs pin it in `server.Service.beginRunAdmission`; the pin
 context reaches prompt expansion and every Subagent/Parallel/Team/named/reference
-factory built by the one `assembleCatalog` path. Out-of-run resource and prompt
-provider calls take one call-scoped pin. Shared and cached default, selector,
-no-FS, client-MCP, mode, specialist, and debug engines carry only a revision tag;
+factory built by the one `assembleCatalog` path. Direct `RunTeam` members are
+built during team creation, so that path retains its creation pin until the run,
+explicit cleanup, or Service shutdown and derives its member factory from the
+same pinned manager. Out-of-run resource and prompt provider calls take one
+call-scoped pin. Shared and cached default, selector, no-FS, client-MCP, mode, specialist, and debug engines carry only a revision tag;
 `server.Service.engineAndEnvironmentFor` rebuilds a mismatch before use, so idle
 engine caches never lease a manager and their close functions never own one.
 Displaced runtimes close after pins drain. A full bounded retirement set closes

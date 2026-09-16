@@ -94,6 +94,11 @@ type teamState struct {
 	owner *session.Principal
 	phase teamPhase
 
+	// operationCtx carries the immutable direct-runtime pin selected before any
+	// member factory runs. operationRelease drains it after RunTeam or cleanup.
+	operationCtx     context.Context
+	operationRelease func()
+
 	// run serialises a SpawnTeammate (AddMember writes the supervisor's member maps)
 	// against a RunTeam start (sup.Run reads them). See the type doc above.
 	run sync.Mutex
@@ -154,11 +159,37 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}
+	operationCtx := context.WithoutCancel(ctx)
+	operationRelease := func() {}
+	if s.cfg.OperationPin != nil {
+		var err error
+		operationCtx, operationRelease, err = s.cfg.OperationPin(operationCtx)
+		if err != nil {
+			return "", nil, err
+		}
+		if operationRelease == nil {
+			operationRelease = func() {}
+		}
+	}
+	pinTransferred := false
+	defer func() {
+		if !pinTransferred {
+			operationRelease()
+		}
+	}()
+	ctx = operationCtx
+	memberEngine := s.cfg.MemberEngine
+	if s.cfg.MemberEngineForOperation != nil {
+		memberEngine = s.cfg.MemberEngineForOperation(ctx)
+		if memberEngine == nil {
+			return "", nil, ErrTeamsDisabled
+		}
+	}
 	workspace := base.Workspace().Root()
 
 	t := team.New(name)
 	factory := func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
-		return s.cfg.MemberEngine(t, spec, routedModel)
+		return memberEngine(t, spec, routedModel)
 	}
 
 	// Compute the team id FIRST (it needs only NewID, no dependency on the supervisor)
@@ -264,9 +295,13 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 	s.mu.Lock()
 	// The slot was claimed above, so no capacity refusal can occur here — the cap
 	// is enforced before any lease or durable write.
-	s.teams[id] = &teamState{team: t, sup: sup, base: workspace, owner: session.PrincipalFromContext(ctx).Clone()}
+	s.teams[id] = &teamState{
+		team: t, sup: sup, base: workspace, owner: session.PrincipalFromContext(ctx).Clone(),
+		operationCtx: ctx, operationRelease: operationRelease,
+	}
 	s.teamsReserving--
 	registered = true
+	pinTransferred = true
 	s.mu.Unlock()
 	return id, t.Members(), nil
 }
@@ -487,16 +522,6 @@ func (s *Service) CancelTeammate(ctx context.Context, teamID, member string) err
 // by Drain itself (that is the bounded GracefulStop's job). The gate starts
 // false — byte-identical default when Drain has not been called.
 func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.TeamEvent)) (agent.TeamOutcome, error) {
-	if s.cfg.OperationPin != nil {
-		pinned, release, err := s.cfg.OperationPin(ctx)
-		if err != nil {
-			return agent.TeamOutcome{}, err
-		}
-		if release != nil {
-			defer release()
-		}
-		ctx = pinned
-	}
 	// Drain gate (ADR 0048, mecak8s): refuse new team runs on a draining
 	// replica before claiming the team — mirrors acquireLease's check.
 	if s.draining.Load() {
@@ -505,6 +530,24 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	ts, err := s.lookupTeam(ctx, teamID)
 	if err != nil {
 		return agent.TeamOutcome{}, err
+	}
+	if ts.operationCtx != nil {
+		runCtx, cancel := context.WithCancel(ts.operationCtx)
+		stop := context.AfterFunc(ctx, cancel)
+		defer func() {
+			stop()
+			cancel()
+		}()
+		ctx = runCtx
+	} else if s.cfg.OperationPin != nil {
+		pinned, release, pinErr := s.cfg.OperationPin(ctx)
+		if pinErr != nil {
+			return agent.TeamOutcome{}, pinErr
+		}
+		if release != nil {
+			defer release()
+		}
+		ctx = pinned
 	}
 	// Atomically claim the team for this run. A second concurrent RunTeam (or one
 	// after a completed run) is rejected — the Supervisor's member state is not safe
@@ -545,9 +588,16 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	}
 
 	defer func() {
+		var release func()
 		s.mu.Lock()
 		ts.phase = teamDone
+		release = ts.operationRelease
+		ts.operationRelease = nil
+		ts.operationCtx = nil
 		s.mu.Unlock()
+		if release != nil {
+			release()
+		}
 	}()
 	return ts.sup.Run(ctx, sink), nil
 }
@@ -580,7 +630,13 @@ func (s *Service) CleanupTeam(ctx context.Context, teamID string) error {
 		return fmt.Errorf("%w: %q", ErrTeamRunning, teamID)
 	}
 	delete(s.teams, teamID)
+	releaseOperation := ts.operationRelease
+	ts.operationRelease = nil
+	ts.operationCtx = nil
 	s.mu.Unlock()
+	if releaseOperation != nil {
+		releaseOperation()
+	}
 
 	// Release every member lease this team acquired. Without this the lease and its
 	// renewer goroutine outlive the team and are only reclaimed at process exit, so a
