@@ -28,8 +28,7 @@ func AddDirectMCPServerWithKey(data []byte, name, endpoint, issuer, root, mode, 
 func quoteYAML(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 
 func addDirectMCPServer(data []byte, name, endpoint, issuer, root, keyDeclaration string) ([]byte, error) {
-	wasEmpty := len(bytes.TrimSpace(data)) == 0
-	if wasEmpty {
+	if len(bytes.TrimSpace(data)) == 0 {
 		data = []byte("{}\n")
 	}
 	if err := ValidateYAML(data); err != nil {
@@ -39,10 +38,12 @@ func addDirectMCPServer(data []byte, name, endpoint, issuer, root, keyDeclaratio
 	if err != nil {
 		return nil, errors.New("settings document is invalid or ambiguous")
 	}
-	if wasEmpty {
-		// The placeholder above parses as a flow-style "{}" mapping. Every entry
-		// this function appends is block-style; serializing block-style values
-		// inside a flow-style parent produces malformed YAML.
+	if len(doc.Mapping().Values) == 0 {
+		// An empty document — whether truly empty input or a caller's "{}\n"
+		// stand-in for "no file yet" (as cmd/mecated's readMCPSettings uses) —
+		// parses as a flow-style "{}" mapping. Every entry this function
+		// appends is block-style; serializing block-style values inside a
+		// flow-style parent produces malformed YAML.
 		doc.Mapping().IsFlowStyle = false
 	}
 	mcpNode, err := uniqueDirectMCPValue(doc.Mapping(), "mcp")
