@@ -254,14 +254,14 @@ func TestSelectionStoreWorktreesShareRepoIdentity(t *testing.T) {
 }
 
 // writeBareGitWorktreeLayout lays out a linked worktree of a BARE repository:
-// bareRepoDir is the repo's own directory (no working tree, "config" marked
-// bare=true), containing worktrees/<name>/commondir pointing back to itself.
-func writeBareGitWorktreeLayout(t *testing.T, bareRepoDir, worktreeRoot, name string) {
+// bareRepoDir is the repo's own directory (no working tree, "config" carrying
+// configBody), containing worktrees/<name>/commondir pointing back to itself.
+func writeBareGitWorktreeLayout(t *testing.T, bareRepoDir, worktreeRoot, name, configBody string) {
 	t.Helper()
 	if err := os.MkdirAll(bareRepoDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bareRepoDir, "config"), []byte("[core]\n\tbare = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(bareRepoDir, "config"), []byte(configBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	adminDir := filepath.Join(bareRepoDir, "worktrees", name)
@@ -292,8 +292,8 @@ func TestSelectionStoreBareRepoWorktreeDoesNotUnify(t *testing.T) {
 	bareB := filepath.Join(reposParent, "b.git")
 	wtA := filepath.Join(t.TempDir(), "wt-a")
 	wtB := filepath.Join(t.TempDir(), "wt-b")
-	writeBareGitWorktreeLayout(t, bareA, wtA, "wt-a")
-	writeBareGitWorktreeLayout(t, bareB, wtB, "wt-b")
+	writeBareGitWorktreeLayout(t, bareA, wtA, "wt-a", "[core]\n\tbare = true\n")
+	writeBareGitWorktreeLayout(t, bareB, wtB, "wt-b", "[core]\n\tbare = true\n")
 	store := newSelectionStore(fakeStateEnv(stateHome))
 
 	selA := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
@@ -307,6 +307,78 @@ func TestSelectionStoreBareRepoWorktreeDoesNotUnify(t *testing.T) {
 	}
 	if got := store2.Load(wtA); got != selA {
 		t.Fatalf("Load(wtA) = %+v, want %+v (its own pick, unaffected)", got, selA)
+	}
+}
+
+// TestIsBareGitDir covers isBareGitDir's conservative git-boolean handling:
+// only an EXPLICIT false-equivalent value ("false"/"no"/"off"/"0") is treated
+// as non-bare; every true-equivalent spelling git itself accepts ("true",
+// "yes", "on", "1", a bare flag with no value), a missing key, an unreadable
+// dir, and an unrecognized value all fail closed as bare.
+func TestIsBareGitDir(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	cases := []struct {
+		name string
+		body string
+		bare bool
+	}{
+		{"explicit false", "[core]\n\tbare = false\n", false},
+		{"explicit no", "[core]\n\tbare = no\n", false},
+		{"explicit off", "[core]\n\tbare = off\n", false},
+		{"explicit 0", "[core]\n\tbare = 0\n", false},
+		{"literal true", "[core]\n\tbare = true\n", true},
+		{"git boolean yes", "[core]\n\tbare = yes\n", true},
+		{"git boolean on", "[core]\n\tbare = on\n", true},
+		{"git boolean 1", "[core]\n\tbare = 1\n", true},
+		{"bare flag with no value", "[core]\n\tbare\n", true},
+		{"missing key", "[core]\n\trepositoryformatversion = 0\n", true},
+		{"unrecognized value", "[core]\n\tbare = maybe\n", true},
+		{"repeated key last wins", "[core]\n\tbare = true\n\tbare = false\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := write(t, tc.body)
+			if got := isBareGitDir(dir); got != tc.bare {
+				t.Fatalf("isBareGitDir(%q) = %v, want %v", tc.body, got, tc.bare)
+			}
+		})
+	}
+	t.Run("missing config file", func(t *testing.T) {
+		if got := isBareGitDir(t.TempDir()); got != true {
+			t.Fatalf("isBareGitDir(no config) = %v, want true (fail closed)", got)
+		}
+	})
+}
+
+// TestSelectionStoreBareRepoAlternateBooleanSpellingDoesNotUnify asserts that
+// "bare = yes" — a git-boolean-true spelling other than the literal string
+// "true" — is STILL treated as bare, so a worktree of such a repo does not
+// unify onto its common-dir's parent.
+func TestSelectionStoreBareRepoAlternateBooleanSpellingDoesNotUnify(t *testing.T) {
+	stateHome := t.TempDir()
+	bareRepo := t.TempDir()
+	worktreeRoot := filepath.Join(t.TempDir(), "wt")
+	writeBareGitWorktreeLayout(t, bareRepo, worktreeRoot, "wt", "[core]\n\tbare = yes\n")
+	store := newSelectionStore(fakeStateEnv(stateHome))
+
+	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
+	if err := store.Save(worktreeRoot, sel); err != nil {
+		t.Fatalf("Save(worktreeRoot): %v", err)
+	}
+
+	store2 := newSelectionStore(fakeStateEnv(stateHome))
+	if got := store2.Load(filepath.Dir(bareRepo)); got != (client.ModelSelection{}) {
+		t.Fatalf("Load(bareRepo parent) = %+v, want the zero selection (\"bare = yes\" must still be treated as bare)", got)
+	}
+	if got := store2.Load(worktreeRoot); got != sel {
+		t.Fatalf("Load(worktreeRoot) = %+v, want %+v (its own pick, unaffected)", got, sel)
 	}
 }
 

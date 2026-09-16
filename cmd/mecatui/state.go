@@ -412,23 +412,39 @@ func mainRootFromWorktreeGitFile(gitFile string) (string, bool) {
 	return filepath.Dir(resolvedCommonDir), true
 }
 
-// bareTrueRE matches git's own "bare = true" marker (case/space-tolerant) in a
-// repository's `config` file — the same field `git rev-parse --is-bare-repository`
-// reads, so this agrees with git's own notion of bareness rather than guessing
-// from directory naming (a bare repo need not be named "*.git").
-var bareTrueRE = regexp.MustCompile(`(?im)^\s*bare\s*=\s*true\s*$`)
+// bareValueRE captures the value assigned to an occurrence of the "bare" key
+// inside a git "config" file's raw text, case-insensitive. A "bare" flag with
+// no "=" (a bare boolean flag, which git treats as true) deliberately does
+// NOT match — it can never be the explicit false value isBareGitDir looks for.
+var bareValueRE = regexp.MustCompile(`(?im)^[ \t]*bare[ \t]*=[ \t]*"?([^"\r\n]*)"?[ \t]*$`)
 
-// isBareGitDir reports whether dir (a resolved shared ".git" directory) belongs
-// to a bare repository, by reading its "config" file. Fails closed (true, i.e.
-// "treat as bare, don't unify") on any read error — an unreadable config is
-// exactly the situation where guessing "it's a normal checkout" risks the
-// collision this check exists to prevent.
+// isBareGitDir reports whether dir (a resolved shared ".git" directory) should
+// be treated as belonging to a bare repository. It is CONSERVATIVE, not a full
+// git-boolean parser: dir is treated as bare (don't unify) UNLESS its "config"
+// file names an EXPLICIT git-boolean-false value ("false"/"no"/"off"/"0",
+// case-insensitive) for the "bare" key — git's own field
+// `git rev-parse --is-bare-repository` reads, but git also accepts "yes"/"on"/
+// "1"/a bare flag with no value as TRUE, and rather than reproduce that whole
+// grammar (and risk missing a spelling), a value this function doesn't
+// recognize, a missing key, or a read error all fail closed as bare. An
+// ordinary checkout's git-authored config always sets this key explicitly, so
+// failing closed here never costs a real non-bare checkout its unification.
 func isBareGitDir(dir string) bool {
 	data, err := os.ReadFile(filepath.Join(dir, "config")) //nolint:gosec // path derived from a filesystem walk, not user/network input
 	if err != nil {
 		return true
 	}
-	return bareTrueRE.MatchString(string(data))
+	matches := bareValueRE.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		return true
+	}
+	// git uses last-key-wins for a repeated key.
+	switch strings.ToLower(strings.TrimSpace(matches[len(matches)-1][1])) {
+	case "false", "no", "off", "0":
+		return false
+	default:
+		return true
+	}
 }
 
 // readStateFile reads the state file with O_NOFOLLOW, so a symlink at the final
