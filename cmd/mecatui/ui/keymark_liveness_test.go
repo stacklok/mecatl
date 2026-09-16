@@ -1001,12 +1001,12 @@ func TestAncillaryHintsReflectKeyOverride(t *testing.T) {
 
 	t.Run("nested help prose", func(t *testing.T) {
 		got := stripANSIstr(helpBody(th, client.Capabilities{}, m.helpKeyMarkings()))
-		for _, want := range []string{"ctrl+f18 to switch", "ctrl+f29 resumes auto-follow", "ctrl+f4 clears"} {
+		for _, want := range []string{"ctrl+f18 switches views", "ctrl+f29 resumes automatic scrolling", "ctrl+f4 clears"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("help body missing live nested hint %q: %q", want, got)
 			}
 		}
-		for _, stale := range []string{"tab to switch", "end resumes auto-follow", "esc clears"} {
+		for _, stale := range []string{"tab switches views", "end resumes automatic scrolling", "esc clears"} {
 			if strings.Contains(got, stale) {
 				t.Errorf("help body still shows default nested hint %q: %q", stale, got)
 			}

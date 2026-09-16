@@ -64,6 +64,50 @@ func TestADR_0303_DoubleEscape_Scenario1_UnsupportedTerminalFailsClosed(t *testi
 	}
 }
 
+func TestADR_0303_DoubleEscape_Scenario1_DraftContentKinds(t *testing.T) {
+	tests := []struct {
+		name string
+		seed func(*Model)
+	}{
+		{"text", func(m *Model) { m.prompt.Rewrite("draft") }},
+		{"attachment", func(m *Model) {
+			m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png"}}
+		}},
+		{"large paste", func(m *Model) {
+			m.stagedPastes = map[string]string{"[Pasted text #1]": "draft"}
+		}},
+		{"pending media", func(m *Model) {
+			m.pendingPromptMedia = client.MediaResult{Descriptors: []string{"pending"}}
+		}},
+	}
+	empty := func(m Model) bool {
+		return m.prompt.Empty() && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 && len(m.pendingPromptMedia.Descriptors) == 0
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			seeded := func() Model {
+				m := doubleEscapeDraft(t)
+				m.prompt.Reset()
+				tc.seed(&m)
+				return m
+			}
+			if empty(seeded()) {
+				t.Fatal("test did not seed draft content")
+			}
+
+			supported := pressReleasePress(enableEventTypes(seeded()))
+			if !empty(supported) || supported.doubleEscapeArmed {
+				t.Fatalf("supported terminal did not clear %s-only draft", tc.name)
+			}
+
+			unsupported := pressReleasePress(seeded())
+			if empty(unsupported) || unsupported.doubleEscapeArmed {
+				t.Fatalf("unsupported terminal cleared or armed for %s-only draft", tc.name)
+			}
+		})
+	}
+}
+
 func TestADR_0303_DoubleEscape_Scenario1_FirstPressArmsExactExpiry(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png", data: []byte("image")}}
@@ -299,7 +343,7 @@ func TestADR_0303_DoubleEscape_Scenario1_FirstPressAndCompletionHaveNoNewStatus(
 
 func TestADR_0303_DoubleEscape_Scenario2_LiveHelpExplainsRequirementAndAlternative(t *testing.T) {
 	body := stripANSIstr(m_helpBody(allOnCaps()))
-	for _, want := range []string{"esc esc", "500ms", "enhanced key-event support required", "first press is silent", "release", "repeat", "not remappable", "staged attachments", "large-paste", "pending media", "owners take precedence", "ctrl+u", "ClearPrompt"} {
+	for _, want := range []string{"esc, release, esc", "current idle draft", "500ms", "enhanced key-event support", "first press makes no visible change", "repeats do not count", "fixed shortcut", "attachments", "large pasted text", "pending media", "other views handle esc first", "ctrl+u", "Clear prompt"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("live help missing %q:\n%s", want, body)
 		}
@@ -319,7 +363,7 @@ func TestADR_0303_DoubleEscape_Scenario2_HelpGoldenChangesAreScoped(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(body), "enhanced key-event support required") {
+		if !strings.Contains(string(body), "requires a terminal with enhanced key-event support") {
 			t.Errorf("%s does not document the double-Escape safety requirement", name)
 		}
 	}

@@ -91,78 +91,85 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	muted := th.Style("muted")
 	var b strings.Builder
 
-	b.WriteString(th.Style("askTitle").Render("mecatui — keys & features") + "\n\n")
+	b.WriteString(th.Style("askTitle").Render("Help") + "\n\n")
 
 	b.WriteString(muted.Render("Prompting") + "\n")
 	writeHelpRows(&b, th, []helpRow{
-		{key: hk.submit, action: "send the prompt"},
-		{key: hk.newlineFirst, action: "newline" + hk.newlineAlso},
-		{key: "/", action: "slash-command palette (built-ins always; workspace commands when enabled)"},
-		{key: "@", action: "attach a file: image/audio inlines as media (when supported), else inlines text"},
-		{key: hk.paste, action: "paste a clipboard image as an attachment (when supported), else paste text"},
-		{key: hk.selectAll, action: "select all prompt text"},
-		{key: hk.copySelection, action: "copy the active prompt or conversation selection"},
-		{key: hk.clearPrompt, action: "clear the unsent prompt"},
-		{key: "esc esc (physical)", action: "enhanced key-event support required; first press is silent; key release then press within 500ms; repeats cannot confirm"},
-		{key: "", action: "clears staged attachments, large-paste content, and pending media; owners take precedence"},
-		{key: "", action: "not remappable; universal alternative: ClearPrompt / " + hk.clearPrompt},
-		{key: hk.cancel, action: "cancel the running turn"},
+		{key: hk.submit, action: "send prompt"},
+		{key: hk.newlineFirst, action: "insert newline" + hk.newlineAlso},
+		{key: "/", action: "open available commands, including workspace commands when enabled"},
+		{key: hk.help + " or /help", action: "open this help; the shortcut works when the prompt is empty"},
+		{key: "@", action: "attach a file; supported images and audio are sent as media, other files as text"},
+		{key: hk.paste, action: "paste a clipboard image, or paste text when image attachments are unavailable"},
+		{key: hk.clearPrompt, action: "clear the current draft"},
+		{key: "esc, release, esc", action: "clear the current idle draft within 500ms; the first press makes no visible change"},
+		{key: "", action: "also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support"},
+		{key: "", action: "fixed shortcut; repeats do not count, and other views handle esc first"},
+		{key: "", action: "use the remappable Clear prompt action (" + hk.clearPrompt + ") on any terminal"},
+		{key: hk.cancel, action: "cancel the current run"},
 	})
 
-	b.WriteString("\n" + muted.Render("While a run is streaming") + "\n")
-	streamingSubmit := "queue a follow-up (sends when the turn ends)"
+	b.WriteString("\n" + muted.Render("While a run is active") + "\n")
+	streamingSubmit := "queue a follow-up to send after this run"
 	if caps.Steer {
-		streamingSubmit = "steer the current run (applies at the next turn boundary; bare built-ins stay local)"
+		streamingSubmit = "guide the running agent at its next step; built-in commands still run here"
 	}
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.submit, action: streamingSubmit},
-		{key: hk.clearPrompt, action: "clear the unsent prompt"},
-		{key: hk.cancel, action: "cancel run"},
+		{key: hk.clearPrompt, action: "clear the current draft"},
+		{key: hk.cancel, action: "cancel the current run"},
 	})
 
-	b.WriteString("\n" + muted.Render("While the permission modal is open") + "\n")
+	b.WriteString("\n" + muted.Render("Permission request") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.allow, action: "allow once"},
-		{key: hk.allowAlways, action: "always allow (this session; main-agent asks only)"},
+		{key: hk.allowAlways, action: "always allow for this session (main agent only)"},
 		{key: hk.deny, action: "deny"},
-		{key: "←/→/tab", action: "cycle the focused button · enter activates it"},
-		{key: hk.expandTools, action: "full-screen scrollable approval details (non-plan asks)"},
-		{key: hk.rawArgs, action: "raw args in the full view"},
+		{key: "←/→/tab", action: "choose an action; enter confirms it"},
+		{key: hk.expandTools, action: "open full approval details when available"},
+		{key: hk.rawArgs, action: "show raw arguments in the full view"},
 	})
 
-	b.WriteString("\n" + muted.Render("Inspect & control") + "\n")
+	b.WriteString("\n" + muted.Render("Inspect and manage") + "\n")
 	inspectRows := []helpRow{
-		{key: hk.mcpPanel, action: "MCP inventory", available: caps.MCP, gated: true},
-		{key: hk.resources, action: "MCP resources", available: caps.MCP, gated: true},
-		{key: hk.prompts, action: "MCP prompts", available: caps.MCP, gated: true},
-		{key: hk.agents, action: "agents overlay (subagents / parallel / teams · " + hk.nextTab + " to switch)"},
-		{key: hk.effort, action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
-		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
+		{key: hk.mcpPanel, action: "open MCP servers and tools", available: caps.MCP, gated: true},
+		{key: hk.resources, action: "browse MCP resources", available: caps.MCP, gated: true},
+		{key: hk.prompts, action: "browse MCP prompts", available: caps.MCP, gated: true},
+		{key: hk.agents, action: "inspect agents, parallel work, and teams; " + hk.nextTab + " switches views"},
+		{key: hk.effort, action: "choose reasoning effort", available: caps.ModelSelection, gated: true},
+		{key: "/schedule", action: "view and manage scheduled tasks", available: caps.Scheduling, gated: true},
 	}
 	if caps.ManualDream != nil {
-		inspectRows = append(inspectRows, helpRow{key: "/dream", action: "manually consolidate memory (generation spends tokens)"})
+		inspectRows = append(inspectRows, helpRow{key: "/dream", action: "review a memory-consolidation proposal (creating it uses tokens)"})
 	}
 	inspectRows = append(inspectRows,
-		helpRow{key: "/session", action: "show active session details and copy its exact ID"},
+		helpRow{key: "/session", action: "show the current session and copy its ID"},
 		helpRow{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
-		helpRow{key: "/connect", action: "sign in and connect to a saved remote target"},
-		helpRow{key: hk.modeSwitch, action: "cycle permission mode (outside MCP prompt argument forms)"},
-		helpRow{key: hk.expandTools, action: "expand/collapse details"},
+		helpRow{key: "/connect", action: "sign in or connect to a remote server"},
+		helpRow{key: hk.modeSwitch, action: "change permission mode (unavailable while filling an MCP prompt)"},
+		helpRow{key: hk.expandTools, action: "show or hide tool details"},
 	)
 	writeHelpRows(&b, th, inspectRows)
 
-	b.WriteString("\n" + muted.Render("General") + "\n")
+	b.WriteString("\n" + muted.Render("Conversation and navigation") + "\n")
 	writeHelpRows(&b, th, []helpRow{
-		{key: hk.scroll, action: "scroll the conversation (a ↑NN% header cue shows while scrolled up)"},
-		{key: hk.jump, action: "jump to top / bottom (" + hk.scrollBottom + " resumes auto-follow)"},
-		{key: "wheel", action: "mouse-wheel scroll (alt screen only)"},
-		{key: "drag", action: "select conversation text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · " + hk.cancel + " clears"},
-		{key: "middle-click", action: "paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)"},
-		{key: hk.help, action: "this help (on an empty prompt)"},
+		{key: hk.selectAll, action: "select all prompt text"},
+		{key: hk.copySelection, action: "copy selected prompt or conversation text"},
+		{key: hk.scroll, action: "scroll the conversation; the header shows your position"},
+		{key: hk.jump, action: "jump to top or bottom; " + hk.scrollBottom + " resumes automatic scrolling"},
+		{key: "wheel", action: "scroll with the mouse (alternate screen only)"},
+		{key: "drag", action: "select and copy conversation text; dragging past an edge scrolls"},
+		{key: "double/triple-click", action: "select a word or line; right-click copies; " + hk.cancel + " clears"},
+		{key: "middle-click", action: "paste the primary selection (X11/Wayland)"},
+	})
+
+	b.WriteString("\n" + muted.Render("Exit and suspend") + "\n")
+	writeHelpRows(&b, th, []helpRow{
 		{key: "/quit", action: "quit immediately (alias: /exit; cancels an active run)"},
-		{key: hk.suspend, action: "suspend to the shell — the engine keeps running; fg resumes"},
-		{key: hk.quit, action: "quit (press twice; first press clears the prompt or arms, again within 3s exits)"},
-		{key: hk.quitD, action: "quit (EOF habit; press twice on an empty prompt)"},
+		{key: hk.suspend, action: "suspend to the shell; the run continues, and fg resumes the TUI"},
+		{key: hk.quit, action: "quit after two presses; the first clears the prompt or prepares to quit"},
+		{key: "", action: "press again within 3 seconds to exit"},
+		{key: hk.quitD, action: "quit after two presses on an empty prompt"},
 	})
 
 	// The skills clarification. Skills always ACTIVATE automatically (the model
@@ -170,15 +177,13 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	// inventory IS browsable via /skills — so the copy is caps-aware: it points at
 	// /skills when enabled, and keeps the "run automatically, not browsable" framing
 	// when skills are off (nothing to browse).
-	b.WriteString("\n")
+	b.WriteString("\n" + muted.Render("Features") + "\n")
 	if caps.Skills {
 		writeHelpMutedLines(&b, th,
-			"Skills activate automatically when the model needs them; type /skills",
-			"to browse the skills inventory.")
+			"The agent loads skills when needed. Type /skills to browse available skills.")
 	} else {
 		writeHelpMutedLines(&b, th,
-			"Skills run automatically when the model needs them — not a browsable",
-			"list; watch the transcript for Skill tool calls.")
+			"This server does not provide a skills inventory.")
 	}
 	// Agent definitions, when served, are browsable via /agents (the inventory the
 	// Subagent tool routes delegations to). Distinct from caps.Teams / f6, which is
@@ -190,7 +195,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		b.WriteString(muted.Render("Type / to browse slash commands.") + "\n")
 	}
 	if caps.Memory {
-		b.WriteString(muted.Render("Cross-session memory is on — context carries across runs.") + "\n")
+		b.WriteString(muted.Render("Cross-session memory is enabled.") + "\n")
 	}
 	switch {
 	case caps.Image && caps.Audio:
@@ -200,15 +205,15 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	case caps.Audio:
 		b.WriteString(muted.Render("Type @ to attach a file — audio goes to the model as media.") + "\n")
 	default:
-		b.WriteString(muted.Render("Type @ to attach a file — this model takes text only, so files inline as text.") + "\n")
+		b.WriteString(muted.Render("This model accepts text only; attached files are inserted as text.") + "\n")
 	}
 
 	// Usage legend: decode the footer/turn-stat token arrows AND the cache percentage,
 	// so "↑1.2K ↓340 ⊕1.2K · cache 88%" is self-explanatory — the input/output/cache-write
 	// glyphs, plus the share of input tokens served from cache (the number behind a
 	// surprisingly large prompt).
-	b.WriteString("\n" + muted.Render("↑ input · ↓ output · ⊕ cache write") + "\n")
-	b.WriteString(muted.Render("cache N% — share of input tokens served from cache") + "\n")
+	b.WriteString("\n" + muted.Render("Usage") + "\n")
+	b.WriteString(muted.Render("↑ input · ↓ output · ⊕ cache write · cache N% input served from cache") + "\n")
 
 	// The navigation and close affordances use the LIVE bindings, so a keymap
 	// override never leaves an unusable scrollable overlay.

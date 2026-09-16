@@ -118,18 +118,18 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 		t.Errorf("all-on help SHOULD advertise the / palette:\n%s", allOn)
 	}
 	steer := stripANSIstr(m_helpBody(client.Capabilities{Steer: true}))
-	if !strings.Contains(steer, "steer the current run") {
+	if !strings.Contains(steer, "guide the running agent") {
 		t.Errorf("steer-capable help should describe mid-run steering:\n%s", steer)
 	}
-	if !strings.Contains(steer, "bare built-ins stay local") {
+	if !strings.Contains(steer, "built-in commands still run here") {
 		t.Errorf("steer-capable help should explain local built-ins:\n%s", steer)
 	}
-	if strings.Contains(steer, "queue a follow-up (sends when the turn ends)") {
+	if strings.Contains(steer, "queue a follow-up to send after this run") {
 		t.Errorf("steer-capable help should not describe the fallback queue:\n%s", steer)
 	}
-	// The skills clarification is always present.
-	if !strings.Contains(embedded, "Skills run automatically") {
-		t.Errorf("help should always carry the skills clarification:\n%s", embedded)
+	// The skills availability note is always present.
+	if !strings.Contains(embedded, "does not provide a skills inventory") {
+		t.Errorf("help should explain that the embedded server has no skills inventory:\n%s", embedded)
 	}
 	// The usage legend decoding BOTH the token arrows AND the cache percentage is
 	// always present (decision 4 + UX-1: the percentage is the number behind a
@@ -142,14 +142,102 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 	// The permission-modal group (issue #488) is always present: the verdict
 	// chords, the ctrl+t full-details row, and the raw-args toggle row.
 	for _, sub := range []string{
-		"While the permission modal is open",
+		"Permission request",
 		"allow once",
-		"always allow (this session; main-agent asks only)",
-		"full-screen scrollable approval details (non-plan asks)",
-		"raw args in the full view",
+		"always allow for this session (main agent only)",
+		"open full approval details when available",
+		"show raw arguments in the full view",
 	} {
 		if !strings.Contains(embedded, sub) {
 			t.Errorf("help should carry the permission-modal row %q:\n%s", sub, embedded)
+		}
+	}
+}
+
+func TestHelpCapabilityAnnotationsAreIndependent(t *testing.T) {
+	tests := []struct {
+		name      string
+		caps      client.Capabilities
+		available []string
+		disabled  []string
+	}{
+		{
+			name:      "MCP only",
+			caps:      client.Capabilities{MCP: true},
+			available: []string{"open MCP servers and tools", "browse MCP resources", "browse MCP prompts"},
+			disabled:  []string{"choose reasoning effort", "view and manage scheduled tasks"},
+		},
+		{
+			name:      "model selection only",
+			caps:      client.Capabilities{ModelSelection: true},
+			available: []string{"choose reasoning effort"},
+			disabled:  []string{"open MCP servers and tools", "view and manage scheduled tasks"},
+		},
+		{
+			name:      "scheduling only",
+			caps:      client.Capabilities{Scheduling: true},
+			available: []string{"view and manage scheduled tasks"},
+			disabled:  []string{"open MCP servers and tools", "choose reasoning effort"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := stripANSIstr(m_helpBody(tc.caps))
+			row := func(action string) string {
+				t.Helper()
+				for _, line := range strings.Split(body, "\n") {
+					if strings.Contains(line, action) {
+						return line
+					}
+				}
+				t.Fatalf("help missing action %q:\n%s", action, body)
+				return ""
+			}
+			for _, action := range tc.available {
+				if got := row(action); strings.Contains(got, notEnabledTag) {
+					t.Errorf("available action %q marked unavailable: %q", action, got)
+				}
+			}
+			for _, action := range tc.disabled {
+				if got := row(action); !strings.Contains(got, notEnabledTag) {
+					t.Errorf("unavailable action %q missing marker: %q", action, got)
+				}
+			}
+		})
+	}
+}
+
+// TestHelpCopyIsPlainAndTaskOriented guards the broad editorial contract behind
+// issue #1609: lead with actions and outcomes, not implementation vocabulary.
+func TestHelpCopyIsPlainAndTaskOriented(t *testing.T) {
+	body := stripANSIstr(m_helpBody(allOnCaps()))
+	for _, want := range []string{
+		"Prompting",
+		"While a run is active",
+		"Permission request",
+		"Inspect and manage",
+		"Conversation and navigation",
+		"Exit and suspend",
+		"? or /help",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("help missing task-oriented copy %q:\n%s", want, body)
+		}
+	}
+	for _, stale := range []string{
+		"esc esc (physical)",
+		"owners take precedence",
+		"enhanced key-event support required",
+		"main-agent asks only",
+		"full-screen scrollable approval details",
+		"non-plan asks",
+		"reasoning-effort picker",
+		"cycle permission mode",
+		"bare built-ins stay local",
+		"EOF habit",
+	} {
+		if strings.Contains(body, stale) {
+			t.Errorf("help retained implementation-heavy copy %q:\n%s", stale, body)
 		}
 	}
 }
@@ -205,10 +293,11 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 	m.prompt.Rewrite("")
 	mm, _ = m.Update(qmark())
 	m = mm.(Model)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 100})
 	help := stripANSIstr(m.View().Content)
 	for action, marker := range map[string]string{
-		"select all prompt text":                           selectAll,
-		"copy the active prompt or conversation selection": copySelection,
+		"select all prompt text":                    selectAll,
+		"copy selected prompt or conversation text": copySelection,
 	} {
 		found := false
 		for _, line := range strings.Split(help, "\n") {
@@ -239,8 +328,8 @@ func TestSelectionShortcutsRenderDefaults(t *testing.T) {
 	t.Run("help overlay", func(t *testing.T) {
 		got := stripANSIstr(m_helpBody(allOnCaps()))
 		rows := map[string]string{
-			"select all prompt text":                           "ctrl+g",
-			"copy the active prompt or conversation selection": "ctrl+y",
+			"select all prompt text":                    "ctrl+g",
+			"copy selected prompt or conversation text": "ctrl+y",
 		}
 		for action, chord := range rows {
 			found := false
@@ -316,24 +405,23 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		absent string
 		occurs int // rows whose action text appears on this many lines
 	}{
-		{name: "Submit", match: "send the prompt", want: "ctrl+f1", absent: "enter", occurs: 1},
+		{name: "Submit", match: "send prompt", want: "ctrl+f1", absent: "enter", occurs: 1},
 		{name: "Submit queued", match: "queue a follow-up", want: "ctrl+f1", absent: "enter", occurs: 1},
 		{name: "Newline", match: "newline", want: "ctrl+f2", absent: "shift+enter", occurs: 1},
 		{name: "Paste", match: "paste a clipboard image", want: "ctrl+f3", absent: "ctrl+v", occurs: 1},
 		{name: "SelectAll", match: "select all prompt text", want: "ctrl+f31", absent: "ctrl+g", occurs: 1},
-		{name: "CopySelection", match: "copy the active prompt or conversation selection", want: "ctrl+f32", absent: "ctrl+y", occurs: 1},
-		{name: "Cancel turn", match: "cancel the running turn", want: "ctrl+f4", absent: "esc", occurs: 1},
-		{name: "ClearPrompt", match: "clear the unsent prompt", want: "ctrl+f33", absent: "ctrl+u", occurs: 2},
-		{name: "Cancel running", match: "cancel run", want: "ctrl+f4", absent: "esc", occurs: 1},
-		{name: "MCPPanel", match: "MCP inventory", want: "ctrl+f6", absent: "ctrl+o", occurs: 1},
-		{name: "Resources", match: "MCP resources", want: "ctrl+f7", absent: "ctrl+r", occurs: 1},
-		{name: "Prompts", match: "MCP prompts", want: "ctrl+f8", absent: "", occurs: 1},
-		{name: "Agents", match: "agents overlay", want: "ctrl+f9", absent: "f6", occurs: 1},
-		{name: "Effort", match: "reasoning-effort picker", want: "ctrl+f5", absent: "f7", occurs: 1},
-		{name: "ModeSwitch", match: "cycle permission mode", want: "ctrl+f10", absent: "shift+tab", occurs: 1},
-		{name: "ExpandTools", match: "expand/collapse details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
-		{name: "Help", match: "this help (on an empty prompt)", want: "ctrl+f12", absent: "?", occurs: 1},
-		{name: "Quit", match: "quit (press twice", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},
+		{name: "CopySelection", match: "copy selected prompt or conversation text", want: "ctrl+f32", absent: "ctrl+y", occurs: 1},
+		{name: "Cancel", match: "cancel the current run", want: "ctrl+f4", absent: "esc", occurs: 2},
+		{name: "ClearPrompt", match: "clear the current draft", want: "ctrl+f33", absent: "ctrl+u", occurs: 2},
+		{name: "MCPPanel", match: "open MCP servers and tools", want: "ctrl+f6", absent: "ctrl+o", occurs: 1},
+		{name: "Resources", match: "browse MCP resources", want: "ctrl+f7", absent: "ctrl+r", occurs: 1},
+		{name: "Prompts", match: "browse MCP prompts", want: "ctrl+f8", absent: "", occurs: 1},
+		{name: "Agents", match: "inspect agents", want: "ctrl+f9", absent: "f6", occurs: 1},
+		{name: "Effort", match: "choose reasoning effort", want: "ctrl+f5", absent: "f7", occurs: 1},
+		{name: "ModeSwitch", match: "change permission mode", want: "ctrl+f10", absent: "shift+tab", occurs: 1},
+		{name: "ExpandTools", match: "show or hide tool details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
+		{name: "Help", match: "open this help; the shortcut", want: "ctrl+f12 or /help", absent: "? or /help", occurs: 1},
+		{name: "Quit", match: "the first clears the prompt", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},
 		{name: "Scroll", match: "scroll the conversation", want: "ctrl+f14/ctrl+f15", absent: "pgup", occurs: 1},
 		{name: "Close hint", match: " close", want: "ctrl+f16 or ctrl+f12", absent: "esc or ?", occurs: 1},
 	}
@@ -399,9 +487,9 @@ func TestHelpKeyOverrideEndToEnd(t *testing.T) {
 	for _, line := range strings.Split(view, "\n") {
 		trim := strings.TrimSpace(line)
 		switch {
-		case strings.Contains(trim, "reasoning-effort picker"):
+		case strings.Contains(trim, "choose reasoning effort"):
 			effortRow = trim
-		case strings.Contains(trim, "MCP inventory"):
+		case strings.Contains(trim, "open MCP servers and tools"):
 			mcpRow = trim
 		}
 	}

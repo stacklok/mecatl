@@ -632,7 +632,7 @@ func TestHelpBuiltinProgram(t *testing.T) {
 	}
 	// The overlay's distinctive body row (not shared with the zero-state card) is
 	// gone once the overlay is closed.
-	if strings.Contains(stripANSIstr(fm.View().Content), "this help (on an empty prompt)") {
+	if strings.Contains(stripANSIstr(fm.View().Content), "open this help; the shortcut") {
 		t.Error("help overlay body should be gone from the final frame after esc")
 	}
 }
