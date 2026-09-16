@@ -35,4 +35,4 @@ remain conservative. Do not introduce a static custom-model declaration or new c
   - verify: `TestOperatorDefinedLLMProviders_Scenario4_ListingFallback`
 - AC4.4: unknown live model metadata never overclaims image, audio, reasoning, output, or
   context-window capabilities.
-  - verify: `TestInvariant_custom_provider_live_metadata_conservative`
+  - verify: `TestInvariant_custom_provider_omitted_live_modalities_use_adapter`

@@ -753,6 +753,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd := m.applyWorkspaceEnrollmentPollTick(msg)
 		return mm, cmd, true
 	case client.MCPRefreshMsg:
+		if msg.RequestToken != m.mcpRefreshRequestToken || msg.SessionID != m.sessionID {
+			return m, nil, true
+		}
 		if msg.Err != nil {
 			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh failed: " + sanitizeTerminal(msg.Err.Error()))
 		} else if msg.Result.Changed {

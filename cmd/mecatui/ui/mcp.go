@@ -37,7 +37,8 @@ func (m Model) runMCPRefresh() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.statusMsg = m.deps.Theme.Style("muted").Render("refreshing MCP tools…")
-	return m, client.RefreshMcpSourcesCmd(m.deps.Ctx, refresher, m.sessionID)
+	m.mcpRefreshRequestToken++
+	return m, client.RefreshMcpSourcesCmd(m.deps.Ctx, refresher, m.sessionID, m.mcpRefreshRequestToken)
 }
 
 // openMCP opens the selected MCP surface and starts its initial RPC.

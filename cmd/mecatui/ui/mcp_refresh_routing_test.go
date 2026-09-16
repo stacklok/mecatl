@@ -45,7 +45,7 @@ func TestMCPSourceReconciliation_Scenario4_UnifiedCommandRoutingMatrix(t *testin
 	}{
 		{name: "direct-only", caps: client.Capabilities{MCPRefresh: true}, withDirect: true, wantRefreshCommand: true, wantDirectCalls: 1},
 		{name: "broker-only", caps: client.Capabilities{WorkspaceEnrollment: true}, withBroker: true, wantRefreshCommand: true, wantAlias: true, wantBrokerCalls: 1},
-		{name: "both-fail-closed", caps: client.Capabilities{MCPRefresh: true, WorkspaceEnrollment: true}, withDirect: true, withBroker: true, wantAlias: true},
+		{name: "both-fail-closed", caps: client.Capabilities{MCPRefresh: true, WorkspaceEnrollment: true}, withDirect: true, withBroker: true, wantAlias: true, wantBrokerCalls: 1},
 		{name: "neither-fail-closed"},
 		{name: "direct-missing-collaborator", caps: client.Capabilities{MCPRefresh: true}},
 		{name: "broker-missing-collaborator", caps: client.Capabilities{WorkspaceEnrollment: true}},
@@ -66,7 +66,7 @@ func TestMCPSourceReconciliation_Scenario4_UnifiedCommandRoutingMatrix(t *testin
 			if refreshOK != tc.wantRefreshCommand {
 				t.Fatalf("mcp-refresh registered=%v want %v", refreshOK, tc.wantRefreshCommand)
 			}
-			_, aliasOK := builtinByName(m.caps, m.wiredCollaborators(), "tools-connect")
+			alias, aliasOK := builtinByName(m.caps, m.wiredCollaborators(), "tools-connect")
 			if aliasOK != tc.wantAlias {
 				t.Fatalf("tools-connect registered=%v want %v", aliasOK, tc.wantAlias)
 			}
@@ -86,9 +86,63 @@ func TestMCPSourceReconciliation_Scenario4_UnifiedCommandRoutingMatrix(t *testin
 				mm, _ = m.Update(msg)
 				m = mm.(Model)
 			}
+			if aliasOK {
+				mm, cmd := alias.run(m)
+				m = mm.(Model)
+				if cmd == nil {
+					t.Fatal("tools-connect returned nil command")
+				}
+				msg := cmd()
+				if batch, ok := msg.(tea.BatchMsg); ok {
+					if len(batch) == 0 {
+						t.Fatal("empty tools-connect command batch")
+					}
+					msg = batch[0]()
+				}
+				mm, _ = m.Update(msg)
+				m = mm.(Model)
+			}
 			if direct.refreshes != tc.wantDirectCalls || broker.connects != tc.wantBrokerCalls {
 				t.Fatalf("direct calls=%d broker calls=%d, want %d/%d", direct.refreshes, broker.connects, tc.wantDirectCalls, tc.wantBrokerCalls)
 			}
 		})
+	}
+}
+
+func TestMCPRefreshLateResponsesDoNotCrossSessionOrRequest(t *testing.T) {
+	direct := &refreshRoutingMCP{}
+	m, _ := builtinDispatchModel(t, client.Capabilities{MCPRefresh: true}, false)
+	m.deps.MCP = direct
+	m.caps.MCPRefresh = true
+
+	mm, firstCmd := m.runMCPRefresh()
+	m = mm.(Model)
+	first := firstCmd().(client.MCPRefreshMsg)
+	mm, secondCmd := m.runMCPRefresh()
+	m = mm.(Model)
+	second := secondCmd().(client.MCPRefreshMsg)
+	if first.RequestToken == second.RequestToken || second.SessionID != m.sessionID {
+		t.Fatalf("refresh correlation first=%+v second=%+v session=%q", first, second, m.sessionID)
+	}
+
+	m.statusMsg = "current request pending"
+	mm, _ = m.Update(first)
+	m = mm.(Model)
+	if m.statusMsg != "current request pending" {
+		t.Fatalf("stale request changed status: %q", m.statusMsg)
+	}
+
+	wrongSession := second
+	wrongSession.SessionID = "another-session"
+	mm, _ = m.Update(wrongSession)
+	m = mm.(Model)
+	if m.statusMsg != "current request pending" {
+		t.Fatalf("wrong-session response changed status: %q", m.statusMsg)
+	}
+
+	mm, _ = m.Update(second)
+	m = mm.(Model)
+	if m.statusMsg == "current request pending" {
+		t.Fatal("current refresh response was ignored")
 	}
 }

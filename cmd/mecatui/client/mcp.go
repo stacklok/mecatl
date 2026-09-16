@@ -172,8 +172,10 @@ type MCPRefreshResult struct {
 
 // MCPRefreshMsg carries an explicit direct-source refresh result.
 type MCPRefreshMsg struct {
-	Result MCPRefreshResult
-	Err    error
+	RequestToken uint64
+	SessionID    string
+	Result       MCPRefreshResult
+	Err          error
 }
 
 // MCPGroupsMsg carries a ListToolHiveGroups success.
@@ -513,10 +515,10 @@ func ListMcpSourcesCmd(ctx context.Context, m MCP) tea.Cmd {
 }
 
 // RefreshMcpSourcesCmd invokes explicit direct-source refresh.
-func RefreshMcpSourcesCmd(ctx context.Context, m MCPRefresher, sessionID string) tea.Cmd {
+func RefreshMcpSourcesCmd(ctx context.Context, m MCPRefresher, sessionID string, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.RefreshMCP(ctx, sessionID)
-		return MCPRefreshMsg{Result: result, Err: err}
+		return MCPRefreshMsg{RequestToken: requestToken, SessionID: sessionID, Result: result, Err: err}
 	}
 }
 
