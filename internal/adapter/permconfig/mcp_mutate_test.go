@@ -29,3 +29,42 @@ func TestDirectMCPMutationRejectsDuplicateFoldedName(t *testing.T) {
 		t.Fatal("duplicate folded name was accepted")
 	}
 }
+
+func TestAddDirectMCPServerWithKeyNestsModeUnderKey(t *testing.T) {
+	added, err := AddDirectMCPServerWithKey(nil, "gateway", "https://mcp.example/mcp", "https://issuer.example", "/tmp/mcp-credentials", "keyring", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseYAML(added)
+	if err != nil {
+		t.Fatalf("generated document did not parse against the real schema:\n%s\nerr: %v", added, err)
+	}
+	local := cfg.MCP.Servers[0].Auth.OAuth.Credentials.Local
+	if local.Key == nil {
+		t.Fatalf("local.key was not populated (mode ended up a sibling, not nested):\n%s", added)
+	}
+	if local.Key.Mode != "keyring" {
+		t.Fatalf("local.key.mode = %q, want keyring:\n%s", local.Key.Mode, added)
+	}
+	if local.Key.File != nil {
+		t.Fatalf("keyring mode unexpectedly carried a file block:\n%s", added)
+	}
+}
+
+func TestAddDirectMCPServerWithKeyFileModeNestsPath(t *testing.T) {
+	added, err := AddDirectMCPServerWithKey(nil, "gateway", "https://mcp.example/mcp", "https://issuer.example", "/tmp/mcp-credentials", "file", "/tmp/mcp-credential-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseYAML(added)
+	if err != nil {
+		t.Fatalf("generated document did not parse against the real schema:\n%s\nerr: %v", added, err)
+	}
+	local := cfg.MCP.Servers[0].Auth.OAuth.Credentials.Local
+	if local.Key == nil || local.Key.Mode != "file" {
+		t.Fatalf("local.key = %#v, want mode file:\n%s", local.Key, added)
+	}
+	if local.Key.File == nil || local.Key.File.Path != "/tmp/mcp-credential-key" {
+		t.Fatalf("local.key.file = %#v, want path /tmp/mcp-credential-key:\n%s", local.Key.File, added)
+	}
+}

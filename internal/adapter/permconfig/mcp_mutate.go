@@ -18,9 +18,9 @@ func AddDirectMCPServer(data []byte, name, endpoint, issuer, root, keyEnv string
 
 // AddDirectMCPServerWithKey writes a root-pinned native custody profile.
 func AddDirectMCPServerWithKey(data []byte, name, endpoint, issuer, root, mode, keyPath string) ([]byte, error) {
-	key := "key:\n              mode: " + quoteYAML(mode)
+	key := "key:\n                mode: " + quoteYAML(mode)
 	if mode == "file" {
-		key += "\n              file: {path: " + quoteYAML(keyPath) + "}"
+		key += "\n                file: {path: " + quoteYAML(keyPath) + "}"
 	}
 	return addDirectMCPServer(data, name, endpoint, issuer, root, key)
 }
@@ -28,7 +28,8 @@ func AddDirectMCPServerWithKey(data []byte, name, endpoint, issuer, root, mode, 
 func quoteYAML(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 
 func addDirectMCPServer(data []byte, name, endpoint, issuer, root, keyDeclaration string) ([]byte, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
+	wasEmpty := len(bytes.TrimSpace(data)) == 0
+	if wasEmpty {
 		data = []byte("{}\n")
 	}
 	if err := ValidateYAML(data); err != nil {
@@ -37,6 +38,12 @@ func addDirectMCPServer(data []byte, name, endpoint, issuer, root, keyDeclaratio
 	doc, err := yamldiag.ParseSettingsDocument(data)
 	if err != nil {
 		return nil, errors.New("settings document is invalid or ambiguous")
+	}
+	if wasEmpty {
+		// The placeholder above parses as a flow-style "{}" mapping. Every entry
+		// this function appends is block-style; serializing block-style values
+		// inside a flow-style parent produces malformed YAML.
+		doc.Mapping().IsFlowStyle = false
 	}
 	mcpNode, err := uniqueDirectMCPValue(doc.Mapping(), "mcp")
 	if err != nil {
@@ -159,7 +166,7 @@ func uniqueDirectMCPValue(mapping *ast.MappingNode, wanted string) (ast.Node, er
 func validateDirectMCPDocument(doc *yamldiag.Document) ([]byte, error) {
 	out := []byte(doc.String())
 	if err := ValidateYAML(out); err != nil {
-		return nil, errors.New("updated settings document is invalid")
+		return nil, fmt.Errorf("updated settings document is invalid: %w", err)
 	}
 	return out, nil
 }
