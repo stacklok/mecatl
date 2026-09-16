@@ -49,6 +49,27 @@ func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
 	}
 }
 
+func TestProviderSetupCustomPromptStatesProviderIDFormat(t *testing.T) {
+	commands := testProviderCommands()
+	commands.backend.inspect = providerInspectionLoader(providerInspection{})
+	var prompts []string
+	commands.terminal.readField = func(_ context.Context, prompt string) (string, error) {
+		prompts = append(prompts, prompt)
+		if len(prompts) == 1 {
+			return "5", nil
+		}
+		return "", context.Canceled
+	}
+
+	err := commands.runSetup(context.Background(), invocationResolution{mode: modeProviderSetup}, io.Discard, io.Discard)
+	if !errors.Is(err, errProviderCredentialCancelled) {
+		t.Fatalf("setup error = %v, want cancellation after custom provider prompt", err)
+	}
+	if len(prompts) < 2 || prompts[1] != "Custom provider ID (1-63 lowercase letters, digits, or hyphens; start with a letter and end with a letter or digit)" {
+		t.Fatalf("custom provider prompt = %q", prompts)
+	}
+}
+
 func TestProviderSetupNamedCustomDispatchesToLoginWithoutDefinitionEdit(t *testing.T) {
 	path := providerCredentialTestFile(t, "providers:\n  custom:\n    api_key: old-secret\n")
 	inspection := providerInspection{definitions: permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: providerAuthAPIKey}}}}

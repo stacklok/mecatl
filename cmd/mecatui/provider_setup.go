@@ -28,7 +28,7 @@ func (c providerCommands) runSetup(ctx context.Context, res invocationResolution
 			return fmt.Errorf("providers setup: select provider: %w", err)
 		}
 		if provider == customProviderSetupChoice {
-			provider, err = c.terminal.readField(ctx, "Custom provider name")
+			provider, err = c.terminal.readField(ctx, "Custom provider ID (1-63 lowercase letters, digits, or hyphens; start with a letter and end with a letter or digit)")
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return providerCredentialCancellation(stderr)

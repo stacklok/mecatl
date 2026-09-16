@@ -46,14 +46,14 @@ Built-in and custom providers are locally configured for embedded mecatui. ToolH
 	case providerActionSetup:
 		text = `Usage: mecatui providers setup [PROVIDER]
 
-Interactively choose a built-in, external, or custom provider. Naming a configured provider starts its local login flow; an unknown name starts custom-provider setup. Setup can write operator configuration and, when authentication is needed, locally managed credentials or OIDC enrollment.
+Interactively choose a built-in, external, or custom provider. Naming a configured provider starts its local login flow; an unknown name starts custom-provider setup. Custom provider IDs use 1 to 63 lowercase letters, digits, or hyphens; they start with a letter and end with a letter or digit. Setup can write operator configuration and, when authentication is needed, locally managed credentials or OIDC enrollment.
 
 ToolHive remains externally managed and delegates its lifecycle to ` + "`thv llm`" + `. Use ` + "`mecatui providers status`" + ` first when recovering from a no-provider installation.
 `
 	case providerActionAdd:
 		text = `Usage: mecatui providers add PROVIDER [--no-login]
 
-Create a custom provider definition in local operator settings. You will supply its HTTPS base URL, API flavor, default model, and authentication method (api_key, oidc, or none); OIDC also collects issuer and trust settings. Without --no-login, add then starts the selected local credential or OIDC enrollment flow.
+Create a custom provider definition in local operator settings. PROVIDER uses 1 to 63 lowercase letters, digits, or hyphens; it starts with a letter and ends with a letter or digit. You will supply its HTTPS base URL, API flavor, default model, and authentication method (api_key, oidc, or none); OIDC also collects issuer and trust settings. Without --no-login, add then starts the selected local credential or OIDC enrollment flow.
 
 --no-login saves only the definition and prints the follow-up login command. This command does not configure remote mecated instances. If no provider is usable afterward, run ` + "`mecatui providers login PROVIDER`" + ` and ` + "`mecatui providers set-default PROVIDER [MODEL]`" + `.
 `
