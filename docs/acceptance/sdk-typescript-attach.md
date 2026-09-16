@@ -624,25 +624,23 @@ safe to attach.
   a generic transport error, and never by opening a `Converse` stream with a
   prompt.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIG92ZXIgZ1JQQyBpcyBhIHR5cGVkIHVuc3VwcG9ydGVkLWZlYXR1cmUgZXJyb3I — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel over gRPC is a typed unsupported-feature error"`
-- AC8.5: `AttachedRun.approve()` and `resolveAsk()` fail with a typed
-  unsupported-feature error on both transports, each naming its **own** distinct
-  dependency rather than one blanket reason — over HTTP the absent ack-only
-  approve response (`approve_ack_only`), over gRPC the absent prompt-free
-  control RPC (`prompt_free_controls`). They are different server changes that
-  will land independently, so one identifier could not describe either honestly,
-  and an operator reading the error learns which change they are waiting on.
-  **Neither clears without an SDK release**: the methods are typed
-  `Promise<never>`, and the gRPC half additionally needs a new proto descriptor
-  and regenerated client, so there is no latent code path for a feature string
-  to switch on — unlike M1's `http_steer`, which gates an implemented route.
-  Neither ever posts to the SSE-relaying approve route, whose body cannot be
-  closed (that cancels the run), left unread (that stalls the relay), or drained
-  to EOF (unbounded, because the resumed run can park on another ask).
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92YWwgbmFtZXMgYSBkaXN0aW5jdCBhYnNlbnQgZmVhdHVyZSBwZXIgdHJhbnNwb3J0 — `sdk/typescript/test/attached-controls.test.ts :: "attached approval names a distinct absent feature per transport"`
-- AC8.6: `AttachedRun.steer()` fails with a typed unsupported-feature error on
-  both transports and never promotes into a fresh run, which would mint a run id
-  the attachment's filter can never match and turn a refusal into silence.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgc3RlZXIgaXMgdW5zdXBwb3J0ZWQgb24gYm90aCB0cmFuc3BvcnRzIGFuZCBuZXZlciBwcm9tb3Rlcw — `sdk/typescript/test/attached-controls.test.ts :: "attached steer is unsupported on both transports and never promotes"`
+- AC8.5: `AttachedRun.approve()` and `resolveAsk()` retain their
+  `Promise<never>` signatures and fail locally with a typed unsupported-feature
+  error on both transports. Both now name the shared `attached_run_controls`
+  compatibility deferral and direct applications to
+  `session.controls(attached.runId)`; neither opens `Converse` nor posts to the
+  legacy SSE-relaying approve route. The original transport-specific
+  `approve_ack_only` (HTTP) and `prompt_free_controls` (gRPC) reasons were
+  accurate when this plan landed, but [ADR-0346](../adr/0346-run-id-addressed-prompt-free-controls.md)
+  Decision 8 supersedes that deferral model now that prompt-free controls ship
+  as a separate run-ID-addressed resource.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92YWwga2VlcHMgdGhlIGxvY2FsIGNvbXBhdGliaWxpdHkgZGVmZXJyYWwgb24gYm90aCB0cmFuc3BvcnRz — `sdk/typescript/test/attached-controls.test.ts :: "attached approval keeps the local compatibility deferral on both transports"`
+- AC8.6: `AttachedRun.steer()` follows the same ADR-0346 compatibility rule:
+  it fails locally with `attached_run_controls` on both transports, directs the
+  caller to the run-ID-addressed resource, and never promotes into a fresh run,
+  which would mint a run id the attachment's filter can never match and turn a
+  refusal into silence.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgc3RlZXIga2VlcHMgdGhlIGxvY2FsIGNvbXBhdGliaWxpdHkgZGVmZXJyYWwgYW5kIG5ldmVyIHByb21vdGVz — `sdk/typescript/test/attached-controls.test.ts :: "attached steer keeps the local compatibility deferral and never promotes"`
 - AC8.7: Aborting the signal, disposing via `Symbol.asyncDispose`, and `break`ing
   out of iteration each release the watch without sending a cancel; the run
   continues to its own terminal and a fresh attachment observes that terminal.

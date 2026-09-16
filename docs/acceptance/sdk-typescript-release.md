@@ -238,10 +238,12 @@ storage health/migration/cleanup namespaces.
 - AC4.3: The batch adds naming and discoverability only — no bespoke retry,
   pagination, cached state, or client-side maintenance job state machine.
   - verify: vitest:sdk/typescript/test/namespaces-ops.test.ts#dGhlIG9wZXJhdGlvbmFsIG5hbWVzcGFjZSBiYXRjaCBhZGRzIG5vIGJlc3Bva2Ugd2lyZSB0eXBlcw — `sdk/typescript/test/namespaces-ops.test.ts :: "the operational namespace batch adds no bespoke wire types"`
-- AC4.4: After this batch, all 84 descriptor operations are callable through
-  the public raw seam and every non-team unary operation has a discoverable
-  named client/session namespace where #821 calls for one.
-  - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#YWxsIDg0IHJhdyBSUENzIGFyZSBjYWxsYWJsZSB0aHJvdWdoIHRoZSBwdWJsaWMgcmF3IHNlYW0 — `sdk/typescript/test/rpc-catalog.test.ts :: "all 84 raw RPCs are callable through the public raw seam"`
+- AC4.4: This batch made all 84 descriptor operations then present callable
+  through the public raw seam. [ADR-0346](../adr/0346-run-id-addressed-prompt-free-controls.md)
+  later added four run-control RPCs, so the current exact catalog proof covers
+  all 88; every non-team unary operation has a discoverable named
+  client/session namespace where #821 calls for one.
+  - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#YWxsIDg4IHJhdyBSUENzIGFyZSBjYWxsYWJsZSB0aHJvdWdoIHRoZSBwdWJsaWMgcmF3IHNlYW0 — `sdk/typescript/test/rpc-catalog.test.ts :: "all 88 raw RPCs are callable through the public raw seam"`
 
 ---
 
