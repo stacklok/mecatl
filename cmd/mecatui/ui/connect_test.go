@@ -64,6 +64,12 @@ func TestConnectRequiresConfirmationAndEmitsPublicIntent(t *testing.T) {
 		t.Fatal("first enter must only request confirmation")
 	}
 	m = mm.(Model)
+	confirm := stripANSIstr(m.View().Content)
+	for _, want := range []string{"Connect to this saved target?", "enter: connect", "esc: back"} {
+		if !strings.Contains(confirm, want) {
+			t.Fatalf("confirmation missing %q:\n%s", want, confirm)
+		}
+	}
 	mm, cmd, _ = m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if cmd == nil {
@@ -75,6 +81,63 @@ func TestConnectRequiresConfirmationAndEmitsPublicIntent(t *testing.T) {
 	}
 	if strings.Contains(intent.Target, "token") {
 		t.Fatal("intent target contains secret-shaped data")
+	}
+}
+
+func TestConnectCopyNamesTheSelectedAction(t *testing.T) {
+	target := ConnectTarget{Target: "remote.example:443"}
+	for _, tc := range []struct {
+		name     string
+		reason   client.AuthReason
+		cursor   int
+		action   string
+		question string
+		rejected bool
+	}{
+		{name: "saved target", action: "connect", question: "Connect to this saved target?"},
+		{name: "new target", cursor: 1, action: "sign in", question: "Sign in to a new target?"},
+		{name: "new target after rejection", reason: client.AuthRejected, cursor: 1, action: "sign in", question: "Sign in to a new target?"},
+		{name: "expired credential", reason: client.AuthSessionExpired, action: "sign in again", question: "Sign in again and connect?"},
+		{name: "storage recovery", reason: client.AuthStorageUnavailable, action: "retry connection", question: "Retry connection without opening a browser?"},
+		{name: "rejected credential", reason: client.AuthRejected, rejected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newConnectModel([]ConnectTarget{target})
+			m.connect.reason = tc.reason
+			m.connect.failedTarget = target.Target
+			mm, cmd := m.openConnect()
+			m = applyAll(mm.(Model), cmd())
+			m.connect.cursor = tc.cursor
+			out := stripANSIstr(m.View().Content)
+			if tc.rejected {
+				if strings.Contains(out, "enter:") || !strings.Contains(out, "esc: close") {
+					t.Fatalf("rejected credential advertised an unavailable action:\n%s", out)
+				}
+				mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+				m = mm.(Model)
+				if !handled || cmd != nil || m.connect.confirm || !strings.Contains(m.connect.err, "rejected") {
+					t.Fatalf("rejected credential Enter = handled=%v cmd=%v state=%+v", handled, cmd, m.connect)
+				}
+				return
+			}
+			if !strings.Contains(out, "enter: "+tc.action) || !strings.Contains(out, "esc: close") {
+				t.Fatalf("connect hint missing selected action %q:\n%s", tc.action, out)
+			}
+			if strings.Contains(out, "enter continues") {
+				t.Fatalf("connect hint still uses vague continuation copy:\n%s", out)
+			}
+			mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+			if !handled || cmd != nil || !m.connect.confirm {
+				t.Fatalf("first Enter did not open confirmation: handled=%v cmd=%v state=%+v", handled, cmd, m.connect)
+			}
+			confirm := stripANSIstr(m.View().Content)
+			for _, want := range []string{tc.question, "enter: " + tc.action, "esc: back"} {
+				if !strings.Contains(confirm, want) {
+					t.Fatalf("confirmation missing %q:\n%s", want, confirm)
+				}
+			}
+		})
 	}
 }
 

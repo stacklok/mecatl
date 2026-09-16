@@ -195,6 +195,34 @@ func TestBuiltinByName(t *testing.T) {
 	}
 }
 
+func TestBuiltinPaletteDescriptionsUseConciseActions(t *testing.T) {
+	commands := builtinCommands(
+		client.Capabilities{Teams: true, Worktrees: true, Scheduling: true},
+		wiredCollaborators{Worktrees: true, Scheduling: true, Sessions: true},
+	)
+	descriptions := make(map[string]string, len(commands))
+	for _, command := range commands {
+		descriptions[command.name] = command.desc
+	}
+	for name, want := range map[string]string{
+		"help":      "show keyboard shortcuts and features",
+		"title":     "view or rename the active session title",
+		"team":      "view agent teams",
+		"worktrees": "start a new session in a sibling Git worktree",
+		"schedule":  "manage scheduled tasks",
+		"sessions":  "manage stored sessions",
+	} {
+		if got := descriptions[name]; got != want {
+			t.Errorf("%s description = %q, want %q", name, got, want)
+		}
+	}
+	for name, description := range descriptions {
+		if strings.Contains(description, "&") {
+			t.Errorf("%s description contains '&': %q", name, description)
+		}
+	}
+}
+
 // TestDebugAskBuiltinGated pins the /debug-ask gate: without debug it is
 // absent; canonical Debug and the narrow DebugAsk alias each register it from
 // the same declaration used by known-name interception.

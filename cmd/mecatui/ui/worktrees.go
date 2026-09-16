@@ -173,7 +173,7 @@ func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
 	}
 	oldID := m.sessionID
 	m.phase = phaseConnecting
-	m.statusMsg = "switching worktree — creating successor…"
+	m.statusMsg = "starting a new session in the selected worktree…"
 	m.worktrees.view = worktreesNone
 	m.refreshView()
 	return m, m.switchWorktreeCmd(oldID, wt), true
@@ -261,7 +261,7 @@ func renderWorktreesOverlay(th theme.Theme, st worktreesState, caps client.Capab
 func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabilities, hk helpKeys, width, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("worktrees") + "\n")
-	b.WriteString(th.Style("muted").Render("select a worktree to start a new session rooted there") + "\n\n")
+	b.WriteString(th.Style("muted").Render("select a worktree to start a new session there") + "\n\n")
 	if st.loading {
 		b.WriteString(th.Style("muted").Render("loading…"))
 		return b.String()
@@ -308,13 +308,13 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 func renderWorktreesConfirm(th theme.Theme, st worktreesState, hk helpKeys, _, _ int) string {
 	w := st.confirm
 	var b strings.Builder
-	b.WriteString(th.Style("title").Render("switch workspace") + "\n\n")
-	b.WriteString("start a new session rooted at:\n")
+	b.WriteString(th.Style("title").Render("start session in worktree") + "\n\n")
+	b.WriteString("a new session will start in:\n")
 	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(w.Label)) + "\n")
 	if w.Branch != "" {
 		b.WriteString(th.Style("muted").Render("  branch: "+sanitizeTerminal(w.Branch)) + "\n")
 	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": switch  "+hk.closeOnly+": back"))
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": start session  "+hk.closeOnly+": back"))
 	return b.String()
 }
 

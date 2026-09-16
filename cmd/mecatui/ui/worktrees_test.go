@@ -72,6 +72,9 @@ func TestWorktreeSwitchUsesOpaqueSelectorAndClosesAfterBinding(t *testing.T) {
 	if !handled || m.sessionID != "source-session" || m.conv.isEmpty() {
 		t.Fatal("switch destroyed source binding before successor creation")
 	}
+	if !strings.Contains(m.statusMsg, "starting a new session") || strings.Contains(m.statusMsg, "switching worktree") {
+		t.Fatalf("successor status = %q, want a new-session action without switching copy", m.statusMsg)
+	}
 	msg := cmd()
 	ready, ok := msg.(worktreeSwitchReadyMsg)
 	if !ok {
@@ -126,5 +129,33 @@ func TestWorktreeFilterUsesDisplayMetadata(t *testing.T) {
 	got := filterWorktrees(wts, "topic")
 	if len(got) != 1 || got[0].Selector.IsZero() {
 		t.Fatalf("filtered worktrees = %+v", got)
+	}
+}
+
+func TestWorktreeCopyDescribesStartingANewSession(t *testing.T) {
+	wt := client.Worktree{Selector: testWorktreeSelector("opaque-copy"), Label: "feature", Branch: "refs/heads/feature"}
+	m := newWorktreesModel(t, &fakeConv{}, &fakeWorktreeLister{wts: []client.Worktree{wt}})
+	mm, cmd := m.openWorktrees()
+	m = feedCmd(t, mm.(Model), cmd)
+	panel := stripANSIstr(m.View().Content)
+	for _, want := range []string{"select a worktree to start a new session there", "enter: select", "esc: close"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("worktree picker missing %q:\n%s", want, panel)
+		}
+	}
+
+	mm, _, handled := m.onWorktreesKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatal("enter was not handled")
+	}
+	m = mm.(Model)
+	confirm := stripANSIstr(m.View().Content)
+	for _, want := range []string{"start session in worktree", "a new session will start in:", "enter: start session", "esc: back"} {
+		if !strings.Contains(confirm, want) {
+			t.Fatalf("worktree confirmation missing %q:\n%s", want, confirm)
+		}
+	}
+	if strings.Contains(strings.ToLower(confirm), "switch workspace") || strings.Contains(confirm, "enter: switch") {
+		t.Fatalf("worktree confirmation still implies a workspace switch:\n%s", confirm)
 	}
 }

@@ -111,7 +111,7 @@ func (m Model) onConnectKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if !key.Matches(msg, m.keys.Choose) {
 		return m, nil, true
 	}
-	if m.connect.reason == client.AuthRejected && m.connect.cursor < len(m.connect.targets) && m.connect.targets[m.connect.cursor].Target == m.connect.failedTarget {
+	if _, ok := m.selectedConnectAction(); !ok {
 		m.connect.err = "The server rejected this credential; check issuer, audience, and CA settings before trying again."
 		return m, nil, true
 	}
@@ -124,22 +124,70 @@ func (m Model) onConnectKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m, tea.Quit, true
 }
 
-func (m Model) connectRestartIntent() ConnectRestartIntent {
-	sameTarget := m.connect.cursor < len(m.connect.targets) && m.connect.targets[m.connect.cursor].Target == m.connect.failedTarget
-	intent := ConnectRestartIntent{Action: ConnectSaved}
+// selectedConnectAction resolves the selected row's real next action. A rejected
+// credential is deliberately not actionable: Enter only explains why it cannot
+// be retried from this panel.
+func (m Model) selectedConnectAction() (ConnectAction, bool) {
 	if m.connect.cursor == len(m.connect.targets) {
-		intent.Action = AddTarget
-	} else {
-		intent.Target = m.connect.targets[m.connect.cursor].Target
+		return AddTarget, true
 	}
-	if !sameTarget {
-		return intent
+	if m.connect.cursor < 0 || m.connect.cursor >= len(m.connect.targets) {
+		return 0, false
+	}
+	if m.connect.reason == client.AuthRejected && m.connect.targets[m.connect.cursor].Target == m.connect.failedTarget {
+		return 0, false
+	}
+	if m.connect.targets[m.connect.cursor].Target != m.connect.failedTarget {
+		return ConnectSaved, true
 	}
 	switch m.connect.reason {
 	case client.AuthCredentialCleanup, client.AuthStorageUnavailable:
-		intent.Action = RetryAfterCleanup
+		return RetryAfterCleanup, true
 	case client.AuthNotEnrolled, client.AuthSessionExpired, client.AuthCredentialUnusable, client.AuthTargetChanged:
-		intent.Action = Reauthenticate
+		return Reauthenticate, true
+	default:
+		return ConnectSaved, true
+	}
+}
+
+func connectActionLabel(action ConnectAction) string {
+	switch action {
+	case ConnectSaved:
+		return "connect"
+	case Reauthenticate:
+		return "sign in again"
+	case RetryAfterCleanup:
+		return "retry connection"
+	case AddTarget:
+		return "sign in"
+	default:
+		return ""
+	}
+}
+
+func connectConfirmationLabel(action ConnectAction) string {
+	switch action {
+	case ConnectSaved:
+		return "Connect to this saved target?"
+	case Reauthenticate:
+		return "Sign in again and connect?"
+	case RetryAfterCleanup:
+		return "Retry connection without opening a browser?"
+	case AddTarget:
+		return "Sign in to a new target?"
+	default:
+		return ""
+	}
+}
+
+func (m Model) connectRestartIntent() ConnectRestartIntent {
+	action, ok := m.selectedConnectAction()
+	if !ok {
+		return ConnectRestartIntent{}
+	}
+	intent := ConnectRestartIntent{Action: action}
+	if action != AddTarget {
+		intent.Target = m.connect.targets[m.connect.cursor].Target
 	}
 	if intent.Action == Reauthenticate || intent.Action == RetryAfterCleanup {
 		intent.ResumeSessionID = m.connect.resumeSessionID
@@ -205,21 +253,17 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 		b.WriteString(prefix + "OIDC sign-in for a new target…\n")
 	}
 	if m.connect.confirm {
-		label := "Connect to this saved target? Press enter to confirm."
-		sameTarget := m.connect.cursor < len(m.connect.targets) && m.connect.targets[m.connect.cursor].Target == m.connect.failedTarget
-		if m.connect.cursor == len(m.connect.targets) {
-			label = "Continue to OIDC enrollment for a new target? Press enter to confirm."
-		} else if sameTarget {
-			switch m.connect.reason {
-			case client.AuthCredentialCleanup, client.AuthStorageUnavailable:
-				label = "Retry connection without opening a browser? Press enter to confirm."
-			case client.AuthNotEnrolled, client.AuthSessionExpired, client.AuthCredentialUnusable, client.AuthTargetChanged:
-				label = "OIDC sign-in again and connect? Press enter to confirm."
-			}
-		}
+		action, _ := m.selectedConnectAction()
+		label := connectConfirmationLabel(action)
 		b.WriteString("\n" + th.Style("warning").Render(label) + "\n")
+		b.WriteString(th.Style("muted").Render("enter: "+connectActionLabel(action)+"  esc: back") + "\n")
 	} else {
-		b.WriteString("\n" + th.Style("muted").Render("↑/↓ select · enter continues · esc closes") + "\n")
+		action, ok := m.selectedConnectAction()
+		hint := "↑/↓ select · esc: close"
+		if ok {
+			hint = "↑/↓ select · enter: " + connectActionLabel(action) + " · esc: close"
+		}
+		b.WriteString("\n" + th.Style("muted").Render(hint) + "\n")
 	}
 	return centerCard(th, b.String(), m.width, m.vp.Height())
 }

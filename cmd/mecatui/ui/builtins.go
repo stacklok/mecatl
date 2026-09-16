@@ -108,7 +108,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		},
 		{
 			name: "help",
-			desc: "show keys & features",
+			desc: "show keyboard shortcuts and features",
 			run:  Model.runHelp,
 		},
 		{
@@ -118,7 +118,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		},
 		{
 			name:        "title",
-			desc:        "show or rename the active session title",
+			desc:        "view or rename the active session title",
 			acceptsArgs: true,
 			run: func(m Model) (tea.Model, tea.Cmd) {
 				return m.runTitle(), nil
@@ -164,7 +164,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	if caps.Teams {
 		out = append(out, builtin{
 			name: "team",
-			desc: "live agent-team overlay",
+			desc: "view agent teams",
 			run:  Model.runTeam,
 		})
 	}
@@ -216,14 +216,14 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	if caps.Worktrees && w.Worktrees {
 		out = append(out, builtin{
 			name: "worktrees",
-			desc: "switch to a sibling git worktree",
+			desc: "start a new session in a sibling Git worktree",
 			run:  Model.runWorktrees,
 		})
 	}
 	if caps.Scheduling && w.Scheduling {
 		out = append(out, builtin{
 			name: "schedule",
-			desc: "browse & manage scheduled tasks",
+			desc: "manage scheduled tasks",
 			run:  Model.runSchedule,
 		})
 	}
@@ -232,7 +232,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	if w.Sessions {
 		out = append(out, builtin{
 			name: "sessions",
-			desc: "continue, inspect, or manage stored sessions",
+			desc: "manage stored sessions",
 			run:  Model.runSessions,
 		})
 	}
