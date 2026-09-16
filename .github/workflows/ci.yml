@@ -66,6 +66,14 @@ jobs:
       # trusted base-ref classifier proves the change cannot affect that category.
       macos_go: ${{ steps.classify.outputs.macos_go }}
       macos_sdk: ${{ steps.classify.outputs.macos_sdk }}
+      # Linux job-family relevance. Same fail-closed, trusted base-ref discipline
+      # as the macOS flags — default true (RUN) and flip to false only when the
+      # change provably cannot affect that family. go_relevant gates the Go
+      # build/test matrix; sdk_relevant gates the pure-TypeScript SDK unit job;
+      # site_relevant gates the Docusaurus site build.
+      go_relevant: ${{ steps.classify.outputs.go_relevant }}
+      sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}
+      site_relevant: ${{ steps.classify.outputs.site_relevant }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,6 +94,11 @@ jobs:
           # Fail closed: run the macOS jobs unless the classifier proves otherwise.
           macos_go=true
           macos_sdk=true
+          # Fail closed: run each Linux job family unless the classifier proves the
+          # change cannot affect it.
+          go_relevant=true
+          sdk_relevant=true
+          site_relevant=true
           case "$EVENT_NAME" in
             pull_request)
               base="$PR_BASE_SHA"
@@ -122,18 +135,35 @@ jobs:
               macos_go="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" go)" || macos_go=true
               macos_sdk="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
             fi
+            # Same trusted-from-base-ref discipline for the Linux job-family flags:
+            # a PR cannot edit the classifier to skip a job it should run, because
+            # the base version is used until it merges. A missing script (the PR
+            # that introduces it) leaves all three flags at their fail-closed RUN
+            # value.
+            relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"
+            if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then
+              go_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true
+              sdk_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true
+              site_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
+            fi
           fi
-          # One redirect group for all three outputs (shellcheck SC2129).
+          # One redirect group for all outputs (shellcheck SC2129).
           {
             echo "docs_only=$docs_only"
             echo "macos_go=$macos_go"
             echo "macos_sdk=$macos_sdk"
+            echo "go_relevant=$go_relevant"
+            echo "sdk_relevant=$sdk_relevant"
+            echo "site_relevant=$site_relevant"
           } >> "$GITHUB_OUTPUT"
 
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # Pure-TypeScript unit suite: runs against the COMMITTED sdk/typescript/src/gen,
+    # so only an SDK-frontend or proto-contract change can affect it. (The SDK jobs
+    # below that build/spawn mecated gate on go OR sdk, not on sdk alone.)
+    if: needs.changes.outputs.sdk_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -190,7 +220,9 @@ jobs:
   sdk-integration:
     name: TypeScript SDK codegen and offline e2e
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # Regenerates contracts from proto and runs the SDK e2e against a same-checkout
+    # mecated, so both Go and SDK/contract changes are relevant.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -242,7 +274,8 @@ jobs:
   sdk-deno:
     name: TypeScript SDK (Deno ${{ matrix.deno-version }})
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # Spawns mecated via Deno.Command, so both Go and SDK/contract changes matter.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -288,7 +321,9 @@ jobs:
   sdk-browser:
     name: TypeScript SDK browser (${{ matrix.label }})
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # Builds mecated for the browser integration, so both Go and SDK/contract
+    # changes are relevant.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -404,7 +439,9 @@ jobs:
   slack-bot-example:
     name: Slack bot example
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    # Builds bin/mecated and spawns it (--mock) for the offline bridge test, so
+    # both Go and SDK/contract changes are relevant.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.go_relevant == 'true' || needs.changes.outputs.sdk_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -457,7 +494,7 @@ jobs:
   build:
     name: Build
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -625,7 +662,7 @@ jobs:
   test-race-root-a:
     name: Test (race root-a)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -657,6 +694,8 @@ jobs:
           bash .github/scripts/docs-only-workflow_test.sh
           bash .github/scripts/macos-relevant-changes_test.sh
           bash .github/scripts/macos-relevant-workflow_test.sh
+          bash .github/scripts/relevant-changes_test.sh
+          bash .github/scripts/relevant-changes-workflow_test.sh
           bash .github/scripts/deslop-workflow_test.sh
       - name: go test -race (root-a and modules)
         env:
@@ -683,7 +722,7 @@ jobs:
   test-race-root-b:
     name: Test (race root-b)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -723,7 +762,7 @@ jobs:
   test-race-ui:
     name: Test (race UI)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -760,7 +799,7 @@ jobs:
   test-non-race-draft:
     name: Test (non-race draft coverage)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -808,6 +847,7 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          GO_RELEVANT: ${{ needs.changes.outputs.go_relevant }}
           ROOT_A_RESULT: ${{ needs.test-race-root-a.result }}
           ROOT_B_RESULT: ${{ needs.test-race-root-b.result }}
           UI_RESULT: ${{ needs.test-race-ui.result }}
@@ -822,6 +862,11 @@ jobs:
           if [[ "$DOCS_ONLY" == true ]]; then
             exit 0
           fi
+          # A change that cannot affect a Go binary/test legitimately skips every
+          # race + draft shard, so there is nothing to require.
+          if [[ "$GO_RELEVANT" != true ]]; then
+            exit 0
+          fi
           if [[ "$IS_DRAFT" == true ]]; then
             [[ "$DRAFT_RESULT" == success ]] || { echo "draft non-race coverage failed: $DRAFT_RESULT" >&2; exit 1; }
             exit 0
@@ -834,7 +879,7 @@ jobs:
   analysis:
     name: Analysis
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -980,6 +1025,7 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          GO_RELEVANT: ${{ needs.changes.outputs.go_relevant }}
           ANALYSIS_RESULT: ${{ needs.analysis.result }}
         run: |
           set -euo pipefail
@@ -994,6 +1040,15 @@ jobs:
             fi
             exit 0
           fi
+          # A non-Go change (e.g. website- or SDK-frontend-only) legitimately skips
+          # the analysis job; require the skip exactly as the docs-only branch does.
+          if [[ "$GO_RELEVANT" != true ]]; then
+            if [[ "$ANALYSIS_RESULT" != skipped ]]; then
+              echo "non-go-relevant analysis job was not skipped: analysis=$ANALYSIS_RESULT" >&2
+              exit 1
+            fi
+            exit 0
+          fi
           if [[ "$ANALYSIS_RESULT" != success ]]; then
             echo "lint coverage failed: analysis=$ANALYSIS_RESULT" >&2
             exit 1
@@ -1002,7 +1057,7 @@ jobs:
   fuzz-smoke:
     name: Fuzz smoke
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1052,7 +1107,7 @@ jobs:
   engine-standalone:
     name: Engine module (standalone, GOWORK=off)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the importable-core module builds + tests with NO workspace and NO
@@ -1086,7 +1141,7 @@ jobs:
   provider-standalone:
     name: Provider modules (standalone, GOWORK=off)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the opt-in provider/ submodules build + test with NO workspace
@@ -1161,7 +1216,7 @@ jobs:
   api-compat:
     name: API compat (engine public surface)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The engine module's public API surface (the seven core packages) is a
@@ -1196,7 +1251,7 @@ jobs:
   vuln:
     name: Vulnerabilities (govulncheck)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Supply-chain hygiene that travels with the engine library: govulncheck
@@ -1365,6 +1420,10 @@ jobs:
   user-docs:
     name: User docs (Docusaurus build)
     needs: changes
+    # Builds the Docusaurus site (website/ + user-docs/) and checks the generated
+    # SDK reference. Gate on site relevance ONLY — no docs_only guard, because a
+    # user-docs/ content change IS docs-only yet must still rebuild the site.
+    if: needs.changes.outputs.site_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `user-docs/` (the mecatl.dev site content) is excluded from the matlatl

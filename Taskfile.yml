@@ -853,11 +853,13 @@ tasks:
       - 'cd provider/openaichat && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
 
   test:docs-only-classifier:
-    desc: Run the offline docs-only CI classifier and workflow-wiring tests
+    desc: Run the offline CI path-classifier and workflow-wiring tests
     cmds:
       - bash .github/scripts/docs-only-changes_test.sh
       - bash .github/scripts/docs-only-workflow_test.sh
       - bash .github/scripts/race-aggregate-workflow_test.sh
+      - bash .github/scripts/relevant-changes_test.sh
+      - bash .github/scripts/relevant-changes-workflow_test.sh
 
   lint:actions:
     desc: |
