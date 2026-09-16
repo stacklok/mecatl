@@ -361,34 +361,16 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWindowTitleView asserts View() wires windowTitle() into the tea.View —
-// deleting view.go's v.WindowTitle assignment would silently kill the feature
-// while every helper-level test stays green. Driving through New + the real
-// View (not the helper directly) pins the wiring.
+// TestWindowTitleView ensures the UI no longer delegates title output to Bubble Tea.
 func TestWindowTitleView(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 120, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-view-0001"},
 	)
-	// Before any prompt: the fixed session handle identifies the tab.
-	if got := m.View().WindowTitle; got != "sess-view-00 — mecatui" {
-		t.Fatalf("View().WindowTitle = %q, want the fixed session handle", got)
-	}
-	// Submit a prompt: the phase flips to running and the title leads.
 	m = sendText(t, m, "investigate the flaky test")
-	if got, want := m.View().WindowTitle, "investigate the flaky test sess-view-00 — Working mecatui"; got != want {
-		t.Errorf("View().WindowTitle = %q, want %q after first prompt (running)", got, want)
-	}
-	// Back at idle the status word drops but the title and handle stay.
-	m.phase = phaseIdle
-	if got, want := m.View().WindowTitle, "investigate the flaky test sess-view-00 — mecatui"; got != want {
-		t.Errorf("View().WindowTitle = %q, want %q at idle", got, want)
-	}
-	// The opt-out pins the bare app name regardless.
-	m.deps.NoWindowTitle = true
-	if got := m.View().WindowTitle; got != "mecatui" {
-		t.Errorf("View().WindowTitle = %q, want bare 'mecatui' under NoWindowTitle", got)
+	if got := m.View().WindowTitle; got != "" {
+		t.Fatalf("View().WindowTitle = %q, want empty: title output belongs to the controller", got)
 	}
 }
 
