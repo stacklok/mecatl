@@ -113,6 +113,15 @@ type HostPaths struct {
 type Paths struct {
 	StateDir, RuntimeDir, Socket, DataDir, ConfigFile, UserSettings string
 	DaemonBinary                                                    string
+	// StateRoot, RuntimeRoot, DataRoot, ConfigRoot are the ambient, pre-existing
+	// directories that StateDir/RuntimeDir/DataDir, respectively the ConfigFile/
+	// UserSettings directory, are created under (an XDG base such as
+	// $XDG_DATA_HOME, or the /tmp fallback for RuntimeDir). They are the host's
+	// ordinary layout — never created or owned by this manager, and never
+	// inspected for a symlink swap by refuseSymlinkAncestors, however they
+	// happen to be laid out on this host (notably macOS, where /var and /tmp
+	// are themselves symlinks to /private/var and /private/tmp).
+	StateRoot, RuntimeRoot, DataRoot, ConfigRoot string
 }
 
 // DefaultPaths resolves XDG paths without requiring any XDG variable. The
@@ -130,14 +139,17 @@ func DefaultPaths(host HostPaths) (Paths, error) {
 	}
 	dataDir := filepath.Join(data, "mecatl", "microvm")
 	runtimeDir := ""
+	runtimeRoot := ""
 	if filepath.IsAbs(host.XDGRuntimeDir) {
 		candidate := filepath.Join(host.XDGRuntimeDir, "mecatl-microvm")
 		if len(filepath.Join(candidate, longestRuntimeSocketSuffix)) < DarwinSocketPathLimit {
 			runtimeDir = candidate
+			runtimeRoot = filepath.Clean(host.XDGRuntimeDir)
 		}
 	}
 	if runtimeDir == "" {
-		runtimeDir = filepath.Join(string(filepath.Separator)+"tmp", "mv-"+strconv.Itoa(host.UID))
+		runtimeRoot = string(filepath.Separator) + "tmp"
+		runtimeDir = filepath.Join(runtimeRoot, "mv-"+strconv.Itoa(host.UID))
 	}
 	paths := Paths{
 		StateDir: filepath.Join(state, "mecatl", "microvm"), RuntimeDir: runtimeDir,
@@ -145,6 +157,7 @@ func DefaultPaths(host HostPaths) (Paths, error) {
 		ConfigFile:   filepath.Join(config, "mecatl", "microvmd.json"),
 		UserSettings: filepath.Join(config, "mecatl", "settings.yaml"),
 		DaemonBinary: filepath.Join(dataDir, "bin", "mecatl-microvmd"),
+		StateRoot:    state, RuntimeRoot: runtimeRoot, DataRoot: data, ConfigRoot: config,
 	}
 	if err := validatePaths(paths); err != nil {
 		return Paths{}, err
@@ -223,9 +236,9 @@ type DaemonInfo = microvmclient.DaemonInfo
 // implementation; tests can keep the complete manager journey offline.
 type Operations interface {
 	Preflight(context.Context, Paths) error
-	Download(context.Context, Release, string) (string, error)
+	Download(ctx context.Context, release Release, root, destination string) (string, error)
 	Verify(context.Context, Release, string) error
-	Install(context.Context, string, string) (InstalledArtifacts, error)
+	Install(ctx context.Context, manifest, root, installRoot string) (InstalledArtifacts, error)
 	Running(context.Context, Paths) (bool, error)
 	DaemonInfo(context.Context, Paths) (DaemonInfo, error)
 	Start(context.Context, Paths) error
@@ -331,7 +344,7 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 			return "", readinessError(StageDaemon, errors.New("unconfigured microvmd has existing repository runtime state; refusing to overwrite or delete it"))
 		}
 		ReportReadinessStage(ctx, StageDownload)
-		manifest, err := m.ops.Download(ctx, request.Release, filepath.Join(m.paths.DataDir, "download"))
+		manifest, err := m.ops.Download(ctx, request.Release, m.paths.DataDir, filepath.Join(m.paths.DataDir, "download"))
 		if err != nil {
 			return "", readinessError(StageDownload, fmt.Errorf("download release bundle: %w", err))
 		}
@@ -340,7 +353,7 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 			return "", readinessError(StageVerify, fmt.Errorf("verify release bundle: %w", err))
 		}
 		ReportReadinessStage(ctx, StageInstall)
-		installed, err := m.ops.Install(ctx, manifest, filepath.Join(m.paths.DataDir, "verified"))
+		installed, err := m.ops.Install(ctx, manifest, m.paths.DataDir, filepath.Join(m.paths.DataDir, "verified"))
 		if err != nil {
 			return "", readinessError(StageInstall, fmt.Errorf("install verified release bundle: %w", err))
 		}
@@ -348,7 +361,7 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 			return "", readinessError(StageInstall, err)
 		}
 		if len(request.Policy.publicKey) != 0 {
-			if err := atomicWrite(request.Policy.PublicKey, request.Policy.publicKey); err != nil {
+			if err := atomicWrite(m.paths.DataDir, request.Policy.PublicKey, request.Policy.publicKey); err != nil {
 				return "", readinessError(StageInstall, fmt.Errorf("materialize local microVM release public key: %w", err))
 			}
 		}
@@ -408,7 +421,7 @@ func ClassifyReadinessFailure(err error, fallback ReadinessStage) ReadinessFailu
 	switch {
 	case errors.Is(err, ErrUnsupportedPlatform):
 		failure.Category = "unsupported_platform"
-		failure.Cause = "microvm-local requires Linux amd64 with KVM, use host-local on this host"
+		failure.Cause = "microvm-local requires Linux amd64/arm64 with KVM, or macOS 15+ Apple Silicon with Hypervisor.framework; use host-local on this host"
 	case errors.Is(err, ErrKVMUnavailable):
 		failure.Category = "host_prerequisite"
 		failure.Cause = "KVM is unavailable to the current user, run microvm doctor for host remediation"
@@ -654,7 +667,7 @@ func (m *Manager) Doctor(ctx context.Context) (string, error) {
 	}
 
 	if errors.Is(preflightErr, ErrUnsupportedPlatform) {
-		_, _ = fmt.Fprintln(&report, "next: microvm-local is supported only on Linux amd64 with KVM; use host-local on this host")
+		_, _ = fmt.Fprintln(&report, "next: microvm-local is supported only on Linux amd64/arm64 with KVM, or macOS 15+ Apple Silicon with Hypervisor.framework; use host-local on this host")
 	} else if preflightErr != nil {
 		_, _ = fmt.Fprintln(&report, "next: fix the failed host prerequisite, then rerun doctor")
 	} else if !configured && !running && runningErr == nil {
@@ -861,7 +874,7 @@ func writeDaemonConfig(path string, paths Paths, release Release, policy Policy,
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, append(data, '\n'))
+	return atomicWrite(filepath.Dir(paths.ConfigFile), path, append(data, '\n'))
 }
 
 func expectedDaemonInfo(paths Paths) (DaemonInfo, error) {
@@ -915,8 +928,21 @@ func preparePaths(paths Paths) error {
 	if err := validatePaths(paths); err != nil {
 		return err
 	}
-	for _, dir := range []string{paths.StateDir, paths.RuntimeDir, paths.DataDir, filepath.Dir(paths.ConfigFile), filepath.Dir(paths.DaemonBinary)} {
-		if err := secureMkdirAll(dir); err != nil {
+	// DataDir is secured first, ahead of the loop below, because
+	// DaemonBinary's directory is rooted at DataDir itself rather than at an
+	// ambient XDG base — expressing that ordering dependency in code instead
+	// of relying on slice position.
+	if err := secureMkdirAll(paths.DataRoot, paths.DataDir); err != nil {
+		return err
+	}
+	targets := []struct{ root, dir string }{
+		{paths.StateRoot, paths.StateDir},
+		{paths.RuntimeRoot, paths.RuntimeDir},
+		{paths.ConfigRoot, filepath.Dir(paths.ConfigFile)},
+		{paths.DataDir, filepath.Dir(paths.DaemonBinary)},
+	}
+	for _, target := range targets {
+		if err := secureMkdirAll(target.root, target.dir); err != nil {
 			return err
 		}
 	}
@@ -929,7 +955,10 @@ func preparePaths(paths Paths) error {
 }
 
 func validatePaths(paths Paths) error {
-	for _, path := range []string{paths.StateDir, paths.RuntimeDir, paths.Socket, paths.DataDir, paths.ConfigFile, paths.UserSettings, paths.DaemonBinary} {
+	for _, path := range []string{
+		paths.StateDir, paths.RuntimeDir, paths.Socket, paths.DataDir, paths.ConfigFile, paths.UserSettings, paths.DaemonBinary,
+		paths.StateRoot, paths.RuntimeRoot, paths.DataRoot, paths.ConfigRoot,
+	} {
 		if !filepath.IsAbs(path) {
 			return errors.New("all microVM manager paths must be absolute")
 		}
@@ -952,18 +981,33 @@ func lockManager(stateDir string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockRetryEINTR(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		_ = lock.Close()
 		return nil, err
 	}
 	return func() {
-		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = flockRetryEINTR(int(lock.Fd()), syscall.LOCK_UN)
 		_ = lock.Close()
 	}, nil
 }
 
-func secureMkdirAll(path string) error {
-	if err := refuseSymlinkAncestors(path); err != nil {
+// flockRetryEINTR retries a raw syscall.Flock on EINTR. Unlike os/net file
+// descriptors, a raw Flock call is not wrapped by internal/poll's automatic
+// EINTR retry, so a blocking LOCK_EX can spuriously fail if the calling
+// thread receives a signal (notably Go's SIGURG async-preemption signal)
+// while parked in the kernel wait. Observed as an intermittent EnsureReady
+// failure under concurrent load on darwin/arm64.
+func flockRetryEINTR(fd int, how int) error {
+	for {
+		err := syscall.Flock(fd, how)
+		if err != syscall.EINTR {
+			return err
+		}
+	}
+}
+
+func secureMkdirAll(root, path string) error {
+	if err := refuseSymlinkAncestors(root, path); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
@@ -985,9 +1029,32 @@ func secureMkdirAll(path string) error {
 	return nil
 }
 
-func refuseSymlinkAncestors(path string) error {
+// refuseSymlinkAncestors guards the directories this manager is about to
+// create (via MkdirAll) or write under against a symlink swapped in ahead of
+// that creation: MkdirAll silently follows a symlink for any ancestor that
+// already exists, so a component planted where we expect a fresh directory
+// could redirect the write outside the intended state/data tree.
+//
+// root is the caller's known, trusted boundary — an ambient XDG base, the
+// /tmp fallback, or an already-secured manager directory such as DataDir —
+// and is never itself inspected, however it happens to be laid out on this
+// host: notably macOS, where /var and /tmp are themselves symlinks to
+// /private/var and /private/tmp, and a path built from either would
+// otherwise trip this guard on ordinary host layout rather than an actual
+// attacker foothold. Everything strictly between root and path is the
+// subtree this manager owns and creates, so it climbs from path up to, but
+// not including, root, refusing any ancestor in that range (root exclusive,
+// path inclusive) that already exists as a symlink. If path is not under
+// root at all, that is a bug in the caller (the wrong root was supplied),
+// and this refuses rather than silently skipping the check or climbing past
+// root into the ambient layout it is meant to stay out of.
+func refuseSymlinkAncestors(root, path string) error {
+	root = filepath.Clean(root)
 	clean := filepath.Clean(path)
-	for current := clean; current != filepath.Dir(current); current = filepath.Dir(current) {
+	if !pathWithin(root, clean) {
+		return fmt.Errorf("refusing path %s outside its root %s", clean, root)
+	}
+	for current := clean; current != root; current = filepath.Dir(current) {
 		info, err := os.Lstat(current)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -1013,15 +1080,15 @@ func refuseSymlink(path string) error {
 	return nil
 }
 
-func atomicWrite(path string, data []byte) error {
-	return atomicWriteMode(path, data, 0o600)
+func atomicWrite(root, path string, data []byte) error {
+	return atomicWriteMode(root, path, data, 0o600)
 }
 
-func atomicWriteMode(path string, data []byte, mode fs.FileMode) error {
-	if err := refuseSymlinkAncestors(path); err != nil {
+func atomicWriteMode(root, path string, data []byte, mode fs.FileMode) error {
+	if err := refuseSymlinkAncestors(root, path); err != nil {
 		return err
 	}
-	if err := secureMkdirAll(filepath.Dir(path)); err != nil {
+	if err := secureMkdirAll(root, filepath.Dir(path)); err != nil {
 		return err
 	}
 	if err := refuseSymlink(path); err != nil && !errors.Is(err, fs.ErrNotExist) {

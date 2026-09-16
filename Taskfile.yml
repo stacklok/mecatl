@@ -375,10 +375,18 @@ tasks:
       - tar -C bin/microvm/guest-agent-artifact -cf bin/microvm/mecatl-guest-agent-artifact.tar mecatl-guest-agent
 
   microvm:dev:prepare:
-    desc: Prepare an unsupported signed local development release under .scratch (Linux amd64; network/tooling required).
+    desc: Prepare an unsupported signed local development release under .scratch (Linux/macOS amd64/arm64; network/tooling required).
     cmds:
       - .github/scripts/prepare-microvm-development-release.sh "{{.BUILD_ID}}"
-      - MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/linux-amd64/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
+      - cmd: |
+          set -eu
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) platform=linux-amd64 ;;
+            Linux-aarch64|Linux-arm64) platform=linux-arm64 ;;
+            Darwin-arm64) platform=darwin-arm64 ;;
+            *) echo "microVM development releases require Linux amd64/arm64 or macOS arm64" >&2; exit 1 ;;
+          esac
+          MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/${platform}/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
 
   microvm:dev:build:
     desc: Build microvm_dev-tagged mecated and mecatui binaries under .scratch; ordinary task build is unchanged.

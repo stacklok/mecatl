@@ -76,7 +76,7 @@ func (o *DefaultOperations) platform() (string, string) {
 func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 	goos, goarch := o.platform()
 	if !supportedPlatform(goos, goarch) {
-		return fmt.Errorf("%w: microvm-local supports Linux amd64 with KVM only; use host-local on this host", ErrUnsupportedPlatform)
+		return fmt.Errorf("%w: microvm-local supports Linux amd64/arm64 with KVM, or macOS 15+ Apple Silicon with Hypervisor.framework; use host-local on this host", ErrUnsupportedPlatform)
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return errors.New("git is required for microVM worktrees")
@@ -110,7 +110,7 @@ func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 }
 
 func supportedPlatform(goos, goarch string) bool {
-	return goos == "linux" && goarch == "amd64"
+	return (goos == "linux" && (goarch == "amd64" || goarch == "arm64")) || (goos == "darwin" && goarch == "arm64")
 }
 
 func darwinMajor(version string) int {
@@ -119,14 +119,16 @@ func darwinMajor(version string) int {
 }
 
 // Download obtains, digest-verifies, and safely extracts one release bundle.
-func (o *DefaultOperations) Download(ctx context.Context, release Release, destination string) (string, error) { //nolint:gocyclo // explicit fail-closed download transaction
+// root is the manager's already-secured boundary (paths.DataDir) that
+// destination is created under.
+func (o *DefaultOperations) Download(ctx context.Context, release Release, root, destination string) (string, error) { //nolint:gocyclo // explicit fail-closed download transaction
 	if release.bundlePath == "" {
 		u, err := url.Parse(release.URL)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
 			return "", errors.New("release URL must be an absolute HTTPS URL without userinfo or fragment")
 		}
 	}
-	if err := secureMkdirAll(destination); err != nil {
+	if err := secureMkdirAll(root, destination); err != nil {
 		return "", err
 	}
 	archivePath := filepath.Join(destination, "release.tar.gz")
@@ -213,10 +215,10 @@ func (o *DefaultOperations) Download(ctx context.Context, release Release, desti
 	if err := os.RemoveAll(unpacked); err != nil {
 		return "", err
 	}
-	if err := secureMkdirAll(unpacked); err != nil {
+	if err := secureMkdirAll(root, unpacked); err != nil {
 		return "", err
 	}
-	if err := extractReleaseBundle(archivePath, unpacked); err != nil {
+	if err := extractReleaseBundle(root, archivePath, unpacked); err != nil {
 		_ = os.RemoveAll(unpacked)
 		return "", err
 	}
@@ -229,7 +231,7 @@ func (o *DefaultOperations) Download(ctx context.Context, release Release, desti
 	return manifest, nil
 }
 
-func extractReleaseBundle(archivePath, destination string) error { //nolint:gocyclo // archive safety checks remain explicit
+func extractReleaseBundle(root, archivePath, destination string) error { //nolint:gocyclo // archive safety checks remain explicit
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -264,14 +266,14 @@ func extractReleaseBundle(archivePath, destination string) error { //nolint:gocy
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := secureMkdirAll(target); err != nil {
+			if err := secureMkdirAll(root, target); err != nil {
 				return err
 			}
 		case tar.TypeReg:
 			if header.Mode < 0 || header.Mode > 0o777 {
 				return fmt.Errorf("invalid release bundle mode for %s", header.Name)
 			}
-			if err := secureMkdirAll(filepath.Dir(target)); err != nil {
+			if err := secureMkdirAll(root, filepath.Dir(target)); err != nil {
 				return err
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, os.FileMode(header.Mode)&0o700) // #nosec G115 -- bounded to Unix permission bits above.
@@ -312,14 +314,16 @@ func (*DefaultOperations) Verify(_ context.Context, release Release, manifest st
 	return nil
 }
 
-// Install executes the installer from the verified bundle.
-func (o *DefaultOperations) Install(ctx context.Context, manifest, installRoot string) (InstalledArtifacts, error) {
+// Install executes the installer from the verified bundle. root is the
+// manager's already-secured boundary (paths.DataDir) that manifest and
+// installRoot are nested under.
+func (o *DefaultOperations) Install(ctx context.Context, manifest, root, installRoot string) (InstalledArtifacts, error) {
 	installerData, err := readBundleInstaller(manifest)
 	if err != nil {
 		return InstalledArtifacts{}, err
 	}
 	installer := filepath.Join(filepath.Dir(manifest), ".bundle-installer")
-	if err := atomicWriteMode(installer, installerData, 0o700); err != nil {
+	if err := atomicWriteMode(root, installer, installerData, 0o700); err != nil {
 		return InstalledArtifacts{}, fmt.Errorf("materialize verified installer: %w", err)
 	}
 	cmd := scrubbedCommand(exec.CommandContext(ctx, installer, manifest, installRoot)) // #nosec G204 -- executable and each argument are distinct verified paths.
@@ -340,7 +344,7 @@ func (o *DefaultOperations) Install(ctx context.Context, manifest, installRoot s
 	goos, goarch := o.platform()
 	source := filepath.Join(filepath.Dir(manifest), "mecatl-microvmd-"+goos+"-"+goarch)
 	target := filepath.Join(filepath.Dir(installRoot), "bin", "mecatl-microvmd")
-	if err := copyVerifiedExecutable(source, target); err != nil {
+	if err := copyVerifiedExecutable(root, source, target); err != nil {
 		return InstalledArtifacts{}, fmt.Errorf("install verified microvmd binary: %w", err)
 	}
 	return installed, nil
@@ -385,7 +389,7 @@ func readBundleInstaller(manifest string) ([]byte, error) {
 	return nil, errors.New("verified release bundle omitted its installer")
 }
 
-func copyVerifiedExecutable(source, target string) error {
+func copyVerifiedExecutable(root, source, target string) error {
 	info, err := os.Lstat(source)
 	if err != nil {
 		return err
@@ -393,7 +397,7 @@ func copyVerifiedExecutable(source, target string) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 256<<20 {
 		return errors.New("verified microvmd binary is not a bounded regular file")
 	}
-	if err := secureMkdirAll(filepath.Dir(target)); err != nil {
+	if err := secureMkdirAll(root, filepath.Dir(target)); err != nil {
 		return err
 	}
 	in, err := os.Open(source)
@@ -467,7 +471,7 @@ func (*DefaultOperations) Start(_ context.Context, paths Paths) error {
 		return err
 	}
 	pid := []byte(strconv.Itoa(cmd.Process.Pid) + "\n")
-	if err := atomicWrite(filepath.Join(paths.StateDir, "microvmd.pid"), pid); err != nil {
+	if err := atomicWrite(paths.StateDir, filepath.Join(paths.StateDir, "microvmd.pid"), pid); err != nil {
 		_ = cmd.Process.Kill()
 		_ = log.Close()
 		return err
@@ -490,7 +494,7 @@ func (*DefaultOperations) Start(_ context.Context, paths Paths) error {
 		_ = log.Close()
 		return err
 	}
-	if err := atomicWrite(filepath.Join(paths.StateDir, "microvmd.process.json"), append(record, '\n')); err != nil {
+	if err := atomicWrite(paths.StateDir, filepath.Join(paths.StateDir, "microvmd.process.json"), append(record, '\n')); err != nil {
 		_ = cmd.Process.Kill()
 		_ = log.Close()
 		return err

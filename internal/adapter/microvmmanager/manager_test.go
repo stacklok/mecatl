@@ -44,6 +44,117 @@ func TestDefaultPathsBoundsDerivedRepositoryNetworkSocket(t *testing.T) {
 	}
 }
 
+// TestRefuseSymlinkAncestorsBoundsToRoot pins the corrected symlink-ancestor
+// boundary (issue reproduced live on macOS: /tmp is itself a symlink to
+// /private/tmp, and secureMkdirAll(paths.RuntimeDir) used to refuse it even
+// though the manager never created or owns /tmp). refuseSymlinkAncestors must
+// refuse a symlink strictly between root (exclusive) and path (inclusive) —
+// the manager's own subtree — while never inspecting root itself or anything
+// above it, no matter how root is laid out on the host.
+func TestRefuseSymlinkAncestorsBoundsToRoot(t *testing.T) {
+	t.Run("root itself a symlink is not inspected", func(t *testing.T) {
+		base := t.TempDir()
+		realRoot := filepath.Join(base, "real-root")
+		if err := os.Mkdir(realRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Join(base, "root-link")
+		if err := os.Symlink(realRoot, root); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, "mecatl", "microvm")
+		if err := refuseSymlinkAncestors(root, path); err != nil {
+			t.Fatalf("root being a symlink must not be refused: %v", err)
+		}
+	})
+
+	t.Run("ancestor above root a symlink is not inspected", func(t *testing.T) {
+		base := t.TempDir()
+		realAbove := filepath.Join(base, "private", "tmp")
+		if err := os.MkdirAll(realAbove, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		ambientTmp := filepath.Join(base, "tmp")
+		if err := os.Symlink(realAbove, ambientTmp); err != nil {
+			t.Fatal(err)
+		}
+		// Mirrors production: RuntimeDir = "/tmp/mv-<uid>", one level below the
+		// ambient (possibly symlinked) /tmp.
+		root := ambientTmp
+		path := filepath.Join(ambientTmp, "mv-1234")
+		if err := refuseSymlinkAncestors(root, path); err != nil {
+			t.Fatalf("an ambient ancestor above root being a symlink must not be refused: %v", err)
+		}
+	})
+
+	t.Run("symlink strictly inside the managed root is refused", func(t *testing.T) {
+		root := t.TempDir()
+		swapped := filepath.Join(root, "somewhere-else")
+		if err := os.Mkdir(swapped, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		// The manager's own subtree entry ("mecatl") is a pre-planted symlink
+		// redirecting a deeper create ("microvm") outside the intended tree.
+		mecatl := filepath.Join(root, "mecatl")
+		if err := os.Symlink(swapped, mecatl); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(mecatl, "microvm")
+		err := refuseSymlinkAncestors(root, path)
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("error = %v, want refusal of the swapped ancestor", err)
+		}
+	})
+
+	t.Run("symlink at the target itself is refused", func(t *testing.T) {
+		root := t.TempDir()
+		elsewhere := filepath.Join(root, "elsewhere")
+		if err := os.Mkdir(elsewhere, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(root, "target")
+		if err := os.Symlink(elsewhere, target); err != nil {
+			t.Fatal(err)
+		}
+		if err := refuseSymlinkAncestors(root, target); err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("error = %v, want refusal of the target itself", err)
+		}
+	})
+
+	t.Run("path outside root is refused rather than silently unchecked", func(t *testing.T) {
+		root := t.TempDir()
+		outside := t.TempDir()
+		if err := refuseSymlinkAncestors(root, filepath.Join(outside, "leaf")); err == nil {
+			t.Fatal("path outside its declared root was accepted")
+		}
+	})
+}
+
+// TestSecureMkdirAllAcrossAmbientSymlinkBoundary reproduces the exact
+// production failure (secureMkdirAll(paths.RuntimeDir) with RuntimeDir
+// falling back to "/tmp/mv-<uid>") using a synthetic ambient /tmp-like
+// symlink, end to end through secureMkdirAll rather than the unexported
+// helper alone.
+func TestSecureMkdirAllAcrossAmbientSymlinkBoundary(t *testing.T) {
+	base := t.TempDir()
+	realTmp := filepath.Join(base, "private", "tmp")
+	if err := os.MkdirAll(realTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ambientTmp := filepath.Join(base, "tmp")
+	if err := os.Symlink(realTmp, ambientTmp); err != nil {
+		t.Fatal(err)
+	}
+	runtimeDir := filepath.Join(ambientTmp, "mv-1234")
+	if err := secureMkdirAll(ambientTmp, runtimeDir); err != nil {
+		t.Fatalf("secureMkdirAll across an ambient symlinked root: %v", err)
+	}
+	info, err := os.Lstat(runtimeDir)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("runtime dir was not created as a real directory: %v, %+v", err, info)
+	}
+}
+
 func TestEnsureReadyTreatsDesiredGuestEgressAsAuthoritative(t *testing.T) {
 	root := t.TempDir()
 	paths := testPaths(root)
@@ -353,7 +464,7 @@ func TestDoctorReportsFreshAndFailureStatesWithoutMutation(t *testing.T) {
 		{name: "healthy", configured: true, ops: &fakeOps{running: true}, want: []string{"host preflight: passed", "backend: healthy", "PASS hypervisor ready"}},
 		{name: "daemon unhealthy", configured: true, ops: &fakeOps{running: true, doctorErr: errors.New("guest transport unavailable")}, want: []string{"backend: unhealthy", "guest transport unavailable"}},
 		{name: "host preflight failed", ops: &fakeOps{failAt: "preflight"}, want: []string{"host preflight: failed", "backend: ready to configure on first use"}},
-		{name: "unsupported platform", ops: &fakeOps{preflightErr: ErrUnsupportedPlatform}, want: []string{"supported only on Linux amd64 with KVM", "use host-local on this host"}},
+		{name: "unsupported platform", ops: &fakeOps{preflightErr: ErrUnsupportedPlatform}, want: []string{"supported only on Linux amd64/arm64 with KVM", "use host-local on this host"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -536,7 +647,7 @@ func (f *fakeOps) Preflight(context.Context, Paths) error {
 	}
 	return f.stageError("preflight")
 }
-func (f *fakeOps) Download(context.Context, Release, string) (string, error) {
+func (f *fakeOps) Download(context.Context, Release, string, string) (string, error) {
 	f.calls = append(f.calls, "download")
 	return "/bundle/manifest.json", f.stageError("download")
 }
@@ -544,7 +655,7 @@ func (f *fakeOps) Verify(context.Context, Release, string) error {
 	f.calls = append(f.calls, "verify")
 	return f.stageError("verify")
 }
-func (f *fakeOps) Install(_ context.Context, _ string, installRoot string) (InstalledArtifacts, error) {
+func (f *fakeOps) Install(_ context.Context, _ string, _ string, installRoot string) (InstalledArtifacts, error) {
 	f.calls = append(f.calls, "install")
 	if err := f.stageError("install"); err != nil {
 		return InstalledArtifacts{}, err
@@ -617,8 +728,14 @@ func (f *fakeOps) Stop(context.Context, Paths) error {
 
 func testPaths(root string) Paths {
 	digest := sha256.Sum256([]byte(root))
-	runtimeDir := filepath.Join(os.TempDir(), fmt.Sprintf("mvt-%x", digest[:8]))
-	return Paths{StateDir: filepath.Join(root, "state"), RuntimeDir: runtimeDir, Socket: filepath.Join(runtimeDir, "d.sock"), DataDir: filepath.Join(root, "data"), ConfigFile: filepath.Join(root, "config", "microvmd.json"), UserSettings: filepath.Join(root, "config", "settings.yaml"), DaemonBinary: filepath.Join(root, "data", "bin", "mecatl-microvmd")}
+	runtimeBase := os.TempDir()
+	runtimeDir := filepath.Join(runtimeBase, fmt.Sprintf("mvt-%x", digest[:8]))
+	return Paths{
+		StateDir: filepath.Join(root, "state"), RuntimeDir: runtimeDir, Socket: filepath.Join(runtimeDir, "d.sock"),
+		DataDir: filepath.Join(root, "data"), ConfigFile: filepath.Join(root, "config", "microvmd.json"),
+		UserSettings: filepath.Join(root, "config", "settings.yaml"), DaemonBinary: filepath.Join(root, "data", "bin", "mecatl-microvmd"),
+		StateRoot: root, RuntimeRoot: runtimeBase, DataRoot: root, ConfigRoot: root,
+	}
 }
 
 func testPolicy(_ string) Policy {

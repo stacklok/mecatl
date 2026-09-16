@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+# ponytail: macOS bsdtar embeds AppleDouble "._*" sidecar entries for any
+# xattr it finds (e.g. the com.apple.provenance macOS stamps on most files)
+# unless this is set; harmless no-op on GNU tar/Linux.
+export COPYFILE_DISABLE=1
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 taskfile="$repo_root/Taskfile.yml"
@@ -29,6 +33,24 @@ forbid() {
     echo "forbidden '$pattern' in ${file#"$repo_root/"}" >&2
     exit 1
   fi
+}
+
+# ponytail: mirrors package-microvm-release.sh's reproducible_tar — bsdtar
+# (macOS) rejects GNU-only --sort/--mtime/--owner/--group/--numeric-owner, so
+# use a portable sorted -T file list + a portable epoch->touch stamp instead.
+reproducible_bootstrap_tar() {
+  dir=$1
+  exclude=$2
+  archive=$3
+  epoch=0
+  if stamp=$(date -u -d "@$epoch" +%Y%m%d%H%M.%S 2>/dev/null); then :; else
+    stamp=$(date -u -r "$epoch" +%Y%m%d%H%M.%S)
+  fi
+  members=$(mktemp)
+  (cd "$dir" && find . -mindepth 1 -exec touch -h -t "$stamp" {} +)
+  (cd "$dir" && find . -mindepth 1 \( -type f -o -type l \) ! -name "$exclude") | sed 's#^\./##' | LC_ALL=C sort >"$members"
+  (cd "$dir" && tar -T "$members" -cf - | gzip -n >"$archive")
+  rm -f "$members"
 }
 
 # Ordinary PR CI must cross the nested-module boundary at every relevant gate.
@@ -515,10 +537,7 @@ for name in mecatl-microvmd-linux-amd64 mecatl-guest-agent-linux-amd64 mecatl-ar
   printf '{"name":"%s"}\n' "$name" >"$scratch/one/$name.spdx.json"
 done
 bootstrap=mecatl-microvm-v0.0.0-test-linux-amd64.tar.gz
-(
-  cd "$scratch/one"
-  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner --exclude="$bootstrap" -cf - . | gzip -n >"$bootstrap"
-)
+reproducible_bootstrap_tar "$scratch/one" "$bootstrap" "$scratch/one/$bootstrap"
 bootstrap_sha=$(sha256sum "$scratch/one/$bootstrap" | cut -d' ' -f1)
 jq -n --arg version v0.0.0-test --arg platform linux-amd64 \
   --arg url "https://github.com/stacklok/mecatl/releases/download/v0.0.0-test/$bootstrap" \
@@ -536,11 +555,8 @@ cp -R "$scratch/one" "$scratch/generated-rerun"
 for bundle in "$scratch/generated-rerun"/*.sigstore.json; do
   printf '{"different_keyless_bundle":true}\n' >"$bundle"
 done
-(
-  cd "$scratch/generated-rerun"
-  rm -f "$bootstrap" microvm-default-linux-amd64.json
-  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner --exclude="$bootstrap" -cf - . | gzip -n >"$bootstrap"
-)
+rm -f "$scratch/generated-rerun/$bootstrap" "$scratch/generated-rerun/microvm-default-linux-amd64.json"
+reproducible_bootstrap_tar "$scratch/generated-rerun" "$bootstrap" "$scratch/generated-rerun/$bootstrap"
 rerun_sha=$(sha256sum "$scratch/generated-rerun/$bootstrap" | cut -d' ' -f1)
 jq -n --arg version v0.0.0-test --arg platform linux-amd64 \
   --arg url "https://github.com/stacklok/mecatl/releases/download/v0.0.0-test/$bootstrap" \

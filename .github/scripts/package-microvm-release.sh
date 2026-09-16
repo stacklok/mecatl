@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+# ponytail: macOS bsdtar embeds AppleDouble "._*" sidecar entries for any
+# xattr it finds (e.g. the com.apple.provenance macOS stamps on most files)
+# unless this is set; harmless no-op on GNU tar/Linux.
+export COPYFILE_DISABLE=1
 
 if [ "$#" -ne 3 ]; then
   echo "usage: $0 OUTPUT_DIR PLATFORM VERSION" >&2
@@ -53,6 +57,33 @@ sha256_file() {
   else
     shasum -a 256 "$1" | cut -d' ' -f1
   fi
+}
+
+# ponytail: GNU tar's --sort/--mtime/--owner/--group/--numeric-owner have no
+# bsdtar (macOS) equivalent, and bsdtar prints usage + exits nonzero rather
+# than erroring loudly through the `tar ... | gzip` pipe (no pipefail here),
+# so the archive silently came out empty on macOS. Reproducibility across
+# runs is still required (microvm-ci-release_test.sh diffs two invocations),
+# so pin every entry's mtime with a portable `touch -h -t` (GNU `date -d @N`
+# vs BSD `date -r N` for the epoch->stamp conversion) and feed tar a
+# pre-sorted `-T` file list instead of --sort; uid/gid are left as the
+# current user's, which is identical across both compared runs. This does
+# NOT need to match GNU tar's own output byte-for-byte: nothing downstream
+# hashes/signs these tar.gz bytes across platforms — the signed provenance
+# binds artifact_tree_digest, computed independently by mecatl-artifact-digest
+# over the raw tree, not the archive bytes.
+reproducible_tar() {
+  tree=$1
+  archive=$2
+  epoch=${SOURCE_DATE_EPOCH:-0}
+  if stamp=$(date -u -d "@$epoch" +%Y%m%d%H%M.%S 2>/dev/null); then :; else
+    stamp=$(date -u -r "$epoch" +%Y%m%d%H%M.%S)
+  fi
+  members=$(mktemp)
+  (cd "$tree" && find . -mindepth 1 -exec touch -h -t "$stamp" {} +)
+  (cd "$tree" && find . -mindepth 1 \( -type f -o -type l \)) | sed 's#^\./##' | LC_ALL=C sort >"$members"
+  tar -C "$tree" -T "$members" -cf - | gzip -n >"$archive"
+  rm -f "$members"
 }
 
 download_verified() {
@@ -121,7 +152,7 @@ write_artifact() {
     artifact_name="mecatl-$artifact_kind-$platform"
   fi
   artifact_tree_digest=$(artifact_digest "$artifact_tree")
-  tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-0}" --owner=0 --group=0 --numeric-owner -C "$artifact_tree" -cf - . | gzip -n >"$output/$artifact_name.tar.gz"
+  reproducible_tar "$artifact_tree" "$output/$artifact_name.tar.gz"
   write_metadata "$artifact_name" "${artifact_tree_digest#sha256:}"
   printf '%s\t%s\t%s\n' "$artifact_kind" "$artifact_name" "$artifact_tree_digest"
 }
