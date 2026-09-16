@@ -333,7 +333,7 @@ func osRescue(root string) func(string) string {
 				// Skip noise that cannot hold a cited source file.
 				// Skip .claude too: it holds git worktrees with the OLD
 				// internal/ layout, which would create phantom rescue hits.
-				if name == ".git" || name == ".claude" || name == "bin" || name == "node_modules" {
+				if name == ".git" || name == ".claude" || name == ".worktrees" || name == ".scratch" || name == "bin" || name == "node_modules" {
 					return filepath.SkipDir
 				}
 				return nil
@@ -350,6 +350,45 @@ func osRescue(root string) func(string) string {
 			return "did it move to " + hits[0] + "?"
 		}
 		return ""
+	}
+}
+
+func TestOSRescueSkipsScratchAndWorktrees(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		filepath.Join("engine", "agent", "moved.go"),
+		filepath.Join(".worktrees", "poison", "moved.go"),
+		filepath.Join(".scratch", "poison", "moved.go"),
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package fixture\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := osRescue(root)("moved.go"), "did it move to engine/agent/moved.go?"; got != want {
+		t.Fatalf("rescue = %q, want %q", got, want)
+	}
+}
+
+func TestOSRescueDoesNotSuggestFilesOnlyInSkippedDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		filepath.Join(".worktrees", "poison", "moved.go"),
+		filepath.Join(".scratch", "poison", "moved.go"),
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package fixture\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := osRescue(root)("moved.go"); got != "" {
+		t.Fatalf("rescue = %q, want no suggestion", got)
 	}
 }
 

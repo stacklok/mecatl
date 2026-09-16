@@ -542,16 +542,8 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	}
 
 	layout := newAgentsOverlayLayout(th, tab, width, height)
-	body, ok := layout.renderBody(func(bodyHeight int) string {
-		switch tab {
-		case tabSubagents:
-			return renderSubagentTab(th, sub, fleet, hk, layout.bodyWidth, bodyHeight)
-		case tabParallel:
-			return renderParallelTab(th, par, groups, hk, layout.bodyWidth, bodyHeight)
-		default:
-			return renderTeamsTab(th, team, b, hk, layout.bodyWidth, bodyHeight)
-		}
-	}, func() string {
+	build := prepareAgentsTabBody(th, tab, sub, par, team, b, fleet, groups, hk, layout.bodyWidth)
+	body, ok := layout.renderBody(build, func() string {
 		return renderEssentialAgentsBody(th, tab, sub, par, team, b, fleet, groups, hk, layout.bodyWidth)
 	})
 	if !ok {
@@ -871,26 +863,45 @@ func agentsTabBar(th theme.Theme, tab agentsTab) string {
 		seg(tabTeams, "Teams")
 }
 
+type agentsBodyRenderer func(height int) string
+
+func prepareAgentsTabBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+	switch tab {
+	case tabSubagents:
+		return prepareSubagentTab(th, sub, fleet, hk, bodyWidth)
+	case tabParallel:
+		return prepareParallelTab(th, par, groups, hk, bodyWidth)
+	default:
+		return prepareTeamsTab(th, team, b, hk, bodyWidth)
+	}
+}
+
 // renderTeamsTab renders the Teams tab body — the EXISTING team overlay roster /
 // focus / tasks / findings sub-views verbatim, via the team.go renderers. A nil team
 // block (no team has run) reads as an honest empty note so the tab is never blank.
 // bodyWidth is the final card's usable row budget; callers derive it once from
 // askCard and never ask a row renderer to subtract card chrome again.
 func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth, height int) string {
+	return prepareTeamsTab(th, st, b, hk, bodyWidth)(height)
+}
+
+func prepareTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if b == nil {
 		muted := th.Style("muted")
-		return renderDynamicCardChromeLine(muted, "", "no team has run this session", bodyWidth) + "\n\n" +
+		body := renderDynamicCardChromeLine(muted, "", "no team has run this session", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth)
+		return func(int) string { return body }
 	}
 	switch st.view {
 	case teamFocus:
-		return renderTeamFocusAt(th, b, st.member, st.scroll, hk, bodyWidth, height)
+		return prepareTeamFocusAt(th, b, st.member, st.scroll, hk, bodyWidth)
 	case teamTasks:
-		return renderTeamTasksAt(th, b, st.scroll, hk, height, bodyWidth)
+		return prepareTeamTasksAt(th, b, st.scroll, hk, bodyWidth)
 	case teamFindings:
-		return renderTeamFindingsAt(th, b, st.scroll, hk, height, bodyWidth)
+		return prepareTeamFindingsAt(th, b, st.scroll, hk, bodyWidth)
 	default:
-		return renderTeamRoster(th, st, b, hk, height, bodyWidth)
+		list := teamSelectableList(th, st, b, hk, bodyWidth).withRowHeights()
+		return func(height int) string { return list.render(th, height) }
 	}
 }
 
@@ -898,10 +909,19 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWid
 // bodyWidth is the final card's usable row budget, shared by every focus and
 // roster renderer beneath the already-framed overlay.
 func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth, height int) string {
+	return prepareSubagentTab(th, st, fleet, hk, bodyWidth)(height)
+}
+
+func prepareSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if st.view == subagentFocus {
-		return renderSubagentFocusAt(th, fleet, st.child, st.scroll, hk, bodyWidth, height)
+		return prepareSubagentFocusAt(th, fleet, st.child, st.scroll, hk, bodyWidth)
 	}
-	return renderSubagentRoster(th, st, fleet, hk, height, bodyWidth)
+	if len(fleet) == 0 {
+		body := renderSubagentRoster(th, st, fleet, hk, 0, bodyWidth)
+		return func(int) string { return body }
+	}
+	list := subagentSelectableList(th, st, fleet, hk, bodyWidth).withRowHeights()
+	return func(height int) string { return list.render(th, height) }
 }
 
 // renderSubagentRoster renders the flat fleet roster WINDOWED to the available height,
@@ -915,9 +935,18 @@ type agentsCursorWindow struct {
 type agentsSelectableList struct {
 	header, footer string
 	rows           []string
+	rowHeights     []int
 	cursor         int
 	muted          lipgloss.Style
 	noun           string
+}
+
+func (l agentsSelectableList) withRowHeights() agentsSelectableList {
+	l.rowHeights = make([]int, len(l.rows)+1)
+	for i, row := range l.rows {
+		l.rowHeights[i+1] = l.rowHeights[i] + lipgloss.Height(row)
+	}
+	return l
 }
 
 func (l agentsSelectableList) window(th theme.Theme, height int) agentsCursorWindow {
@@ -929,7 +958,11 @@ func (l agentsSelectableList) window(th theme.Theme, height int) agentsCursorWin
 	}
 	capacity := height - th.Style("askCard").GetVerticalFrameSize() -
 		lipgloss.Height(l.header) - lipgloss.Height(l.footer) - 2
-	return physicalCursorWindow(l.rows, clampCursor(l.cursor, len(l.rows)), capacity)
+	heights := l.rowHeights
+	if len(heights) != len(l.rows)+1 {
+		heights = l.withRowHeights().rowHeights
+	}
+	return physicalCursorWindow(l.rows, heights, clampCursor(l.cursor, len(l.rows)), capacity)
 }
 
 func (l agentsSelectableList) render(th theme.Theme, height int) string {
@@ -947,7 +980,7 @@ func (l agentsSelectableList) render(th theme.Theme, height int) string {
 
 // physicalCursorWindow finds the largest contiguous logical-row window that fits
 // the physical-line budget. Indicator rows are charged in the same calculation.
-func physicalCursorWindow(rows []string, cursor, capacity int) agentsCursorWindow {
+func physicalCursorWindow(rows []string, heights []int, cursor, capacity int) agentsCursorWindow {
 	total := len(rows)
 	if total == 0 {
 		return agentsCursorWindow{}
@@ -955,10 +988,6 @@ func physicalCursorWindow(rows []string, cursor, capacity int) agentsCursorWindo
 	cursor = clampCursor(cursor, total)
 	if capacity <= 0 {
 		return agentsCursorWindow{start: cursor, end: cursor + 1, above: cursor, below: total - cursor - 1}
-	}
-	heights := make([]int, total+1)
-	for i, row := range rows {
-		heights[i+1] = heights[i] + lipgloss.Height(row)
 	}
 	best := agentsCursorWindow{start: cursor, end: cursor + 1, above: cursor, below: total - cursor - 1}
 	bestCount := 0
@@ -1232,12 +1261,17 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 }
 
 func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, scroll int, hk helpKeys, bodyWidth, height int) string {
+	return prepareSubagentFocusAt(th, fleet, child, scroll, hk, bodyWidth)(height)
+}
+
+func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
-		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "subagent", bodyWidth) + "\n\n" +
+		body := renderDynamicCardChromeLine(th.Style("askTitle"), "", "subagent", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", "subagent #"+shortChildID(child)+" is no longer in the fleet", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
+		return func(int) string { return body }
 	}
 
 	var out strings.Builder
@@ -1272,26 +1306,28 @@ func renderSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, s
 		}
 	}
 	out.WriteString("\n\n")
+	prefix := out.String()
 
 	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
-	trace := r.renderTrace(ln.trace)
-	if trace == "" {
-		out.WriteString(muted.Render("(no activity yet)"))
-	} else {
-		lines := strings.Split(trace, "\n")
-		w := renderedLineWindow(scroll, len(lines), teamFocusRows(height))
-		out.WriteString(strings.Join(lines[w.start:w.end], "\n"))
+	var traceLines []string
+	if trace := r.renderTrace(ln.trace); trace != "" {
+		traceLines = strings.Split(trace, "\n")
 	}
-
-	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
-	w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
 	lead := focusBackHint(hk)
 	if !ln.done {
 		lead = hk.cancelChild + " cancel · " + lead
 	}
-	hint := agentsDetailHint(hk, w, lead)
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
-	return out.String()
+	return func(height int) string {
+		w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+		body := prefix
+		if len(traceLines) == 0 {
+			body += muted.Render("(no activity yet)")
+		} else {
+			body += strings.Join(traceLines[w.start:w.end], "\n")
+		}
+		hint := agentsDetailHint(hk, w, lead)
+		return body + "\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth)
+	}
 }
 
 // findFleetLane returns the lane with the given ChildID off the fleet slice, or nil.
@@ -1324,10 +1360,19 @@ func subagentStopErrored(stop string) bool {
 // renderParallelTab renders the Parallel tab body: the GROUP roster (one row per Parallel
 // call) or one focused group's branches inline.
 func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, width, height int) string {
+	return prepareParallelTab(th, st, groups, hk, width)(height)
+}
+
+func prepareParallelTab(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, width int) agentsBodyRenderer {
 	if st.view == parallelGroupView {
-		return renderParallelGroupFocus(th, st, groups, hk, width, height)
+		return prepareParallelGroupFocus(th, st, groups, hk, width)
 	}
-	return renderParallelRoster(th, st, groups, hk, height, width)
+	if len(groups) == 0 {
+		body := renderParallelRoster(th, st, groups, hk, 0, width)
+		return func(int) string { return body }
+	}
+	list := parallelSelectableList(th, st, groups, hk, width).withRowHeights()
+	return func(height int) string { return list.render(th, height) }
 }
 
 // renderParallelRoster renders the Parallel group roster WINDOWED to the available height,
@@ -1469,14 +1514,20 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 }
 
 func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, bodyWidth, height int) string {
+	return prepareParallelGroupFocus(th, st, groups, hk, bodyWidth)(height)
+}
+
+func prepareParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	g := findParallelGroup(groups, st.group)
 	if g == nil {
 		muted := th.Style("muted")
-		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "parallel", bodyWidth) + "\n\n" +
+		body := renderDynamicCardChromeLine(th.Style("askTitle"), "", "parallel", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", "this parallel run is no longer tracked", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
+		return func(int) string { return body }
 	}
-	return parallelBranchSelectableList(th, st, g, hk, bodyWidth).render(th, height)
+	list := parallelBranchSelectableList(th, st, g, hk, bodyWidth).withRowHeights()
+	return func(height int) string { return list.render(th, height) }
 }
 
 // renderParallelBranchRow renders a branch's two-level summary within a focused

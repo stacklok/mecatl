@@ -30,7 +30,7 @@ describe("session retry", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests) {
           const input = requests[Symbol.asyncIterator]();
           const start = await input.next();
@@ -72,7 +72,7 @@ describe("session retry", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId: "session" }),
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         converse: async function* (requests, context) {
           expect(context.requestHeader.get("x-caller")).toBe("kept");
           expect(context.requestHeader.get(SESSION_ID_HEADER_NAME)).toBe("session");
@@ -140,7 +140,8 @@ describe("session retry", () => {
       fetch: async (input, init) => {
         const path = new URL(String(input)).pathname;
         const headers = new Headers(init?.headers);
-        if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+        if (path === "/v1/compatibility")
+          return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
         if (path === "/v1/sessions") return Response.json({ session_id: "session" });
         expect(headers.get("x-caller")).toBe("kept");
         expect(headers.get(SESSION_ID_HEADER_NAME)).toBe("session");

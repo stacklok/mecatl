@@ -212,7 +212,7 @@ agents, commands, worktrees, and models; public exports and API reports.
   - verify: vitest:sdk/typescript/test/namespaces-core.test.ts#dGhpbiBuYW1lc3BhY2UgbWV0aG9kcyBwcmVzZXJ2ZSByZXF1ZXN0IG9wdGlvbnMgYW5kIHR5cGVkIGVycm9ycw — `sdk/typescript/test/namespaces-core.test.ts :: "thin namespace methods preserve request options and typed errors"`
 - AC3.3: Isomorphic namespaces are exported from `.`, remain usable from
   `./node`, and introduce no Node builtin into the browser entrypoint graph.
-  - verify: vitest:sdk/typescript/test/package.test.ts#dGhlIGNvcmUgbmFtZXNwYWNlIGJhdGNoIGlzIGV4cG9ydGVkIGZyb20gYm90aCBzdXBwb3J0ZWQgZW50cnlwb2ludHM — `sdk/typescript/test/package.test.ts :: "the core namespace batch is exported from both supported entrypoints"`
+  - verify: vitest:sdk/typescript/test/package.test.ts#dGhlIG5hbWVzcGFjZSBiYXRjaGVzIGFyZSBleHBvcnRlZCBmcm9tIGV2ZXJ5IHJ1bnRpbWUgZW50cnlwb2ludA — `sdk/typescript/test/package.test.ts :: "the namespace batches are exported from every runtime entrypoint"`
 
 ---
 
@@ -238,10 +238,10 @@ storage health/migration/cleanup namespaces.
 - AC4.3: The batch adds naming and discoverability only — no bespoke retry,
   pagination, cached state, or client-side maintenance job state machine.
   - verify: vitest:sdk/typescript/test/namespaces-ops.test.ts#dGhlIG9wZXJhdGlvbmFsIG5hbWVzcGFjZSBiYXRjaCBhZGRzIG5vIGJlc3Bva2Ugd2lyZSB0eXBlcw — `sdk/typescript/test/namespaces-ops.test.ts :: "the operational namespace batch adds no bespoke wire types"`
-- AC4.4: After this batch, all 77 descriptor operations are callable through
+- AC4.4: After this batch, all 84 descriptor operations are callable through
   the public raw seam and every non-team unary operation has a discoverable
   named client/session namespace where #821 calls for one.
-  - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#YWxsIDc3IHJhdyBSUENzIGFyZSBjYWxsYWJsZSB0aHJvdWdoIHRoZSBwdWJsaWMgcmF3IHNlYW0 — `sdk/typescript/test/rpc-catalog.test.ts :: "all 77 raw RPCs are callable through the public raw seam"`
+  - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#YWxsIDg0IHJhdyBSUENzIGFyZSBjYWxsYWJsZSB0aHJvdWdoIHRoZSBwdWJsaWMgcmF3IHNlYW0 — `sdk/typescript/test/rpc-catalog.test.ts :: "all 84 raw RPCs are callable through the public raw seam"`
 
 ---
 
@@ -426,7 +426,7 @@ cache/timeouts/traces, and a separate `macos-14` Node 22 spawn job.
   also asserts the resolved socket path stays within
   `spawn.ts`'s `DARWIN_SUN_PATH_BYTES` (104) bound and that the shorter-base
   fallback still binds when it triggers — the one thing Linux CI cannot prove.
-  - verify: vitest:sdk/typescript/e2e/macos-spawn.e2e.test.ts#bWFjT1Mgc3Bhd25zIG92ZXIgVURTIGFuZCBleGl0cyBjbGVhbmxl — `sdk/typescript/e2e/macos-spawn.e2e.test.ts :: "macOS spawns over UDS and exits cleanly"`
+  - verify: vitest:sdk/typescript/e2e/macos-spawn.e2e.test.ts#bWFjT1Mgc3Bhd25zIG92ZXIgVURTIGFuZCBleGl0cyBjbGVhbmx5 — `sdk/typescript/e2e/macos-spawn.e2e.test.ts :: "macOS spawns over UDS and exits cleanly"`
 - AC9.4: Browser projects reuse one worker-scoped daemon, declare explicit
   per-test and per-job timeouts, collect traces only on failure, and use no
   blanket retry. Both the fixture-origin server and the daemon bind **ephemeral

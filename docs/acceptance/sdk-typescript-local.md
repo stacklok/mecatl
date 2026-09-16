@@ -379,9 +379,9 @@ ask policy.
 - AC5.6: That denial emits exactly one diagnostic record naming the tool and the
   ask, and emits no `session.Event` of its own.
   - verify: vitest:sdk/typescript/test/query.test.ts#dGhlIHJlc3BvbmRlci1sZXNzIGRlbmlhbCBlbWl0cyBvbmUgZGlhZ25vc3RpYyBhbmQgbm8gZXZlbnQ — `sdk/typescript/test/query.test.ts :: "the responder-less denial emits one diagnostic and no event"`
-- AC5.7: `query()` in plan mode fails with a typed `unsupported_feature` naming
-  `session.resolvePlan()`, **before** any daemon is spawned.
-  - verify: vitest:sdk/typescript/test/query.test.ts#cGxhbiBtb2RlIGlzIHJlZnVzZWQgYmVmb3JlIHNwYXduaW5n — `sdk/typescript/test/query.test.ts :: "plan mode is refused before spawning"`
+- AC5.7: `query()` in plan mode requires `onPlanApproval` before any daemon is spawned;
+  without it, the call fails with typed `invalid_state`.
+  - verify: vitest:sdk/typescript/test/query.test.ts#cGxhbiBtb2RlIHJlcXVpcmVzIG9uUGxhbkFwcHJvdmFsIGJlZm9yZSBzcGF3bmluZw — `sdk/typescript/test/query.test.ts :: "plan mode requires onPlanApproval before spawning"`
 - AC5.8: A `query()` aborted through its signal, or abandoned by `break`ing out
   of its iteration, still performs the full cleanup its successful path performs.
   - verify: vitest:sdk/typescript/test/query.test.ts#YW4gYWJvcnRlZCBvciBhYmFuZG9uZWQgcXVlcnkgc3RpbGwgY2xlYW5zIHVw — `sdk/typescript/test/query.test.ts :: "an aborted or abandoned query still cleans up"`

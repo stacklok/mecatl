@@ -43,6 +43,8 @@ func authoritativeKeys() []string {
 	collect("retention.main", permconfig.RetentionLimitSection{})
 	collect("retention.child", permconfig.RetentionLimitSection{})
 	collect("retention.scheduled", permconfig.RetentionLimitSection{})
+	collect("command_runner", permconfig.CommandRunnerSection{})
+	collect("command_runner.environment", permconfig.CommandRunnerEnvironment{})
 	collect("temporary_storage", permconfig.TemporaryStorageSection{})
 	collect("storage_management", permconfig.StorageManagementSection{})
 	collect("storage_management.principals", permconfig.StorageManagementPrincipal{})
@@ -341,6 +343,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"provider_overrides":     configgen.TierOperator, // operator-only: a project cannot redirect built-in provider traffic
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
+		"command_runner":         configgen.TierOperator, // operator-only: project cannot select a shell or restore ambient credentials
 		"temporary_storage":      configgen.TierOperator, // operator-only: project cannot redirect command storage or cleanup
 		"storage_management":     configgen.TierOperator, // operator-only: project cannot grant process-wide management
 		"steer":                  configgen.TierOperator, // operator-only: a project cannot flip the mid-run steer surface (issue #512)

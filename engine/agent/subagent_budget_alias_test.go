@@ -68,15 +68,6 @@ func TestSubagentTokenBudgetSchemaDescribesActualSemantics(t *testing.T) {
 				"earlier cumulative usage remains spent", "stop before new work",
 			},
 		},
-		{
-			field: "max_tokens",
-			want: []string{
-				"deprecated alias for max_run_tokens", "cumulative input+output",
-				"not a provider output-token limit", "inherit the operator/engine budget",
-				"bounded or disabled", "tighten-only", "25 000 per-call floor",
-				"between turns", "not guaranteed", "resumed child", "stop before new work",
-			},
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.field, func(t *testing.T) {
@@ -92,7 +83,7 @@ func TestSubagentTokenBudgetSchemaDescribesActualSemantics(t *testing.T) {
 		})
 	}
 
-	budgetDescriptions := strings.ToLower(schema.Properties["max_run_tokens"].Description + "\n" + schema.Properties["max_tokens"].Description)
+	budgetDescriptions := strings.ToLower(schema.Properties["max_run_tokens"].Description)
 	for _, stale := range []string{
 		"usually-unlimited", "usually unlimited", "default unlimited",
 		"returns its best-effort summary", "guaranteed best-effort summary",
@@ -103,16 +94,15 @@ func TestSubagentTokenBudgetSchemaDescribesActualSemantics(t *testing.T) {
 	}
 }
 
-// TestSubagentMaxRunTokensAliasResolvesToOverride proves the PREFERRED max_run_tokens alias
-// caps the child exactly as the deprecated max_tokens does: a per-call budget above the
-// floor (minSubagentRunTokens) rides RunRequest.MaxRunTokensOverride into the loop brake
-// and trips StopBudget. The child engine has NO operator budget so only the per-call
-// override stops it.
+// TestSubagentMaxRunTokensResolvesToOverride proves max_run_tokens caps the child: a
+// per-call budget above the floor (minSubagentRunTokens) rides
+// RunRequest.MaxRunTokensOverride into the loop brake and trips StopBudget. The child
+// engine has NO operator budget so only the per-call override stops it.
 //
 // We use a value above the floor (agent.MinSubagentRunTokens + 500) and script the child
 // to spend enough tokens to cross that budget, proving the override is honoured verbatim
 // when it is already at or above the floor.
-func TestSubagentMaxRunTokensAliasResolvesToOverride(t *testing.T) {
+func TestSubagentMaxRunTokensResolvesToOverride(t *testing.T) {
 	// Budget just above the floor; child spends 10 000/turn and will cross it after 3 turns.
 	budget := agent.MinSubagentRunTokens + 500 // 25 500
 	perTurn := 10_000
@@ -136,84 +126,8 @@ func TestSubagentMaxRunTokensAliasResolvesToOverride(t *testing.T) {
 	}
 }
 
-// TestSubagentMaxTokensDeprecatedAliasStillWorks is the backward-compat guard: the
-// deprecated max_tokens alone still caps the child via the same budget brake (above-floor
-// value, same mechanic as max_run_tokens).
-func TestSubagentMaxTokensDeprecatedAliasStillWorks(t *testing.T) {
-	budget := agent.MinSubagentRunTokens + 500
-	perTurn := 10_000
-	child := budgetTrippingChild(t, perTurn, 6, 0)
-	task := agent.NewSubagentTool(child)
-
-	results, _ := subagentParentResults(t, task,
-		mockllm.ToolCallTurn(toolCall("p1", "Subagent",
-			fmt.Sprintf(`{"prompt":"loop","max_tokens":%d}`, budget))),
-		mockllm.TextTurn("parent done"),
-	)
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
-	}
-	if results[0].IsError {
-		t.Fatalf("a budget-stopped child is a clean success-with-note, not an error: %q", results[0].Content)
-	}
-	if !strings.Contains(results[0].Content, "reached its token budget") {
-		t.Fatalf("the deprecated max_tokens alias did not trip the per-call budget; result = %q", results[0].Content)
-	}
-}
-
-// TestSubagentMaxRunTokensConflictRejected is the ADVERSARIAL case: the model supplies BOTH
-// aliases with DIFFERENT positive values. The call must be rejected with a model-visible
-// error tool result, and the child must NEVER run (no token-budget note, no child summary).
-func TestSubagentMaxRunTokensConflictRejected(t *testing.T) {
-	child := budgetTrippingChild(t, 100, 6, 0)
-	task := agent.NewSubagentTool(child)
-
-	results, _ := subagentParentResults(t, task,
-		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"loop","max_tokens":100,"max_run_tokens":200}`)),
-		mockllm.TextTurn("parent done"),
-	)
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
-	}
-	if !results[0].IsError {
-		t.Fatalf("conflicting budget aliases must be a model-visible error, got %+v", results[0])
-	}
-	if !strings.Contains(results[0].Content, "set only one of max_run_tokens or") {
-		t.Fatalf("error should name the conflicting-alias rule, got %q", results[0].Content)
-	}
-	// The child must not have run at all — neither a summary nor a budget note.
-	if strings.Contains(results[0].Content, "CHILD DONE") || strings.Contains(results[0].Content, "token budget") {
-		t.Fatalf("the child ran despite the conflicting-alias rejection: %q", results[0].Content)
-	}
-}
-
-// TestSubagentMaxRunTokensSameValueAccepted proves that supplying BOTH aliases with the SAME
-// positive value is NOT a conflict (they name the same budget) — the call is accepted and
-// the shared value caps the child (value must be above the floor).
-func TestSubagentMaxRunTokensSameValueAccepted(t *testing.T) {
-	budget := agent.MinSubagentRunTokens + 500
-	perTurn := 10_000
-	child := budgetTrippingChild(t, perTurn, 6, 0)
-	task := agent.NewSubagentTool(child)
-
-	results, _ := subagentParentResults(t, task,
-		mockllm.ToolCallTurn(toolCall("p1", "Subagent",
-			fmt.Sprintf(`{"prompt":"loop","max_tokens":%d,"max_run_tokens":%d}`, budget, budget))),
-		mockllm.TextTurn("parent done"),
-	)
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
-	}
-	if results[0].IsError {
-		t.Fatalf("equal-value aliases must be accepted, not rejected: %q", results[0].Content)
-	}
-	if !strings.Contains(results[0].Content, "reached its token budget") {
-		t.Fatalf("the shared budget did not cap the child; result = %q", results[0].Content)
-	}
-}
-
 // TestSubagentBudgetUnsetByDefault is the default-OFF guard (mirrors
-// TestSubagentOmittedPerCallArgsUnchanged): with NEITHER alias set the child runs to its
+// TestSubagentOmittedPerCallArgsUnchanged): with no budget set the child runs to its
 // scripted text answer under an unlimited budget — even though its spend would trip a tiny
 // per-call ceiling if one were supplied. A regression that defaulted the budget to a
 // non-zero value would stop the child early with a token-budget note instead.
@@ -242,7 +156,7 @@ func TestSubagentBudgetUnsetByDefault(t *testing.T) {
 }
 
 // TestSubagentMaxRunTokensNonPositiveTreatedAsUnset proves an explicit NON-POSITIVE budget
-// (the model emitting max_run_tokens: 0, and the deprecated max_tokens: -1) is treated as
+// (the model emitting max_run_tokens: 0 or -5) is treated as
 // UNSET — exactly like omitting the arg: the child runs to completion under the inherited
 // unlimited budget, with no token-budget note. A regression that read a 0/negative value
 // straight into MaxRunTokensOverride would stop the child immediately (a 0 ceiling is
@@ -254,8 +168,6 @@ func TestSubagentMaxRunTokensNonPositiveTreatedAsUnset(t *testing.T) {
 	}{
 		{"zero max_run_tokens", `{"prompt":"loop","max_run_tokens":0}`},
 		{"negative max_run_tokens", `{"prompt":"loop","max_run_tokens":-5}`},
-		{"zero deprecated max_tokens", `{"prompt":"loop","max_tokens":0}`},
-		{"zero both aliases", `{"prompt":"loop","max_run_tokens":0,"max_tokens":0}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			child := budgetTrippingChild(t, 100, 6, 0)

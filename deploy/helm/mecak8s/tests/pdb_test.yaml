@@ -17,6 +17,21 @@ tests:
       - equal:
           path: spec.maxUnavailable
           value: 1
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: mecak8s
+            app.kubernetes.io/instance: unit
+            app.kubernetes.io/component: agent
+
+  - it: accepts a percentage disruption limit
+    set:
+      replicaCount: 4
+      podDisruptionBudget.maxUnavailable: 25%
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 25%
 
   - it: omits the budget for one replica
     set:

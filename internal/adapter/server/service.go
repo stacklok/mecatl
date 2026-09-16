@@ -145,6 +145,27 @@ type SessionEngineResult struct {
 	// (the wire-only option) turns the check on, so the ACP path and every
 	// selector-only factory are unaffected.
 	MountedClientMCP []string
+	// MountedClientMCPTools names the individual model-facing tools (e.g.
+	// "mcp__sdk__get_diagnostics") exposed by the servers in MountedClientMCP —
+	// the same per-tool granularity DebugMCPTools already gets for a debug
+	// session. Without this, a client-registered callback tool (SDK client.tool())
+	// mounts and dispatches correctly (it is already part of this session's
+	// Catalog) but every call is refused by the authority evaluator: root
+	// authority is minted once, per session KIND, from the static build-time
+	// catalog + the operator-global MCP manager — it has no way to see a
+	// per-session client-supplied tool that did not exist until THIS session was
+	// created. setPerSessionLabels folds this into the minted authority's
+	// CapabilitySet the same way it already does for DebugMCPTools, so a tool
+	// this session's own client just mounted is authorized to actually run.
+	//
+	// A factory MUST derive this from the exact same tool snapshot it put in
+	// the session's Catalog (internal/app's assembleCatalog does, via a
+	// before/after name diff), never from a second independent read of the
+	// client MCP manager: a manager's tool list can change (a
+	// tools/list_changed notification) between catalog assembly and this
+	// value being read, which would authorize a DIFFERENT tool than the one
+	// the model was actually offered.
+	MountedClientMCPTools []string
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
 }
@@ -1952,16 +1973,24 @@ func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel Provi
 
 func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, broker []tool.Tool, carried session.Authority, carriedBound bool) error {
 	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
-	// Broker wrappers are created only after the process root authority was
-	// minted. Include this session's exact wrappers in a fresh root without
+	// Broker wrappers and client-mounted MCP tools are both resolved only after
+	// the process root authority was minted (they are per-SESSION, not known at
+	// build time). Include this session's exact set in a fresh root without
 	// widening authority carried from another session.
-	if !carriedBound && len(broker) != 0 {
-		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker))
+	if !carriedBound && (len(broker) != 0 || len(res.MountedClientMCPTools) != 0) {
+		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker)+len(res.MountedClientMCPTools))
 		for _, name := range authority.CapabilitySet.Tools {
 			seen[name] = struct{}{}
 		}
 		for _, candidate := range broker {
 			name := candidate.Spec().Name
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+		}
+		for _, name := range res.MountedClientMCPTools {
 			if _, ok := seen[name]; ok {
 				continue
 			}

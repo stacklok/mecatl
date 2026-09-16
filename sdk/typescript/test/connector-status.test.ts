@@ -12,7 +12,11 @@ it("broker connector inspection has gRPC and HTTP parity without direct MCP call
   const sessionId = "owned-session";
   const transport = createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: { mcpConnectorStatus: true } }),
+      getCompatibilityInfo: () => ({
+        apiMajor: 1,
+        capabilities: { mcpConnectorStatus: true },
+        features: ["server_info"],
+      }),
       listSessionMcpConnectors: (request, context) => {
         expect(request.sessionId).toBe(sessionId);
         expect(context.requestHeader.get(SESSION_ID_HEADER_NAME)).toBe(sessionId);
@@ -34,7 +38,11 @@ it("broker connector inspection has gRPC and HTTP parity without direct MCP call
         const path = new URL(String(input)).pathname;
         paths.push(path);
         if (path === "/v1/compatibility")
-          return Response.json({ api_major: 1, capabilities: { mcp_connector_status: true } });
+          return Response.json({
+            api_major: 1,
+            capabilities: { mcp_connector_status: true },
+            features: ["server_info"],
+          });
         expect(path).toBe(`/v1/sessions/${sessionId}/mcp/connectors`);
         expect(new Headers(init?.headers).get(SESSION_ID_HEADER_NAME)).toBe(sessionId);
         return Response.json({

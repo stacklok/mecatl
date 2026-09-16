@@ -308,6 +308,19 @@ func (p *ProviderOverride) UnmarshalYAML(node ast.Node) error {
 }
 
 func isReservedProviderID(id string) bool { _, ok := reservedProviderIDs[id]; return ok }
+
+// ValidateProviderID reports whether id is an acceptable custom provider
+// identifier, returning a descriptive error naming the actual rule when not.
+func ValidateProviderID(id string) error {
+	if !providerIDPattern.MatchString(id) {
+		return errors.New("provider name must start with a lowercase letter and contain only lowercase letters, digits, and hyphens")
+	}
+	if isReservedProviderID(id) {
+		return fmt.Errorf("provider name %q is reserved for a built-in provider", id)
+	}
+	return nil
+}
+
 func validProviderURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != providerHTTPS || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

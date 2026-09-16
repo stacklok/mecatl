@@ -236,7 +236,7 @@ func TestAgentModelDiscovery_Scenario3_PerSessionCatalogParity(t *testing.T) {
 		t.Fatalf("buildCatalog: %v", err)
 	}
 	defer closeAll()
-	selector, closeSelector := assembleCatalog(ctx, cfg, reg, memstore.New(), hookexec.New(nil), &assets, catalogSession{provider: provider, providerID: providerOpenAI, model: cfg.Model})
+	selector, closeSelector, _ := assembleCatalog(ctx, cfg, reg, memstore.New(), hookexec.New(nil), &assets, catalogSession{provider: provider, providerID: providerOpenAI, model: cfg.Model})
 	defer func() { _ = closeSelector() }()
 	for label, catalog := range map[string]*tool.Catalog{"shared": shared, "selector": selector} {
 		if _, ok := catalog.Lookup(agentModelDiscoveryToolName); !ok {
@@ -255,7 +255,7 @@ func TestAgentModelDiscovery_Scenario3_NoFSCatalogParity(t *testing.T) {
 		t.Fatalf("buildCatalog: %v", err)
 	}
 	defer closeAll()
-	catalog, closeCatalog := assembleCatalog(ctx, cfg, reg, memstore.New(), hookexec.New(nil), &assets, catalogSession{provider: provider, providerID: providerOpenAI, model: cfg.Model, noFS: true})
+	catalog, closeCatalog, _ := assembleCatalog(ctx, cfg, reg, memstore.New(), hookexec.New(nil), &assets, catalogSession{provider: provider, providerID: providerOpenAI, model: cfg.Model, noFS: true})
 	defer func() { _ = closeCatalog() }()
 	discovery, ok := catalog.Lookup(agentModelDiscoveryToolName)
 	if !ok || !discovery.ReadOnly() {

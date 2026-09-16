@@ -998,6 +998,7 @@ func (m Model) renderInput() string {
 		width:            m.prompt.Width(),
 		height:           m.prompt.Height(),
 		mode:             m.inputMode(),
+		placeholder:      m.prompt.Placeholder(),
 	}
 	if m.rend.inputValid && m.rend.inputKey == key {
 		return m.rend.inputView

@@ -148,6 +148,7 @@ type config struct {
 	mockScript   string
 	mockProvider port.LLMProvider
 	shell        string
+	shellFlagSet bool
 	noShell      bool
 
 	// Storage-free state (ADR 0048): --redis-url points the session store +
@@ -525,6 +526,8 @@ func parseFlags(argv []string) (config, error) {
 		switch fl.Name {
 		case "posture":
 			cfg.postureFlagSet = true
+		case "shell":
+			cfg.shellFlagSet = true
 		case "reasoning-effort":
 			cfg.reasoningEffortFlagSet = true
 		case "subagent-model-router":
@@ -540,6 +543,11 @@ func parseFlags(argv []string) (config, error) {
 			cfg.defaultProviderFlagSet = true
 		}
 	})
+	resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(cfg.shell, cfg.shellFlagSet, cfg.permissionsConventional, cfg.permissionConfigs)
+	if err != nil {
+		return config{}, fmt.Errorf("command runner configuration: %w", err)
+	}
+	cfg.shell = resolvedShell
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
 	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by

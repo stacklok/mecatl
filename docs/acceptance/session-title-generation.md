@@ -116,12 +116,12 @@ prompts. The generator uses one bounded direct stream call and returns only stri
   - verify: `TestSessionTitleGeneration_Scenario3_TitleSlotRoutesOnlyGenerator`
 - AC3.3: The generator has no routing, credential, store, or mutation authority and receives no
   client-supplied title input, model, provider, or system prompt.
-  - verify: `TestADR_0301_TitleGenerationServerOwnsInputAndModel`
+  - verify: `TestADR_0284_TitleGenerationServerOwnsInputAndModel`
 - AC3.4: Input is fenced as untrusted data and bounded before the provider call. Valid generated
   output is strict, UTF-8, whitespace-canonicalized to one line, and capped at 80 runes total
   including truncation. First-prompt and operator titles retain their existing length limit but use
   the same one-line whitespace canonicalization.
-  - verify: `TestADR_0301_TitleGenerationInputOutputBoundary`
+  - verify: `TestADR_0284_TitleGenerationInputOutputBoundary`
 - AC3.5: `defer` permits an attempt after source prompt two or three; a valid title, malformed
   output, unavailable configuration, or third-prompt exhaustion ends the lifecycle with the
   fallback retained.
@@ -197,8 +197,8 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
   cumulative main usage immediately before their bounded re-drive; cleanup spend is
   added to the same lifetime totals; and no externally callable usage-reset or
   baseline-selection API exists.
-  - verify: `TestADR_0302_RunBudgetBaselineDoesNotResetLifetimeUsage`,
-    `TestSubagentBudgetStopSalvages`
+  - verify: `TestOrdinaryRunUsesZeroBudgetBaseline`, `TestSynthesisBudgetBaselineSurvivesNudge`,
+    and `TestSubagentBudgetStopSalvages`
 - AC5.6: Other auxiliary callers are not migrated by this plan.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`
 

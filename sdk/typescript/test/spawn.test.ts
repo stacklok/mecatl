@@ -63,7 +63,7 @@ function argumentValue(args: readonly string[], flag: string): string {
 function routerTransport(): Transport {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1 }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
     });
   });
 }
@@ -406,7 +406,7 @@ describe("spawn", () => {
         fileSystem: {
           mkdtemp: async (prefix) => {
             prefixes.push(prefix);
-            return mkdtemp(prefixes.length === 1 ? prefix : join(scratchRoot, "mecatl-sdk-short-"));
+            return mkdtemp(prefixes.length === 1 ? prefix : "/tmp/mecatl-sdk-short-");
           },
         },
         tempDirectory: longBase,

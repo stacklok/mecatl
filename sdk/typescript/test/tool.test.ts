@@ -47,7 +47,11 @@ function toolHarness(options: HarnessOptions = {}) {
         created.push(request);
         return { sessionId: `session-${created.length}` };
       },
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: ["mcp_servers_on_create"] }),
+      getCompatibilityInfo: () => ({
+        apiMajor: 1,
+        capabilities: {},
+        features: ["mcp_servers_on_create"],
+      }),
       listMcpSources: () => ({ sources: options.sources ?? [] }),
     });
   });

@@ -41,7 +41,7 @@ in [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md).
 - AC1.1: With server-assigned filesystem authority and a configured deployment
   root, a default-profile `CreateSession` request whose workspace is empty
   creates a session rooted at that configured root.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario1_EmptyWorkspaceUsesConfiguredRoot`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC1.2: With server-assigned filesystem authority, every non-empty requested
   workspace—including whitespace, relative, traversal, and an exact textual
   match of the configured root—is rejected as `InvalidArgument` with a message
@@ -49,19 +49,19 @@ in [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md).
   path cleaning, filesystem access, trust evaluation, or environment creation;
   the value is neither compared with nor silently replaced by the configured
   root.
-  - verify: `TestInvariant_server_assigned_workspace_requires_empty_request`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC1.3: An explicit no-FS request remains valid with an empty workspace under
   server-assigned authority and is rejected with a non-empty workspace under
   the existing no-FS contract.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario1_ServerAssignedProfileMatrix`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC1.4: The same acceptance and rejection behavior is observed through both
   the gRPC and HTTP session-create surfaces, because they share the Service
   policy.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario1_GrpcAndHTTPAgree`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC1.5: A filesystem-bearing network configuration with no authoritative
   workspace fails configuration validation before either API listener starts.
   A no-FS deployment remains valid without a filesystem root.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario1_NetworkFilesystemRequiresConfiguredRoot`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 
 ---
 
@@ -77,20 +77,20 @@ not inferred inside the Service from an address string.
 - AC2.1: Under client-selectable workspace authority, an absolute workspace
   supplied by the local client creates a session rooted at that workspace even
   when it differs from the deployment default.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario2_LocalClientWorkspacePreserved`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC2.2: A loopback-only `mecated` configuration selects client-selectable
   authority. Any non-loopback, wildcard, or mixed public/loopback gRPC or
   HTTP/SSE listener selects server-assigned authority using the existing
   fail-closed parsed-address classifier, including IPv6 loopback coverage.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario2_MecatedPolicyFollowsAPIListenerTopology`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC2.3: A reverse-proxied loopback deployment can explicitly select
   server-assigned authority; an explicit policy selection overrides the
   topology-derived local default.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario2_ExplicitAuthorityOverridesTopology`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC2.4: Existing worktree discovery and session binding still accept a
   client-selected local workspace, while `ListWorktrees` remains inert for a
   server-assigned request whose workspace is empty.
-  - verify: `TestADR_0032_WorktreeBindingRemainsClientSelectableOnly`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 
 ---
 
@@ -106,16 +106,16 @@ This separation follows [ADR 0237](../adr/0237-listener-scoped-workspace-authori
 - AC3.1: A non-loopback `mecatui connect` invocation with no explicit
   workspace sends an empty workspace in `CreateSession`; it does not resolve
   or transmit the client cwd.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorkspace`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC3.2: Embedded and loopback connect paths still resolve an omitted
   workspace to the local cwd and send that absolute path.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspaceDefault`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC3.3: A non-loopback `mecatui connect` invocation with an explicit workspace
   is rejected locally before it resolves a cwd or sends `CreateSession`. A
   stale or non-mecatui client remains subject to the server's
   `InvalidArgument` rejection; neither path may create a client-selected
   workspace.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRejectedLocally`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 
 ---
 
@@ -130,19 +130,19 @@ posture in [ADR 0032](../adr/0032-worktree-binding.md).
 **Acceptance:**
 - AC4.1: A new `mecak8s` session that omits a profile uses the no-FS profile
   and succeeds with an empty workspace.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC4.2: The default mecak8s session catalog excludes `Read`, `Edit`, `Write`,
   `Grep`, `Glob`, `Shell`, `Parallel`, and `SkillDraft`, while retaining the
   documented no-FS-safe tools.
-  - verify: `TestNoFSCatalogProfile`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC4.3: mecak8s accepts an explicit no-FS profile and treats the wire's empty
   (omitted/default) profile as no-FS. It rejects every non-no-FS profile and
   every non-empty workspace, so a caller cannot bypass the file-less deployment
   default.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProfileAndWorkspace`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC4.4: The offline mecak8s fixture creates and runs a default session
   without using the container root as its agent workspace.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sFixtureRunsNoFS`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 
 ---
 
@@ -177,12 +177,12 @@ remain uninspected non-empty rejections under AC1.2.
   root is not the configured root under the stored-root identity contract
   fails with a clear failed precondition before any workspace factory,
   environment resolver, or filesystem access receives that stored path.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario5_PersistedOffRootSessionFailsClosed`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC5.2: The persisted-root identity contract rejects a relative path,
   traversal spelling, symlink alias, or a root made stale by a configuration
   change. It accepts only the same cleaned absolute configured root without
   resolving symlinks.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario5_PersistedRootIdentityIsLexicalAndFailClosed`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC5.3: A scheduled fire under server-assigned authority has this profile
   matrix: no-FS schedules carry no workspace; a filesystem schedule is stamped
   with the configured root by the server, not a stored or tool-supplied client
@@ -190,13 +190,13 @@ remain uninspected non-empty rejections under AC1.2.
   rejected. A legacy off-root schedule fails before claim, session creation,
   environment creation, or filesystem access and records an operator-visible
   error.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario5_ScheduledFireCannotReviveOffRoot`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 - AC5.4: `CreateSession`, persisted-session run entry/rehydration, scheduled
   fires, adoption preflight/adoption, and composition-created environment
   overrides each apply server-assigned authority or use the configured
   deployment environment. No path attaches a client- or snapshot-supplied
   off-root filesystem session.
-  - verify: `TestListenerScopedWorkspaceAuthority_Scenario5_AllCreationPathsRespectAuthority`
+  - verify: historical contract superseded by ADR 0291; no current traceability claim.
 
 ## Out of scope
 
@@ -223,27 +223,12 @@ and startup validation in the two network composition roots. Next adapt the
 mecatui connect default and finally make mecak8s's omitted profile resolve to
 no-FS. Finish with HTTP/gRPC and fixture coverage plus documentation.
 
-## Named tests landing in this plan
+## Historical test inventory
 
-- `TestInvariant_server_assigned_workspace_requires_empty_request`
-- `TestListenerScopedWorkspaceAuthority_Scenario1_EmptyWorkspaceUsesConfiguredRoot`
-- `TestListenerScopedWorkspaceAuthority_Scenario1_ServerAssignedProfileMatrix`
-- `TestListenerScopedWorkspaceAuthority_Scenario1_GrpcAndHTTPAgree`
-- `TestListenerScopedWorkspaceAuthority_Scenario1_NetworkFilesystemRequiresConfiguredRoot`
-- `TestListenerScopedWorkspaceAuthority_Scenario2_LocalClientWorkspacePreserved`
-- `TestListenerScopedWorkspaceAuthority_Scenario2_MecatedPolicyFollowsAPIListenerTopology`
-- `TestListenerScopedWorkspaceAuthority_Scenario2_ExplicitAuthorityOverridesTopology`
-- `TestADR_0032_WorktreeBindingRemainsClientSelectableOnly`
-- `TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorkspace`
-- `TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspaceDefault`
-- `TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRejectedLocally`
-- `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS`
-- `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProfileAndWorkspace`
-- `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sFixtureRunsNoFS`
-- `TestListenerScopedWorkspaceAuthority_Scenario5_PersistedOffRootSessionFailsClosed`
-- `TestListenerScopedWorkspaceAuthority_Scenario5_PersistedRootIdentityIsLexicalAndFailClosed`
-- `TestListenerScopedWorkspaceAuthority_Scenario5_ScheduledFireCannotReviveOffRoot`
-- `TestListenerScopedWorkspaceAuthority_Scenario5_AllCreationPathsRespectAuthority`
+The former test names are not retained because ADR 0291 deliberately replaced this
+path-authority contract. Current placement coverage belongs to
+[`server-owned-session-placement.md`](server-owned-session-placement.md) and its
+ADR 0291 tests.
 
 ## Definition of done
 

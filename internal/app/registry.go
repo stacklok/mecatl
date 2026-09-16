@@ -1087,6 +1087,9 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		if effort != "" {
 			opts = append(opts, openaichat.WithReasoningEffort(effort))
 		}
+		if id == providerOpenCode {
+			opts = append(opts, openaichat.WithOpenCodeSessionHeader())
+		}
 		// Prompt caching (ADR 0100): dormant today (id is always providerOpenCode
 		// here, which never matches the OpenAI gate — see
 		// openaichatCacheDialectFor), but wired inside the closure so a future

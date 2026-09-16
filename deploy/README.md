@@ -118,9 +118,9 @@ subject)` that owns it. With the verifier enabled, callers can access only
 their own records; historical ownerless records are deliberately unavailable
 rather than adopted.
 
-The chart uses `v<chart-version>` when both image selectors are empty. This keeps
-ranged Helm upgrades aligned with released images. Set `image.tag` or
-`image.digest` only to override that default.
+Release PRs keep the chart's default `image.tag` aligned with the chart and
+application versions. Set `image.digest` to pin an immutable image, or clear both
+selectors to fall back to `v<chart-version>`.
 
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \

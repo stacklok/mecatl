@@ -68,7 +68,9 @@ function fixture(ready: unknown, options: FixtureOptions = {}) {
   vi.stubGlobal("fetch", fetch);
   vi.mocked(createNodeTransport).mockReturnValue(
     createRouterTransport((router) => {
-      router.service(HarnessService, { getCompatibilityInfo: () => ({ apiMajor: 1 }) });
+      router.service(HarnessService, {
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+      });
     }),
   );
   vi.stubGlobal("Deno", {

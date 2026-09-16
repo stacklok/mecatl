@@ -84,6 +84,7 @@ function watchTransport(
   }) => AsyncIterable<WatchSessionEventsResponse>,
   compatibility: () => { apiMajor: number; features?: string[] } = () => ({
     apiMajor: 1,
+    capabilities: {},
     features: [watchFeature],
   }),
 ): Transport {
@@ -356,7 +357,7 @@ describe("attachment reconnect authority", () => {
           mutationAttempts += 1;
           throw new ConnectError("dropped mutation", Code.Unavailable);
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -372,7 +373,7 @@ describe("attachment reconnect authority", () => {
           promptAttempts += 1;
           yield await Promise.reject(new ConnectError("dropped prompt", Code.Unavailable));
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -398,7 +399,7 @@ describe("attachment reconnect authority", () => {
           await input.next();
           throw new ConnectError("dropped approval", Code.Unavailable);
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -419,7 +420,7 @@ describe("attachment reconnect authority", () => {
           yield { event: { runId, text: "started", type: "message.delta" } };
           throw new ConnectError("dropped owned run", Code.Unavailable);
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
@@ -534,7 +535,7 @@ describe("attachment reconnect authority", () => {
         router.service(HarnessService, {
           getCompatibilityInfo: (_request, context) => {
             order.push(`compat:${context.requestHeader.get("authorization")}`);
-            return { apiMajor: 1, features: [watchFeature] };
+            return { apiMajor: 1, capabilities: {}, features: [watchFeature] };
           },
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           watchSessionEvents: async function* (_request, context) {
@@ -603,7 +604,8 @@ describe("attachment reconnect authority", () => {
         compatibilityCalls += 1;
         return {
           apiMajor: 1,
-          features: compatibilityCalls === 1 ? [watchFeature] : [],
+          capabilities: {},
+          features: compatibilityCalls === 1 ? [watchFeature] : ["server_info"],
         };
       },
     );

@@ -138,6 +138,8 @@ export interface Client {
     // (undocumented)
     readonly schedules: Schedules;
     // (undocumented)
+    readonly server: Server;
+    // (undocumented)
     readonly sessions: Sessions;
     // (undocumented)
     readonly skills: Skills;
@@ -951,6 +953,12 @@ export type SdkCursor = string;
 export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "plan_continuation_start" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
 // @public
+export interface Server {
+    compatibility(options?: RequestOptions): Promise<ServerCompatibility>;
+    info(options?: ServerInfoOptions, requestOptions?: RequestOptions): Promise<ServerInfo>;
+}
+
+// @public
 export interface ServerCapabilities {
     // (undocumented)
     readonly agents: boolean;
@@ -1011,6 +1019,14 @@ export interface ServerCapabilities {
 }
 
 // @public
+export interface ServerCompatibility {
+    readonly apiMajor: typeof SUPPORTED_API_MAJOR;
+    readonly capabilities: ServerCapabilities;
+    readonly deployment?: string;
+    readonly features: ReadonlySet<string>;
+}
+
+// @public
 export class ServerError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code"> & {
         code: ServerErrorCode;
@@ -1021,6 +1037,41 @@ export class ServerError extends MecatlError {
 
 // @public
 export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
+
+// @public
+export const ServerFeature: {
+    readonly HttpSteer: "http_steer";
+    readonly McpServersOnCreate: "mcp_servers_on_create";
+    readonly ServerInfo: "server_info";
+    readonly SessionActivityInventory: "session_activity_inventory";
+    readonly WatchSessionEvents: "watch_session_events";
+};
+
+// @public
+export type ServerFeature = (typeof ServerFeature)[keyof typeof ServerFeature];
+
+// @public
+export interface ServerInfo {
+    readonly buildId: string;
+    readonly llmProviderDisplayEndpoint?: string;
+    readonly serverImplementation: string;
+}
+
+// @public
+export interface ServerInfoOptions {
+    readonly providerId?: string;
+}
+
+// @public
+export const ServerPosture: {
+    readonly Strict: "strict";
+    readonly Trusted: "trusted";
+    readonly Auto: "auto";
+    readonly Yolo: "yolo";
+};
+
+// @public
+export type ServerPosture = (typeof ServerPosture)[keyof typeof ServerPosture];
 
 // @public
 export interface Session {
@@ -1673,6 +1724,9 @@ export interface UserPromptEventPayload {
     // (undocumented)
     readonly text: string;
 }
+
+// @public @deprecated
+export const WATCH_SESSION_EVENTS_FEATURE: "watch_session_events";
 
 // @public
 export interface WatchBoundaryEnvelope {

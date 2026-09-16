@@ -16,7 +16,8 @@ Releases go through a pull request; nothing pushes a commit to `main`.
 
 1. A maintainer dispatches [Create Release PR](create-release-pr.yml) and picks
    `patch`, `minor`, or `major`. A bot opens `Release vX.Y.Z` on branch
-   `release/vX.Y.Z`, bumping [`VERSION`](../../VERSION) — the whole diff.
+   `release/vX.Y.Z`, bumping [`VERSION`](../../VERSION), the `mecak8s` chart
+   version and app version, and its default image tag.
 2. A maintainer reviews and squash-merges that PR.
 3. [Create Release Tag](create-release-tag.yml) sees `VERSION` change on `main`,
    re-verifies the commit is a merged release PR, and pushes the annotated tag.
@@ -28,10 +29,11 @@ restricted to `main`, so the credential is not reachable from a branch. The full
 including post-release verification, is in the
 [cut-release skill](../../.claude/skills/cut-release/SKILL.md).
 
-`VERSION` is the single authored source of the release version, and the only file a
-release changes. Mecatequi's sibling actions use `$/` self-repository refs, which
-resolve to this repository at the ref the workflow is running from — so there is no
-version pin to bump and no skew to guard against.
+`VERSION` is the source of truth for the release version. The release PR propagates it
+to `deploy/helm/mecak8s/Chart.yaml` and `deploy/helm/mecak8s/values.yaml`, and both
+release workflows verify the synchronized values without relying on a fixed list of files.
+Mecatequi's sibling actions use `$/` self-repository refs, which resolve to this repository
+at the ref the workflow is running from, so they need no version pin.
 
 ## Cutting a TypeScript SDK release
 

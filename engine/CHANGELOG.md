@@ -325,6 +325,17 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Removed
 
+- **Subagent `max_tokens` tool argument** — removed the deprecated alias for
+  `max_run_tokens` from the `Subagent` tool schema. Both named the SAME cumulative
+  input+output RUN budget, and the shorter name read as a provider single-response
+  output ceiling it never was. `max_run_tokens` is now the only per-call budget arg;
+  `resolveMaxRunTokens` no longer folds two aliases, so the "set only one of
+  max_run_tokens or the deprecated max_tokens" conflict error is gone. No exported
+  identifier changes (`subagentArgs` is unexported), so the public-API baselines are
+  unaffected — but a caller whose model emits `max_tokens` now has that key IGNORED
+  and the child inherits the operator/engine budget instead. Model-facing behaviour
+  change, no Go API change.
+
 - **Agent untrusted-content fencing APIs** (issue #380,
   [ADR 0241](../docs/adr/0241-governance-fence-ownership.md)) — removed
   `agent.UntrustedFence`, `agent.WriteUntrustedBlock`, `agent.FenceUntrusted`, and

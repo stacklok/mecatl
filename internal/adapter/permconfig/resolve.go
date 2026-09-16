@@ -218,6 +218,8 @@ type Resolver struct {
 	// block. Parse failures are retained so composition fails closed at startup.
 	operatorStorageManagement    *StorageManagementSection
 	operatorStorageManagementErr error
+	operatorCommandRunner        *CommandRunnerSection
+	operatorCommandRunnerErr     error
 	operatorTemporaryStorage     *TemporaryStorageSection
 	operatorTemporaryStorageErr  error
 
@@ -257,6 +259,59 @@ func (r *Resolver) OperatorStorageManagement() (*StorageManagementSection, error
 		return nil, nil
 	}
 	return r.operatorStorageManagement, r.operatorStorageManagementErr
+}
+
+// OperatorCredentialEnvironmentNames returns the effective configured environment
+// credential references. Values are names only and the returned slice is a copy.
+func (r *Resolver) OperatorCredentialEnvironmentNames() []string {
+	if r == nil {
+		return nil
+	}
+	var names []string
+	if store := r.operatorCredentialStore; store != nil && store.OIDC != nil {
+		names = append(names, store.OIDC.Key.KeyEnv)
+	}
+	if mcp := r.operatorMCP; mcp != nil {
+		for _, server := range mcp.Servers {
+			auth := server.Auth
+			if auth.StaticBearer != nil {
+				names = append(names, auth.StaticBearer.TokenEnv)
+			}
+			if auth.OAuth == nil {
+				continue
+			}
+			if p := auth.OAuth.Client.Preregistered; p != nil {
+				names = append(names, p.SecretEnv)
+			}
+			if p := auth.OAuth.Credentials.Local; p != nil {
+				names = append(names, p.KeyEnv)
+			}
+			if p := auth.OAuth.Credentials.Environment; p != nil {
+				names = append(names, p.CredentialEnv)
+			}
+		}
+	}
+	out := names[:0]
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return append([]string(nil), out...)
+}
+
+// OperatorCommandRunner returns the immutable effective operator-tier command-runner policy.
+func (r *Resolver) OperatorCommandRunner() (*CommandRunnerSection, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return r.operatorCommandRunner, r.operatorCommandRunnerErr
 }
 
 // OperatorTemporaryStorage returns the immutable operator-tier command temporary
@@ -719,6 +774,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"retention: IGNORING a project-tier retention block (operator-tier only; projects cannot weaken cleanup protection)",
 				"file", src.path, "root", ws.Root())
 		}
+		r.warnProjectCommandRunner(cfg.CommandRunner, src.path, ws.Root())
 		if cfg.TemporaryStorage != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"temporary_storage: IGNORING a project-tier temporary_storage block (operator-tier only; projects cannot redirect command temporary storage or alter cleanup retention)",
@@ -745,6 +801,15 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 	rules = r.applyTrustGate(rules, &report)
 	r.logReport(&report, "project("+ws.Root()+")")
 	return rules, projectModels
+}
+
+func (r *Resolver) warnProjectCommandRunner(section *CommandRunnerSection, file, root string) {
+	if section == nil {
+		return
+	}
+	r.diag.Log(context.Background(), port.LevelWarn,
+		"command_runner: IGNORING a project-tier command_runner block (operator-tier only; configure it in user-global settings.yaml or an explicit operator file)",
+		"file", file, "root", root)
 }
 
 // captureProjectModels applies the ADR 0030 Phase 4 gate to ONE project-tier models:
@@ -893,6 +958,9 @@ func (r *Resolver) captureOperatorParseError(data []byte, err error) {
 	if hasTopLevelKey(data, "storage_management") && r.operatorStorageManagementErr == nil {
 		r.operatorStorageManagementErr = err
 	}
+	if hasTopLevelKey(data, "command_runner") && r.operatorCommandRunnerErr == nil {
+		r.operatorCommandRunnerErr = err
+	}
 	if hasTopLevelKey(data, "temporary_storage") && r.operatorTemporaryStorageErr == nil {
 		r.operatorTemporaryStorageErr = err
 	}
@@ -947,6 +1015,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
+		r.captureCommandRunner(cfg.CommandRunner)
 		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
 
@@ -989,6 +1058,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureMCP(cfg.MCP)
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
+				r.captureCommandRunner(cfg.CommandRunner)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 			}
@@ -1154,6 +1224,13 @@ func (r *Resolver) captureRetention(s *RetentionSection) {
 		return
 	}
 	r.operatorRetention = s
+}
+
+func (r *Resolver) captureCommandRunner(s *CommandRunnerSection) {
+	if s == nil || r.operatorCommandRunner != nil {
+		return
+	}
+	r.operatorCommandRunner = s
 }
 
 func (r *Resolver) captureTemporaryStorage(s *TemporaryStorageSection) {

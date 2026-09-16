@@ -56,7 +56,7 @@ function routerWatch(
 ): Transport {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
       getSession: () => ({ session: { sessionId } }),
       watchSessionEvents,
     });
@@ -98,7 +98,7 @@ function httpFault(code: "cursor_expired" | "cursor_malformed", requestId: strin
   const fetch: typeof globalThis.fetch = async (input) => {
     const path = new URL(String(input)).pathname;
     if (path === "/v1/compatibility") {
-      return Response.json({ api_major: 1, features: [watchFeature] });
+      return Response.json({ api_major: 1, capabilities: {}, features: [watchFeature] });
     }
     if (path === `/v1/sessions/${sessionId}`) {
       return Response.json({ session_id: sessionId });

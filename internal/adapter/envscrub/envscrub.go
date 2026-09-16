@@ -49,6 +49,7 @@ var DenyExact = map[string]struct{}{
 	"OPENAI_API_KEY":     {},
 	"OPENROUTER_API_KEY": {},
 	"ANTHROPIC_API_KEY":  {},
+	"OPENCODE_API_KEY":   {},
 	// WebSearch backend credentials (cmd/mecated).
 	"WEBSEARCH_API_KEY": {},
 	"BRAVE_API_KEY":     {},
@@ -63,6 +64,12 @@ var DenyExact = map[string]struct{}{
 	// operations authenticate via the on-disk git credential helper, not these.
 	"GH_TOKEN":     {},
 	"GITHUB_TOKEN": {},
+}
+
+// NonOverridableExact names credentials read by Mecatl that an inheritance grant cannot restore.
+var NonOverridableExact = map[string]struct{}{
+	"OPENAI_API_KEY": {}, "OPENROUTER_API_KEY": {}, "ANTHROPIC_API_KEY": {}, "OPENCODE_API_KEY": {},
+	"WEBSEARCH_API_KEY": {}, "BRAVE_API_KEY": {}, "EXA_API_KEY": {},
 }
 
 // denyPatternSuffixes are case-SENSITIVE name SUFFIXES that mark a variable as
@@ -106,6 +113,36 @@ func IsSecretName(name string) bool {
 	}
 	// Fixed cloud-credential name that matches no suffix/prefix pattern.
 	return name == "GOOGLE_APPLICATION_CREDENTIALS"
+}
+
+// ScrubWithInherited applies Scrub but restores only explicitly named secret-shaped
+// variables that are not reserved to the harness. It never synthesizes an absent value.
+func ScrubWithInherited(base, inherit []string, reserved map[string]struct{}) []string {
+	allowed := make(map[string]struct{}, len(inherit))
+	for _, name := range inherit {
+		if strings.HasPrefix(name, "MECATL_") {
+			continue
+		}
+		if _, blocked := reserved[name]; !blocked {
+			allowed[name] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(base))
+	for _, kv := range base {
+		i := strings.IndexByte(kv, '=')
+		if i < 0 {
+			continue
+		}
+		name := kv[:i]
+		if !IsSecretName(name) {
+			out = append(out, kv)
+			continue
+		}
+		if _, ok := allowed[name]; ok {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // Scrub returns a process environment derived from base (typically os.Environ())

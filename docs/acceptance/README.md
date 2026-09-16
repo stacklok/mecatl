@@ -123,6 +123,11 @@ PR after verification. There is no cleanup or status-only PR.
   plan/interface review before autonomous implementation, with exact interface
   declarations, run-local orchestration state, and a final human code-review gate.
   Status: landed in this Combined candidate; authoritative on merge.
+- [Operator-configured command runners](operator-configured-command-runners.md) —
+  operator-global `command_runner` defaults for the Shell interpreter and a deliberately
+  constrained main-shell ambient credential grant, while managed temporary storage remains
+  a separate lifecycle policy. Status: proposed.
+- [Mecatui bounded scroll and cursor control](mecatui-bounded-scroll-selection.md) — establishes shared package-private physical-line browsing and logical-item cursor behavior, then proves complete geometry, styling, wheel ownership, and Models click-to-cursor semantics across Agents and Models. Status: proposed.
 - [Mecatui unified Agents overlay fit](mecatui-unified-agents-overlay-fit.md) — aligns every F6 selectable roster with the Sessions picker’s unbordered selection treatment and bounds every Agents-overlay subview to its offered viewport, with reachable overflow and compact short-terminal fallback. Status: proposed.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui effort-handoff recovery](mecatui-effort-handoff-recovery.md) — transactional `/effort` successor hydration that preserves the usable source until the target is validated, cleans failed or stale targets best-effort, and retires the source only after adoption. Status: proposed.
@@ -151,6 +156,7 @@ PR after verification. There is no cleanup or status-only PR.
   attributable Linux and macOS command/job temporary storage with a permission-visible
   system escape and deterministic crash-residue reaping. Status: landed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
+- [Mecatui-owned configurable terminal titles](mecatui-terminal-title-controller.md) — replaces Bubble Tea title emission with a renderer-serialized OSC 0 controller, user-global plain-text title templates over display-safe status facts, explicit disablement precedence, and live-run `/session` identity access. Status: proposed.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
 - [Broker MCP status](broker-mcp-status.md) — approved owner-scoped broker connector
   inventory and enrollment/catalogue status behind `/mcp`, without probes or new
@@ -159,6 +165,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Idle-session MCP broker workspace refresh](idle-session-broker-workspace-refresh.md) — allows an owned idle broker session to explicitly refresh its complete protected-tool bundle after earlier turns and to recover after broker-process loss without resetting the conversation; retains ToolHive custody and broker-mode single-replica operation. Status: proposed.
 - [MCP broker DCR client](mcp-broker-dcr-client.md) — a third `mcp.servers[].auth.oauth.client.mode: dcr`, exposing ToolHive's existing RFC 7591 Dynamic Client Registration upstream-client support for protected MCP servers with no preregistered client or hosted CIMD document. Status: draft.
 - [Direct MCP Dynamic Client Registration](direct-mcp-dcr.md) — core implementation exists for durable public-client DCR in a local direct MCP profile, with no-refresh access grants and explicit re-login after expiry; remaining acceptance proofs, review, and human qualification are tracked in the plan. Status: in-progress.
+- [Direct MCP onboarding](direct-mcp-onboarding.md) — URL-first host-local add/list/login/remove lifecycle with safe issuer discovery, pinned keyring or owner-only file-key custody, honest restart semantics, and no new daemon-administration authority. Status: proposed after post-decision MoE review and scope reduction.
 - [Live authenticated MCP metadata replaces static stand-ins](authenticated-mcp-metadata-replaces-static-standins.md) — replace protected-tool placeholders with safely admitted authenticated metadata after either lazy authorization or complete pre-prompt enrollment, without revealing undeclared tools on the lazy path. Status: in-progress.
 
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an

@@ -46,7 +46,7 @@ function argumentValue(args: readonly string[], flag: string): string {
 function routerTransport(): Transport {
   return createRouterTransport((router) => {
     router.service(HarnessService, {
-      getCompatibilityInfo: () => ({ apiMajor: 1 }),
+      getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
     });
   });
 }

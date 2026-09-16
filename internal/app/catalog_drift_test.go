@@ -219,7 +219,7 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 
 	// The selector inputs (what sessionEngineFactory passes for a /models pick),
 	// over the SAME Phase-A assets, no client manager.
-	selCat, selClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+	selCat, selClose, _ := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 		provider: or, providerID: providerOpenRouter, model: "openrouter/other-model", narrate: false,
 	})
 	defer func() { _ = selClose() }()
@@ -239,7 +239,7 @@ func TestPerSessionCatalogMatchesSharedCatalog(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewManager(client): %v", err)
 		}
-		cliCat, cliClose := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+		cliCat, cliClose, _ := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
 			provider: or, providerID: providerOpenRouter, model: "openrouter/other-model", clientMgr: clientMgr, narrate: false,
 		})
 		defer func() { _ = cliClose() }()
@@ -304,7 +304,7 @@ func TestPresentPlanInSharedAndPerSessionCatalogs(t *testing.T) {
 		t.Fatal("the shared build-time catalog must register PresentPlan (issue #206 Wave 3)")
 	}
 
-	selCat, selClose := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
+	selCat, selClose, _ := assembleCatalog(ctx, cfg, reg, memstore.New(), hooks, &assets, catalogSession{
 		provider: or, providerID: providerOpenRouter, model: "openrouter/other-model", narrate: false,
 	})
 	defer func() { _ = selClose() }()

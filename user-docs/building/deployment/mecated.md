@@ -28,7 +28,7 @@ mecatui providers
 |`mecatui providers add NAME`|Define a custom HTTPS provider, API flavor, default model, and authentication.|
 |`mecatui providers login NAME`|Enter or replace the provider's credential.|
 |`mecatui providers logout NAME`|Remove its local OIDC enrollment.|
-|`mecatui providers set-default NAME [MODEL]`|Select the deployment default.|
+|`mecatui providers set-default NAME [MODEL]`|Select the deployment default. A supplied concrete model ID is saved without a live inventory check; availability is verified when the provider is used.|
 |`mecatui providers remove NAME`|Remove a custom provider.|
 |`mecatui providers` or `mecatui providers status`|Show configuration state without credentials.|
 
@@ -316,12 +316,13 @@ binding a listener when the script is invalid.
 }
 ```
 
-#### The ToolHive LLM gateway (no API key needed)
+#### A ToolHive-managed LLM gateway (no API key needed)
 
-If you have configured [ToolHive](https://docs.stacklok.com/toolhive/)'s LLM
-gateway, `--toolhive-llm` (on by default) detects it and registers two provider
-IDs: `toolhive` uses OpenAI Responses, while `toolhive-anthropic` uses native
-Anthropic Messages. ToolHive holds the credentials. Use `/models` to select
+If you have configured access to an LLM gateway through
+[ToolHive](https://docs.stacklok.com/toolhive/), `--toolhive-llm` (on by
+default) detects that configuration and registers two provider IDs: `toolhive`
+uses OpenAI Responses, while `toolhive-anthropic` uses native Anthropic
+Messages. ToolHive manages the gateway credentials. Use `/models` to select
 either provider; the `mecatui` welcome screen reports when one is available but
 not selected. Disable detection with `--toolhive-llm=false` on shared hosts.
 
@@ -344,7 +345,7 @@ when credentials are missing. Direct mode does not honor `tls_skip_verify`.
 
 For provider selection, protocol paths, independent catalog status, and
 model-routing troubleshooting, see
-[Choose models and providers](/features/choose-models.md#select-toolhive-gateway-models).
+[Choose models and providers](/features/choose-models.md#select-models-from-a-toolhive-managed-gateway).
 
 ### Posture
 

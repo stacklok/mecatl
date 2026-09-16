@@ -69,6 +69,44 @@ explicit `mecated serve` flag. It controls listener topology, TLS, and rate
 limits. Supply the daemon API bearer through `--auth-token` or
 `MECATL_AUTH_TOKEN`.
 
+## Configure the command runner
+
+Use `command_runner.shell` to choose the interpreter for built-in local Shell
+runners. An explicit `--shell` value overrides this setting, including
+`--shell ""` to disable Shell. `--no-shell` always disables Shell.
+
+The built-in main runner removes credential-shaped environment variables by
+default. To make a specific external CLI credential available to main-session
+Shell commands, list its environment variable name without its value:
+
+```yaml
+command_runner:
+  shell: /bin/sh
+  environment:
+    inherit:
+      - GH_TOKEN
+```
+
+The variable must already be present in the Mecatl process environment. The
+setting grants ambient access to every permitted main-session Shell command, so
+use a credential limited to the intended service. Shell commands must not
+inspect, print, copy, write, or commit credential values.
+
+Mecatl never restores its own provider, web-search, server, driver, MCP, or
+other configured credential references. Read-only Subagents, Team members,
+Parallel branches, and internal Git operations retain fully scrubbed
+environments. A direct-write Subagent uses the main runner and receives the
+same deliberate grants. Independent attenuation for direct-write children
+requires a future same-workspace child runner; direct-write mode is not a child
+credential-isolation boundary.
+
+The setting applies to `mecated`, `mecak8s`, `mecatequi`, and the server embedded
+by bare `mecatui`. A custom placement provider owns its complete execution
+environment and is unchanged. Project `command_runner` blocks are ignored with
+a value-free warning. See the
+[configuration reference](/reference/configuration.md#command_runner) for the
+complete schema.
+
 ## Configure provider credentials
 
 Keep provider credentials in the process environment or in an owner-readable

@@ -38,18 +38,15 @@ var movedADRSlugs = []string{
 // TestNoStaleMovedADRSlugs guards only the exact paths moved during the ADR
 // number repair. Bare historical number references are intentionally outside
 // this gate because their meaning cannot be inferred reliably.
-func TestNoStaleMovedADRSlugs(t *testing.T) {
-	root := repoRoot(t)
-	thisFile := filepath.Join(root, "docs", "lint", "old_adr_slugs_test.go")
+func findMovedADRSlugs(root, thisFile string) ([]string, error) {
 	var findings []string
-
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", ".scratch", "node_modules", "build", "bin":
+			case ".git", ".scratch", ".worktrees", "node_modules", "build", "bin":
 				return filepath.SkipDir
 			}
 			return nil
@@ -74,11 +71,42 @@ func TestNoStaleMovedADRSlugs(t *testing.T) {
 		}
 		return nil
 	})
+	sort.Strings(findings)
+	return findings, err
+}
+
+func TestNoStaleMovedADRSlugs(t *testing.T) {
+	root := repoRoot(t)
+	findings, err := findMovedADRSlugs(root, filepath.Join(root, "docs", "lint", "old_adr_slugs_test.go"))
 	if err != nil {
 		t.Fatalf("scan repository for stale moved ADR slugs: %v", err)
 	}
 	if len(findings) > 0 {
-		sort.Strings(findings)
 		t.Fatalf("stale moved ADR paths remain:\n  %s", strings.Join(findings, "\n  "))
+	}
+}
+
+func TestMovedADRSlugScanSkipsNestedWorktreesOnly(t *testing.T) {
+	root := t.TempDir()
+	slug := movedADRSlugs[0]
+	for name, content := range map[string]string{
+		filepath.Join(".worktrees", "poison", "doc.md"): slug,
+		"ordinary.md": slug,
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	findings, err := findMovedADRSlugs(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ordinary.md: " + slug
+	if len(findings) != 1 || findings[0] != want {
+		t.Fatalf("findings = %v, want [%s]", findings, want)
 	}
 }

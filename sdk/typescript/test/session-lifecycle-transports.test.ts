@@ -102,7 +102,7 @@ describe("session lifecycle transport parity", () => {
           recordGrpc("fork", context, request);
           return { sessionId: "forked" };
         },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
         getSession: (request, context) => {
           recordGrpc("get", context, request);
           return {
@@ -172,7 +172,8 @@ describe("session lifecycle transport parity", () => {
         const url = new URL(String(input));
         const path = url.pathname;
         const method = init?.method ?? "GET";
-        if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+        if (path === "/v1/compatibility")
+          return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
         const headers = new Headers(init?.headers);
         const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
         const operation =
@@ -290,7 +291,11 @@ describe("session lifecycle transport parity", () => {
             }
             return { sessionId: "session" };
           },
-          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["server_info"],
+          }),
           getSession: () => {
             if (failureClass === "projection") {
               throw new ConnectError("rejected", Code.InvalidArgument);
@@ -330,7 +335,8 @@ describe("session lifecycle transport parity", () => {
         baseUrl: "http://mecatl.test",
         fetch: async (input) => {
           const path = new URL(String(input)).pathname;
-          if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+          if (path === "/v1/compatibility")
+            return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
           if (path === "/v1/sessions") {
             return failureClass === "acquisition"
               ? problem()

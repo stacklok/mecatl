@@ -76,7 +76,7 @@ describe("session attachment", () => {
     const filters: string[] = [];
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         watchSessionEvents: async function* (request) {
           filters.push(request.runId);
@@ -108,7 +108,7 @@ describe("session attachment", () => {
   it("live flips false when the terminal is observed", async () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         watchSessionEvents: async function* () {
           yield event("run-live", "working", "cursor-1");
@@ -134,7 +134,7 @@ describe("session attachment", () => {
     let enteredFollow = false;
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         watchSessionEvents: async function* (request) {
           if (request.sessionId === "session-runless") {
@@ -159,7 +159,7 @@ describe("session attachment", () => {
   it("a running session with an empty log reports NoRunsError", async () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({
           session: { sessionId: request.sessionId, state: "running" },
         }),
@@ -177,7 +177,7 @@ describe("session attachment", () => {
   it("an unknown or foreign session id is session_not_found, never NoRunsError", async () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         watchSessionEvents: async function* () {
           yield* [];
@@ -198,7 +198,7 @@ describe("session attachment", () => {
     const filters: string[] = [];
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         watchSessionEvents: async function* (request) {
           filters.push(request.runId);
@@ -220,7 +220,11 @@ describe("session attachment", () => {
       let watches = 0;
       const transport = createRouterTransport((router) => {
         router.service(HarnessService, {
-          getCompatibilityInfo: () => ({ apiMajor: 1, features: [] }),
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["server_info"],
+          }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           watchSessionEvents: async function* () {
             watches += 1;
@@ -249,7 +253,7 @@ describe("session attachment", () => {
     for (const code of ["watch_unsupported", "no_event_log"]) {
       const transport = createRouterTransport((router) => {
         router.service(HarnessService, {
-          getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+          getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
           watchSessionEvents: async function* () {
             yield* [];
@@ -266,7 +270,7 @@ describe("session attachment", () => {
   it("a delegation child id is refused and a sched-- id is not", async () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({ apiMajor: 1, features: [watchFeature] }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [watchFeature] }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
         watchSessionEvents: async function* (request) {
           if (/^(subagent-|parallel-|team-)/.test(request.sessionId)) {

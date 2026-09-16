@@ -6,9 +6,11 @@ import (
 	"strings"
 )
 
-// ResolveDeploymentDefault validates a persisted deployment default with the
-// same registry and default-model resolver used at startup, without contacting
-// a provider. It returns the concrete provider/model pair selected by startup.
+// ResolveDeploymentDefault validates a persisted deployment default's provider with
+// the same registry and default-model resolver used at startup, without contacting
+// a provider. A supplied model is validated as an alias or concrete model selector,
+// but not against an offline catalog: its availability is provider-runtime truth.
+// It returns the concrete provider/model pair selected by startup.
 func ResolveDeploymentDefault(ctx context.Context, cfg Config) (string, string, error) {
 	cfg.DefaultProvider = strings.TrimSpace(cfg.DefaultProvider)
 	cfg.DefaultModel = strings.TrimSpace(cfg.DefaultModel)
@@ -24,7 +26,7 @@ func ResolveDeploymentDefault(ctx context.Context, cfg Config) (string, string, 
 	if err != nil {
 		return "", "", err
 	}
-	if err := validateDefaultModel(cfg, reg); err != nil {
+	if err := validateDefaultProvider(cfg, reg); err != nil {
 		return "", "", err
 	}
 	model := reg.ResolvedDefaultModel()

@@ -55,8 +55,7 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
 **Per-call knobs (`subagentArgs`).** Beyond `prompt`/`description`/`agent`, a Subagent call may
 supply: `max_turns`/`max_tool_calls`/`max_run_tokens` (TIGHTEN-ONLY caps — the model can
 make its child stricter than the operator's bound, never looser; `max_run_tokens` is the
-**preferred** cumulative input+output run-budget arg, `max_tokens` the **deprecated** alias for
-the same budget — supplying both with different positive values is a model-visible error;
+cumulative input+output run-budget arg;
 **default: inherited/unlimited**); `timeout_ms` (a
 wall-clock deadline → a time-budget tool error); `model` (pin THIS child to a specific
 provider model — minted via the composition-supplied `WithSubagentEngineFactory` closure

@@ -16,6 +16,8 @@ between `mecated`, `mecak8s`, and `mecatui`.
 
 - [Capability and deployment matrix](./capability-matrix.md) explains the
   operational differences among server and terminal deployments.
+- [Ask Mecatl about itself](./ask-about-mecatl.md) covers the account of Mecatl
+  that every agent carries and how it answers questions about the product.
 
 ## Run and maintain sessions
 
