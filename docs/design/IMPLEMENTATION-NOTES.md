@@ -2544,9 +2544,8 @@ widened description guard). Goldens: unchanged (no golden covers a background la
 
 **Subagent per-call token budget (`max_run_tokens` — Run-scoped
 override, R4 + issue #62).** The arg is `subagentArgs.MaxRunTokens`: a cumulative input+output
-RUN budget, the loop-level token ceiling, NOT a provider single-response output ceiling. (The
-misleadingly-named `max_tokens` alias it once carried was REMOVED — it named this same run budget
-and read as a provider output cap.) `resolveMaxRunTokens(args)` yields its positive value, or 0
+RUN budget, the loop-level token ceiling, NOT a provider single-response output ceiling.
+`resolveMaxRunTokens(args)` yields its positive value, or 0
 (= inherited/unlimited) when it is absent or non-positive. `buildSubagentRunRequest` reads the
 resolved value into `RunRequest.MaxRunTokensOverride`
 carried into `Engine.Run`, so a per-call budget bounds the SHARED child engine WITHOUT minting a fresh
