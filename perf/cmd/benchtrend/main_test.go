@@ -57,6 +57,35 @@ func TestConvertBench_FailsClosed(t *testing.T) {
 	}
 }
 
+func TestRunConvert_ReadsAndWritesFiles(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "bench.txt")
+	outPath := filepath.Join(dir, "trend.json")
+	input := "pkg: example.test\nBenchmarkBuild-4 100 10 ns/op 20 B/op 1 allocs/op\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runConvert([]string{"-in", inPath, "-out", outPath}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var points []benchPoint
+	if err := json.Unmarshal(out, &points); err != nil {
+		t.Fatal(err)
+	}
+	want := []benchPoint{
+		{Name: "BenchmarkBuild - ns/op", Unit: "ns/op", Value: 10},
+		{Name: "BenchmarkBuild - B/op", Unit: "B/op", Value: 20},
+		{Name: "BenchmarkBuild - allocs/op", Unit: "allocs/op", Value: 1},
+	}
+	if !reflect.DeepEqual(points, want) {
+		t.Fatalf("points = %#v, want %#v", points, want)
+	}
+}
+
 func TestCompactHistory_AggregatesEveryCommitAndPreservesOtherSuites(t *testing.T) {
 	input := dataJSPrefix + `{
   "lastUpdate": 123,
@@ -174,6 +203,17 @@ func TestCompactHistory_AggregatesEveryCommitAndPreservesOtherSuites(t *testing.
 	}
 	if !bytes.Equal(out, second) {
 		t.Error("compaction is not byte-idempotent")
+	}
+
+	unmatched, unmatchedStats, err := compactHistory(bytes.NewReader(out), "mecatl go microbenchmarks", "new-commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unmatchedStats != (compactStats{rows: 2, before: 6, after: 6}) {
+		t.Fatalf("unmatched replacement stats = %#v, want rows=2 before=6 after=6", unmatchedStats)
+	}
+	if !bytes.Equal(out, unmatched) {
+		t.Error("an absent replacement commit changed compacted history")
 	}
 
 	replaced, replaceStats, err := compactHistory(bytes.NewReader(out), "mecatl go microbenchmarks", "abc")
