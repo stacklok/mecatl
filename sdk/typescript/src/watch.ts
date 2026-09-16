@@ -692,25 +692,23 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
   }
 
   async approve(_askId: string, _allow: boolean): Promise<never> {
-    throw this.#approvalUnsupported();
+    throw this.#controlsUnsupported();
   }
 
   async resolveAsk(_askId: string, _verdict: PermissionVerdict): Promise<never> {
-    throw this.#approvalUnsupported();
+    throw this.#controlsUnsupported();
   }
 
   async steer(_text: string): Promise<never> {
-    throw new UnsupportedFeatureError(
-      this.#transport === "grpc" ? "prompt_free_controls" : "http_steer",
-      { transport: this.#transport },
-    );
+    throw this.#controlsUnsupported();
   }
 
-  #approvalUnsupported(): UnsupportedFeatureError {
-    return new UnsupportedFeatureError(
-      this.#transport === "grpc" ? "prompt_free_controls" : "approve_ack_only",
-      { transport: this.#transport },
-    );
+  #controlsUnsupported(): UnsupportedFeatureError {
+    const error = new UnsupportedFeatureError("attached_run_controls", {
+      transport: this.#transport,
+    });
+    error.message += "; use session.controls(attached.runId)";
+    return error;
   }
 }
 

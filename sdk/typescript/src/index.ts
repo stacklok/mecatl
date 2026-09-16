@@ -162,6 +162,12 @@ export type {
   RunResult,
 } from "./run.js";
 export type {
+  RunControls,
+  RunSteerAcknowledgement,
+  RunSteerCancellationAcknowledgement,
+  RunSteerOptions,
+} from "./run-controls.js";
+export type {
   Server,
   ServerCompatibility,
   ServerInfo,

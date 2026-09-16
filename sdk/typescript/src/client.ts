@@ -67,6 +67,7 @@ import {
   sessionAffinityIfRepresentable,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
+import { createRunControls, type RunControls } from "./run-controls.js";
 import {
   createServer,
   projectServerCompatibility,
@@ -189,6 +190,13 @@ export interface ClearSessionOptions {
 /** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
+  /**
+   * Creates prompt-free controls bound to one exact run without opening a watch.
+   *
+   * @param runId - Exact durable run ID to address.
+   * @returns A synchronous lightweight control resource.
+   */
+  controls(runId: string): RunControls;
   /**
    * Attaches to an explicit run, or selects the newest run in the durable log.
    *
@@ -415,7 +423,7 @@ interface SessionOperations {
   attachmentStatus(): AttachmentStatusWriter;
   cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
-  features(): Promise<ReadonlySet<string>>;
+  features(options?: RequestOptions): Promise<ReadonlySet<string>>;
   invalidateCompatibility(): void;
   registerAttachment(close: () => Promise<void>): () => void;
   registerRun(cancel: () => Promise<void>): () => void;
@@ -515,6 +523,16 @@ class SessionImpl implements Session {
     this.#baseOperations = operations;
     this.#operations = sessionAffinityOperations(this.id, operations);
     this.#promptCapabilities = promptCapabilities;
+  }
+
+  controls(runId: string): RunControls {
+    return createRunControls(this.id, runId, {
+      assertOpen: () => this.#operations.assertOpen(),
+      features: (options) => this.#operations.features(options),
+      promptCapabilities: () => this.#promptCapabilities,
+      transportKind: this.#operations.transportKind,
+      unary: (method, input, options) => this.#operations.unary(method, input, options),
+    });
   }
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
@@ -853,7 +871,7 @@ class ClientImpl implements Client {
       attachmentStatus: () => this.#createAttachmentStatus(),
       cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
-      features: () => this.#features(),
+      features: (options) => this.#features(options),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
       registerAttachment: (close) => this.#register(this.#attachments, close),
       registerRun: (cancel) => this.#register(this.#runs, cancel),
@@ -1174,9 +1192,9 @@ class ClientImpl implements Client {
     await this.#observeRequest(() => cancel(sessionId, runId, this.#abort.signal));
   }
 
-  async #features(): Promise<ReadonlySet<string>> {
+  async #features(options?: RequestOptions): Promise<ReadonlySet<string>> {
     this.#assertOpen();
-    return this.#observeRequest(() => this.#raw.features({ signal: this.#abort.signal }));
+    return this.#observeRequest(() => this.#raw.features(this.#withClientSignal(options)));
   }
 
   async #compatibility(

@@ -68,6 +68,34 @@ function approvalVerdict(value: JsonValue | undefined): string {
   }
 }
 
+function strictApprovalVerdict(value: JsonValue | undefined): string {
+  switch (value) {
+    case 1:
+      return "deny";
+    case 2:
+      return "allow_once";
+    case 3:
+      return "allow_always";
+    default:
+      return "";
+  }
+}
+
+function strictSteerOutcome(value: JsonValue | undefined): number | JsonValue | undefined {
+  switch (value) {
+    case "accepted":
+      return 1;
+    case "appended":
+      return 2;
+    case "retracted":
+      return 3;
+    case "none_pending":
+      return 4;
+    default:
+      return value;
+  }
+}
+
 function contentKind(value: number): string {
   if (value === 1) return "image";
   if (value === 2) return "audio";
@@ -96,6 +124,20 @@ function encodeInput(
   if (method.name === "ApprovePlan" && json.target_mode !== undefined) {
     json.target_mode = permissionMode(json.target_mode);
   }
+  if (method.name === "ResolveRunAsk") {
+    json.verdict = strictApprovalVerdict(json.verdict);
+  }
+  if (method.name === "SteerRun") {
+    json.message_id ??= "";
+    const parts = json.parts;
+    if (Array.isArray(parts)) {
+      json.parts = parts.map((part) => {
+        const content = record(part);
+        return { ...content, kind: contentKind(Number(content.kind ?? 0)) };
+      });
+    }
+  }
+  if (method.name === "CancelRunSteer") json.message_id ??= "";
   return json;
 }
 
@@ -127,6 +169,13 @@ function normalizeUnaryResponse(
     return { [classification.responseField]: raw };
   }
   return raw;
+}
+
+function normalizeMethodResponse(methodName: string, raw: JsonValue): JsonValue {
+  if (methodName !== "SteerRun" && methodName !== "CancelRunSteer") return raw;
+  const response = record(raw);
+  const outcome = strictSteerOutcome(response.outcome);
+  return { ...response, ...(outcome === undefined ? {} : { outcome }) };
 }
 
 function timeoutSignal(
@@ -248,7 +297,10 @@ class HttpTransport implements Transport {
         });
       }
     }
-    const normalized = normalizeUnaryResponse(resolved.classification, raw);
+    const normalized = normalizeUnaryResponse(
+      resolved.classification,
+      normalizeMethodResponse(method.name, raw),
+    );
     let message: MessageShape<O>;
     try {
       message = fromJson(method.output, normalized, { ignoreUnknownFields: true });

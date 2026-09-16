@@ -279,7 +279,7 @@ describe("attached controls", () => {
     await client.close();
   });
 
-  it("attached approval names a distinct absent feature per transport", async () => {
+  it("attached approval keeps the local compatibility deferral on both transports", async () => {
     const grpc = await attachGrpc();
     for (const control of [
       () => grpc.attached.approve("ask-1", true),
@@ -287,7 +287,7 @@ describe("attached controls", () => {
     ]) {
       await expect(control()).rejects.toMatchObject({
         code: "unsupported_feature",
-        feature: "prompt_free_controls",
+        feature: "attached_run_controls",
         transport: "grpc",
       });
     }
@@ -302,7 +302,7 @@ describe("attached controls", () => {
     ]) {
       await expect(control()).rejects.toMatchObject({
         code: "unsupported_feature",
-        feature: "approve_ack_only",
+        feature: "attached_run_controls",
         transport: "http",
       });
     }
@@ -311,11 +311,11 @@ describe("attached controls", () => {
     await http.client.close();
   });
 
-  it("attached steer is unsupported on both transports and never promotes", async () => {
+  it("attached steer keeps the local compatibility deferral and never promotes", async () => {
     const grpc = await attachGrpc();
     await expect(grpc.attached.steer("new direction")).rejects.toMatchObject({
       code: "unsupported_feature",
-      feature: "prompt_free_controls",
+      feature: "attached_run_controls",
       transport: "grpc",
     });
     expect(grpc.converseCalls()).toBe(0);
@@ -325,7 +325,7 @@ describe("attached controls", () => {
     const http = await attachHttp({ features: [watchFeature, "http_steer"] });
     await expect(http.attached.steer("new direction")).rejects.toMatchObject({
       code: "unsupported_feature",
-      feature: "http_steer",
+      feature: "attached_run_controls",
       transport: "http",
     });
     expect(
