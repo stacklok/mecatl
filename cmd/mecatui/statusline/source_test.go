@@ -142,7 +142,7 @@ func TestStatusLine_CompactHeaderLabelsPermissionMode(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shipped source did not publish")
 	}
-	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · deadbeef · GPT-5 · mode accept-edits"; got != want {
+	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · GPT-5 · mode accept-edits"; got != want {
 		t.Fatalf("compact header = %q, want %q", got, want)
 	}
 }
