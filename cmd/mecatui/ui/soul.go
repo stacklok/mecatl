@@ -153,8 +153,8 @@ func soulContentLines(content string) []string {
 
 // soulDisabledNote is the empty-state copy when soul is NOT enabled on the
 // connected server (caps.Soul == false), with the remedy.
-const soulDisabledNote = "Instructions are not enabled on this server.\n" +
-	"Add an instructions file, then reconnect."
+const soulDisabledNote = "No soul (persona) is enabled on this server.\n" +
+	"Create ~/.config/mecatl/soul.md (or pass --soul-file) and reconnect."
 
 // soulTrustLabel renders the soul's provenance + trust + drift state as a single
 // human label for the metadata line. It distinguishes a loaded user/project soul
@@ -164,7 +164,7 @@ const soulDisabledNote = "Instructions are not enabled on this server.\n" +
 func soulTrustLabel(s client.Soul) string {
 	switch s.Provenance {
 	case client.SoulProvenanceUser:
-		label := "personal"
+		label := "user"
 		if s.Drifted {
 			label += " · changed since it was trusted"
 		}
@@ -191,7 +191,7 @@ func soulTrustLabel(s client.Soul) string {
 // the content. EVERY server-derived string is terminal-sanitized.
 func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, hk helpKeys, width int) string {
 	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render(soulPanelTitle(st.soul)) + "\n\n")
+	b.WriteString(th.Style("askTitle").Render("Soul (persona)") + "\n\n")
 
 	budget := cardTextWidth(width)
 	switch {
@@ -209,7 +209,7 @@ func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, hk 
 		if !caps.Soul {
 			b.WriteString(th.Style("muted").Render(soulDisabledNote) + "\n")
 		} else {
-			b.WriteString(th.Style("muted").Render("No personal or project instructions are available.") + "\n")
+			b.WriteString(th.Style("muted").Render("No user or project soul is available.") + "\n")
 		}
 	default:
 		b.WriteString(th.Style("muted").Render(renderSoulMeta(st.soul)) + "\n\n")
@@ -223,29 +223,18 @@ func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, hk 
 	return b.String()
 }
 
-// soulPanelTitle and soulPanelFooter keep the panel's ownership language aligned
-// with the server-projected provenance. The view is always read-only, but a user
-// instruction source and a project-controlled source have different remedies.
-func soulPanelTitle(s client.Soul) string {
-	switch s.Provenance {
-	case client.SoulProvenanceUser:
-		return "Personal instructions"
-	case client.SoulProvenanceProject:
-		return "Project instructions"
-	default:
-		return "Instructions"
-	}
-}
-
+// soulPanelFooter keeps the ownership guidance aligned with the server-projected
+// provenance. The soul is always read-only to the agent, but user and project
+// sources have different remedies.
 func soulPanelFooter(s client.Soul, hk helpKeys) string {
 	var ownership string
 	switch s.Provenance {
 	case client.SoulProvenanceUser:
-		ownership = "you control these instructions · edit their source file to change them; the agent can suggest wording"
+		ownership = "you control this soul · edit its source file to change it; the agent can suggest wording"
 	case client.SoulProvenanceProject:
-		ownership = "controlled by this project · change its instructions file or ask a maintainer"
+		ownership = "controlled by this project · change its soul file or ask a maintainer"
 	default:
-		ownership = "read-only"
+		ownership = "read-only persona"
 	}
 	return ownership + " · " + hk.scroll + " scroll · " + hk.closeOnly + " close"
 }
@@ -274,7 +263,7 @@ func renderSoulMeta(s client.Soul) string {
 // when the content exceeds the window.
 func renderSoulBody(th theme.Theme, st soulState, budget int) string {
 	if st.soul.Content == "" {
-		return th.Style("muted").Render("(instructions not loaded)") + "\n"
+		return th.Style("muted").Render("(soul not loaded)") + "\n"
 	}
 	// Wrap each raw line to the budget so a long persona line cannot overflow the
 	// card; the scroll window then operates on the wrapped lines for honest paging.

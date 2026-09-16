@@ -95,8 +95,8 @@ type trustOutcome struct {
 	persisted bool
 }
 
-const trustDisclosure = "Trust enables project instructions and project ALLOW grants. Project DENY and ASK rules always apply."
-const untrustedDisclosure = "Project instructions and project ALLOW grants stay disabled. Project DENY and ASK rules still apply."
+const trustDisclosure = "Trust enables project instructions, soul, agents, commands, skills, and ALLOW grants. Project DENY and ASK rules always apply."
+const untrustedDisclosure = "Project instructions, soul, agents, commands, skills, and ALLOW grants stay disabled. Project DENY and ASK rules still apply."
 
 // resolveTrustForRun runs the pre-TUI trust gate and returns the per-run trust
 // outcome. It NEVER errors out of band and NEVER blocks: a Remember write failure
@@ -141,7 +141,7 @@ func askTrust(seam trustSeam, workspace string, drifted bool, stdin io.Reader, e
 	pf("\n")
 	if drifted {
 		pf("mecatui: this workspace CHANGED since you trusted it:\n  %s\n", safe)
-		pf("Its project instructions, agents, commands, or skills changed. %s\nTrust them again?\n", trustDisclosure)
+		pf("Its project instructions, soul, agents, commands, or skills changed. %s\nTrust them again?\n", trustDisclosure)
 	} else {
 		pf("mecatui: do you trust the project files in this workspace?\n  %s\n", safe)
 		pf("%s\n", trustDisclosure)

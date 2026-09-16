@@ -288,9 +288,8 @@ func TestSoulWheelConsumedWhileOpen(t *testing.T) {
 	}
 }
 
-// TestSoulDriftedLabel asserts a drifted personal-instructions file explains that it
-// changed since it was trusted (the soulTrustLabel drift branch is otherwise
-// uncovered).
+// TestSoulDriftedLabel asserts a drifted user soul explains that it changed since
+// it was trusted (the soulTrustLabel drift branch is otherwise uncovered).
 func TestSoulDriftedLabel(t *testing.T) {
 	fs := &fakeSoul{soul: client.Soul{
 		Content:    "You are terse.",
@@ -414,8 +413,7 @@ func TestSoulPanelEmptyEnabledGolden(t *testing.T) {
 	compareGolden(t, "soul_empty_enabled.golden", got)
 }
 
-// TestSoulPanelProjectGolden locks the provenance-aware project copy. In
-// particular, a project source must never be labelled as personal instructions.
+// TestSoulPanelProjectGolden locks the provenance-aware project copy.
 func TestSoulPanelProjectGolden(t *testing.T) {
 	project := &fakeSoul{soul: client.Soul{
 		Content:    "Follow this repository's conventions.",
@@ -435,17 +433,14 @@ func TestSoulPanelProjectGolden(t *testing.T) {
 func TestSoulPanelOwnershipCopyFollowsProvenance(t *testing.T) {
 	hk := helpKeys{scroll: "pgup/pgdn", closeOnly: "esc"}
 	for _, tc := range []struct {
-		name, title, footer string
-		soul                client.Soul
+		name, footer string
+		soul         client.Soul
 	}{
-		{"personal", "Personal instructions", "you control these instructions", client.Soul{Provenance: client.SoulProvenanceUser}},
-		{"project", "Project instructions", "controlled by this project", client.Soul{Provenance: client.SoulProvenanceProject, Present: true, Trusted: true}},
-		{"untrusted project", "Project instructions", "controlled by this project", client.Soul{Provenance: client.SoulProvenanceProject, Present: false, Trusted: false}},
+		{"user", "you control this soul", client.Soul{Provenance: client.SoulProvenanceUser}},
+		{"project", "controlled by this project", client.Soul{Provenance: client.SoulProvenanceProject, Present: true, Trusted: true}},
+		{"untrusted project", "controlled by this project", client.Soul{Provenance: client.SoulProvenanceProject, Present: false, Trusted: false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := soulPanelTitle(tc.soul); got != tc.title {
-				t.Fatalf("title = %q, want %q", got, tc.title)
-			}
 			if got := soulPanelFooter(tc.soul, hk); !strings.Contains(got, tc.footer) {
 				t.Fatalf("footer = %q, want %q", got, tc.footer)
 			}
