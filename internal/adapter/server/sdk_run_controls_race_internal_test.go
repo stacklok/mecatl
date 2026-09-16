@@ -46,33 +46,130 @@ func TestSDKRunControls_Scenario4_CancelSteerRaceAndLeaseGates(t *testing.T) {
 		heldLeases:          map[session.SessionID]*heldLease{},
 	}
 
-	if _, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), "m", 1); !errors.Is(err, ErrStaleRunControl) {
-		t.Fatalf("generation loser = %v, want ErrStaleRunControl", err)
+	seedSentinel := func(label string) string {
+		t.Helper()
+		messageID := "sentinel-" + label
+		outcome, err := run.EnqueueSteerWithMessageID("pending "+label, nil, messageID)
+		if err != nil || outcome != agent.SteerAccepted {
+			t.Fatalf("seed %s sentinel = (%s, %v), want accepted", label, outcome, err)
+		}
+		return messageID
+	}
+	assertRejectedWithoutRetraction := func(label string, want error, reject func(string) error) {
+		t.Helper()
+		messageID := seedSentinel(label)
+		if err := reject(messageID); !errors.Is(err, want) {
+			t.Fatalf("%s loser = %v, want %v", label, err, want)
+		}
+		outcome, err := run.CancelSteer()
+		if err != nil || outcome != agent.SteerRetracted {
+			t.Fatalf("%s loser consumed sentinel: direct retraction = (%s, %v), want retracted", label, outcome, err)
+		}
 	}
 
-	state.cancelling = true
-	if _, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), "m", 2); !errors.Is(err, ErrStaleRunControl) {
-		t.Fatalf("cancelling loser = %v, want ErrStaleRunControl", err)
-	}
-	state.cancelling = false
+	assertRejectedWithoutRetraction("generation", ErrStaleRunControl, func(messageID string) error {
+		_, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), messageID, 1)
+		return err
+	})
 
-	svc.cfg.SessionLease = strictControlLease{}
-	svc.leaseDisabled = false
-	if _, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), "m", 2); !errors.Is(err, ErrSessionLeasedElsewhere) {
-		t.Fatalf("lease loser = %v, want ErrSessionLeasedElsewhere", err)
-	}
+	assertRejectedWithoutRetraction("cancelling", ErrStaleRunControl, func(messageID string) error {
+		svc.mu.Lock()
+		state.cancelling = true
+		svc.mu.Unlock()
+		_, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), messageID, 2)
+		svc.mu.Lock()
+		state.cancelling = false
+		svc.mu.Unlock()
+		return err
+	})
 
-	svc.cfg.SessionLease = nil
-	if _, err := svc.cancelRunSteer(t.Context(), id, "replacement", "m", 2); !errors.Is(err, ErrStaleRunControl) {
+	assertRejectedWithoutRetraction("cancel-signaled", ErrStaleRunControl, func(messageID string) error {
+		state.persistMu.Lock()
+		state.cancelSignaled = true
+		state.persistMu.Unlock()
+		_, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), messageID, 2)
+		state.persistMu.Lock()
+		state.cancelSignaled = false
+		state.persistMu.Unlock()
+		return err
+	})
+
+	assertRejectedWithoutRetraction("lease", ErrSessionLeasedElsewhere, func(messageID string) error {
+		svc.cfg.SessionLease = strictControlLease{}
+		svc.leaseDisabled = false
+		_, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), messageID, 2)
+		svc.cfg.SessionLease = nil
+		return err
+	})
+
+	// Model the delayed-control case in the contract: a successor is now the
+	// registered run, and the stale request still names the predecessor. Plant
+	// the sentinel on the successor so the assertion proves it cannot be touched.
+	replacement := activeStrictControlRunWithID(t, "run-successor")
+	replacementState := &runState{run: replacement, sess: stored, settled: make(chan struct{})}
+	const replacementMessageID = "sentinel-replacement"
+	if outcome, err := replacement.EnqueueSteerWithMessageID("pending replacement", nil, replacementMessageID); err != nil || outcome != agent.SteerAccepted {
+		t.Fatalf("seed replacement sentinel = (%s, %v), want accepted", outcome, err)
+	}
+	svc.mu.Lock()
+	svc.runs[id] = replacementState
+	svc.mu.Unlock()
+	if _, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), replacementMessageID, 2); !errors.Is(err, ErrStaleRunControl) {
 		t.Fatalf("replacement loser = %v, want ErrStaleRunControl", err)
 	}
+	if outcome, err := replacement.CancelSteer(); err != nil || outcome != agent.SteerRetracted {
+		t.Fatalf("replacement loser consumed successor sentinel: direct retraction = (%s, %v), want retracted", outcome, err)
+	}
+	svc.mu.Lock()
+	svc.runs[id] = state
+	svc.mu.Unlock()
 
-	ack, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), "m", 2)
-	if err != nil || ack.RunID != run.RunID() || ack.MessageID != "m" {
+	messageID := seedSentinel("valid")
+	ack, err := svc.cancelRunSteer(t.Context(), id, run.RunID(), messageID, 2)
+	if err != nil || ack.Outcome != agent.SteerRetracted || ack.RunID != run.RunID() || ack.MessageID != messageID {
 		t.Fatalf("exact live transition = (%+v, %v)", ack, err)
 	}
-	if ack.Outcome == "" {
-		t.Fatal("successful retraction returned an unspecified outcome")
+	if outcome, err := run.CancelSteer(); err != nil || outcome != agent.SteerNonePending {
+		t.Fatalf("valid retraction left sentinel pending: direct retraction = (%s, %v), want none_pending", outcome, err)
+	}
+}
+
+func TestSDKRunControls_CancellationWinnerDoesNotRetractPendingSteer(t *testing.T) {
+	id := session.SessionID("strict-cancellation-winner")
+	stored := awaitingControlSession(t, id)
+	base := memstore.New()
+	if err := base.Save(t.Context(), stored); err != nil {
+		t.Fatal(err)
+	}
+	// activeStrictControlRun is held inside its provider observer until cleanup.
+	// CancelRun therefore marks and signals cancellation while the engine cannot
+	// yet reach its terminal steer drain, making this ordering deterministic.
+	run := activeStrictControlRun(t)
+	state := &runState{run: run, sess: stored, settled: make(chan struct{})}
+	svc := &Service{
+		cfg:                 Config{Store: base, MutationCapability: NewSessionMutationCapability(false)},
+		runs:                map[session.SessionID]*runState{id: state},
+		runEntryGenerations: map[session.SessionID]uint64{id: 1},
+		heldLeases:          map[session.SessionID]*heldLease{},
+	}
+	const messageID = "sentinel-cancellation-winner"
+	if outcome, err := run.EnqueueSteerWithMessageID("pending cancellation winner", nil, messageID); err != nil || outcome != agent.SteerAccepted {
+		t.Fatalf("seed cancellation sentinel = (%s, %v), want accepted", outcome, err)
+	}
+	if ack, err := svc.CancelRun(t.Context(), id, run.RunID()); err != nil || ack.RunID != run.RunID() {
+		t.Fatalf("CancelRun = (%+v, %v), want exact acknowledgement", ack, err)
+	}
+
+	stale := make(chan error, 1)
+	go func() {
+		_, err := svc.cancelRunSteer(context.Background(), id, run.RunID(), messageID, 1)
+		stale <- err
+	}()
+	if err := <-stale; !errors.Is(err, ErrStaleRunControl) {
+		t.Fatalf("retraction after cancellation won = %v, want ErrStaleRunControl", err)
+	}
+	if outcome, err := run.CancelSteer(); err != nil || outcome != agent.SteerRetracted {
+		t.Fatalf("stale retraction consumed cancellation sentinel: direct retraction = (%s, %v), want retracted", outcome, err)
 	}
 }
 
@@ -202,6 +299,11 @@ func pendingSteerControlRun(t *testing.T) *agent.Run {
 
 func activeStrictControlRun(t *testing.T) *agent.Run {
 	t.Helper()
+	return activeStrictControlRunWithID(t, "run-old")
+}
+
+func activeStrictControlRunWithID(t *testing.T, runID string) *agent.Run {
+	t.Helper()
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	provider := mockllm.NewWith([]mockllm.Option{
@@ -211,15 +313,16 @@ func activeStrictControlRun(t *testing.T) *agent.Run {
 		}),
 	}, mockllm.TextTurn("done"))
 	ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
-	sess := session.New("strict-control-run", session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
+	sess := session.New(session.SessionID("strict-control-"+runID), session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
 	env := tool.MustEnvironment(ref, nofs.New(), memledger.New(), nil)
 	eng := agent.NewEngine(agent.Deps{
-		LLM:     provider,
-		Catalog: tool.NewCatalog(),
-		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), permstore.New()),
-		Model:   "test-model",
+		LLM:         provider,
+		Catalog:     tool.NewCatalog(),
+		Policy:      permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), permstore.New()),
+		Model:       "test-model",
+		EnableSteer: true,
 	})
-	run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "go", RunID: "run-old"})
+	run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "go", RunID: runID})
 	t.Cleanup(func() {
 		close(release)
 		run.Cancel()
