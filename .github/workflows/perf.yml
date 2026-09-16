@@ -27,6 +27,13 @@
 # first step already advanced — whereas perf-main's `auto-push` keeps local and
 # remote in sync so each step's fetch stays a fast-forward.
 #
+# TREND RETENTION: keep one median point per benchmark metric per main commit.
+# `task bench` still runs BENCHCOUNT=10 for the gate and local statistical value,
+# but benchtrend collapses those samples before the advisory dashboard sees them.
+# The main job also idempotently compacts historical go-tool rows before publishing;
+# this preserves the commit-keyed long horizon while preventing data.js from growing
+# ten redundant copies of every measurement per commit.
+#
 # Like ci.yml, this uses `pull_request` (NOT `pull_request_target`): PR code is
 # untrusted and must run without secrets and with a read-only token. The only
 # secret used anywhere is the automatic `GITHUB_TOKEN`, scoped per job by the
@@ -317,6 +324,13 @@ jobs:
         shell: bash
         run: task bench BENCHCOUNT=10 | tee bench-new.txt
 
+      # The hard gate consumes all 10 samples above; the dashboard needs one
+      # commit-keyed point per metric. Preserve the suite's existing point names so
+      # the compacted historical series and new custom-format rows stay continuous.
+      - name: Convert microbenchmarks → median trend points
+        shell: bash
+        run: go run ./perf/cmd/benchtrend convert -in bench-new.txt -out bench-trend.json
+
       # Fetch the previous-main baseline BEFORE it is superseded, so the post-merge
       # allocs gate can catch a regression that slipped through PR review. Authenticated
       # gh api (GITHUB_TOKEN) works for either repository visibility; an unauthenticated
@@ -369,15 +383,50 @@ jobs:
         shell: bash
         run: git checkout -- . 2>/dev/null || true
 
-      # The ns/op + allocs TREND dashboard (advisory — fail-on-alert:false). This is
-      # the `go`-tool suite over the raw `task bench` output; it never fails a build,
-      # it just records the time series so a human can see drift.
+      # The original go-tool feed stored all BENCHCOUNT=10 samples plus a redundant
+      # composite point for every benchmark. Compact every existing commit to the
+      # three per-unit medians before the action appends this commit. The operation
+      # is idempotent, preserves other suites and unknown fields, and uses the same
+      # serialized perf-main concurrency group as the later publishers.
+      - name: Compact historical microbenchmark trend
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          history_dir="$(mktemp -d)"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git clone --depth 1 --branch gh-pages "$remote" "$history_dir"
+          history_file="$history_dir/dev/bench/data.js"
+          if [[ -f "$history_file" ]]; then
+            go run ./perf/cmd/benchtrend compact \
+              -in "$history_file" \
+              -out "$history_file" \
+              -suite "mecatl go microbenchmarks" \
+              -replace-commit "$GITHUB_SHA"
+          else
+            echo "No benchmark history yet; the publisher will create it."
+            exit 0
+          fi
+          git -C "$history_dir" config user.name "github-actions[bot]"
+          git -C "$history_dir" config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C "$history_dir" add dev/bench/data.js
+          if git -C "$history_dir" diff --cached --quiet; then
+            echo "microbenchmark history already compact; nothing to commit."
+          else
+            git -C "$history_dir" commit -m "perf: compact microbenchmark trend history"
+            git -C "$history_dir" push origin gh-pages
+          fi
+
+      # The ns/op + bytes/op + allocs/op TREND dashboard (advisory —
+      # fail-on-alert:false). benchtrend emits one median per metric for this commit;
+      # the full BENCHCOUNT=10 raw output remains the hard-gate/baseline input.
       - name: github-action-benchmark — go bench trend (advisory)
         uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: mecatl go microbenchmarks
-          tool: go
-          output-file-path: bench-new.txt
+          tool: customSmallerIsBetter
+          output-file-path: bench-trend.json
           benchmark-data-dir-path: dev/bench
           fail-on-alert: false
           auto-push: true
@@ -481,6 +530,7 @@ jobs:
             perf-scenarios-bigger.json
             perf-scenarios-render.json
             bench-new.txt
+            bench-trend.json
             allocsgate.txt
           retention-days: 14
           if-no-files-found: ignore

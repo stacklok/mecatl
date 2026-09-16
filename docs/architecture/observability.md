@@ -26,6 +26,14 @@ against the main baseline but never publishes a new baseline from a PR.
 coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. See
 `docs/adr/0019-perf-tracking.md` for the performance-tracking decision.
 
+The `gh-pages` trend store keeps commit granularity without retaining duplicate
+sampling rows. The hard microbenchmark gate and its latest-main `bench.txt`
+baseline retain all `BENCHCOUNT=10` samples; `perf/cmd/benchtrend` median-aggregates
+those samples to one `ns/op`, `B/op`, and `allocs/op` point per benchmark and main
+commit for the advisory dashboard. Before publishing, the same command
+idempotently compacts legacy Go-tool history to that representation. Scenario
+samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
+
 - **EventSink** (`port.EventSink`) — an optional secondary relay.
   `Emit(ctx, ev)` carries the run's `context.Context` so telemetry can parent a
   run span to an inbound request span (the ctx is a **trace/baggage carrier
