@@ -140,7 +140,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		st.syncFilter()
 		presentations["sessions"] = stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, ""))
 		for name, rendered := range presentations {
-			if !strings.Contains(rendered, want) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
+			if (name != "header" && !strings.Contains(rendered, want)) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
 				t.Fatalf("%s does not use terminal-safe shared handle %q: %q", name, want, rendered)
 			}
 		}
@@ -176,8 +176,8 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		for _, span := range source.Latest().Header.Spans {
 			shipped.WriteString(span.Text)
 		}
-		if got := shipped.String(); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
-			t.Fatalf("shipped template does not use bare handle %q: %q", want, got)
+		if got := shipped.String(); strings.Contains(got, want) || strings.Contains(got, "#"+want) {
+			t.Fatalf("shipped template leaked opt-in handle %q: %q", want, got)
 		}
 	}
 

@@ -30,7 +30,7 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 	updated, _ = m.update(waitStatusMessage(t, m.statusLineWaitCmd()))
 	m = updated.(Model)
 	header := stripANSIstr(m.renderHeader())
-	for _, want := range []string{"mecatui", "session session-stat", "mode default", "server.example"} {
+	for _, want := range []string{"mecatui", "mode default", "server.example"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("header %q is missing shipped chrome %q", header, want)
 		}
@@ -131,7 +131,7 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 		t.Fatal("no result")
 	}
 	line := s.Latest()
-	if got, want := statusSpansText(line.Header.Spans), "mecatui · session deadbeef · openai/GPT-5/azure · mode default"; got != want {
+	if got, want := statusSpansText(line.Header.Spans), "mecatui · openai/GPT-5/azure · mode default"; got != want {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 	if got, want := statusSpansText(line.Footer.Spans), "ctx ▒▒░░░░░░ 20% · 2K/10K · ↑4K ↓1K cache 0%"; got != want {

@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
@@ -192,8 +195,8 @@ func TestReadClientSettingsIgnoresServerModelsWithoutTitleSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server settings without models.slots.title must not affect client settings: %v", err)
 	}
-	if !reflect.DeepEqual(got, clientSettings{}) {
-		t.Fatalf("client settings = %#v, want zero settings when the client file is absent", got)
+	if !reflect.DeepEqual(got, defaultClientSettings()) {
+		t.Fatalf("client settings = %#v, want defaults when the client file is absent", got)
 	}
 }
 
@@ -497,20 +500,125 @@ func TestReadStatusCustomizationRejectsPartialSurfaceVariants(t *testing.T) {
 	}
 }
 
-func TestBuildStatusSourceConstructsValidatedTemplateSettings(t *testing.T) {
-	source := buildStatusSource(statusCustomization{Templates: &statusTemplates{Footer: &statusSurfaceTemplates{
-		Full:    `<footer><accent>{{.Session.Title}}</accent></footer>`,
-		Compact: `<footer><accent>{{.Session.Title}}</accent></footer>`,
-		Minimal: `<footer><accent>{{.Session.Title}}</accent></footer>`,
-	}}})
+func TestADR_0344_Scenario2_DefaultPresentationOmitsHandle(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	settings, err := readClientSettings()
+	if err != nil {
+		t.Fatalf("read absent settings: %v", err)
+	}
+	title, err := newTitleRenderer(settings.TerminalTitle)
+	if err != nil {
+		t.Fatalf("build shipped title renderer: %v", err)
+	}
+	got, err := title.Render(statusline.Input{Session: statusline.Session{Handle: "session-123"}})
+	if err != nil {
+		t.Fatalf("render shipped title: %v", err)
+	}
+	if got != "mecatui" {
+		t.Fatalf("shipped title = %q, want fallback without session handle", got)
+	}
+
+	source := statusline.NewDefaultSource(0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(statusline.Input{Session: statusline.Session{Title: "configured"}, Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	source.Submit(statusline.Input{Session: statusline.Session{Handle: "session-123"}, Terminal: statusline.Terminal{HeaderAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(time.Second):
-		t.Fatal("configured template source did not publish")
+		t.Fatal("default status source did not publish")
 	}
-	if got, want := source.Latest().Footer.Spans[0].Text, "configured"; got != want {
-		t.Fatalf("configured template text = %q, want %q", got, want)
+	if got := source.Latest().Header.Spans[0].Text; strings.Contains(got, "session-123") {
+		t.Fatalf("shipped status header leaked session handle: %q", got)
+	}
+}
+
+func TestADR_0344_Scenario2_SharedTemplateProjectionAndElide(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatui", "terminal_title:\n  template: '{{.Session.Handle}} {{elide 4 .Session.Title}}'\nstatus_customization:\n  templates:\n    header:\n      full: '<header><text>{{elide 4 .Session.Title}}</text></header>'\n      compact: '<header><text>{{elide 4 .Session.Title}}</text></header>'\n      minimal: '<header><text>{{elide 4 .Session.Title}}</text></header>'\n")
+
+	settings, err := readClientSettings()
+	if err != nil {
+		t.Fatalf("read configured settings: %v", err)
+	}
+	title, err := newTitleRenderer(settings.TerminalTitle)
+	if err != nil {
+		t.Fatalf("build title renderer: %v", err)
+	}
+	input := statusline.Input{Session: statusline.Session{Handle: "session-123", Title: "abcdef"}, Terminal: statusline.Terminal{HeaderAvailCols: 80}}
+	if got, err := title.Render(input); err != nil || got != "session-123 abc…" {
+		t.Fatalf("custom title = %q, %v; want %q", got, err, "session-123 abc…")
+	}
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{{0, ""}, {-1, ""}, {6, "abcdef"}, {1, "…"}, {4, "abc…"}} {
+		renderer, err := newTitleRenderer(terminalTitleSettings{Enabled: true, Template: "{{elide " + strconv.Itoa(tc.width) + " .Session.Title}}"})
+		if err != nil {
+			t.Fatalf("build width %d renderer: %v", tc.width, err)
+		}
+		got, err := renderer.Render(input)
+		if err != nil || got != tc.want || ansi.StringWidth(got) > max(tc.width, 0) {
+			t.Errorf("elide(%d) = %q, %v (width %d), want %q within %d", tc.width, got, err, ansi.StringWidth(got), tc.want, max(tc.width, 0))
+		}
+	}
+	wideRenderer, err := newTitleRenderer(terminalTitleSettings{Enabled: true, Template: "{{elide 5 .Session.Title}}"})
+	if err != nil {
+		t.Fatalf("build wide-character renderer: %v", err)
+	}
+	if got, err := wideRenderer.Render(statusline.Input{Session: statusline.Session{Title: "界界界"}}); err != nil || got != "界界…" || ansi.StringWidth(got) > 5 {
+		t.Fatalf("wide elide = %q, %v (width %d), want %q within 5", got, err, ansi.StringWidth(got), "界界…")
+	}
+
+	source := newSource(*settings.StatusCustomization)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(input)
+	select {
+	case <-source.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("template status source did not publish")
+	}
+	if got := source.Latest().Header.Spans[0].Text; got != "abc…" {
+		t.Fatalf("status template elide = %q, want %q", got, "abc…")
+	}
+}
+
+func TestADR_0344_Scenario2_InvalidConfigurationFailsActionably(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"unknown field", "terminal_title:\n  unexpected: true\n", "terminal_title"},
+		{"invalid YAML", "terminal_title: [\n", "terminal_title"},
+		{"parse failure", "terminal_title:\n  template: '{{'\n", "terminal_title.template"},
+		{"execution failure", "terminal_title:\n  template: '{{index .Session.Title 1}}'\n", "terminal_title.template"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			writeSettings(t, "mecatui", tc.body)
+			if _, err := readClientSettings(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("readClientSettings() error = %v, want actionable %q error", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestADR_0344_Scenario2_CommandStatusCannotControlTitle(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatui", "terminal_title:\n  template: '{{.Session.Title}} · mecatui'\nstatus_customization:\n  command:\n    executable: /bin/echo\n    args: ['<header><text>command title</text></header>']\n")
+
+	settings, err := readClientSettings()
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if settings.StatusCustomization == nil || settings.StatusCustomization.Command == nil {
+		t.Fatal("test setup must select the command status source")
+	}
+	title, err := newTitleRenderer(settings.TerminalTitle)
+	if err != nil {
+		t.Fatalf("build title renderer: %v", err)
+	}
+	got, err := title.Render(statusline.Input{Session: statusline.Session{Title: "trusted title"}})
+	if err != nil {
+		t.Fatalf("render title: %v", err)
+	}
+	if got != "trusted title · mecatui" || strings.Contains(got, "command title") {
+		t.Fatalf("command-backed status influenced title %q", got)
 	}
 }
