@@ -73,7 +73,11 @@ import (
 //     tool, so ForkPreservedCap stays a PROCESS bound (a per-session reaper would
 //     multiply the cap by the number of sessions).
 type catalogAssets struct {
-	globalMgr        *mcp.Manager
+	globalMgr *mcp.Manager
+	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
+	// Catalog copies select the operation-pinned manager before assembly; cached
+	// engines retain only the returned revision tag.
+	mcpRuntimes      *mcpRuntimeSet
 	agentReg         *agents.Registry
 	memStore         tool.MemoryStore
 	userModelStore   tool.MemoryStore

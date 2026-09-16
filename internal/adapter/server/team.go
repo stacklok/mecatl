@@ -487,6 +487,16 @@ func (s *Service) CancelTeammate(ctx context.Context, teamID, member string) err
 // by Drain itself (that is the bounded GracefulStop's job). The gate starts
 // false — byte-identical default when Drain has not been called.
 func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.TeamEvent)) (agent.TeamOutcome, error) {
+	if s.cfg.OperationPin != nil {
+		pinned, release, err := s.cfg.OperationPin(ctx)
+		if err != nil {
+			return agent.TeamOutcome{}, err
+		}
+		if release != nil {
+			defer release()
+		}
+		ctx = pinned
+	}
 	// Drain gate (ADR 0048, mecak8s): refuse new team runs on a draining
 	// replica before claiming the team — mirrors acquireLease's check.
 	if s.draining.Load() {

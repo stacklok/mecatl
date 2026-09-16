@@ -165,6 +165,11 @@ type SessionEngineResult struct {
 	// value being read, which would authorize a DIFFERENT tool than the one
 	// the model was actually offered.
 	MountedClientMCPTools []string
+	// RuntimeRevision is the immutable direct-MCP runtime revision used to build
+	// this engine. Zero keeps compatibility for compositions without live MCP
+	// publication. Engines do not hold runtime pins; run admission compares this
+	// tag with the operation pin and rebuilds before use.
+	RuntimeRevision uint64
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
 }
@@ -590,6 +595,17 @@ type Config struct {
 	// (a mode flip changes nothing, the shared engine is unchanged). This is the
 	// regression-guard seam: composition wires it ONLY when a plan slot is active.
 	ModeNeedsEngine func(mode session.PermissionMode) bool
+
+	// OperationPin pins one immutable direct-MCP runtime for a root run. The
+	// returned context carries the generation into composition factories and child
+	// engines; release is called only when the run registry settles. Nil disables
+	// runtime publication integration.
+	OperationPin func(context.Context) (context.Context, func(), error)
+	// OperationRevision reads the revision carried by OperationPin. Shared and
+	// cached engines are rebuilt before use when their tag differs.
+	OperationRevision func(context.Context) uint64
+	// SharedEngineRevision tags Engine's build-time direct-MCP generation.
+	SharedEngineRevision uint64
 
 	// MemberEngine builds a team member's Engine from the shared team and the
 	// member spec (see engine/agent.MemberEngine). It is the seam that wires
@@ -1262,8 +1278,11 @@ type sessionEngine struct {
 	// shared buildAndRegisterSessionEngine path (the run-entry seam, between turns). The
 	// empty value means "no mode pin" (a pre-Phase-3 factory) and never triggers a
 	// rebuild — byte-identical to the old behaviour.
-	builtForMode session.PermissionMode
-	close        func() error
+	// runtimeRevision tags the immutable direct-MCP generation used to build the
+	// catalog. It is not a lease; the root run owns the operation pin.
+	runtimeRevision uint64
+	builtForMode    session.PermissionMode
+	close           func() error
 }
 
 // runState couples an in-flight *agent.Run with the live *session.Session the
@@ -1298,7 +1317,10 @@ type runState struct {
 	// runContextStop releases the lease-linked launch context after the promoted
 	// run has settled. It must outlive the run-entry call itself.
 	runContextStop context.CancelFunc
-	awaiting       atomic.Bool
+	// operationRelease drains the immutable direct-MCP runtime pin acquired at
+	// run admission. It is independent from engine cache lifetime.
+	operationRelease func()
+	awaiting         atomic.Bool
 	// titleRevision is the last title metadata revision successfully persisted and
 	// published for this run. It starts from the admitted durable snapshot so
 	// prompt-ingress changes publish only after their save succeeds.
@@ -4304,6 +4326,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		modelID:         res.ModelID,
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
+		runtimeRevision: res.RuntimeRevision,
 		close:           res.Close,
 	}
 	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
@@ -5468,8 +5491,12 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			return nil, tool.Environment{}, err
 		}
 	}
+	desiredRuntimeRevision := s.cfg.SharedEngineRevision
+	if s.cfg.OperationRevision != nil {
+		desiredRuntimeRevision = s.cfg.OperationRevision(ctx)
+	}
 	switch {
-	case hasEngine && se.builtForMode != "" && se.builtForMode != sess.Mode:
+	case hasEngine && (se.runtimeRevision != desiredRuntimeRevision || se.builtForMode != "" && se.builtForMode != sess.Mode):
 		// CASE 1 (ADR 0030 Layer 3): the registered per-session engine was built for a
 		// DIFFERENT mode than the session now holds — a plan↔execute switch re-resolved
 		// the model. Rebuild through the shared factory path, REPLACING the prior engine.
@@ -5497,7 +5524,8 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		s.mu.Lock()
 		envOverride, hasEnvOverride = s.sessionEnvironments[id]
 		s.mu.Unlock()
-	case !hasEngine && !s.needsRehydration(sess) && s.cfg.ModeNeedsEngine != nil && s.cfg.SessionEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode):
+	case !hasEngine && !s.needsRehydration(sess) && s.cfg.SessionEngine != nil &&
+		(desiredRuntimeRevision != s.cfg.SharedEngineRevision || s.cfg.ModeNeedsEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode)):
 		// CASE 2 (ADR 0030 Layer 3): a DEFAULT-FS session that would otherwise ride the
 		// shared engine, but its mode (plan) resolves a DIFFERENT model — promote it to a
 		// per-session factory engine. A default-FS session has the empty selector + a real
@@ -5733,6 +5761,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		modelID:         res.ModelID,
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
+		runtimeRevision: res.RuntimeRevision,
 		close:           res.Close,
 	}
 	s.mu.Lock()
@@ -7841,17 +7870,30 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 // path so concurrent approvals wait for its resumeMu transaction to promote.
 // The caller holds runEntryMu for id.
 func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
+	operationRelease := func() {}
+	if s.cfg.OperationPin != nil {
+		var err error
+		parent, operationRelease, err = s.cfg.OperationPin(parent)
+		if err != nil {
+			return nil, nil, err
+		}
+		if operationRelease == nil {
+			operationRelease = func() {}
+		}
+	}
 	ctx, cancel := context.WithCancel(parent)
-	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{}), resumeAdmission: resumeAdmission, titleRevision: sess.TitleRevision}
+	st := &runState{sess: sess, admissionCancel: cancel, operationRelease: operationRelease, settled: make(chan struct{}), resumeAdmission: resumeAdmission, titleRevision: sess.TitleRevision}
 	s.mu.Lock()
 	if s.draining.Load() {
 		s.mu.Unlock()
 		cancel()
+		operationRelease()
 		return nil, nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	if _, exists := s.runs[id]; exists {
 		s.mu.Unlock()
 		cancel()
+		operationRelease()
 		return nil, nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
 	}
 	s.runs[id] = st
@@ -7862,11 +7904,14 @@ func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID
 func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	removeCapability := false
 	var stopRunContext context.CancelFunc
+	var releaseOperation func()
 	s.mu.Lock()
 	if s.runs[id] == st {
 		delete(s.runs, id)
 		stopRunContext = st.runContextStop
 		st.runContextStop = nil
+		releaseOperation = st.operationRelease
+		st.operationRelease = nil
 		st.settledOnce.Do(func() { close(st.settled) })
 		removeCapability = st.removeCapabilityOnSettle
 		if h := s.heldLeases[id]; h != nil && !h.valid {
@@ -7877,6 +7922,9 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	s.mu.Unlock()
 	if stopRunContext != nil {
 		stopRunContext()
+	}
+	if releaseOperation != nil {
+		releaseOperation()
 	}
 	if removeCapability {
 		s.cfg.MutationCapability.Remove(id)

@@ -2187,7 +2187,20 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			return entry.baseURL
 		},
-		Engine:                              engine,
+		Engine: engine,
+		OperationPin: func(ctx context.Context) (context.Context, func(), error) {
+			if assets.mcpRuntimes == nil {
+				return ctx, func() {}, nil
+			}
+			return assets.mcpRuntimes.pin(ctx)
+		},
+		OperationRevision: mcpRuntimeRevision,
+		SharedEngineRevision: func() uint64 {
+			if assets.mcpRuntimes == nil {
+				return 0
+			}
+			return assets.mcpRuntimes.currentRevision()
+		}(),
 		Store:                               store,
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
 		SessionLoadFailureMetric:            cfg.SessionLoadFailureMetricsEmitter,
@@ -2208,7 +2221,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		PlacementScope:    placementScope,
 		SessionReadLedger: sessionReadLedger,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
-			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
+			return mintRuntimeRootAuthority(assets.rootCatalog, assets.mcpRuntimes, kind)
 		},
 		SharedEngineRoot: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// ADR 0237 applied to outbound MCP: the same deployment-policy discipline —
@@ -2546,7 +2559,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// in buildEngine so it shares the main engine's exact collaborators.
 		SessionEngine:          sessFactory,
 		SessionEngineWithTools: assets.sessionFactoryWithTools,
-		DebugSessionEngine:     debugSessionEngineFactory(cfg, reg, provider, store, eventLog, policy, assets.globalMgr),
+		DebugSessionEngine:     debugSessionEngineFactory(cfg, reg, provider, store, eventLog, policy, assets.globalMgr, assets.mcpRuntimes),
 		DebugMCP:               assets.globalMgr != nil && len(assets.globalMgr.Tools()) > 0,
 		// ModeNeedsEngine (ADR 0030 Layer 3): tells the Service whether a session's
 		// PermissionMode would resolve a model DIFFERING from the shared engine's model
@@ -2935,8 +2948,21 @@ func resolvedSessionProjection(cfg Config, reg *providerRegistry, sel server.Pro
 // selected, already-connected server-global MCP servers.
 //
 //nolint:gocyclo // The dedicated factory keeps target, provider, catalog, and policy validation together.
-func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.LLMProvider, store port.SessionStore, eventLog port.EventLog, basePolicy port.PermissionPolicy, globalMgr *mcp.Manager) server.DebugSessionEngineFactory {
+func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.LLMProvider, store port.SessionStore, eventLog port.EventLog, basePolicy port.PermissionPolicy, globalMgr *mcp.Manager, runtimes *mcpRuntimeSet) server.DebugSessionEngineFactory {
 	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, target session.SessionID, expectedFingerprint string, expectedOwner *session.Principal, selectedServers, toolCeiling []string) (server.SessionEngineResult, error) {
+		runtimeRevision := uint64(0)
+		manager := globalMgr
+		if runtimes != nil {
+			pinned, release, err := runtimes.pin(ctx)
+			if err != nil {
+				return server.SessionEngineResult{}, err
+			}
+			defer release()
+			ctx = pinned
+			candidate := mcpRuntimeCandidate(ctx)
+			manager = candidate.manager
+			runtimeRevision = candidate.generation
+		}
 		if profile != server.ProfileNoFS || target == "" || expectedFingerprint == "" {
 			return server.SessionEngineResult{}, fmt.Errorf("%w: debug sessions require no-fs and a bound target incarnation", server.ErrInvalidArgument)
 		}
@@ -2965,7 +2991,14 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 
 		cat := tool.NewCatalog()
 		cat.MustRegister(sessiondebug.NewBound(target, expectedFingerprint, expectedOwner, cfg.OwnershipEnforced, store, eventLog))
-		mounted, err := globalMgr.SelectedTools(selectedServers, toolCeiling)
+		var mounted []tool.Tool
+		if manager == nil {
+			if len(selectedServers) != 0 || len(toolCeiling) != 0 {
+				return server.SessionEngineResult{}, fmt.Errorf("%w: selected debug MCP tools are unavailable", server.ErrInvalidArgument)
+			}
+		} else {
+			mounted, err = manager.SelectedTools(selectedServers, toolCeiling)
+		}
 		if err != nil {
 			return server.SessionEngineResult{}, fmt.Errorf("%w: selected debug MCP: %v", server.ErrInvalidArgument, err)
 		}
@@ -2993,7 +3026,7 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 		}
 		return server.SessionEngineResult{
 			Engine: agent.NewEngine(deps), Capabilities: modelCapability(reg, providerID, model),
-			ProviderID: providerID, ModelID: model, BuiltForMode: mode, DebugMCPTools: mountedNames, Close: func() error { return nil },
+			ProviderID: providerID, ModelID: model, BuiltForMode: mode, RuntimeRevision: runtimeRevision, DebugMCPTools: mountedNames, Close: func() error { return nil },
 		}, nil
 	}
 }
@@ -3050,7 +3083,9 @@ func sessionEngineFactoryWithTools(
 	assets catalogAssets,
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.SessionEngineWithToolsFactory {
-	return func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (server.SessionEngineResult, error) {
+	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (server.SessionEngineResult, error) {
+		runtimeAssets := mcpCatalogAssets(ctx, assets)
+		runtimeRevision := mcpRuntimeRevision(ctx)
 		// Pin the CHILD permission resolver to THIS session's base root (issue
 		// #32): a per-session engine's subagents/members/branches must resolve
 		// project permission rules from the SESSION's pre-fork root — the
@@ -3212,9 +3247,9 @@ func sessionEngineFactoryWithTools(
 		// Caller-scoped lazy hydration: rebuild this authenticated session's global
 		// and admitted project generations from durable state before binding the
 		// Skill tool. A failed authoritative read clears only these partitions.
-		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, assets, workspace)
+		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, runtimeAssets, workspace)
 
-		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
+		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
 			provider:        resolvedProvider,
 			providerID:      resolvedProviderID,
 			model:           resolvedModel,
@@ -3235,18 +3270,18 @@ func sessionEngineFactoryWithTools(
 		learningCfg.Workspace = workspace
 		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
-		learningCfg.attemptRepository = assets.attemptRepository
-		learningCfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
+		learningCfg.attemptRepository = runtimeAssets.attemptRepository
+		learningCfg.automaticAdmissionLedger = runtimeAssets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
-		attachOperatorProfile(&deps, assets.userModelStore)
+		attachOperatorProfile(&deps, runtimeAssets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
-		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmissionGate, buildProcedureProcessor(learningCfg, assets)), assets.reflectionLifecycle)
+		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, runtimeAssets.userModelStore, runtimeAssets.memStore, runtimeAssets.reflectionRepository, runtimeAssets.reflectionCoordinator, runtimeAssets.learningAdmissionGate, buildProcedureProcessor(learningCfg, runtimeAssets)), runtimeAssets.reflectionLifecycle)
 		deps.Catalog = cat
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
 		// schedule-capable store) is the byte-identical no-delivery path.
-		deps.DeliveryQueue = assets.deliveryQueue
+		deps.DeliveryQueue = runtimeAssets.deliveryQueue
 		// MODEL-VISIBLE plan-approval contract (issue #206): the gate only fires
 		// when the model CALLS PresentPlan, and nothing else tells it to — an
 		// uninstructed model treats an inline "acceptable" as approval and keeps
@@ -3262,7 +3297,7 @@ func sessionEngineFactoryWithTools(
 		// (the StablePrefix layer). A session whose store backs no ScheduleStore
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
-		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(runtimeAssets))
 		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
 		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
@@ -3330,7 +3365,8 @@ func sessionEngineFactoryWithTools(
 			// Echo the mode this engine resolved its model for (ADR 0030 Layer 3), so the
 			// Service stamps sessionEngine.builtForMode from this one source and detects a
 			// later mode→model staleness — the SAME single-source discipline as the ids.
-			BuiltForMode: mode,
+			BuiltForMode:    mode,
+			RuntimeRevision: runtimeRevision,
 			// The client MCP servers that actually connected (nil when none were
 			// requested). The factory REPORTS; the Service decides whether a partial
 			// mount is acceptable, because its two callers disagree — see the
@@ -3340,6 +3376,7 @@ func sessionEngineFactoryWithTools(
 			Close:                 closeFn,
 		}, nil
 	}
+	return pinMCPRuntimeFactory(assets, build)
 }
 
 // catalogContextWindow returns the embedded models.dev catalog's total context
@@ -5420,7 +5457,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	// buildSubagentTool can (a) pull a REFERENCED main server's tools out of this manager
 	// and (b) connect their own INLINE servers. mainMgr is nil when no main servers are
 	// configured (reference entries then resolve to a clear "unknown server" diagnostic).
-	mainMgr, mcpProvider, mcpInventory, mcpClose := connectMCP(ctx, cfg)
+	mainMgr, mcpProvider, mcpInventory, mcpRuntimes, mcpClose := connectMCP(ctx, cfg)
 
 	// Per-project memory store: opt-in via MemoryStoreURL (a remote gRPC driver;
 	// Phase B) or MemoryDir (the flocked reference adapter, opened ONCE here —
@@ -5643,6 +5680,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 
 	assets := catalogAssets{
 		globalMgr:        mainMgr,
+		mcpRuntimes:      mcpRuntimes,
 		agentReg:         agentReg,
 		memStore:         memStore,
 		userModelStore:   userModelStore,
@@ -5784,26 +5822,29 @@ func mcpSourceProber(cfg Config) func(ctx context.Context) []mcpsource.SourceInf
 // the concrete *mcp.Manager (nil when no servers connect) so the per-agent-def
 // wiring can pull a REFERENCED main server's tools out of it; the same value is
 // the mcp.Provider used for resources/prompts.
-func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, func()) {
+func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, *mcpRuntimeSet, func()) {
 	opts := mcpResolveOptions(cfg)
 	if len(opts.StaticServers) == 0 && !opts.ToolHiveEnabled {
 		_, inventory, _ := mcpsource.Resolve(ctx, mcpsource.ResolveSources(opts))
 		cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)", "toolhive", false, "static", 0)
-		return nil, nil, inventory, func() {}
+		return nil, nil, inventory, nil, func() {}
 	}
+	runtimes := newMCPRuntimeSet(nil)
 	reconciler := newMCPSourceReconciler(mcpReconcilerOptions{
 		sources:  mcpsource.ResolveSources(opts),
 		toolHive: opts.ToolHiveEnabled,
 		build:    buildMCPReconcileCandidate(cfg),
-		// Task 03 replaces this bridge with immutable runtime publication and
-		// retirement. Until then, changed candidates are safely discarded rather
-		// than closing the manager already borrowed by assembled catalogs.
-		publish: func(old, _ *mcpReconcileCandidate) bool { return old == nil },
+		publish:  runtimes.publish,
 	})
+	runtimes.setRetry(reconciler.invalidate)
 	result, err := reconciler.Reconcile(ctx)
 	for _, diagnostic := range result.diagnostics {
 		cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", diagnostic)
 	}
+	closeRuntime := sync.OnceFunc(func() {
+		reconciler.Close()
+		runtimes.close()
+	})
 	if err != nil || result.candidate == nil || len(result.candidate.configs) == 0 {
 		if err != nil {
 			logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, err)
@@ -5812,11 +5853,11 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 			cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)",
 				"toolhive", cfg.ToolHiveEnabled, "static", len(cfg.MCPServers))
 		}
-		return nil, nil, result.inventory, reconciler.Close
+		return nil, runtimes, result.inventory, runtimes, closeRuntime
 	}
 	mgr := result.candidate.manager
 	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(result.candidate.configs), "tools", len(mgr.Tools()))
-	return mgr, mgr, result.inventory, reconciler.Close
+	return mgr, runtimes, result.inventory, runtimes, closeRuntime
 }
 
 func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, err error) {

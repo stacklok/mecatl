@@ -147,3 +147,23 @@ func mintRootAuthority(catalog *tool.Catalog, resources []string, kind session.S
 		DefinitionIdentity: rootAuthorityDefinition,
 	}
 }
+
+func mintRuntimeRootAuthority(catalog *tool.Catalog, runtimes *mcpRuntimeSet, kind session.SessionKind) session.Authority {
+	if runtimes == nil || kind == session.SessionKindDebug {
+		return mintRootAuthority(catalog, nil, kind)
+	}
+	authority := mintRootAuthority(catalog, nil, kind)
+	names := authority.CapabilitySet.Tools[:0]
+	for _, name := range authority.CapabilitySet.Tools {
+		if strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, "mcp_resource__") {
+			continue
+		}
+		names = append(names, name)
+	}
+	names = append(names, runtimes.currentToolNames()...)
+	for _, server := range runtimes.currentResourceServers() {
+		names = append(names, governance.MCPResourceCapability(server))
+	}
+	authority.CapabilitySet.Tools = names
+	return authority
+}

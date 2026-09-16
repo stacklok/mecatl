@@ -5998,7 +5998,7 @@ without affinity or a durable-broker decision. Guards include `internal/adapter/
 `internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
 `internal/adapter/mcpbroker/toolhive_process_test.go`.
 
-**Ordered direct MCP source reconciliation (ADR 0345, Task 02):**
+**Ordered direct MCP source reconciliation and runtime publication (ADR 0345):**
 `internal/app/mcp_reconciler.go` (`mcpSourceReconciler`) is the one Build-owned,
 serialized/coalesced path for initial resolution, manual requests, current-server
 list-change notifications, and ToolHive-only bounded jittered polling. It consults
@@ -6011,12 +6011,21 @@ candidate generations are ignored. `internal/adapter/mcp/mcp.go`
 (`NewCompleteManager`) connects and lists all desired servers all-or-nothing,
 using one candidate-wide page/byte/cardinality budget and no OAuth presenter.
 Candidate equality covers source/server configuration and bounded tool,
-resource, and prompt metadata. Build shutdown rejects new waits, cancels and
-joins the worker, then closes its current candidate. Caller cancellation only
-abandons that caller's wait. The current `connectMCP` publication bridge accepts
-the initial candidate and safely closes/discards later changed candidates while
-retaining the manager borrowed by existing catalogs; immutable runtime
-publication, revision pins, and retirement replace that bridge in Task 03.
+resource, and prompt metadata. `internal/app/mcp_runtime.go` (`mcpRuntimeSet`)
+atomically publishes the complete candidate as one manager/provider/catalog
+contribution. Root runs pin it in `server.Service.beginRunAdmission`; the pin
+context reaches prompt expansion and every Subagent/Parallel/Team/named/reference
+factory built by the one `assembleCatalog` path. Out-of-run resource and prompt
+provider calls take one call-scoped pin. Shared and cached default, selector,
+no-FS, client-MCP, mode, specialist, and debug engines carry only a revision tag;
+`server.Service.engineAndEnvironmentFor` rebuilds a mismatch before use, so idle
+engine caches never lease a manager and their close functions never own one.
+Displaced runtimes close after pins drain. A full bounded retirement set closes
+and discards the unpublishable candidate without force-closing live work, marks
+the cycle stale, and remembers one retry that fires when a retirement drains.
+Build shutdown first drains Service operations, then rejects new reconciler waits,
+cancels and joins the worker, and closes all remaining runtime managers. Caller
+cancellation only abandons that caller's reconciliation wait.
 
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the

@@ -53,12 +53,24 @@ type mcpReconcileCandidate struct {
 	generation uint64
 	pages      int
 	bytes      int
+	closeOnce  sync.Once
+	closed     atomic.Bool
 }
 
 func (c *mcpReconcileCandidate) close() {
-	if c != nil && c.manager != nil {
-		_ = c.manager.Close()
+	if c == nil {
+		return
 	}
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		if c.manager != nil {
+			_ = c.manager.Close()
+		}
+	})
+}
+
+func (c *mcpReconcileCandidate) isClosed() bool {
+	return c != nil && c.closed.Load()
 }
 
 type mcpReconcileResult struct {
@@ -265,13 +277,20 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 
 	r.mu.Lock()
 	old := r.current
+	r.mu.Unlock()
 	if equalMCPCandidate(old, candidate) {
-		r.mu.Unlock()
 		candidate.close()
 		result.candidate = old
 		return result, nil
 	}
+	r.mu.Lock()
+	r.current = candidate
+	r.mu.Unlock()
 	if r.publish != nil && !r.publish(old, candidate) {
+		r.mu.Lock()
+		if r.current == candidate {
+			r.current = old
+		}
 		r.mu.Unlock()
 		candidate.close()
 		result.candidate = old
@@ -279,9 +298,9 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		result.diagnostics = appendBoundedDiagnostic(result.diagnostics, "MCP runtime publication is pending integration")
 		return result, nil
 	}
-	r.current = candidate
-	r.mu.Unlock()
-	if old != nil {
+	// A publication hook owns displaced-runtime retirement. Without one, preserve
+	// the reconciler's original immediate-close behavior for unit embeddings.
+	if old != nil && r.publish == nil {
 		old.close()
 	}
 	result.candidate = candidate
