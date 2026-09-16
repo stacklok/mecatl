@@ -454,6 +454,40 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 			if stored.State == oauthDCRStatePending {
 				return OAuthOptions{}, "", dcrRecovery(recoveryCategoryForPersistedDCRFailure(stored.FailureCategory))
 			}
+			if stored.State == oauthDCRStateRemoved {
+				// A valid removed tombstone permits a fresh pending generation and a
+				// new upstream registration — this is NOT a corrupt/recovery state.
+				pending, pendingErr := newOAuthDCRPending(identity, meta, oauthDCRRecord{}, "")
+				if pendingErr != nil {
+					return OAuthOptions{}, "", pendingErr
+				}
+				value, encodeErr := encodeOAuthDCRRecord(pending, identity)
+				if encodeErr != nil {
+					return OAuthOptions{}, "", encodeErr
+				}
+				updated, putErr := opts.CredentialStore.Put(ctx, key, value, &record.Version)
+				if errors.Is(putErr, credentialstore.ErrConflict) {
+					winner, winnerErr := opts.CredentialStore.Get(ctx, key)
+					if winnerErr != nil {
+						return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+					}
+					winnerStored, decodeErr := decodeOAuthDCRRecord(winner.Value, identity)
+					if decodeErr != nil {
+						return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+					}
+					winnerMeta := meta
+					winnerMeta.RedirectPath = winnerStored.Metadata.RedirectPath
+					if winnerStored.State == oauthDCRStateReady && winnerStored.MetadataFingerprint == fingerprintDCRMetadata(winnerMeta) && equalDCRMetadata(winnerStored.Metadata, winnerMeta) {
+						return withResolvedDCR(opts, winnerStored), winnerStored.Metadata.RedirectPath, nil
+					}
+					return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+				}
+				if putErr != nil {
+					return OAuthOptions{}, "", ErrOAuthDCRRecoveryRequired
+				}
+				opts.dcrTicket = &oauthDCRTicket{key: append([]byte(nil), key...), version: updated.Version, record: pending, registrationEndpoint: endpoint}
+				return opts, pending.Metadata.RedirectPath, nil
+			}
 			if stored.State != oauthDCRStateReady || stored.MetadataFingerprint != fingerprintDCRMetadata(meta) || !equalDCRMetadata(stored.Metadata, meta) {
 				return OAuthOptions{}, "", dcrRecovery(OAuthDCRRecoveryCorrupt)
 			}

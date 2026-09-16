@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/url"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
@@ -101,3 +103,80 @@ func TestRemoveOAuthDCRBlocksReadOnlyStore(t *testing.T) {
 		t.Fatalf("read-only remove = %v, want recovery required", err)
 	}
 }
+
+// TestPrepareOAuthDCRLoginAfterRemovalRegistersFreshClient pins AC6.4: a valid
+// removed tombstone must permit a later "add" to start a fresh pending
+// generation and perform a genuinely new upstream registration — it must NOT
+// be classified as corrupt/recovery-required the way every other non-ready,
+// non-pending state is.
+func TestPrepareOAuthDCRLoginAfterRemovalRegistersFreshClient(t *testing.T) {
+	fixture := newDCRMetadataFixture(t)
+	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
+	opts := fixture.options(t, store)
+	opts.CredentialStore = removalStore{store}
+	opts.Presenter = OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		u, _ := url.Parse(raw)
+		return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+	})
+
+	bootstrap := func() oauthDCRRecord {
+		prepared, path, err := PrepareOAuthDCRLogin(context.Background(), resource, opts, OAuthDCRLoginReuse)
+		if err != nil {
+			t.Fatalf("PrepareOAuthDCRLogin: %v (category=%v)", err, OAuthDCRRecoveryCategoryOf(err))
+		}
+		prepared.RedirectURL = "http://127.0.0.1:49152" + path
+		controller, err := NewOAuthController(context.Background(), resource, prepared)
+		if err != nil {
+			t.Fatalf("NewOAuthController: %v", err)
+		}
+		req, resp := dcrChallenge(t, resource)
+		if err := controller.Authorize(context.Background(), req, resp); err != nil {
+			t.Fatalf("Authorize: %v", err)
+		}
+		if err := controller.Close(); err != nil {
+			t.Fatal(err)
+		}
+		key, err := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record, err := store.Get(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, err := decodeOAuthDCRRecordRaw(record.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ready.State != oauthDCRStateReady {
+			t.Fatalf("bootstrap did not reach ready: %#v", ready)
+		}
+		return ready
+	}
+
+	firstReady := bootstrap()
+	if fixture.registerCount != 1 {
+		t.Fatalf("registerCount after first bootstrap = %d, want 1", fixture.registerCount)
+	}
+
+	if result, err := RemoveOAuthDCR(context.Background(), resource, opts); err != nil || !result.LifecycleFound {
+		t.Fatalf("remove = %#v, %v", result, err)
+	}
+
+	// The bug this pins: before the fix, reusing a removed profile was
+	// classified OAuthDCRRecoveryCorrupt instead of starting a fresh pending
+	// generation. bootstrap() itself calls PrepareOAuthDCRLogin(Reuse) and
+	// fails the test if it errors, then drives the fresh registration all
+	// the way to ready.
+	secondReady := bootstrap()
+	if fixture.registerCount != 2 {
+		t.Fatalf("registerCount after re-add = %d, want 2 (a genuinely new upstream registration)", fixture.registerCount)
+	}
+	if secondReady.Generation == firstReady.Generation {
+		t.Fatal("re-add after removal reused the old generation instead of registering fresh")
+	}
+	if secondReady.Registration.ClientID == "" || secondReady.Registration.ClientID != fixture.clientID {
+		t.Fatalf("re-add client id = %q, want the fixture's registered client %q", secondReady.Registration.ClientID, fixture.clientID)
+	}
+}
+
