@@ -84,6 +84,30 @@ recent 10 MiB tail, with the replacement and containing directory synced before
 append. Unsafe paths and failures before replacement preserve the prior log and
 use `io.Discard`, so diagnostics cannot corrupt the terminal.
 
+### Terminal titles
+
+Mecatui also owns the terminal title through the renderer's serialized output
+path. The client renders a plain-text title from the same display-safe status
+input used by status templates and emits OSC 0 only when that title changes. A
+clean exit clears the title after a non-empty title was emitted. The shipped
+default uses the session title and activity state, falls back to `mecatui`, and
+leaves the session handle out unless a custom template includes
+`.Session.Handle`.
+
+The user-global client settings file is
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`. Its strict `terminal_title` section
+contains `enabled` and `template`; it is independent of `status_customization`,
+and command-backed status output cannot influence it. The shared `elide`
+function is width-aware, while title output remains plain text rather than
+StatusML. The client removes terminal controls, normalizes whitespace, and
+bounds the result before OSC 0 construction.
+
+`--terminal-title=off` and `MECATUI_NO_TERMINAL_TITLE=1` disable title writes.
+An explicit `--terminal-title=on` overrides settings disablement. Otherwise the
+settings `enabled` value applies. Terminals and multiplexers decide whether to
+present OSC 0, so the client cannot guarantee a tab or pane label. The complete
+settings schema and precedence are in [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md#customize-the-terminal-title).
+
 ## Build
 
 ```sh
