@@ -275,8 +275,8 @@ func TestOperatorDefinedLLMProviders_Scenario4_ListingFallback(t *testing.T) {
 			if row.GetProviderId() != definition.ID || row.GetState() != tc.wantState {
 				t.Errorf("provider_status row = %+v, want provider=%q state=%q", row, definition.ID, tc.wantState)
 			}
-			if row.GetHint() != "" || row.GetAvailableNotDefault() || row.GetDefaultModelAutoSelected() || row.GetModelCount() != 0 {
-				t.Errorf("custom provider status = %+v, want only its safe failure state", row)
+			if row.GetHint() != customProviderStatusHints[tc.wantState] || row.GetAvailableNotDefault() || row.GetDefaultModelAutoSelected() || row.GetModelCount() != 0 {
+				t.Errorf("custom provider status = %+v, want the generic custom-provider hint and no other data", row)
 			}
 			assertProtoHides(t, row, server.URL, sensitiveBody, cfg.CustomProviderAPIKeys[definition.ID])
 		})
@@ -304,8 +304,8 @@ func TestOperatorDefinedLLMProviders_EmptyListingPreservesFloorAndStatus(t *test
 		t.Fatalf("empty listing inventory = %v, want configured floor %q", models, definition.DefaultModel)
 	}
 	rows := providerStatusProto(reg)
-	if len(rows) != 1 || rows[0].GetProviderId() != definition.ID || rows[0].GetState() != statusEmpty || rows[0].GetHint() != "" {
-		t.Fatalf("provider_status = %+v, want one safe custom empty row", rows)
+	if len(rows) != 1 || rows[0].GetProviderId() != definition.ID || rows[0].GetState() != statusEmpty || rows[0].GetHint() != customProviderStatusHints[statusEmpty] {
+		t.Fatalf("provider_status = %+v, want one safe custom empty row with the generic hint", rows)
 	}
 	assertProtoHides(t, rows[0], server.URL, sensitiveBody, cfg.CustomProviderAPIKeys[definition.ID])
 }

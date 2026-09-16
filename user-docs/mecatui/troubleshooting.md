@@ -83,6 +83,14 @@ context window, configure the exact value under
 discovery. See
 [Choose models and providers](/features/choose-models.md#configure-a-custom-provider).
 
+Chat can fail with `context window unavailable` even when the same credential
+works for chat completions: a custom provider's context window is learned by
+fetching its live model list, and some OpenAI-compatible gateways authorize or
+implement that listing endpoint differently from the completion endpoint.
+Check the server's startup log for `live model fetch failed` and its reported
+state, and confirm the credential against the listing endpoint directly, for
+example `curl -H "Authorization: Bearer <key>" <base_url>/models`.
+
 ### Recover OIDC credentials
 
 `credential_store.oidc` is shared OIDC credential custody. With an environment

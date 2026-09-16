@@ -1046,7 +1046,7 @@ func awaitContextWindowWithin(ctx context.Context, d port.Diagnostics, reg *prov
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return fmt.Errorf("%w: context window discovery for provider %q model %q did not settle; restore model discovery or configure an exact models.context_windows override, then retry", server.ErrContextWindowUnavailable, providerID, modelID)
+			return fmt.Errorf("%w: context window discovery for provider %q model %q did not settle; restore model discovery or set an exact override (e.g. models.context_windows.%s.%s: 128000) in your settings, then retry", server.ErrContextWindowUnavailable, providerID, modelID, providerID, modelID)
 		}
 	}
 	if _, known := reg.resolveWindowCore(Config{ContextWindowOverride: reg.contextWindowOverride, contextWindows: reg.contextWindows}, providerID, modelID); known {
@@ -1073,5 +1073,5 @@ func awaitContextWindowWithin(ctx context.Context, d port.Diagnostics, reg *prov
 }
 
 func contextWindowUnavailable(providerID, modelID string) error {
-	return fmt.Errorf("%w: context window discovery unavailable for provider %q model %q; restore model discovery or configure an exact models.context_windows override, then retry", server.ErrContextWindowUnavailable, providerID, modelID)
+	return fmt.Errorf("%w: context window discovery unavailable for provider %q model %q; restore model discovery or set an exact override (e.g. models.context_windows.%s.%s: 128000) in your settings, then retry", server.ErrContextWindowUnavailable, providerID, modelID, providerID, modelID)
 }

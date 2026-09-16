@@ -1823,22 +1823,48 @@ var openAICodexStatusHints = map[string]string{
 	statusEmpty:        "the ChatGPT account lists no selectable Codex models; replace the manual token or check the subscription",
 }
 
-// statusHintFor returns provider-specific remediation for ToolHive and Codex.
-// It consumes the whole entry so ToolHive routing mode is structural data, not
-// something callers infer from the resulting prose. Custom-provider listing
-// failures are also projected through provider_status, but deliberately receive
-// no endpoint-specific hint. Ordinary provider outages (for example OpenRouter)
-// get "". Keep each vendor's copy in its own table so gateway and manual-token
+// customProviderStatusHints is deliberately GENERIC — mecatl knows nothing
+// vendor-specific about an operator-defined custom provider's gateway, so
+// unlike the ToolHive/Codex tables above this names no specific remedy
+// command. It exists because a custom provider's live-listing failure is the
+// one case where the operator's own credential can be entirely correct (it
+// works for inference) while listing still 401s: many OpenAI-compatible
+// gateways authorize or even implement the listing endpoint differently from
+// the completion endpoint. The hint names that possibility plus the concrete
+// escape hatch (models.context_windows) rather than leaving the operator with
+// only the bare state string.
+var customProviderStatusHints = map[string]string{
+	statusUnreachable:  "could not reach this provider's model-listing endpoint; check the base URL, or set an exact models.context_windows override if listing is not supported",
+	statusUnauthorized: "this provider rejected the API key for model listing (it may still be valid for inference — some gateways authorize listing separately); verify the key or set an exact models.context_windows override",
+	statusEmpty:        "this provider's model-listing endpoint returned no models; set an exact models.context_windows override if listing is not expected to work",
+}
+
+// statusHintFor returns provider-specific remediation for ToolHive, Codex, and
+// operator-defined custom providers (entry.defaultModel != "" — see
+// providerEntry.defaultModel). It consumes the whole entry so ToolHive routing
+// mode is structural data, not something callers infer from the resulting
+// prose. Ordinary built-in provider outages (for example OpenRouter) get "".
+// Keep each vendor's copy in its own table so gateway and manual-token
 // remedies cannot cross-contaminate.
+//
+// Case order matters: the ToolHive/Codex identity cases MUST stay ahead of the
+// entry.defaultModel != "" case. That is safe today only because no ToolHive
+// or Codex construction path (newToolhiveEntry* / the Codex entry builder)
+// ever sets providerEntry.defaultModel — it is populated solely by
+// newNativeProviderEntry/newCustomProviderEntry. If a future change ever set
+// defaultModel on a built-in entry, it would silently fall through to the
+// generic custom-provider hint instead of its vendor-specific one.
 func statusHintFor(entry providerEntry, state string) string {
-	switch entry.id {
-	case providerToolhive, providerToolhiveAnthropic:
+	switch {
+	case entry.id == providerToolhive || entry.id == providerToolhiveAnthropic:
 		if entry.toolhiveMode == toolhiveModeDirect {
 			return toolhiveDirectStatusHints[state]
 		}
 		return toolhiveStatusHints[state]
-	case providerOpenAICodex:
+	case entry.id == providerOpenAICodex:
 		return openAICodexStatusHints[state]
+	case entry.defaultModel != "":
+		return customProviderStatusHints[state]
 	default:
 		return ""
 	}

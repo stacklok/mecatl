@@ -1101,6 +1101,17 @@ func TestRefreshStaleModelsConcurrentWithBackgroundRefresh(t *testing.T) {
 	}
 }
 
+func TestContextWindowUnavailableNamesConcreteOverrideExample(t *testing.T) {
+	err := contextWindowUnavailable("my-gateway", "my-model")
+	if !errors.Is(err, server.ErrContextWindowUnavailable) {
+		t.Fatalf("err = %v, want ErrContextWindowUnavailable", err)
+	}
+	const want = "models.context_windows.my-gateway.my-model: 128000"
+	if got := err.Error(); !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want it to contain concrete override example %q", got, want)
+	}
+}
+
 func TestAwaitContextWindowRejectsCatalogFallbackAfterEmptyListingAndRecovers(t *testing.T) {
 	const selected = "openai/uncatalogued-selected"
 	lister := &fakeLister{}
