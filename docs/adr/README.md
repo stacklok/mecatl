@@ -197,8 +197,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
-- [0057 — MCP server notifications](./0057-mcp-server-notifications.md) *(deferred “no live catalog mutation” decision proposed to be superseded by 0345; notification transport, bounded lazy-list, reconnect, and teardown decisions retained)*
-- [0345 — Reconcile stale direct MCP source snapshots](./0345-mcp-source-reconciliation.md) *(proposed; preserves exact-name authority and supersedes 0057 only for its deferred “no live catalog mutation” decision)*
+- [0057 — MCP server notifications](./0057-mcp-server-notifications.md) *(deferred “no live catalog mutation” decision proposed to be superseded by 0346; notification transport, bounded lazy-list, reconnect, and teardown decisions retained)*
+- [0346 — Reconcile stale direct MCP source snapshots](./0346-mcp-source-reconciliation.md) *(proposed; preserves exact-name authority and supersedes 0057 only for its deferred “no live catalog mutation” decision)*
 - [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
 - [0078 — MCP typed tool results](./0078-mcp-typed-tool-results.md)
 - [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)
