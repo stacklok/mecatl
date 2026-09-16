@@ -1,0 +1,16 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "restart-control-write",
+          "name": "Write",
+          "args": {
+            "path": "restart-control-approved.txt",
+            "content": "approved by detached controls\n"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -11,6 +11,8 @@ sidebar_position: 6
 Use `session.attach()` to replay and follow one run. Use `session.activity()`
 for the ordered cross-run session timeline, including schedule activity. Both
 views expose a serializable cursor for application-owned checkpoint storage.
+Watching and controlling are independent. A stored session ID and run ID are
+enough to create controls without opening a durable view.
 
 ## Follow a session timeline
 
@@ -69,8 +71,35 @@ run. Use an explicit run ID with `from: "now"` because a live-only view has no
 replay from which to select a run.
 
 An attached run ends after its terminal result. `attached.cancel()` cancels the
-exact run. Approval and steer controls on a durable attachment report a typed
-unsupported-feature error; use a live `Run` handle for those controls.
+exact run through its established transport-specific path. Approval and steer
+methods on a durable attachment return a typed unsupported-feature error and
+direct the application to `session.controls(attached.runId)`.
+
+## Control a stored run without watching
+
+Persist the run ID alongside the activity cursor. A replacement process can
+load a fresh session handle and address that exact run:
+
+```ts
+const session = await client.sessions.get(storedSessionId);
+const controls = session.controls(storedRunId);
+
+const acknowledgement = await controls.steer('Focus on the failing test', {
+  messageId: crypto.randomUUID(),
+});
+console.log(acknowledgement.runId, acknowledgement.messageId);
+```
+
+Creating `controls` does not open, resume, or retain an attachment. Each method
+makes one unary request, so watching the run does not affect control authority.
+The server applies the operation only when `storedRunId` is still the exact
+eligible run.
+
+A transport failure, caller cancellation, or deadline can happen after the
+server accepts a control but before the acknowledgement reaches the
+application. Reconcile that ambiguous case from the authoritative session
+snapshot and durable activity before retrying. Approval, steer, retraction, and
+terminal events provide the durable observation path.
 
 ## Include log-only events
 
@@ -92,12 +121,12 @@ Transient classified read failures reconnect with bounded backoff. This includes
 full, and `watch_lagging`, which means the client did not consume the server's
 bounded delivery buffer quickly enough. Both reconnect from the last processed
 cursor with the same filter. The SDK does not retry prompts, approvals,
-mutations, or owned runs automatically.
+controls, mutations, or owned runs automatically.
 
 ## Next steps
 
-- [Handle permissions and plans](./permissions-and-plans.md) for the live-run
-  controls that durable attachments do not expose.
+- [Handle permissions and plans](./permissions-and-plans.md) to resolve ordinary
+  asks on an exact run and keep plan resolution separate.
 - [Session continuity](/features/session-continuity.md) for the server-side
   persistence model.
 

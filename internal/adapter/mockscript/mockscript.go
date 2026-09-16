@@ -23,7 +23,13 @@ const (
 )
 
 type document struct {
-	Turns []turn `json:"turns"`
+	Capabilities capabilities `json:"capabilities,omitempty"`
+	Turns        []turn       `json:"turns"`
+}
+
+type capabilities struct {
+	Audio bool `json:"audio,omitempty"`
+	Image bool `json:"image,omitempty"`
 }
 
 type turn struct {
@@ -79,7 +85,11 @@ func Load(path string) (port.LLMProvider, error) {
 		delays = append(delays, delay)
 	}
 
-	return &delayedProvider{inner: mockllm.New(turns...), delays: delays}, nil
+	inner := mockllm.NewWith([]mockllm.Option{mockllm.WithCapabilities(port.ProviderCapabilities{
+		Audio: doc.Capabilities.Audio,
+		Image: doc.Capabilities.Image,
+	})}, turns...)
+	return &delayedProvider{inner: inner, delays: delays}, nil
 }
 
 func ensureJSONEOF(dec *json.Decoder) error {

@@ -116,8 +116,12 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
 | [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
 | [`Run`](#api-run-interface) | Interface |
+| [`RunControls`](#api-runcontrols-interface) | Interface |
 | [`RunOptions`](#api-runoptions-interface) | Interface |
 | [`RunResult`](#api-runresult-interface) | Interface |
+| [`RunSteerAcknowledgement`](#api-runsteeracknowledgement-interface) | Interface |
+| [`RunSteerCancellationAcknowledgement`](#api-runsteercancellationacknowledgement-interface) | Interface |
+| [`RunSteerOptions`](#api-runsteeroptions-interface) | Interface |
 | [`ScheduleEventPayload`](#api-scheduleeventpayload-interface) | Interface |
 | [`Schedules`](#api-schedules-interface) | Interface |
 | [`SdkCursor`](#api-sdkcursor-typealias) | Type alias |
@@ -3205,6 +3209,93 @@ Parameters:
 
 Returns: `Promise<void>`: A promise that resolves after the steering request is sent.
 
+<Heading as="h3" id="api-runcontrols-interface"><code>RunControls</code></Heading>
+
+Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Every method requires the server's `prompt_free_controls` feature, addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
+
+```ts
+export interface RunControls
+```
+
+Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
+
+<Heading as="h4" id="api-runcontrols-cancel-methodsignature"><code>RunControls.cancel</code></Heading>
+
+Requests cancellation of this exact live run.
+
+```ts
+cancel(requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+<Heading as="h4" id="api-runcontrols-cancelsteer-methodsignature"><code>RunControls.cancelSteer</code></Heading>
+
+Retracts this exact live run's pending steer bundle.
+
+```ts
+cancelSteer(options?: RunSteerOptions, requestOptions?: RequestOptions): Promise<RunSteerCancellationAcknowledgement>;
+```
+
+Parameters:
+
+- `options` (`RunSteerOptions`, optional): Optional message correlation for this retraction request.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<RunSteerCancellationAcknowledgement>`: Whether the server retracted a bundle or found none pending.
+
+<Heading as="h4" id="api-runcontrols-resolveask-methodsignature"><code>RunControls.resolveAsk</code></Heading>
+
+Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `Session.resolvePlan()` and fail with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`.
+
+```ts
+resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): Exact permission ask ID.
+- `verdict` (`PermissionVerdict`): Ordinary permission verdict to apply.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+<Heading as="h4" id="api-runcontrols-runid-propertysignature"><code>RunControls.runId</code></Heading>
+
+Exact durable run addressed by every operation.
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h4" id="api-runcontrols-sessionid-propertysignature"><code>RunControls.sessionId</code></Heading>
+
+Session that owns the addressed run.
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h4" id="api-runcontrols-steer-methodsignature"><code>RunControls.steer</code></Heading>
+
+Injects text or ordered media into this exact live run. Structured prompt text fragments are joined with a newline, and media parts retain their order relative to other media. An empty prompt is rejected locally. A late steer fails as stale and never creates a successor run.
+
+```ts
+steer(prompt: PromptInput, options?: RunSteerOptions, requestOptions?: RequestOptions): Promise<RunSteerAcknowledgement>;
+```
+
+Parameters:
+
+- `prompt` (`PromptInput`): Text, image, audio, or a structured prompt to inject.
+- `options` (`RunSteerOptions`, optional): Optional message correlation.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<RunSteerAcknowledgement>`: The server's accepted-or-appended acknowledgement.
+
 <Heading as="h3" id="api-runoptions-interface"><code>RunOptions</code></Heading>
 
 Options applied to one run.
@@ -3281,6 +3372,86 @@ readonly text: string;
 
 ```ts
 readonly usage: EventUsage | undefined;
+```
+
+<Heading as="h3" id="api-runsteeracknowledgement-interface"><code>RunSteerAcknowledgement</code></Heading>
+
+The authoritative acknowledgement for a strict steer request. `accepted` means the steer created a pending bundle. `appended` means the steer was merged into the bundle that was already pending. The run and message IDs echo the addressed run and the request correlation.
+
+```ts
+export interface RunSteerAcknowledgement
+```
+
+<Heading as="h4" id="api-runsteeracknowledgement-messageid-propertysignature"><code>RunSteerAcknowledgement.messageId</code></Heading>
+
+Request correlation ID, or an empty string when none was supplied.
+
+```ts
+readonly messageId: string;
+```
+
+<Heading as="h4" id="api-runsteeracknowledgement-outcome-propertysignature"><code>RunSteerAcknowledgement.outcome</code></Heading>
+
+Whether the steer created or joined the pending bundle.
+
+```ts
+readonly outcome: "accepted" | "appended";
+```
+
+<Heading as="h4" id="api-runsteeracknowledgement-runid-propertysignature"><code>RunSteerAcknowledgement.runId</code></Heading>
+
+Exact run ID addressed by the request.
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h3" id="api-runsteercancellationacknowledgement-interface"><code>RunSteerCancellationAcknowledgement</code></Heading>
+
+The authoritative acknowledgement for strict steer retraction. `retracted` means the pending bundle was removed. `none_pending` means the exact live run had no pending bundle at the transition point. The run and message IDs echo the addressed run and the request correlation.
+
+```ts
+export interface RunSteerCancellationAcknowledgement
+```
+
+<Heading as="h4" id="api-runsteercancellationacknowledgement-messageid-propertysignature"><code>RunSteerCancellationAcknowledgement.messageId</code></Heading>
+
+Request correlation ID, or an empty string when none was supplied.
+
+```ts
+readonly messageId: string;
+```
+
+<Heading as="h4" id="api-runsteercancellationacknowledgement-outcome-propertysignature"><code>RunSteerCancellationAcknowledgement.outcome</code></Heading>
+
+Whether a pending steer bundle was removed.
+
+```ts
+readonly outcome: "retracted" | "none_pending";
+```
+
+<Heading as="h4" id="api-runsteercancellationacknowledgement-runid-propertysignature"><code>RunSteerCancellationAcknowledgement.runId</code></Heading>
+
+Exact run ID addressed by the request.
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h3" id="api-runsteeroptions-interface"><code>RunSteerOptions</code></Heading>
+
+Optional application correlation for a strict steer or retraction request. The server accepts at most 64 Unicode code points and echoes the supplied ID in the operation's acknowledgement. Omission sends an empty correlation ID.
+
+```ts
+export interface RunSteerOptions
+```
+
+<Heading as="h4" id="api-runsteeroptions-messageid-propertysignature"><code>RunSteerOptions.messageId</code></Heading>
+
+Client-authored correlation ID echoed by the server.
+
+```ts
+messageId?: string;
 ```
 
 <Heading as="h3" id="api-scheduleeventpayload-interface"><code>ScheduleEventPayload</code></Heading>
@@ -3798,7 +3969,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -3877,6 +4048,20 @@ Parameters:
 - `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<boolean>`: Whether the server reduced the model-visible history.
+
+<Heading as="h4" id="api-session-controls-methodsignature"><code>Session.controls</code></Heading>
+
+Creates prompt-free controls bound to one exact run without opening a watch.
+
+```ts
+controls(runId: string): RunControls;
+```
+
+Parameters:
+
+- `runId` (`string`): Exact durable run ID to address.
+
+Returns: `RunControls`: A synchronous lightweight control resource.
 
 <Heading as="h4" id="api-session-delete-methodsignature"><code>Session.delete</code></Heading>
 
@@ -6318,7 +6503,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -6345,6 +6530,7 @@ Known server feature identifiers. Unknown identifiers remain observable.
 ServerFeature: {
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
+    readonly PromptFreeControls: "prompt_free_controls";
     readonly ServerInfo: "server_info";
     readonly SessionActivityInventory: "session_activity_inventory";
     readonly WatchSessionEvents: "watch_session_events";

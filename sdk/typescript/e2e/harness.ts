@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +31,7 @@ export interface DaemonOptions {
   durable?: boolean;
   http?: boolean;
   script?: string;
+  trustProject?: boolean;
   uds?: boolean;
 }
 
@@ -57,6 +58,7 @@ export async function withDaemon<T>(
   const readyFile = join(runtimeDirectory, "ready.json");
   const storeDirectory = join(runtimeDirectory, "store");
   const workspace = join(runtimeDirectory, "workspace");
+  const socketPath = join("/tmp", `${basename(runtimeDirectory)}.sock`);
   await Promise.all([mkdir(storeDirectory), mkdir(workspace)]);
   let effectiveOptions = { ...options };
   try {
@@ -66,6 +68,7 @@ export async function withDaemon<T>(
       storeDirectory,
       workspace,
       undefined,
+      socketPath,
     );
     const daemon: Daemon = {
       ready: running.ready,
@@ -87,6 +90,7 @@ export async function withDaemon<T>(
           storeDirectory,
           workspace,
           previousReady,
+          socketPath,
         );
         daemon.ready = running.ready;
       },
@@ -101,6 +105,7 @@ export async function withDaemon<T>(
       await stop(running.child);
     }
   } finally {
+    await rm(socketPath, { force: true });
     await rm(runtimeDirectory, { force: true, recursive: true });
   }
 }
@@ -111,6 +116,7 @@ async function startDaemon(
   storeDirectory: string,
   workspace: string,
   previousReady: ReadyDocument | undefined,
+  socketPath: string,
 ): Promise<RunningDaemon> {
   const args = [
     "serve",
@@ -129,11 +135,11 @@ async function startDaemon(
   if (options.durable === true) {
     args.push("--store-dir", storeDirectory);
   }
+  if (options.trustProject === true) {
+    args.push("--trust-project");
+  }
   if (options.uds === true) {
-    args.push(
-      "--grpc-unix-socket",
-      previousReady?.socket_path ?? join(dirname(readyFile), "mecated.sock"),
-    );
+    args.push("--grpc-unix-socket", previousReady?.socket_path ?? socketPath);
     args.push("--http-addr", "");
   } else {
     args.push("--grpc-addr", previousReady?.grpc_address ?? "127.0.0.1:0");

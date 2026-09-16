@@ -38,6 +38,29 @@ When a UI makes the decision after receiving a `permission.ask` event, call
 `run.resolveAsk(askId, verdict)`. The first accepted verdict wins. A duplicate
 or late response throws `PermissionAskAlreadyResolvedError`.
 
+When the application retained only the session, run, and ask IDs, load a fresh
+session handle and use prompt-free run controls:
+
+```ts
+const session = await client.sessions.get(storedSessionId);
+await session.controls(storedRunId).resolveAsk(
+  storedAskId,
+  'allow_once',
+  { timeoutMs: 10_000 }
+);
+```
+
+This path resolves an ordinary root or surfaced-child permission ask on that
+exact run. It can resume an ordinary ask from a persisted awaiting run after a
+daemon restart. An unknown or already resolved ask returns
+`ask_not_pending`. A plan-originated ask returns `plan_resolution_required` and
+remains pending for the plan workflow.
+
+The acknowledgement is one unary response. A transport failure, caller
+cancellation, or deadline after dispatch can reject the promise after the
+server accepts the verdict. Reconcile that ambiguous case from the session's
+durable activity before retrying.
+
 ## Resolve a plan during a live run
 
 Plan approval is separate from ordinary permission approval. Pass
@@ -58,6 +81,9 @@ The responder returns `approve`, `accept_edits`, `iterate`, or `undefined`.
 `query()` requires `onPlanApproval` before it creates resources when the new
 session uses plan mode. Set `session.mode` to `PermissionMode.PLAN` in the query
 options.
+
+`session.controls(runId).resolveAsk()` does not approve or deny plans. Use the
+live plan responder above or `session.resolvePlan()` for a parked plan.
 
 ## Continue a parked plan
 

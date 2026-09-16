@@ -1,0 +1,48 @@
+{
+  "capabilities": { "audio": true, "image": true },
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "root-write",
+          "name": "Write",
+          "args": { "path": "root-approved.txt", "content": "root approved\n" }
+        }
+      ]
+    },
+    { "delay_ms": 500, "text": "root approval completed" },
+    {
+      "tool_calls": [
+        {
+          "id": "delegate",
+          "name": "Subagent",
+          "args": { "prompt": "run the scripted shell check" }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "child-shell",
+          "name": "Shell",
+          "args": { "command": "cat $(mecatl_missing_child_command)" }
+        }
+      ]
+    },
+    { "text": "child continued after approval" },
+    { "text": "parent observed the child result" },
+    { "delay_ms": 2000, "text": "cancel should interrupt this turn" },
+    { "delay_ms": 2000, "text": "steer should remain pending until retracted" },
+    { "text": "addressed run ended" },
+    { "delay_ms": 2000, "text": "replacement remained active" },
+    {
+      "tool_calls": [
+        {
+          "id": "present-plan",
+          "name": "PresentPlan",
+          "args": { "plan": "one scripted step" }
+        }
+      ]
+    }
+  ]
+}

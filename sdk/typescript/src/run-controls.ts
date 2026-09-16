@@ -30,45 +30,126 @@ import { ServerFeature } from "./server.js";
 
 type SteerControlResponse = SteerRunResponse | CancelRunSteerResponse;
 
-/** Optional correlation for one strict steer operation. @public */
+/**
+ * Optional application correlation for a strict steer or retraction request.
+ *
+ * The server accepts at most 64 Unicode code points and echoes the supplied ID
+ * in the operation's acknowledgement. Omission sends an empty correlation ID.
+ *
+ * @public
+ */
 export interface RunSteerOptions {
-  /** Client-authored message ID echoed by the server. Omission sends an empty correlation. */
+  /** Client-authored correlation ID echoed by the server. */
   messageId?: string;
 }
 
-/** A narrowed acknowledgement for an accepted strict steer. @public */
+/**
+ * The authoritative acknowledgement for a strict steer request.
+ *
+ * `accepted` means the steer created a pending bundle. `appended` means the
+ * steer was merged into the bundle that was already pending. The run and
+ * message IDs echo the addressed run and the request correlation.
+ *
+ * @public
+ */
 export interface RunSteerAcknowledgement {
+  /** Whether the steer created or joined the pending bundle. */
   readonly outcome: "accepted" | "appended";
+  /** Exact run ID addressed by the request. */
   readonly runId: string;
+  /** Request correlation ID, or an empty string when none was supplied. */
   readonly messageId: string;
 }
 
-/** A narrowed acknowledgement for strict steer retraction. @public */
+/**
+ * The authoritative acknowledgement for strict steer retraction.
+ *
+ * `retracted` means the pending bundle was removed. `none_pending` means the
+ * exact live run had no pending bundle at the transition point. The run and
+ * message IDs echo the addressed run and the request correlation.
+ *
+ * @public
+ */
 export interface RunSteerCancellationAcknowledgement {
+  /** Whether a pending steer bundle was removed. */
   readonly outcome: "retracted" | "none_pending";
+  /** Exact run ID addressed by the request. */
   readonly runId: string;
+  /** Request correlation ID, or an empty string when none was supplied. */
   readonly messageId: string;
 }
 
-/** Prompt-free controls bound to one exact session run. @public */
+/**
+ * Prompt-free controls bound to one exact session run.
+ *
+ * Construct this resource with {@link Session.controls}. It does not attach,
+ * subscribe, or keep a run alive. Every method requires the server's
+ * `prompt_free_controls` feature, addresses `runId` exactly, performs one unary
+ * request without automatic retry, and accepts ordinary {@link RequestOptions}.
+ * A server that lacks the feature raises {@link UnsupportedFeatureError} before
+ * a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs
+ * fail with the server's typed `stale_run_control` error.
+ *
+ * A transport failure, caller cancellation, or deadline after dispatch can
+ * reject the promise after the server accepted the operation. Reconcile that
+ * ambiguous case from the authoritative session or activity state before
+ * deciding whether to retry.
+ *
+ * @public
+ */
 export interface RunControls {
+  /** Session that owns the addressed run. */
   readonly sessionId: string;
+  /** Exact durable run addressed by every operation. */
   readonly runId: string;
-  /** Resolves one ordinary permission ask on this exact run. */
+  /**
+   * Resolves one ordinary permission ask on this exact run.
+   *
+   * Root and surfaced-child permission asks are supported, including an
+   * ordinary ask restored from a persisted awaiting run. Plan-originated asks
+   * require `Session.resolvePlan()` and fail with `plan_resolution_required`.
+   * Unknown or already resolved asks fail with `ask_not_pending`.
+   *
+   * @param askId - Exact permission ask ID.
+   * @param verdict - Ordinary permission verdict to apply.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   */
   resolveAsk(
     askId: string,
     verdict: PermissionVerdict,
     requestOptions?: RequestOptions,
   ): Promise<void>;
-  /** Requests cancellation of this exact run. */
+  /**
+   * Requests cancellation of this exact live run.
+   *
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   */
   cancel(requestOptions?: RequestOptions): Promise<void>;
-  /** Injects text or ordered media into this exact live run. */
+  /**
+   * Injects text or ordered media into this exact live run.
+   *
+   * Structured prompt text fragments are joined with a newline, and media
+   * parts retain their order relative to other media. An empty prompt is
+   * rejected locally. A late steer fails as stale and never creates a successor
+   * run.
+   *
+   * @param prompt - Text, image, audio, or a structured prompt to inject.
+   * @param options - Optional message correlation.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns The server's accepted-or-appended acknowledgement.
+   */
   steer(
     prompt: PromptInput,
     options?: RunSteerOptions,
     requestOptions?: RequestOptions,
   ): Promise<RunSteerAcknowledgement>;
-  /** Retracts this exact run's pending steer bundle. */
+  /**
+   * Retracts this exact live run's pending steer bundle.
+   *
+   * @param options - Optional message correlation for this retraction request.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns Whether the server retracted a bundle or found none pending.
+   */
   cancelSteer(
     options?: RunSteerOptions,
     requestOptions?: RequestOptions,

@@ -8970,21 +8970,50 @@ reconnect scheduler keep consuming until their own caller/client abort or dispos
 
 Attached cancellation does not reuse `RunOperations.send`: that method is the synchronous push
 onto an owned Converse stream, while an attachment has no such stream and must await an HTTP
-response. `sdk/typescript/src/watch.ts` (`AttachmentOperations.cancelRun`) is the asynchronous
-`cancelRun(sessionId, runId): Promise<void>` seam. `sdk/typescript/src/client.ts` binds it to the
-transport capabilities registered in `sdk/typescript/src/raw.ts`; `sdk/typescript/src/http.ts`
-registers the prompt-free implementation, posts `{expected_run_id: runId}` to the session cancel
-route, and resolves only after the bodyless acknowledgement. The HTTP transport's owned-Converse
-cancel arm calls that same implementation, preserving the ADR-0249 stale guard and shared problem
-mapping without pretending the delivery mechanisms are interchangeable. The gRPC binding rejects
-locally with `UnsupportedFeatureError("prompt_free_controls")`, before any Converse stream exists.
+response. `sdk/typescript/src/watch.ts` (`AttachmentOperations.cancelRun`) is the legacy
+asynchronous `cancelRun(sessionId, runId): Promise<void>` seam. `sdk/typescript/src/client.ts`
+binds it to the transport capabilities registered in `sdk/typescript/src/raw.ts`; the HTTP arm in
+`sdk/typescript/src/http.ts` posts `{expected_run_id: runId}` to the original session cancel route,
+while the gRPC arm retains its local `prompt_free_controls` refusal. That behavior remains
+source-compatible even when the replacement server advertises the feature.
 
-The other `AttachedRun` controls remain deliberate typed dead ends in M2. `approve()` and
-`resolveAsk()` return `Promise<never>` and name `approve_ack_only` on HTTP versus
-`prompt_free_controls` on gRPC; neither posts to the approve route whose restart path relays an
-unbounded SSE body. `steer()` also returns `Promise<never>`, naming `http_steer` on HTTP and
-`prompt_free_controls` on gRPC, and cannot promote into a new run. These methods have no latent
-feature-enabled branch: each deferred server capability needs a later SDK release.
+The other `AttachedRun` controls remain deliberate typed dead ends. `approve()`, `resolveAsk()`,
+and `steer()` return `Promise<never>`, raise `UnsupportedFeatureError("attached_run_controls")`,
+and direct callers to `session.controls(attached.runId)`. They never branch on the advertised
+prompt-free feature because their existing signatures cannot return the new acknowledgement
+contract. This keeps watch disposal independent from mutation and avoids silently changing the
+meaning of the attachment API.
+
+`sdk/typescript/src/run-controls.ts` (`RunControls`) owns the prompt-free SDK resource added by ADR
+0346. `sdk/typescript/src/client.ts` (`Session.controls`) constructs it synchronously from the
+session-affined unary operation bag, without probing, opening Converse, or registering a
+`WatchConnection`. Each method gates through the same cached compatibility path using the caller's
+`RequestOptions`, then invokes exactly one generated unary descriptor. There is no retry, legacy
+route fallback, or synthetic stream. Missing `prompt_free_controls` therefore raises a typed local
+feature refusal before a control RPC; an advertised-but-missing method remains a transport or
+protocol failure.
+
+The handle carries immutable session and run IDs and writes both into every request. The server
+transitions in `internal/adapter/server/service.go` (`ResolveRunAsk`, `CancelRun`, `SteerRun`, and
+`CancelRunSteer`) repeat the ownership, generation, lease, and exact-run checks under the lock that
+linearizes the mutation. Ended, cancelling, and replacement targets all return
+`stale_run_control` without a successor ID. Only resolution of a matching ordinary ask may
+rehydrate a persisted awaiting run. Plan-originated asks return `plan_resolution_required` without
+mutation, and unknown or already resolved asks return `ask_not_pending`.
+
+Run-control HTTP responses stay attached to their raw JSON through `sdk/typescript/src/raw.ts`
+(`getRawJson`), so `sdk/typescript/src/run-controls.ts` can prove the presence and JSON type of every
+required field before accepting protobuf-es defaults. Both transports validate the exact echoed run
+ID, ask ID, and optional client message ID. Strict steer rejects empty input locally, reuses the
+ordinary `PromptInput` encoder, and accepts only `accepted` or `appended`; cancellation accepts only
+`retracted` or `none_pending`. A promoted or mismatched response is a `ProtocolError`.
+
+Control request lifetime ends at the unary acknowledgement. A persisted-awaiting ask resolution
+that has crossed the atomic acceptance point moves its engine and relay onto the server-owned
+context, so response return, caller cancellation, or deadline expiry cannot cancel the resumed run.
+Conversely, loss of a unary response after acceptance is inherently ambiguous. The SDK does not
+retry it, and applications reconcile from the authoritative session projection and durable event
+log before issuing another mutation.
 
 Scenario 10's real-wire proofs live in `sdk/typescript/e2e/attach.e2e.test.ts` and
 `sdk/typescript/e2e/activity.e2e.test.ts`. The restart helper in

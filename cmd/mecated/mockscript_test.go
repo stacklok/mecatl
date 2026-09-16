@@ -14,6 +14,7 @@ import (
 func TestLoadMockScriptCompilesTextAndToolTurns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "script.json")
 	body := `{
+  "capabilities": {"audio": true, "image": true},
   "turns": [
     {"tool_calls":[{"id":"write-1","name":"Write","args":{"path":"proof.txt","content":"ok\n"}}]},
     {"text":"continued after the tool"}
@@ -26,6 +27,9 @@ func TestLoadMockScriptCompilesTextAndToolTurns(t *testing.T) {
 	provider, err := loadMockScript(path)
 	if err != nil {
 		t.Fatalf("loadMockScript: %v", err)
+	}
+	if got := provider.Capabilities(); got != (port.ProviderCapabilities{Audio: true, Image: true}) {
+		t.Fatalf("mock script capabilities = %+v, want image and audio", got)
 	}
 	first, err := provider.Stream(context.Background(), port.LLMRequest{})
 	if err != nil {

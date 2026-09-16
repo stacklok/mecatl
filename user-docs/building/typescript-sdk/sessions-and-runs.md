@@ -163,7 +163,8 @@ Transport and protocol failures throw typed SDK errors.
 
 ## Send controls to a live run
 
-The `Run` handle binds controls to its exact run ID:
+The owned `Run` handle keeps controls on its Converse stream and binds them to
+its exact run ID:
 
 - `run.cancel()` requests cancellation. Continue consuming the run to receive
   its terminal result.
@@ -174,6 +175,57 @@ The `Run` handle binds controls to its exact run ID:
 
 Use automatic responders for ordinary application approval flows. See
 [Handle permissions and plans](./permissions-and-plans.md).
+
+When the application retained a run ID but no longer owns its stream, create a
+prompt-free control resource from any fresh handle for the same session:
+
+```ts
+const session = await client.sessions.get(storedSessionId);
+const controls = session.controls(storedRunId);
+
+const acknowledgement = await controls.steer(
+  'Include the integration test result',
+  { messageId: crypto.randomUUID() },
+  { timeoutMs: 10_000 }
+);
+
+console.log(acknowledgement.outcome, acknowledgement.messageId);
+```
+
+`session.controls(runId)` is synchronous and does not probe the server, open a
+watch, or register a live run. Each operation first checks that the server
+advertises `prompt_free_controls`, then makes one unary request:
+
+- `resolveAsk(askId, verdict, requestOptions?)` resolves an ordinary root or
+  surfaced-child permission ask.
+- `cancel(requestOptions?)` requests cancellation of the exact live run.
+- `steer(prompt, options?, requestOptions?)` sends text or structured image and
+  audio input.
+- `cancelSteer(options?, requestOptions?)` retracts the pending steer bundle.
+
+All four methods accept the same request headers, cancellation signal, response
+callbacks, and deadline controls as other SDK unary calls. The SDK performs no
+automatic retry or fallback. A server without `prompt_free_controls` raises a
+typed `UnsupportedFeatureError` before the SDK sends a control RPC.
+
+Every operation is strict about `runId`. A run that ended, is cancelling, or
+was replaced returns the server's typed `stale_run_control` error. A delayed
+steer cannot become a new run. Plan asks remain under the separate
+`session.resolvePlan()` workflow.
+
+Structured steer prompts use the same `PromptInput` and media validation as a
+new run. Text fragments join with one newline, while image and audio parts keep
+their order relative to other media. `messageId` is an optional application
+correlation of up to 64 Unicode code points. The acknowledgement echoes the
+exact run and message IDs. A steer reports `accepted` when it creates a pending
+bundle or `appended` when it joins an existing bundle. Retraction reports
+`retracted` or `none_pending`.
+
+Treat a lost unary acknowledgement as ambiguous. The server can accept a
+control before the connection, caller cancellation, or deadline prevents the
+response from reaching the application. Reconcile the operation from the
+authoritative session snapshot and durable activity before deciding whether to
+retry it. See [Resume durable activity](./durable-activity.md).
 
 ## Send image or audio input
 

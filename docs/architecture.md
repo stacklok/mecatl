@@ -540,23 +540,36 @@ request path's transient `offline`; its next envelope restores `online` once no 
 remains. Opening an attachment does not subscribe to status or start/retain the heartbeat. Browser
 visibility still pauses the subscriber-gated heartbeat, but it neither pauses nor detaches a watch.
 
-Attached controls deliberately use a different path from an owned `Run`'s Converse frames.
-`AttachedRun.cancel()` is an asynchronous out-of-band operation: over HTTP it posts the attached
-run id as `expected_run_id` to `/v1/sessions/{id}/cancel` and resolves only after the server's
-bodyless `204` acknowledgement, so transport and stale-run failures reject the returned promise.
-gRPC has no prompt-free control RPC and therefore returns a typed `prompt_free_controls`
-unsupported-feature error without opening Converse. Attached approval is likewise an explicit
-typed deferral (`approve_ack_only` over HTTP, `prompt_free_controls` over gRPC), while attached
-steer remains unsupported on both transports. None of these deferrals changes detach semantics:
-aborting, disposing, or leaving iteration releases only the watch.
+Prompt-free run controls are independent of owned Converse streams and durable watches.
+`Session.controls(runId)` constructs a synchronous local `RunControls` resource without probing,
+attaching, or registering a live run. Its resolve-ask, cancel, steer, and steer-retraction methods
+gate on `prompt_free_controls`, address the supplied run id exactly, and issue one bounded unary
+request over gRPC or HTTP. All four methods carry ordinary request options. They neither retry nor
+fall back to legacy controls, and a late operation cannot target a successor run. Steer accepts the
+same structured text and media input as a prompt and returns the server's accepted-or-appended
+outcome with the exact run and client correlation ids. Retraction returns retracted-or-none-pending
+with the same correlations.
+
+The unary acknowledgement is a delivery fact rather than an idempotency proof. A request can be
+accepted before its response is lost to cancellation, deadline, or transport failure, so an
+application reconciles an ambiguous outcome from authoritative session and durable-activity state.
+Resolving a matching ordinary ask on a persisted awaiting run is the one prompt-free operation that
+can rehydrate it. Acceptance transfers that resumed run to a server-owned context before the bounded
+acknowledgement returns. Plan-originated asks stay under the separate plan-resolution choreography.
+
+`AttachedRun` preserves its established compatibility surface instead of silently acquiring these
+semantics. Its legacy `cancel()` retains its transport-specific behavior, while approval and steer
+methods remain typed deferrals that direct callers to `session.controls(attached.runId)`. Aborting,
+disposing, or leaving attachment iteration still releases only the watch.
 
 The offline SDK lane exercises that contract against a same-checkout daemon rather than only
 an injected transport. Its restartable harness rebinds the same listeners over one JSONL store:
 an open `activity()` view resumes from its consumption checkpoint and observes a newly minted run,
-while a run-bound view crosses restart only in the persisted-awaiting case where an external HTTP
-approval resumes the original run id. The latter response is bounded and drained by test harness
-code, not exposed as an SDK approval contract. The same suites prove gRPC TCP, UDS, HTTP/SSE,
-attached stale-guarded cancellation, terminal SSE cursor errors, and default log-only filtering.
+while a run-bound view crosses restart only in the persisted-awaiting case. Prompt-free control
+coverage drives successful root and surfaced-child ask resolution, cancellation, text and media
+steer, retraction, strict stale/error results, request cancellation and deadlines, and bounded
+acknowledgement-only rehydration across gRPC TCP, UDS, and HTTP. The attachment suites retain their
+stale-guarded cancellation, terminal SSE cursor errors, and default log-only filtering proofs.
 
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and

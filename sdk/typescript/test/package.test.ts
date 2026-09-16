@@ -652,3 +652,127 @@ if (JSON.stringify(SessionMode) !== JSON.stringify({ Unspecified: 0, Default: 1,
   for (const operation of ["snapshot()", "transcript()", "rename", "setMode", "clear()", "retry()"])
     expect(guide).toContain(operation);
 });
+
+test("run controls are exported documented and api reviewed", () => {
+  const consumer = join(consumerRoot, "run-controls.mts");
+  writeFileSync(
+    consumer,
+    `
+import type {
+  PermissionVerdict,
+  PromptInput,
+  RequestOptions,
+  RunControls,
+  RunSteerAcknowledgement,
+  RunSteerCancellationAcknowledgement,
+  RunSteerOptions,
+  Session,
+} from "@stacklok-oss/mecatl-sdk";
+import type {
+  RunControls as NodeRunControls,
+  RunSteerAcknowledgement as NodeRunSteerAcknowledgement,
+  RunSteerCancellationAcknowledgement as NodeRunSteerCancellationAcknowledgement,
+  RunSteerOptions as NodeRunSteerOptions,
+} from "@stacklok-oss/mecatl-sdk/node";
+import type {
+  RunControls as DenoRunControls,
+  RunSteerAcknowledgement as DenoRunSteerAcknowledgement,
+  RunSteerCancellationAcknowledgement as DenoRunSteerCancellationAcknowledgement,
+  RunSteerOptions as DenoRunSteerOptions,
+} from "@stacklok-oss/mecatl-sdk/deno";
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends
+  (<Value>() => Value extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+
+declare const session: Session;
+const controls: RunControls = session.controls("run-1");
+const ids: readonly [string, string] = [controls.sessionId, controls.runId];
+type ResolveAsk = Assert<Equal<
+  RunControls["resolveAsk"],
+  (askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions) => Promise<void>
+>>;
+type Cancel = Assert<Equal<
+  RunControls["cancel"],
+  (requestOptions?: RequestOptions) => Promise<void>
+>>;
+type Steer = Assert<Equal<
+  RunControls["steer"],
+  (
+    prompt: PromptInput,
+    options?: RunSteerOptions,
+    requestOptions?: RequestOptions,
+  ) => Promise<RunSteerAcknowledgement>
+>>;
+type CancelSteer = Assert<Equal<
+  RunControls["cancelSteer"],
+  (
+    options?: RunSteerOptions,
+    requestOptions?: RequestOptions,
+  ) => Promise<RunSteerCancellationAcknowledgement>
+>>;
+type NodeExports = Assert<Equal<
+  readonly [NodeRunControls, NodeRunSteerOptions, NodeRunSteerAcknowledgement, NodeRunSteerCancellationAcknowledgement],
+  readonly [RunControls, RunSteerOptions, RunSteerAcknowledgement, RunSteerCancellationAcknowledgement]
+>>;
+type DenoExports = Assert<Equal<
+  readonly [DenoRunControls, DenoRunSteerOptions, DenoRunSteerAcknowledgement, DenoRunSteerCancellationAcknowledgement],
+  readonly [RunControls, RunSteerOptions, RunSteerAcknowledgement, RunSteerCancellationAcknowledgement]
+>>;
+void [ids];
+export type { ResolveAsk, Cancel, Steer, CancelSteer, NodeExports, DenoExports };
+`,
+  );
+
+  const typecheck = spawnSync(
+    process.execPath,
+    [
+      join(packageRoot, "node_modules", "typescript", "bin", "tsc"),
+      "--noEmit",
+      "--strict",
+      "--target",
+      "ES2022",
+      "--lib",
+      "ESNext,DOM,DOM.Iterable",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--types",
+      "node",
+      "--typeRoots",
+      join(packageRoot, "node_modules", "@types"),
+      consumer,
+    ],
+    { cwd: consumerRoot, encoding: "utf8" },
+  );
+  expect(typecheck.stderr).toBe("");
+  expect(typecheck.stdout).toBe("");
+  expect(typecheck.status).toBe(0);
+
+  for (const report of ["mecatl-sdk.api.md", "mecatl-sdk-node.api.md", "mecatl-sdk-deno.api.md"]) {
+    const api = readFileSync(join(packageRoot, "etc", report), "utf8");
+    expect(api).toContain("export interface RunControls");
+    expect(api).toContain("export interface RunSteerAcknowledgement");
+    expect(api).toContain("export interface RunSteerCancellationAcknowledgement");
+    expect(api).toContain("export interface RunSteerOptions");
+    expect(api).toContain("controls(runId: string): RunControls;");
+  }
+
+  const referenceRoot = resolve(packageRoot, "../../user-docs/reference/typescript-sdk-api");
+  const coreReference = readFileSync(join(referenceRoot, "core.md"), "utf8");
+  expect(coreReference).toContain('id="api-runcontrols-interface"');
+  expect(coreReference).toContain('id="api-runsteeracknowledgement-interface"');
+  expect(coreReference).toContain('id="api-runsteercancellationacknowledgement-interface"');
+  expect(coreReference).toContain('id="api-runsteeroptions-interface"');
+  expect(coreReference).toContain('id="api-session-controls-methodsignature"');
+  for (const entrypoint of ["node.md", "deno.md"]) {
+    const reference = readFileSync(join(referenceRoot, entrypoint), "utf8");
+    expect(reference).toContain("The entry point also exports the [shared core API](./core.md).");
+  }
+
+  const example = readFileSync(join(packageRoot, "examples", "durable-attachment.ts"), "utf8");
+  expect(example).toContain("durableState.runId = envelope.event.runId");
+  expect(example).toContain("session.controls(durableState.runId)");
+});
