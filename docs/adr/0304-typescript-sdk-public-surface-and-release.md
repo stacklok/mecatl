@@ -4,7 +4,7 @@
 - Date: 2026-09-07
 - Scope: `sdk/typescript/`, its browser and platform verification, public documentation, and the npm release path for `@stacklok/mecatl-sdk`. Client-side by default: no contract change and no production server change.
 - Supersedes: none. Completes the M4 surface deferred by [ADR 0279](./0279-typescript-sdk-architecture.md), [ADR 0288](./0288-typescript-sdk-durable-attachment.md), and [ADR 0292](./0292-typescript-sdk-local-daemon-and-tools.md).
-- Superseded by: ADR 0313 (Decisions 8–9, in part); [ADR 0328](./0328-typescript-sdk-npmjs-stacklok-oss.md) (npmjs cutover and `@stacklok-oss` package name)
+- Superseded by: ADR 0313 (Decisions 8–9, in part); [ADR 0328](./0328-typescript-sdk-npmjs-stacklok-oss.md) (npmjs cutover and `@stacklok-oss` package name); [ADR 0346](./0346-run-id-addressed-prompt-free-controls.md) (Decision 3's teams-only ergonomic-resource constraint)
 
 ## Context
 

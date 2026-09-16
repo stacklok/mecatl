@@ -71,14 +71,15 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0252 — HTTP steer endpoint: `POST /v1/sessions/{id}/steer`](./0252-http-steer-endpoint.md)
 - [0253 — SDK mocking testkit: vendor the proven unary pattern, defer streaming](./0253-sdk-mocking-testkit.md)
 - [0279 — TypeScript SDK architecture: Connect-ES transport, protobuf-es codegen, in-repo pnpm project](./0279-typescript-sdk-architecture.md) *(supersedes ADR 0253 Decisions 1–2 in part)*
-- [0288 — TypeScript SDK durable attachment: the watch envelope, the serializable cursor, and the reconnect authority](./0288-typescript-sdk-durable-attachment.md)
+- [0288 — TypeScript SDK durable attachment: the watch envelope, the serializable cursor, and the reconnect authority](./0288-typescript-sdk-durable-attachment.md) *(prompt-free control deferral superseded by 0346)*
 - [0292 — TypeScript SDK local daemon and callback tools](./0292-typescript-sdk-local-daemon-and-tools.md)
-- [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md) *(package identity and GitHub Packages interim superseded by 0328; 0313 superseded in full)*
+- [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md) *(package identity and GitHub Packages interim superseded by 0328; teams-only ergonomic-resource constraint superseded by 0346; 0313 superseded in full)*
 - [0313 — Interim GitHub Packages distribution and 0.0.x versioning](./0313-interim-github-packages-typescript-sdk.md) *(superseded by 0328)*
 - [0328 — Publish the TypeScript SDK to npmjs as `@stacklok-oss/mecatl-sdk`](./0328-typescript-sdk-npmjs-stacklok-oss.md) *(proposed)*
 - [0339 - Deno uses the TypeScript SDK HTTP/SSE entry point](./0339-typescript-sdk-deno.md) *(supersedes ADR 0279 only for the supported-runtime set)*
 - [0340 - Deno owns local daemons through Deno.Command](./0340-typescript-sdk-deno-command.md) *(supersedes ADR 0339 for the Deno public entry-point and local-process decisions)*
 - [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
+- [0346 — Run-ID-addressed prompt-free controls](./0346-run-id-addressed-prompt-free-controls.md) *(proposed; supersedes ADR 0288 Decision 6 and ADR 0304 Decision 3 in part)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)

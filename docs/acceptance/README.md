@@ -327,6 +327,10 @@ PR after verification. There is no cleanup or status-only PR.
 - [TypeScript SDK server discovery](sdk-server-discovery.md) — a typed pre-session
   compatibility and safe server-identity namespace with open feature vocabularies,
   explicit refresh, race-safe shared negotiation, and gRPC/HTTP parity. Status: proposed.
+- [TypeScript SDK run-ID-addressed controls](sdk-run-controls.md) — prompt-free
+  ordinary ask resolution, cancellation, strict multimodal steering, and pending-steer
+  retraction over gRPC and HTTP through `session.controls(runId)`, with request options,
+  bounded correlated acknowledgements, and mandatory stale-run guards. Status: proposed.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
