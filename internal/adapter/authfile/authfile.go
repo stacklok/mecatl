@@ -136,7 +136,7 @@ func (f *File) OAuth(name string) OAuthEntry {
 func LoadStrict(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders []string) (*File, error) {
 	file, warning := Load(path, explicit, env, knownProviders)
 	if warning != "" {
-		return nil, errors.New("auth file validation failed")
+		return nil, errors.New(warning)
 	}
 	return file, nil
 }

@@ -74,11 +74,11 @@ func TestInvariant_custom_provider_auth_bootstrap_single_source(t *testing.T) {
 
 func TestInvariant_custom_provider_authfile_strict(t *testing.T) {
 	defs := permconfig.ProviderDefinitions{"known": {ID: "known", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
-	_, err := ResolveProviderCredentials(nil, defs, envWithAuth("/config/mecatl/auth.yaml", "providers:\n  unknown:\n    api_key: secret\n"))
+	_, err := ResolveProviderCredentials(nil, defs, envWithAuth("/config/mecatl/auth.yaml", "providers:\n  old-provider:\n    api_key: secret\n"))
 	if err == nil {
 		t.Fatal("unknown custom auth provider was accepted")
 	}
-	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "unknown") {
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "old-provider") {
 		t.Fatalf("strict auth error leaked file data: %v", err)
 	}
 }
@@ -97,6 +97,28 @@ func TestProviderCredentialResolverFailsClosedForMalformedConventionalAuthWithCu
 	definitions := permconfig.ProviderDefinitions{"custom": {ID: "custom", Auth: permconfig.ProviderAuth{Method: "api_key"}}}
 	if _, _, err := resolver.Load(definitions); err == nil {
 		t.Fatal("custom provider accepted malformed conventional auth file")
+	}
+}
+
+func TestResolveProviderCredentialsReportsUnknownProviderWarningSafely(t *testing.T) {
+	const path = "/config/mecatl/auth.yaml"
+	const staleID = "old-provider"
+	defs := permconfig.ProviderDefinitions{
+		"renamed-provider": {ID: "renamed-provider", Auth: permconfig.ProviderAuth{Method: "api_key"}},
+	}
+	_, err := ResolveProviderCredentials(nil, defs, envWithAuth(path, "providers:\n  "+staleID+":\n    api_key: secret\n"))
+	if err == nil {
+		t.Fatal("unknown custom auth provider was accepted")
+	}
+	message := err.Error()
+	if !strings.Contains(message, path) {
+		t.Fatalf("error = %q, want auth-file path", message)
+	}
+	if !strings.Contains(message, "renamed-provider") {
+		t.Fatalf("error = %q, want configured provider ID", message)
+	}
+	if strings.Contains(message, staleID) || strings.Contains(message, "secret") {
+		t.Fatalf("error = %q, leaked stale provider ID or credential", message)
 	}
 }
 

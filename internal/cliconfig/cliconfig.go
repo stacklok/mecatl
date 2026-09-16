@@ -17,6 +17,7 @@ package cliconfig
 
 import (
 	"cmp"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -202,11 +203,13 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	var file *authfile.File
 	if pf != nil && pf.authSnapshotReady {
 		file = pf.authSnapshot
-		if file != nil && file.ValidateKnown(known) != "" {
-			return ResolvedCredentials{}, fmt.Errorf("auth file validation failed")
+		if file != nil {
+			if warning := file.ValidateKnown(known); warning != "" {
+				return ResolvedCredentials{}, errors.New(warning)
+			}
 		}
 		if file == nil && pf.authSnapshotWarn != "" {
-			return ResolvedCredentials{}, fmt.Errorf("auth file validation failed")
+			return ResolvedCredentials{}, errors.New(pf.authSnapshotWarn)
 		}
 	} else {
 		var err error

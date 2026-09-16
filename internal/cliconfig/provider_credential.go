@@ -47,10 +47,12 @@ func (r *ProviderCredentialResolver) Load(definitions permconfig.ProviderDefinit
 	}
 	sort.Strings(known)
 	if len(definitions) > 0 && r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot == nil && r.flags.authSnapshotWarn != "" {
-		return app.ProviderCredentials{}, nil, errors.New("auth file validation failed")
+		return app.ProviderCredentials{}, nil, errors.New(r.flags.authSnapshotWarn)
 	}
-	if r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot != nil && r.flags.authSnapshot.ValidateKnown(known) != "" {
-		return app.ProviderCredentials{}, nil, errors.New("auth file validation failed")
+	if r.flags != nil && r.flags.authSnapshotReady && r.flags.authSnapshot != nil {
+		if warning := r.flags.authSnapshot.ValidateKnown(known); warning != "" {
+			return app.ProviderCredentials{}, nil, errors.New(warning)
+		}
 	}
 
 	credentials := app.ProviderCredentials{
