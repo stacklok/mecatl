@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
+
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
@@ -179,4 +180,3 @@ func TestPrepareOAuthDCRLoginAfterRemovalRegistersFreshClient(t *testing.T) {
 		t.Fatalf("re-add client id = %q, want the fixture's registered client %q", secondReady.Registration.ClientID, fixture.clientID)
 	}
 }
-

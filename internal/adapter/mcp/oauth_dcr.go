@@ -363,21 +363,21 @@ func removeDCRGrant(ctx context.Context, store credentialstore.Store, key []byte
 		}
 		if err := store.Delete(ctx, key, grant.Version); err == nil || errors.Is(err, credentialstore.ErrNotFound) {
 			return nil
-		} else {
-			// Delete may have committed before its response was lost. Re-read
-			// before deciding whether the crash-safe retry is still required.
-			_, readErr := store.Get(ctx, key)
-			if errors.Is(readErr, credentialstore.ErrNotFound) {
-				return nil
-			}
-			if readErr != nil || attempt == 1 {
-				return ErrOAuthDCRRecoveryRequired
-			}
+		}
+		// Delete may have committed before its response was lost. Re-read
+		// before deciding whether the crash-safe retry is still required.
+		_, readErr := store.Get(ctx, key)
+		if errors.Is(readErr, credentialstore.ErrNotFound) {
+			return nil
+		}
+		if readErr != nil || attempt == 1 {
+			return ErrOAuthDCRRecoveryRequired
 		}
 	}
 	return ErrOAuthDCRRecoveryRequired
 }
 
+// PrepareOAuthDCRLogin validates the DCR lifecycle state and prepares the login flow.
 func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOptions, action OAuthDCRLoginAction) (OAuthOptions, string, error) { //nolint:gocyclo // explicit CAS states and recovery actions stay visible.
 	if ctx == nil {
 		return OAuthOptions{}, "", errors.New("OAuth DCR preparation requires a context")

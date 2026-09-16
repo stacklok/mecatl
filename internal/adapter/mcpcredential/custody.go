@@ -16,14 +16,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
+	"github.com/godbus/dbus/v5"
 	keyringapi "github.com/zalando/go-keyring"
 	"golang.org/x/sys/unix"
 )
 
+// BackendKeyring stores generated keys in the OS keyring; BackendFile uses a protected file.
 const (
-	BackendKeyring = "keyring"
-	BackendFile    = "file"
+	BackendKeyring = "keyring" // BackendKeyring stores the generated key in the OS keyring.
+	BackendFile    = "file"    // BackendFile stores the generated key in a protected file.
 	keyringService = "mecatl.mcp.oauth"
 	keyringDomain  = "mecatl/mcp/oauth-key/v1\x00"
 	markerName     = "mcp-credential-backend.json"
@@ -32,22 +35,34 @@ const (
 	maxKeyBytes    = 128
 )
 
+// Keyring reads and writes the OS credential entry used by MCP custody.
 type Keyring interface {
 	Get(string, string) (string, error)
 	Set(string, string, string) error
 }
+
+// Detector reports whether the platform keyring is available.
 type Detector func(context.Context) (bool, error)
 
+// ConfirmFile confirms the attended fallback to file custody.
+type ConfirmFile func(context.Context) (bool, error)
+
+// Selection is the selected custody backend and the key it opened or created.
 type Selection struct {
 	Backend, Locator string
 	Key              []byte
 }
+
+// Options controls MCP credential custody selection.
 type Options struct {
 	Requested, FilePath, Platform string
 	Detect                        Detector
+	ConfirmFile                   ConfirmFile
+	Attended                      bool
 	Keyring                       Keyring
 }
 
+// Resolve selects and opens the root-pinned MCP credential backend.
 func Resolve(ctx context.Context, root string, opts Options) (Selection, error) {
 	if opts.Requested == "" {
 		opts.Requested = "auto"
@@ -72,7 +87,11 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 		if opts.Requested != "auto" && opts.Requested != marker.Backend {
 			return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
 		}
-		return openPinned(canonical, marker.Backend, opts)
+		locator, err := pinnedLocator(canonical, marker.Backend, opts.FilePath)
+		if err != nil || digest(locator) != marker.LocatorSHA256 {
+			return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
+		}
+		return openPinned(marker.Backend, locator, opts)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
@@ -92,6 +111,7 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 	return sel, nil
 }
 
+// Open opens an existing root-pinned MCP credential backend.
 func Open(ctx context.Context, root, backend, filePath string, keyring Keyring) (Selection, error) {
 	if keyring == nil {
 		keyring = osKeyring{}
@@ -109,10 +129,14 @@ func Open(ctx context.Context, root, backend, filePath string, keyring Keyring) 
 	if err != nil || marker.Backend != backend || marker.LocatorSHA256 == "" {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
-	sel, err := openPinned(canonical, backend, Options{FilePath: filePath, Keyring: keyring})
-	if err != nil || digest(sel.Locator) != marker.LocatorSHA256 {
-		clear(sel.Key)
+	locator, err := pinnedLocator(canonical, backend, filePath)
+	if err != nil || digest(locator) != marker.LocatorSHA256 {
 		return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
+	}
+	sel, err := openPinned(backend, locator, Options{FilePath: filePath, Keyring: keyring})
+	if err != nil {
+		clear(sel.Key)
+		return Selection{}, err
 	}
 	return sel, nil
 }
@@ -164,13 +188,13 @@ func writeMarker(root string, marker backendMarker) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(dir)
+	defer func() { _ = unix.Close(dir) }()
 	name := "." + markerName + ".new"
 	fd, err := unix.Openat(dir, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return err
 	}
-	defer unix.Unlinkat(dir, name, 0)
+	defer func() { _ = unix.Unlinkat(dir, name, 0) }()
 	if err = writeAll(fd, data); err == nil {
 		err = unix.Fsync(fd)
 	}
@@ -201,7 +225,7 @@ func choose(ctx context.Context, o Options) (string, error) {
 			return BackendKeyring, nil
 		}
 		if o.Detect == nil {
-			return "", errors.New("MCP keyring availability is unproven; choose --credential-store=file")
+			o.Detect = detectSecretService
 		}
 		ok, err := o.Detect(ctx)
 		if err != nil {
@@ -210,11 +234,46 @@ func choose(ctx context.Context, o Options) (string, error) {
 		if ok {
 			return BackendKeyring, nil
 		}
+		if !o.Attended || o.ConfirmFile == nil {
+			return "", errors.New("MCP keyring is unavailable; choose --credential-store=file")
+		}
+		confirmed, err := o.ConfirmFile(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !confirmed {
+			return "", errors.New("MCP keyring declined; choose --credential-store=file")
+		}
 		return BackendFile, nil
 	default:
 		return "", errors.New("MCP credential-store must be auto, keyring, or file")
 	}
 }
+func detectSecretService(ctx context.Context) (bool, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+	}
+	bus, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, nil
+	}
+	defer func() { _ = bus.Close() }()
+	var owner string
+	call := bus.Object("org.freedesktop.DBus", dbus.ObjectPath("/org/freedesktop/DBus")).CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, "org.freedesktop.secrets")
+	if err := call.Store(&owner); err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, nil
+	}
+	return owner != "", nil
+}
+
 func openNew(root, backend string, o Options) (Selection, error) {
 	if backend == BackendKeyring {
 		key := make([]byte, 32)
@@ -236,10 +295,9 @@ func openNew(root, backend string, o Options) (Selection, error) {
 	key, err := readOrCreateFileKey(path)
 	return Selection{Backend: backend, Locator: path, Key: key}, err
 }
-func openPinned(root, backend string, o Options) (Selection, error) {
+func openPinned(backend, locator string, o Options) (Selection, error) {
 	if backend == BackendKeyring {
-		loc := keyringAccount(root)
-		value, err := o.Keyring.Get(keyringService, loc)
+		value, err := o.Keyring.Get(keyringService, locator)
 		if err != nil {
 			return Selection{}, errors.New("MCP keyring is unavailable")
 		}
@@ -248,20 +306,26 @@ func openPinned(root, backend string, o Options) (Selection, error) {
 			clear(key)
 			return Selection{}, errors.New("MCP keyring entry is invalid")
 		}
-		return Selection{Backend: backend, Locator: loc, Key: key}, nil
+		return Selection{Backend: backend, Locator: locator, Key: key}, nil
 	}
-	path, err := fileLocator(root, o.FilePath)
-	if err != nil {
-		return Selection{}, err
+	key, err := readFileKey(locator)
+	return Selection{Backend: backend, Locator: locator, Key: key}, err
+}
+
+func pinnedLocator(root, backend, filePath string) (string, error) {
+	if backend == BackendKeyring {
+		return keyringAccount(root), nil
 	}
-	key, err := readOrCreateFileKey(path)
-	return Selection{Backend: backend, Locator: path, Key: key}, err
+	if backend == BackendFile {
+		return fileLocator(root, filePath)
+	}
+	return "", errors.New("MCP credential backend is invalid")
 }
 func keyringAccount(root string) string {
 	h := sha256.Sum256(append([]byte(keyringDomain), []byte(root)...))
 	return hex.EncodeToString(h[:])
 }
-func fileLocator(root, path string) (string, error) {
+func fileLocator(_ string, path string) (string, error) {
 	if path == "" {
 		return "", errors.New("MCP file credential key path is required")
 	}
@@ -270,6 +334,14 @@ func fileLocator(root, path string) (string, error) {
 		return "", errors.New("MCP file credential key path is invalid")
 	}
 	return canonicalPath(abs)
+}
+
+func readFileKey(path string) ([]byte, error) {
+	b, err := readPrivateFile(path, maxKeyBytes)
+	if err != nil {
+		return nil, errors.New("MCP file credential key cannot be read")
+	}
+	return decodeKey(b)
 }
 
 func readOrCreateFileKey(path string) ([]byte, error) {
@@ -350,7 +422,7 @@ func readPrivateFile(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(b)) > limit {
 		return nil, errors.New("file is too large")
@@ -359,7 +431,7 @@ func readPrivateFile(path string, limit int64) ([]byte, error) {
 }
 func verifyPrivateFD(fd int) error {
 	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || uint32(st.Uid) != uint32(os.Geteuid()) || st.Nlink != 1 || st.Mode&0o777 != 0o600 {
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Uid != uint32(os.Geteuid()) || st.Nlink != 1 || st.Mode&0o777 != 0o600 { //nolint:gosec // euid is the OS-provided owner identity and is compared as a uid.
 		return errors.New("not owner-only regular file")
 	}
 	return nil
@@ -393,9 +465,9 @@ func prepareExistingRoot(root string) (string, error) {
 	if err != nil {
 		return "", errors.New("MCP credential root is unavailable")
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || uint32(st.Uid) != uint32(os.Geteuid()) || st.Mode&0o777 != 0o700 {
+	if unix.Fstat(fd, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&0o777 != 0o700 { //nolint:gosec // euid is the OS-provided owner identity and is compared as a uid.
 		return "", errors.New("MCP credential root must be owner-only")
 	}
 	return filepath.Clean(root), nil

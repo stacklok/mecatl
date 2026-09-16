@@ -19,7 +19,7 @@ func AddDirectMCPServer(data []byte, name, endpoint, issuer, root, keyEnv string
 // AddDirectMCPServerWithKey writes a root-pinned native custody profile.
 func AddDirectMCPServerWithKey(data []byte, name, endpoint, issuer, root, mode, keyPath string) ([]byte, error) {
 	key := "key:\n                mode: " + quoteYAML(mode)
-	if mode == "file" {
+	if mode == mcpCredentialFile {
 		key += "\n                file: {path: " + quoteYAML(keyPath) + "}"
 	}
 	return addDirectMCPServer(data, name, endpoint, issuer, root, key)

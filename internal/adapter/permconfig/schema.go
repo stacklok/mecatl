@@ -640,8 +640,9 @@ var (
 )
 
 const (
-	modeKey       = "mode"
-	mcpOAuth2Mode = "oauth2"
+	modeKey           = "mode"
+	mcpOAuth2Mode     = "oauth2"
+	mcpCredentialFile = "file"
 )
 
 func (s *MCPSection) strictFields() map[string]any {
@@ -995,13 +996,13 @@ func (c *MCPLocalCredentialProfile) UnmarshalYAML(node ast.Node) error {
 		if c.KeyEnv != "" {
 			return errors.New("local credentials cannot combine key and key_env")
 		}
-		if c.Key.Mode != "keyring" && c.Key.Mode != "file" {
+		if c.Key.Mode != "keyring" && c.Key.Mode != mcpCredentialFile {
 			return errors.New("local credentials key.mode must be keyring or file")
 		}
 		if c.Key.Mode == "keyring" && c.Key.File != nil {
 			return errors.New("keyring credentials cannot contain file settings")
 		}
-		if c.Key.Mode == "file" && (c.Key.File == nil || c.Key.File.Path == "" || !filepath.IsAbs(c.Key.File.Path)) {
+		if c.Key.Mode == mcpCredentialFile && (c.Key.File == nil || c.Key.File.Path == "" || !filepath.IsAbs(c.Key.File.Path)) {
 			return errors.New("file credentials require an absolute key.path")
 		}
 		return nil
@@ -1010,12 +1011,16 @@ func (c *MCPLocalCredentialProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (c *MCPNativeCredentialKey) strictFields() map[string]any {
-	return map[string]any{"mode": &c.Mode, "file": newPermconfigNodePointer(&c.File)}
+	return map[string]any{"mode": &c.Mode, mcpCredentialFile: newPermconfigNodePointer(&c.File)}
 }
+
+// UnmarshalYAML strictly decodes native credential-key metadata.
 func (c *MCPNativeCredentialKey) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.local.key", c.strictFields())
 }
 func (c *MCPFileCredentialKey) strictFields() map[string]any { return map[string]any{"path": &c.Path} }
+
+// UnmarshalYAML strictly decodes file credential-key metadata.
 func (c *MCPFileCredentialKey) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.local.key.file", c.strictFields())
 }

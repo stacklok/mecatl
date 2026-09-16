@@ -338,7 +338,8 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.credentials.mode` | `string` | `(empty)` | Mode is exactly local or environment. |
 | `mcp.servers[].auth.oauth.credentials.local` | `mcplocalcredentialprofile` | `(absent)` | Local declares encrypted mutable credentials rooted at an absolute path. |
 | `mcp.servers[].auth.oauth.credentials.local.root` | `string` | `(empty)` | Root is the required absolute credential-store root. |
-| `mcp.servers[].auth.oauth.credentials.local.key_env` | `string` | `(empty)` | KeyEnv is a MECATL_* environment variable name containing the encryption key. |
+| `mcp.servers[].auth.oauth.credentials.local.key_env` | `string` | `(empty)` | KeyEnv is the legacy MECATL_* environment variable containing the key. |
+| `mcp.servers[].auth.oauth.credentials.local.key` | `mcpnativecredentialkey` | `(absent)` | Key selects root-pinned native custody for newly onboarded profiles. |
 | `mcp.servers[].auth.oauth.credentials.environment` | `mcpenvironmentcredentialprofile` | `(absent)` | Environment declares one externally provisioned read-only credential record. |
 | `mcp.servers[].auth.oauth.credentials.environment.credential_env` | `string` | `(empty)` | CredentialEnv is a MECATL_* environment variable containing the opaque credential record. |
 | `mcp.servers[].auth.oauth.credentials.environment.allow_process_local_refresh` | `bool` | `false` | AllowProcessLocalRefresh permits refreshed credentials to live only in this process. |

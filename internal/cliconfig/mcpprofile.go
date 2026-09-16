@@ -337,24 +337,7 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 		cacheKey := local.Root + "\x00" + local.KeyEnv
 		store := stores[cacheKey]
 		if local.Key != nil {
-			filePath := ""
-			if local.Key.File != nil {
-				filePath = local.Key.File.Path
-			}
-			selected, openErr := mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
-			if openErr != nil {
-				return nil, &MCPProfileError{Server: profile.Name, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore}
-			}
-			store, err := credentialstore.NewEncryptedFile(local.Root, mcpOAuthCredentialNamespace, selected.Key)
-			clear(selected.Key)
-			runtime.KeepAlive(selected.Key)
-			if err != nil {
-				return nil, &MCPProfileError{Server: profile.Name, Field: "auth.oauth.credentials.local", Kind: ErrMCPProfileStore}
-			}
-			stores[cacheKey] = store
-			owner.owned = append(owner.owned, store)
-			opts.CredentialStore = store
-			return opts, nil
+			return loadNativeOAuthProfile(profile.Name, local, loadOpts, cacheKey, owner, stores, opts)
 		} else if store == nil {
 			encoded, ok := lookupMCPEnv(lookup, local.KeyEnv)
 			if !ok || encoded == "" {
@@ -402,6 +385,27 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 	default:
 		return nil, &MCPProfileError{Server: profile.Name, Field: "oauth.credentials.mode", Kind: ErrMCPProfileInvalid}
 	}
+	return opts, nil
+}
+
+func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialProfile, loadOpts MCPProfileLoadOptions, cacheKey string, owner *MCPProfiles, stores map[string]credentialstore.Store, opts *mcp.OAuthOptions) (*mcp.OAuthOptions, error) {
+	filePath := ""
+	if local.Key.File != nil {
+		filePath = local.Key.File.Path
+	}
+	selected, err := mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
+	if err != nil {
+		return nil, &MCPProfileError{Server: server, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore}
+	}
+	store, err := credentialstore.NewEncryptedFile(local.Root, mcpOAuthCredentialNamespace, selected.Key)
+	clear(selected.Key)
+	runtime.KeepAlive(selected.Key)
+	if err != nil {
+		return nil, &MCPProfileError{Server: server, Field: "auth.oauth.credentials.local", Kind: ErrMCPProfileStore}
+	}
+	stores[cacheKey] = store
+	owner.owned = append(owner.owned, store)
+	opts.CredentialStore = store
 	return opts, nil
 }
 

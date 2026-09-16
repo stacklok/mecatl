@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -17,8 +18,8 @@ func TestDirectResourceMetadataRejectsConflictingAndQuotedComma(t *testing.T) {
 	}
 }
 
-func TestDirectResourceMetadataParsesMixedChallengesAtomically(t *testing.T) {
-	metadata, err := directResourceMetadata([]string{`Basic realm="ignored", Bearer error=invalid_token, resource_metadata="https://mcp.example/meta", Digest realm="also ignored"`})
+func TestDirectResourceMetadataParsesBearerChallengesAtomically(t *testing.T) {
+	metadata, err := directResourceMetadata([]string{`Basic realm="ignored", Bearer error=invalid_token, resource_metadata="https://mcp.example/meta", scope="openid", Digest realm="also ignored"`})
 	if err != nil || metadata != "https://mcp.example/meta" {
 		t.Fatalf("metadata = %q, %v", metadata, err)
 	}
@@ -28,11 +29,12 @@ func TestDirectResourceMetadataParsesMixedChallengesAtomically(t *testing.T) {
 	}
 	for _, header := range []string{
 		`Bearer resource_metadata="https://mcp.example/a", Basic realm="x", Bearer resource_metadata="https://mcp.example/b"`,
+		`Bearer resource_metadata="https://mcp.example/meta", scope="openid", Bearer resource_metadata="https://mcp.example/meta", scope="profile"`,
 		`Bearer resource_metadata=https://mcp.example/meta`,
 		`Bearer resource_metadata="https://mcp.example/meta`,
 	} {
 		if _, err := directResourceMetadata([]string{header}); err == nil {
-			t.Fatalf("hostile header accepted: %q", header)
+			t.Fatalf("hostile or conflicting header accepted: %q", header)
 		}
 	}
 }
@@ -50,6 +52,7 @@ func TestDirectIssuerMetadataFallsBackOnlyFrom404WithoutCredentials(t *testing.T
 			http.NotFound(w, r)
 		case "/.well-known/openid-configuration/tenant":
 			oidcHits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"issuer":"` + server.URL + `/tenant","authorization_endpoint":"` + server.URL + `/authorize","token_endpoint":"` + server.URL + `/token","registration_endpoint":"` + server.URL + `/register","authorization_response_iss_parameter_supported":true}`))
 		default:
 			t.Errorf("unexpected discovery request: %s", r.URL.Path)
@@ -64,10 +67,87 @@ func TestDirectIssuerMetadataFallsBackOnlyFrom404WithoutCredentials(t *testing.T
 		t.Fatalf("discovery=%+v rfc8414=%d oidc=%d", got, rfc8414Hits.Load(), oidcHits.Load())
 	}
 }
-func TestDirectIssuerMetadataDoesNotAdvanceAfterNon404(t *testing.T) {
-	var oidcHits atomic.Int32
+func TestDirectIssuerMetadataTriesPathfulOIDCAppendLast(t *testing.T) {
+	var paths []string
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path != "/tenant/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"issuer":"` + server.URL + `/tenant","authorization_endpoint":"` + server.URL + `/authorize","token_endpoint":"` + server.URL + `/token","registration_endpoint":"` + server.URL + `/register"}`))
+	}))
+	defer server.Close()
+
+	if _, err := directIssuerMetadata(t.Context(), server.Client(), server.URL+"/tenant"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/.well-known/oauth-authorization-server/tenant", "/.well-known/openid-configuration/tenant", "/tenant/.well-known/openid-configuration"}
+	if len(paths) != len(want) {
+		t.Fatalf("paths = %v, want %v", paths, want)
+	}
+	for i := range want {
+		if paths[i] != want[i] {
+			t.Fatalf("paths = %v, want %v", paths, want)
+		}
+	}
+}
+func TestDirectIssuerMetadataRejectsNonJSONContentType(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/oauth-authorization-server" {
+			t.Errorf("unexpected fallback after terminal response: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(`{"issuer":"` + server.URL + `"}`))
+	}))
+	defer server.Close()
+
+	if _, err := directIssuerMetadata(t.Context(), server.Client(), server.URL); err == nil {
+		t.Fatal("non-JSON issuer metadata was accepted")
+	}
+}
+
+func TestDirectMetadataRequiresJSONContentTypeAndEnforcesBodyLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contentType string
+		body        []byte
+	}{
+		{name: "wrong content type", contentType: "text/plain", body: []byte(`{"resource":"https://mcp.example","authorization_servers":["https://issuer.example"]}`)},
+		{name: "oversized body", contentType: "application/json", body: append([]byte(`{}`), bytes.Repeat([]byte(" "), maxDirectDiscoveryBody)...)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write(tc.body)
+			}))
+			defer server.Close()
+			if _, _, err := directProtectedResource(t.Context(), server.Client(), server.URL, server.URL); err == nil {
+				t.Fatal("invalid metadata response was accepted")
+			}
+		})
+	}
+}
+
+func TestExactDirectMetadataURLPreservesPathForRootFallback(t *testing.T) {
+	root, _ := exactDirectURL("https://mcp.example/")
+	pathful, _ := exactDirectURL("https://mcp.example/mcp")
+	if got, want := directEndpointMetadataURL(root), "https://mcp.example/.well-known/oauth-protected-resource/"; got != want {
+		t.Fatalf("root metadata URL = %q, want %q", got, want)
+	}
+	if got, want := directEndpointMetadataURL(pathful), "https://mcp.example/.well-known/oauth-protected-resource/mcp"; got != want {
+		t.Fatalf("pathful metadata URL = %q, want %q", got, want)
+	}
+}
+
+func TestDirectIssuerMetadataDoesNotAdvanceAfterNon404(t *testing.T) {
+	var oidcHits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/openid-configuration" {
 			oidcHits.Add(1)
 		}

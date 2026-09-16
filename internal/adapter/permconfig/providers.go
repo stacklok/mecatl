@@ -104,7 +104,7 @@ func (s *CredentialStoreSection) UnmarshalYAML(node ast.Node) error {
 
 // UnmarshalYAML decodes the optional file-backed API-key input.
 func (s *APIKeyCredentialStore) UnmarshalYAML(node ast.Node) error {
-	if err := decodeStrictMapping(node, "credential_store.api_key", map[string]any{"file": &s.File}); err != nil {
+	if err := decodeStrictMapping(node, "credential_store.api_key", map[string]any{mcpCredentialFile: &s.File}); err != nil {
 		return err
 	}
 	if strings.TrimSpace(s.File) == "" {

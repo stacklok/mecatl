@@ -70,7 +70,47 @@ export MECATL_MCP_CREDENTIAL_KEY="$(cat "$HOME/.local/state/mecatl-mcp.key")"
 Do not put the key, client secret, access token, or refresh token in source
 control, a command argument, `settings.yaml`, or a prompt.
 
-## Authorize a local OAuth profile
+## Add, inspect, and remove a direct MCP profile
+
+For a direct streaming-HTTP MCP server, add a profile from its resource URL. The
+command discovers and pins one issuer, selects local credential custody, saves the
+profile, then completes browser authorization and verifies the MCP connection.
+
+```sh
+mecated mcp add connector https://mcp.example.com/mcp
+```
+
+Use `--file <PATH>` to select the one operator settings document that the command
+may write. Add and remove refuse to proceed when another configured operator
+settings source contains an `mcp:` block, so a higher- or lower-precedence source
+cannot hide the change. On Linux without Secret Service, select file custody
+explicitly when prompted:
+
+```sh
+mecated mcp add connector https://mcp.example.com/mcp --credential-store=file
+```
+
+Inspect configured profiles without contacting an MCP server or presenting a
+browser flow:
+
+```sh
+mecated mcp list [--file <PATH>]
+```
+
+Each row identifies the configured source and a non-presenting credential status.
+Changes affect newly started daemons; activation in an already running daemon is
+unknown.
+
+Remove a direct profile locally with:
+
+```sh
+mecated mcp remove connector [--file <PATH>]
+```
+
+Removal deletes the current local grant and records a durable removal state before
+removing the settings profile. It does not revoke an upstream OAuth client or
+remove a shared wrapping key.
+
 
 A mutable local profile is authorized explicitly by the operator:
 
@@ -80,10 +120,13 @@ mecated mcp login github --no-browser
 ```
 
 The normal command opens a browser. `--no-browser` prints the authorization URL
-for another browser or a headless operator. Use `--permission-config` to select
-trusted operator settings files:
+for another browser or a headless operator. Use either `--file` for one settings
+document or the deprecated repeatable `--permission-config` selector for trusted
+operator settings files; the selectors are mutually exclusive:
 
 ```sh
+mecated mcp login github --file /etc/mecatl/settings.yaml
+# Deprecated, repeatable selector:
 mecated mcp login github \
   --permission-config /etc/mecatl/settings.yaml
 ```

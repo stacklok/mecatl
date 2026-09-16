@@ -4,12 +4,12 @@
 **Work classification:** Architectural — this work changes durable operator CLI and configuration contracts, OAuth issuer trust bootstrap, local credential-key custody, and direct-DCR removal state.
 **Decision record:** [ADR 0345](../adr/0345-direct-mcp-onboarding.md)
 **Phase:** local direct-MCP onboarding and lifecycle management
-**Status:** proposed, 2026-09-16. Post-MoE corrections and the user-approved scope reduction are recorded; ready for Plan / Interface review.
-**Delivery:** Split. The command, configuration, credential, and trust-bootstrap contracts need human review before implementation changes the host or performs OAuth.
+**Status:** in-progress, 2026-09-16. Implementation is underway against the merged Plan / Interface baseline.
+**Delivery:** Split. The command, configuration, credential, and trust-bootstrap contracts were human-reviewed before implementation began.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1613](https://github.com/stacklok/mecatl/issues/1613).
 **Plan PR:** [#1626](https://github.com/stacklok/mecatl/pull/1626).
-**Approved baseline:** absent until the Plan / Interface PR merges.
+**Approved baseline:** `b9f8cc5da3518e6e8eff726b769f5ebc894a1438`.
 
 Make the currently supported direct-DCR profile a URL-first host operation. One attended command writes a validated operator profile, safely discovers and pins its sole issuer, selects durable credential custody without asking the operator to handle an encryption key, completes browser authorization, and verifies the MCP connection. Matching list, login, and removal commands replace routine YAML surgery.
 

@@ -26,61 +26,99 @@ type mcpLifecycleArgs struct {
 	name, url, file, custody string
 }
 
+type mcpSettingsSource struct {
+	path     string
+	snapshot mcpSettingsSnapshot
+	config   permconfig.Config
+}
+
 func parseMCPLifecycleArgs(command string, args []string) (mcpLifecycleArgs, error) {
-	var result mcpLifecycleArgs
-	result.custody = "auto"
+	result := mcpLifecycleArgs{custody: "auto"}
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--file" || arg == "--credential-store" {
-			if i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-				return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
-			}
-			i++
-			if arg == "--file" {
-				if result.file != "" {
-					return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
-				}
-				result.file = args[i]
-			} else {
-				result.custody = args[i]
-			}
+		consumed, handled, err := parseMCPOption(args, i, &result)
+		if err != nil {
+			return mcpLifecycleArgs{}, err
+		}
+		if handled {
+			i += consumed
 			continue
 		}
-		if value, ok := strings.CutPrefix(arg, "--file="); ok && value != "" {
-			if result.file != "" {
-				return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
-			}
-			result.file = value
-			continue
-		}
-		if value, ok := strings.CutPrefix(arg, "--credential-store="); ok && value != "" {
-			result.custody = value
-			continue
-		}
-		if strings.HasPrefix(arg, "-") {
+		if !parseMCPPositional(command, args[i], &result) {
 			return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
 		}
-		if command == "add" && result.name == "" {
-			result.name = arg
-			continue
-		}
-		if command == "add" && result.url == "" {
-			result.url = arg
-			continue
-		}
-		if command == "remove" && result.name == "" {
-			result.name = arg
-			continue
-		}
-		return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
 	}
-	if command == "add" && (result.name == "" || result.url == "") || command == "remove" && result.name == "" || command == "list" && result.name != "" {
-		return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
-	}
-	if command != "add" && result.custody != "auto" || result.custody != "auto" && result.custody != "keyring" && result.custody != "file" {
+	if !validMCPLifecycleArgs(command, result) {
 		return mcpLifecycleArgs{}, errors.New(mcpLifecycleUsage)
 	}
 	return result, nil
+}
+
+func parseMCPOption(args []string, index int, result *mcpLifecycleArgs) (int, bool, error) {
+	arg := args[index]
+	if arg == mcpFileFlag || arg == "--credential-store" {
+		if index+1 == len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "-") {
+			return 0, false, errors.New(mcpLifecycleUsage)
+		}
+		if arg == mcpFileFlag {
+			if result.file != "" {
+				return 0, false, errors.New(mcpLifecycleUsage)
+			}
+			result.file = args[index+1]
+		} else {
+			result.custody = args[index+1]
+		}
+		return 1, true, nil
+	}
+	if value, ok := strings.CutPrefix(arg, "--file="); ok {
+		if value == "" || result.file != "" {
+			return 0, false, errors.New(mcpLifecycleUsage)
+		}
+		result.file = value
+		return 0, true, nil
+	}
+	if value, ok := strings.CutPrefix(arg, "--credential-store="); ok {
+		if value == "" {
+			return 0, false, errors.New(mcpLifecycleUsage)
+		}
+		result.custody = value
+		return 0, true, nil
+	}
+	return 0, false, nil
+}
+
+func parseMCPPositional(command, arg string, result *mcpLifecycleArgs) bool {
+	if strings.HasPrefix(arg, "-") {
+		return false
+	}
+	if command == mcpAddCommand && result.name == "" {
+		result.name = arg
+		return true
+	}
+	if command == mcpAddCommand && result.url == "" {
+		result.url = arg
+		return true
+	}
+	if command == "remove" && result.name == "" {
+		result.name = arg
+		return true
+	}
+	return false
+}
+
+func validMCPLifecycleArgs(command string, result mcpLifecycleArgs) bool {
+	if command == mcpAddCommand && (result.name == "" || result.url == "") {
+		return false
+	}
+	if command == "remove" && result.name == "" {
+		return false
+	}
+	if command == "list" && result.name != "" {
+		return false
+	}
+	if command != mcpAddCommand && result.custody != "auto" {
+		return false
+	}
+	return result.custody == "auto" || result.custody == "keyring" || result.custody == "file"
 }
 
 func defaultMCPSettingsFile() (string, error) {
@@ -165,7 +203,7 @@ func readMCPSettings(path string) (mcpSettingsSnapshot, error) {
 		return mcpSettingsSnapshot{}, fmt.Errorf("MCP settings %q cannot be read", path)
 	}
 	file := os.NewFile(uintptr(fd), path)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxMCPSettingsBytes+1))
 	if err != nil || len(data) > maxMCPSettingsBytes {
 		return mcpSettingsSnapshot{}, fmt.Errorf("MCP settings %q cannot be read", path)
@@ -177,7 +215,12 @@ func readMCPSettings(path string) (mcpSettingsSnapshot, error) {
 	if err != nil {
 		return mcpSettingsSnapshot{}, fmt.Errorf("MCP settings %q cannot be read", path)
 	}
-	return mcpSettingsSnapshot{data: data, version: mcpSettingsVersion{exists: true, device: uint64(st.Dev), inode: uint64(st.Ino), size: info.Size(), modNanos: info.ModTime().UnixNano()}}, nil
+	return mcpSettingsSnapshot{data: data, version: mcpSettingsVersion{exists: true, device: mcpSettingsDevice(st.Dev), inode: st.Ino, size: info.Size(), modNanos: info.ModTime().UnixNano()}}, nil //nolint:gosec // Stat_t device and inode values are non-negative OS identities.
+}
+
+func mcpSettingsUnchanged(path string, before mcpSettingsSnapshot) bool {
+	current, err := readMCPSettings(path)
+	return err == nil && sameMCPSettingsVersion(current, before) && string(current.data) == string(before.data)
 }
 
 func writeMCPSettings(path string, before mcpSettingsSnapshot, after []byte) error {
@@ -185,8 +228,7 @@ func writeMCPSettings(path string, before mcpSettingsSnapshot, after []byte) err
 	if canonicalErr != nil {
 		return errors.New("MCP settings changed while this command was running; retry")
 	}
-	current, err := readMCPSettings(path)
-	if err != nil || !sameMCPSettingsVersion(current, before) || string(current.data) != string(before.data) {
+	if !mcpSettingsUnchanged(path, before) {
 		return errors.New("MCP settings changed while this command was running; retry")
 	}
 	dirPath, base := filepath.Dir(path), filepath.Base(path)
@@ -197,7 +239,7 @@ func writeMCPSettings(path string, before mcpSettingsSnapshot, after []byte) err
 	if err != nil {
 		return errors.New("MCP settings directory cannot be created")
 	}
-	defer unix.Close(dir)
+	defer func() { _ = unix.Close(dir) }()
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return errors.New("MCP settings cannot be staged")
@@ -207,7 +249,7 @@ func writeMCPSettings(path string, before mcpSettingsSnapshot, after []byte) err
 	if err != nil {
 		return errors.New("MCP settings cannot be staged")
 	}
-	defer unix.Unlinkat(dir, tempName, 0)
+	defer func() { _ = unix.Unlinkat(dir, tempName, 0) }()
 	if err = writeAllMCPSettings(fd, after); err == nil {
 		err = unix.Fsync(fd)
 	}
@@ -217,8 +259,7 @@ func writeMCPSettings(path string, before mcpSettingsSnapshot, after []byte) err
 	if err != nil {
 		return errors.New("MCP settings cannot be staged")
 	}
-	latest, err := readMCPSettings(path)
-	if err != nil || !sameMCPSettingsVersion(latest, before) || string(latest.data) != string(before.data) {
+	if !mcpSettingsUnchanged(path, before) {
 		return errors.New("MCP settings changed while this command was running; retry")
 	}
 	var st unix.Stat_t
@@ -254,8 +295,85 @@ func writeAllMCPSettings(fd int, data []byte) error {
 }
 
 func sameMCPSettingsVersion(a, b mcpSettingsSnapshot) bool { return a.version == b.version }
+func mcpSettingsDevice(value int32) uint64                 { return uint64(uint32(value)) } //nolint:gosec // Stat_t device values are non-negative OS identities.
+
 func sameMCPSettingsStat(st unix.Stat_t, v mcpSettingsVersion) bool {
-	return v.exists && uint64(st.Dev) == v.device && uint64(st.Ino) == v.inode && int64(st.Size) == v.size
+	return v.exists && mcpSettingsDevice(st.Dev) == v.device && st.Ino == v.inode && st.Size == v.size
+}
+
+// lockMCPSettings serializes operator-owned lifecycle writes for one target.
+func lockMCPSettings(path string) (func(), error) {
+	if err := secureMCPSettingsDir(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("MCP settings lock %q cannot be opened", path+".lock")
+	}
+	dirPath, base := filepath.Dir(path), filepath.Base(path)
+	dir, err := unix.Open(dirPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("MCP settings lock %q cannot be opened: %w", path+".lock", err)
+	}
+	defer func() { _ = unix.Close(dir) }()
+	fd, err := unix.Openat(dir, base+".lock", unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC, 0600)
+	if errors.Is(err, unix.EEXIST) {
+		fd, err = unix.Openat(dir, base+".lock", unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("MCP settings lock %q cannot be opened: %w", path+".lock", err)
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || st.Uid != uint32(os.Getuid()) || st.Mode&0o077 != 0 { //nolint:gosec // Getuid is the OS-provided non-negative uid used for ownership comparison.
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("MCP settings lock %q is unsafe", path+".lock")
+	}
+	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("MCP settings lock %q cannot be acquired", path+".lock")
+	}
+	return func() { _ = unix.Close(fd) }, nil
+}
+
+func mcpSettingsSources(target string, extra []string) ([]mcpSettingsSource, error) {
+	paths := append([]string{target}, extra...)
+	if conventional, err := defaultMCPSettingsFile(); err == nil {
+		paths = append(paths, conventional)
+	}
+	seen := make(map[string]struct{}, len(paths))
+	var sources []mcpSettingsSource
+	for _, raw := range paths {
+		path, err := mcpSettingsFile(raw)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		snapshot, err := readMCPSettings(path)
+		if err != nil {
+			return nil, err
+		}
+		if !snapshot.version.exists && path != target {
+			continue
+		}
+		var cfg permconfig.Config
+		if err := yaml.Unmarshal(snapshot.data, &cfg); err != nil {
+			return nil, fmt.Errorf("MCP settings %q is invalid: %w", path, err)
+		}
+		sources = append(sources, mcpSettingsSource{path: path, snapshot: snapshot, config: cfg})
+	}
+	return sources, nil
+}
+
+func mcpMutationTarget(target string) (mcpSettingsSnapshot, error) {
+	sources, err := mcpSettingsSources(target, nil)
+	if err != nil {
+		return mcpSettingsSnapshot{}, err
+	}
+	for i, source := range sources {
+		if i > 0 && source.config.MCP != nil {
+			return mcpSettingsSnapshot{}, fmt.Errorf("MCP settings %q supplies mcp: and would shadow writable target %q", source.path, target)
+		}
+	}
+	return sources[0].snapshot, nil
 }
 
 // secureMCPSettingsDir prevents a selected settings path from inheriting a symlinked parent.
@@ -286,7 +404,7 @@ func secureMCPSettingsDir(path string) error {
 }
 
 func runMCPAdd(args []string, stdout io.Writer) error {
-	parsed, err := parseMCPLifecycleArgs("add", args)
+	parsed, err := parseMCPLifecycleArgs(mcpAddCommand, args)
 	if err != nil {
 		return err
 	}
@@ -297,17 +415,36 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	before, err := readMCPSettings(path)
-	if err != nil {
-		return err
-	}
+	_, _ = fmt.Fprintf(stdout, "MCP settings writable target: %s\n", path)
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: discovering protected resource")
 	discovery, err := mcp.DiscoverDirectIssuer(context.Background(), parsed.url)
 	if err != nil {
 		return err
 	}
+	unlock, err := lockMCPSettings(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	before, err := mcpMutationTarget(path)
+	if err != nil {
+		return err
+	}
 	issuer := discovery.Issuer
-	_, _ = fmt.Fprintln(stdout, "MCP onboarding: updating settings")
+	if err := publishMCPAdd(path, before, parsed, issuer, stdout); err != nil {
+		return err
+	}
+	unlock()
+	unlock = nil
+	return runMCPLogin([]string{parsed.name, mcpFileFlag, path}, stdout)
+}
+
+func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleArgs, issuer string, stdout io.Writer) error {
+	_, _ = fmt.Fprintln(stdout, "MCP onboarding: selecting credential custody")
 	configDir := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
 	stateDir := xdgconfig.UserStateDir(xdgconfig.OSEnv)
 	if configDir == "" || stateDir == "" {
@@ -320,20 +457,19 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 		return err
 	}
 	defer clear(selected.Key)
-	var after []byte
+	locator := ""
 	if selected.Backend == mcpcredential.BackendFile {
-		after, err = permconfig.AddDirectMCPServerWithKey(before.data, parsed.name, parsed.url, issuer, credentialRoot, selected.Backend, selected.Locator)
-	} else {
-		after, err = permconfig.AddDirectMCPServerWithKey(before.data, parsed.name, parsed.url, issuer, credentialRoot, selected.Backend, "")
+		locator = selected.Locator
 	}
+	after, err := permconfig.AddDirectMCPServerWithKey(before.data, parsed.name, parsed.url, issuer, credentialRoot, selected.Backend, locator)
 	if err != nil {
 		return err
 	}
 	if err := writeMCPSettings(path, before, after); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(stdout, "MCP onboarding: settings saved; authorizing and verifying")
-	return runMCPLogin([]string{parsed.name, "--permission-config", path}, stdout)
+	_, _ = fmt.Fprintln(stdout, "MCP onboarding: settings saved")
+	return nil
 }
 
 func runMCPList(args []string, stdout io.Writer) error {
@@ -345,21 +481,44 @@ func runMCPList(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	data, err := readMCPSettings(path)
+	sources, err := mcpSettingsSources(path, nil)
 	if err != nil {
 		return err
 	}
-	var cfg permconfig.Config
-	if err := yaml.Unmarshal(data.data, &cfg); err != nil {
-		return fmt.Errorf("MCP settings %q is invalid: %w", path, err)
+	for _, source := range sources {
+		_, _ = fmt.Fprintf(stdout, "MCP settings source: %s\n", source.path)
 	}
-	if cfg.MCP != nil {
-		for _, server := range cfg.MCP.Servers {
-			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", server.Name, server.URL, server.Auth.Mode, path)
+	for _, source := range sources {
+		if source.config.MCP == nil {
+			continue
 		}
+		_, _ = fmt.Fprintf(stdout, "MCP settings winner: %s\n", source.path)
+		for _, server := range source.config.MCP.Servers {
+			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", server.Name, server.URL, mcpProfileKind(server), mcpCredentialStatus(server), source.path)
+		}
+		break
 	}
 	_, _ = fmt.Fprintln(stdout, "Changes affect newly started daemons; existing-daemon activation is unknown.")
 	return nil
+}
+
+func mcpProfileKind(server permconfig.MCPServerProfile) string {
+	if server.Auth.OAuth == nil {
+		return server.Auth.Mode
+	}
+	if client := server.Auth.OAuth.Client; client.Mode != "" {
+		return "oauth/" + client.Mode
+	}
+	return "oauth"
+}
+
+// mcpCredentialStatus deliberately inspects only configuration. List must not
+// unlock custody, contact a service, or present an authorization flow.
+func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
+	if server.Auth.OAuth == nil && server.Auth.Mode == "none" {
+		return "ready"
+	}
+	return "unknown"
 }
 
 func runMCPRemove(args []string, stdout io.Writer) error {
@@ -371,7 +530,13 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	before, err := readMCPSettings(path)
+	_, _ = fmt.Fprintf(stdout, "MCP settings writable target: %s\n", path)
+	unlock, err := lockMCPSettings(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	before, err := mcpMutationTarget(path)
 	if err != nil {
 		return err
 	}

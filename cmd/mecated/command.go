@@ -22,8 +22,10 @@ import (
 type commandMode string
 
 const (
-	modeServe commandMode = "serve"
-	modeACP   commandMode = "acp"
+	modeServe     commandMode = "serve"
+	modeACP       commandMode = "acp"
+	mcpAddCommand             = "add"
+	mcpFileFlag               = "--file"
 )
 
 // errBareInvocation is the usage error a bare `mecated` (no command word) or a
@@ -263,7 +265,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 			return nil
 		})}
 	}
-	if len(args) >= 3 && args[2] == "add" {
+	if len(args) >= 3 && args[2] == mcpAddCommand {
 		return commandResolution{handled: true, run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error { return runMCPAdd(args[3:], stdout) })}
 	}
 	if len(args) >= 3 && args[2] == "list" {
@@ -284,7 +286,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 }
 
 func writeMCPHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  login SERVER [--no-browser] [--permission-config PATH ...]\n  remove NAME [--file PATH]\n\nThe add custody modes are intentionally incomplete in this local spike. Login keeps its existing behavior.")
+	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]\n\nLifecycle settings are host-local; changes affect newly started daemons. Use mecated mcp login SERVER to authorize a profile.")
 }
 
 func mcpUsageError(argv []string) error {

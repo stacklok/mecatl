@@ -1,14 +1,18 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+const maxDirectDiscoveryBody = 1 << 20
 
 // ErrDirectPathMetadataFallbackUnsupported means a pathful protected resource
 // did not expose its RFC 9728 endpoint. Falling back to an origin-wide document
@@ -56,7 +60,7 @@ func DiscoverDirectIssuer(ctx context.Context, resource string) (DirectIssuerDis
 			return DirectIssuerDiscovery{}, errors.New("MCP resource_metadata must be a query-free HTTPS URL on the MCP resource origin")
 		}
 	} else {
-		metadataURL = urlOrigin(resourceURL) + "/.well-known/oauth-protected-resource" + resourceURL.EscapedPath()
+		metadataURL = directEndpointMetadataURL(resourceURL)
 	}
 	document, status, err := directProtectedResource(ctx, client, metadataURL, canonical)
 	if err != nil {
@@ -69,9 +73,12 @@ func DiscoverDirectIssuer(ctx context.Context, resource string) (DirectIssuerDis
 		fallback := urlOrigin(resourceURL) + "/.well-known/oauth-protected-resource"
 		if fallback != metadataURL {
 			document, status, err = directProtectedResource(ctx, client, fallback, canonical)
+			if err != nil {
+				return DirectIssuerDiscovery{}, err
+			}
 		}
 	}
-	if err != nil || status != http.StatusOK {
+	if status != http.StatusOK {
 		return DirectIssuerDiscovery{}, errors.New("MCP resource metadata was not available")
 	}
 	issuer, err := exactDirectURL(document.AuthorizationServers[0])
@@ -106,6 +113,10 @@ func exactDirectURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+func directEndpointMetadataURL(resource *url.URL) string {
+	return urlOrigin(resource) + "/.well-known/oauth-protected-resource" + resource.EscapedPath()
+}
+
 func newDirectDiscoveryClient(origin string) (*http.Client, error) {
 	client, _, err := newOAuthHTTPClient(origin, OAuthOptions{Issuer: origin, Network: OAuthNetworkPolicy{MaxRedirects: maxOAuthRedirects}})
 	if err != nil {
@@ -133,19 +144,34 @@ func directProtectedResource(ctx context.Context, client *http.Client, target, r
 	if err != nil {
 		return directPRM{}, 0, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return directPRM{}, response.StatusCode, nil
 	}
+	if !directJSONContentType(response.Header.Get("Content-Type")) {
+		return directPRM{}, response.StatusCode, errors.New("MCP resource metadata must be JSON")
+	}
 	var document directPRM
-	if err := directDecodeJSON(io.LimitReader(response.Body, 1<<20+1), &document); err != nil || document.Resource != resource || len(document.AuthorizationServers) != 1 {
+	if err := directDecodeJSON(response.Body, &document); err != nil || document.Resource != resource || len(document.AuthorizationServers) != 1 {
 		return directPRM{}, response.StatusCode, errors.New("MCP resource metadata must bind the resource and advertise exactly one issuer")
 	}
 	return document, response.StatusCode, nil
 }
 
+func directJSONContentType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && strings.EqualFold(mediaType, "application/json")
+}
+
 func directDecodeJSON(body io.Reader, target any) error {
-	decoder := json.NewDecoder(body)
+	contents, err := io.ReadAll(io.LimitReader(body, maxDirectDiscoveryBody+1))
+	if err != nil {
+		return err
+	}
+	if len(contents) > maxDirectDiscoveryBody {
+		return errors.New("MCP discovery response is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
@@ -164,11 +190,17 @@ func directIssuerMetadata(ctx context.Context, client *http.Client, issuer strin
 	if u.EscapedPath() != "" && u.EscapedPath() != "/" {
 		base += u.EscapedPath()
 	}
-	oidc := urlOrigin(u) + "/.well-known/openid-configuration"
+	oidcPath := urlOrigin(u) + "/.well-known/openid-configuration"
+	appendOIDC := ""
 	if u.EscapedPath() != "" && u.EscapedPath() != "/" {
-		oidc += u.EscapedPath()
+		oidcPath += u.EscapedPath()
+		appendOIDC = issuer + "/.well-known/openid-configuration"
 	}
-	for _, target := range []string{base, oidc} {
+	candidates := []string{base, oidcPath}
+	if appendOIDC != "" {
+		candidates = append(candidates, appendOIDC)
+	}
+	for _, target := range candidates {
 		response, err := directGet(ctx, client, target)
 		if err != nil {
 			return DirectIssuerDiscovery{}, errors.New("MCP issuer metadata discovery failed")
@@ -181,6 +213,10 @@ func directIssuerMetadata(ctx context.Context, client *http.Client, issuer strin
 			_ = response.Body.Close()
 			return DirectIssuerDiscovery{}, errors.New("MCP issuer metadata was not available")
 		}
+		if !directJSONContentType(response.Header.Get("Content-Type")) {
+			_ = response.Body.Close()
+			return DirectIssuerDiscovery{}, errors.New("MCP issuer metadata must be JSON")
+		}
 		var metadata struct {
 			Issuer                                     string `json:"issuer"`
 			AuthorizationEndpoint                      string `json:"authorization_endpoint"`
@@ -188,7 +224,7 @@ func directIssuerMetadata(ctx context.Context, client *http.Client, issuer strin
 			RegistrationEndpoint                       string `json:"registration_endpoint"`
 			AuthorizationResponseIssParameterSupported bool   `json:"authorization_response_iss_parameter_supported"`
 		}
-		decodeErr := directDecodeJSON(io.LimitReader(response.Body, 1<<20+1), &metadata)
+		decodeErr := directDecodeJSON(response.Body, &metadata)
 		_ = response.Body.Close()
 		if decodeErr != nil || metadata.Issuer != issuer {
 			return DirectIssuerDiscovery{}, errors.New("MCP issuer metadata is invalid")
@@ -204,10 +240,12 @@ func directIssuerMetadata(ctx context.Context, client *http.Client, issuer strin
 	return DirectIssuerDiscovery{}, errors.New("MCP issuer metadata was not available")
 }
 
-// directResourceMetadata parses each RFC 9110 challenge atomically: a parameter
-// cannot leak from Basic (or another Bearer challenge) into the selected Bearer one.
+// directResourceMetadata selects a complete Bearer challenge. resource_metadata
+// and scope are compared as one value, so no parameter is inherited from a
+// separate challenge.
 func directResourceMetadata(values []string) (string, error) {
-	var selected string
+	var selected directChallenge
+	selectedSet := false
 	for _, value := range values {
 		challenges, err := parseDirectChallenges(value)
 		if err != nil {
@@ -217,17 +255,21 @@ func directResourceMetadata(values []string) (string, error) {
 			if !strings.EqualFold(challenge.scheme, "Bearer") {
 				continue
 			}
-			candidate := challenge.params["resource_metadata"]
-			if candidate == "" {
+			metadata, hasMetadata := challenge.params["resource_metadata"]
+			if !hasMetadata {
 				continue
 			}
-			if selected != "" && selected != candidate {
-				return "", errors.New("MCP Bearer challenges advertise conflicting resource_metadata")
+			if selectedSet && (selected.params["resource_metadata"] != metadata || selected.params["scope"] != challenge.params["scope"]) {
+				return "", errors.New("MCP Bearer challenges advertise conflicting resource_metadata or scope")
 			}
-			selected = candidate
+			selected = challenge
+			selectedSet = true
 		}
 	}
-	return selected, nil
+	if !selectedSet {
+		return "", nil
+	}
+	return selected.params["resource_metadata"], nil
 }
 
 type directChallenge struct {

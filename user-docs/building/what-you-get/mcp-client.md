@@ -54,7 +54,7 @@ For OAuth, configure an operator `mcp.servers` profile. Authorize a mutable
 local profile once:
 
 ```sh
-mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]
+mecated mcp login SERVER [--no-browser] [--file PATH | --permission-config PATH ...]
 ```
 
 Serving restores the encrypted record at startup and persists refresh-token

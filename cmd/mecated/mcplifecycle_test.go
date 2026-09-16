@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +23,11 @@ func TestMCPLifecycleListAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "calendar\thttps://mcp.example/mcp\tnone\t"+canonical) {
+	if !strings.Contains(output.String(), "calendar\thttps://mcp.example/mcp\tnone\tready\t"+canonical) {
 		t.Fatalf("list output = %q", output.String())
+	}
+	if !strings.Contains(output.String(), "MCP settings source: "+canonical) || !strings.Contains(output.String(), "MCP settings winner: "+canonical) {
+		t.Fatalf("list provenance = %q", output.String())
 	}
 	output.Reset()
 	if err := runMCPRemove([]string{"calendar", "--file", path}, &output); err != nil {
@@ -38,6 +42,69 @@ func TestMCPLifecycleListAndRemove(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "no upstream client was revoked") {
 		t.Fatalf("remove output = %q", output.String())
+	}
+}
+
+func TestMCPSettingsLockSerializesSafeLock(t *testing.T) {
+	path, err := mcpSettingsFile(filepath.Join(t.TempDir(), "settings.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockMCPSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	unlock, err = lockMCPSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+}
+
+func TestMCPSettingsLockRejectsNonOwnerOnlyFile(t *testing.T) {
+	path, err := mcpSettingsFile(filepath.Join(t.TempDir(), "settings.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".lock", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path+".lock", 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockMCPSettings(path); err == nil {
+		t.Fatal("lockMCPSettings accepted a non-owner-only lock")
+	}
+}
+
+func TestMCPSettingsRejectsExternalMCPSourcesForMutation(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	defaultPath := filepath.Join(config, "mecatl", "settings.yaml")
+	if err := os.MkdirAll(filepath.Dir(defaultPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defaultPath, []byte("mcp: {servers: []}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(target, []byte("permissions: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := mcpMutationTarget(target)
+	if err == nil || !strings.Contains(err.Error(), defaultPath) || !strings.Contains(err.Error(), target) {
+		t.Fatalf("mcpMutationTarget error = %v", err)
+	}
+}
+
+func TestMCPLoginFileAndPermissionConfigAreMutuallyExclusive(t *testing.T) {
+	if _, err := parseMCPLoginArgs([]string{"server", "--file", "settings.yaml", "--permission-config", "other.yaml"}, io.Discard); err == nil {
+		t.Fatal("accepted mutually exclusive settings selectors")
+	}
+	parsed, err := parseMCPLoginArgs([]string{"server", "--file=settings.yaml"}, io.Discard)
+	if err != nil || parsed.file != "settings.yaml" {
+		t.Fatalf("parseMCPLoginArgs = %#v, %v", parsed, err)
 	}
 }
 
@@ -120,4 +187,3 @@ func TestMCPAddDefaultSettingsPathFollowsXDGNotOSNative(t *testing.T) {
 		t.Fatalf("defaultMCPSettingsFile() = %q, want %q (an OS-native os.UserConfigDir() path would diverge from every other mecatl command's default)", path, want)
 	}
 }
-
