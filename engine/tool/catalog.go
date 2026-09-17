@@ -75,6 +75,7 @@ func (c *Catalog) AvailableNames(mode session.PermissionMode) []string {
 	})
 }
 
+// Specs returns the ToolSpecs of the tools available under the given permission
 // mode, ordered by name. In ModePlan only read-only tools are exposed, enforcing
 // plan-mode read-only gating at the catalog level before dispatch. In non-plan
 // modes a tool implementing PlanOnly (issue #206's PresentPlan signalling tool) is
