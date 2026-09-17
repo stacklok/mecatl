@@ -152,9 +152,11 @@ func TestADR_0346_ExplicitDefaultProviderOverridesCachingPreference(t *testing.T
 	}
 }
 
-// TestADR_0346_PromptCachedProjectedOncePerModel pins AC2.5: the picker signal is
-// computed by composition's single projection, and reports FALSE exactly where a
-// Claude model would silently re-pay full input.
+// TestADR_0346_PromptCachedProjectedOncePerModel pins AC3.4: the picker signal
+// is computed by composition's single projection, so the picker and the wire
+// cannot disagree. The FALSE case is asserted by the sibling
+// TestADR_0346_PromptCachedTrueWithoutDialect, which owns the
+// --no-prompt-cache sweep now that it is the only way to reach false.
 func TestADR_0346_PromptCachedProjectedOncePerModel(t *testing.T) {
 	reg, err := buildProviderRegistry(orCfg(), noEnv)
 	if err != nil {
@@ -166,8 +168,9 @@ func TestADR_0346_PromptCachedProjectedOncePerModel(t *testing.T) {
 	if !reg.promptCached(providerOpenRouterAnthropic, "anthropic/claude-opus-4.8") {
 		t.Error("the native Messages entry must report prompt_cached true")
 	}
-	// The canonical OpenRouter Responses endpoint DOES receive a root
-	// cache_control breakpoint, so it is honestly true.
+	// The canonical OpenRouter Responses endpoint carries the protocol-native
+	// prompt_cache_breakpoint (root cache_control is RETIRED by decision 3), so
+	// it is honestly true.
 	if !reg.promptCached(providerOpenRouter, "anthropic/claude-opus-4.8") {
 		t.Error("canonical openrouter carries the OpenRouter dialect, so it must report true")
 	}

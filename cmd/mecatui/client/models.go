@@ -24,11 +24,13 @@ type ModelInfo struct {
 	Image        bool   // accepts image input
 	Reasoning    bool   // emits reasoning
 	ContextLimit int64  // total context window in tokens; 0 = unknown
-	// PromptCached is true when a session on this (provider, model) pair caches
-	// its conversation prefix (ADR 0346). False means mecatl emits NO cache
-	// breakpoint for it — decisive for an Anthropic model, which caches only on
-	// an explicit ask, and conservative for an unclassified OpenAI-compatible
-	// endpoint that might still cache implicitly upstream.
+	// PromptCached is true when mecatl ASKS the upstream to cache this
+	// (provider, model) pair's conversation prefix (ADR 0346). The breakpoint is
+	// armed on every Responses endpoint, so false means the server was started
+	// with --no-prompt-cache, not that this endpoint cannot cache. Decisive for
+	// an Anthropic model, which caches only on an explicit ask; for an implicit
+	// cacher the upstream may still cache regardless, which is why the renderer
+	// scopes its marker (see modelCapSegments).
 	PromptCached bool
 }
 

@@ -12703,12 +12703,15 @@ type ModelInfo struct {
 	Reasoning bool `protobuf:"varint,5,opt,name=reasoning,proto3" json:"reasoning,omitempty"`
 	// context_limit is the model's total context window in tokens (0 when unknown).
 	ContextLimit int64 `protobuf:"varint,6,opt,name=context_limit,json=contextLimit,proto3" json:"context_limit,omitempty"`
-	// prompt_cached is true when a session on this (provider, model) pair caches
-	// its conversation prefix (ADR 0346). False marks a row that emits no cache
-	// breakpoint — notably an Anthropic model on an OpenAI-Responses endpoint
-	// whose dialect is None, which silently re-pays full uncached input every
-	// turn because Anthropic caches only on an explicit ask. Clients SHOULD mark
-	// such a row rather than hide it. Additive: an older client reads false.
+	// prompt_cached is true when mecatl ASKS the upstream to cache this
+	// (provider, model) pair's conversation prefix (ADR 0346). Decision 1 arms
+	// the protocol-native breakpoint on EVERY Responses endpoint, so false means
+	// caching is off harness-wide (the server's --no-prompt-cache), NOT that this
+	// endpoint cannot cache. Whether an upstream HONOURS the ask is not
+	// statically knowable and this field does not claim it. Clients SHOULD mark a
+	// false row rather than hide it; scoping the mark to Anthropic-family ids is
+	// the useful convention, since those cache solely on an explicit ask while an
+	// implicit cacher may cache regardless. Additive: an older client reads false.
 	PromptCached  bool `protobuf:"varint,7,opt,name=prompt_cached,json=promptCached,proto3" json:"prompt_cached,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

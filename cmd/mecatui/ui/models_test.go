@@ -2348,24 +2348,50 @@ func TestFooterGatewayNoticeGolden(t *testing.T) {
 	compareGolden(t, "footer_gateway_notice.golden", []byte(got+"\n"))
 }
 
-// uncachedModels is the ADR 0346 contrast fixture: a deployment where a Claude
-// model is reachable on a path that sends NO prompt-cache breakpoint. This is
-// the shape of the reported incident — the ToolHive gateway's OpenAI-Responses
-// surface lists Claude, and Anthropic caches only on an explicit ask, so every
-// turn re-pays full uncached input.
+// uncachedModels is the ADR 0346 contrast fixture: every row reports
+// PromptCached=false, which is the ONE shape composition can actually produce
+// now that decision 1 arms the breakpoint on every Responses endpoint. The flag
+// behind it (--no-prompt-cache) is harness-wide, so a fixture marking a single
+// non-caching provider would encode a state the server cannot emit.
 func uncachedModels() *fakeModels {
 	return &fakeModels{models: []client.ModelInfo{
-		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true, ContextLimit: 200000, PromptCached: true},
-		{ID: "anthropic/claude-opus-4.8", ProviderID: "openrouter-anthropic", DisplayName: "Claude Opus 4.8", Reasoning: true, ContextLimit: 1000000, PromptCached: true},
+		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true, ContextLimit: 200000},
+		{ID: "anthropic/claude-opus-4.8", ProviderID: "openrouter-anthropic", DisplayName: "Claude Opus 4.8", Reasoning: true, ContextLimit: 1000000},
 		{ID: "anthropic/claude-opus-4.8", ProviderID: "toolhive", DisplayName: "Claude Opus 4.8", Reasoning: true, ContextLimit: 1000000},
 	}}
 }
 
-// TestUnifiedPromptCache_Scenario2_PickerMarksUncachedRow pins AC2.6: the row
+// markedRowsFor returns the rendered model rows (never the legend) that carry
+// the no-cache marker, keyed by the substring identifying each row. The legend
+// line contains "no-cache" too, so a whole-view Contains cannot distinguish a
+// marked row from the explanation of one.
+func markedRowsFor(view, rowSubstring string) (found, marked bool) {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "no-cache = ") {
+			continue // the legend, not a row
+		}
+		if !strings.Contains(line, rowSubstring) {
+			continue
+		}
+		found = true
+		if strings.Contains(line, "no-cache") {
+			marked = true
+		}
+	}
+	return found, marked
+}
+
+// TestUnifiedPromptCache_Scenario2_PickerMarksUncachedRow pins AC3.5: the row
 // mecatl sends no cache breakpoint for is MARKED and stays SELECTABLE. Marking
-// rather than hiding was the explicit decision — an operator may deliberately
-// want the Responses path — so this asserts both halves, plus that the legend
-// only appears when there is a marker to explain.
+// rather than hiding was the explicit decision, so this asserts both halves,
+// plus that the legend only appears when there is a marker to explain.
+//
+// This is a RENDERER contract: it feeds PromptCached=false in directly, because
+// the renderer's job is to mark whatever false it is handed. Composition can
+// only produce false under --no-prompt-cache (a harness-wide switch), which the
+// sibling TestADR_0346_PromptCachedTrueWithoutDialect covers. The test name
+// keeps its Scenario2 prefix because the approved acceptance plan cites it
+// verbatim in AC3.5's verify line.
 func TestUnifiedPromptCache_Scenario2_PickerMarksUncachedRow(t *testing.T) {
 	m := newModelsModel(t, uncachedModels(), &fakeStore{}, modelsCaps(),
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
@@ -2373,8 +2399,14 @@ func TestUnifiedPromptCache_Scenario2_PickerMarksUncachedRow(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 	view := string(stripANSI([]byte(m.View().Content)))
 
-	if !strings.Contains(view, "no-cache") {
-		t.Errorf("the uncached toolhive Claude row must be marked, got:\n%s", view)
+	if found, marked := markedRowsFor(view, "toolhive"); !found || !marked {
+		t.Errorf("the toolhive Claude row must be marked (found=%v marked=%v), got:\n%s", found, marked, view)
+	}
+	// Scoping, the half that was previously unasserted: the SAME disabled
+	// posture leaves a non-Anthropic row unmarked, because false there only
+	// means mecatl sends no hint and an implicit cacher may cache anyway.
+	if found, marked := markedRowsFor(view, "GPT-5"); !found || marked {
+		t.Errorf("the gpt-5 row must NOT be marked (found=%v marked=%v), got:\n%s", found, marked, view)
 	}
 	if !strings.Contains(view, "no-cache = no prompt-cache breakpoint sent") {
 		t.Errorf("the legend must appear when a row is marked, got:\n%s", view)

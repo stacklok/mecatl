@@ -369,16 +369,22 @@ func modelCapSegments(mi client.ModelInfo) []string {
 		segs = append(segs, humanizeTokens(mi.ContextLimit))
 	}
 	// ADR 0346: mark a row mecatl sends no cache breakpoint for. The row stays
-	// SELECTABLE — an operator may deliberately want the Responses path — but an
-	// Anthropic model here re-pays full uncached input every turn, which is how
-	// the reported incident happened. Marking, not hiding, was the explicit
-	// decision recorded in the acceptance plan.
+	// SELECTABLE, and marking rather than hiding was the explicit decision
+	// recorded in the acceptance plan.
+	//
+	// Since decision 1 arms the breakpoint on every Responses endpoint, the only
+	// way to see PromptCached=false is a server started with --no-prompt-cache.
+	// That is worth surfacing HERE rather than leaving to the build-once posture
+	// line: a connect-mode mecatui never passed that flag (it is embedded-server
+	// only) and the posture line goes to the log file, not the screen, so this
+	// marker is the sole in-screen signal that every Claude turn is re-paying
+	// full input.
 	//
 	// Scoped to Anthropic-family ids because that is where PromptCached=false is
 	// DECISIVE: Anthropic caches only on an explicit ask, so no breakpoint means
 	// no cache. For every other vendor false merely means mecatl sends no hint,
 	// and an implicit-caching upstream (OpenAI, Gemini, DeepSeek, Grok) may well
-	// cache anyway — marking those would be a false alarm.
+	// cache anyway, so marking those would be a false alarm.
 	if !mi.PromptCached && modelLooksAnthropic(mi.ID) {
 		segs = append(segs, "no-cache")
 	}
