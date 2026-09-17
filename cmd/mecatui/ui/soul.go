@@ -166,7 +166,7 @@ func soulTrustLabel(s client.Soul) string {
 	case client.SoulProvenanceUser:
 		label := "user"
 		if s.Drifted {
-			label += " · changed since it was trusted"
+			label += " · changed since it was last approved"
 		}
 		return label
 	case client.SoulProvenanceProject:
@@ -178,7 +178,7 @@ func soulTrustLabel(s client.Soul) string {
 		}
 		label := "project · trusted"
 		if s.Drifted {
-			label += " · changed since it was trusted"
+			label += " · changed since it was last approved"
 		}
 		return label
 	default:

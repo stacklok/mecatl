@@ -289,7 +289,7 @@ func TestSoulWheelConsumedWhileOpen(t *testing.T) {
 }
 
 // TestSoulDriftedLabel asserts a drifted user soul explains that it changed since
-// it was trusted (the soulTrustLabel drift branch is otherwise uncovered).
+// it was last approved (the soulTrustLabel drift branch is otherwise uncovered).
 func TestSoulDriftedLabel(t *testing.T) {
 	fs := &fakeSoul{soul: client.Soul{
 		Content:    "You are terse.",
@@ -302,7 +302,7 @@ func TestSoulDriftedLabel(t *testing.T) {
 	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
-	if !strings.Contains(stripANSIstr(m.View().Content), "changed since it was trusted") {
+	if !strings.Contains(stripANSIstr(m.View().Content), "changed since it was last approved") {
 		t.Errorf("a drifted soul should explain that it changed, got:\n%s", stripANSIstr(m.View().Content))
 	}
 }
