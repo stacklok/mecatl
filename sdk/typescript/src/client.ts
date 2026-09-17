@@ -668,7 +668,10 @@ class SessionImpl implements Session {
   }
 
   mcpAuthorization(authorizationId: string): McpAuthorization {
-    return createMcpAuthorization(this.id, authorizationId, this.#operations);
+    return createMcpAuthorization(this.id, authorizationId, {
+      ...this.#operations,
+      promptCapabilities: () => this.#promptCapabilities,
+    });
   }
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
