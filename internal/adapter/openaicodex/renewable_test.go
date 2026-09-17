@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -262,5 +264,75 @@ func TestRenewableCompletesRefreshDespiteCallerCancellation(t *testing.T) {
 	saved, saves := store.snapshot()
 	if saves != 1 || saved.RefreshToken != "refresh-rotated" {
 		t.Fatalf("rotated grant was not persisted: saves=%d token=%q", saves, saved.RefreshToken)
+	}
+}
+
+// A renewing policy must resolve its credential at the network boundary, so a
+// rotation reaches both inference and listing without a restart. A policy that
+// captured the credential at construction would keep sending a retired token.
+func TestRenewingPolicyUsesCurrentCredential(t *testing.T) {
+	now := time.Now()
+	store := &memoryStore{tokens: OAuthTokens{
+		AccessToken:  codextest.Token(now.Add(10*time.Second), "acct-before"),
+		RefreshToken: "refresh-original",
+		AccountID:    "acct-before",
+		ExpiresAt:    now.Add(10 * time.Second),
+	}}
+	tokenServer, _ := refreshCounter(t, "acct-after", time.Hour)
+	renewable := renewer(t, store, tokenServer, func() time.Time { return now })
+
+	captured := &headerCapturingTransport{}
+	policy, err := NewRenewingRequestPolicy(renewable, func() time.Time { return now }, captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, BaseURL+"/models?client_version=1.0.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The policy refuses a Host override, and NewRequest populates Host from
+	// the URL, so it is cleared exactly as the production lister does.
+	req.Host = ""
+	resp, err := policy.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	// The credential was renewed during the request, so the rotated account is
+	// what reached the wire.
+	if got := captured.header.Get("ChatGPT-Account-ID"); got != "acct-after" {
+		t.Fatalf("ChatGPT-Account-ID = %q, want the renewed account", got)
+	}
+	if got := captured.header.Get("Authorization"); got == "" || got == "Bearer " {
+		t.Fatalf("Authorization = %q", got)
+	}
+	if got := captured.header.Get("originator"); got != "mecatl" {
+		t.Fatalf("originator = %q, want the honest value", got)
+	}
+	if captured.header.Get("version") != "" {
+		t.Fatal("the Codex CLI version header was sent")
+	}
+}
+
+// headerCapturingTransport records the headers the policy stamped.
+type headerCapturingTransport struct{ header http.Header }
+
+func (t *headerCapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.header = req.Header.Clone()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("{}")),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+// A renewing policy with no source is a programming error and must be refused
+// rather than sending unauthenticated requests.
+func TestRenewingPolicyRequiresSource(t *testing.T) {
+	if _, err := NewRenewingRequestPolicy(nil, time.Now, nil); err == nil {
+		t.Fatal("a renewing policy was built with no credential source")
 	}
 }

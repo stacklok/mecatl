@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
@@ -70,7 +71,14 @@ func (c providerCommands) runCredential(ctx context.Context, res invocationResol
 			if res.providerAction == providerActionLogout {
 				return runSubscriptionLogout(ctx, res.providerName, stdout)
 			}
-			return runSubscriptionLogin(ctx, res.providerName, opts, stdout, stderr)
+			// A sign-in that an existing credential will shadow is inert.
+			// Resolve that now so the operator is told at login rather than
+			// discovering their requests still bill the other identity.
+			shadowedBy := ""
+			if inspection, inspectErr := c.backend.inspect(); inspectErr == nil {
+				shadowedBy = cliconfig.SubscriptionShadowedBy(inspection.credentials, res.providerName)
+			}
+			return runSubscriptionLogin(ctx, res.providerName, opts, shadowedBy, stdout, stderr)
 		}
 	}
 	if isBuiltinAPIKeyProvider(res.providerName) {

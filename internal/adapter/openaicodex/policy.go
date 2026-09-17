@@ -26,8 +26,19 @@ var errInvalidRequestPolicy = errors.New("openai-codex: invalid request policy")
 // disable an SDK retry loop.
 type RequestPolicy struct {
 	credential Credential
-	now        func() time.Time
-	base       http.RoundTripper
+	// source, when set, resolves a currently-valid credential per request and
+	// takes precedence over the immutable snapshot. It is what makes a
+	// refreshable subscription grant usable through the same transport as a
+	// manually supplied token.
+	source CredentialSource
+	now    func() time.Time
+	base   http.RoundTripper
+}
+
+// CredentialSource yields a credential valid at call time, renewing it first
+// when required.
+type CredentialSource interface {
+	Credential(context.Context) (Credential, error)
 }
 
 // NewRequestPolicy creates an immutable policy. transport is an offline-test
@@ -44,6 +55,19 @@ func NewRequestPolicy(credential Credential, now func() time.Time, transport htt
 		transport = http.DefaultTransport
 	}
 	return RequestPolicy{credential: credential, now: now, base: transport}, nil
+}
+
+// NewRenewingRequestPolicy creates a policy that resolves its credential per
+// request. The credential is never captured at construction, so a rotation
+// takes effect on the next request rather than requiring a restart.
+func NewRenewingRequestPolicy(source CredentialSource, now func() time.Time, transport http.RoundTripper) (RequestPolicy, error) {
+	if now == nil || source == nil {
+		return RequestPolicy{}, errInvalidRequestPolicy
+	}
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	return RequestPolicy{source: source, now: now, base: transport}, nil
 }
 
 // HTTPClient returns an inference-safe client over this policy. It deliberately
@@ -94,7 +118,17 @@ func (p RequestPolicy) authorizedRequest(req *http.Request) (*http.Request, erro
 	if !allowedRequest(req) {
 		return nil, errors.New("openai-codex: refused endpoint override")
 	}
-	if err := p.credential.Validate(p.now()); err != nil {
+	// A renewing policy resolves (and if required refreshes) the credential at
+	// the network boundary; a snapshot policy validates the one it captured.
+	credential := p.credential
+	if p.source != nil {
+		resolved, err := p.source.Credential(req.Context())
+		if err != nil {
+			return nil, err
+		}
+		credential = resolved
+	}
+	if err := credential.Validate(p.now()); err != nil {
 		return nil, err
 	}
 	clone := req.Clone(req.Context())
@@ -110,9 +144,9 @@ func (p RequestPolicy) authorizedRequest(req *http.Request) (*http.Request, erro
 		clean.Set("Accept", "application/json")
 	}
 	clean.Set("X-Stainless-Retry-Count", "0")
-	clean.Set("Authorization", "Bearer "+p.credential.accessToken)
-	clean.Set("ChatGPT-Account-ID", p.credential.accountID)
-	if p.credential.fedRAMP {
+	clean.Set("Authorization", "Bearer "+credential.accessToken)
+	clean.Set("ChatGPT-Account-ID", credential.accountID)
+	if credential.fedRAMP {
 		clean.Set("X-OpenAI-Fedramp", "true")
 	}
 	clean.Set("originator", "mecatl")

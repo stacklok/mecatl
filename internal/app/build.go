@@ -339,6 +339,13 @@ type Config struct {
 	// leaves every existing Config on the API-key path.
 	AnthropicSubscription anthropicsub.CredentialSource
 
+	// OpenAICodexSubscription opts INTO authenticating the Codex provider
+	// with a ChatGPT sign-in that renews itself, instead of the immutable
+	// manual token OpenAICodexCredential carries. When set it takes
+	// precedence over that snapshot, because a renewable grant cannot
+	// expire out from under the process. The ZERO VALUE is nil.
+	OpenAICodexSubscription openaicodex.CredentialSource
+
 	// ToolhiveLLM (issue #262) opts INTO auto-detecting a locally-running
 	// ToolHive LLM gateway proxy: reading ToolHive's own config file (via the
 	// toolhivellm adapter) and, if an `llm:` block is found, registering an

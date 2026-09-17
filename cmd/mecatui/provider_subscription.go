@@ -89,12 +89,18 @@ func openSubscriptionStore(ctx context.Context) (*subcred.Store, func(), error) 
 
 // runSubscriptionLogin performs the provider's sign-in flow and persists the
 // grant. The grant, not an API key, is what the provider's transport carries.
-func runSubscriptionLogin(ctx context.Context, provider string, opts subscriptionLoginOptions, stdout, stderr io.Writer) error {
+func runSubscriptionLogin(ctx context.Context, provider string, opts subscriptionLoginOptions, shadowedBy string, stdout, stderr io.Writer) error {
 	store, closeStore, err := openSubscriptionStore(ctx)
 	if err != nil {
 		return fmt.Errorf("providers login: open credential storage: %w", err)
 	}
 	defer closeStore()
+
+	// Stated before the browser opens: an operator should learn the sign-in
+	// will be shadowed before spending time completing it, not afterwards.
+	if err := warnSubscriptionShadowed(shadowedBy, stderr); err != nil {
+		return err
+	}
 
 	switch provider {
 	case subcred.ProviderOpenAICodex:
@@ -208,4 +214,18 @@ func shortAccount(accountID string) string {
 		return accountID
 	}
 	return accountID[:8] + "…"
+}
+
+// warnSubscriptionShadowed states plainly when a stored sign-in will not be
+// used because another credential takes precedence. Without this the login
+// reports success and nothing observable changes.
+func warnSubscriptionShadowed(shadowedBy string, out io.Writer) error {
+	if shadowedBy == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(out,
+		"Warning: %s is configured and takes precedence, so requests will continue to use it, not this sign-in.\n"+
+			"Remove it to use the subscription: unset the environment variable or delete the entry from auth.yaml.\n",
+		shadowedBy)
+	return err
 }
