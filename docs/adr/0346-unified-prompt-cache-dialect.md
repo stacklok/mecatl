@@ -205,18 +205,23 @@ Decision 1 is the floor, not a replacement.
 
 Two costs are accepted rather than engineered away. A strict OpenAI-compatible endpoint that
 rejects unknown fields inside a content block now sees the field for **every** model, not only
-an explicit-ask one; that is the price of removing the vendor gate, bounded by
-`--no-prompt-cache` and by the per-endpoint dialect still being able to force none. And a
-genuine one-shot run writes a breakpoint nothing reads, losing roughly 0.25x on that request,
-because "this will be the only turn" is not knowable before the turn.
+an explicit-ask one; that is the price of removing the vendor gate, bounded only by
+`--no-prompt-cache`. The per-endpoint dialect is deliberately not a second bound: decision 1
+detaches the breakpoint from the dialect, so an unclassified endpoint cannot be exempted
+without disabling caching harness-wide. And a genuine one-shot run writes a breakpoint nothing
+reads, losing roughly 0.25x on that request, because "this will be the only turn" is not
+knowable before the turn.
 
 The canonical-OpenAI carve-out in decision 2 rests on undocumented behaviour and should not
 outlive a live probe. If an earlier model ignores the field, delete the carve-out; if it
 rejects the request, the carve-out is load-bearing and should say so with a citation.
 
 One further asymmetry is now recorded rather than left implicit: a model can appear under two
-provider ids for one identity with only one of them caching. Decision 6 and the posture line
-exist so that is visible instead of silent, and the picker marks the non-caching row.
+provider ids for one identity with materially different cache quality, four breakpoints and a
+TTL on Messages against one breakpoint on Responses. Decision 6 and the posture line exist so
+that is visible instead of silent. The picker's `prompt_cached` marker is narrower than that
+asymmetry: after decision 1 both siblings ask for a cache, so it marks only a Claude row under
+`--no-prompt-cache`.
 
 Unchanged from ADR 0100: `prompt_cache_key`'s derivation (now salted), and
 `prompt_cache_retention`'s model gating on the canonical OpenAI endpoint — though OpenAI has
