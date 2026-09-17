@@ -178,14 +178,25 @@ path pays the full price every turn. Mecatl therefore prefers
 `openrouter-anthropic` lists Anthropic models only, because OpenRouter's
 Anthropic endpoint does not serve other vendors' models.
 
-In `/models`, a row marked `no-cache` is one Mecatl will not ask to cache. With
-default settings no row is marked; the marker appears when you run with
-`--no-prompt-cache`.
+In `/models`, a row marked `no-cache` is a Claude model Mecatl will not ask to
+cache, which is where an unasked cache costs the most. You will see it if you
+run with `--no-prompt-cache`, or if you route a Claude model through a provider
+speaking the Chat Completions protocol: `opencode`, or one you defined with
+`api_flavor: openai-chat-completions`. That protocol has no way to ask for a
+cache, so every turn re-pays full input. Route Claude models through a Responses
+or Messages provider instead.
 
-To turn provider-side prompt caching off everywhere, run with
-`--no-prompt-cache`. Enabling a cache also asks the provider to retain your
-prompt prefix for the cache lifetime, so `--no-prompt-cache` is the right
-setting for a deployment relying on a zero-retention arrangement.
+To stop asking for a prompt cache, run with `--no-prompt-cache`. It turns off
+every Responses-side ask and the three conversation breakpoints on the Anthropic
+Messages providers.
+
+It does not turn off caching completely. On a Messages provider, the breakpoint
+covering the system prompt is emitted whatever you set, so the provider is still
+asked to retain that prefix for the cache lifetime. A deployment relying on a
+zero-retention arrangement therefore needs `--no-prompt-cache` *and* a model
+route that avoids the Messages providers: `anthropic`, `openrouter-anthropic`,
+`toolhive-anthropic`, and any provider you defined with
+`api_flavor: anthropic-messages`.
 
 ### Configure aliases, slots, and task routing
 
