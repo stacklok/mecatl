@@ -802,6 +802,12 @@ func conventionalAuthFileWarning(c config, keys cliconfig.ResolvedKeys) string {
 	if !c.mayEmbed() || c.listThemes || c.mock || keys.Any() {
 		return ""
 	}
+	// A stored sign-in is a usable startup path, so an absent conventional
+	// auth file is not noteworthy: warning about a file the operator does not
+	// need reads as a failure of the sign-in they just completed.
+	if len(cliconfig.StoredSubscriptions(context.Background())) > 0 {
+		return ""
+	}
 	var probe app.Config
 	c.toolhiveLLMFlags.Apply(&probe)
 	if app.ToolhiveAvailable(probe) {
