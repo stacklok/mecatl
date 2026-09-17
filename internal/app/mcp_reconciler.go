@@ -198,18 +198,24 @@ func (r *mcpSourceReconciler) loop() {
 			r.status.Reconciling = true
 			r.mu.Unlock()
 			result, err := r.cycle()
-			r.mu.Lock()
-			r.status.Sources = cloneMCPInventory(result.inventory)
-			r.status.Stale = result.stale
-			r.status.Reconciling = false
-			if result.candidate != nil {
-				r.status.Revision = result.candidate.generation
-			}
-			r.mu.Unlock()
+			r.publishStatus(result)
 			r.cyclesDone.Add(1)
 			replyMCPWaiters(waiters, result, err)
 		}
 	}
+}
+
+func (r *mcpSourceReconciler) publishStatus(result mcpReconcileResult) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status.Sources = nil
+	r.status.Revision = 0
+	if r.current != nil {
+		r.status.Sources = publishedMCPInventory(r.current.inventory, result.inventory)
+		r.status.Revision = r.current.generation
+	}
+	r.status.Stale = result.stale
+	r.status.Reconciling = false
 }
 
 func mcpPollDelay() time.Duration {
@@ -249,6 +255,12 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		result.candidate = r.current
 		r.mu.Unlock()
 		return result, err
+	}
+	if stale {
+		r.mu.Lock()
+		result.candidate = r.current
+		r.mu.Unlock()
+		return result, nil
 	}
 
 	r.mu.Lock()
@@ -484,6 +496,19 @@ func cloneMCPInventory(in []mcpsource.SourceInfo) []mcpsource.SourceInfo {
 		out[i].Diagnostics = append([]string(nil), info.Diagnostics...)
 	}
 	return out
+}
+
+func publishedMCPInventory(published, observed []mcpsource.SourceInfo) []mcpsource.SourceInfo {
+	inventory := cloneMCPInventory(published)
+	for i := range inventory {
+		for _, observation := range observed {
+			if inventory[i].Name == observation.Name {
+				inventory[i].Diagnostics = append([]string(nil), observation.Diagnostics...)
+				break
+			}
+		}
+	}
+	return inventory
 }
 
 func appendBoundedDiagnostic(dst []string, raw string) []string {

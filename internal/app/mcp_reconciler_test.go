@@ -16,6 +16,7 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	mcpsource "github.com/stacklok/mecatl/internal/adapter/mcp/source"
+	serveradapter "github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 type reconciliationSource struct {
@@ -353,6 +354,109 @@ func TestADR_0345_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shutdown did not join reconciliation")
 	}
+}
+
+func TestMCPSourceReconciliation_StatusPublishesOnlyActiveCandidateInventory(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		build     func([]mcp.ServerConfig) (*mcpReconcileCandidate, error)
+		publish   func(*mcpReconcileCandidate, *mcpReconcileCandidate) bool
+		sourceErr error
+	}{
+		{
+			name:      "source failure",
+			sourceErr: errors.New("source unavailable"),
+		},
+		{
+			name: "build failure",
+			build: func([]mcp.ServerConfig) (*mcpReconcileCandidate, error) {
+				return nil, errors.New("build failed")
+			},
+		},
+		{
+			name: "validation failure",
+			build: func(configs []mcp.ServerConfig) (*mcpReconcileCandidate, error) {
+				return &mcpReconcileCandidate{configs: cloneMCPConfigs(configs), tools: make([]mcpToolMeta, maxMCPActiveListEntries+1)}, nil
+			},
+		},
+		{
+			name: "publication deferred",
+			build: func(configs []mcp.ServerConfig) (*mcpReconcileCandidate, error) {
+				return candidateFromConfigs(configs, 0), nil
+			},
+			publish: func(*mcpReconcileCandidate, *mcpReconcileCandidate) bool { return false },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "a", URL: "http://a/mcp"}}}
+			build := func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
+				return candidateFromConfigs(configs, 0), nil
+			}
+			r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{source}, build: build})
+			t.Cleanup(r.Close)
+			if _, err := r.Reconcile(context.Background()); err != nil {
+				t.Fatalf("initial reconcile: %v", err)
+			}
+			initial := r.statusSnapshot()
+			if initial.Revision == 0 || sourceStatusServerNames(initial) != "a" {
+				t.Fatalf("initial status = %+v", initial)
+			}
+
+			source.set([]mcp.ServerConfig{{Name: "b", URL: "http://b/mcp"}}, tc.sourceErr)
+			if tc.build != nil {
+				r.build = func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
+					return tc.build(configs)
+				}
+			}
+			r.publish = tc.publish
+			_, _ = r.Reconcile(context.Background())
+			failed := r.statusSnapshot()
+			if failed.Revision != initial.Revision || sourceStatusServerNames(failed) != "a" || !failed.Stale {
+				t.Fatalf("failed status = %+v, want active candidate A marked stale", failed)
+			}
+			if tc.sourceErr != nil && !strings.Contains(strings.Join(failed.Sources[0].Diagnostics, " "), "source consultation failed") {
+				t.Fatalf("source failure diagnostic missing from status: %+v", failed)
+			}
+
+			r.build = build
+			r.publish = nil
+			source.set([]mcp.ServerConfig{{Name: "b", URL: "http://b/mcp"}}, nil)
+			if _, err := r.Reconcile(context.Background()); err != nil {
+				t.Fatalf("later reconcile: %v", err)
+			}
+			success := r.statusSnapshot()
+			if success.Revision == initial.Revision || sourceStatusServerNames(success) != "b" || success.Stale {
+				t.Fatalf("successful status = %+v, want published candidate B", success)
+			}
+		})
+	}
+}
+
+func TestMCPSourceReconciliation_StatusIsEmptyWithoutAnActiveCandidate(t *testing.T) {
+	source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "unpublished", URL: "http://unpublished/mcp"}}}
+	r := newMCPSourceReconciler(mcpReconcilerOptions{
+		sources: []mcpsource.Source{source},
+		build: func(context.Context, []mcp.ServerConfig, func()) (*mcpReconcileCandidate, error) {
+			return nil, errors.New("build failed")
+		},
+	})
+	t.Cleanup(r.Close)
+	if _, err := r.Reconcile(context.Background()); err == nil {
+		t.Fatal("initial failed reconcile unexpectedly succeeded")
+	}
+	if status := r.statusSnapshot(); status.Revision != 0 || len(status.Sources) != 0 || !status.Stale {
+		t.Fatalf("initial failed status = %+v, want empty stale status", status)
+	}
+}
+
+func sourceStatusServerNames(status serveradapter.MCPSourceStatus) string {
+	var names []string
+	for _, source := range status.Sources {
+		for _, server := range source.Servers {
+			names = append(names, server.Name)
+		}
+	}
+	return strings.Join(names, ",")
 }
 
 func TestMCPSourceReconciliation_Scenario2_FailedCompleteCandidateKeepsPreviousRuntime(t *testing.T) {
