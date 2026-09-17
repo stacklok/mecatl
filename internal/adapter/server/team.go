@@ -204,7 +204,7 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 		budget: maxTeamTokens, specs: append([]agent.MemberSpec(nil), members...),
 		owner: session.PrincipalFromContext(ctx).Clone(),
 	}
-	if err := s.declareInitialRoster(t, members); err != nil {
+	if err := s.declareInitialRoster(t, id, members); err != nil {
 		return "", nil, err
 	}
 	if s.cfg.OperationPin == nil {
@@ -240,7 +240,7 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 	return id, state.team.Members(), nil
 }
 
-func (s *Service) declareInitialRoster(t *team.Team, members []agent.MemberSpec) error {
+func (s *Service) declareInitialRoster(t *team.Team, teamID string, members []agent.MemberSpec) error {
 	for _, spec := range members {
 		if spec.Name == "" {
 			return fmt.Errorf("%w: %v", ErrInvalidArgument, agent.ErrMemberNameRequired)
@@ -250,6 +250,9 @@ func (s *Service) declareInitialRoster(t *team.Team, members []agent.MemberSpec)
 		}
 		if err := t.AddMember(spec.Name, spec.AgentType); err != nil {
 			return classifyAddMemberErr(err)
+		}
+		if err := t.SetMemberSession(spec.Name, agent.MemberSessionID(teamID, spec.Name)); err != nil {
+			return fmt.Errorf("%w: advertise member session: %v", ErrInternal, err)
 		}
 	}
 	return nil
@@ -320,6 +323,9 @@ func (s *Service) SpawnTeammate(ctx context.Context, teamID string, spec agent.M
 		}
 	} else if err := ts.team.AddMember(spec.Name, spec.AgentType); err != nil {
 		return team.Member{}, classifyAddMemberErr(err)
+	}
+	if err := ts.team.SetMemberSession(spec.Name, agent.MemberSessionID(teamID, spec.Name)); err != nil {
+		return team.Member{}, fmt.Errorf("%w: advertise member session: %v", ErrInternal, err)
 	}
 	ts.specs = append(ts.specs, spec)
 	for _, m := range ts.team.Members() {

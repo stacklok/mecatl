@@ -162,6 +162,84 @@ func TestMemberSessionIDRoundTripsGRPCPath(t *testing.T) {
 	}
 }
 
+func TestDeclaredTeamMembersAdvertiseCanonicalSessionIDsBeforeRun(t *testing.T) {
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
+			LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: cat, Policy: allow, Model: "mock",
+		})}
+	}
+	store := memstore.New()
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{
+			LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
+		}),
+		Store: store, Now: func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
+		OperationPin: func(ctx context.Context) (context.Context, func(), error) {
+			return ctx, nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	h := server.NewHarnessServer(svc)
+	ctx := context.Background()
+	created, err := h.CreateTeam(ctx, newCreateTeamWith("/ws",
+		&mecatlv1.TeammateSpec{Name: "lead", Lead: true, InitialPrompt: "go"},
+	))
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	teamID := created.GetTeamId()
+	wantLead := string(agent.MemberSessionID(teamID, "lead"))
+	if got := created.GetMembers()[0].GetSessionId(); got != wantLead {
+		t.Fatalf("CreateTeam lead session_id = %q, want %q", got, wantLead)
+	}
+
+	spawned, err := h.SpawnTeammate(ctx, newSpawn(teamID, "worker", false, ""))
+	if err != nil {
+		t.Fatalf("SpawnTeammate: %v", err)
+	}
+	wantWorker := string(agent.MemberSessionID(teamID, "worker"))
+	if got := spawned.GetMember().GetSessionId(); got != wantWorker {
+		t.Fatalf("SpawnTeammate worker session_id = %q, want %q", got, wantWorker)
+	}
+
+	listed, err := h.ListTeam(ctx, &mecatlv1.ListTeamRequest{TeamId: teamID})
+	if err != nil {
+		t.Fatalf("ListTeam: %v", err)
+	}
+	want := []string{wantLead, wantWorker}
+	for i, member := range listed.GetMembers() {
+		if got := member.GetSessionId(); got != want[i] {
+			t.Errorf("ListTeam member %q session_id = %q, want %q", member.GetName(), got, want[i])
+		}
+		if _, err := store.Load(ctx, session.SessionID(want[i])); !errors.Is(err, port.ErrSessionNotFound) {
+			t.Errorf("declared member %q was materialized before RunTeam: %v", want[i], err)
+		}
+	}
+
+	if _, err := svc.RunTeam(ctx, teamID, func(agent.TeamEvent) {}); err != nil {
+		t.Fatalf("RunTeam: %v", err)
+	}
+	listed, err = h.ListTeam(ctx, &mecatlv1.ListTeamRequest{TeamId: teamID})
+	if err != nil {
+		t.Fatalf("ListTeam after RunTeam: %v", err)
+	}
+	for i, member := range listed.GetMembers() {
+		if got := member.GetSessionId(); got != want[i] {
+			t.Errorf("ListTeam after RunTeam member %q session_id = %q, want %q", member.GetName(), got, want[i])
+		}
+		if _, err := store.Load(ctx, session.SessionID(want[i])); err != nil {
+			t.Errorf("persisted member %q: %v", want[i], err)
+		}
+	}
+}
+
 // usageTurn builds a single mock member turn that carries token usage via a
 // UsageChunk — the shared spend knob the team-budget tests tune to cross (or not
 // cross) a budget bound.
