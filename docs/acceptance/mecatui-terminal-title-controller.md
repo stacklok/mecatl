@@ -4,7 +4,7 @@
 **Work classification:** Architectural — replaces a third-party-owned terminal-output lifecycle and introduces a durable user-global title-template/configuration contract shared with the status-input surface.
 **Decision record:** [ADR 0344](../adr/0344-mecatui-terminal-title-controller.md)
 **Phase:** mecatui client presentation and session discoverability
-**Status:** in-progress, 2026-09-16. Plan / Interface PR #1616 merged; implementation started from its approved baseline.
+**Status:** landed, 2026-09-16. Implementation candidate completed from the approved Plan / Interface baseline; authoritative when its implementation PR merges.
 **Delivery:** Split. The client configuration, terminal-control, compatibility, and live-run interaction contracts require separate human interface review before implementation.
 **Expected tasks:** deferred to orchestration after the Plan / Interface PR is approved.
 **Issue:** [stacklok/mecatl#1460](https://github.com/stacklok/mecatl/issues/1460); [stacklok/mecatl#1606](https://github.com/stacklok/mecatl/issues/1606).
