@@ -23,14 +23,15 @@ func (e *Engine) emitRequestManifest(r *Run, sess *session.Session, env tool.Env
 func (e *Engine) requestManifest(r *Run, sess *session.Session, env tool.Environment, req port.LLMRequest) session.RequestManifestPayload {
 	messageBytes, _ := json.Marshal(req.Messages)
 	payload := session.RequestManifestPayload{
-		Provider:        manifestIdentifier(sess.ProviderID),
-		Model:           manifestIdentifier(e.deps.Model),
-		ReasoningEffort: manifestIdentifier(sess.ReasoningEffort),
-		ToolNames:       make([]string, 0, len(req.Tools)),
-		ToolDecisions:   e.requestToolDecisions(r, sess, env),
-		MessageCount:    len(req.Messages),
-		MessageBytes:    len(messageBytes),
-		Prompt:          requestPromptManifest(req.System, r.fragments, r.fragmentManifest),
+		Provider:                  manifestIdentifier(sess.ProviderID),
+		Model:                     manifestIdentifier(e.deps.Model),
+		ReasoningEffort:           manifestIdentifier(sess.ReasoningEffort),
+		ToolNames:                 make([]string, 0, len(req.Tools)),
+		ToolDecisions:             e.requestToolDecisions(r, sess, env),
+		AdvertisedToolSchemaBytes: advertisedToolSchemaBytes(req.Tools),
+		MessageCount:              len(req.Messages),
+		MessageBytes:              len(messageBytes),
+		Prompt:                    requestPromptManifest(req.System, r.fragments, r.fragmentManifest),
 	}
 	if e.deps.ContextWindow != nil {
 		if window := e.deps.ContextWindow(); window > 0 {
@@ -43,21 +44,27 @@ func (e *Engine) requestManifest(r *Run, sess *session.Session, env tool.Environ
 	return payload
 }
 
+func advertisedToolSchemaBytes(specs []tool.ToolSpec) int {
+	bytes := 0
+	for _, spec := range specs {
+		bytes += len(spec.Schema)
+	}
+	return bytes
+}
+
 func (e *Engine) requestToolDecisions(r *Run, sess *session.Session, env tool.Environment) []session.RequestToolDecision {
 	authority, bound := sess.BoundAuthority()
-	available := make(map[string]tool.Tool, len(e.deps.Catalog.Tools()))
-	for _, candidate := range e.deps.Catalog.Available(sess.Mode) {
-		available[candidate.Spec().Name] = candidate
+	available := make(map[string]struct{}, len(e.deps.Catalog.AvailableNames(sess.Mode)))
+	for _, name := range e.deps.Catalog.AvailableNames(sess.Mode) {
+		available[name] = struct{}{}
 	}
-	overlays := make(map[string]struct{}, len(r.req.ExtraTools))
-	for _, extra := range r.req.ExtraTools {
-		overlays[extra.Spec().Name] = struct{}{}
+	overlays := make(map[string]struct{}, len(r.extraToolNames))
+	for _, name := range r.extraToolNames {
+		overlays[name] = struct{}{}
 	}
-	decisions := make([]session.RequestToolDecision, 0, len(e.deps.Catalog.Tools())+len(r.req.ExtraTools))
-	catalogNames := make(map[string]struct{}, len(e.deps.Catalog.Tools()))
-	for _, candidate := range e.deps.Catalog.Tools() {
-		name := candidate.Spec().Name
-		catalogNames[name] = struct{}{}
+	catalogNames := e.deps.Catalog.Names()
+	decisions := make([]session.RequestToolDecision, 0, len(catalogNames)+len(r.extraToolNames))
+	for _, name := range catalogNames {
 		decision := session.RequestToolAdvertised
 		if _, ok := available[name]; !ok {
 			decision = session.RequestToolModeFiltered
@@ -68,21 +75,19 @@ func (e *Engine) requestToolDecisions(r *Run, sess *session.Session, env tool.En
 		} else if _, ok := overlays[name]; ok {
 			decision = session.RequestToolShadowed
 		} else if e.deps.ProgressiveTools {
+			candidate, _ := e.deps.Catalog.Lookup(name)
 			if _, ok := candidate.(tool.Disclosable); ok {
 				decision = session.RequestToolDisclosureHidden
 			}
 		}
-		sourceOverlay := decision == session.RequestToolShadowed
 		decisions = append(decisions, session.RequestToolDecision{
-			Name: manifestLabel(name), Source: requestToolSource(name, sourceOverlay), Decision: decision,
+			Name: manifestLabel(name), Source: requestToolSource(name, decision == session.RequestToolShadowed), Decision: decision,
 		})
 	}
-	for _, extra := range r.req.ExtraTools {
-		name := extra.Spec().Name
-		if _, exists := catalogNames[name]; exists {
+	for _, name := range r.extraToolNames {
+		if _, exists := e.deps.Catalog.Lookup(name); exists {
 			continue
 		}
-		catalogNames[name] = struct{}{}
 		decisions = append(decisions, session.RequestToolDecision{
 			Name: manifestLabel(name), Source: requestToolSource(name, true), Decision: session.RequestToolAdvertised,
 		})

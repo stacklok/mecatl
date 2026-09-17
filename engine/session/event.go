@@ -560,15 +560,16 @@ type ResultPayload struct {
 // tokens, identifiers, and byte/count metadata; it deliberately carries no
 // content digest that could become an offline oracle.
 type RequestManifestPayload struct {
-	Provider        string                   `json:"provider,omitempty"`
-	Model           string                   `json:"model,omitempty"`
-	ReasoningEffort string                   `json:"reasoning_effort,omitempty"`
-	ContextWindow   int                      `json:"context_window,omitempty"`
-	ToolNames       []string                 `json:"tool_names"`
-	ToolDecisions   []RequestToolDecision    `json:"tool_decisions"`
-	MessageCount    int                      `json:"message_count"`
-	MessageBytes    int                      `json:"message_bytes"`
-	Prompt          []RequestPromptComponent `json:"prompt"`
+	Provider                  string                   `json:"provider,omitempty"`
+	Model                     string                   `json:"model,omitempty"`
+	ReasoningEffort           string                   `json:"reasoning_effort,omitempty"`
+	ContextWindow             int                      `json:"context_window,omitempty"`
+	ToolNames                 []string                 `json:"tool_names"`
+	ToolDecisions             []RequestToolDecision    `json:"tool_decisions"`
+	AdvertisedToolSchemaBytes int                      `json:"advertised_tool_schema_bytes"`
+	MessageCount              int                      `json:"message_count"`
+	MessageBytes              int                      `json:"message_bytes"`
+	Prompt                    []RequestPromptComponent `json:"prompt"`
 }
 
 // RequestToolDecision records a decision the final request assembly actually

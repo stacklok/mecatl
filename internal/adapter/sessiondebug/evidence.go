@@ -247,15 +247,16 @@ type manifestEvidence struct {
 	Rows               []manifestRow `json:"rows"`
 }
 type manifestRow struct {
-	Provider        string                           `json:"provider,omitempty"`
-	Model           string                           `json:"model,omitempty"`
-	ReasoningEffort string                           `json:"reasoning_effort,omitempty"`
-	ContextWindow   int                              `json:"context_window,omitempty"`
-	MessageCount    int                              `json:"message_count"`
-	MessageBytes    int                              `json:"message_bytes"`
-	Tools           []string                         `json:"tools"`
-	Decisions       []session.RequestToolDecision    `json:"decisions"`
-	Components      []session.RequestPromptComponent `json:"components"`
+	Provider                  string                           `json:"provider,omitempty"`
+	Model                     string                           `json:"model,omitempty"`
+	ReasoningEffort           string                           `json:"reasoning_effort,omitempty"`
+	ContextWindow             int                              `json:"context_window,omitempty"`
+	MessageCount              int                              `json:"message_count"`
+	MessageBytes              int                              `json:"message_bytes"`
+	AdvertisedToolSchemaBytes int                              `json:"advertised_tool_schema_bytes"`
+	Tools                     []string                         `json:"tools"`
+	Decisions                 []session.RequestToolDecision    `json:"decisions"`
+	Components                []session.RequestPromptComponent `json:"components"`
 }
 
 func (t *inspectTool) manifestView(ctx context.Context, id session.SessionID, offset, requested int) manifestEvidence {
@@ -303,7 +304,8 @@ func projectManifest(p session.RequestManifestPayload) manifestRow {
 	r := manifestRow{
 		Provider: safeLine(p.Provider), Model: safeLine(p.Model), ReasoningEffort: safeLine(p.ReasoningEffort),
 		ContextWindow: p.ContextWindow, MessageCount: p.MessageCount, MessageBytes: p.MessageBytes,
-		Tools: safeLines(p.ToolNames),
+		AdvertisedToolSchemaBytes: p.AdvertisedToolSchemaBytes,
+		Tools:                     safeLines(p.ToolNames),
 	}
 	for _, d := range p.ToolDecisions {
 		r.Decisions = append(r.Decisions, session.RequestToolDecision{Name: safeLine(d.Name), Source: safeLine(d.Source), Decision: safeLine(d.Decision)})

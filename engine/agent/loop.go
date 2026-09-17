@@ -625,6 +625,9 @@ type Run struct {
 	// runID is the host-minted identity stamped onto every event this run emits
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
+	// extraToolNames is the snapshot of overlay registration keys captured at the
+	// same advertisement boundary that builds the provider request.
+	extraToolNames []string
 	// budgetBaseline is the immutable cumulative main usage captured when this run
 	// starts. Ordinary runs use zero; privileged package-private continuations
 	// (team synthesis and a budget-stopped child cleanup) capture the session's
@@ -2602,7 +2605,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	// A name already present in cfg.Tools is REPLACED by the extra's spec (the overlay
 	// wins, matching lookupTool's overlay-first resolution) so the advertised set and
 	// the dispatch resolution never disagree.
-	cfg.Tools = authorityOverlaySpecs(cfg.Tools, r.req.ExtraTools)
+	cfg.Tools, r.extraToolNames = authorityOverlaySpecsWithNames(cfg.Tools, r.req.ExtraTools)
 	// Shell-less Environment (issue #462 review): the CAPABILITY TRUTH for whether
 	// this turn has a shell is the LIVE tool.Environment handed to Run, NOT the
 	// shared Engine's catalog/prompt (which were built once from server config and

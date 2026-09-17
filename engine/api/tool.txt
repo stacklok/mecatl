@@ -51,8 +51,10 @@
     ifacemethod func (WorkspaceReader).Stat(ctx context.Context, path string) (FileInfo, error)
     method func (*Catalog).AdvertisedSpecs(mode session.PermissionMode) []ToolSpec
     method func (*Catalog).Available(mode session.PermissionMode) []Tool
+    method func (*Catalog).AvailableNames(mode session.PermissionMode) []string
     method func (*Catalog).Lookup(name string) (Tool, bool)
     method func (*Catalog).MustRegister(t Tool)
+    method func (*Catalog).Names() []string
     method func (*Catalog).Register(t Tool) error
     method func (*Catalog).Specs(mode session.PermissionMode) []ToolSpec
     method func (*Catalog).Tools() []Tool

@@ -185,6 +185,13 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	if manifest.MessageCount != len(observed.Messages) || manifest.MessageBytes != len(messageBytes) {
 		t.Errorf("message metadata = count %d bytes %d; request has count %d bytes %d", manifest.MessageCount, manifest.MessageBytes, len(observed.Messages), len(messageBytes))
 	}
+	wantSchemaBytes := 0
+	for _, spec := range observed.Tools {
+		wantSchemaBytes += len(spec.Schema)
+	}
+	if manifest.AdvertisedToolSchemaBytes != wantSchemaBytes {
+		t.Errorf("advertised tool schema bytes = %d, want %d", manifest.AdvertisedToolSchemaBytes, wantSchemaBytes)
+	}
 	if len(manifest.Prompt) < 2 {
 		t.Fatalf("prompt metadata = %+v", manifest.Prompt)
 	}

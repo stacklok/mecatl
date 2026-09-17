@@ -53,7 +53,28 @@ func (c *Catalog) Tools() []Tool {
 	return c.sorted(func(Tool) bool { return true })
 }
 
-// Specs returns the ToolSpecs of the tools available under the given permission
+// Names returns all catalog registration keys, ordered by name. Registration
+// keys are the metadata authority; callers that need tool specifications must
+// obtain them through the advertisement boundary instead of calling Spec.
+func (c *Catalog) Names() []string {
+	return c.registrationNames(func(Tool) bool { return true })
+}
+
+// AvailableNames returns the registration keys visible under the given mode,
+// ordered by name. It applies the same projection as Available without reading
+// any tool specification.
+func (c *Catalog) AvailableNames(mode session.PermissionMode) []string {
+	return c.registrationNames(func(t Tool) bool {
+		if mode == session.ModePlan {
+			return t.ReadOnly()
+		}
+		if _, ok := t.(PlanOnly); ok {
+			return false
+		}
+		return true
+	})
+}
+
 // mode, ordered by name. In ModePlan only read-only tools are exposed, enforcing
 // plan-mode read-only gating at the catalog level before dispatch. In non-plan
 // modes a tool implementing PlanOnly (issue #206's PresentPlan signalling tool) is
@@ -111,18 +132,22 @@ func (c *Catalog) Available(mode session.PermissionMode) []Tool {
 
 // sorted returns the tools matching keep, ordered by registration name.
 func (c *Catalog) sorted(keep func(Tool) bool) []Tool {
-	names := make([]string, 0, len(c.tools))
-	for name := range c.tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := c.registrationNames(keep)
 
-	out := make([]Tool, 0, len(c.tools))
+	out := make([]Tool, 0, len(names))
 	for _, name := range names {
-		t := c.tools[name]
-		if keep(t) {
-			out = append(out, t)
-		}
+		out = append(out, c.tools[name])
 	}
 	return out
+}
+
+func (c *Catalog) registrationNames(keep func(Tool) bool) []string {
+	names := make([]string, 0, len(c.tools))
+	for name, t := range c.tools {
+		if keep(t) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

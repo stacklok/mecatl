@@ -25,10 +25,13 @@ func authoritySpecs(specs []tool.ToolSpec, set governance.CapabilitySet, bound b
 	return filtered
 }
 
-// authorityOverlaySpecs adds per-run tools after the carried-authority projection.
-func authorityOverlaySpecs(specs []tool.ToolSpec, extras []tool.Tool) []tool.ToolSpec {
+// authorityOverlaySpecsWithNames adds per-run tools after the carried-authority
+// projection and returns the registration keys captured from those same specs.
+func authorityOverlaySpecsWithNames(specs []tool.ToolSpec, extras []tool.Tool) ([]tool.ToolSpec, []string) {
+	names := make([]string, 0, len(extras))
 	for _, extra := range extras {
 		spec := extra.Spec()
+		names = append(names, spec.Name)
 		replaced := false
 		for i := range specs {
 			if specs[i].Name == spec.Name {
@@ -41,7 +44,7 @@ func authorityOverlaySpecs(specs []tool.ToolSpec, extras []tool.Tool) []tool.Too
 			specs = append(specs, spec)
 		}
 	}
-	return specs
+	return specs, names
 }
 
 func authorityDisclosesTool(name string, set governance.CapabilitySet) bool {
