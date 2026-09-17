@@ -102,6 +102,14 @@ export { MECATL_EVENT_KINDS } from "./events.js";
 export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
 export type {
+  McpAuthorization,
+  McpAuthorizationFlow,
+  McpAuthorizationFlowOptions,
+  McpAuthorizationOperation,
+  McpAuthorizationResult,
+  McpAuthorizationStatus,
+} from "./mcp-authorization.js";
+export type {
   McpConnectorInventory,
   McpConnectorStatus,
   WorkspaceEnrollment,
