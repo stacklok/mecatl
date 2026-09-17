@@ -39,6 +39,7 @@ const (
 type Keyring interface {
 	Get(string, string) (string, error)
 	Set(string, string, string) error
+	Delete(string, string) error
 }
 
 // Detector reports whether the platform keyring is available.
@@ -100,15 +101,51 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 	if err != nil {
 		return Selection{}, err
 	}
-	sel, err := openNew(canonical, backend, opts)
+	sel, rollback, err := openNew(canonical, backend, opts)
 	if err != nil {
 		return Selection{}, err
 	}
 	if err := writeMarker(canonical, backendMarker{Version: 1, Backend: backend, LocatorSHA256: digest(sel.Locator)}); err != nil {
+		rollback()
 		clear(sel.Key)
 		return Selection{}, errors.New("MCP credential backend marker cannot be written")
 	}
 	return sel, nil
+}
+
+// MarkerInspection is the bounded, non-secret result of inspecting custody metadata.
+type MarkerInspection string
+
+const (
+	MarkerMissing     MarkerInspection = "missing"
+	MarkerUnavailable MarkerInspection = "unavailable"
+	MarkerLocked      MarkerInspection = "locked"
+	MarkerRecovery    MarkerInspection = "recovery required"
+	MarkerPresent     MarkerInspection = "present"
+)
+
+// InspectMarker checks only the root-pinned custody marker. It never opens a
+// keyring, reads a credential, or returns marker contents. The result is safe
+// for status/list projections.
+func InspectMarker(root string) MarkerInspection {
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		return MarkerMissing
+	}
+	canonical, err := prepareExistingRoot(root)
+	if err != nil {
+		return MarkerUnavailable
+	}
+	_, err = readMarker(canonical)
+	switch {
+	case err == nil:
+		return MarkerPresent
+	case errors.Is(err, os.ErrNotExist):
+		return MarkerMissing
+	default:
+		// readMarker uses the same no-follow, owner-only read path as Resolve.
+		// Do not distinguish marker corruption from inaccessible metadata here.
+		return MarkerRecovery
+	}
 }
 
 // Open opens an existing root-pinned MCP credential backend.
@@ -274,26 +311,39 @@ func detectSecretService(ctx context.Context) (bool, error) {
 	return owner != "", nil
 }
 
-func openNew(root, backend string, o Options) (Selection, error) {
+func openNew(root, backend string, o Options) (Selection, func(), error) {
 	if backend == BackendKeyring {
 		key := make([]byte, 32)
 		if _, err := rand.Read(key); err != nil {
-			return Selection{}, errors.New("MCP key generation failed")
+			return Selection{}, func() {}, errors.New("MCP key generation failed")
 		}
 		loc := keyringAccount(root)
+		previous, err := o.Keyring.Get(keyringService, loc)
+		hadPrevious := err == nil
+		if err != nil && !errors.Is(err, keyringapi.ErrNotFound) {
+			clear(key)
+			return Selection{}, func() {}, errors.New("MCP keyring is unavailable")
+		}
 		encoded := base64.RawStdEncoding.EncodeToString(key)
 		if err := o.Keyring.Set(keyringService, loc, encoded); err != nil {
 			clear(key)
-			return Selection{}, errors.New("MCP keyring is unavailable")
+			return Selection{}, func() {}, errors.New("MCP keyring is unavailable")
 		}
-		return Selection{Backend: backend, Locator: loc, Key: key}, nil
+		rollback := func() {
+			if hadPrevious {
+				_ = o.Keyring.Set(keyringService, loc, previous)
+			} else {
+				_ = o.Keyring.Delete(keyringService, loc)
+			}
+		}
+		return Selection{Backend: backend, Locator: loc, Key: key}, rollback, nil
 	}
 	path, err := fileLocator(root, o.FilePath)
 	if err != nil {
-		return Selection{}, err
+		return Selection{}, func() {}, err
 	}
 	key, err := readOrCreateFileKey(path)
-	return Selection{Backend: backend, Locator: path, Key: key}, err
+	return Selection{Backend: backend, Locator: path, Key: key}, func() {}, err
 }
 func openPinned(backend, locator string, o Options) (Selection, error) {
 	if backend == BackendKeyring {
@@ -533,3 +583,4 @@ type osKeyring struct{}
 
 func (osKeyring) Get(s, a string) (string, error) { return keyringapi.Get(s, a) }
 func (osKeyring) Set(s, a, v string) error        { return keyringapi.Set(s, a, v) }
+func (osKeyring) Delete(s, a string) error        { return keyringapi.Delete(s, a) }

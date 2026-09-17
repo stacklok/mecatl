@@ -63,8 +63,7 @@ type MCPProfileLoadOptions struct {
 	Legacy    *MCPServerList
 	LookupEnv func(string) (string, bool)
 	// Native custody seams keep offline tests away from desktop keyrings and DBus.
-	Keyring     mcpcredential.Keyring
-	DetectLinux mcpcredential.Detector
+	Keyring mcpcredential.Keyring
 }
 
 // MCPProfileResolver binds the legacy CLI metadata and environment lookup to the

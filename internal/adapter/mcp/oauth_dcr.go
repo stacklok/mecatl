@@ -184,7 +184,10 @@ type oauthDCRMetadata struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	Scopes                  []string `json:"scopes"`
-	supportedScopes         []string
+	// AuthorizationResponseIssParameterSupported is the RFC 9207 capability
+	// discovered for this exact authorization server transaction.
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
+	supportedScopes                            []string
 }
 
 type oauthDCRRegistration struct {
@@ -432,6 +435,7 @@ func PrepareOAuthDCRLogin(ctx context.Context, resource string, opts OAuthOption
 	if err != nil {
 		return OAuthOptions{}, "", err
 	}
+	opts.dcrIssParameterSupported = meta.AuthorizationResponseIssParameterSupported
 	record, getErr = opts.CredentialStore.Get(ctx, key)
 	if getErr == nil {
 		stored, decodeErr := decodeOAuthDCRRecordRaw(record.Value)
@@ -679,6 +683,7 @@ func discoverDCRMetadata(ctx context.Context, resource string, opts OAuthOptions
 		TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"},
 		ResponseTypes: []string{"code"}, Scopes: []string{oauthDCRScope},
 		supportedScopes: slices.Clone(as.ScopesSupported),
+		AuthorizationResponseIssParameterSupported: as.AuthorizationResponseIssParameterSupported,
 	}, as.RegistrationEndpoint, nil
 }
 
@@ -743,6 +748,7 @@ func resolvePreparedDCR(ctx context.Context, resource string, opts OAuthOptions,
 		if err != nil {
 			return OAuthOptions{}, ErrOAuthDCRRecoveryRequired
 		}
+		opts.dcrIssParameterSupported = meta.AuthorizationResponseIssParameterSupported
 		key, err := oauthDCRLifecycleKey(opts.Client.DCR.ServerName)
 		if err != nil {
 			return OAuthOptions{}, err
@@ -897,6 +903,7 @@ func sameStrings(a, b []string) bool {
 
 func withResolvedDCR(opts OAuthOptions, record oauthDCRRecord) OAuthOptions {
 	opts.dcrTicket = nil
+	opts.dcrIssParameterSupported = record.Metadata.AuthorizationResponseIssParameterSupported
 	opts.dcr = &oauthDCRResolved{issuer: record.Identity.Issuer, clientID: record.Registration.ClientID, generation: record.Generation, path: record.Metadata.RedirectPath, serverName: opts.Client.DCR.ServerName}
 	return opts
 }
@@ -1104,7 +1111,7 @@ func validDCRRedirectPort(port string) bool {
 }
 
 func equalDCRMetadata(a, b oauthDCRMetadata) bool {
-	return a.Issuer == b.Issuer && a.Resource == b.Resource && a.RedirectPolicy == b.RedirectPolicy && a.RedirectPath == b.RedirectPath && a.TokenEndpointAuthMethod == b.TokenEndpointAuthMethod && slices.Equal(a.GrantTypes, b.GrantTypes) && slices.Equal(a.ResponseTypes, b.ResponseTypes) && slices.Equal(a.Scopes, b.Scopes)
+	return a.Issuer == b.Issuer && a.Resource == b.Resource && a.RedirectPolicy == b.RedirectPolicy && a.RedirectPath == b.RedirectPath && a.TokenEndpointAuthMethod == b.TokenEndpointAuthMethod && a.AuthorizationResponseIssParameterSupported == b.AuthorizationResponseIssParameterSupported && slices.Equal(a.GrantTypes, b.GrantTypes) && slices.Equal(a.ResponseTypes, b.ResponseTypes) && slices.Equal(a.Scopes, b.Scopes)
 }
 
 func fingerprintDCRMetadata(meta oauthDCRMetadata) string {

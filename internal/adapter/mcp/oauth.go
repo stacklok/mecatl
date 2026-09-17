@@ -102,6 +102,9 @@ type OAuthOptions struct {
 	testRootCAs          *x509.CertPool
 	dcr                  *oauthDCRResolved
 	dcrTicket            *oauthDCRTicket
+	// dcrIssParameterSupported is bound to the discovered metadata used by the
+	// same add/login transaction; it is not rediscovered at callback time.
+	dcrIssParameterSupported bool
 }
 
 // AllowOAuthLoopbackForTest enables loopback only for in-process test servers.
@@ -426,15 +429,17 @@ type authorizationFlight struct {
 // OAuthController owns one official SDK authorization handler and the durable
 // credential state for one MCP resource.
 type OAuthController struct {
-	state                  *oauthCredentialState
-	handler                *auth.AuthorizationCodeHandler
-	authorize              func(context.Context, *http.Request, *http.Response) error
-	presenter              OAuthPresenter
-	authorizationContext   context.Context
-	onAuthorizationStart   func()
-	onAuthorizationSuccess func()
-	client                 *http.Client
-	transport              *oauthHTTPTransport
+	state                    *oauthCredentialState
+	handler                  *auth.AuthorizationCodeHandler
+	authorize                func(context.Context, *http.Request, *http.Response) error
+	presenter                OAuthPresenter
+	authorizationContext     context.Context
+	onAuthorizationStart     func()
+	onAuthorizationSuccess   func()
+	client                   *http.Client
+	transport                *oauthHTTPTransport
+	dcrIssuer                string
+	dcrIssParameterSupported bool
 
 	flightMu sync.Mutex
 	flight   *authorizationFlight
@@ -478,12 +483,14 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 	}
 	lifetimeCtx, lifetimeCancel := context.WithCancel(context.Background())
 	controller := &OAuthController{
-		presenter:   opts.Presenter,
-		client:      client,
-		transport:   transport,
-		lifetimeCtx: lifetimeCtx,
-		cancel:      lifetimeCancel,
-		closeDone:   make(chan struct{}),
+		presenter:                opts.Presenter,
+		client:                   client,
+		transport:                transport,
+		dcrIssuer:                opts.Issuer,
+		dcrIssParameterSupported: opts.dcrIssParameterSupported,
+		lifetimeCtx:              lifetimeCtx,
+		cancel:                   lifetimeCancel,
+		closeDone:                make(chan struct{}),
 	}
 	fetcher := controller.presentAuthorization
 	timeout := opts.Timeout
@@ -525,6 +532,17 @@ func (c *OAuthController) presentAuthorization(ctx context.Context, args *auth.A
 		}
 	}
 	result, err := c.presenter.PresentAuthorization(ctx, args.URL)
+	if err == nil && c.state.registration.kind == oauthDCRClientKind {
+		// RFC 9207 is a capability gate for omission, not a license to ignore a
+		// value the authorization server returned. Any present issuer is bound to
+		// the issuer used for this transaction before token exchange.
+		if result == nil || result.Iss != "" && result.Iss != c.dcrIssuer {
+			return nil, projectOAuthError(errors.New("OAuth authorization response issuer is missing or does not match discovered issuer"))
+		}
+		if c.dcrIssParameterSupported && result.Iss == "" {
+			return nil, projectOAuthError(errors.New("OAuth authorization response issuer is missing or does not match discovered issuer"))
+		}
+	}
 	return result, projectOAuthError(err)
 }
 

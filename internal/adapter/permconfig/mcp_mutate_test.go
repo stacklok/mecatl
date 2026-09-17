@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestDirectMCPMutationPreservesUnrelatedContent(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario3_AtomicNarrowMutation(t *testing.T) {
 	before := []byte("# preserve me\nmodels:\n  default: test\n")
 	added, err := AddDirectMCPServer(before, "Calendar", "https://mcp.example/mcp", "https://issuer.example", "/tmp/credentials", "MECATL_MCP_CREDENTIAL_KEY")
 	if err != nil {

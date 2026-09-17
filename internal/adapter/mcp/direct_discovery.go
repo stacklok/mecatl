@@ -256,6 +256,13 @@ func directResourceMetadata(values []string) (string, error) {
 				continue
 			}
 			metadata, hasMetadata := challenge.params["resource_metadata"]
+			_, hasScope := challenge.params["scope"]
+			// A scope-bearing challenge is one atomic resource declaration. A
+			// scope from one challenge must never be combined with metadata from
+			// another, and a scope without metadata is ambiguous.
+			if hasScope && !hasMetadata {
+				return "", errors.New("MCP Bearer scope requires resource_metadata in the same challenge")
+			}
 			if !hasMetadata {
 				continue
 			}

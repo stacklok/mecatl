@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 )
 
-func TestDirectResourceMetadataRejectsConflictingAndQuotedComma(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario1_ChallengeParsingAndMetadataPolicy(t *testing.T) {
 	metadata, err := directResourceMetadata([]string{`Bearer realm="example, protected", resource_metadata="https://mcp.example/.well-known/oauth-protected-resource"`, `Bearer resource_metadata="https://mcp.example/.well-known/oauth-protected-resource"`})
 	if err != nil || metadata != "https://mcp.example/.well-known/oauth-protected-resource" {
 		t.Fatalf("metadata = %q, %v", metadata, err)
@@ -39,7 +40,47 @@ func TestDirectResourceMetadataParsesBearerChallengesAtomically(t *testing.T) {
 	}
 }
 
-func TestDirectIssuerMetadataFallsBackOnlyFrom404WithoutCredentials(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario1_ChallengeAndFallbackOrder(t *testing.T) {
+	resource, err := exactDirectResource("https://mcp.example/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := directEndpointMetadataURL(mustURL(t, resource)); got != "https://mcp.example/.well-known/oauth-protected-resource/mcp" {
+		t.Fatalf("pathful metadata URL = %q", got)
+	}
+	if got := directEndpointMetadataURL(mustURL(t, "https://mcp.example/")); got != "https://mcp.example/.well-known/oauth-protected-resource/" {
+		t.Fatalf("root metadata URL = %q", got)
+	}
+	if _, err := directResourceMetadata([]string{`Bearer resource_metadata="https://mcp.example/meta"`}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func TestDirectMCPOnboarding_Scenario1_BearerScopeMetadataAtomicity(t *testing.T) {
+	if _, err := directResourceMetadata([]string{`Bearer scope="openid"`}); err == nil {
+		t.Fatal("scope-bearing Bearer challenge without resource metadata was accepted")
+	}
+	if _, err := directResourceMetadata([]string{
+		`Bearer resource_metadata="https://mcp.example/meta"`,
+		`Bearer scope="openid", resource_metadata="https://mcp.example/meta"`,
+	}); err == nil {
+		t.Fatal("scope from a separate challenge was accepted")
+	}
+	metadata, err := directResourceMetadata([]string{`Bearer scope="openid", resource_metadata="https://mcp.example/meta"`})
+	if err != nil || metadata != "https://mcp.example/meta" {
+		t.Fatalf("atomic challenge = %q, %v", metadata, err)
+	}
+}
+func TestDirectMCPOnboarding_Scenario1_IssuerMetadataMatrix(t *testing.T) {
 	var rfc8414Hits, oidcHits atomic.Int32
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +175,7 @@ func TestDirectMetadataRequiresJSONContentTypeAndEnforcesBodyLimit(t *testing.T)
 	}
 }
 
-func TestExactDirectMetadataURLPreservesPathForRootFallback(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario1_ExactResourceAndRedirectBinding(t *testing.T) {
 	root, _ := exactDirectURL("https://mcp.example/")
 	pathful, _ := exactDirectURL("https://mcp.example/mcp")
 	if got, want := directEndpointMetadataURL(root), "https://mcp.example/.well-known/oauth-protected-resource/"; got != want {

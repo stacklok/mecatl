@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,14 +14,19 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
+	"github.com/stacklok/mecatl/internal/adapter/mcplifecycle"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
 const mcpLifecycleUsage = "mecated mcp {add NAME URL [--file PATH] [--credential-store auto|keyring|file] | list [--file PATH] | remove NAME [--file PATH]}"
+
+var discoverMCPDirectIssuer = mcp.DiscoverDirectIssuer
+var removeMCPOAuthDCR = mcp.RemoveOAuthDCR
 
 type mcpLifecycleArgs struct {
 	name, url, file, custody string
@@ -416,12 +422,38 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "MCP settings writable target: %s\n", path)
-	_, _ = fmt.Fprintln(stdout, "MCP onboarding: discovering protected resource")
-	discovery, err := mcp.DiscoverDirectIssuer(context.Background(), parsed.url)
+
+	// Validate and snapshot the selected target before doing any network work. A
+	// typo, unsafe path, or shadowed layered source must not cause discovery (or
+	// any other externally visible onboarding activity).
+	unlock, err := lockMCPSettings(path)
 	if err != nil {
 		return err
 	}
-	unlock, err := lockMCPSettings(path)
+	before, err := mcpMutationTarget(path)
+	unlock()
+	if err != nil {
+		return err
+	}
+	var settings permconfig.Config
+	if err := yaml.Unmarshal(before.data, &settings); err != nil {
+		return fmt.Errorf("MCP settings %q is invalid: %w", path, err)
+	}
+	if settings.MCP != nil && settings.MCP.Mode == "broker" {
+		// Direct onboarding must reject the mutually exclusive broker authority
+		// before discovery, custody selection, or any settings mutation.
+		return errors.New("MCP direct onboarding is unavailable when mcp.mode is broker")
+	}
+
+	_, _ = fmt.Fprintln(stdout, "MCP onboarding: discovering protected resource")
+	discovery, err := discoverMCPDirectIssuer(context.Background(), parsed.url)
+	if err != nil {
+		return err
+	}
+
+	// Re-read after discovery: the first snapshot is only the preflight. Never
+	// publish over a settings change made while discovery was in flight.
+	unlock, err = lockMCPSettings(path)
 	if err != nil {
 		return err
 	}
@@ -430,7 +462,7 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 			unlock()
 		}
 	}()
-	before, err := mcpMutationTarget(path)
+	before, err = mcpMutationTarget(path)
 	if err != nil {
 		return err
 	}
@@ -444,7 +476,6 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 }
 
 func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleArgs, issuer string, stdout io.Writer) error {
-	_, _ = fmt.Fprintln(stdout, "MCP onboarding: selecting credential custody")
 	configDir := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
 	stateDir := xdgconfig.UserStateDir(xdgconfig.OSEnv)
 	if configDir == "" || stateDir == "" {
@@ -452,20 +483,24 @@ func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleA
 	}
 	credentialRoot := filepath.Join(stateDir, "mecatl", "mcp-credentials")
 	keyPath := filepath.Join(configDir, "mecatl", "mcp-credential-key")
-	selected, err := mcpcredential.Resolve(context.Background(), credentialRoot, mcpcredential.Options{Requested: parsed.custody, FilePath: keyPath})
+	result, err := mcplifecycle.Add(context.Background(), mcplifecycle.AddRequest{
+		Name: parsed.name, URL: parsed.url, Issuer: issuer, Settings: before.data,
+		CredentialRoot: credentialRoot, FileKeyPath: keyPath, CredentialStore: parsed.custody,
+		Attended: term.IsTerminal(int(os.Stdin.Fd())),
+		ConfirmFile: func(context.Context) (bool, error) {
+			_, _ = fmt.Fprint(stdout, "MCP keyring unavailable; store the key in a protected file instead? [y/N] ")
+			answer, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				return false, readErr
+			}
+			return strings.EqualFold(strings.TrimSpace(answer), "y"), nil
+		},
+		Progress: func(stage string) { _, _ = fmt.Fprintf(stdout, "MCP onboarding: %s\n", stage) },
+	})
 	if err != nil {
 		return err
 	}
-	defer clear(selected.Key)
-	locator := ""
-	if selected.Backend == mcpcredential.BackendFile {
-		locator = selected.Locator
-	}
-	after, err := permconfig.AddDirectMCPServerWithKey(before.data, parsed.name, parsed.url, issuer, credentialRoot, selected.Backend, locator)
-	if err != nil {
-		return err
-	}
-	if err := writeMCPSettings(path, before, after); err != nil {
+	if err := writeMCPSettings(path, before, result.Settings); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: settings saved")
@@ -493,8 +528,8 @@ func runMCPList(args []string, stdout io.Writer) error {
 			continue
 		}
 		_, _ = fmt.Fprintf(stdout, "MCP settings winner: %s\n", source.path)
-		for _, server := range source.config.MCP.Servers {
-			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", server.Name, server.URL, mcpProfileKind(server), mcpCredentialStatus(server), source.path)
+		for _, server := range mcplifecycle.List(source.config) {
+			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", server.Name, server.URL, server.Kind, server.CredentialStatus, source.path)
 		}
 		break
 	}
@@ -512,13 +547,41 @@ func mcpProfileKind(server permconfig.MCPServerProfile) string {
 	return "oauth"
 }
 
-// mcpCredentialStatus deliberately inspects only configuration. List must not
-// unlock custody, contact a service, or present an authorization flow.
+// mcpCredentialStatus deliberately performs only bounded, non-presenting
+// inspection. In particular, it never opens a keyring, reads an environment
+// credential, unlocks an encrypted store, or starts OAuth.
 func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
-	if server.Auth.OAuth == nil && server.Auth.Mode == "none" {
-		return "ready"
+	if server.Auth.OAuth == nil {
+		if server.Auth.Mode == "none" {
+			return "ready"
+		}
+		return "unknown"
 	}
-	return "unknown"
+	credentials := server.Auth.OAuth.Credentials
+	switch credentials.Mode {
+	case "environment":
+		return "unknown" // The value is intentionally not read by list.
+	case "local":
+		if credentials.Local == nil || credentials.Local.Key == nil {
+			return "unknown"
+		}
+		switch mcpcredential.InspectMarker(credentials.Local.Root) {
+		case mcpcredential.MarkerMissing:
+			return "login required"
+		case mcpcredential.MarkerUnavailable:
+			return "unavailable"
+		case mcpcredential.MarkerLocked:
+			return "locked"
+		case mcpcredential.MarkerRecovery:
+			return "recovery required"
+		case mcpcredential.MarkerPresent:
+			return "unknown" // Presence of custody metadata is not proof of a grant.
+		default:
+			return "unknown"
+		}
+	default:
+		return "unknown"
+	}
 }
 
 func runMCPRemove(args []string, stdout io.Writer) error {
@@ -546,7 +609,10 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = profiles.Close() }()
 	if server, ok := profiles.OAuthServer(parsed.name); ok {
-		result, removeErr := mcp.RemoveOAuthDCR(context.Background(), server.URL, *server.OAuth)
+		if server.OAuth == nil || server.OAuth.Client.DCR == nil {
+			return errors.New("MCP profile removal is supported only for direct OAuth DCR profiles")
+		}
+		result, removeErr := removeMCPOAuthDCR(context.Background(), server.URL, *server.OAuth)
 		if removeErr != nil {
 			return mcpLoginRemedy(removeErr)
 		}
@@ -555,7 +621,7 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 			_, _ = fmt.Fprintln(stdout, "MCP OAuth lifecycle record not found; removing settings only")
 		}
 	}
-	after, err := permconfig.RemoveDirectMCPServer(before.data, parsed.name)
+	after, err := mcplifecycle.Remove(before.data, parsed.name)
 	if err != nil {
 		return err
 	}

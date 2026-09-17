@@ -222,7 +222,11 @@ func runMCPLogin(args []string, stdout io.Writer, stderr ...io.Writer) error {
 	if pathErr != nil {
 		return pathErr
 	}
-	sources, sourceErr := mcpSettingsSources(path, explicit[1:])
+	extraSources := explicit
+	if len(extraSources) > 0 {
+		extraSources = extraSources[1:]
+	}
+	sources, sourceErr := mcpSettingsSources(path, extraSources)
 	if sourceErr != nil {
 		return sourceErr
 	}

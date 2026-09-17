@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	keyringapi "github.com/zalando/go-keyring"
 )
 
 type fakeKeyring struct{ values map[string]string }
@@ -13,7 +15,7 @@ type fakeKeyring struct{ values map[string]string }
 func (f *fakeKeyring) Get(service, account string) (string, error) {
 	v, ok := f.values[service+"\x00"+account]
 	if !ok {
-		return "", errors.New("missing")
+		return "", keyringapi.ErrNotFound
 	}
 	return v, nil
 }
@@ -23,12 +25,22 @@ func (f *fakeKeyring) Set(service, account, value string) error {
 	return nil
 }
 
+func (f *fakeKeyring) Delete(service, account string) error {
+	key := service + "\x00" + account
+	if _, ok := f.values[key]; !ok {
+		return errors.New("missing")
+	}
+	delete(f.values, key)
+	return nil
+}
+
 type failingKeyring struct{}
 
 func (failingKeyring) Get(string, string) (string, error) { return "", errors.New("unavailable") }
 func (failingKeyring) Set(string, string, string) error   { return errors.New("unavailable") }
+func (failingKeyring) Delete(string, string) error        { return errors.New("unavailable") }
 
-func TestFileCustodyPinsLocatorAndPermissions(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario2_PrivatePinnedCustody(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "credentials")
 	keyPath := filepath.Join(t.TempDir(), "key")
 	first, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath, Platform: "linux"})
@@ -53,6 +65,16 @@ func TestFileCustodyPinsLocatorAndPermissions(t *testing.T) {
 	defer clear(second.Key)
 	if string(first.Key) != string(second.Key) {
 		t.Fatal("file key changed after reopen")
+	}
+	keyring := &fakeKeyring{values: map[string]string{}}
+	keyringRoot := filepath.Join(t.TempDir(), "keyring-credentials")
+	keyringSelection, err := Resolve(context.Background(), keyringRoot, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: keyring})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(keyringSelection.Key)
+	if len(keyringSelection.Key) != 32 || len(keyringSelection.Locator) != 64 {
+		t.Fatalf("keyring selection = %#v", keyringSelection)
 	}
 }
 
@@ -163,7 +185,7 @@ func TestOpenRejectsSymlinkedMarker(t *testing.T) {
 		t.Fatal("Open accepted symlinked marker")
 	}
 }
-func TestPinnedFileNeverCreatesMissingKeyOrReadsDriftedLocator(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario2_NoFallbackOrLocatorDrift(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "credentials")
 	keyPath := filepath.Join(t.TempDir(), "key")
 	selection, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath})
@@ -189,7 +211,7 @@ func TestPinnedFileNeverCreatesMissingKeyOrReadsDriftedLocator(t *testing.T) {
 	}
 }
 
-func TestLinuxAutoSelectionRequiresAttendedConfirmationForFile(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario2_PlatformSelectionMatrix(t *testing.T) {
 	newOptions := func(confirm ConfirmFile, attended bool) Options {
 		return Options{Requested: "auto", Platform: "linux", Detect: func(context.Context) (bool, error) { return false, nil }, ConfirmFile: confirm, Attended: attended}
 	}
@@ -255,5 +277,41 @@ func TestSharedRootReusesPinnedCustody(t *testing.T) {
 	defer clear(second.Key)
 	if first.Locator != second.Locator || string(first.Key) != string(second.Key) {
 		t.Fatal("shared root did not reuse pinned custody")
+	}
+}
+
+func TestMarkerPublicationFailureRollsBackNewKeyringEntry(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	kr := &fakeKeyring{values: map[string]string{}}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "."+markerName+".new"), []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(context.Background(), root, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: kr}); err == nil {
+		t.Fatal("Resolve unexpectedly succeeded")
+	}
+	if len(kr.values) != 0 {
+		t.Fatalf("marker failure left keyring entries: %d", len(kr.values))
+	}
+}
+
+func TestMarkerPublicationFailureRestoresExistingKeyringEntry(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	kr := &fakeKeyring{values: map[string]string{}}
+	account := keyringAccount(root)
+	kr.values[keyringService+"\x00"+account] = "existing-key"
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "."+markerName+".new"), []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(context.Background(), root, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: kr}); err == nil {
+		t.Fatal("Resolve unexpectedly succeeded")
+	}
+	if got := kr.values[keyringService+"\x00"+account]; got != "existing-key" {
+		t.Fatalf("existing key was not restored: %q", got)
 	}
 }
