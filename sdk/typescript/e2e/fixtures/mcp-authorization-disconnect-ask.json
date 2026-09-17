@@ -1,0 +1,23 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "disconnect-ask-auth",
+          "name": "mcp__fixture__one",
+          "args": { "request": "disconnect-at-ask" }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "id": "disconnect-ask-write",
+          "name": "Write",
+          "args": { "path": "stranded.txt", "content": "must not be written\n" }
+        }
+      ]
+    },
+    { "text": "permission continuation ended" }
+  ]
+}
