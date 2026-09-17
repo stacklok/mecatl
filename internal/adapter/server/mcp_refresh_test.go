@@ -3,6 +3,8 @@ package server_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -240,6 +243,50 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 		}
 	})
 
+	t.Run("no-fs-and-unrelated-authority-preserved", func(t *testing.T) {
+		store := &refreshStore{Store: memstore.New()}
+		eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "test"})
+		svc, err := newPlacementTestService(server.Config{
+			Engine: eng, Store: store, OwnershipEnforced: true,
+			SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
+				return server.SessionEngineResult{Engine: eng}, nil
+			},
+			RootAuthority: func(session.SessionKind) session.Authority {
+				return session.Authority{CapabilitySet: governance.CapabilitySet{
+					Tools: []string{"Read", "mcp__client__keep"}, RemainingDelegationDepth: 3,
+				}, Provenance: "test"}
+			},
+			MCPRefresh: func(context.Context) (server.MCPRefreshSnapshot, error) {
+				return server.MCPRefreshSnapshot{Revision: 8, ToolNames: []string{"mcp__direct__new"}}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewService: %v", err)
+		}
+		sess, err := svc.CreateSessionWithProfile(ownerCtx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
+		if err != nil {
+			t.Fatalf("CreateSessionWithProfile: %v", err)
+		}
+		before, _ := sess.BoundAuthority()
+		store.mu.Lock()
+		store.saves = 0
+		store.mu.Unlock()
+		if _, err := svc.RefreshMcpSources(ownerCtx, sess.ID); err != nil {
+			t.Fatalf("RefreshMcpSources: %v", err)
+		}
+		afterSession, err := store.Store.Load(context.Background(), sess.ID)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		after, _ := afterSession.BoundAuthority()
+		if after.CapabilitySet.FileSystem || after.CapabilitySet.DirectWrite || after.CapabilitySet.RemainingDelegationDepth != before.CapabilitySet.RemainingDelegationDepth {
+			t.Fatalf("unrelated no-FS authority changed: before=%+v after=%+v", before, after)
+		}
+		if !after.CapabilitySet.Contains(governance.CapabilitySet{Tools: []string{"mcp__client__keep", "mcp__direct__new"}}) {
+			t.Fatalf("client/unrelated authority not preserved: %+v", after)
+		}
+	})
+
 	t.Run("ineligible-state-and-taxonomy", func(t *testing.T) {
 		cases := []struct {
 			name   string
@@ -309,6 +356,73 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 		if store.saveCount() != 1 {
 			t.Fatalf("converged refresh saves=%d want 1", store.saveCount())
 		}
+	})
+
+	t.Run("concurrent-callers-fresh-load-under-run-entry-exclusion", func(t *testing.T) {
+		svc, store, id := newFixture(t, []string{"mcp__new__call"}, nil, false, nil)
+		const callers = 8
+		start := make(chan struct{})
+		errs := make(chan error, callers)
+		for range callers {
+			go func() {
+				<-start
+				_, err := svc.RefreshMcpSources(ownerCtx, id)
+				errs <- err
+			}()
+		}
+		close(start)
+		for range callers {
+			if err := <-errs; err != nil {
+				t.Fatalf("concurrent refresh: %v", err)
+			}
+		}
+		if store.saveCount() != 1 {
+			t.Fatalf("concurrent stable union saved %d times, want 1", store.saveCount())
+		}
+	})
+
+	t.Run("active-run-excluded-at-local-linearization-point", func(t *testing.T) {
+		svc, store, id := newFixture(t, []string{"mcp__new__call"}, nil, false, nil)
+		run, err := svc.StartRun(ownerCtx, id, "keep registered")
+		if err != nil {
+			t.Fatalf("StartRun: %v", err)
+		}
+		if _, err := svc.RefreshMcpSources(ownerCtx, id); !errors.Is(err, server.ErrFailedPrecondition) {
+			t.Fatalf("refresh during registered run err=%v", err)
+		}
+		for range run.Events() {
+		}
+		svc.FinishRun(id, run)
+		if store.saveCount() != 0 {
+			t.Fatalf("refresh during run saved %d times", store.saveCount())
+		}
+	})
+
+	t.Run("actual-service-grant-count-and-name-byte-bounds", func(t *testing.T) {
+		t.Run("union-count-bound", func(t *testing.T) {
+			names := make([]string, 1_025)
+			for i := range names {
+				names[i] = fmt.Sprintf("mcp__bounded__tool_%04d", i)
+			}
+			svc, store, id := newFixture(t, names, nil, false, nil)
+			if _, err := svc.RefreshMcpSources(ownerCtx, id); !errors.Is(err, server.ErrFailedPrecondition) {
+				t.Fatalf("err=%v want ErrFailedPrecondition", err)
+			}
+			if store.saveCount() != 0 {
+				t.Fatalf("over-bound union saved %d times", store.saveCount())
+			}
+		})
+
+		t.Run("tool-name-byte-bound", func(t *testing.T) {
+			name := strings.Repeat("x", 257)
+			svc, store, id := newFixture(t, []string{name}, nil, false, nil)
+			if _, err := svc.RefreshMcpSources(ownerCtx, id); !errors.Is(err, server.ErrFailedPrecondition) {
+				t.Fatalf("err=%v want ErrFailedPrecondition", err)
+			}
+			if store.saveCount() != 0 {
+				t.Fatalf("invalid-name union saved %d times", store.saveCount())
+			}
+		})
 	})
 
 	t.Run("owner-concealment", func(t *testing.T) {
