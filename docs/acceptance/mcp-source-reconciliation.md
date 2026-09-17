@@ -4,7 +4,7 @@
 **Work classification:** Architectural — changes process-wide MCP publication, runtime ownership, a public refresh control, and one importable aggregate API.
 **Decision record:** [ADR 0351](../adr/0351-mcp-source-reconciliation.md)
 **Phase:** Minimal stale direct/global MCP source reconciliation
-**Status:** proposed, 2026-09-16. Directing-human decisions are settled; ready for amended Plan / Interface review.
+**Status:** landed in this implementation candidate, 2026-09-17. The transition becomes authoritative only when a human merges the stacked implementation after the Plan / Interface PR; it does not claim the behavior is currently shipped.
 **Baseline synchronization:** merged `origin/main` at `ca993a6ea1b648e8e18a102b6810da5dea8c494f`; the proposed technical contract is unchanged, while its Proposed ADR and two ADR-named verification functions now use the next free number, 0351, after synchronized main allocated 0350.
 **Delivery:** Split. Runtime publication and additive public controls require contract review. The directing human explicitly authorizes a stacked implementation PR before this Plan PR merges, based on the exact amended plan commit and targeting `plan/mcp-source-reconciliation`; this does not approve or merge either PR, and contract-drift gates remain.
 **Expected tasks:** deferred to orchestration after parent advisory review.
@@ -118,6 +118,10 @@ Direct refresh validates an eligible owned root under run-entry exclusion before
 5. Implementation updates `docs/architecture.md`, `docs/architecture/extensibility.md`, `docs/design/IMPLEMENTATION-NOTES.md`, owning `user-docs/` MCP/mecatui pages, generated API/config references, and ADR 0057's index annotation.
 6. `task generate`, `task lint`, `task test`, `task api:check`, `task docs`, `task site:build`, `task ac-trace-strict`, and `go run ./cmd/mecademo` pass at implementation completion.
 7. The implementation PR remains stacked until plan merge, reports exact interface conformance, and has no unwaived review blocker. This plan tracks #1511 but does not close it.
+
+## Completion proof
+
+All 12 `verify:` targets under AC1.1–AC4.3 pass on the implementation candidate. `task ac-trace-strict` resolves every target, and the aggregate gates in Definition of done item 6 pass on the same tree; the final panel records zero ship blockers and zero reviewer failures.
 
 ## Deferred decisions and known risks
 
