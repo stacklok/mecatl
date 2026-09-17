@@ -94,9 +94,6 @@ APIs](/building/deployment/grpc-http.md) or the [TypeScript
 SDK](/building/getting-started/typescript-sdk.md). An existing harness would
 need a dedicated integration to hand its agent loop over to Mecatl.
 
-When we say that desktop support is on the roadmap, we mean a Mecatl desktop
-client. It does not mean that Claude Desktop itself will become a Mecatl client.
-
 ## Where this is going
 
 Mecatl is early, and the cloud-native harness is a direction as well as a
