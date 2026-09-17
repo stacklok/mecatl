@@ -69,15 +69,7 @@ type Options struct {
 
 // Resolve selects and opens the root-pinned MCP credential backend.
 func Resolve(ctx context.Context, root string, opts Options) (Selection, error) {
-	if opts.Requested == "" {
-		opts.Requested = "auto"
-	}
-	if opts.Platform == "" {
-		opts.Platform = runtime.GOOS
-	}
-	if opts.Keyring == nil {
-		opts.Keyring = osKeyring{}
-	}
+	prepareOptions(&opts)
 	canonical, err := prepareRoot(root)
 	if err != nil {
 		return Selection{}, err
@@ -91,40 +83,15 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 			unlock()
 		}
 	}()
+
 	marker, err := readMarker(canonical)
 	if err == nil {
-		if marker.State != markerReady && marker.State != markerPending {
-			return Selection{}, errors.New("MCP credential backend marker is invalid")
-		}
-		if opts.Requested != "auto" && opts.Requested != marker.Backend {
-			return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
-		}
-		if marker.StoreNamespace != NativeNamespace {
-			return Selection{}, errors.New("MCP credential backend marker is invalid")
-		}
-		locator, err := pinnedLocator(canonical, marker.Backend, opts.FilePath)
-		if err != nil || locatorDigest(marker.Backend, locator) != marker.LocatorSHA256 {
-			return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
-		}
-		if marker.State == markerPending {
-			// A pending marker is the only authorization to recover an artifact
-			// created by an interrupted initialization. Never adopt an artifact
-			// without this exact, root-pinned marker.
-			sel, _, err := openNew(canonical, marker.Backend, opts, true, marker.InitSHA256)
-			if err != nil {
-				return Selection{}, err
-			}
-			if err := publishMarker(canonical, backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: marker.Backend, LocatorSHA256: marker.LocatorSHA256, InitSHA256: marker.InitSHA256}, true); err != nil {
-				clear(sel.Key)
-				return Selection{}, errors.New("MCP credential backend marker cannot be finalized")
-			}
-			return sel, nil
-		}
-		return openPinned(marker.Backend, locator, opts)
+		return resolveMarker(ctx, canonical, marker, opts, "", false)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
+
 	// Do not hold the root lock while an attended confirmation waits for input.
 	// Re-lock and re-check after selection so a concurrent initializer wins.
 	unlock()
@@ -139,55 +106,83 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 	}
 	marker, err = readMarker(canonical)
 	if err == nil {
-		if marker.State != markerReady && marker.State != markerPending {
-			return Selection{}, errors.New("MCP credential backend marker is invalid")
-		}
-		if marker.Backend != backend {
-			return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
-		}
-		locator, err := pinnedLocator(canonical, marker.Backend, opts.FilePath)
-		if err != nil || locatorDigest(marker.Backend, locator) != marker.LocatorSHA256 {
-			return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
-		}
-		if marker.State == markerPending {
-			if err := ctx.Err(); err != nil {
-				return Selection{}, err
-			}
-			sel, _, err := openNew(canonical, marker.Backend, opts, true, marker.InitSHA256)
-			if err != nil {
-				return Selection{}, err
-			}
-			if err := ctx.Err(); err != nil {
-				clear(sel.Key)
-				return Selection{}, err
-			}
-			if err := publishMarker(canonical, backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: marker.Backend, LocatorSHA256: marker.LocatorSHA256, InitSHA256: marker.InitSHA256}, true); err != nil {
-				clear(sel.Key)
-				return Selection{}, errors.New("MCP credential backend marker cannot be finalized")
-			}
-			return sel, nil
-		}
-		return openPinned(marker.Backend, locator, opts)
+		return resolveMarker(ctx, canonical, marker, opts, backend, true)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
-	locator, err := pinnedLocator(canonical, backend, opts.FilePath)
+	return createCredential(ctx, canonical, backend, opts)
+}
+
+func prepareOptions(opts *Options) {
+	if opts.Requested == "" {
+		opts.Requested = "auto"
+	}
+	if opts.Platform == "" {
+		opts.Platform = runtime.GOOS
+	}
+	if opts.Keyring == nil {
+		opts.Keyring = osKeyring{}
+	}
+}
+
+func resolveMarker(ctx context.Context, root string, marker backendMarker, opts Options, expectedBackend string, checkContext bool) (Selection, error) {
+	if expectedBackend != "" && marker.Backend != expectedBackend {
+		return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
+	}
+	if expectedBackend == "" && opts.Requested != "auto" && opts.Requested != marker.Backend {
+		return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
+	}
+	locator, err := pinnedLocator(root, marker.Backend, opts.FilePath)
+	if err != nil || locatorDigest(marker.Backend, locator) != marker.LocatorSHA256 {
+		return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
+	}
+	if marker.State == markerPending {
+		return recoverPending(ctx, root, marker, opts, checkContext)
+	}
+	return openPinned(marker.Backend, locator, opts)
+}
+
+func recoverPending(ctx context.Context, root string, marker backendMarker, opts Options, checkContext bool) (Selection, error) {
+	if checkContext {
+		if err := ctx.Err(); err != nil {
+			return Selection{}, err
+		}
+	}
+	sel, _, err := openNew(root, marker.Backend, opts, true, marker.InitSHA256)
+	if err != nil {
+		return Selection{}, err
+	}
+	if checkContext {
+		if err := ctx.Err(); err != nil {
+			clear(sel.Key)
+			return Selection{}, err
+		}
+	}
+	ready := backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: marker.Backend, LocatorSHA256: marker.LocatorSHA256, InitSHA256: marker.InitSHA256}
+	if err := publishMarker(root, ready, true); err != nil {
+		clear(sel.Key)
+		return Selection{}, errors.New("MCP credential backend marker cannot be finalized")
+	}
+	return sel, nil
+}
+
+func createCredential(ctx context.Context, root, backend string, opts Options) (Selection, error) {
+	locator, err := pinnedLocator(root, backend, opts.FilePath)
 	if err != nil {
 		return Selection{}, err
 	}
 	// Create the artifact before publishing its pending marker. The marker records
 	// the artifact identity, so recovery can never adopt an arbitrary valid key.
-	sel, rollback, err := openNew(canonical, backend, opts, false, "")
+	sel, rollback, err := openNew(root, backend, opts, false, "")
 	if err != nil {
 		// Preserve a recovery-required marker, but bind it to an identity that
 		// cannot match an artifact. Recovery therefore fails closed.
-		_ = publishMarker(canonical, backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: locatorDigest(backend, locator), InitSHA256: strings.Repeat("0", sha256.Size*2)}, false)
+		_ = publishMarker(root, backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: locatorDigest(backend, locator), InitSHA256: strings.Repeat("0", sha256.Size*2)}, false)
 		return Selection{}, err
 	}
-	artifactDigest := keyDigest(sel.Key)
-	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: locatorDigest(backend, locator), InitSHA256: artifactDigest}
-	if err := publishMarker(canonical, pending, false); err != nil {
+	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: locatorDigest(backend, locator), InitSHA256: keyDigest(sel.Key)}
+	if err := publishMarker(root, pending, false); err != nil {
 		rollback()
 		clear(sel.Key)
 		return Selection{}, errors.New("MCP credential backend marker cannot be written")
@@ -196,7 +191,9 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 		clear(sel.Key)
 		return Selection{}, err
 	}
-	if err := publishMarker(canonical, backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: pending.LocatorSHA256, InitSHA256: pending.InitSHA256}, true); err != nil {
+	ready := pending
+	ready.State = markerReady
+	if err := publishMarker(root, ready, true); err != nil {
 		// Keep the pending marker: the next run can distinguish this in-flight
 		// initialization from an arbitrary unmarked artifact and recover it.
 		clear(sel.Key)
