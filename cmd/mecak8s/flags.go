@@ -433,7 +433,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.guardrailsMode, "guardrails", "", "Set to off to disable guardrails regardless of other configuration")
 
 	// Subagent model router (ADR 0042): kill-switch.
-	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "Disable a configured subagent model router by setting false")
+	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "Disable operator-configured subagent model routing; this flag cannot enable routing")
 	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "Default model for child agents without their own model. Empty inherits --model")
 
 	// Posture: DEFAULT "auto" (the recommended UNATTENDED single-tenant tier).
@@ -444,7 +444,7 @@ func parseFlags(argv []string) (config, error) {
 		"Default reasoning effort: auto, low, medium, high, xhigh, or max. Empty or auto uses configured or provider defaults; unsupported or invalid values fall back to a supported default")
 
 	// Security (no rate-limit: a pod is fronted by the Service/mesh).
-	fs.StringVar(&cfg.authToken, "auth-token", "", "Bearer token required for every RPC and API request. Empty disables authentication; reads MECATL_AUTH_TOKEN when unset")
+	fs.StringVar(&cfg.authToken, "auth-token", "", "Bearer token for RPC/API requests. Empty disables static bearer authentication; OIDC or mTLS may still apply. Reads MECATL_AUTH_TOKEN when unset")
 	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "PEM server certificate. Enables TLS for gRPC and HTTP with --tls-key")
 	fs.StringVar(&cfg.tlsKey, "tls-key", "", "PEM server private key for --tls-cert")
 	fs.StringVar(&cfg.clientCA, "client-ca", "", "PEM client CA bundle. Requires and verifies client certificates")
@@ -456,8 +456,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "Interval for session-retention cleanup after the startup sweep. Zero runs only the startup sweep")
 	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "Retention period for persisted main-session snapshots. Older snapshots are deleted; requires --acknowledge-main-retention. Zero disables age-based cleanup")
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "Maximum persisted main-session snapshots. Older snapshots are deleted; requires --acknowledge-main-retention. Zero disables the limit")
-	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "Retention period for scheduled-run snapshots. Older completed snapshots are deleted; zero disables cleanup. An unset value uses 168h when scheduling is enabled")
-	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "Maximum persisted scheduled-run snapshots. Older completed snapshots are deleted; zero disables the limit")
+	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "Delete scheduled-run snapshots older than this age; running and awaiting are protected. Zero disables age cleanup; default is 168h.")
+	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "Keep at most this many scheduled-run snapshots; delete the oldest non-active snapshots above the limit. Zero disables count cleanup")
 	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "Acknowledge automatic deletion of main sessions when main retention is configured")
 
 	// Skills / agents / soul / user-model (default OFF / conventional, like mecated).
