@@ -4,12 +4,12 @@
 **Work classification:** Architectural — this adds durable public TypeScript SDK methods, projections, and closed workflow-state vocabularies for session-scoped MCP connector enrollment.
 **Decision record:** [ADR 0304](../adr/0304-typescript-sdk-public-surface-and-release.md)
 **Phase:** ergonomic TypeScript SDK MCP workspace enrollment
-**Status:** proposed, 2026-09-17. The directing user approved the exact public SDK surface and explicitly authorized stacking implementation before the Plan / Interface PR merges.
+**Status:** in-progress, 2026-09-17. The directing user approved the exact public SDK surface and explicitly authorized stacking implementation before the Plan / Interface PR merges.
 **Delivery:** Split. The exported SDK contract, correlation rules, ephemeral presentation value, and terminal-state semantics merit approval before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1467](https://github.com/stacklok/mecatl/issues/1467).
 **Plan PR:** [stacklok/mecatl#1688](https://github.com/stacklok/mecatl/pull/1688)
-**Approved baseline:** absent until the Plan / Interface PR merges
+**Approved baseline:** `f3d1c48b5e96e481e5c86f5ecdf1211adb7eb322` under the directing user's explicit stacking waiver
 
 An SDK consumer can inspect one owned session's broker connector inventory and drive its
 whole-bundle workspace enrollment without constructing generated requests or raw descriptor
