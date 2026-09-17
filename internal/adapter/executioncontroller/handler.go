@@ -133,15 +133,16 @@ func (h *Handler) client(ctx context.Context) (authenticatedClient, error) {
 	if h.backend == nil || (h.cfg.Ready != nil && !h.cfg.Ready()) {
 		return authenticatedClient{}, wireError(executionenv.CodeNotReady, true)
 	}
-	leaf, handshakeVerified, err := clientCertificate(ctx)
+	chain, handshakeVerified, err := clientCertificates(ctx)
 	if err != nil || h.cfg.Security == nil && !handshakeVerified {
 		return authenticatedClient{}, wireError(executionenv.CodeUnauthenticated, false)
 	}
+	leaf := chain[0]
 	if h.cfg.Security != nil {
 		if !h.cfg.Security.Ready() {
 			return authenticatedClient{}, wireError(executionenv.CodeNotReady, true)
 		}
-		id, policy, err := h.cfg.Security.authorize(ctx, leaf)
+		id, policy, err := h.cfg.Security.authorize(ctx, chain)
 		if err != nil {
 			return authenticatedClient{}, wireError(executionenv.CodeUnauthenticated, false)
 		}
@@ -427,6 +428,9 @@ func (h *Handler) ListReferenceIntents(ctx context.Context, q *executionv1.ListR
 			return nil, wireError(executionenv.CodeInvalidArgument, false)
 		}
 		intents, err = lifecycle.ListReferenceIntents(ctx, c.id, ownerHash(owner), int(q.Limit))
+		for i := range intents {
+			intents[i].Owner = owner
+		}
 	} else if owned, ok := h.backend.(ownerIntentBackend); ok {
 		intents, err = owned.ListReferenceIntentsForClient(ctx, c.id, int(q.Limit))
 	} else {

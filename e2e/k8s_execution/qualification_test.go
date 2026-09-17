@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -124,6 +125,14 @@ func TestKindExecutionQualification(t *testing.T) {
 	if _, err := providerClient.ValidateProfile(ctx, "go"); err == nil {
 		t.Fatal("provider endpoint loss unexpectedly fell back")
 	}
+	providerForward = portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
+	providerTLS = loadTLS(t, pki, "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
+	providerClient, err = executionclient.New(providerForward.addr, providerTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitProviderRPCReady(t, ctx, providerClient, providerForward.addr, providerTLS)
+	defer providerClient.Close()
 
 	tokenForward := portForward(t, ctx, kubeconfig, "service/oidc-issuer", 8443)
 	alice := fixtureToken(t, ctx, tokenForward.addr, pki, "alice")
@@ -164,6 +173,17 @@ func TestKindExecutionQualification(t *testing.T) {
 	applyReattachScript(t, ctx, kubeconfig, state)
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=180s")
+	providerForward = portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
+	providerTLS = loadTLS(t, pki, "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
+	providerClient, err = executionclient.New(providerForward.addr, providerTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitProviderRPCReady(t, ctx, providerClient, providerForward.addr, providerTLS)
+	defer providerClient.Close()
+	if refreshed := waitReady(t, ctx, providerClient, owner, sessionID, lookup); refreshed.Environment != lookup {
+		t.Fatal("provider did not reattach the exact environment after restart")
+	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
 	agentForward = portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
@@ -328,6 +348,54 @@ func remoteErrorCode(err error) string {
 		return string(remote.Code)
 	}
 	return "transport"
+}
+
+func waitProviderRPCReady(t *testing.T, ctx context.Context, c *executionclient.Client, addr string, cfg *tls.Config) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		attemptCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, lastErr = c.ValidateProfile(attemptCtx, "go")
+		cancel()
+		if lastErr == nil {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("provider RPC did not become ready: code=%s tls=%s", remoteErrorCode(lastErr), classifyTLSFailure(addr, cfg))
+}
+
+func classifyTLSFailure(addr string, cfg *tls.Config) string {
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, cfg.Clone())
+	if err == nil {
+		_ = conn.Close()
+		return "ok"
+	}
+	var unknown x509.UnknownAuthorityError
+	if errors.As(err, &unknown) {
+		return "unknown-ca"
+	}
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &invalid) {
+		if invalid.Reason == x509.Expired {
+			return "expired"
+		}
+		return "bad-certificate"
+	}
+	var hostname x509.HostnameError
+	if errors.As(err, &hostname) {
+		return "bad-certificate"
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "dial-refused"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "dial-timeout"
+	}
+	return "handshake-failed"
 }
 
 func loadTLS(t *testing.T, dir, name, serverName string) *tls.Config {

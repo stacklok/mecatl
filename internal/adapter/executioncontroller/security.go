@@ -177,13 +177,23 @@ func (m *SecurityManager) TLSConfig() *tls.Config {
 	}}
 }
 
-func (m *SecurityManager) authorize(ctx context.Context, leaf *x509.Certificate) (string, ClientPolicy, error) {
+func (m *SecurityManager) authorize(ctx context.Context, chain []*x509.Certificate) (string, ClientPolicy, error) {
+	if len(chain) == 0 || chain[0] == nil {
+		return "", ClientPolicy{}, errors.New("client certificate is unavailable")
+	}
 	now := m.now()
 	s, err := m.authoritativeAt(ctx, now)
 	if err != nil {
 		return "", ClientPolicy{}, err
 	}
-	opts := x509.VerifyOptions{Roots: s.clientCAs, Intermediates: x509.NewCertPool(), CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	intermediates := x509.NewCertPool()
+	for _, cert := range chain[1:] {
+		if cert != nil {
+			intermediates.AddCert(cert)
+		}
+	}
+	opts := x509.VerifyOptions{Roots: s.clientCAs, Intermediates: intermediates, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	leaf := chain[0]
 	if _, err := leaf.Verify(opts); err != nil {
 		return "", ClientPolicy{}, err
 	}

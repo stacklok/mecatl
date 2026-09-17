@@ -110,7 +110,9 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 				http.Error(w, "not ready: "+reconciler.ReadinessReason(), http.StatusServiceUnavailable)
 				return
 			}
-			if !security.CheckReady(r.Context()) {
+			readyCtx, stop := context.WithTimeout(r.Context(), 2*time.Second)
+			defer stop()
+			if !security.CheckReady(readyCtx) {
 				http.Error(w, "not ready: security-authority-or-expiry", http.StatusServiceUnavailable)
 				return
 			}

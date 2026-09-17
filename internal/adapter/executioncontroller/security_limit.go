@@ -33,11 +33,11 @@ func NewRPCLimiter(security *SecurityManager, globalMax, clientMax int) (*RPCLim
 
 // UnaryInterceptor authenticates against current policy before reserving capacity.
 func (l *RPCLimiter) UnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	client, _, err := clientCertificate(ctx)
+	chain, _, err := clientCertificates(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "execution provider request failed")
 	}
-	id, _, err := l.security.authorize(ctx, client)
+	id, _, err := l.security.authorize(ctx, chain)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "execution provider request failed")
 	}
@@ -48,7 +48,7 @@ func (l *RPCLimiter) UnaryInterceptor(ctx context.Context, req any, _ *grpc.Unar
 	return handler(ctx, req)
 }
 
-func clientCertificate(ctx context.Context) (*x509.Certificate, bool, error) {
+func clientCertificates(ctx context.Context) ([]*x509.Certificate, bool, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
 		return nil, false, errors.New("peer is unavailable")
@@ -57,7 +57,7 @@ func clientCertificate(ctx context.Context) (*x509.Certificate, bool, error) {
 	if !ok || len(tlsInfo.State.PeerCertificates) == 0 {
 		return nil, false, errors.New("client certificate is unavailable")
 	}
-	return tlsInfo.State.PeerCertificates[0], len(tlsInfo.State.VerifiedChains) != 0, nil
+	return tlsInfo.State.PeerCertificates, len(tlsInfo.State.VerifiedChains) != 0, nil
 }
 
 func (l *RPCLimiter) acquire(id string) bool {

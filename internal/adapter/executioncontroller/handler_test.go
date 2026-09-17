@@ -25,6 +25,7 @@ type fakeBackend struct {
 	ensureCalls, created int
 	allocations          map[string]Allocation
 	commandState         executionenv.CommandState
+	intents              []executionenv.ReferenceIntent
 }
 
 func newFakeBackend() *fakeBackend { return &fakeBackend{allocations: map[string]Allocation{}} }
@@ -95,8 +96,8 @@ func (*fakeBackend) ConfirmReferenceDelete(context.Context, executionenv.Environ
 func (*fakeBackend) CancelReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
 	return nil
 }
-func (*fakeBackend) ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error) {
-	return nil, nil
+func (f *fakeBackend) ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error) {
+	return f.intents, nil
 }
 func (*fakeBackend) FindReferenceIntent(context.Context, executionenv.EnvironmentRef, string, string, string) (executionenv.ReferenceIntent, error) {
 	return executionenv.ReferenceIntent{}, nil
@@ -132,6 +133,21 @@ func structTLSState(cert *x509.Certificate) (s tls.ConnectionState) {
 	s.PeerCertificates = []*x509.Certificate{cert}
 	s.VerifiedChains = [][]*x509.Certificate{{cert}}
 	return s
+}
+
+func TestListReferenceIntentsProjectsAttestedOwner(t *testing.T) {
+	backend := newFakeBackend()
+	backend.intents = []executionenv.ReferenceIntent{{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", State: executionenv.ReferencePendingDelete, OperationID: "delete", CreatedAt: time.Now().UTC()}}
+	id := "spiffe://cluster/ns/mecak8s"
+	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{id: {MayAttestOwner: true}}}, backend)
+	owner := &executionv1.Owner{Issuer: "issuer", Subject: "alice"}
+	out, err := h.ListReferenceIntents(authenticatedContext(id), &executionv1.ListReferenceIntentsRequest{Owner: owner, Limit: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.GetIntents()) != 1 || out.GetIntents()[0].GetOwner().GetIssuer() != owner.GetIssuer() || out.GetIntents()[0].GetOwner().GetSubject() != owner.GetSubject() {
+		t.Fatal("owner-scoped reference intent omitted its attested owner")
+	}
 }
 
 func TestMigrateEnvironmentRequiresExpectedSchemaPresence(t *testing.T) {

@@ -38,10 +38,12 @@ func requireProduction(t *testing.T) (string, string, context.Context, context.C
 func productionClient(t *testing.T, ctx context.Context, state, kubeconfig string) (*executionclient.Client, *forward) {
 	t.Helper()
 	f := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
-	client, err := executionclient.New(f.addr, loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local"))
+	tlsConfig := loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
+	client, err := executionclient.New(f.addr, tlsConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitProviderRPCReady(t, ctx, client, f.addr, tlsConfig)
 	t.Cleanup(func() { client.Close() })
 	return client, f
 }
@@ -220,6 +222,9 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	recoveredRun := executionenv.RequestContext{Environment: recovered.Environment, Owner: owner, BindingID: binding, RunID: recovered.RunID, ClaimID: recovered.ClaimID, Epoch: recovered.Epoch, GrantGeneration: recovered.GrantGeneration, Grant: recovered.Grant}
 	waitFileContent(t, ctx, oldClient, recoveredRun, "rotation-sentinel.txt", "old-authority\n", "valid authority recovery")
+	if err := oldClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: recovered.Environment, Owner: owner, BindingID: binding, RunID: recovered.RunID, ClaimID: recovered.ClaimID, Epoch: recovered.Epoch, GrantGeneration: recovered.GrantGeneration, OperationID: "rotation-release-recovered"}); err != nil {
+		t.Fatalf("release recovery-phase claim: code=%s", remoteErrorCode(err))
+	}
 
 	// Generation 2 bridges client trust before changing the server certificate.
 	// The old connection remains usable, while a new-CA client can establish its
@@ -237,11 +242,20 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	defer newClient.Close()
 	newAttached := waitReady(t, ctx, newClient, owner, binding, attached.Environment)
-	renewed, err := newClient.RenewRun(ctx, executionenv.RunClaimRequest{Environment: recoveredRun.Environment, Owner: owner, BindingID: binding, RunID: recoveredRun.RunID, ClaimID: recoveredRun.ClaimID, Epoch: recoveredRun.Epoch, GrantGeneration: recoveredRun.GrantGeneration, OperationID: "rotation-renew-k2", TTL: time.Minute})
+	if _, err := newClient.RenewRun(ctx, executionenv.RunClaimRequest{Environment: recoveredRun.Environment, Owner: owner, BindingID: binding, RunID: recoveredRun.RunID, ClaimID: recoveredRun.ClaimID, Epoch: recoveredRun.Epoch, GrantGeneration: recoveredRun.GrantGeneration, OperationID: "rotation-renew-released-phase-claim", TTL: time.Minute}); !isRemoteCode(err, executionenv.CodeConflict) {
+		t.Fatalf("released recovery-phase claim renewal code=%s, want conflict", remoteErrorCode(err))
+	}
+	renewed, err := newClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: newAttached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-k2-grant", OperationID: "rotation-acquire-k2", TTL: time.Minute})
 	if err != nil {
-		t.Fatalf("renew recovered claim under bridge authority: code=%s", remoteErrorCode(err))
+		t.Fatalf("acquire bridge-authority claim: code=%s", remoteErrorCode(err))
 	}
 	newRun := executionenv.RequestContext{Environment: renewed.Environment, Owner: owner, BindingID: binding, RunID: renewed.RunID, ClaimID: renewed.ClaimID, Epoch: renewed.Epoch, GrantGeneration: renewed.GrantGeneration, Grant: renewed.Grant}
+	if got, err := newClient.File(ctx, executionenv.FileRequest{Context: newRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err != nil || string(got.Data) != "old-authority\n" {
+		t.Fatalf("bridge authority did not authorize preserved data: %v", err)
+	}
+	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: renewed.Environment, Owner: owner, BindingID: binding, RunID: renewed.RunID, ClaimID: renewed.ClaimID, Epoch: renewed.Epoch, GrantGeneration: renewed.GrantGeneration, OperationID: "rotation-release-k2-bridge"}); err != nil {
+		t.Fatalf("release bridge-phase claim: code=%s", remoteErrorCode(err))
+	}
 
 	// Generation 3 switches server TLS, removes the old client CA, and revokes
 	// k1. Authorization is checked on every RPC, so the established old-client
@@ -254,7 +268,13 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if _, err := newClient.File(ctx, executionenv.FileRequest{Context: recoveredRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
 		t.Fatal("grant signed by revoked k1 remained authorized through the new client")
 	}
-	if got, err := newClient.File(ctx, executionenv.FileRequest{Context: newRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err != nil || string(got.Data) != "old-authority\n" {
+	finalAttached := waitReady(t, ctx, newClient, owner, binding, attached.Environment)
+	finalClaim, err := newClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: finalAttached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-final-grant", OperationID: "rotation-acquire-final", TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("acquire final-authority claim: code=%s", remoteErrorCode(err))
+	}
+	finalRun := executionenv.RequestContext{Environment: finalClaim.Environment, Owner: owner, BindingID: binding, RunID: finalClaim.RunID, ClaimID: finalClaim.ClaimID, Epoch: finalClaim.Epoch, GrantGeneration: finalClaim.GrantGeneration, Grant: finalClaim.Grant}
+	if got, err := newClient.File(ctx, executionenv.FileRequest{Context: finalRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err != nil || string(got.Data) != "old-authority\n" {
 		t.Fatalf("new authority did not authorize preserved data: %v", err)
 	}
 	freshClient, err := executionclient.New(forward.addr, newTLS)
@@ -266,7 +286,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 		t.Fatalf("fresh new-CA client failed after TLS switch: %v", err)
 	}
 
-	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: renewed.Environment, Owner: owner, BindingID: binding, RunID: renewed.RunID, ClaimID: renewed.ClaimID, Epoch: renewed.Epoch, GrantGeneration: renewed.GrantGeneration, OperationID: "rotation-release-k2"}); err != nil {
+	if err := newClient.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: finalClaim.Environment, Owner: owner, BindingID: binding, RunID: finalClaim.RunID, ClaimID: finalClaim.ClaimID, Epoch: finalClaim.Epoch, GrantGeneration: finalClaim.GrantGeneration, OperationID: "rotation-release-final"}); err != nil {
 		t.Fatal(err)
 	}
 	generation, err := newClient.RevokeEnvironment(ctx, attached.Environment, owner, newAttached.GrantGeneration, "rotation-revoke-replay")
@@ -501,6 +521,7 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=240s")
+	client, _ = productionClient(t, ctx, state, kubeconfig)
 	if refreshed := waitReady(t, ctx, client, owner, binding, attached.Environment); refreshed.GrantGeneration != newGeneration {
 		t.Fatal("revocation generation was not durable across provider restart")
 	}
