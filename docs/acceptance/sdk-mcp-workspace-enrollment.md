@@ -4,7 +4,7 @@
 **Work classification:** Architectural — this adds durable public TypeScript SDK methods, projections, and closed workflow-state vocabularies for session-scoped MCP connector enrollment.
 **Decision record:** [ADR 0304](../adr/0304-typescript-sdk-public-surface-and-release.md)
 **Phase:** ergonomic TypeScript SDK MCP workspace enrollment
-**Status:** in-progress, 2026-09-17. The directing user approved the exact public SDK surface and explicitly authorized stacking implementation before the Plan / Interface PR merges.
+**Status:** landed, 2026-09-17. The directing user approved the exact public SDK surface and explicitly authorized stacking implementation before the Plan / Interface PR merges.
 **Delivery:** Split. The exported SDK contract, correlation rules, ephemeral presentation value, and terminal-state semantics merit approval before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1467](https://github.com/stacklok/mecatl/issues/1467).
