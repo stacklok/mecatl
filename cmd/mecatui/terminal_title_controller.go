@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
@@ -13,13 +15,15 @@ const terminalTitleRunes = 160
 // terminalTitleController owns title emission through Bubble Tea's renderer
 // output writer. Set runs during View; Write is the renderer-serialized path.
 type terminalTitleController struct {
-	output   io.Writer
-	enabled  bool
-	renderer *statusline.TitleRenderer
-	pending  string
-	last     string
-	wrote    bool
-	debug    bool
+	mu        sync.Mutex
+	output    io.Writer
+	enabled   bool
+	renderer  *statusline.TitleRenderer
+	pending   string
+	last      string
+	wrote     bool
+	debug     bool
+	renderErr error
 }
 
 func newTerminalTitleController(output io.Writer, enabled bool, renderer *statusline.TitleRenderer) *terminalTitleController {
@@ -34,11 +38,14 @@ func terminalTitleEnabled(cfg config, settings terminalTitleSettings) bool {
 }
 
 func (c *terminalTitleController) Set(input statusline.Input) {
-	if !c.enabled {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.enabled || c.renderErr != nil {
 		return
 	}
 	title, err := c.renderer.Render(input)
 	if err != nil {
+		c.renderErr = fmt.Errorf("terminal_title.template: execute: %w", err)
 		return
 	}
 	if c.debug {
@@ -48,6 +55,11 @@ func (c *terminalTitleController) Set(input statusline.Input) {
 }
 
 func (c *terminalTitleController) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.renderErr != nil {
+		return 0, c.renderErr
+	}
 	if c.enabled && c.pending != c.last && (c.pending != "" || c.wrote) {
 		if _, err := io.WriteString(c.output, "\x1b]0;"+c.pending+"\a"); err != nil {
 			return 0, err
@@ -61,13 +73,15 @@ func (c *terminalTitleController) Write(p []byte) (int, error) {
 }
 
 func (c *terminalTitleController) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.enabled && c.wrote && c.last != "" {
 		if _, err := io.WriteString(c.output, "\x1b]0;\a"); err != nil {
 			return err
 		}
 		c.last = ""
 	}
-	return nil
+	return c.renderErr
 }
 
 func sanitizeTerminalTitle(value string) string {

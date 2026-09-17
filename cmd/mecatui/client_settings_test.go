@@ -21,6 +21,15 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
+func mustReadClientSettings(t *testing.T) clientSettings {
+	t.Helper()
+	settings, err := readClientSettings()
+	if err != nil {
+		t.Fatalf("read client settings: %v", err)
+	}
+	return settings
+}
+
 // writeSettings writes body to <XDG_CONFIG_HOME>/<app>/settings.yaml under the
 // test's temp XDG root, creating the app dir.
 func writeSettings(t *testing.T, app, body string) string {
@@ -279,7 +288,7 @@ func TestKeymapPrecedenceCLIBeatsClientBeatsLegacy(t *testing.T) {
 	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n  ExpandTools: ctrl+f4\n")
 	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5"}}
 	var deps ui.Deps
-	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
+	if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := map[string][]string{
@@ -297,7 +306,7 @@ func TestKeymapPrecedenceClientBeatsLegacyPerAction(t *testing.T) {
 	writeSettings(t, "mecatl", "keymap:\n  Agents: ctrl+f1\n  Effort: ctrl+f2\n")
 	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n")
 	var deps ui.Deps
-	if err := applyKeyOverridesToDeps(config{}, &deps); err != nil {
+	if err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := map[string][]string{
@@ -318,7 +327,7 @@ func TestKeymapLegacyOnlyBackCompat(t *testing.T) {
 	writeSettings(t, "mecatl", "keymap:\n  Agents: ctrl+f1\n  Effort: ctrl+f2\n")
 	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5"}}
 	var deps ui.Deps
-	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
+	if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := map[string][]string{
@@ -335,7 +344,7 @@ func TestKeymapDeprecationWarnFiresOnceOnLegacyKeymap(t *testing.T) {
 	writeSettings(t, "mecatl", "keymap:\n  Agents: ctrl+f1\n")
 	var deps ui.Deps
 	out := captureStderr(t, func() {
-		if err := applyKeyOverridesToDeps(config{}, &deps); err != nil {
+		if err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 	})
@@ -351,7 +360,7 @@ func TestCanonicalDebugPrintsKeymapDiagnostics(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var deps ui.Deps
 	out := captureStderr(t, func() {
-		if err := applyKeyOverridesToDeps(config{debugKeymap: true}, &deps); err != nil {
+		if err := applyKeyOverridesToDeps(config{debugKeymap: true}, mustReadClientSettings(t), &deps); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 	})
@@ -369,7 +378,7 @@ func TestKeymapDeprecationWarnSilentWithoutLegacyKeymap(t *testing.T) {
 	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n")
 	var deps ui.Deps
 	out := captureStderr(t, func() {
-		if err := applyKeyOverridesToDeps(config{}, &deps); err != nil {
+		if err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 	})
@@ -386,7 +395,7 @@ func TestApplyKeyOverridesInvalidActionStillFailsStartup(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	writeSettings(t, "mecatui", "keymap:\n  NotAnAction: ctrl+f9\n")
 	var deps ui.Deps
-	err := applyKeyOverridesToDeps(config{}, &deps)
+	err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps)
 	if err == nil {
 		t.Fatal("an unknown action name must surface as an error")
 	}
@@ -597,6 +606,23 @@ func TestADR_0344_Scenario2_InvalidConfigurationFailsActionably(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("data-dependent runtime failure is safe and actionable", func(t *testing.T) {
+		renderer, err := statusline.NewTitleRenderer("{{if .Session.Title}}{{index .Session.Title 99}}{{else}}mecatui{{end}}")
+		if err != nil {
+			t.Fatalf("build conditionally valid title renderer: %v", err)
+		}
+		var output bytes.Buffer
+		controller := newTerminalTitleController(&output, true, renderer)
+		controller.Set(statusline.Input{Session: statusline.Session{Title: "short"}})
+		_, err = controller.Write([]byte("frame"))
+		if err == nil || !strings.Contains(err.Error(), "terminal_title.template") || !strings.Contains(err.Error(), "index out of range") {
+			t.Fatalf("runtime title write error = %v, want field and actionable cause", err)
+		}
+		if output.Len() != 0 {
+			t.Fatalf("failed runtime title wrote output: %q", output.String())
+		}
+	})
 }
 
 func TestADR_0344_Scenario2_CommandStatusCannotControlTitle(t *testing.T) {
