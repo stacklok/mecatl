@@ -183,6 +183,7 @@ Steering reuses the existing [multimodal content contract](../adr/0251-multimoda
   - verify: vitest:sdk/typescript/test/run-controls.test.ts#Y2FuY2VsU3RlZXIgcmV0dXJucyBuYXJyb3dlZCBjb3JyZWxhdGVkIGFja25vd2xlZGdlbWVudHM — `sdk/typescript/test/run-controls.test.ts :: "cancelSteer returns narrowed correlated acknowledgements"`
 - AC4.5: Concurrent drain, cancellation, registry replacement, generation invalidation, and lease loss linearize before or after retraction: success reflects the winning exact-live transition, and every losing arm returns its registered error without touching a successor or an unowned inbox.
   - verify: `TestSDKRunControls_Scenario4_CancelSteerRaceAndLeaseGates`
+  - verify: `TestSDKRunControls_CancelAndDrainLinearizeAgainstPendingSteerRetraction`
 - AC4.6: Wrong-operation outcomes, unspecified/numeric-unknown outcomes, changed message/run IDs, promoted metadata, missing required raw JSON keys, malformed JSON, and transport-native malformed messages fail with `ProtocolError` rather than widening either acknowledgement union.
   - verify: vitest:sdk/typescript/test/run-controls.test.ts#c3RlZXIgY29udHJvbHMgcmVqZWN0IG1hbGZvcm1lZCBhY2tub3dsZWRnZW1lbnRz — `sdk/typescript/test/run-controls.test.ts :: "steer controls reject malformed acknowledgements"`
 
