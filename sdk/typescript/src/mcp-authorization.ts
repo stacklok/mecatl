@@ -528,7 +528,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
           askId,
           verdict,
           pending,
-          this.#flowOptions.permissionRequestOptions,
+          this.#automaticControlOptions(this.#flowOptions.permissionRequestOptions),
         );
       } catch (error) {
         if (!this.#ended) this.#rejectControlFailure(error);
@@ -558,6 +558,20 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     await controls.resolveAsk(askId, verdict, requestOptions);
   }
 
+  #automaticControlOptions(requestOptions: RequestOptions | undefined): RequestOptions {
+    const lifetimeSignal = this.#abort?.signal;
+    if (lifetimeSignal === undefined) {
+      throw this.#protocol("The authorization flow has no active request lifetime");
+    }
+    return {
+      ...requestOptions,
+      signal:
+        requestOptions?.signal === undefined
+          ? lifetimeSignal
+          : AbortSignal.any([requestOptions.signal, lifetimeSignal]),
+    };
+  }
+
   #retireAsk(askId: string): void {
     const pending = this.#pendingAsks.get(askId);
     if (pending === undefined) return;
@@ -581,6 +595,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     }
     const status = event.payload.status;
     if (
+      event.payload.authorizationId === "" ||
       event.payload.authorizationId !== this.authorizationId ||
       event.payload.callId === "" ||
       !authorizationStatuses.has(status as McpAuthorizationStatus)
@@ -770,5 +785,10 @@ export function createMcpAuthorization(
   authorizationId: string,
   operations: McpAuthorizationOperations,
 ): McpAuthorization {
+  if (authorizationId === "") {
+    throw new InvalidStateError("The MCP authorization ID must be non-empty", {
+      transport: "local",
+    });
+  }
   return new McpAuthorizationImpl(sessionId, authorizationId, operations);
 }

@@ -28,6 +28,9 @@ describe("MCP authorization continuation controls", () => {
       streams: [{ events: continuation(ask("ask-auto"), result()) }],
     });
     const seen: string[] = [];
+    const automaticController = new AbortController();
+    const automaticHeaders: string[] = [];
+    const automaticTrailers: string[] = [];
     const flow = automatic.session.mcpAuthorization(authorizationId).recheck(
       {
         onPermissionAsk: async (permission, signal) => {
@@ -35,7 +38,13 @@ describe("MCP authorization continuation controls", () => {
           seen.push(permission.askId);
           return "allow_once" as const;
         },
-        permissionRequestOptions: { headers: { "x-authority": "automatic" }, timeoutMs: 91 },
+        permissionRequestOptions: {
+          headers: { "x-authority": "automatic" },
+          onHeader: (headers) => automaticHeaders.push(headers.get("x-fixture-response") ?? ""),
+          onTrailer: (headers) => automaticTrailers.push(headers.get("x-fixture-trailer") ?? ""),
+          signal: automaticController.signal,
+          timeoutMs: 91,
+        },
       },
       { headers: { "x-authority": "stream" }, timeoutMs: 90 },
     );
@@ -51,6 +60,10 @@ describe("MCP authorization continuation controls", () => {
       timeoutMs: 91,
     });
     expect(automaticCall?.headers.get("x-authority")).toBe("automatic");
+    expect(automaticHeaders).toEqual(["ResolveRunAsk"]);
+    expect(automaticTrailers).toEqual(["ResolveRunAsk"]);
+    automaticController.abort(new Error("caller finished"));
+    expect(automaticCall?.signal?.aborted).toBe(true);
 
     const manual = await harness({
       streams: [
