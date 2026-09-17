@@ -75,10 +75,10 @@ func mutateProviderMap(data []byte, update ProviderMapUpdate) ([]byte, bool, err
 				}
 			}
 			if len(providers.Values) == 0 {
-				for _, entry := range doc.Mapping().Values {
+				for i, entry := range doc.Mapping().Values {
 					key, _ := defaultString(entry.Key)
 					if key == "providers" {
-						_ = entry.Replace(defaultStaticEntry("providers: {}\n").Value)
+						doc.Mapping().Values = append(doc.Mapping().Values[:i], doc.Mapping().Values[i+1:]...)
 						break
 					}
 				}
@@ -123,6 +123,9 @@ func mutateProviderMap(data []byte, update ProviderMapUpdate) ([]byte, bool, err
 	}
 	if doc.Mapping().IsFlowStyle {
 		doc.Mapping().SetIsFlowStyle(true)
+	}
+	if len(doc.Mapping().Values) == 0 {
+		return []byte{}, false, nil
 	}
 	out := []byte(doc.String())
 	if err := ValidateYAML(out); err != nil {
@@ -233,10 +236,10 @@ func removeOIDCCredentialStore(doc *yamldiag.Document, expected OIDCCredentialSt
 		}
 	}
 	if len(section.Values) == 0 {
-		for _, entry := range doc.Mapping().Values {
+		for i, entry := range doc.Mapping().Values {
 			key, _ := defaultString(entry.Key)
 			if key == "credential_store" {
-				_ = entry.Replace(defaultStaticEntry("credential_store: {}\n").Value)
+				doc.Mapping().Values = append(doc.Mapping().Values[:i], doc.Mapping().Values[i+1:]...)
 				break
 			}
 		}

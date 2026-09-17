@@ -81,7 +81,7 @@ inspect the gateway logs for its rejection. If the provider cannot report a
 context window, configure the exact value under
 `models.context_windows.<provider-id>.<model-id>` or restore live model
 discovery. See
-[Choose models and providers](/features/choose-models.md#configure-a-custom-provider).
+[Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
 
 Chat can fail with `context window unavailable` even when the same credential
 works for chat completions: a custom provider's context window is learned by

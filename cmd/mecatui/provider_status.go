@@ -196,7 +196,7 @@ func currentToolHiveAvailable() bool {
 	return found
 }
 
-//nolint:gocyclo // Resolve credentials and their provenance from one file snapshot, including source precedence and custody errors.
+//nolint:gocyclo // Resolve credentials and their provenance from ordinary local configuration inputs.
 func inspectLocalProviders() (providerInspection, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true}, xdgconfig.OSEnv)
 	definitions, _, err := resolver.OperatorProviders()
@@ -208,25 +208,9 @@ func inspectLocalProviders() (providerInspection, error) {
 	if credentialStore != nil && credentialStore.APIKey != nil {
 		flags.SetAPIKeyFile(credentialStore.APIKey.File)
 	}
-	// Resolve and project the same file bytes; a concurrent replacement must not
-	// mix a runtime credential with provenance from another snapshot.
-	env := xdgconfig.OSEnv
-	var data []byte
-	var readErr error
-	env.ReadFile = func(path string) ([]byte, error) {
-		data, readErr = os.ReadFile(path)
-		if errors.Is(readErr, os.ErrNotExist) {
-			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-				readErr = errors.New("credential path is not an absent regular file")
-			} else {
-				return nil, nil
-			}
-		}
-		return data, readErr
-	}
-	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, env)
+	credentials, err := cliconfig.ResolveProviderCredentials(flags, definitions, xdgconfig.OSEnv)
 	if err != nil {
-		return providerInspection{}, providerCredentialInputError(readErr)
+		return providerInspection{}, providerCredentialInputError(flags)
 	}
 	var aliases map[string]string
 	selectedProvider, selectedModel := "", ""
@@ -239,16 +223,9 @@ func inspectLocalProviders() (providerInspection, error) {
 	for id := range definitions {
 		known = append(known, id)
 	}
-	missing := errors.Is(readErr, os.ErrNotExist)
-	env.ReadFile = func(string) ([]byte, error) {
-		if missing {
-			return nil, nil
-		}
-		return data, readErr
-	}
-	file, err := authfile.LoadStrict(path, explicit, env, known)
+	file, err := authfile.LoadStrict(path, explicit, xdgconfig.OSEnv, known)
 	if err != nil {
-		return providerInspection{}, err
+		return providerInspection{}, providerCredentialInputError(flags)
 	}
 	envKeys := cliconfig.ReadProviderKeys()
 	shadowed := make(map[string]bool, len(stockAPIKeyProviders))
@@ -272,14 +249,11 @@ func inspectLocalProviders() (providerInspection, error) {
 	if credentials.HasOpenAICodex() || credentials.AuthFileWarning != "" {
 		sources[openAICodexEndpointID] = "credential_store.api_key.file (manual token)"
 	}
-	if missing && explicit {
-		err = errProviderCredentialMissing
-	}
 	return providerInspection{
 		definitions: definitions, credentials: credentials, aliases: aliases, shadowed: shadowed, sources: sources,
 		oidcStoreConfigured: credentialStore != nil && credentialStore.OIDC != nil,
 		selectedProvider:    selectedProvider, selectedModel: selectedModel,
-	}, err
+	}, nil
 }
 
 var errProviderCredentialMissing = errors.New("configured credential input is missing; check credential_store.api_key.file")
@@ -294,10 +268,12 @@ func (c providerCommands) inspectForEnrollment() (providerInspection, error) {
 	return inspection, err
 }
 
-func providerCredentialInputError(readErr error) error {
+func providerCredentialInputError(flags *cliconfig.ProviderFlags) error {
+	path, _ := flags.AuthFilePath()
+	_, readErr := os.ReadFile(path)
 	switch {
 	case errors.Is(readErr, os.ErrNotExist):
-		return errors.New("configured credential input is missing; check credential_store.api_key.file")
+		return errProviderCredentialMissing
 	case readErr != nil:
 		return errors.New("credential input is unreadable; check credential_store.api_key.file and access permissions")
 	default:

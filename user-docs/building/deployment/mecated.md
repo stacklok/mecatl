@@ -345,7 +345,7 @@ when credentials are missing. Direct mode does not honor `tls_skip_verify`.
 
 For provider selection, protocol paths, independent catalog status, and
 model-routing troubleshooting, see
-[Choose models and providers](/features/choose-models.md#select-models-from-a-toolhive-managed-gateway).
+[Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
 
 ### Posture
 

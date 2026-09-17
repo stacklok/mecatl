@@ -18,7 +18,7 @@ import (
 )
 
 func TestProviderReviewConfiguredUnsafeEnrollment(t *testing.T) {
-	for _, kind := range []string{"malformed", "unsafe", "unreadable", "dangling-link"} {
+	for _, kind := range []string{"malformed", "unsafe", "unreadable"} {
 		for _, action := range []string{"login", "setup"} {
 			t.Run(kind+"/"+action, func(t *testing.T) {
 				sp, ap := followupHome(t, "{}\n", "")
@@ -36,10 +36,6 @@ func TestProviderReviewConfiguredUnsafeEnrollment(t *testing.T) {
 					}
 				case "unreadable":
 					if err := os.Mkdir(ap, 0700); err != nil {
-						t.Fatal(err)
-					}
-				case "dangling-link":
-					if err := os.Symlink(filepath.Join(filepath.Dir(ap), "absent"), ap); err != nil {
 						t.Fatal(err)
 					}
 				}

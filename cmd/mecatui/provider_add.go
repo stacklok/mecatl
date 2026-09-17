@@ -53,6 +53,9 @@ func (c providerCommands) runAdd(ctx context.Context, res invocationResolution, 
 	if len(res.remaining) == 1 && isHelpMetaFlag(res.remaining[0]) {
 		return providerHelpResult(stderr, providerActionAdd)
 	}
+	if err := permconfig.ValidateProviderID(res.providerName); err != nil {
+		return fmt.Errorf("providers add: %w", err)
+	}
 	inspection, err := c.inspectForEnrollment()
 	if err != nil {
 		return fmt.Errorf("providers add: inspect configured providers: %w", err)

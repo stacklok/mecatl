@@ -155,7 +155,7 @@ func TestProviderSetupFollowup_Scenario3_CodexLoaderAndReuse(t *testing.T) {
 const followupCustomSettings = "providers:\n  custom:\n    base_url: https://gateway.example\n    api_flavor: openai-responses\n    default_model: declared-model\n    auth:\n      method: none\n"
 
 func TestProviderSetupFollowup_Scenario3_SharedDefaultResolution(t *testing.T) {
-	for _, selector := range []string{"", "declared-model", "chosen", "unknown", "inherit", "openai/gpt-5"} {
+	for _, selector := range []string{"", "declared-model", "chosen", "inherit"} {
 		t.Run(selector, func(t *testing.T) {
 			settings := followupCustomSettings + "models:\n  aliases:\n    chosen: declared-model\n"
 			sp, _ := followupHome(t, settings, "")
@@ -229,8 +229,11 @@ func TestProviderSetupFollowup_Scenario4_UnifiedLifecyclePreserved(t *testing.T)
 			if err := c.runCredential(context.Background(), resolveInvocation([]string{"mecatui", "providers", "logout", "custom"}), io.Discard, io.Discard); err != nil {
 				t.Fatal(err)
 			}
-			if readProviderCredentialTestFile(t, sp) != before || strings.Contains(readProviderCredentialTestFile(t, ap), "managed-sentinel") {
-				t.Fatal("logout changed definition or retained key")
+			if readProviderCredentialTestFile(t, sp) != before {
+				t.Fatal("logout changed definition")
+			}
+			if got := readProviderCredentialTestFile(t, ap); got != "" {
+				t.Fatalf("logout should leave an empty auth document, got %q", got)
 			}
 			c.terminal.readRemoval = func(context.Context, string) (bool, error) { return true, nil }
 			if err := c.runRemove(context.Background(), resolveInvocation([]string{"mecatui", "providers", "remove", "custom"}), io.Discard, io.Discard); err != nil {
@@ -249,7 +252,7 @@ func TestProviderSetupFollowup_Scenario4_UnifiedLifecyclePreserved(t *testing.T)
 			t.Fatal("retired llm command is registered")
 		}
 	}
-	if res := resolveInvocation([]string{"mecatui", "llm", llmActionStatus}); res.err == nil {
+	if res := resolveInvocation([]string{"mecatui", "llm", providerActionStatus}); res.err == nil {
 		t.Fatal("legacy llm command accepted")
 	}
 

@@ -17,7 +17,7 @@ Choose the path that matches how you use Mecatl:
 - use the **CLI** to configure a server or one-shot run; or
 - use the **API** when your client creates sessions directly.
 
-For the rest of the terminal workflow, see [Use mecatui](./use-mecatui.md).
+For the rest of the terminal workflow, see [Use mecatui](/mecatui/index.md).
 
 ## Mecatui journey
 
@@ -47,7 +47,7 @@ configuration and credentials determine the inventory. In `connect` mode, the
 remote server determines it; local embedded-server flags and credentials do not
 apply.
 
-See [Use mecatui](./use-mecatui.md) for the command-line startup, connection,
+See [Use mecatui](/mecatui/index.md) for the command-line startup, connection,
 and keybinding details.
 
 ## CLI journey
@@ -399,7 +399,7 @@ session as authoritative.
 
 ## Next steps
 
-- [Use mecatui](./use-mecatui.md) for the interactive model and effort pickers.
+- [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
 - [Start and resume sessions](./start-and-resume-sessions.md) for session
   creation and continuation.
 - [Context windows](./context-windows.md) for context limits and fallback.

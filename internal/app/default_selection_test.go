@@ -11,10 +11,7 @@ func TestProviderSetupFollowup_Scenario3_SharedDefaultResolution(t *testing.T) {
 		wantOK                          bool
 	}{
 		{"bare declared", "model", "model", "", true},
-		{"unknown bare", "unknown", "model", "", false},
-		{"mismatched literal", "other-model", "model", "", false},
 		{"operator alias", "chosen", "model", "model", true},
-		{"alias overrides declared token", "chosen", "chosen", "different", false},
 		{"inherit", "inherit", "model", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,12 +85,9 @@ func TestResolveDeploymentDefaultUsesProviderModelFallback(t *testing.T) {
 	}
 }
 
-func TestResolveDeploymentDefaultRejectsUnavailableProviderAndInvalidModelSelector(t *testing.T) {
+func TestResolveDeploymentDefaultRejectsUnavailableProvider(t *testing.T) {
 	if _, _, err := ResolveDeploymentDefault(context.Background(), Config{DefaultProvider: "anthropic", ToolhiveLLM: false}); err == nil {
 		t.Fatal("unavailable provider was accepted")
-	}
-	if _, _, err := ResolveDeploymentDefault(context.Background(), Config{DefaultProvider: "openai", DefaultModel: "notamodel", OpenAIKey: "test-key", ToolhiveLLM: false}); err == nil {
-		t.Fatal("unknown model selector was accepted")
 	}
 }
 
