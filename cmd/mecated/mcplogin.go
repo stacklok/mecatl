@@ -193,18 +193,31 @@ var executeMCPLogin = func(ctx context.Context, server mcp.ServerConfig, runtime
 }
 
 func loadMCPLoginProfiles(explicit []string) (*cliconfig.MCPProfiles, error) {
+	return loadMCPLoginProfilesSelected(explicit, "")
+}
+
+func loadMCPLoginProfilesSelected(explicit []string, selected string) (*cliconfig.MCPProfiles, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true, ExplicitFiles: explicit}, xdgconfig.OSEnv)
 	var operator *permconfig.MCPSection
 	if resolver != nil {
 		operator = resolver.OperatorMCP()
 	}
-	return cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{Operator: operator, LookupEnv: os.LookupEnv})
+	return cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{Operator: operator, LookupEnv: os.LookupEnv, SelectedName: selected})
 }
 
 func runMCPLogin(args []string, stdout io.Writer, stderr ...io.Writer) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runMCPLoginContext(ctx, args, stdout, stderr...)
+}
+
+func runMCPLoginContext(ctx context.Context, args []string, stdout io.Writer, stderr ...io.Writer) error {
 	diagnosticOut := io.Discard
 	if len(stderr) > 0 && stderr[0] != nil {
 		diagnosticOut = stderr[0]
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	parsed, err := parseMCPLoginArgs(args, stdout)
 	if err != nil {
@@ -242,7 +255,7 @@ func runMCPLogin(args []string, stdout io.Writer, stderr ...io.Writer) error {
 	if parsed.file != "" {
 		explicit = []string{path}
 	}
-	profiles, err := loadMCPLoginProfiles(explicit)
+	profiles, err := loadMCPLoginProfilesSelected(explicit, parsed.server)
 	if err != nil {
 		return err
 	}
@@ -258,8 +271,6 @@ func runMCPLogin(args []string, stdout io.Writer, stderr ...io.Writer) error {
 	if parsed.noBrowser {
 		opts.URLWriter = stdout
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: verifying MCP connection")
 	if err := executeMCPLogin(ctx, server, opts, app.MCPLoginOptions{DCRAction: parsed.dcrAction, Diagnostics: slogdiag.NewText(diagnosticOut)}); err != nil {
 		return mcpLoginRemedy(err)

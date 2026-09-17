@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"golang.org/x/sys/unix"
@@ -309,6 +312,10 @@ func sameMCPSettingsStat(st unix.Stat_t, v mcpSettingsVersion) bool {
 
 // lockMCPSettings serializes operator-owned lifecycle writes for one target.
 func lockMCPSettings(path string) (func(), error) {
+	return lockMCPSettingsContext(context.Background(), path)
+}
+
+func lockMCPSettingsContext(ctx context.Context, path string) (func(), error) {
 	if err := secureMCPSettingsDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("MCP settings lock %q cannot be opened", path+".lock")
 	}
@@ -330,9 +337,29 @@ func lockMCPSettings(path string) (func(), error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("MCP settings lock %q is unsafe", path+".lock")
 	}
-	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("MCP settings lock %q cannot be acquired", path+".lock")
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = unix.Close(fd)
+			return nil, err
+		}
+		err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			_ = unix.Close(fd)
+			return nil, fmt.Errorf("MCP settings lock %q cannot be acquired", path+".lock")
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			_ = unix.Close(fd)
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	return func() { _ = unix.Close(fd) }, nil
 }
@@ -410,6 +437,15 @@ func secureMCPSettingsDir(path string) error {
 }
 
 func runMCPAdd(args []string, stdout, stderr io.Writer) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runMCPAddContext(ctx, args, stdout, stderr)
+}
+
+func runMCPAddContext(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	parsed, err := parseMCPLifecycleArgs(mcpAddCommand, args)
 	if err != nil {
 		return err
@@ -426,7 +462,7 @@ func runMCPAdd(args []string, stdout, stderr io.Writer) error {
 	// Validate and snapshot the selected target before doing any network work. A
 	// typo, unsafe path, or shadowed layered source must not cause discovery (or
 	// any other externally visible onboarding activity).
-	unlock, err := lockMCPSettings(path)
+	unlock, err := lockMCPSettingsContext(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -446,14 +482,14 @@ func runMCPAdd(args []string, stdout, stderr io.Writer) error {
 	}
 
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: discovering protected resource")
-	discovery, err := discoverMCPDirectIssuer(context.Background(), parsed.url)
+	discovery, err := discoverMCPDirectIssuer(ctx, parsed.url)
 	if err != nil {
 		return err
 	}
 
 	// Re-read after discovery: the first snapshot is only the preflight. Never
 	// publish over a settings change made while discovery was in flight.
-	unlock, err = lockMCPSettings(path)
+	unlock, err = lockMCPSettingsContext(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -467,15 +503,18 @@ func runMCPAdd(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	issuer := discovery.Issuer
-	if err := publishMCPAdd(path, before, parsed, issuer, stdout); err != nil {
+	if err := publishMCPAdd(ctx, path, before, parsed, issuer, stdout); err != nil {
 		return err
 	}
 	unlock()
 	unlock = nil
-	return runMCPLogin([]string{parsed.name, mcpFileFlag, path}, stdout, stderr)
+	return runMCPLoginContext(ctx, []string{parsed.name, mcpFileFlag, path}, stdout, stderr)
 }
 
-func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleArgs, issuer string, stdout io.Writer) error {
+func publishMCPAdd(ctx context.Context, path string, before mcpSettingsSnapshot, parsed mcpLifecycleArgs, issuer string, stdout io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	configDir := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
 	stateDir := xdgconfig.UserStateDir(xdgconfig.OSEnv)
 	if configDir == "" || stateDir == "" {
@@ -483,7 +522,7 @@ func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleA
 	}
 	credentialRoot := filepath.Join(stateDir, "mecatl", "mcp-credentials")
 	keyPath := filepath.Join(configDir, "mecatl", "mcp-credential-key")
-	result, err := mcplifecycle.Add(context.Background(), mcplifecycle.AddRequest{
+	result, err := mcplifecycle.Add(ctx, mcplifecycle.AddRequest{
 		Name: parsed.name, URL: parsed.url, Issuer: issuer, Settings: before.data,
 		CredentialRoot: credentialRoot, FileKeyPath: keyPath, CredentialStore: parsed.custody,
 		Attended: term.IsTerminal(int(os.Stdin.Fd())),
@@ -498,6 +537,9 @@ func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleA
 		Progress: func(stage string) { _, _ = fmt.Fprintf(stdout, "MCP onboarding: %s\n", stage) },
 	})
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := writeMCPSettings(path, before, result.Settings); err != nil {
@@ -577,6 +619,15 @@ func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
 }
 
 func runMCPRemove(args []string, stdout io.Writer) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runMCPRemoveContext(ctx, args, stdout)
+}
+
+func runMCPRemoveContext(ctx context.Context, args []string, stdout io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	parsed, err := parseMCPLifecycleArgs("remove", args)
 	if err != nil {
 		return err
@@ -586,7 +637,7 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "MCP settings writable target: %s\n", path)
-	unlock, err := lockMCPSettings(path)
+	unlock, err := lockMCPSettingsContext(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -595,7 +646,7 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	profiles, profileErr := loadMCPLoginProfiles([]string{path})
+	profiles, profileErr := loadMCPLoginProfilesSelected([]string{path}, parsed.name)
 	if profileErr != nil {
 		return profileErr
 	}
@@ -604,7 +655,10 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 		if server.OAuth == nil || server.OAuth.Client.DCR == nil {
 			return errors.New("MCP profile removal is supported only for direct OAuth DCR profiles")
 		}
-		result, removeErr := removeMCPOAuthDCR(context.Background(), server.URL, *server.OAuth)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		result, removeErr := removeMCPOAuthDCR(ctx, server.URL, *server.OAuth)
 		if removeErr != nil {
 			return mcpLoginRemedy(removeErr)
 		}
@@ -615,6 +669,9 @@ func runMCPRemove(args []string, stdout io.Writer) error {
 	}
 	after, err := mcplifecycle.Remove(before.data, parsed.name)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := writeMCPSettings(path, before, after); err != nil {

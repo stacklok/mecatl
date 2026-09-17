@@ -119,6 +119,14 @@ mecated mcp login github
 mecated mcp login github --no-browser
 ```
 
+A native local credential root is fail-closed when its wrapping key exists without
+its owner-only marker. During first initialization, the marker is published as
+`pending` before key creation and atomically becomes `ready` afterward. If the
+process is interrupted, a later operation may recover only a matching pending
+marker (namespace, backend, and canonical locator); arbitrary unmarked files or
+keyring entries are never adopted, overwritten, or deleted. Attended file-custody
+confirmation observes cancellation before it holds the custody lock.
+
 The normal command opens a browser. `--no-browser` prints the authorization URL
 for another browser or a headless operator. Use either `--file` for one settings
 document or the deprecated repeatable `--permission-config` selector for trusted

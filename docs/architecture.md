@@ -126,8 +126,14 @@ No reauthorization occurs across restart or reconnect while the selected credent
 valid. The global manager/controllers close before loader-owned Stores and Readers. ACP
 cannot provide OAuth profiles or install/drive authorization, but after operator
 authorization ACP sessions may invoke the shared global OAuth-backed tools under ordinary
-permissions. OAuth is not available for per-session MCP, inline agent definitions, or
-discovered servers (ADR 0113).
+permissions. The native direct-MCP wrapping-key custody is a separate, fail-closed seam. Its
+owner-only `mcp-credential-backend.json` marker binds the native namespace,
+backend, canonical locator, and a random initialization identity. First setup
+publishes a `pending` marker before creating the file/keyring artifact, then
+atomically replaces it with `ready`; a later run may recover only a matching
+pending marker. An arbitrary unmarked artifact is never adopted, overwritten, or
+deleted. Attended fallback confirmation is performed without retaining the root
+lock while cancellation or operator input is pending.
 
 The explicit environment Reader maps one configured opaque key to one configured lookup
 function and strict base64 environment value. It does no global lookup, listing, or

@@ -44,6 +44,9 @@ type AddResult struct {
 // The issuer is supplied when discovery was intentionally performed by the
 // caller; an empty issuer performs discovery here.
 func Add(ctx context.Context, req AddRequest) (AddResult, error) {
+	if err := ctx.Err(); err != nil {
+		return AddResult{}, err
+	}
 	var settings permconfig.Config
 	if err := yaml.Unmarshal(req.Settings, &settings); err != nil {
 		return AddResult{}, err
@@ -62,6 +65,9 @@ func Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		}
 		issuer = discovery.Issuer
 	}
+	if err := ctx.Err(); err != nil {
+		return AddResult{}, err
+	}
 	if req.Progress != nil {
 		req.Progress("selecting credential custody")
 	}
@@ -72,6 +78,9 @@ func Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		ConfirmFile: req.ConfirmFile,
 	})
 	if err != nil {
+		return AddResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return AddResult{}, err
 	}
 	defer clear(selected.Key)

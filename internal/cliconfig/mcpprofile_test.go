@@ -16,6 +16,24 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
+func TestLoadMCPProfilesSelectedNameSkipsUnrelatedSecret(t *testing.T) {
+	operator := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{
+		{Name: "native", URL: "https://native.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
+		{Name: "legacy", URL: "https://legacy.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: environmentOAuth()}},
+	}}
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{
+		Operator: operator, SelectedName: "native",
+		LookupEnv: func(string) (string, bool) { return "", false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profiles.Close()
+	if len(profiles.Servers) != 1 || profiles.Servers[0].Name != "native" {
+		t.Fatalf("selected profiles = %#v", profiles.Servers)
+	}
+}
+
 func TestLoadMCPProfilesModesAndWholeEntryPrecedence(t *testing.T) {
 	operator := &permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{
 		{Name: "public", URL: "https://settings.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: environmentOAuth()}},

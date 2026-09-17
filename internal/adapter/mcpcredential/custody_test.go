@@ -1,13 +1,18 @@
 package mcpcredential
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	keyringapi "github.com/zalando/go-keyring"
+
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
 type fakeKeyring struct{ values map[string]string }
@@ -75,6 +80,132 @@ func TestDirectMCPOnboarding_Scenario2_PrivatePinnedCustody(t *testing.T) {
 	defer clear(keyringSelection.Key)
 	if len(keyringSelection.Key) != 32 || len(keyringSelection.Locator) != 64 {
 		t.Fatalf("keyring selection = %#v", keyringSelection)
+	}
+}
+
+func TestNativeCustodyRejectsUnmarkedArtifactsWithoutMutation(t *testing.T) {
+	t.Run("file", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "credentials")
+		keyPath := filepath.Join(t.TempDir(), "key")
+		if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(keyPath, []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath}); err == nil {
+			t.Fatal("Resolve adopted an unmarked file key")
+		}
+		after, err := os.ReadFile(keyPath)
+		if err != nil || string(after) != string(before) {
+			t.Fatal("unmarked file key was changed")
+		}
+	})
+
+	t.Run("keyring", func(t *testing.T) {
+		kr := &fakeKeyring{values: map[string]string{}}
+		root := filepath.Join(t.TempDir(), "credentials")
+		if err := os.MkdirAll(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		loc, err := canonicalPath(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loc = keyringAccount(loc)
+		kr.values[keyringService+"\x00"+loc] = base64.RawStdEncoding.EncodeToString(make([]byte, 32))
+		if _, err := Resolve(context.Background(), root, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: kr}); err == nil {
+			t.Fatal("Resolve adopted an unmarked keyring key")
+		}
+		if got := kr.values[keyringService+"\x00"+loc]; got == "" {
+			t.Fatal("unmarked keyring key was deleted")
+		}
+	})
+}
+
+func TestNativeAndLegacyCredentialNamespacesShareRootWithoutCollision(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "key")
+	sel, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear(sel.Key)
+	nativeKey := bytes.Repeat([]byte{8}, 32)
+	native, err := credentialstore.NewEncryptedFile(root, NativeNamespace, nativeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer native.Close()
+	legacyKey := bytes.Repeat([]byte{7}, 32)
+	legacy, err := credentialstore.NewEncryptedFile(root, "mecatl-mcp-oauth", legacyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	if _, err := os.Stat(filepath.Join(root, credentialstore.NamespacePhysicalName(NativeNamespace))); err != nil {
+		t.Fatal("native namespace missing")
+	}
+	if _, err := os.Stat(filepath.Join(root, credentialstore.NamespacePhysicalName("mecatl-mcp-oauth"))); err != nil {
+		t.Fatal("legacy namespace missing")
+	}
+}
+
+func TestPendingMarkerRecoversCreatedFileAndPublishesReady(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(key)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	locator, err := fileLocator(root, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: BackendFile, LocatorSHA256: locatorDigest(BackendFile, locator), InitSHA256: strings.Repeat("a", 64)}
+	if err := publishMarker(root, pending, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(got.Key)
+	if string(got.Key) != string(key) {
+		t.Fatal("pending recovery changed the file key")
+	}
+	marker, err := readMarker(root)
+	if err != nil || marker.State != markerReady {
+		t.Fatalf("marker = %#v, %v", marker, err)
+	}
+}
+
+func TestAttendedConfirmationCancellationDoesNotHoldCustodyLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := Resolve(ctx, root, Options{Requested: "auto", Platform: "linux", Detect: func(context.Context) (bool, error) { return false, nil }, Attended: true, ConfirmFile: func(ctx context.Context) (bool, error) {
+		cancel()
+		return false, ctx.Err()
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+	// A cancelled confirmation must not strand the root lock.
+	if _, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: filepath.Join(t.TempDir(), "key")}); err != nil {
+		t.Fatalf("root remained locked: %v", err)
 	}
 }
 
@@ -244,8 +375,8 @@ func TestLinuxAutoPresentKeyringDoesNotFallBackWhenUnusable(t *testing.T) {
 	if err == nil {
 		t.Fatal("unusable present keyring unexpectedly fell back")
 	}
-	if _, statErr := os.Stat(filepath.Join(root, markerName)); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("failed keyring selection left marker: %v", statErr)
+	if marker, readErr := readMarker(root); readErr != nil || marker.State != markerPending {
+		t.Fatalf("failed keyring selection did not leave recoverable pending marker: %v", readErr)
 	}
 }
 

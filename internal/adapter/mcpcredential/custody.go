@@ -27,12 +27,16 @@ import (
 const (
 	BackendKeyring = "keyring" // BackendKeyring stores the generated key in the OS keyring.
 	BackendFile    = "file"    // BackendFile stores the generated key in a protected file.
-	keyringService = "mecatl.mcp.oauth"
-	keyringDomain  = "mecatl/mcp/oauth-key/v1\x00"
-	markerName     = "mcp-credential-backend.json"
-	lockName       = ".mcp-credential-key.lock"
-	maxMarkerBytes = 1024
-	maxKeyBytes    = 128
+	// NativeNamespace is the credential-store namespace reserved for native MCP
+	// custody. It is deliberately distinct from the legacy key_env namespace.
+	NativeNamespace = "mecatl-mcp-oauth-native/v1" // #nosec G101 -- public namespace discriminator, not a credential.
+	keyringService  = "mecatl.mcp.oauth"
+	keyringDomain   = "mecatl/mcp/oauth-key/v1\x00"
+	locatorDomain   = "mecatl/mcp/credential-locator/v1\x00"
+	markerName      = "mcp-credential-backend.json"
+	lockName        = ".mcp-credential-key.lock"
+	maxMarkerBytes  = 1024
+	maxKeyBytes     = 128
 )
 
 // Keyring reads and writes the OS credential entry used by MCP custody.
@@ -82,33 +86,113 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 	if err != nil {
 		return Selection{}, err
 	}
-	defer unlock()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
 	marker, err := readMarker(canonical)
 	if err == nil {
+		if marker.State != markerReady && marker.State != markerPending {
+			return Selection{}, errors.New("MCP credential backend marker is invalid")
+		}
 		if opts.Requested != "auto" && opts.Requested != marker.Backend {
 			return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
 		}
+		if marker.StoreNamespace != NativeNamespace {
+			return Selection{}, errors.New("MCP credential backend marker is invalid")
+		}
 		locator, err := pinnedLocator(canonical, marker.Backend, opts.FilePath)
-		if err != nil || digest(locator) != marker.LocatorSHA256 {
+		if err != nil || locatorDigest(marker.Backend, locator) != marker.LocatorSHA256 {
 			return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
+		}
+		if marker.State == markerPending {
+			// A pending marker is the only authorization to recover an artifact
+			// created by an interrupted initialization. Never adopt an artifact
+			// without this exact, root-pinned marker.
+			sel, _, err := openNew(canonical, marker.Backend, opts, true)
+			if err != nil {
+				return Selection{}, err
+			}
+			if err := publishMarker(canonical, backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: marker.Backend, LocatorSHA256: marker.LocatorSHA256, InitSHA256: marker.InitSHA256}, true); err != nil {
+				clear(sel.Key)
+				return Selection{}, errors.New("MCP credential backend marker cannot be finalized")
+			}
+			return sel, nil
 		}
 		return openPinned(marker.Backend, locator, opts)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
+	// Do not hold the root lock while an attended confirmation waits for input.
+	// Re-lock and re-check after selection so a concurrent initializer wins.
+	unlock()
+	unlock = nil
 	backend, err := choose(ctx, opts)
 	if err != nil {
 		return Selection{}, err
 	}
-	sel, rollback, err := openNew(canonical, backend, opts)
+	unlock, err = lockRoot(ctx, canonical)
 	if err != nil {
 		return Selection{}, err
 	}
-	if err := writeMarker(canonical, backendMarker{Version: 1, Backend: backend, LocatorSHA256: digest(sel.Locator)}); err != nil {
+	marker, err = readMarker(canonical)
+	if err == nil {
+		if marker.State != markerReady && marker.State != markerPending {
+			return Selection{}, errors.New("MCP credential backend marker is invalid")
+		}
+		if marker.Backend != backend {
+			return Selection{}, errors.New("MCP credential-store conflicts with the pinned backend")
+		}
+		locator, err := pinnedLocator(canonical, marker.Backend, opts.FilePath)
+		if err != nil || locatorDigest(marker.Backend, locator) != marker.LocatorSHA256 {
+			return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
+		}
+		if marker.State == markerPending {
+			sel, _, err := openNew(canonical, marker.Backend, opts, true)
+			if err != nil {
+				return Selection{}, err
+			}
+			if err := publishMarker(canonical, backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: marker.Backend, LocatorSHA256: marker.LocatorSHA256, InitSHA256: marker.InitSHA256}, true); err != nil {
+				clear(sel.Key)
+				return Selection{}, errors.New("MCP credential backend marker cannot be finalized")
+			}
+			return sel, nil
+		}
+		return openPinned(marker.Backend, locator, opts)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return Selection{}, errors.New("MCP credential backend marker is invalid")
+	}
+	locator, err := pinnedLocator(canonical, backend, opts.FilePath)
+	if err != nil {
+		return Selection{}, err
+	}
+	init := make([]byte, 32)
+	if _, err := rand.Read(init); err != nil {
+		return Selection{}, errors.New("MCP credential initialization failed")
+	}
+	initDigest := sha256.Sum256(init)
+	clear(init)
+	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: locatorDigest(backend, locator), InitSHA256: hex.EncodeToString(initDigest[:])}
+	if err := publishMarker(canonical, pending, false); err != nil {
+		return Selection{}, errors.New("MCP credential backend marker cannot be written")
+	}
+	sel, rollback, err := openNew(canonical, backend, opts, false)
+	if err != nil {
+		return Selection{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		rollback()
 		clear(sel.Key)
-		return Selection{}, errors.New("MCP credential backend marker cannot be written")
+		return Selection{}, err
+	}
+	if err := publishMarker(canonical, backendMarker{Version: 1, State: markerReady, StoreNamespace: NativeNamespace, Backend: backend, LocatorSHA256: pending.LocatorSHA256, InitSHA256: pending.InitSHA256}, true); err != nil {
+		// Keep the pending marker: the next run can distinguish this in-flight
+		// initialization from an arbitrary unmarked artifact and recover it.
+		clear(sel.Key)
+		return Selection{}, errors.New("MCP credential backend marker cannot be finalized")
 	}
 	return sel, nil
 }
@@ -166,13 +250,17 @@ func Open(ctx context.Context, root, backend, filePath string, keyring Keyring) 
 	if err != nil {
 		return Selection{}, err
 	}
-	defer unlock()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
 	marker, err := readMarker(canonical)
-	if err != nil || marker.Backend != backend || marker.LocatorSHA256 == "" {
+	if err != nil || marker.Backend != backend || marker.StoreNamespace != NativeNamespace || marker.LocatorSHA256 == "" {
 		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
 	locator, err := pinnedLocator(canonical, backend, filePath)
-	if err != nil || digest(locator) != marker.LocatorSHA256 {
+	if err != nil || locatorDigest(backend, locator) != marker.LocatorSHA256 {
 		return Selection{}, errors.New("MCP credential backend locator does not match the pinned root")
 	}
 	sel, err := openPinned(backend, locator, Options{FilePath: filePath, Keyring: keyring})
@@ -197,10 +285,18 @@ func lockRoot(ctx context.Context, root string) (func(), error) {
 	return func() { _ = unix.Flock(fd, unix.LOCK_UN); _ = unix.Close(fd) }, nil
 }
 
+const (
+	markerPending = "pending"
+	markerReady   = "ready"
+)
+
 type backendMarker struct {
-	Version       int    `json:"version"`
-	Backend       string `json:"backend"`
-	LocatorSHA256 string `json:"locator_sha256"`
+	Version        int    `json:"version"`
+	State          string `json:"state"`
+	StoreNamespace string `json:"store_namespace"`
+	Backend        string `json:"backend"`
+	LocatorSHA256  string `json:"locator_sha256"`
+	InitSHA256     string `json:"init_sha256"`
 }
 
 func readMarker(root string) (backendMarker, error) {
@@ -212,16 +308,19 @@ func readMarker(root string) (backendMarker, error) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	var extra any
-	if dec.Decode(&marker) != nil || dec.Decode(&extra) != io.EOF || marker.Version != 1 || (marker.Backend != BackendKeyring && marker.Backend != BackendFile) || len(marker.LocatorSHA256) != sha256.Size*2 {
+	if dec.Decode(&marker) != nil || dec.Decode(&extra) != io.EOF || marker.Version != 1 || (marker.State != markerPending && marker.State != markerReady) || marker.StoreNamespace != NativeNamespace || (marker.Backend != BackendKeyring && marker.Backend != BackendFile) || len(marker.LocatorSHA256) != sha256.Size*2 || len(marker.InitSHA256) != sha256.Size*2 {
 		return marker, errors.New("invalid marker")
 	}
 	if _, err := hex.DecodeString(marker.LocatorSHA256); err != nil {
 		return marker, errors.New("invalid marker")
 	}
+	if _, err := hex.DecodeString(marker.InitSHA256); err != nil {
+		return marker, errors.New("invalid marker")
+	}
 	return marker, nil
 }
 
-func writeMarker(root string, marker backendMarker) error {
+func publishMarker(root string, marker backendMarker, replace bool) error {
 	data, err := json.Marshal(marker)
 	if err != nil {
 		return err
@@ -246,16 +345,25 @@ func writeMarker(root string, marker backendMarker) error {
 	if err != nil {
 		return err
 	}
-	if err = unix.Linkat(dir, name, dir, markerName, 0); err != nil {
+	if replace {
+		if err = unix.Renameat(dir, name, dir, markerName); err != nil {
+			return err
+		}
+	} else if err = unix.Linkat(dir, name, dir, markerName, 0); err != nil {
 		return err
 	}
-	if err = unix.Unlinkat(dir, name, 0); err != nil {
-		return err
+	if !replace {
+		if err = unix.Unlinkat(dir, name, 0); err != nil {
+			return err
+		}
 	}
 	return unix.Fsync(dir)
 }
 
-func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+func locatorDigest(backend, locator string) string {
+	h := sha256.Sum256(append([]byte(locatorDomain+NativeNamespace+"\x00"+backend+"\x00"), []byte(locator)...))
+	return hex.EncodeToString(h[:])
+}
 func choose(ctx context.Context, o Options) (string, error) {
 	switch o.Requested {
 	case BackendFile:
@@ -316,38 +424,42 @@ func detectSecretService(ctx context.Context) (bool, error) {
 	return owner != "", nil
 }
 
-func openNew(root, backend string, o Options) (Selection, func(), error) {
+func openNew(root, backend string, o Options, allowPendingArtifact bool) (Selection, func(), error) {
 	if backend == BackendKeyring {
 		key := make([]byte, 32)
 		if _, err := rand.Read(key); err != nil {
 			return Selection{}, func() {}, errors.New("MCP key generation failed")
 		}
 		loc := keyringAccount(root)
-		previous, err := o.Keyring.Get(keyringService, loc)
-		hadPrevious := err == nil
+		value, err := o.Keyring.Get(keyringService, loc)
 		if err != nil && !errors.Is(err, keyringapi.ErrNotFound) {
 			clear(key)
 			return Selection{}, func() {}, errors.New("MCP keyring is unavailable")
+		}
+		if err == nil {
+			if allowPendingArtifact {
+				existing, readErr := base64.RawStdEncoding.DecodeString(value)
+				clear(key)
+				if readErr == nil && len(existing) == 32 {
+					return Selection{Backend: backend, Locator: loc, Key: existing}, func() {}, nil
+				}
+			}
+			clear(key)
+			return Selection{}, func() {}, errors.New("MCP keyring contains an unmarked native credential")
 		}
 		encoded := base64.RawStdEncoding.EncodeToString(key)
 		if err := o.Keyring.Set(keyringService, loc, encoded); err != nil {
 			clear(key)
 			return Selection{}, func() {}, errors.New("MCP keyring is unavailable")
 		}
-		rollback := func() {
-			if hadPrevious {
-				_ = o.Keyring.Set(keyringService, loc, previous)
-			} else {
-				_ = o.Keyring.Delete(keyringService, loc)
-			}
-		}
+		rollback := func() { _ = o.Keyring.Delete(keyringService, loc) }
 		return Selection{Backend: backend, Locator: loc, Key: key}, rollback, nil
 	}
 	path, err := fileLocator(root, o.FilePath)
 	if err != nil {
 		return Selection{}, func() {}, err
 	}
-	key, err := readOrCreateFileKey(path)
+	key, err := readOrCreateFileKey(path, allowPendingArtifact)
 	return Selection{Backend: backend, Locator: path, Key: key}, func() {}, err
 }
 func openPinned(backend, locator string, o Options) (Selection, error) {
@@ -399,7 +511,7 @@ func readFileKey(path string) ([]byte, error) {
 	return decodeKey(b)
 }
 
-func readOrCreateFileKey(path string) ([]byte, error) {
+func readOrCreateFileKey(path string, allowPendingArtifact bool) ([]byte, error) {
 	b, err := readPrivateFile(path, maxKeyBytes)
 	if err == nil {
 		return decodeKey(b)
@@ -418,11 +530,10 @@ func readOrCreateFileKey(path string) ([]byte, error) {
 	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if errors.Is(err, unix.EEXIST) {
 		clear(key)
-		b, readErr := readPrivateFile(path, maxKeyBytes)
-		if readErr != nil {
-			return nil, errors.New("MCP file credential key cannot be read")
+		if allowPendingArtifact {
+			return readFileKey(path)
 		}
-		return decodeKey(b)
+		return nil, errors.New("MCP file credential key is unmarked")
 	}
 	if err != nil {
 		clear(key)

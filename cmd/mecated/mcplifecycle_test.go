@@ -689,3 +689,80 @@ func TestDirectMCPOnboarding_RemovePreservesWrappingKeyAndSettingsOnRecoveryFail
 		t.Fatalf("recovery-required removal deleted wrapping-key custody root: %v", err)
 	}
 }
+
+func TestDirectMCPOnboarding_CancellationBeforeDiscoveryDoesNotStartWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	oldDiscover := discoverMCPDirectIssuer
+	t.Cleanup(func() { discoverMCPDirectIssuer = oldDiscover })
+	discoverMCPDirectIssuer = func(context.Context, string) (mcp.DirectIssuerDiscovery, error) {
+		called = true
+		return mcp.DirectIssuerDiscovery{}, nil
+	}
+	if err := runMCPAddContext(ctx, []string{"calendar", "https://mcp.example/mcp", "--file", filepath.Join(t.TempDir(), "settings.yaml"), "--credential-store", "file"}, io.Discard, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled add error = %v, want context.Canceled", err)
+	}
+	if called {
+		t.Fatal("cancelled add started discovery")
+	}
+}
+
+func TestDirectMCPOnboarding_CancellationDuringDiscoveryDoesNotPublish(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	original := []byte("mcp:\n  servers: []\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscover := discoverMCPDirectIssuer
+	t.Cleanup(func() { discoverMCPDirectIssuer = oldDiscover })
+	discoverMCPDirectIssuer = func(ctx context.Context, _ string) (mcp.DirectIssuerDiscovery, error) {
+		cancel()
+		<-ctx.Done()
+		return mcp.DirectIssuerDiscovery{}, ctx.Err()
+	}
+	if err := runMCPAddContext(ctx, []string{"calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, io.Discard, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Fatalf("discovery-cancelled add error = %v, want context.Canceled", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("cancelled add changed settings: %q", got)
+	}
+}
+
+func TestDirectMCPOnboarding_CancellationDuringRemovalDoesNotPublish(t *testing.T) {
+	fixture := newMCPLoginDCRFixture(t)
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(mcpLoginDCRYAML(fixture, filepath.Join(t.TempDir(), "credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	oldRemove := removeMCPOAuthDCR
+	t.Cleanup(func() { removeMCPOAuthDCR = oldRemove })
+	removeMCPOAuthDCR = func(ctx context.Context, _ string, _ mcp.OAuthOptions) (mcp.OAuthDCRRemovalResult, error) {
+		cancel()
+		<-ctx.Done()
+		return mcp.OAuthDCRRemovalResult{}, ctx.Err()
+	}
+	before, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runMCPRemoveContext(ctx, []string{"connector", "--file", settings}, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled remove error = %v, want context.Canceled", err)
+	}
+	after, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("cancelled remove changed settings")
+	}
+}

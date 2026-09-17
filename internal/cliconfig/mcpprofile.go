@@ -64,6 +64,9 @@ type MCPProfileLoadOptions struct {
 	LookupEnv func(string) (string, bool)
 	// Native custody seams keep offline tests away from desktop keyrings and DBus.
 	Keyring mcpcredential.Keyring
+	// SelectedName is used by targeted lifecycle commands. An empty value keeps
+	// the daemon's all-profile composition unchanged.
+	SelectedName string
 }
 
 // MCPProfileResolver binds the legacy CLI metadata and environment lookup to the
@@ -178,6 +181,15 @@ func LoadMCPProfiles(opts MCPProfileLoadOptions) (*MCPProfiles, error) {
 				profiles = append(profiles, replacement)
 			}
 		}
+	}
+	if opts.SelectedName != "" {
+		selected := profiles[:0]
+		for _, input := range profiles {
+			if strings.EqualFold(input.name(), opts.SelectedName) {
+				selected = append(selected, input)
+			}
+		}
+		profiles = selected
 	}
 	if len(profiles) == 0 {
 		return &MCPProfiles{}, nil
@@ -396,7 +408,7 @@ func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialP
 	if err != nil {
 		return nil, &MCPProfileError{Server: server, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore}
 	}
-	store, err := credentialstore.NewEncryptedFile(local.Root, mcpOAuthCredentialNamespace, selected.Key)
+	store, err := credentialstore.NewEncryptedFile(local.Root, mcpcredential.NativeNamespace, selected.Key)
 	clear(selected.Key)
 	runtime.KeepAlive(selected.Key)
 	if err != nil {
