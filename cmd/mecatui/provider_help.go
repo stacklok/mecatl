@@ -14,7 +14,7 @@ func writeProviderHelp(out io.Writer, action string) error {
 	var text string
 	switch action {
 	case "":
-		text = `Usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]
+		text = `Usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser|--subscription|--device] | logout PROVIDER [--subscription] | set-default PROVIDER [MODEL] | remove PROVIDER]
 
 Manage providers and credentials used by the embedded server. These commands do not change a remote mecated server.
 
@@ -22,8 +22,8 @@ Commands:
   status [PROVIDER]              show provider readiness
   setup [PROVIDER]               configure a provider interactively
   add PROVIDER [--no-login]      add a custom provider
-  login PROVIDER [--no-browser]  save an API key or sign in with OIDC
-  logout PROVIDER                remove saved credentials
+  login PROVIDER [flags]         save an API key, enroll OIDC, or sign in to a subscription
+  logout PROVIDER [flags]        remove saved credentials
   set-default PROVIDER [MODEL]   set the embedded deployment default
   remove PROVIDER                remove a custom provider and its credentials
 
@@ -51,11 +51,13 @@ Add a custom provider to local settings, then collect its credentials. Use --no-
 This command does not change a remote mecated server.
 `
 	case providerActionLogin:
-		text = `Usage: mecatui providers login PROVIDER [--no-browser]
+		text = `Usage: mecatui providers login PROVIDER [--no-browser] [--subscription] [--device]
 
 Save an API key or sign in with OIDC for PROVIDER. Use --no-browser to print the OIDC URL instead of opening it.
 
-Credentials are stored locally and never printed. Manage ToolHive credentials with ` + "`thv llm`" + `.
+Subscription sign-in uses a plan entitlement instead of an API key. openai-codex has no API key and always signs in; anthropic keeps its API-key path and requires --subscription. --device completes openai-codex sign-in without a local browser or callback port. The grant is stored in the host credential store and refreshed automatically; ` + "`--subscription`" + ` on logout removes it. An Anthropic sign-in expires about a month after it is granted and cannot be extended by refresh.
+
+Credentials are stored locally and are never printed. Login does not start or configure a remote mecated. Use ` + "`mecatui providers status PROVIDER`" + ` to verify readiness, then set an embedded default if needed. Manage ToolHive credentials with ` + "`thv llm`" + `.
 `
 	case providerActionLogout:
 		text = `Usage: mecatui providers logout PROVIDER

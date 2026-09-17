@@ -58,6 +58,21 @@ func (c providerCommands) runCredential(ctx context.Context, res invocationResol
 	if err != nil {
 		return fmt.Errorf("providers %s: load configured providers: %w", res.providerAction, err)
 	}
+	// A subscription provider's credential is a plan entitlement obtained by
+	// signing in. Codex has no API key at all, so it always takes this path;
+	// Anthropic keeps its API-key path and opts in with --subscription.
+	if isSubscriptionProvider(res.providerName) {
+		opts, subscription, err := parseSubscriptionFlags(res)
+		if err != nil {
+			return err
+		}
+		if subscription {
+			if res.providerAction == providerActionLogout {
+				return runSubscriptionLogout(ctx, res.providerName, stdout)
+			}
+			return runSubscriptionLogin(ctx, res.providerName, opts, stdout, stderr)
+		}
+	}
 	if isBuiltinAPIKeyProvider(res.providerName) {
 		if len(res.remaining) != 0 {
 			return errors.New("providers login: --no-browser is available only for auth.method oidc")
