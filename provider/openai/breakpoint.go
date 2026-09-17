@@ -7,7 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// breakpointSupportPrefixes are the model-id prefixes known to accept
+// supportsExplicitBreakpoint reports whether model is known to accept
 // prompt_cache_breakpoint ON THE CANONICAL OPENAI ENDPOINT. OpenAI documents
 // explicit breakpoints as GPT-5.6-and-later and says of earlier models only
 // "Only implicit caching is supported" — it does NOT document whether an
@@ -17,19 +17,16 @@ import (
 // scoped to one endpoint whose parameter strictness is documented (ADR 0100
 // records this repo being bitten by a strict upstream on an unrecognised cache
 // field). It is NOT a vendor-family gate: every other endpoint gets the
-// breakpoint without anyone asking who made the model. Delete this table if a
-// live probe shows an earlier model ignores the field.
-var breakpointSupportPrefixes = []string{
-	"gpt-5.6",
-	"gpt-6",
-}
-
-// supportsExplicitBreakpoint reports whether model is known to accept
-// prompt_cache_breakpoint. Used ONLY for the canonical OpenAI endpoint; the
-// match is on the lower-cased, dated-suffix-stripped id, reusing
-// normaliseModelID so a dated snapshot classifies like its bare alias.
+// breakpoint without anyone asking who made the model.
+//
+// It reads the SAME explicitCacheModelPrefixes table retentionFor denies on,
+// because breakpoint support and retention deprecation are the same documented
+// cutover seen from two sides (ADR 0346 decision 2) — not two facts that happen
+// to share a boundary today. The match is on the lower-cased,
+// dated-suffix-stripped id, reusing normaliseModelID so a dated snapshot
+// classifies like its bare alias.
 func supportsExplicitBreakpoint(model string) bool {
-	return hasAnyPrefix(normaliseModelID(model), breakpointSupportPrefixes)
+	return hasAnyPrefix(normaliseModelID(model), explicitCacheModelPrefixes)
 }
 
 // breakpointIndex returns the index of the message that should carry the

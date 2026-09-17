@@ -22,8 +22,13 @@ func TestADR_0346_CacheKeySaltedPerProcess(t *testing.T) {
 	if a == b {
 		t.Errorf("two mints produced the same salt %q — it is not random", a)
 	}
-	if len(a) != 32 {
-		t.Errorf("salt hex length = %d, want 32 (16 random bytes)", len(a))
+	// crypto/rand.Text documents its exact length and contents as subject to
+	// backwards-incompatible change, so this asserts the PROPERTY the salt needs
+	// (enough entropy to be uncorrelatable) rather than a byte count that would
+	// turn a stdlib bump into a failing test. 128 bits is the documented floor;
+	// base32 carries 5 bits per character, so 26 characters is that floor today.
+	if len(a) < 26 {
+		t.Errorf("salt length = %d, want >= 26 (crypto/rand.Text's documented 128-bit floor)", len(a))
 	}
 }
 

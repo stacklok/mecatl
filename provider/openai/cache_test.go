@@ -76,7 +76,7 @@ func TestCacheDialectOpenAIOmitsRetentionForUnknownModel(t *testing.T) {
 	}
 }
 
-func TestCacheDialectOpenRouterSendsCacheControlNoRetention(t *testing.T) {
+func TestCacheDialectOpenRouterSendsCacheKeyOnly(t *testing.T) {
 	p := New(WithAPIKey("sk-test"), WithCacheDialect(CacheDialectOpenRouter))
 	// Use a model string that WOULD be retention-allow-listed under
 	// CacheDialectOpenAI, to prove the OpenRouter arm never even consults
@@ -119,6 +119,56 @@ func TestRetentionModelAllowlist(t *testing.T) {
 		t.Run(fmt.Sprintf("neg_%s", model), func(t *testing.T) {
 			if _, ok := retentionFor(model); ok {
 				t.Errorf("retentionFor(%q) ok = true, want false (omit, never guess)", model)
+			}
+		})
+	}
+}
+
+// TestCacheSemanticsCutoverIsOneList pins the ONE thing collapsing
+// retentionDenyPrefixes and breakpointSupportPrefixes into
+// explicitCacheModelPrefixes bought: breakpoint support and retention
+// deprecation are read from the SAME table, so they cannot drift apart on the
+// next model release.
+//
+// The assertion is deliberately PAIRED per model rather than two independent
+// tables: two separate lists would pass a test that checked each side alone, and
+// that is precisely the divergence ADR 0346 decision 2 says must not happen. The
+// wire-level halves live in TestCacheDialectOpenAIOmitsRetentionForUnknownModel
+// (retention) and the breakpoint marshalling tests (breakpoint); this is the
+// classifier-level invariant that keeps the two in lockstep.
+func TestCacheSemanticsCutoverIsOneList(t *testing.T) {
+	for _, tc := range []struct {
+		model          string
+		wantBreakpoint bool
+		wantRetention  string // "" means the field must be OMITTED
+	}{
+		// At or after the cutover: explicit breakpoints arrived, retention went away.
+		{"gpt-5.6", true, ""},
+		{"gpt-5.6-codex", true, ""},
+		{"gpt-5.6-2026-03-01", true, ""},
+		{"gpt-6", true, ""},
+		// Before it: no explicit breakpoint (implicit caching covers it), retention accepted.
+		{"gpt-5.5", false, "24h"},
+		{"gpt-5.2", false, "24h"},
+		{"gpt-5", false, "24h"},
+		{"gpt-4.1", false, "24h"},
+		// Neither side claims a model the tables do not know.
+		{"gpt-4o", false, ""},
+		{"", false, ""},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			if got := supportsExplicitBreakpoint(tc.model); got != tc.wantBreakpoint {
+				t.Errorf("supportsExplicitBreakpoint(%q) = %v, want %v", tc.model, got, tc.wantBreakpoint)
+			}
+			retention, ok := retentionFor(tc.model)
+			if tc.wantRetention == "" {
+				if ok {
+					t.Errorf("retentionFor(%q) = %q, ok=true; want the field omitted", tc.model, retention)
+				}
+				return
+			}
+			if !ok || string(retention) != tc.wantRetention {
+				t.Errorf("retentionFor(%q) = %q, ok=%v; want %q, true", tc.model, retention, ok, tc.wantRetention)
 			}
 		})
 	}
