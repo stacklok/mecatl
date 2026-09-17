@@ -224,7 +224,7 @@ func readMCPSettings(path string) (mcpSettingsSnapshot, error) {
 	if err != nil {
 		return mcpSettingsSnapshot{}, fmt.Errorf("MCP settings %q cannot be read", path)
 	}
-	return mcpSettingsSnapshot{data: data, version: mcpSettingsVersion{exists: true, device: mcpSettingsDevice(st.Dev), inode: st.Ino, size: info.Size(), modNanos: info.ModTime().UnixNano()}}, nil //nolint:gosec // Stat_t device and inode values are non-negative OS identities.
+	return mcpSettingsSnapshot{data: data, version: mcpSettingsVersion{exists: true, device: mcpSettingsDevice(st), inode: st.Ino, size: info.Size(), modNanos: info.ModTime().UnixNano()}}, nil //nolint:gosec // Stat_t device and inode values are non-negative OS identities.
 }
 
 func mcpSettingsUnchanged(path string, before mcpSettingsSnapshot) bool {
@@ -304,10 +304,9 @@ func writeAllMCPSettings(fd int, data []byte) error {
 }
 
 func sameMCPSettingsVersion(a, b mcpSettingsSnapshot) bool { return a.version == b.version }
-func mcpSettingsDevice(value int32) uint64                 { return uint64(uint32(value)) } //nolint:gosec // Stat_t device values are non-negative OS identities.
 
 func sameMCPSettingsStat(st unix.Stat_t, v mcpSettingsVersion) bool {
-	return v.exists && mcpSettingsDevice(st.Dev) == v.device && st.Ino == v.inode && st.Size == v.size
+	return v.exists && mcpSettingsDevice(st) == v.device && st.Ino == v.inode && st.Size == v.size
 }
 
 // lockMCPSettings serializes operator-owned lifecycle writes for one target.
