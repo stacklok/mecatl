@@ -339,7 +339,9 @@ session title exists. It does not include the session handle. Add
 `.Session.Handle` when you want a handle in the title. The title template gets
 the same display-safe input as status templates, including `Session`, `Model`,
 `Context`, `Usage`, `Workspace`, `Terminal`, `MainAgent`, `Delegation`, and
-`Clock` values. It also supports `elide WIDTH VALUE`: a non-positive width is
+`Clock` values. The title-specific projection excludes `Workspace.Path`; exact
+local roots remain available only to status templates and direct status commands.
+It also supports `elide WIDTH VALUE`: a non-positive width is
 empty, a fitting value is unchanged, width `1` is `…`, and wider values are
 truncated to the widest prefix that fits plus `…`.
 

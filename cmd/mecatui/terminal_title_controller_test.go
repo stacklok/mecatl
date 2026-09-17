@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
-	var output bytes.Buffer
+	var output lockedBuffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}}"))
 
 	controller.Set(statusline.Input{Session: statusline.Session{Title: "first"}, MainAgent: statusline.MainAgent{State: "idle"}})
@@ -22,9 +23,25 @@ func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 		t.Fatalf("write second frame: %v", err)
 	}
 
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			controller.Set(statusline.Input{Session: statusline.Session{Title: "concurrent"}, MainAgent: statusline.MainAgent{State: "thinking"}})
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := controller.Write([]byte("frame")); err != nil {
+				t.Errorf("write concurrent frame: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
 	got := output.String()
-	if strings.Count(got, "\x1b]0;") != 2 {
-		t.Fatalf("OSC 0 writes = %d, want 2: %q", strings.Count(got, "\x1b]0;"), got)
+	if strings.Count(got, "\x1b]0;") < 2 {
+		t.Fatalf("OSC 0 writes = %d, want at least 2: %q", strings.Count(got, "\x1b]0;"), got)
 	}
 	if strings.Contains(got, "\x1b]2;") {
 		t.Fatalf("Bubble Tea OSC 2 reached output: %q", got)
@@ -32,6 +49,23 @@ func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 	if !strings.Contains(got, "\x1b]0;first · idle\a") || !strings.Contains(got, "\x1b]0;second · thinking\a") {
 		t.Fatalf("missing serialized OSC 0 titles: %q", got)
 	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
 }
 
 func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing.T) {
@@ -54,15 +88,23 @@ func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing
 			t.Fatalf("dedupe/cleanup output = %q", got)
 		}
 	})
-	t.Run("does not clear before a title or when disabled", func(t *testing.T) {
+	t.Run("does not clear before a title or emit when disabled", func(t *testing.T) {
 		for _, enabled := range []bool{true, false} {
 			var output bytes.Buffer
 			controller := newTerminalTitleController(&output, enabled, mustTitleRenderer(t, "{{.Session.Title}}"))
+			controller.Set(statusline.Input{Session: statusline.Session{Title: "must-not-emit-when-disabled"}})
+			if _, err := controller.Write([]byte("frame")); err != nil {
+				t.Fatalf("write enabled=%t: %v", enabled, err)
+			}
 			if err := controller.Close(); err != nil {
 				t.Fatalf("close enabled=%t: %v", enabled, err)
 			}
-			if got := output.String(); strings.Contains(got, "\x1b]0;") {
-				t.Fatalf("enabled=%t wrote an unexpected OSC title: %q", enabled, got)
+			got := output.String()
+			if !enabled && strings.Contains(got, "\x1b]0;") {
+				t.Fatalf("disabled controller wrote an OSC title: %q", got)
+			}
+			if enabled && strings.Count(got, "\x1b]0;") != 2 {
+				t.Fatalf("enabled controller title and cleanup count = %d, want 2: %q", strings.Count(got, "\x1b]0;"), got)
 			}
 		}
 	})
@@ -96,8 +138,21 @@ func TestADR_0344_Scenario2_ExplicitDisablementPrecedence(t *testing.T) {
 		{"settings off", "on", false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := terminalTitleEnabled(config{terminalTitle: tc.flag, terminalTitleFlagSet: tc.flagSet, terminalTitleOff: tc.flag == "off"}, terminalTitleSettings{Enabled: tc.setting}); got != tc.want {
-				t.Fatalf("enabled = %t, want %t", got, tc.want)
+			cfg := config{terminalTitle: tc.flag, terminalTitleFlagSet: tc.flagSet, terminalTitleOff: tc.flag == "off"}
+			settings := defaultClientSettings()
+			settings.TerminalTitle = terminalTitleSettings{Enabled: tc.setting, Template: "configured"}
+			var output bytes.Buffer
+			status, title, err := buildClientPresentation(cfg, settings, &output)
+			if err != nil {
+				t.Fatalf("build client presentation: %v", err)
+			}
+			t.Cleanup(func() { _ = status.Close(t.Context()) })
+			title.Set(statusline.Input{})
+			if _, err := title.Write([]byte("frame")); err != nil {
+				t.Fatalf("write frame: %v", err)
+			}
+			if got := strings.Contains(output.String(), "\x1b]0;configured\a"); got != tc.want {
+				t.Fatalf("configured title emitted = %t, want %t: %q", got, tc.want, output.String())
 			}
 		})
 	}
@@ -133,12 +188,30 @@ func TestADR_0344_Scenario3_DebugTitle(t *testing.T) {
 }
 
 func TestADR_0344_Scenario3_LocalAndRemotePresentation(t *testing.T) {
+	settings := defaultClientSettings()
+	settings.TerminalTitle.Template = "{{.Session.Title}} · {{.MainAgent.State}}"
 	input := statusline.Input{Session: statusline.Session{Title: "shared", Handle: "sess-123"}, MainAgent: statusline.MainAgent{State: "idle"}, Workspace: statusline.Workspace{Path: "/private/workspace"}}
-	local := renderTitle(t, "{{.Session.Title}} · {{.MainAgent.State}}", input)
-	input.Server.ConnectionMode = "connect"
-	remote := renderTitle(t, "{{.Session.Title}} · {{.MainAgent.State}}", input)
-	if local != remote || strings.Contains(local, "/private/workspace") {
-		t.Fatalf("local=%q remote=%q; title must be connection-independent and path-free", local, remote)
+
+	outputs := make([]string, 0, 2)
+	for _, mode := range []string{"embedded", "connect"} {
+		var output bytes.Buffer
+		status, title, err := buildClientPresentation(config{}, settings, &output)
+		if err != nil {
+			t.Fatalf("build %s presentation: %v", mode, err)
+		}
+		t.Cleanup(func() { _ = status.Close(t.Context()) })
+		input.Server.ConnectionMode = mode
+		title.Set(input)
+		if _, err := title.Write([]byte("frame")); err != nil {
+			t.Fatalf("write %s presentation: %v", mode, err)
+		}
+		outputs = append(outputs, output.String())
+	}
+	if outputs[0] != outputs[1] || strings.Contains(outputs[0], "/private/workspace") {
+		t.Fatalf("embedded=%q connect=%q; title must be connection-independent and path-free", outputs[0], outputs[1])
+	}
+	if _, err := statusline.NewTitleRenderer("{{.Workspace.Path}}"); err == nil || !strings.Contains(err.Error(), "Path") {
+		t.Fatalf("title Workspace.Path projection error = %v, want unavailable-field error", err)
 	}
 }
 
