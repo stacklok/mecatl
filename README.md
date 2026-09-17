@@ -1,7 +1,8 @@
 # Mecatl
 
 <p align="center">
-  <img src="./assets/mecatito.png" alt="Mecatito, the Mecatl mascot" width="260">
+  <img src="./assets/mecatl-hero.svg" width="800"
+       alt="A traditional harness couples its UI, runtime, and models into one sealed vendor stack. Mecatl keeps the engine loop constant and lets you choose all three: any client, anywhere it runs, any model provider. Mecatito, the Mecatl mascot, leans over the top-right corner.">
 </p>
 
 **Mecatl is an open source, cloud-native agent harness.** It provides
@@ -77,6 +78,11 @@ and provide the backing services and execution environment yourself. See
 for the runtime guarantees and boundaries.
 
 ## Open and modular by design
+
+<p align="center">
+  <img src="./assets/mecatl-architecture.svg" width="800"
+       alt="The Mecatl engine loop sits at the centre, providing tool dispatch, permissions, hooks, delegation, compaction, and events. Around it, each layer stays yours to choose: any client, any runtime, any model provider, any MCP server or gateway, and a state store that lives outside the process.">
+</p>
 
 Mecatl keeps the agent loop independent of the provider and infrastructure
 behind it. Reference adapters support offline development, while integrations
