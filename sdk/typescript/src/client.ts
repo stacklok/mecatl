@@ -33,6 +33,7 @@ import {
   type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
+import { createMcpAuthorization, type McpAuthorization } from "./mcp-authorization.js";
 import {
   type McpConnectorInventory,
   projectMcpConnectorInventory,
@@ -197,6 +198,8 @@ export interface ClearSessionOptions {
 /** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
+  /** Binds one external authorization ID to this session without performing I/O. */
+  mcpAuthorization(authorizationId: string): McpAuthorization;
   /**
    * Reads the current broker connector inventory for this session.
    *
@@ -662,6 +665,10 @@ class SessionImpl implements Session {
       { enrollmentId, kind: "cancel" },
       this.#operations.transportKind,
     );
+  }
+
+  mcpAuthorization(authorizationId: string): McpAuthorization {
+    return createMcpAuthorization(this.id, authorizationId, this.#operations);
   }
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
