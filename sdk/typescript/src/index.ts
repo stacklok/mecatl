@@ -6,6 +6,16 @@
 
 export type { Transport } from "@connectrpc/connect";
 export type {
+  McpAuthorization,
+  McpAuthorizationOutcome,
+  McpAuthorizationPresentation,
+  McpAuthorizationStream,
+  McpConnectorStatus,
+  SessionMcpConnectors,
+  WorkspaceEnrollmentControls,
+  WorkspaceEnrollmentState,
+} from "./authorization.js";
+export type {
   ClearSessionOptions,
   Client,
   ConnectionStatus,
@@ -21,6 +31,14 @@ export type {
   Sessions,
 } from "./client.js";
 export { connect } from "./client.js";
+export type {
+  RunControls,
+  SteerAck,
+  SteerCancelAck,
+  SteerCancelOutcome,
+  SteerControlOptions,
+  SteerOutcome,
+} from "./controls.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";
 export type {
   ClientDiagnosticsOptions,
@@ -146,6 +164,7 @@ export type {
   PlanResolution,
   PlanResolutionResult,
 } from "./plan.js";
+export { PLAN_APPROVAL_TOOL, PLAN_APPROVED_PROCEED_TEXT } from "./plan.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export {
   createRawClient,

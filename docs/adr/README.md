@@ -268,6 +268,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0087 — Staged mecatui transport migration](./0087-mecatui-staged-transport-migration.md) *(superseded by 0089)*
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)
 - [0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0222-mecatui-ask-args-view.md)
+- [0347 — Studio: the Atrium workspace as mecatl's daemon-only web client](./0347-studio-atrium-module.md)
+- [0348 — Studio's chat list is the daemon's session store](./0348-studio-server-backed-chats.md)
 - [0247 — mecatui generated status lines](./0247-mecatui-status-line.md) *(superseded by 0289)*
 - [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
 - [0344 — Mecatui-owned terminal titles](./0344-mecatui-terminal-title-controller.md) *(proposed)*

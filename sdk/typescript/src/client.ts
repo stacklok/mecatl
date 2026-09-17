@@ -2,12 +2,22 @@ import type {
   DescMessage,
   DescMethodStreaming,
   DescMethodUnary,
+  JsonValue,
   MessageInitShape,
   MessageShape,
 } from "@bufbuild/protobuf";
 import { create } from "@bufbuild/protobuf";
 import type { CallOptions, Transport } from "@connectrpc/connect";
-
+import {
+  type AuthorizationOperations,
+  createMcpAuthorization,
+  createWorkspaceEnrollmentControls,
+  type McpAuthorization,
+  projectMcpConnectors,
+  type SessionMcpConnectors,
+  type WorkspaceEnrollmentControls,
+} from "./authorization.js";
+import { createRunControls, type RunControls } from "./controls.js";
 import {
   AuthenticationError,
   type DiagnosticsSink,
@@ -283,6 +293,41 @@ export interface Session {
    */
   resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
   /**
+   * Returns strict, run-id-addressed controls for one run of this session.
+   *
+   * The handle needs no event stream, so it also serves a run this client did
+   * not start (a durable watch, a re-attached page). HTTP transport only.
+   *
+   * @param runId - The run every control names through `expected_run_id`.
+   * @returns Controls that resolve asks, cancel, steer, and retract a steer.
+   */
+  controls(runId: string): RunControls;
+  /**
+   * Cancels one running child (subagent, parallel branch, or team member) of this session's live run.
+   *
+   * @param childId - The child session id carried by `subagent.start`, `parallel.branch`, or `team.member`.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns A promise that resolves after the daemon accepts the cancellation.
+   * @throws `ServerError` with code `not_found` when the child is unknown or already finished.
+   */
+  cancelChild(childId: string, options?: RequestOptions): Promise<void>;
+  /**
+   * Inspects the session's broker-local MCP connector catalogue (no upstream probe).
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns Availability, enrollment state, and the connector rows.
+   */
+  mcpConnectors(options?: RequestOptions): Promise<SessionMcpConnectors>;
+  /**
+   * Returns the controls for one pending per-tool MCP authorization.
+   *
+   * @param authorizationId - The id carried by the `authorization.required` event.
+   * @returns Presentation, recheck, and cancel controls bound to that authorization.
+   */
+  mcpAuthorization(authorizationId: string): McpAuthorization;
+  /** Pre-prompt workspace-services enrollment controls for this session. */
+  readonly workspaceEnrollment: WorkspaceEnrollmentControls;
+  /**
    * Releases runtime resources without removing the durable session.
    *
    * @param options - Request headers, cancellation signal, and deadline.
@@ -414,6 +459,11 @@ interface SessionOperations {
   assertOpen(): void;
   attachmentStatus(): AttachmentStatusWriter;
   cancelRun(sessionId: string, runId: string): Promise<void>;
+  control(
+    sessionId: string,
+    frame: ConverseFrame,
+    options?: RequestOptions,
+  ): Promise<JsonValue | undefined>;
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
   invalidateCompatibility(): void;
@@ -769,6 +819,63 @@ class SessionImpl implements Session {
     }
   }
 
+  async cancelChild(childId: string, options?: RequestOptions): Promise<void> {
+    this.#operations.assertOpen();
+    if (childId === "") {
+      throw new InvalidStateError("cancelChild requires a child id", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    await this.#operations.control(
+      this.id,
+      { kind: { case: "cancelChild", value: { childId } } },
+      options,
+    );
+  }
+
+  async mcpConnectors(options?: RequestOptions): Promise<SessionMcpConnectors> {
+    this.#operations.assertOpen();
+    const response = await this.#operations.unary(
+      HarnessService.method.listSessionMcpConnectors,
+      { sessionId: this.id },
+      options,
+    );
+    return projectMcpConnectors(response);
+  }
+
+  mcpAuthorization(authorizationId: string): McpAuthorization {
+    return createMcpAuthorization(this.id, authorizationId, this.#authorizationOperations());
+  }
+
+  get workspaceEnrollment(): WorkspaceEnrollmentControls {
+    return createWorkspaceEnrollmentControls(this.id, this.#authorizationOperations());
+  }
+
+  #authorizationOperations(): AuthorizationOperations {
+    return {
+      assertOpen: () => this.#operations.assertOpen(),
+      registerRun: (cancel) => this.#operations.registerRun(cancel),
+      stream: (method, input, options) => this.#operations.stream(method, input, options),
+      transportKind: this.#operations.transportKind,
+      unary: (method, input, options) => this.#operations.unary(method, input, options),
+    };
+  }
+
+  controls(runId: string): RunControls {
+    this.#operations.assertOpen();
+    if (runId === "") {
+      throw new InvalidStateError("Run controls require a run id", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    return createRunControls(this.id, runId, {
+      assertOpen: () => this.#operations.assertOpen(),
+      control: (sessionId, frame, options) => this.#operations.control(sessionId, frame, options),
+      promptCapabilities: () => this.#promptCapabilities,
+      transportKind: this.#operations.transportKind,
+    });
+  }
+
   async close(options?: RequestOptions): Promise<void> {
     this.#operations.assertOpen();
     await this.#operations.unary(
@@ -853,6 +960,7 @@ class ClientImpl implements Client {
       attachmentStatus: () => this.#createAttachmentStatus(),
       cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
+      control: (sessionId, frame, options) => this.#control(sessionId, frame, options),
       features: () => this.#features(),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
       registerAttachment: (close) => this.#register(this.#attachments, close),
@@ -1160,6 +1268,40 @@ class ClientImpl implements Client {
     return this.#observeRequest(() =>
       this.#raw.unary(method, input, this.#withClientSignal(options)),
     );
+  }
+
+  async #control(
+    sessionId: string,
+    frame: ConverseFrame,
+    options?: RequestOptions,
+  ): Promise<JsonValue | undefined> {
+    this.#assertOpen();
+    if (this.#transportKind === "grpc") {
+      throw new UnsupportedFeatureError("prompt_free_controls", { transport: "grpc" });
+    }
+    const control = registeredTransportOperations(this.#transport)?.control;
+    if (control === undefined) {
+      throw new UnsupportedFeatureError("prompt_free_controls", { transport: "http" });
+    }
+    const request = create(HarnessService.method.converse.input, frame);
+    const signal =
+      options?.signal === undefined
+        ? this.#abort.signal
+        : AbortSignal.any([this.#abort.signal, options.signal]);
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
+    try {
+      const ack = await control(
+        sessionId,
+        request,
+        signal,
+        sessionAffinityIfRepresentable(sessionId, options)?.headers,
+      );
+      this.#setRequestStatus("online");
+      return ack;
+    } catch (error) {
+      this.#observeError(error);
+      throw error;
+    }
   }
 
   async #cancelRun(sessionId: string, runId: string): Promise<void> {

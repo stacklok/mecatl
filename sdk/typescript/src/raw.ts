@@ -15,7 +15,7 @@ import {
   ServerError,
   type TransportKind,
 } from "./errors.js";
-import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
+import type { ConverseRequest, GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 
 /** Canonical routing hint for session-bound Mecatl requests. It grants no authority. @public */
@@ -89,6 +89,16 @@ const compatibilityReaders = new WeakMap<RawClient, CompatibilityReader>();
 
 interface TransportOperations {
   cancelRun(sessionId: string, runId: string, signal: AbortSignal): Promise<void>;
+  /**
+   * Sends one prompt-free control (approve, cancel, steer, cancel-steer) for a
+   * session and returns the server's JSON acknowledgement, when it sent one.
+   */
+  control(
+    sessionId: string,
+    frame: ConverseRequest,
+    signal: AbortSignal,
+    requestHeaders?: HeadersInit,
+  ): Promise<JsonValue | undefined>;
 }
 
 interface CompatibilityResult {

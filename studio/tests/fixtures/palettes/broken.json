@@ -1,0 +1,7 @@
+{
+  "name": "broken",
+  "palette": {
+    "brand": "url(https://evil.example/steal.png)",
+    "background-image": "#fff"
+  }
+}

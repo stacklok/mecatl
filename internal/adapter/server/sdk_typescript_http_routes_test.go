@@ -278,7 +278,13 @@ func assertSDKHTTPBodyCodec(t *testing.T, key string, review sdkHTTPReview, fact
 		}
 	}
 	wantBody := "none"
-	if len(remaining) != 0 {
+	_, correlationOnly := facts.calls["controlRequestBodyEmpty"]
+	switch {
+	case correlationOnly:
+		// The handler enforces the correlation-only shape: any request body is
+		// rejected with HTTP 400, so the request message's remaining fields are
+		// gRPC frame fields the HTTP route never carries.
+	case len(remaining) != 0:
 		wantBody = "json"
 		if facts.optionalBody {
 			wantBody = "optional-json"

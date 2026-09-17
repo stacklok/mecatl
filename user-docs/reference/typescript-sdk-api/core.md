@@ -80,6 +80,11 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
+| [`McpAuthorization`](#api-mcpauthorization-interface) | Interface |
+| [`McpAuthorizationOutcome`](#api-mcpauthorizationoutcome-interface) | Interface |
+| [`McpAuthorizationPresentation`](#api-mcpauthorizationpresentation-interface) | Interface |
+| [`McpAuthorizationStream`](#api-mcpauthorizationstream-interface) | Interface |
+| [`McpConnectorStatus`](#api-mcpconnectorstatus-interface) | Interface |
 | [`McpInventory`](#api-mcpinventory-interface) | Interface |
 | [`MECATL_ATTACH_FILTERED_KINDS`](#api-mecatl-attach-filtered-kinds-variable) | Variable |
 | [`MECATL_ERROR_CODES`](#api-mecatl-error-codes-variable) | Variable |
@@ -98,6 +103,8 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface) | Interface |
 | [`PermissionAskResponder`](#api-permissionaskresponder-typealias) | Type alias |
 | [`PermissionVerdict`](#api-permissionverdict-typealias) | Type alias |
+| [`PLAN_APPROVAL_TOOL`](#api-plan-approval-tool-variable) | Variable |
+| [`PLAN_APPROVED_PROCEED_TEXT`](#api-plan-approved-proceed-text-variable) | Variable |
 | [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
 | [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
 | [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
@@ -116,6 +123,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
 | [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
 | [`Run`](#api-run-interface) | Interface |
+| [`RunControls`](#api-runcontrols-interface) | Interface |
 | [`RunOptions`](#api-runoptions-interface) | Interface |
 | [`RunResult`](#api-runresult-interface) | Interface |
 | [`ScheduleEventPayload`](#api-scheduleeventpayload-interface) | Interface |
@@ -140,6 +148,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
 | [`SessionCapabilities`](#api-sessioncapabilities-interface) | Interface |
 | [`SessionLimits`](#api-sessionlimits-interface) | Interface |
+| [`SessionMcpConnectors`](#api-sessionmcpconnectors-interface) | Interface |
 | [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
 | [`SessionMode`](#api-sessionmode-typealias) | Type alias |
 | [`SessionMode`](#api-sessionmode-variable) | Variable |
@@ -157,7 +166,12 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`SessionTranscriptMessage`](#api-sessiontranscriptmessage-interface) | Interface |
 | [`Skills`](#api-skills-interface) | Interface |
 | [`Soul`](#api-soul-interface) | Interface |
+| [`SteerAck`](#api-steerack-interface) | Interface |
+| [`SteerCancelAck`](#api-steercancelack-interface) | Interface |
+| [`SteerCancelOutcome`](#api-steercanceloutcome-typealias) | Type alias |
+| [`SteerControlOptions`](#api-steercontroloptions-interface) | Interface |
 | [`SteerEventPayload`](#api-steereventpayload-interface) | Interface |
+| [`SteerOutcome`](#api-steeroutcome-typealias) | Type alias |
 | [`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface) | Interface |
 | [`Storage`](#api-storage-interface) | Interface |
 | [`StreamProgress`](#api-streamprogress-typealias) | Type alias |
@@ -198,6 +212,8 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`WatchEventEnvelope`](#api-watcheventenvelope-interface) | Interface |
 | [`WatchGapEnvelope`](#api-watchgapenvelope-interface) | Interface |
 | [`withSessionAffinity`](#api-withsessionaffinity-function) | Function |
+| [`WorkspaceEnrollmentControls`](#api-workspaceenrollmentcontrols-interface) | Interface |
+| [`WorkspaceEnrollmentState`](#api-workspaceenrollmentstate-interface) | Interface |
 | [`Worktrees`](#api-worktrees-interface) | Interface |
 
 ## Classes
@@ -1032,6 +1048,17 @@ Includes durable records omitted by the high-level view by default.
 
 ```ts
 includeLogOnly?: boolean;
+```
+
+<Heading as="h4" id="api-attachoptions-onreconnect-propertysignature"><code>AttachOptions.onReconnect</code></Heading>
+
+Called before each resumable reconnect attempt (never for the first connection, never after detach) with the 1-based attempt number and the backoff delay about to be waited.
+
+```ts
+onReconnect?: (info: {
+        readonly attempt: number;
+        readonly delayMs: number;
+    }) => void;
 ```
 
 <Heading as="h4" id="api-attachoptions-signal-propertysignature"><code>AttachOptions.signal</code></Heading>
@@ -2489,6 +2516,158 @@ readonly projectMemory?: DreamTargetCapability;
 readonly userModel?: DreamTargetCapability;
 ```
 
+<Heading as="h3" id="api-mcpauthorization-interface"><code>McpAuthorization</code></Heading>
+
+Controls for one pending per-tool MCP authorization (`authorization.required`). `presentation()` fetches the live browser URL; `recheck()` asks the daemon to re-inspect the authorization and streams the outcome (and the resumed run when it succeeds); `cancel()` abandons the authorization with the same stream shape.
+
+```ts
+export interface McpAuthorization
+```
+
+Callable members: [`cancel()`](#api-mcpauthorization-cancel-methodsignature), [`presentation()`](#api-mcpauthorization-presentation-methodsignature), [`recheck()`](#api-mcpauthorization-recheck-methodsignature)
+
+<Heading as="h4" id="api-mcpauthorization-authorizationid-propertysignature"><code>McpAuthorization.authorizationId</code></Heading>
+
+```ts
+readonly authorizationId: string;
+```
+
+<Heading as="h4" id="api-mcpauthorization-cancel-methodsignature"><code>McpAuthorization.cancel</code></Heading>
+
+Cancels the authorization and streams the cancellation outcome plus any continuation run.
+
+```ts
+cancel(options?: RequestOptions): McpAuthorizationStream;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `McpAuthorizationStream`: A single-consumption event stream.
+
+<Heading as="h4" id="api-mcpauthorization-presentation-methodsignature"><code>McpAuthorization.presentation</code></Heading>
+
+Reads the live browser URL for this pending authorization.
+
+```ts
+presentation(options?: RequestOptions): Promise<McpAuthorizationPresentation>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<McpAuthorizationPresentation>`: The URL the operator opens to authorize the tool.
+
+<Heading as="h4" id="api-mcpauthorization-recheck-methodsignature"><code>McpAuthorization.recheck</code></Heading>
+
+Re-checks the authorization and streams status plus any continuation run.
+
+```ts
+recheck(options?: RequestOptions): McpAuthorizationStream;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `McpAuthorizationStream`: A single-consumption event stream.
+
+<Heading as="h4" id="api-mcpauthorization-sessionid-propertysignature"><code>McpAuthorization.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-mcpauthorizationoutcome-interface"><code>McpAuthorizationOutcome</code></Heading>
+
+The terminal outcome of an authorization recheck or cancellation stream.
+
+```ts
+export interface McpAuthorizationOutcome
+```
+
+<Heading as="h4" id="api-mcpauthorizationoutcome-result-propertysignature"><code>McpAuthorizationOutcome.result</code></Heading>
+
+The terminal result of the continuation run, absent when the stream ended without one.
+
+```ts
+readonly result?: RunResult;
+```
+
+<Heading as="h3" id="api-mcpauthorizationpresentation-interface"><code>McpAuthorizationPresentation</code></Heading>
+
+The live browser URL for one pending MCP authorization.
+
+```ts
+export interface McpAuthorizationPresentation
+```
+
+<Heading as="h4" id="api-mcpauthorizationpresentation-url-propertysignature"><code>McpAuthorizationPresentation.url</code></Heading>
+
+The URL to open in a browser. It is returned only by this live control and never enters an event or snapshot.
+
+```ts
+readonly url: string;
+```
+
+<Heading as="h3" id="api-mcpauthorizationstream-interface"><code>McpAuthorizationStream</code></Heading>
+
+The event stream an authorization control returns: the daemon's status events followed by the continuation run when the tool call resumes. Single-consumption: iterate it, or call result().
+
+```ts
+export interface McpAuthorizationStream extends AsyncIterable<Event>
+```
+
+Callable members: [`close()`](#api-mcpauthorizationstream-close-methodsignature), [`result()`](#api-mcpauthorizationstream-result-methodsignature)
+
+<Heading as="h4" id="api-mcpauthorizationstream-close-methodsignature"><code>McpAuthorizationStream.close</code></Heading>
+
+Stops consuming the stream without cancelling the authorization.
+
+```ts
+close(): Promise<void>;
+```
+
+Returns: `Promise<void>`
+
+<Heading as="h4" id="api-mcpauthorizationstream-result-methodsignature"><code>McpAuthorizationStream.result</code></Heading>
+
+Drains the stream and returns the continuation's terminal, when one arrived.
+
+```ts
+result(): Promise<McpAuthorizationOutcome>;
+```
+
+Returns: `Promise<McpAuthorizationOutcome>`
+
+<Heading as="h3" id="api-mcpconnectorstatus-interface"><code>McpConnectorStatus</code></Heading>
+
+One broker-local MCP connector as the session sees it.
+
+```ts
+export interface McpConnectorStatus
+```
+
+<Heading as="h4" id="api-mcpconnectorstatus-cataloguestate-propertysignature"><code>McpConnectorStatus.catalogueState</code></Heading>
+
+```ts
+readonly catalogueState: string;
+```
+
+<Heading as="h4" id="api-mcpconnectorstatus-name-propertysignature"><code>McpConnectorStatus.name</code></Heading>
+
+```ts
+readonly name: string;
+```
+
+<Heading as="h4" id="api-mcpconnectorstatus-toolcount-propertysignature"><code>McpConnectorStatus.toolCount</code></Heading>
+
+```ts
+readonly toolCount: number;
+```
+
 <Heading as="h3" id="api-mcpinventory-interface"><code>McpInventory</code></Heading>
 
 MCP resource, prompt, source, and ToolHive-group inventory operations.
@@ -3205,6 +3384,97 @@ Parameters:
 
 Returns: `Promise<void>`: A promise that resolves after the steering request is sent.
 
+<Heading as="h3" id="api-runcontrols-interface"><code>RunControls</code></Heading>
+
+Prompt-free controls for one run, addressed by run id. Every control is STRICT: it names the run through `expected_run_id`, so a control that outlives its run is refused by the server as `stale_run_control` rather than acting on the session's next run. Unlike the controls on a `Run`, these do not require the run's own event stream, so they also serve a run this client re-attached to or observes through a durable watch. HTTP transport only.
+
+```ts
+export interface RunControls
+```
+
+Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
+
+<Heading as="h4" id="api-runcontrols-cancel-methodsignature"><code>RunControls.cancel</code></Heading>
+
+Requests cancellation of this run.
+
+```ts
+cancel(options?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+Throws: `ServerError` with code `stale_run_control` when the run already ended.
+
+<Heading as="h4" id="api-runcontrols-cancelsteer-methodsignature"><code>RunControls.cancelSteer</code></Heading>
+
+Retracts this run's pending, un-drained steer bundle.
+
+```ts
+cancelSteer(options?: SteerControlOptions): Promise<SteerCancelAck>;
+```
+
+Parameters:
+
+- `options` (`SteerControlOptions`, optional): Correlation id plus request headers, signal, and deadline.
+
+Returns: `Promise<SteerCancelAck>`: `retracted`, or `none_pending` when nothing was waiting.
+
+Throws: `UnsupportedFeatureError` when the server lacks `http_steer`.
+
+<Heading as="h4" id="api-runcontrols-resolveask-methodsignature"><code>RunControls.resolveAsk</code></Heading>
+
+Resolves one pending permission ask on this run.
+
+```ts
+resolveAsk(askId: string, verdict: PermissionVerdict, options?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): ID carried by the permission ask.
+- `verdict` (`PermissionVerdict`): Decision to apply to the pending ask.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+Throws: `ServerError` with code `stale_run_control` when the run already ended.
+
+<Heading as="h4" id="api-runcontrols-runid-propertysignature"><code>RunControls.runId</code></Heading>
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h4" id="api-runcontrols-sessionid-propertysignature"><code>RunControls.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h4" id="api-runcontrols-steer-methodsignature"><code>RunControls.steer</code></Heading>
+
+Strictly steers this run with text or ordered text and media parts.
+
+```ts
+steer(prompt: PromptInput, options?: SteerControlOptions): Promise<SteerAck>;
+```
+
+Parameters:
+
+- `prompt` (`PromptInput`): Instruction to inject at the run's next turn boundary.
+- `options` (`SteerControlOptions`, optional): Correlation id plus request headers, signal, and deadline.
+
+Returns: `Promise<SteerAck>`: The server's outcome; the caller keeps the text on `too_late`.
+
+Throws: `UnsupportedFeatureError` when the server lacks `http_steer`.
+
+Throws: `ServerError` with code `stale_run_control` when the run already ended.
+
 <Heading as="h3" id="api-runoptions-interface"><code>RunOptions</code></Heading>
 
 Options applied to one run.
@@ -3798,7 +4068,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelChild()`](#api-session-cancelchild-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`mcpConnectors()`](#api-session-mcpconnectors-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -3834,6 +4104,23 @@ Returns: `Promise<AttachedRun>`: A single-consumption durable stream bound to th
 Throws: `NoRunsError` when no run can be selected.
 
 Throws: `CursorScopeError` when a cursor would widen its original filter.
+
+<Heading as="h4" id="api-session-cancelchild-methodsignature"><code>Session.cancelChild</code></Heading>
+
+Cancels one running child (subagent, parallel branch, or team member) of this session's live run.
+
+```ts
+cancelChild(childId: string, options?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `childId` (`string`): The child session id carried by `subagent.start`, `parallel.branch`, or `team.member`.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`: A promise that resolves after the daemon accepts the cancellation.
+
+Throws: `ServerError` with code `not_found` when the child is unknown or already finished.
 
 <Heading as="h4" id="api-session-clear-methodsignature"><code>Session.clear</code></Heading>
 
@@ -3878,6 +4165,20 @@ Parameters:
 
 Returns: `Promise<boolean>`: Whether the server reduced the model-visible history.
 
+<Heading as="h4" id="api-session-controls-methodsignature"><code>Session.controls</code></Heading>
+
+Returns strict, run-id-addressed controls for one run of this session. The handle needs no event stream, so it also serves a run this client did not start (a durable watch, a re-attached page). HTTP transport only.
+
+```ts
+controls(runId: string): RunControls;
+```
+
+Parameters:
+
+- `runId` (`string`): The run every control names through `expected_run_id`.
+
+Returns: `RunControls`: Controls that resolve asks, cancel, steer, and retract a steer.
+
 <Heading as="h4" id="api-session-delete-methodsignature"><code>Session.delete</code></Heading>
 
 Permanently removes the durable session and its sidecars.
@@ -3897,6 +4198,34 @@ Returns: `Promise<void>`: A promise that resolves after the server removes the s
 ```ts
 readonly id: string;
 ```
+
+<Heading as="h4" id="api-session-mcpauthorization-methodsignature"><code>Session.mcpAuthorization</code></Heading>
+
+Returns the controls for one pending per-tool MCP authorization.
+
+```ts
+mcpAuthorization(authorizationId: string): McpAuthorization;
+```
+
+Parameters:
+
+- `authorizationId` (`string`): The id carried by the `authorization.required` event.
+
+Returns: `McpAuthorization`: Presentation, recheck, and cancel controls bound to that authorization.
+
+<Heading as="h4" id="api-session-mcpconnectors-methodsignature"><code>Session.mcpConnectors</code></Heading>
+
+Inspects the session's broker-local MCP connector catalogue (no upstream probe).
+
+```ts
+mcpConnectors(options?: RequestOptions): Promise<SessionMcpConnectors>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<SessionMcpConnectors>`: Availability, enrollment state, and the connector rows.
 
 <Heading as="h4" id="api-session-rename-methodsignature"><code>Session.rename</code></Heading>
 
@@ -4013,6 +4342,14 @@ Returns: `Promise<SessionTranscript>`: The ordered transcript without provider-p
 
 Throws: `ProtocolError` when the server response is missing or mismatched.
 
+<Heading as="h4" id="api-session-workspaceenrollment-propertysignature"><code>Session.workspaceEnrollment</code></Heading>
+
+Pre-prompt workspace-services enrollment controls for this session.
+
+```ts
+readonly workspaceEnrollment: WorkspaceEnrollmentControls;
+```
+
 <Heading as="h3" id="api-sessionactivity-interface"><code>SessionActivity</code></Heading>
 
 A durable, cross-run session activity stream.
@@ -4115,6 +4452,44 @@ Maximum model turns; zero disables this limit.
 
 ```ts
 maxTurns?: number;
+```
+
+<Heading as="h3" id="api-sessionmcpconnectors-interface"><code>SessionMcpConnectors</code></Heading>
+
+The session's broker-local MCP connector catalogue.
+
+```ts
+export interface SessionMcpConnectors
+```
+
+<Heading as="h4" id="api-sessionmcpconnectors-availability-propertysignature"><code>SessionMcpConnectors.availability</code></Heading>
+
+```ts
+readonly availability: string;
+```
+
+<Heading as="h4" id="api-sessionmcpconnectors-connectors-propertysignature"><code>SessionMcpConnectors.connectors</code></Heading>
+
+```ts
+readonly connectors: readonly McpConnectorStatus[];
+```
+
+<Heading as="h4" id="api-sessionmcpconnectors-enrollmentstate-propertysignature"><code>SessionMcpConnectors.enrollmentState</code></Heading>
+
+```ts
+readonly enrollmentState: string;
+```
+
+<Heading as="h4" id="api-sessionmcpconnectors-totalconnectors-propertysignature"><code>SessionMcpConnectors.totalConnectors</code></Heading>
+
+```ts
+readonly totalConnectors: number;
+```
+
+<Heading as="h4" id="api-sessionmcpconnectors-truncated-propertysignature"><code>SessionMcpConnectors.truncated</code></Heading>
+
+```ts
+readonly truncated: boolean;
 ```
 
 <Heading as="h3" id="api-sessionmcpserver-interface"><code>SessionMcpServer</code></Heading>
@@ -4739,6 +5114,80 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<GetSoulResponse>`
+
+<Heading as="h3" id="api-steerack-interface"><code>SteerAck</code></Heading>
+
+The acknowledgement of a steer control.
+
+```ts
+export interface SteerAck
+```
+
+<Heading as="h4" id="api-steerack-messageid-propertysignature"><code>SteerAck.messageId</code></Heading>
+
+The request's own message id, echoed by the server ("" when none).
+
+```ts
+readonly messageId: string;
+```
+
+<Heading as="h4" id="api-steerack-outcome-propertysignature"><code>SteerAck.outcome</code></Heading>
+
+```ts
+readonly outcome: SteerOutcome;
+```
+
+<Heading as="h4" id="api-steerack-promoted-propertysignature"><code>SteerAck.promoted</code></Heading>
+
+True when a too-late unqualified steer was promoted into a follow-up run.
+
+```ts
+readonly promoted: boolean;
+```
+
+<Heading as="h4" id="api-steerack-runid-propertysignature"><code>SteerAck.runId</code></Heading>
+
+The promoted follow-up run's id, "" when nothing was promoted.
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h3" id="api-steercancelack-interface"><code>SteerCancelAck</code></Heading>
+
+The acknowledgement of a cancel-steer control.
+
+```ts
+export interface SteerCancelAck
+```
+
+<Heading as="h4" id="api-steercancelack-messageid-propertysignature"><code>SteerCancelAck.messageId</code></Heading>
+
+```ts
+readonly messageId: string;
+```
+
+<Heading as="h4" id="api-steercancelack-outcome-propertysignature"><code>SteerCancelAck.outcome</code></Heading>
+
+```ts
+readonly outcome: SteerCancelOutcome;
+```
+
+<Heading as="h3" id="api-steercontroloptions-interface"><code>SteerControlOptions</code></Heading>
+
+Options accepted by the steer and cancel-steer run controls.
+
+```ts
+export interface SteerControlOptions extends RequestOptions
+```
+
+<Heading as="h4" id="api-steercontroloptions-messageid-propertysignature"><code>SteerControlOptions.messageId</code></Heading>
+
+Client-minted correlation id. The acknowledgement echoes it, and the run's later `steer` drain echo names the id of the LAST message merged into the drained bundle (the watermark a client splits its queue on).
+
+```ts
+messageId?: string;
+```
 
 <Heading as="h3" id="api-steereventpayload-interface"><code>SteerEventPayload</code></Heading>
 
@@ -5951,6 +6400,98 @@ readonly kind: "gap";
 readonly phase: "gap";
 ```
 
+<Heading as="h3" id="api-workspaceenrollmentcontrols-interface"><code>WorkspaceEnrollmentControls</code></Heading>
+
+The pre-prompt workspace-services enrollment controls for one session. `connect()` begins an eligible enrollment or observes the pending one; `retry()` and `cancel()` act on one exact enrollment id and fail stale with a 412 problem.
+
+```ts
+export interface WorkspaceEnrollmentControls
+```
+
+Callable members: [`cancel()`](#api-workspaceenrollmentcontrols-cancel-methodsignature), [`connect()`](#api-workspaceenrollmentcontrols-connect-methodsignature), [`retry()`](#api-workspaceenrollmentcontrols-retry-methodsignature)
+
+<Heading as="h4" id="api-workspaceenrollmentcontrols-cancel-methodsignature"><code>WorkspaceEnrollmentControls.cancel</code></Heading>
+
+Cancels only the exact pending enrollment and clears its prompt gate.
+
+```ts
+cancel(enrollmentId: string, options?: RequestOptions): Promise<WorkspaceEnrollmentState>;
+```
+
+Parameters:
+
+- `enrollmentId` (`string`): The enrollment to cancel.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<WorkspaceEnrollmentState>`: The cancelled enrollment's projection.
+
+Throws: `ServerError` with status 412 when the id is stale.
+
+<Heading as="h4" id="api-workspaceenrollmentcontrols-connect-methodsignature"><code>WorkspaceEnrollmentControls.connect</code></Heading>
+
+Begins an eligible pre-prompt enrollment, or observes the exact pending one.
+
+```ts
+connect(options?: RequestOptions): Promise<WorkspaceEnrollmentState>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<WorkspaceEnrollmentState>`: The safe enrollment projection, including the browser URL while pending.
+
+<Heading as="h4" id="api-workspaceenrollmentcontrols-retry-methodsignature"><code>WorkspaceEnrollmentControls.retry</code></Heading>
+
+Cancels the exact pending enrollment and begins its replacement.
+
+```ts
+retry(enrollmentId: string, options?: RequestOptions): Promise<WorkspaceEnrollmentState>;
+```
+
+Parameters:
+
+- `enrollmentId` (`string`): The enrollment to replace.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<WorkspaceEnrollmentState>`: The replacement enrollment's projection.
+
+Throws: `ServerError` with status 412 when the id is stale.
+
+<Heading as="h3" id="api-workspaceenrollmentstate-interface"><code>WorkspaceEnrollmentState</code></Heading>
+
+The safe projection of one workspace-services enrollment.
+
+```ts
+export interface WorkspaceEnrollmentState
+```
+
+<Heading as="h4" id="api-workspaceenrollmentstate-enrollmentid-propertysignature"><code>WorkspaceEnrollmentState.enrollmentId</code></Heading>
+
+```ts
+readonly enrollmentId: string;
+```
+
+<Heading as="h4" id="api-workspaceenrollmentstate-presentationurl-propertysignature"><code>WorkspaceEnrollmentState.presentationUrl</code></Heading>
+
+The browser URL to complete the enrollment, "" when none is pending.
+
+```ts
+readonly presentationUrl: string;
+```
+
+<Heading as="h4" id="api-workspaceenrollmentstate-requiredservices-propertysignature"><code>WorkspaceEnrollmentState.requiredServices</code></Heading>
+
+```ts
+readonly requiredServices: number;
+```
+
+<Heading as="h4" id="api-workspaceenrollmentstate-status-propertysignature"><code>WorkspaceEnrollmentState.status</code></Heading>
+
+```ts
+readonly status: string;
+```
+
 <Heading as="h3" id="api-worktrees-interface"><code>Worktrees</code></Heading>
 
 Session-scoped worktree inventory operations.
@@ -6219,6 +6760,22 @@ One SDK permission-mode value.
 export type SessionMode = (typeof SessionMode)[keyof typeof SessionMode];
 ```
 
+<Heading as="h3" id="api-steercanceloutcome-typealias"><code>SteerCancelOutcome</code></Heading>
+
+The server's answer to a cancel-steer control.
+
+```ts
+export type SteerCancelOutcome = "retracted" | "none_pending";
+```
+
+<Heading as="h3" id="api-steeroutcome-typealias"><code>SteerOutcome</code></Heading>
+
+The server's answer to a steer control.
+
+```ts
+export type SteerOutcome = "accepted" | "appended" | "too_late";
+```
+
 <Heading as="h3" id="api-streamprogress-typealias"><code>StreamProgress</code></Heading>
 
 Stream-progress classification carried by model-retry and result payloads.
@@ -6335,6 +6892,22 @@ Watch phases this SDK understands.
 
 ```ts
 MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"]
+```
+
+<Heading as="h3" id="api-plan-approval-tool-variable"><code>PLAN_APPROVAL_TOOL</code></Heading>
+
+The daemon's plan-approval tool name: a permission ask for this tool is a plan presented for operator review rather than an ordinary tool call.
+
+```ts
+PLAN_APPROVAL_TOOL = "PresentPlan"
+```
+
+<Heading as="h3" id="api-plan-approved-proceed-text-variable"><code>PLAN_APPROVED_PROCEED_TEXT</code></Heading>
+
+The exact prompt the daemon expects when an approved plan continues into execution; clients that start the continuation themselves must send it verbatim.
+
+```ts
+PLAN_APPROVED_PROCEED_TEXT = "Plan approved by operator. Proceed with execution."
 ```
 
 <Heading as="h3" id="api-serverfeature-variable"><code>ServerFeature</code></Heading>

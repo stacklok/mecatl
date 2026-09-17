@@ -26,6 +26,7 @@ import {
   resolveHTTPOnlyControl,
   resolveHTTPRoute,
 } from "./rpc-catalog.js";
+import { normalizeWellKnownJson } from "./wire-json.js";
 
 /** Options for the browser-compatible HTTP and SSE transport. @public */
 export interface HttpTransportOptions extends CredentialOptions {
@@ -127,6 +128,17 @@ function normalizeUnaryResponse(
     return { [classification.responseField]: raw };
   }
   return raw;
+}
+
+function wrapsEvent(output: DescMessage): boolean {
+  if (output.fields.length !== 1) return false;
+  const field = output.fields[0];
+  return (
+    field !== undefined &&
+    field.name === "event" &&
+    field.fieldKind === "message" &&
+    field.message.typeName === "mecatl.v1.Event"
+  );
 }
 
 function timeoutSignal(
@@ -248,7 +260,10 @@ class HttpTransport implements Transport {
         });
       }
     }
-    const normalized = normalizeUnaryResponse(resolved.classification, raw);
+    const normalized = normalizeWellKnownJson(
+      method.output,
+      normalizeUnaryResponse(resolved.classification, raw),
+    );
     let message: MessageShape<O>;
     try {
       message = fromJson(method.output, normalized, { ignoreUnknownFields: true });
@@ -284,6 +299,20 @@ class HttpTransport implements Transport {
     signal: AbortSignal | undefined,
     requestHeaders?: HeadersInit,
   ): Promise<void> {
+    await this.control(sessionId, frame, signal, requestHeaders);
+  }
+
+  /**
+   * Sends one prompt-free control for a session over its unary HTTP route and
+   * returns the server's JSON acknowledgement (`{}` for a bodiless 204). The
+   * same rewrite serves the Converse control lane, so the two never drift.
+   */
+  async control(
+    sessionId: string,
+    frame: ConverseRequest,
+    signal: AbortSignal | undefined,
+    requestHeaders?: HeadersInit,
+  ): Promise<JsonValue> {
     const kind = frame.kind;
     let route: Route;
     let body: JsonRecord;
@@ -299,7 +328,7 @@ class HttpTransport implements Transport {
         break;
       case "cancel":
         await this.cancelRun(sessionId, kind.value.expectedRunId, signal, requestHeaders);
-        return;
+        return {};
       case "cancelChild":
         route = sessionControlRoute("cancelChild", sessionId);
         body = { child_id: kind.value.childId };
@@ -338,6 +367,13 @@ class HttpTransport implements Transport {
     }
     const response = await this.#request(route, body, signal, requestHeaders);
     if (!response.ok) await this.#problem(response);
+    if (response.status === 204) return {};
+    try {
+      return (await response.json()) as JsonValue;
+    } catch {
+      // A control acknowledgement without a JSON body still succeeded.
+      return {};
+    }
   }
 
   async cancelRun(
@@ -370,7 +406,12 @@ class HttpTransport implements Transport {
     const effectiveSignal = timeoutSignal(signal, timeoutMs);
     let route: Route;
     let body: JsonRecord = {};
-    let wrapEvent = false;
+    // The daemon streams BARE Event frames on every SSE route whose response
+    // message is a single-field `event` envelope (Converse, the MCP
+    // authorization controls). Wrap those so fromJson sees the envelope; a
+    // response that already is the frame (WatchSessionEvents' {event,cursor,
+    // phase}, ApprovePlan's bare Event) passes through untouched.
+    const wrapEvent = wrapsEvent(method.output);
     let startControls: (() => Promise<never>) | undefined;
     let controlFailure: Promise<never> = new Promise(() => undefined);
 
@@ -383,7 +424,6 @@ class HttpTransport implements Transport {
         });
       }
       const sessionId = start.value.sessionId;
-      wrapEvent = true;
       if (start.case === "prompt") {
         route = sessionControlRoute("prompt", sessionId);
         body = {
@@ -457,7 +497,7 @@ class HttpTransport implements Transport {
             response.headers.get("x-request-id") ?? undefined,
           );
         }
-        const normalized = wrapEvent ? { event: raw } : raw;
+        const normalized = normalizeWellKnownJson(output, wrapEvent ? { event: raw } : raw);
         let message: MessageShape<O>;
         try {
           message = fromJson(output, normalized, { ignoreUnknownFields: true });
@@ -560,5 +600,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   const transport = new HttpTransport(options);
   return registerTransport(transport, "http", {
     cancelRun: (sessionId, runId, signal) => transport.cancelRun(sessionId, runId, signal),
+    control: (sessionId, frame, signal, requestHeaders) =>
+      transport.control(sessionId, frame, signal, requestHeaders),
   });
 }

@@ -1,0 +1,32 @@
+{
+  "name": "midnight",
+  "label": "Midnight",
+  "palette": {
+    "brand": "#4f7cff",
+    "brand-ink": "#4f7cff",
+    "brand-label": "#4f7cff",
+    "btn-primary": "#4f7cff",
+    "btn-primary-hover": "#3b63d9",
+    "link": "#4f7cff",
+    "info": "#4f7cff",
+    "nav-background": "#0b1020",
+    "nav-border": "#1c2848",
+    "nav-button-active-bg": "#2e4a9e",
+    "shell-gradient-start": "#1b2a5a",
+    "shell-gradient-mid": "#101a3a",
+    "shell-gradient-end": "#070b18",
+    "nav-pill-bg": "#c7d3ff",
+    "nav-pill-text": "#0b1020",
+    "nav-icon": "#8f9bc4",
+    "nav-search-border": "#3c4a80",
+    "nav-search-text": "#b4bde0",
+    "nav-kbd-bg": "#1c2848"
+  },
+  "dark": {
+    "brand": "#7c9cff",
+    "brand-ink": "#9db4ff",
+    "brand-label": "#9db4ff",
+    "link": "#9db4ff",
+    "info": "#9db4ff"
+  }
+}

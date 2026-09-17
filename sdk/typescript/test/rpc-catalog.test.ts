@@ -122,4 +122,19 @@ describe("RPC transport catalog", () => {
       "Missing HTTP control path field session_id",
     );
   });
+
+  it("posts the MCP authorization controls with no request body", () => {
+    // The daemon's control handlers reject any body (HTTP 400), so the catalog
+    // must not let the transport post the `{}` an empty message would encode to.
+    for (const key of [
+      "HarnessService.RecheckMcpAuthorization",
+      "HarnessService.CancelMcpAuthorization",
+    ] as const) {
+      const { http } = RPC_CATALOG[key];
+      expect(http.kind).toBe("http");
+      if (http.kind !== "http") throw new Error(`${key} is not an HTTP route`);
+      expect(http.method).toBe("POST");
+      expect(http.requestBody).toBe("none");
+    }
+  });
 });

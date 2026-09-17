@@ -52,6 +52,12 @@ export interface AttachOptions {
   includeLogOnly?: boolean;
   /** Detaches this view when aborted; it never cancels a run. */
   signal?: AbortSignal;
+  /**
+   * Called before each resumable reconnect attempt (never for the first
+   * connection, never after detach) with the 1-based attempt number and the
+   * backoff delay about to be waited.
+   */
+  onReconnect?: (info: { readonly attempt: number; readonly delayMs: number }) => void;
 }
 
 /** A replayed or live durable event. @public */
@@ -364,6 +370,7 @@ class WatchConnection {
   readonly #sessionId: string;
   readonly #signal: AbortSignal;
   readonly #status: AttachmentStatusWriter;
+  readonly #onReconnect: AttachOptions["onReconnect"];
   #attempt = 0;
   #closed = false;
   #source: AsyncIterator<WatchSessionEventsResponse> | undefined;
@@ -374,7 +381,9 @@ class WatchConnection {
     operations: AttachmentOperations,
     externalSignal: AbortSignal | undefined,
     internal: AttachmentInternalOptions,
+    onReconnect?: AttachOptions["onReconnect"],
   ) {
+    this.#onReconnect = onReconnect;
     this.#sessionId = sessionId;
     this.#runId = runId;
     this.#operations = operations;
@@ -441,6 +450,11 @@ class WatchConnection {
     while (!this.#closed && !this.#signal.aborted) {
       const delay = this.#scheduler.delayFor(this.#attempt);
       this.#attempt += 1;
+      try {
+        this.#onReconnect?.({ attempt: this.#attempt, delayMs: delay });
+      } catch {
+        // A listener must never break the reconnect loop.
+      }
       try {
         await this.#scheduler.sleep(delay, this.#signal);
       } catch (error) {
@@ -730,7 +744,14 @@ export async function createSessionActivity(
   if (resume !== undefined) requireCursorScope(resume, "", "");
   await requireWatchFeature(operations);
   const token = resume?.token ?? "";
-  const connection = new WatchConnection(sessionId, "", operations, options.signal, internal);
+  const connection = new WatchConnection(
+    sessionId,
+    "",
+    operations,
+    options.signal,
+    internal,
+    options.onReconnect,
+  );
   return new SessionActivityImpl(
     connection,
     operations.transportKind,
@@ -772,6 +793,7 @@ export async function createAttachedRun(
       operations,
       options.signal,
       internal,
+      options.onReconnect,
     );
     return new AttachedRunImpl(
       sessionId,
@@ -796,6 +818,7 @@ export async function createAttachedRun(
     operations,
     options.signal,
     internal,
+    options.onReconnect,
   );
   if (runId !== undefined) {
     return new AttachedRunImpl(

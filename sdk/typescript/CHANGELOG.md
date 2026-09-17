@@ -4,6 +4,39 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## Unreleased
+
+- Added `session.mcpAuthorization(id)` (`presentation()`, `recheck()`, `cancel()`)
+  for the per-tool MCP authorization flow, `session.mcpConnectors()` for the
+  broker-local connector catalogue, `session.workspaceEnrollment`
+  (`connect()`, `retry()`, `cancel()`) for pre-prompt workspace-services
+  enrollment, and `session.cancelChild(childId)` to stop one running subagent,
+  branch, or team member — every daemon route is now reachable through a typed
+  method.
+- The HTTP transport now wraps the daemon's bare SSE events for every stream
+  whose response is a single-field `event` envelope, not only `Converse`, so
+  the authorization control streams decode.
+- Added `session.controls(runId)`: strict, run-id-addressed HTTP controls
+  (`resolveAsk`, `cancel`, `steer`, `cancelSteer`) that need no event stream,
+  so a client can act on a run it re-attached to or observes through a durable
+  watch. `steer` returns the server's `accepted` / `appended` / `too_late`
+  outcome and accepts a client-minted `messageId` and media parts; a control
+  that outlives its run surfaces as `ServerError` `stale_run_control`.
+- The HTTP transport now decodes `google.protobuf.Timestamp` and
+  `google.protobuf.Duration` fields the daemon marshals with stdlib
+  `encoding/json` (`{"seconds", "nanos"}` objects) — learning proposals,
+  learned skills, dream plans, schedule specs and fires, and session
+  snapshots no longer fail with `ProtocolError` against a real daemon.
+- `session.mcpAuthorization(id).recheck()` and `.cancel()` now post with no
+  request body over HTTP; the daemon rejects any body on those controls, so
+  the `{}` the empty request message encoded to failed with HTTP 400.
+- Added `AttachOptions.onReconnect`, an observer called before each watch
+  reconnect attempt with the attempt number and the backoff delay, so a client
+  can show "reconnecting…" state; a throwing listener never breaks the loop.
+- Exported `PLAN_APPROVAL_TOOL` and `PLAN_APPROVED_PROCEED_TEXT` so clients
+  that render plan asks or continuation prompts share the SDK's constants
+  instead of mirroring the daemon's strings.
+
 ## [0.2.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.2.0)
 
 - fix(sdk): align Biome schema version (#1426) ([`ebb14c7`](https://github.com/stacklok/mecatl/commit/ebb14c78823946909a5ec2957d42b485bcef1e96))

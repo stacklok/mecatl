@@ -61,8 +61,18 @@ export interface PlanResolutionOperations {
 type ConsumptionMode = "events" | "result";
 type ResolutionPhase = "resumed" | "after-resumed" | "continuation" | "after-continuation";
 
+/**
+ * The daemon's plan-approval tool name: a permission ask for this tool is a
+ * plan presented for operator review rather than an ordinary tool call.
+ * @public
+ */
 export const PLAN_APPROVAL_TOOL = "PresentPlan";
 
+/**
+ * The exact prompt the daemon expects when an approved plan continues into
+ * execution; clients that start the continuation themselves must send it verbatim.
+ * @public
+ */
 // BEGIN MECATL_PLAN_APPROVED_PROCEED_TEXT
 export const PLAN_APPROVED_PROCEED_TEXT = "Plan approved by operator. Proceed with execution.";
 // END MECATL_PLAN_APPROVED_PROCEED_TEXT

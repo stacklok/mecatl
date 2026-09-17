@@ -1,0 +1,106 @@
+version: '3'
+
+# Mecatl Studio — the local web client for the harness.
+# Run from the repo root via `task studio:*` (the root Taskfile includes this
+# file under the `studio` namespace with dir: studio).
+#
+# Studio drives the mecated in THIS checkout: `task studio:dev` starts a
+# supervisor that spawns ../bin/mecated against the repo root as its workspace,
+# so `task build` must have run first.
+#
+# Studio consumes the daemon through the TypeScript SDK (sdk/typescript), which
+# package.json pins as a `file:../sdk/typescript` dependency. npm links the
+# SDK's checkout in place — it does NOT build it — so `install` builds the SDK
+# first (`task sdk:build`, which runs the frozen pnpm install itself).
+
+vars:
+  PORT: 3000
+  LOG: dev.log
+
+tasks:
+  install:
+    desc: Install npm dependencies (skipped when package files are unchanged)
+    sources:
+      - package.json
+      - package-lock.json
+      - ../sdk/typescript/package.json
+      - ../sdk/typescript/src/**/*.ts
+    generates:
+      - node_modules/.package-lock.json
+      - ../sdk/typescript/dist/index.js
+    cmds:
+      # The SDK is a file: dependency — build it before npm links it in.
+      - task --taskfile ../Taskfile.yml sdk:build
+      # Pinned via npx: a system npm 11 rewrites the lockfile in a shape
+      # npm 10 (what CI's Node 22 ships) rejects, breaking npm ci.
+      - npx -y npm@10.9.4 install
+
+  dev:
+    desc: Start Studio + its mecated supervisor in the background (runs install if needed)
+    deps: [install]
+    cmds:
+      - |
+        if [ -z "${MECATL_BASE_URL:-}" ] && [ ! -x ../bin/mecated ]; then
+          echo "../bin/mecated not found — run 'task build' first" >&2
+          exit 1
+        fi
+        if lsof -t -i TCP:{{.PORT}} -s TCP:LISTEN > /dev/null 2>&1; then
+          echo "Studio already running — http://localhost:{{.PORT}}"
+        else
+          bash -c 'npm run dev >> {{.LOG}} 2>&1 & disown $!'
+          echo "Studio starting — http://localhost:{{.PORT}}"
+          echo "Logs: tail -f studio/{{.LOG}}"
+        fi
+
+  stop:
+    desc: Stop Studio (web server + controller + the mecated it supervises)
+    cmds:
+      - |
+        # The controller (8788) owns the mecated child, so stopping it first
+        # lets the supervisor tear the daemon down rather than orphaning it.
+        for PORT in 8788 {{.PORT}}; do
+          PID=$(lsof -t -i TCP:$PORT -s TCP:LISTEN || true)
+          if [ -n "$PID" ]; then /bin/kill $PID && echo "Stopped listener on $PORT"; fi
+        done
+
+  restart:
+    desc: Restart Studio
+    cmds:
+      - task: stop
+      - task: dev
+
+  status:
+    desc: Show Studio dev server status
+    cmds:
+      - |
+        PID=$(lsof -t -i TCP:{{.PORT}} -s TCP:LISTEN || true)
+        if [ -n "$PID" ]; then
+          echo "Running (PID $PID) — http://localhost:{{.PORT}}"
+        else
+          echo "Not running"
+        fi
+
+  build:
+    desc: Build Studio into studio/.next/
+    deps: [install]
+    cmds:
+      - npm run build
+
+  test:
+    desc: Run Studio's unit suite and the hermetic server-tier suite
+    deps: [install]
+    cmds:
+      - npx vitest run
+      - npm run test:server
+
+  lint:
+    desc: Run Biome over studio/
+    deps: [install]
+    cmds:
+      - npm run lint
+
+  typecheck:
+    desc: Run TypeScript type-check over studio/
+    deps: [install]
+    cmds:
+      - npm run typecheck

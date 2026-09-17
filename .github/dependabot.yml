@@ -154,3 +154,19 @@ updates:
         update-types:
           - minor
           - patch
+
+  # Studio (the Node web client) — npm.
+  - package-ecosystem: npm
+    directory: "/studio"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch

@@ -6,6 +6,8 @@ import {
   connect,
   type Event,
   InvalidStateError,
+  PLAN_APPROVAL_TOOL,
+  PLAN_APPROVED_PROCEED_TEXT,
   PlanContinuationStartError,
   ProtocolError,
 } from "../src/index.js";
@@ -173,5 +175,12 @@ describe("streaming plan resolution", () => {
     });
     expect(failure).not.toBeInstanceOf(ProtocolError);
     await client.close();
+  });
+});
+
+describe("plan approval constants", () => {
+  it("are exported so clients never mirror the daemon's tool name or proceed text", () => {
+    expect(PLAN_APPROVAL_TOOL).toBe("PresentPlan");
+    expect(PLAN_APPROVED_PROCEED_TEXT).toBe("Plan approved by operator. Proceed with execution.");
   });
 });

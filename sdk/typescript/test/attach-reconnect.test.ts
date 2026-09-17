@@ -245,6 +245,52 @@ describe("attachment reconnect authority", () => {
     expect(delays[0]).toBe(75);
   });
 
+  it("onReconnect reports each attempt and its delay, and a throwing listener never breaks the loop", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const delays: number[] = [];
+    const notices: { attempt: number; delayMs: number }[] = [];
+    let watches = 0;
+    const clientAbort = new AbortController();
+    const operations = {
+      cancelRun: async () => undefined,
+      clientSignal: clientAbort.signal,
+      features: async () => new Set([watchFeature]),
+      invalidateCompatibility: () => undefined,
+      transportKind: "grpc" as const,
+      watch: () => {
+        watches += 1;
+        if (watches > 4) throw terminalError("cursor_expired");
+        return failedWatch(new TransportError("dropped", { transport: "grpc" }));
+      },
+    };
+    const attached = await createAttachedRun(
+      sessionId,
+      runId,
+      operations,
+      {
+        onReconnect: (info) => {
+          notices.push({ ...info });
+          throw new Error("listener bug");
+        },
+      },
+      {
+        scheduler: {
+          sleep: async (ms) => {
+            delays.push(ms);
+          },
+        },
+      },
+    );
+
+    await expect(attached[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      code: "cursor_expired",
+    });
+
+    expect(notices.map((notice) => notice.attempt)).toEqual([1, 2, 3, 4]);
+    expect(notices.map((notice) => notice.delayMs)).toEqual(delays);
+    expect(delays).toHaveLength(4);
+  });
+
   it("a lagging watch is resumable and reconnects rather than failing", async () => {
     const requests: string[] = [];
     const transport = watchTransport(async function* (request) {

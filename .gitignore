@@ -43,3 +43,9 @@ coverage.*
 # Personal, local-only Claude Code instructions and running-state notes
 /CLAUDE.local.md
 /HANDOFF.md
+
+# Studio managed-mode local state (controller-pinned skills/memory dirs).
+/.mecatl/
+
+# Ad-hoc local attachment drops.
+/attachments/

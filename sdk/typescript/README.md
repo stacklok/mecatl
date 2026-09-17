@@ -58,6 +58,34 @@ fact, then raises the same error if iteration continues. Both leave the cursor a
 last envelope before the gap. `CursorExpiredError` also ends the attachment and requires
 the caller to choose an explicit restart from the beginning or a transcript reload.
 
+## Run controls by run id
+
+A `Run` returned by `session.run()` carries its own `approve`, `cancel`, and `steer`.
+When the client did not start the run — it re-attached after a reload, or it follows
+the run through `session.activity()` — `session.controls(runId)` gives the same
+controls addressed by run id, over HTTP only. Every control is strict: it names the
+run through `expected_run_id`, so one that outlives its run is refused as
+`stale_run_control` instead of acting on the session's next run. `steer` returns the
+server's `accepted`, `appended`, or `too_late` outcome (the caller keeps the text on
+`too_late`) and takes a client-minted `messageId` that the run's later `steer` event
+echoes as the drained bundle's watermark; `cancelSteer` retracts the pending bundle.
+`client.server.compatibility()` reports whether the server advertises the `http_steer` feature
+these two controls require.
+
+## MCP authorization, connectors, and workspace enrollment
+
+When a tool call parks on `authorization.required`, `session.mcpAuthorization(id)`
+returns the controls for that one authorization: `presentation()` reads the live
+browser URL, `recheck()` asks the daemon to re-inspect it and streams the outcome
+(and the resumed run when it succeeds), and `cancel()` abandons it with the same
+stream shape. `session.mcpConnectors()` inspects the session's broker-local MCP
+connector catalogue without probing upstreams, and `session.workspaceEnrollment`
+(`connect()`, `retry(id)`, `cancel(id)`) drives the pre-prompt workspace-services
+enrollment. `session.cancelChild(childId)` stops one running subagent, parallel
+branch, or team member without cancelling the whole run. All are HTTP controls;
+gate the first three on the `mcp_connector_status` and `workspace_enrollment`
+server capabilities.
+
 ## Node and Bun local daemon
 
 Node/Bun callers can import `spawn` from `@stacklok-oss/mecatl-sdk/node`. It resolves an existing

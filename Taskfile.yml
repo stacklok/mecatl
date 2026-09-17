@@ -22,6 +22,9 @@ includes:
   site:
     taskfile: website/Taskfile.yml
     dir: website
+  studio:
+    taskfile: studio/Taskfile.yml
+    dir: studio
   sdk:
     taskfile: sdk/typescript/Taskfile.yml
     dir: sdk/typescript
