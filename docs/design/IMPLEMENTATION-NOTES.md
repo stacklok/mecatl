@@ -8551,6 +8551,18 @@ The native Deno fixture rejects an invalid `nodeOptions` field during stable
 checking; this catches a missing declaration dependency that would otherwise degrade those options
 to `any` in Deno's dependency declarations.
 
+`sdk/typescript/src/http-wkt.ts` is the private compatibility step immediately before every
+HTTP unary and ordinary SSE `fromJson` call. It walks the output `DescMessage`, including nested
+messages, repeated message elements, and message-valued maps, and matches fields by protobuf or
+JSON name. Only exact `google.protobuf.Timestamp` and `google.protobuf.Duration` descriptors
+convert stdlib-JSON `{seconds,nanos}` objects into canonical ProtoJSON strings. Numeric seconds
+must be safe integers; string seconds use canonical base-10 integer spelling; nanos are integer
+numbers; and protobuf range and sign rules fail closed. An existing string or `null` reaches
+protobuf-es unchanged. The walk produces a detached JSON value and leaves unknown fields intact;
+`sdk/typescript/src/http.ts` registers the original parsed unary response, SSE envelope, and nested
+event with `getRawJson()` before yielding the decoded message. Any conversion or protobuf-es decode
+failure becomes the existing `ProtocolError` with HTTP transport identity.
+
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without
 making the probe a second protocol contract. `Session` handles are lightweight views over one

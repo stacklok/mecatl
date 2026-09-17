@@ -327,7 +327,12 @@ reserved for protobuf-es types and service descriptors generated under
 the same `Client`/`Session`/single-consumption `Run` layer: compatibility is checked
 before ordinary calls; events and server errors are normalized into closed typed
 families; controls carry the current run id; permission responders do not hide raw
-ask events; and prompt media is validated before transport selection. UDS dials by
+ask events; and prompt media is validated before transport selection. Immediately before
+protobuf-es decoding, the HTTP transport recursively follows the output descriptor and converts
+stdlib-JSON `{seconds,nanos}` objects only at `google.protobuf.Timestamp` and
+`google.protobuf.Duration` fields. ProtoJSON strings and `null` pass through, malformed objects
+fail as typed HTTP protocol errors, and normalization uses a detached value so `getRawJson()`
+retains the original unary or SSE data. UDS dials by
 supplying connect-node's HTTP/2 node connection option for the socket path, never a
 `unix://` base URL. Unit tests inject transports; `sdk/typescript/e2e/` separately
 builds and spawns the same checkout's `mecated` with the offline mock provider to

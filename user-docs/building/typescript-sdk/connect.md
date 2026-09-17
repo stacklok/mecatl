@@ -111,6 +111,21 @@ origins. See
 [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md) for
 listener and transport configuration.
 
+## Read timestamps and durations over HTTP
+
+The SDK decodes protobuf `Timestamp` and `Duration` fields automatically in
+unary HTTP responses and SSE events. This works when the daemon sends either a
+ProtoJSON string or an object with `seconds` and `nanos` members. The transport
+uses the generated protobuf descriptors to find these fields in nested
+messages, lists, and maps, so application messages with similarly named fields
+keep their original meaning.
+
+Decoded messages contain the standard protobuf-es values. `getRawJson()` still
+returns the original parsed HTTP value, including object-form timestamps and
+durations and unknown fields. A malformed or out-of-range value raises a
+`ProtocolError` with `transport` set to `"http"`. Use the decoded values directly
+and handle this error as a response-protocol failure.
+
 ## Observe connection status
 
 `client.status` is a multicast status store. Read the current value with

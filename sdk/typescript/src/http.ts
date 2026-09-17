@@ -18,6 +18,7 @@ import {
   UnsupportedFeatureError,
 } from "./errors.js";
 import type { ConverseRequest } from "./gen/mecatl/v1/harness_pb.js";
+import { normalizeHttpWktJson } from "./http-wkt.js";
 import { registerRawJson, registerTransport } from "./raw.js";
 import {
   type HTTPMethod,
@@ -297,12 +298,13 @@ class HttpTransport implements Transport {
         });
       }
     }
-    const normalized = normalizeUnaryResponse(
-      resolved.classification,
-      normalizeMethodResponse(method.name, raw),
-    );
+    let normalized: JsonValue;
     let message: MessageShape<O>;
     try {
+      normalized = normalizeHttpWktJson(
+        method.output,
+        normalizeUnaryResponse(resolved.classification, normalizeMethodResponse(method.name, raw)),
+      );
       message = fromJson(method.output, normalized, { ignoreUnknownFields: true });
     } catch (cause) {
       throw new ProtocolError("The mecatl server returned an invalid response", {
@@ -509,9 +511,10 @@ class HttpTransport implements Transport {
             response.headers.get("x-request-id") ?? undefined,
           );
         }
-        const normalized = wrapEvent ? { event: raw } : raw;
+        let normalized: JsonValue;
         let message: MessageShape<O>;
         try {
+          normalized = normalizeHttpWktJson(output, wrapEvent ? { event: raw } : raw);
           message = fromJson(output, normalized, { ignoreUnknownFields: true });
         } catch (cause) {
           throw new ProtocolError("The mecatl SSE stream contained an invalid event", {
