@@ -335,6 +335,10 @@ PR after verification. There is no cleanup or status-only PR.
   ordinary ask resolution, cancellation, strict multimodal steering, and pending-steer
   retraction over gRPC and HTTP through `session.controls(runId)`, with request options,
   bounded correlated acknowledgements, and mandatory stale-run guards. Status: proposed.
+- [TypeScript SDK MCP authorization lifecycle](sdk-mcp-authorization-lifecycle.md) — a
+  session-bound authorization handle with live URL presentation, explicit typed recheck/cancel
+  flows, exact-run permission controls, single-consumption correlation, and honest
+  disconnect/recovery semantics over gRPC and HTTP. Status: proposed.
 - [TypeScript SDK HTTP well-known-type JSON compatibility](sdk-http-wkt-json-compatibility.md) —
   descriptor-guided Timestamp and Duration decoding for daemon stdlib-JSON responses across unary
   HTTP and SSE, preserving ProtoJSON strings, typed failures, and the registered raw response.
