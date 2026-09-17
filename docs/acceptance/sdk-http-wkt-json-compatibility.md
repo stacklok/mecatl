@@ -9,7 +9,7 @@
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1631](https://github.com/stacklok/mecatl/issues/1631).
 **Plan PR:** [#1684](https://github.com/stacklok/mecatl/pull/1684)
-**Approved baseline:** absent until the Plan / Interface PR merges
+**Approved baseline:** `110017facdc7cb9fbbebf730af6587386f8de8a4` (Plan / Interface PR #1684 merge commit)
 
 Let the TypeScript SDK consume the daemon's existing standard-library JSON encoding of
 `google.protobuf.Timestamp` and `google.protobuf.Duration` over HTTP and SSE. Immediately before
