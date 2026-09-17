@@ -343,6 +343,12 @@ type Config struct {
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
 	PlacementScope PlacementScope
+	// ExecutionAccess is an optional host-only run-ownership seam. Local and no-FS
+	// placements leave it nil and perform no lifecycle RPCs.
+	ExecutionAccess ExecutionAccess
+	// ReferenceIntents enables owner-safe reconciliation of provider-retained
+	// publication/deletion outcomes. Nil is fully inert.
+	ReferenceIntents ReferenceIntentLifecycle
 	// SessionReadLedger optionally selects a durable read-before-write ledger for
 	// each session independently of its placement's content backend. The returned
 	// handle must be non-nil; nil fails the run closed.
@@ -902,6 +908,8 @@ type Service struct {
 	// refresh — background or on-demand — re-projects it). Never nil after
 	// NewService.
 	providerStatus atomic.Pointer[[]*mecatlv1.ProviderStatus]
+	// referenceIntentWarned bounds diagnostics for retained ambiguous intents.
+	referenceIntentWarned atomic.Bool
 
 	// modelsRefresher is the OPTIONAL composition-supplied closure ListModels
 	// calls before returning its snapshot (issue #262, R1.4: a proxy started
@@ -1285,8 +1293,14 @@ type runState struct {
 	admissionCancel context.CancelFunc
 	// runContextStop releases the lease-linked launch context after the promoted
 	// run has settled. It must outlive the run-entry call itself.
-	runContextStop context.CancelFunc
-	awaiting       atomic.Bool
+	runContextStop       context.CancelFunc
+	execution            ExecutionRunHandle
+	executionMu          sync.Mutex
+	executionClosed      bool
+	executionRenewCancel context.CancelFunc
+	executionRenewDone   chan struct{}
+	executionTeardown    sync.Once
+	awaiting             atomic.Bool
 	// titleRevision is the last title metadata revision successfully persisted and
 	// published for this run. It starts from the admitted durable snapshot so
 	// prompt-ingress changes publish only after their save succeeds.
@@ -1544,11 +1558,21 @@ func (s *Service) BindPlacement(ctx context.Context, selector PlacementSelector,
 // ReattachPlacement authorizes and resolves the exact persisted environment
 // identity. It never invokes Bind and therefore cannot follow a changed default.
 func (s *Service) ReattachPlacement(ctx context.Context, ref session.EnvironmentRef) (PlacementBinding, error) {
+	return s.reattachPlacement(ctx, ref, "")
+}
+
+// ReattachPlacementForBinding supplies the durable session reference identity
+// required by allocating remote providers.
+func (s *Service) ReattachPlacementForBinding(ctx context.Context, ref session.EnvironmentRef, bindingID session.SessionID) (PlacementBinding, error) {
+	return s.reattachPlacement(ctx, ref, bindingID)
+}
+
+func (s *Service) reattachPlacement(ctx context.Context, ref session.EnvironmentRef, bindingID session.SessionID) (PlacementBinding, error) {
 	if s == nil || s.placementBinder == nil {
 		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrFailedPrecondition)
 	}
 	binding, err := s.placementBinder.Reattach(ctx, PlacementReattachRequest{
-		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope, BindingID: bindingID,
 	})
 	if err != nil {
 		s.logPlacementProviderError(ctx, "reattach", err)
@@ -2086,53 +2110,61 @@ func (s *Service) classifyCreateWinner(existing *session.Session, owner *session
 	return existing, nil
 }
 
-// reserveSessionID validates a caller-chosen session id (WithSessionID, ADR 0059
-// decision #7 Phase-2) against THREE collision sources and reserves it for the
-// duration of the create, returning a release func the caller MUST defer:
-//
-//  1. a LIVE per-session engine (sessionEngines — a collision would shadow an
-//     in-flight session);
-//  2. an in-flight create holding the id (reservedIDs — closes the old TOCTOU:
-//     the prior check released s.mu before the slow factory call and the separate
-//     registration, so two concurrent creates on the same id both passed);
-//  3. a PERSISTED session already in the store (a completed prior create is NOT
-//     in sessionEngines — e.g. the shared-engine fast path never registers there).
-//
-// The in-memory reservation (1)+(2) is taken under a single s.mu hold; the store
-// probe (3) runs after (no I/O under the mutex). On a collision or an infra probe
-// fault the reservation is released before returning the error. Once the session
-// is registered (per-session) or persisted (shared) the durable collision sources
-// take over, so the reservation only needs to live for the create.
-func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, owner *session.Principal, request createRequest) (existing *session.Session, release func(), err error) {
+func (s *Service) reserveCreateID(ctx context.Context, id session.SessionID, owner *session.Principal) (*session.Session, func(), error) {
 	s.mu.Lock()
 	_, liveEngine := s.sessionEngines[id]
 	_, reserved := s.reservedIDs[id]
 	if liveEngine || reserved {
 		s.mu.Unlock()
-		// Accurate for BOTH cases: a live per-session engine (liveEngine) OR a
-		// concurrent in-flight create holding the id (reserved).
 		return nil, nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
 	}
 	s.reservedIDs[id] = struct{}{}
 	s.mu.Unlock()
-	release = func() {
+	release := func() {
 		s.mu.Lock()
 		delete(s.reservedIDs, id)
 		s.mu.Unlock()
 	}
-	// Probe the store for a persisted session under this id. A not-found error
-	// means the id is clear; any other infrastructure fault fails closed and is
-	// exposed only through a content-free public category.
-	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
+	existing, err := s.cfg.Store.Load(ctx, id)
+	if errors.Is(err, port.ErrSessionNotFound) {
+		return nil, release, nil
+	}
+	if err != nil {
 		release()
-		winner, classifyErr := s.classifyCreateWinner(existing, owner, request)
-		return winner, nil, classifyErr
-	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
-		release()
-		s.logDiscoveryError(ctx, "probe session placement", lerr)
 		return nil, nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
-	return nil, release, nil
+	sameOwner := existing != nil && (existing.Owner == nil && owner == nil || existing.Owner.SameIdentity(owner))
+	if !sameOwner {
+		release()
+		return nil, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return existing, release, nil
+}
+
+func (s *Service) reserveGeneratedSessionID(ctx context.Context, id session.SessionID) (func(), error) {
+	s.mu.Lock()
+	_, liveEngine := s.sessionEngines[id]
+	_, reserved := s.reservedIDs[id]
+	if liveEngine || reserved {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("%w: session id %q is already in use", ErrInvalidArgument, id)
+	}
+	s.reservedIDs[id] = struct{}{}
+	s.mu.Unlock()
+	release := func() {
+		s.mu.Lock()
+		delete(s.reservedIDs, id)
+		s.mu.Unlock()
+	}
+	if existing, err := s.cfg.Store.Load(ctx, id); err == nil && existing != nil {
+		release()
+		return nil, port.ErrSessionAlreadyExists
+	} else if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
+		release()
+		s.logDiscoveryError(ctx, "probe generated session placement", err)
+		return nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
+	}
+	return release, nil
 }
 
 func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) error {
@@ -2251,6 +2283,27 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
 	owner := resolveOwner(ctx, opts)
+	// Durable placement allocation is keyed by the final session id. Mint it once
+	// before Bind; the id is never replaced after a remote allocation succeeds.
+	finalID := opts.id
+	generatedID := !opts.idSet
+	if opts.idSet && finalID == "" {
+		return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
+	}
+	if !opts.idSet {
+		finalID = s.cfg.NewID()
+	}
+	var existingCreate *session.Session
+	var releaseCreate func()
+	if generatedID {
+		releaseCreate, err = s.reserveGeneratedSessionID(ctx, finalID)
+	} else {
+		existingCreate, releaseCreate, err = s.reserveCreateID(ctx, finalID, owner)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer releaseCreate()
 	var placement *PlacementBinding
 	if opts.placement != nil {
 		if err := validatePlacementBinding(*opts.placement); err != nil {
@@ -2262,7 +2315,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner)
+		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID)
 		if err != nil {
 			return nil, err
 		}
@@ -2277,57 +2330,17 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		return nil, err
 	}
 
-	// Resolve the session id: the caller's override (WithSessionID, ADR 0059
-	// decision #7 Phase-2) wins; otherwise the Service's NewID generator mints a
-	// fresh one (the byte-identical pre-Phase-2 path). WithSessionID with an EMPTY
-	// id is rejected (the doc promises it), distinguished from "never called" by
-	// idSet. A caller-chosen id is validated + reserved by reserveSessionID (see
-	// its doc for the three collision sources); the reservation is released on
-	// EVERY exit path.
+	// Reserve the final id for the rest of creation. Placement allocation above is
+	// idempotent on this same key, so a retry cannot allocate a second environment.
+	request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
 	var retryRequest *createRequest
-	mintID := s.cfg.NewID
-	if opts.idSet {
-		if opts.id == "" {
-			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
-		}
-		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
+	if !generatedID {
 		retryRequest = &request
-		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
-		if err != nil {
-			return nil, err
+		if existingCreate != nil {
+			return s.classifyCreateWinner(existingCreate, owner, request)
 		}
-		if existing != nil {
-			return existing, nil
-		}
-		defer release()
-		mintID = func() session.SessionID { return opts.id }
 	}
-	// A broker attachment is keyed by the canonical persisted identity. Mint and
-	// reserve generated IDs before any attachment or catalogue construction.
-	if s.cfg.MCPBroker != nil && !opts.idSet {
-		id := mintID()
-		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
-		// Populate the outer retryRequest too (not just the local var used for
-		// reserveSessionID above): persistCreatedSession's collision-retry path
-		// (resolveCreateCollision) needs a non-nil *createRequest to classify an
-		// idempotent-retry winner on this generated-id branch, exactly as the
-		// opts.idSet branch above already does. Before this fix, retryRequest
-		// stayed nil here (the "request" identifier above is a fresh local, not
-		// the outer var), so resolveCreateCollision's request==nil guard always
-		// short-circuited and a genuine ErrSessionAlreadyExists from persistNewSession
-		// always hard-failed instead of resolving to the existing winner.
-		retryRequest = &request
-		existing, release, reserveErr := s.reserveSessionID(ctx, id, owner, request)
-		if reserveErr != nil {
-			return nil, reserveErr
-		}
-		if existing != nil {
-			release()
-			return nil, fmt.Errorf("%w: generated session id %q already exists", ErrInvalidArgument, id)
-		}
-		defer release()
-		mintID = func() session.SessionID { return id }
-	}
+	mintID := func() session.SessionID { return finalID }
 
 	// Issue #20 (model-switch context carryover): when a source session is
 	// named, validate it (turn-boundary) and snapshot its conversation ONCE
@@ -2536,6 +2549,15 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			_ = closeFn()
 		}
 		return persisted, perr
+	}
+	if placement != nil && placement.Commit != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		commitErr := placement.Commit(commitCtx)
+		cancelCommit()
+		if commitErr != nil {
+			s.logPlacementProviderError(ctx, "commit reference", commitErr)
+			return sess, fmt.Errorf("%w: session %q persisted but reference publication must be retried", ErrInternal, sess.ID)
+		}
 	}
 	if broker != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
@@ -3001,14 +3023,14 @@ func (s *Service) Close() {
 		rs.persistMu.Lock()
 		awaiting := rs.awaiting.Load()
 		rs.persistMu.Unlock()
-		if awaiting {
-			continue // resumable cross-process via the durable awaiting snapshot
+		if !awaiting {
+			if rs.run != nil {
+				rs.run.Cancel()
+			} else if rs.admissionCancel != nil {
+				rs.admissionCancel()
+			}
 		}
-		if rs.run != nil {
-			rs.run.Cancel()
-		} else if rs.admissionCancel != nil {
-			rs.admissionCancel()
-		}
+		s.teardownExecution(rs)
 	}
 
 	// Stop the scheduler FIRST so in-flight fires drain while the service is
@@ -3334,8 +3356,99 @@ func (s *Service) StorageReady(ctx context.Context) bool {
 	return p.Ping(ctx) == nil
 }
 
+// ReconcileReferenceIntents resolves the provider's bounded, client-scoped
+// ambiguous publication and deletion outcomes against exact durable sessions.
+func (s *Service) ReconcileReferenceIntents(ctx context.Context) {
+	lifecycle := s.cfg.ReferenceIntents
+	if lifecycle == nil {
+		return
+	}
+	intents, err := lifecycle.ListReferenceIntents(ctx, 64)
+	if err != nil {
+		s.warnReferenceIntentRetention(ctx)
+		return
+	}
+	retained := false
+	for _, intent := range intents {
+		if intent.BindingID == "" || intent.OperationID == "" || !intent.Ref.Valid() || intent.Principal == nil {
+			retained = true
+			continue
+		}
+		sess, loadErr := s.cfg.Store.Load(ctx, intent.BindingID)
+		if loadErr != nil {
+			if errors.Is(loadErr, port.ErrSessionNotFound) && intent.PendingDelete {
+				if err := lifecycle.ConfirmReferenceIntentDelete(ctx, intent); err != nil {
+					retained = true
+				}
+			} else {
+				// A missing pending create may have been published by another replica
+				// after this read. It is never safe to abort or TTL-collect it here.
+				retained = true
+			}
+			continue
+		}
+		matching := sess != nil && sess.ID == intent.BindingID && sess.EnvironmentRef == intent.Ref && sess.Owner != nil && sess.Owner.SameIdentity(intent.Principal)
+		if !matching {
+			retained = true
+			continue
+		}
+		if intent.PendingDelete {
+			// Presence after an earlier ambiguous delete attempt is not proof that the
+			// attempt had no effect: a delayed commit may still remove this incarnation.
+			// Keep the exact pending intent until absence proves deletion or an explicit
+			// retry obtains a deterministic outcome.
+			retained = true
+			continue
+		}
+		err = lifecycle.CommitReferenceIntent(ctx, intent)
+		if err != nil {
+			retained = true
+		}
+	}
+	if retained {
+		s.warnReferenceIntentRetention(ctx)
+	} else {
+		s.referenceIntentWarned.Store(false)
+	}
+}
+
+func (s *Service) warnReferenceIntentRetention(ctx context.Context) {
+	if s.referenceIntentWarned.CompareAndSwap(false, true) {
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "execution reference reconciliation retained ambiguous intents")
+	}
+}
+
 func (s *Service) saveSession(ctx context.Context, sess *session.Session) error {
 	return s.cfg.MutationCapability.GuardStore(s.cfg.Store).Save(ctx, sess)
+}
+
+func (s *Service) prepareReferenceDelete(ctx context.Context, sess *session.Session) (ReferenceDeleteHandle, error) {
+	if sess == nil || s.cfg.ExecutionAccess == nil || !s.cfg.ExecutionAccess.Applies(sess.EnvironmentRef) {
+		return nil, nil
+	}
+	lifecycle, ok := s.cfg.PlacementProvider.(ReferenceLifecycle)
+	if !ok {
+		return nil, ErrPlacementUnavailable
+	}
+	return lifecycle.PrepareReferenceDelete(ctx, PlacementSuccessorRequest{Ref: sess.EnvironmentRef, Principal: sess.Owner, SourceBindingID: sess.ID})
+}
+func (s *Service) cancelReferenceDelete(ctx context.Context, handle ReferenceDeleteHandle) {
+	if handle == nil {
+		return
+	}
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := handle.Cancel(cancelCtx); err != nil {
+		s.logPlacementProviderError(ctx, "cancel reference delete", err)
+	}
+}
+func (*Service) confirmReferenceDelete(ctx context.Context, handle ReferenceDeleteHandle) error {
+	if handle == nil {
+		return nil
+	}
+	confirmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return handle.Confirm(confirmCtx)
 }
 
 func (s *Service) deleteSessionFamily(ctx context.Context, id session.SessionID, store port.PrunableStore) error {
@@ -3560,10 +3673,17 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	if err != nil || absent {
 		return err
 	}
+	referenceDelete, err := s.prepareReferenceDelete(ctx, sess)
+	if err != nil {
+		return err
+	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			if confirmErr := s.confirmReferenceDelete(ctx, referenceDelete); confirmErr != nil {
+				return fmt.Errorf("%w: confirm deleted session reference: %v", ErrInternal, confirmErr)
+			}
 			// The durable record is already gone: still attempt broker cleanup
 			// (best-effort) before reporting success, so a locally-retained
 			// broker handle is never orphaned by an already-completed delete.
@@ -3578,6 +3698,9 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 			return ErrSessionDeleteUnsupported
 		}
 		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
+	}
+	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
+		return fmt.Errorf("%w: session deleted but reference confirmation must be retried", ErrInternal)
 	}
 	// The durable record is gone; broker cleanup is now best-effort. Reordered
 	// deliberately (I-8): deleting broker state FIRST left an unrecoverable
@@ -3630,6 +3753,10 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if !retentionCandidateMatches(sess, candidate) {
 		return errRetentionCandidateChanged
 	}
+	referenceDelete, err := s.prepareReferenceDelete(ctx, sess)
+	if err != nil {
+		return err
+	}
 	unlockBroker := s.brokerMu.lock(candidate.ID)
 	defer unlockBroker()
 	if !s.mutationLeaseHeld(candidate.ID) {
@@ -3643,7 +3770,11 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
 	}
 	if !deleted {
+		s.cancelReferenceDelete(ctx, referenceDelete)
 		return errRetentionCandidateChanged
+	}
+	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
+		return fmt.Errorf("%w: retention deleted session but reference confirmation must be retried", ErrInternal)
 	}
 	// The durable record is gone; broker cleanup is now best-effort (I-8: see
 	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
@@ -3670,6 +3801,8 @@ func retentionCandidateMatches(sess *session.Session, candidate port.SessionDisc
 // chats, but it still serializes against run entry, acquires the cross-process
 // mutation lease, and revalidates durable taxonomy and lifecycle after acquiring
 // that lease. It is an internal composition callback, never a wire operation.
+//
+//nolint:gocyclo // Retention keeps lease, taxonomy, reference intent, and deletion in one transaction.
 func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.SessionID) error {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -3700,10 +3833,17 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || sess.State == session.StateAuthorizing || s.IsLive(id) {
 		return fmt.Errorf("%w: retention candidate is active or awaiting approval", ErrFailedPrecondition)
 	}
+	referenceDelete, err := s.prepareReferenceDelete(ctx, sess)
+	if err != nil {
+		return err
+	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			if confirmErr := s.confirmReferenceDelete(ctx, referenceDelete); confirmErr != nil {
+				return fmt.Errorf("%w: confirm deleted retention reference: %v", ErrInternal, confirmErr)
+			}
 			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
 				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted retention candidate failed",
 					"session", string(id), "err", brokerErr.Error())
@@ -3715,6 +3855,9 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 			return ErrSessionDeleteUnsupported
 		}
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
+	}
+	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
+		return fmt.Errorf("%w: retention deleted session but reference confirmation must be retried", ErrInternal)
 	}
 	// The durable record is gone; broker cleanup is now best-effort (I-8: see
 	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
@@ -4393,11 +4536,8 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
 		return nil, fmt.Errorf("%w: session %q is not eligible for chat retry", ErrFailedStepRetryIneligible, id)
 	}
-	if registered, ok := s.LookupRun(id); ok {
-		if !sess.State.IsTerminal() {
-			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedStepRetryIneligible, id)
-		}
-		s.deregister(id, registered)
+	if _, ok := s.LookupRun(id); ok {
+		return nil, fmt.Errorf("%w: session %q still has an undrained run", ErrFailedStepRetryIneligible, id)
 	}
 	eligibleFailure, err := failedStepRetryEligibility(sess)
 	if err != nil {
@@ -4437,6 +4577,10 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
+	env, err = s.acquireExecution(ctx, st, sess, sess.RunID(), env)
+	if err != nil {
+		return nil, err
+	}
 	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.RetryFailedStep(ctx, sess, env)
@@ -4445,6 +4589,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		return nil, err
 	}
 	promoted = true
+	s.startExecutionRenewal(id, st, run)
 	return run, nil
 }
 
@@ -4558,12 +4703,19 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	}
 	// The run registry is the authoritative same-process single-run gate while the
 	// loaded aggregate is non-terminal. A terminal snapshot means the registered
-	// run has finished driving but its relay has not called FinishRun yet. Remove
-	// that exact run before reopening so the finished relay's later FinishRun
-	// cannot deregister the continuation that replaces it.
+	// run has finished driving but its relay has not called FinishRun yet. Local
+	// and no-FS runs retain the historical fast handoff: remove that exact run
+	// before reopening so its later FinishRun cannot deregister the continuation.
+	// Native execution is different: its runState owns the provider claim until
+	// FinishRun after relay drain, so an undrained native run must remain registered
+	// and block a replacement claim.
 	if registered, ok := s.LookupRun(id); ok {
-		if !sess.State.IsTerminal() {
-			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
+		s.mu.Lock()
+		st := s.runs[id]
+		nativeUndrained := st != nil && st.run == registered && s.cfg.ExecutionAccess != nil && s.cfg.ExecutionAccess.Applies(sess.EnvironmentRef)
+		s.mu.Unlock()
+		if !sess.State.IsTerminal() || nativeUndrained {
+			return nil, fmt.Errorf("%w: session %q still has an active or undrained run", ErrFailedPrecondition, id)
 		}
 		s.deregister(id, registered)
 	}
@@ -4678,6 +4830,10 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// one mint site for a new run.
 	runID := newRunID()
 	sess.BeginRun(runID)
+	env, err = s.acquireExecution(ctx, st, sess, runID, env)
+	if err != nil {
+		return nil, err
+	}
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
@@ -4694,6 +4850,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 		*interruptedContinuationOwned = true
 	}
 	promoted = true
+	s.startExecutionRenewal(id, st, run)
 	return run, nil
 }
 
@@ -5003,7 +5160,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	if !sess.EnvironmentRef.Valid() {
 		return nil, tool.Environment{}, ErrInvalidPlacementSelection
 	}
-	verified, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	verified, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 	if err != nil {
 		return nil, tool.Environment{}, err
 	}
@@ -5807,6 +5964,10 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
+	env, err = s.acquireExecution(ctx, st, sess, sess.RunID(), env)
+	if err != nil {
+		return nil, err
+	}
 	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.ResumeApproval(ctx, sess, env, askID, verdict)
@@ -5815,6 +5976,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		return nil, err
 	}
 	promoted = true
+	s.startExecutionRenewal(id, st, run)
 	return run, nil
 }
 
@@ -5914,7 +6076,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 		var resumedStop session.StopReason
 		if resumed != nil {
 			resumedStop = s.forwardRunEvents(ctx, resumed, out)
-			s.deregister(id, resumed)
+			s.FinishRun(id, resumed)
 		}
 		// (5) Atomic continuation (allow paths only). A deny leaves the session
 		// in plan mode with no continuation run — the model re-plans on the next
@@ -5950,7 +6112,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 			return
 		}
 		s.forwardRunEvents(ctx, cont, out)
-		s.deregister(id, cont)
+		s.FinishRun(id, cont)
 	}()
 
 	return out, nil
@@ -6225,7 +6387,7 @@ func (s *Service) completeRelay(ctx context.Context, id session.SessionID, run *
 // disconnected client cannot lose the terminal snapshot, then release the run.
 func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run *agent.Run) {
 	s.completeRelay(ctx, id, run)
-	s.deregister(id, run)
+	s.FinishRun(id, run)
 }
 
 // appendEvent durably records one projected relay event to the configured
@@ -6518,7 +6680,7 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 		recorder.Observe(ev)
 	}
 	recorder.Close()
-	s.deregister(id, cont)
+	s.FinishRun(id, cont)
 }
 
 // autoApproveWaitTimeout bounds how long autoApproveContinuation waits for the
@@ -7344,6 +7506,7 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 		return
 	}
 	st.admissionCancel()
+	s.teardownExecution(st)
 	s.removeRunState(id, st)
 }
 
@@ -7427,6 +7590,131 @@ func (s *Service) deregister(id session.SessionID, run *agent.Run) {
 	}
 }
 
+func (s *Service) acquireExecution(ctx context.Context, st *runState, sess *session.Session, runID string, fallback tool.Environment) (tool.Environment, error) {
+	access := s.cfg.ExecutionAccess
+	if access == nil || !access.Applies(sess.EnvironmentRef) {
+		return fallback, nil
+	}
+	handle, err := access.AcquireRun(ctx, ExecutionRunRequest{Ref: sess.EnvironmentRef, Principal: sess.Owner, BindingID: sess.ID, RunID: runID})
+	if err != nil {
+		return tool.Environment{}, err
+	}
+	env := handle.Environment()
+	if env.Ref() != sess.EnvironmentRef || env.Workspace() == nil {
+		_ = handle.Release(context.WithoutCancel(ctx))
+		return tool.Environment{}, ErrInvalidPlacementBinding
+	}
+	st.executionMu.Lock()
+	if st.executionClosed {
+		st.executionMu.Unlock()
+		_ = handle.Release(context.WithoutCancel(ctx))
+		return tool.Environment{}, ErrPlacementUnavailable
+	}
+	st.execution = handle
+	st.executionMu.Unlock()
+	return env, nil
+}
+
+type executionRenewalDeadline interface {
+	RenewalDeadline() time.Time
+}
+
+func executionRenewDelay(handle ExecutionRunHandle, now time.Time) (time.Duration, bool) {
+	deadlineHandle, ok := handle.(executionRenewalDeadline)
+	if !ok {
+		return 20 * time.Second, true
+	}
+	remaining := deadlineHandle.RenewalDeadline().Sub(now)
+	if remaining <= 300*time.Millisecond {
+		return 0, false
+	}
+	delay := remaining / 3
+	if delay > 20*time.Second {
+		delay = 20 * time.Second
+	}
+	if delay < 100*time.Millisecond {
+		delay = 100 * time.Millisecond
+	}
+	return delay, delay < remaining
+}
+
+func (s *Service) startExecutionRenewal(_ session.SessionID, st *runState, run *agent.Run) {
+	st.executionMu.Lock()
+	if st.execution == nil || st.executionClosed {
+		st.executionMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	st.executionRenewCancel = cancel
+	st.executionRenewDone = make(chan struct{})
+	done := st.executionRenewDone
+	handle := st.execution
+	st.executionMu.Unlock()
+	go func() {
+		defer close(done)
+		for {
+			delay, usable := executionRenewDelay(handle, time.Now())
+			if !usable {
+				s.logDiscoveryError(context.Background(), "execution ownership renewal failed", errors.New("execution grant has insufficient time remaining"))
+				run.Cancel()
+				return
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			case <-timer.C:
+				remaining := 10 * time.Second
+				if deadlineHandle, ok := handle.(executionRenewalDeadline); ok {
+					remaining = time.Until(deadlineHandle.RenewalDeadline()) / 2
+					if remaining <= 0 {
+						run.Cancel()
+						return
+					}
+				}
+				renewCtx, stop := context.WithTimeout(ctx, remaining)
+				err := handle.Renew(renewCtx)
+				stop()
+				if err != nil {
+					s.logDiscoveryError(context.Background(), "execution ownership renewal failed", err)
+					run.Cancel()
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (s *Service) teardownExecution(st *runState) {
+	if st == nil {
+		return
+	}
+	st.executionTeardown.Do(func() {
+		st.executionMu.Lock()
+		st.executionClosed = true
+		cancelRenew := st.executionRenewCancel
+		done := st.executionRenewDone
+		handle := st.execution
+		st.executionMu.Unlock()
+		if cancelRenew != nil {
+			cancelRenew()
+		}
+		if done != nil {
+			<-done
+		}
+		if handle != nil {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := handle.Release(releaseCtx); err != nil {
+				s.logDiscoveryError(context.Background(), "execution ownership release failed", err)
+			}
+			cancel()
+		}
+	})
+}
+
 // FinishRun removes run from the in-flight registry for id. It is the EXPORTED
 // counterpart of register that every wire adapter must call (typically via
 // `defer`) once it has finished draining run.Events(), so a completed run does
@@ -7446,6 +7734,7 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 	if parked && st.sess != nil {
 		pending, pendingOK = st.sess.PendingAuthorization()
 	}
+	s.teardownExecution(st)
 	s.removeRunState(id, st)
 	if parked {
 		s.scheduleAuthorizationExpiry(id, pending, pendingOK)

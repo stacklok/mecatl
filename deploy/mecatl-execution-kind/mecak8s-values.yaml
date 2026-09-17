@@ -1,0 +1,37 @@
+fullnameOverride: mecak8s
+replicaCount: 1
+mockProvider: true
+redis:
+  endpoint: redis:6379
+  credentialsSecret: ""
+  local:
+    enabled: true
+execution:
+  enabled: true
+  endpoint: mecatl-execution.execution-qualification.svc.cluster.local:8443
+  profile: go
+  tlsSecret: execution-client-tls
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
+oidc:
+  enabled: true
+  issuer: https://oidc-issuer.execution-qualification.svc.cluster.local:8443
+  audience: mecatl
+  allowPrivateHTTPSIssuer: true
+  caSecret: execution-client-tls
+  caKey: ca.crt
+extraArgs:
+- --mock-script=/var/run/mecatl-execution/mock-script.json
+- --no-soul
+- --no-user-model
+- --permissions-conventional=false
+- --agents-conventional=false
+extraVolumeMounts:
+- name: execution-mock
+  mountPath: /var/run/mecatl-execution
+  readOnly: true
+extraVolumes:
+- name: execution-mock
+  configMap:
+    name: execution-mock

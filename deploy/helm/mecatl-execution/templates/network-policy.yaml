@@ -1,0 +1,101 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}-provider
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+  - from:
+{{- range .Values.provider.clientIngressSelectors }}
+    - namespaceSelector:
+        matchLabels:
+{{ toYaml .namespaceLabels | indent 12 }}
+      podSelector:
+        matchLabels:
+{{ toYaml .podLabels | indent 12 }}
+{{- end }}
+    ports:
+    - {protocol: TCP, port: {{ .Values.service.port }}}
+  egress:
+{{- range .Values.provider.apiServerCIDRs }}
+  - to: [{ipBlock: {cidr: {{ . | quote }}}}]
+    ports:
+{{- range $.Values.networkPolicy.apiServerPorts }}
+    - {protocol: TCP, port: {{ . }}}
+{{- end }}
+{{- end }}
+{{- range .Values.provider.dnsCIDRs }}
+  - to: [{ipBlock: {cidr: {{ . | quote }}}}]
+    ports:
+{{- range $.Values.networkPolicy.dnsPorts }}
+    - {protocol: UDP, port: {{ . }}}
+    - {protocol: TCP, port: {{ . }}}
+{{- end }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}-workload-default-deny
+spec:
+  podSelector:
+    matchExpressions:
+    - {key: execution.mecatl.dev/environment, operator: Exists}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+{{- range $name, $profile := .Values.networkPolicy.workloadProfiles }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecatl-execution.fullname" $ }}-profile-{{ sha256sum $name | trunc 16 }}
+spec:
+  podSelector:
+    matchLabels:
+      execution.mecatl.dev/profile: {{ sha256sum $name | trunc 16 }}
+  policyTypes: [Egress]
+  egress:
+{{- range $profile.egress }}
+  - to: [{ipBlock: {cidr: {{ .cidr | quote }}}}]
+    ports:
+{{- range .ports }}
+    - {protocol: {{ default "TCP" .protocol }}, port: {{ .port }}}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+---
+{{- if .Values.resourceGovernance.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}
+spec:
+  hard:
+    pods: {{ .Values.resourceGovernance.pods | quote }}
+    persistentvolumeclaims: {{ .Values.resourceGovernance.persistentVolumeClaims | quote }}
+    count/executionenvironments.execution.mecatl.dev: {{ .Values.resourceGovernance.executionEnvironments | quote }}
+    requests.cpu: {{ .Values.resourceGovernance.requestsCPU | quote }}
+    requests.memory: {{ .Values.resourceGovernance.requestsMemory | quote }}
+    requests.storage: {{ .Values.resourceGovernance.requestsStorage | quote }}
+    requests.ephemeral-storage: {{ .Values.resourceGovernance.requestsEphemeralStorage | quote }}
+    limits.cpu: {{ .Values.resourceGovernance.limitsCPU | quote }}
+    limits.memory: {{ .Values.resourceGovernance.limitsMemory | quote }}
+    limits.ephemeral-storage: {{ .Values.resourceGovernance.limitsEphemeralStorage | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}
+spec:
+  limits:
+  - type: Container
+    defaultRequest: {cpu: 50m, memory: 64Mi, ephemeral-storage: 32Mi}
+    default: {cpu: "1", memory: 1Gi, ephemeral-storage: 1Gi}
+  - type: PersistentVolumeClaim
+    max: {storage: {{ .Values.resourceGovernance.requestsStorage | quote }}}
+{{- end }}

@@ -82,7 +82,7 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
 	}
 	if s.placementBinder != nil {
-		binding, bindErr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+		binding, bindErr := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 		if bindErr != nil {
 			return nil, bindErr
 		}
@@ -570,7 +570,7 @@ func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) 
 	if s.placementBinder == nil {
 		return "", true
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	binding, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 	if err != nil {
 		return "", false
 	}

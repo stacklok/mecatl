@@ -37,7 +37,7 @@ func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.Sessio
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return sess, tool.Environment{}, nil
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	binding, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 	if err != nil {
 		return nil, tool.Environment{}, err
 	}

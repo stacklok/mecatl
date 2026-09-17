@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}-profiles
+data:
+  profiles.yaml: |
+    profiles:
+{{ toYaml .Values.profiles | indent 6 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}-security-manifest
+data:
+  manifest.json: |
+{{ required "provider.securityManifest is required" .Values.provider.securityManifest | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}-security-authority
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mecatl-execution-profile-allocations
+data: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}
+spec:
+  replicas: {{ .Values.provider.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+    spec:
+      serviceAccountName: {{ include "mecatl-execution.fullname" . }}
+      automountServiceAccountToken: true
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: provider
+        image: {{ required "provider.image must be digest-pinned" .Values.provider.image | quote }}
+        imagePullPolicy: {{ .Values.provider.imagePullPolicy }}
+        args:
+        - --namespace={{ .Release.Namespace }}
+        - --profiles=/etc/mecatl-execution/profiles.yaml
+        - --grant-keyring-manifest=/etc/mecatl-execution/security/manifest.json
+        - --grant-key-directory=/etc/mecatl-execution/security
+        - --security-authority-configmap={{ include "mecatl-execution.fullname" . }}-security-authority
+        - --security-reload-interval={{ .Values.provider.securityReloadInterval }}
+        - --max-concurrent-streams={{ .Values.provider.maxConcurrentStreams }}
+        - --max-concurrent-rpcs={{ .Values.provider.maxConcurrentRPCs }}
+        - --max-concurrent-rpcs-per-client={{ .Values.provider.maxConcurrentRPCsPerClient }}
+        - --health-listen=:{{ .Values.provider.healthPort }}
+        ports:
+        - {name: grpc, containerPort: 8443}
+        - {name: health, containerPort: {{ .Values.provider.healthPort }}}
+        startupProbe:
+          httpGet: {path: /ready, port: health}
+          failureThreshold: 30
+          periodSeconds: 2
+        readinessProbe:
+          httpGet: {path: /ready, port: health}
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /live, port: health}
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        resources:
+{{ toYaml .Values.provider.resources | indent 10 }}
+        volumeMounts:
+        - {name: profiles, mountPath: /etc/mecatl-execution/profiles.yaml, subPath: profiles.yaml, readOnly: true}
+        - {name: security, mountPath: /etc/mecatl-execution/security, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - name: profiles
+        configMap: {name: {{ include "mecatl-execution.fullname" . }}-profiles}
+      - name: security
+        projected:
+          sources:
+          - configMap:
+              name: {{ include "mecatl-execution.fullname" . }}-security-manifest
+          - secret:
+              name: {{ required "provider.securitySecretName is required" .Values.provider.securitySecretName }}
+      - name: tmp
+        emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}
+spec:
+  selector: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+  ports:
+  - {name: grpc, port: {{ .Values.service.port }}, targetPort: grpc}

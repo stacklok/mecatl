@@ -72,6 +72,9 @@ tasks:
       # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
+      # Optional native Kubernetes execution provider and its fixed workload helper.
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-execution-provider ./cmd/mecatl-execution-provider
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-executor ./cmd/mecatl-executor
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
@@ -503,6 +506,50 @@ tasks:
           esac
           GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
 
+  e2e:k8s:execution:
+    desc: |
+      Run the focused mock-only Kind qualification for the optional Kubernetes
+      execution provider. It uses a unique cluster and explicit kubeconfig under
+      .scratch, builds/loads immutable local images, and never reads a provider
+      credential. Docker is the default; set CONTAINER_ENGINE=podman for rootless
+      Podman. The owned cluster is intentionally retained; the command prints the
+      exact human-confirmed cleanup command. NOT part of task test.
+    preconditions:
+      - sh: command -v kind >/dev/null 2>&1
+        msg: "kind is required"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-docker}"
+          case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) exit 1 ;; esac
+        msg: "CONTAINER_ENGINE must be docker or podman and available on PATH"
+    cmds:
+      - deploy/mecatl-execution-kind/run.sh
+
+  e2e:k8s:execution:production:
+    desc: |
+      Run the deterministic production-network and lifecycle execution-provider
+      qualification. CI sets MECATL_EXECUTION_QUAL_CI=1 so its uniquely owned Kind
+      cluster is removed automatically; local runs retain it for inspection and
+      print the human-confirmed cleanup command. No model credential is used.
+    cmds:
+      - MECATL_EXECUTION_QUAL_PROFILE=production task e2e:k8s:execution
+
+  e2e:k8s:execution:live:
+    desc: |
+      EXPLICIT OPT-IN: run mock qualification followed by one bounded real-provider
+      coding smoke on the approved retained Kind cluster. Requires absolute
+      MECATL_EXECUTION_CREDENTIAL_FILE and MECATL_EXECUTION_QUAL_STATE paths. A
+      trusted loader stages a run-scoped Secret without exposing its value, the
+      test independently verifies files and go test through typed gRPC, then the
+      mock profile is restored and only that run-scoped Secret is removed. NOT
+      part of task test.
+    preconditions:
+      - sh: test -n "${MECATL_EXECUTION_CREDENTIAL_FILE:-}"
+        msg: "MECATL_EXECUTION_CREDENTIAL_FILE is required"
+      - sh: test -n "${MECATL_EXECUTION_QUAL_STATE:-}"
+        msg: "MECATL_EXECUTION_QUAL_STATE is required"
+    cmds:
+      - deploy/mecatl-execution-kind/live.sh
+
   e2e:k8s:podman:
     desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)
     cmds:
@@ -876,6 +923,7 @@ tasks:
       - task: lint:action-templates
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
+      - sh .github/scripts/release-tag-guard_test.sh
 
   lint:action-templates:
     desc: |

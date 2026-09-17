@@ -1,0 +1,7 @@
+{
+  "turns": [
+    {"tool_calls":[{"id":"reattach-read","name":"Read","args":{"path":"proof.txt"}}]},
+    {"tool_calls":[{"id":"reattach-shell","name":"Shell","args":{"command":"go test ./...","timeout_ms":120000}}]},
+    {"text":"REMOTE_EXECUTION_REATTACH_COMPLETE"}
+  ]
+}

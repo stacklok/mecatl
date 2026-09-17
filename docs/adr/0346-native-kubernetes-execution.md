@@ -62,9 +62,11 @@ Shell writes retain their documented ability to bypass Workspace CAS
 stronger remote filesystem transaction.
 
 Introduce a side-effect-free configuration/profile validation operation distinct from idempotent
-allocation. Candidate private operations include profile validation, ensure, exact attach, command
-start/stream/status/cancel, and retirement. Their precise Go signatures and private wire protocol
-are deliberately undecided and block promotion of this ADR.
+allocation. The candidate private wire transport is typed protobuf gRPC over mandatory
+mTLS (not HTTP/JSON and not a JSON/bytes envelope). Candidate operations include profile
+validation, ensure, exact attach, file operations, command start/stream/status/cancel, and
+retirement. Message details, lifecycle semantics, and precise Go signatures remain deliberately
+undecided in this planning ADR and block promotion; the draft implementation is not approval.
 
 ### 3. Make installation and connection explicitly optional
 

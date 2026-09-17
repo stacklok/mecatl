@@ -130,6 +130,14 @@ spec:
             {{- if .Values.workspace }}
             - {{ printf "--workspace=%s" .Values.workspace | quote }}
             {{- end }}
+            {{- if .Values.execution.enabled }}
+            - --execution-enabled
+            - {{ printf "--execution-endpoint=%s" .Values.execution.endpoint | quote }}
+            - {{ printf "--execution-profile=%s" .Values.execution.profile | quote }}
+            - {{ printf "--execution-tls-ca=/var/run/secrets/execution/%s" .Values.execution.caKey | quote }}
+            - {{ printf "--execution-tls-cert=/var/run/secrets/execution/%s" .Values.execution.certKey | quote }}
+            - {{ printf "--execution-tls-key=/var/run/secrets/execution/%s" .Values.execution.keyKey | quote }}
+            {{- end }}
             {{- if .Values.mockProvider }}
             - --mock
             {{- end }}
@@ -294,6 +302,9 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
+            {{- if .Values.execution.enabled }}
+            - {name: execution-mtls, mountPath: /var/run/secrets/execution, readOnly: true}
+            {{- end }}
             {{- if .Values.learning.store.tls.caSecret }}
             - {name: learning-store-ca, mountPath: /var/run/secrets/learning-store-ca, readOnly: true}
             {{- end }}
@@ -341,6 +352,16 @@ spec:
             defaultMode: 0440
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
+        {{- end }}
+        {{- if .Values.execution.enabled }}
+        - name: execution-mtls
+          secret:
+            secretName: {{ .Values.execution.tlsSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.execution.caKey | quote }}, path: {{ .Values.execution.caKey | quote }}}
+              - {key: {{ .Values.execution.certKey | quote }}, path: {{ .Values.execution.certKey | quote }}}
+              - {key: {{ .Values.execution.keyKey | quote }}, path: {{ .Values.execution.keyKey | quote }}}
         {{- end }}
         {{- if .Values.learning.store.tls.caSecret }}
         - name: learning-store-ca

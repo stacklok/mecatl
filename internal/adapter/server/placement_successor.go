@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -57,7 +58,7 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 	// non-destructive gate. Exact inherited placement stays on the lease-protected
 	// path below because reattachment may itself wait for lease loss/cancellation.
 	if placement.Selector != "" {
-		preflight, placementErr := s.successorPlacement(ctx, lockedSource, placement)
+		preflight, placementErr := s.successorPlacement(ctx, lockedSource, placement, "")
 		if placementErr != nil {
 			return "", placementErr
 		}
@@ -157,11 +158,17 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err != nil || absent {
 		return "", err
 	}
+	destinationID := s.cfg.NewID()
+	releaseDestination, reserveErr := s.reserveGeneratedSessionID(mutationCtx, destinationID)
+	if reserveErr != nil {
+		return "", reserveErr
+	}
+	defer releaseDestination()
 	selector, err := successorProviderSelector(source, req)
 	if err != nil {
 		return "", err
 	}
-	binding, err := s.successorPlacement(mutationCtx, source, req.Placement)
+	binding, err := s.successorPlacement(mutationCtx, source, req.Placement, destinationID)
 	if err != nil {
 		return "", err
 	}
@@ -180,7 +187,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 
-	created := session.New(s.cfg.NewID(), source.Mode, binding.Ref, source.Limits, s.cfg.Now())
+	created := session.New(destinationID, source.Mode, binding.Ref, source.Limits, s.cfg.Now())
 	created.Placement = canonicalPlacementMetadata(binding)
 	authority, bound := source.BoundAuthority()
 	if !bound {
@@ -265,6 +272,15 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		s.logDiscoveryError(ctx, "persist successor placement", err)
 		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
+	if binding.Commit != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), 10*time.Second)
+		commitErr := binding.Commit(commitCtx)
+		cancelCommit()
+		if commitErr != nil {
+			s.logPlacementProviderError(ctx, "commit successor reference", commitErr)
+			return created.ID, fmt.Errorf("%w: session %q persisted but reference publication must be retried", ErrInternal, created.ID)
+		}
+	}
 	if broker != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
 		commitErr := s.commitBrokerAttachment(commitCtx, created.ID, broker)
@@ -295,9 +311,16 @@ func successorProviderSelector(source *session.Session, req ForkSuccessorRequest
 	return selector, nil
 }
 
-func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement) (PlacementBinding, error) {
+func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement, destination session.SessionID) (PlacementBinding, error) {
 	if requested.Selector == "" {
-		return s.ReattachPlacement(ctx, source.EnvironmentRef)
+		if destination != "" && s.cfg.ExecutionAccess != nil && s.cfg.ExecutionAccess.Applies(source.EnvironmentRef) {
+			reservoir, ok := s.cfg.PlacementProvider.(PlacementSuccessorReservoir)
+			if !ok {
+				return PlacementBinding{}, ErrPlacementUnavailable
+			}
+			return reservoir.ReserveSuccessor(ctx, PlacementSuccessorRequest{Ref: source.EnvironmentRef, Principal: source.Owner, SourceBindingID: source.ID, DestinationBindingID: destination})
+		}
+		return s.ReattachPlacementForBinding(ctx, source.EnvironmentRef, source.ID)
 	}
 	if source.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return PlacementBinding{}, ErrPlacementNotFound

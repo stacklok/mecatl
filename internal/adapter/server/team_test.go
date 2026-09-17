@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"strings"
 	"sync"
 	"testing"
@@ -54,9 +55,9 @@ func (r *teamLivenessTracker) IsLive(id session.SessionID) bool {
 }
 
 // teamService builds a team-enabled Service whose per-member Engine uses the
-// supplied mockllm provider (shared by all members) and carries that member's
+// supplied provider (shared by all members) and carries that member's
 // coordination tools.
-func teamService(t *testing.T, llm *mockllm.Provider) *server.Service {
+func teamService(t *testing.T, llm port.LLMProvider) *server.Service {
 	t.Helper()
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
@@ -723,13 +724,45 @@ func TestCreateTeamMaxTeams(t *testing.T) {
 	}
 }
 
+// cleanupTeamBlockingProvider holds a member's actual stream after it has entered
+// the runner, making the running-phase probe deterministic.
+type cleanupTeamBlockingProvider struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (cleanupTeamBlockingProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p cleanupTeamBlockingProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		if !yield(port.Chunk{Kind: port.ChunkText, Text: "thinking"}, nil) {
+			return
+		}
+		select {
+		case p.entered <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+		}
+	}, nil
+}
+
 // TestCleanupTeamRejectsRunning asserts Fix D: CleanupTeam on a running team is
 // rejected with FailedPrecondition (deleting it would orphan the live supervisor),
 // while a created or done team can be cleaned up and frees its slot.
 func TestCleanupTeamRejectsRunning(t *testing.T) {
-	// A member whose single turn blocks until ctx is cancelled keeps the team in the
-	// running phase for the duration of the probe.
-	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
+	// The provider signals only after the real member stream has started, then
+	// remains blocked until the probe has observed CleanupTeam's running guard.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	llm := cleanupTeamBlockingProvider{entered: entered, release: release}
 	svc := teamService(t, llm)
 	h := server.NewHarnessServer(svc)
 	ctx := context.Background()
@@ -755,22 +788,16 @@ func TestCleanupTeamRejectsRunning(t *testing.T) {
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
-	firstEvent := make(chan struct{}, 1)
 	runDone := make(chan struct{})
 	go func() {
 		defer close(runDone)
-		_, _ = svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {
-			select {
-			case firstEvent <- struct{}{}:
-			default:
-			}
-		})
+		_, _ = svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {})
 	}()
 
 	select {
-	case <-firstEvent:
+	case <-entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the team run to start")
+		t.Fatal("timed out waiting for the member stream to start")
 	}
 
 	// CleanupTeam on the running team is rejected (FailedPrecondition).
@@ -781,6 +808,7 @@ func TestCleanupTeamRejectsRunning(t *testing.T) {
 		t.Fatalf("Service.CleanupTeam(running): err = %v, want ErrTeamRunning", serr)
 	}
 
+	releaseOnce.Do(func() { close(release) })
 	cancelRun()
 	select {
 	case <-runDone:

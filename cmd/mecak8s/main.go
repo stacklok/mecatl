@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/adapter/mockscript"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
@@ -82,6 +83,26 @@ func run() error {
 	}
 
 	composition := appConfig(cfg, diag, obs)
+	if cfg.executionEnabled {
+		tlsConfig, tlsErr := executionclient.LoadTLSConfig(executionclient.TLSFiles{CA: cfg.executionTLSCA, Cert: cfg.executionTLSCert, Key: cfg.executionTLSKey})
+		if tlsErr != nil {
+			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
+			return tlsErr
+		}
+		client, clientErr := executionclient.New(cfg.executionEndpoint, tlsConfig)
+		if clientErr != nil {
+			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
+			return clientErr
+		}
+		defer client.Close()
+		placement, placementErr := executionclient.NewProvider(client, cfg.executionProfile)
+		if placementErr != nil {
+			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
+			return placementErr
+		}
+		composition.PlacementProvider = placement
+		composition.PlacementScope = "remote-execution"
+	}
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
