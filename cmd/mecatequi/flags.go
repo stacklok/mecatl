@@ -312,11 +312,11 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.storeDir, "store-dir", "", "Directory for the JSONL session store. Default: in-memory store.")
 	fs.StringVar(&f.shell, "shell", "/bin/sh", "Shell for Shell tool commands. An empty value disables the Shell tool.")
 	fs.BoolVar(&f.noShell, "no-shell", false, "Disable the Shell tool. Overrides --shell.")
-	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens for the run. Crossing the limit ends with stop_reason=budget. Default: 0, unlimited.")
-	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "Maximum cumulative input and output tokens for an agent team run. Default: 0, unlimited.")
+	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "Cumulative input and output token budget per engine. Default: 0, unlimited.")
+	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "Cumulative input and output token budget for a team, checked between rounds. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "Maximum model calls for the run. Crossing the limit ends with stop_reason=max_turns. Default: 0, use the deployment default.")
 
-	fs.BoolVar(&f.headless, "headless", true, "Run without a human approver. Unresolved child subagent, team member, and branch permission requests are denied or sent to --subagent-ask-reviewer. Default: true. Set false only when an external approver can respond.")
+	fs.BoolVar(&f.headless, "headless", true, "Run without a human approver. Unresolved child subagent, team member, and branch permission requests are denied or sent to --subagent-ask-reviewer. Default: true. Set false to expose child permission requests; mecatequi cannot approve them.")
 
 	fs.StringVar(&f.guardrailsModel, "guardrails-model", "", "Model identifier or alias for the tool-free guardrails checker. Setting this flag enables guardrails unless --guardrails=off. A guardrail model slot takes precedence. Default: empty.")
 	fs.StringVar(&f.guardrailsMode, "guardrails", "", "Set to off to disable guardrails, including configured checker models. Other values leave guardrails controlled by the configured checker model.")
@@ -326,7 +326,7 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.IntVar(&f.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "Consecutive non-allow reviewer outcomes before the reviewer is disabled for the rest of the run. Values less than or equal to 0 use the default: 3.")
 	fs.StringVar(&f.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "Trusted policy rubric file for --subagent-ask-reviewer. Its contents replace the built-in rubric. An unreadable file fails startup.")
 
-	fs.StringVar(&f.posture, "posture", "", "Permission posture: strict (default), trusted, auto, or yolo. In a headless strict run, a main-agent permission request cancels the run with exit 1. trusted honors project allow rules; auto allows tools by default and relaxes main command substitutions while retaining child injection defenses; yolo also automatically runs $(), backticks, and here-documents in children. Deny rules and configured ask rules still apply. Unknown values use strict.")
+	fs.StringVar(&f.posture, "posture", "", "Permission posture: strict (default), trusted, auto, or yolo. Headless runs require --trust-project to admit project content. In a headless strict run, a main-agent permission request cancels the run; auto allows tools by default and relaxes main command substitutions while retaining child injection defenses; yolo also automatically runs $(), backticks, and here-documents in children. Deny rules and configured ask rules still apply. Unknown values use strict.")
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "Reasoning effort: auto, low, medium, high, xhigh, or max. Empty uses the provider or operator setting. OpenAI maps xhigh and max to high. Unknown values use the provider or operator setting.")
 	fs.BoolVar(&f.trustProject, "trust-project", false, "Allow workspace content to provide project instructions, rules, agents, skills, souls, commands, Git snapshots, and the read-only child worktree shell. Default: false. Enable only for a repository and Git metadata you trust.")
 
@@ -390,7 +390,7 @@ func usageEpilogue(fs *flag.FlagSet) func() {
 	return func() {
 		out := fs.Output()
 		_, _ = fmt.Fprintf(out, "mecatequi: single-shot, headless Mecatl runner for CI and batch use.\n\n")
-		_, _ = fmt.Fprintf(out, "Usage: mecatequi --prompt <text> [flags]\n\n")
+		_, _ = fmt.Fprintf(out, "Usage: mecatequi (--prompt <text> and/or --prompt-file <path>) [flags]\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
 		flaghelp.PrintDefaults(out, fs)
 		_, _ = fmt.Fprintln(out, "\nVersion: mecatequi --version prints the build version and exits.")
