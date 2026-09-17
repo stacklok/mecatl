@@ -1605,12 +1605,19 @@ function unwrapEvents(
   transport: TransportKind,
   release: () => void,
 ): AsyncIterator<Event> {
+  let returned = false;
+  const close = async () => {
+    release();
+    if (returned) return;
+    returned = true;
+    await responses.return?.();
+  };
   return {
     next: async () => {
       try {
         const next = await responses.next();
         if (next.done) {
-          release();
+          await close();
           return { done: true, value: undefined };
         }
         const event = next.value.event;
@@ -1628,6 +1635,10 @@ function unwrapEvents(
         release();
         throw error;
       }
+    },
+    return: async () => {
+      await close();
+      return { done: true, value: undefined };
     },
   };
 }
