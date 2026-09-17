@@ -80,6 +80,12 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
+| [`McpAuthorization`](#api-mcpauthorization-interface) | Interface |
+| [`McpAuthorizationFlow`](#api-mcpauthorizationflow-interface) | Interface |
+| [`McpAuthorizationFlowOptions`](#api-mcpauthorizationflowoptions-interface) | Interface |
+| [`McpAuthorizationOperation`](#api-mcpauthorizationoperation-typealias) | Type alias |
+| [`McpAuthorizationResult`](#api-mcpauthorizationresult-typealias) | Type alias |
+| [`McpAuthorizationStatus`](#api-mcpauthorizationstatus-typealias) | Type alias |
 | [`McpConnectorAvailability`](#api-mcpconnectoravailability-typealias) | Type alias |
 | [`McpConnectorAvailability`](#api-mcpconnectoravailability-variable) | Variable |
 | [`McpConnectorCatalogueState`](#api-mcpconnectorcataloguestate-typealias) | Type alias |
@@ -124,8 +130,12 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
 | [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
 | [`Run`](#api-run-interface) | Interface |
+| [`RunAuthorizationRequiredError`](#api-runauthorizationrequirederror-class) | Class |
+| [`RunAuthorizationRequiredOutcome`](#api-runauthorizationrequiredoutcome-interface) | Interface |
+| [`RunCompletedOutcome`](#api-runcompletedoutcome-interface) | Interface |
 | [`RunControls`](#api-runcontrols-interface) | Interface |
 | [`RunOptions`](#api-runoptions-interface) | Interface |
+| [`RunOutcome`](#api-runoutcome-typealias) | Type alias |
 | [`RunResult`](#api-runresult-interface) | Interface |
 | [`RunSteerAcknowledgement`](#api-runsteeracknowledgement-interface) | Interface |
 | [`RunSteerCancellationAcknowledgement`](#api-runsteercancellationacknowledgement-interface) | Interface |
@@ -573,6 +583,35 @@ Parameters:
 
 - `message` (`string`)
 - `options` (`Omit<MecatlErrorOptions, "code">`)
+
+<Heading as="h3" id="api-runauthorizationrequirederror-class"><code>RunAuthorizationRequiredError</code></Heading>
+
+`Run.result()` consumed a valid authorization handoff instead of a completed result. Read `outcome` to create `Session.mcpAuthorization()` with the exact authorization ID.
+
+```ts
+export declare class RunAuthorizationRequiredError extends InvalidStateError
+```
+
+Callable members: [`constructor`](#api-runauthorizationrequirederror-constructor-constructor)
+
+<Heading as="h4" id="api-runauthorizationrequirederror-constructor-constructor"><code>RunAuthorizationRequiredError.constructor</code></Heading>
+
+Constructs a new instance of the `RunAuthorizationRequiredError` class
+
+```ts
+constructor(outcome: RunAuthorizationRequiredOutcome, options: Omit<MecatlErrorOptions, "code">);
+```
+
+Parameters:
+
+- `outcome` (`RunAuthorizationRequiredOutcome`)
+- `options` (`Omit<MecatlErrorOptions, "code">`)
+
+<Heading as="h4" id="api-runauthorizationrequirederror-outcome-property"><code>RunAuthorizationRequiredError.outcome</code></Heading>
+
+```ts
+readonly outcome: RunAuthorizationRequiredOutcome;
+```
 
 <Heading as="h3" id="api-servererror-class"><code>ServerError</code></Heading>
 
@@ -2504,6 +2543,184 @@ readonly projectMemory?: DreamTargetCapability;
 readonly userModel?: DreamTargetCapability;
 ```
 
+<Heading as="h3" id="api-mcpauthorization-interface"><code>McpAuthorization</code></Heading>
+
+A reusable session-bound correlation handle for one server-owned authorization. Construction stores exact correlation only. It performs no I/O and makes no state or authority claim. The handle does not persist credentials or lifecycle truth. Every presentation lookup and control request receives automatic session affinity.
+
+```ts
+export interface McpAuthorization
+```
+
+Callable members: [`cancel()`](#api-mcpauthorization-cancel-methodsignature), [`presentation()`](#api-mcpauthorization-presentation-methodsignature), [`recheck()`](#api-mcpauthorization-recheck-methodsignature)
+
+<Heading as="h4" id="api-mcpauthorization-authorizationid-propertysignature"><code>McpAuthorization.authorizationId</code></Heading>
+
+```ts
+readonly authorizationId: string;
+```
+
+<Heading as="h4" id="api-mcpauthorization-cancel-methodsignature"><code>McpAuthorization.cancel</code></Heading>
+
+Creates one lazy authorization cancellation flow.
+
+```ts
+cancel(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
+```
+
+Parameters:
+
+- `options` (`McpAuthorizationFlowOptions`, optional): Permission handling for a possible continuation.
+- `requestOptions` (`RequestOptions`, optional): Options used only when this flow starts.
+
+Returns: `McpAuthorizationFlow`: A distinct, transport-lazy, single-consumption flow.
+
+<Heading as="h4" id="api-mcpauthorization-presentation-methodsignature"><code>McpAuthorization.presentation</code></Heading>
+
+Reads the live presentation URL for this authorization. The application owns display and browser policy. The SDK validates and returns the HTTP(S) string without opening, copying, caching, rendering, or persisting it.
+
+```ts
+presentation(requestOptions?: RequestOptions): Promise<string>;
+```
+
+Parameters:
+
+- `requestOptions` (`RequestOptions`, optional): Request headers, callbacks, cancellation signal, and deadline.
+
+Returns: `Promise<string>`: The server's current absolute HTTP(S) presentation URL.
+
+Throws: `ProtocolError` when the response has no valid absolute HTTP(S) URL.
+
+<Heading as="h4" id="api-mcpauthorization-recheck-methodsignature"><code>McpAuthorization.recheck</code></Heading>
+
+Creates one lazy authorization recheck flow.
+
+```ts
+recheck(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
+```
+
+Parameters:
+
+- `options` (`McpAuthorizationFlowOptions`, optional): Permission handling for a possible continuation.
+- `requestOptions` (`RequestOptions`, optional): Options used only when this flow starts.
+
+Returns: `McpAuthorizationFlow`: A distinct, transport-lazy, single-consumption flow.
+
+<Heading as="h4" id="api-mcpauthorization-sessionid-propertysignature"><code>McpAuthorization.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-mcpauthorizationflow-interface"><code>McpAuthorizationFlow</code></Heading>
+
+One lazy, single-consumption authorization control and optional continuation. Calling `recheck()` or `cancel()` creates this flow without I/O. The first iterator `next()` or `result()` performs the one control request with exact session affinity. Iteration and `result()` are mutually exclusive. Request cancellation releases SDK-owned resources but does not determine whether the server committed the control. The SDK does not poll, retry, reconnect, or scan durable activity automatically.
+
+```ts
+export interface McpAuthorizationFlow extends AsyncIterable<Event>
+```
+
+Callable members: [`cancelContinuation()`](#api-mcpauthorizationflow-cancelcontinuation-methodsignature), [`resolveAsk()`](#api-mcpauthorizationflow-resolveask-methodsignature), [`result()`](#api-mcpauthorizationflow-result-methodsignature)
+
+<Heading as="h4" id="api-mcpauthorizationflow-authorizationid-propertysignature"><code>McpAuthorizationFlow.authorizationId</code></Heading>
+
+```ts
+readonly authorizationId: string;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflow-cancelcontinuation-methodsignature"><code>McpAuthorizationFlow.cancelContinuation</code></Heading>
+
+Requests cancellation of the exact continuation run already observed by this flow.
+
+```ts
+cancelContinuation(requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `requestOptions` (`RequestOptions`, optional): Options used only for this cancellation mutation.
+
+Returns: `Promise<void>`: A promise that resolves after the server accepts the request.
+
+Throws: `InvalidStateError` before a continuation run is observed.
+
+Throws: `UnsupportedFeatureError` when the server lacks `prompt_free_controls`.
+
+<Heading as="h4" id="api-mcpauthorizationflow-continuationrunid-propertysignature"><code>McpAuthorizationFlow.continuationRunId</code></Heading>
+
+```ts
+readonly continuationRunId: string | undefined;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflow-operation-propertysignature"><code>McpAuthorizationFlow.operation</code></Heading>
+
+```ts
+readonly operation: McpAuthorizationOperation;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflow-resolveask-methodsignature"><code>McpAuthorizationFlow.resolveAsk</code></Heading>
+
+Resolves one observed ordinary permission ask on the exact continuation run.
+
+```ts
+resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): ID of a pending ask already observed on this flow.
+- `verdict` (`PermissionVerdict`): Application-owned permission decision to send unchanged.
+- `requestOptions` (`RequestOptions`, optional): Options used only for this permission mutation.
+
+Returns: `Promise<void>`: A promise that resolves after the server accepts the decision.
+
+Throws: `InvalidStateError` when the ask is unknown, no longer pending, or plan-originated.
+
+Throws: `UnsupportedFeatureError` when the server lacks `prompt_free_controls`.
+
+<Heading as="h4" id="api-mcpauthorizationflow-result-methodsignature"><code>McpAuthorizationFlow.result</code></Heading>
+
+Starts and drains this flow as its single consumption mode.
+
+```ts
+result(): Promise<McpAuthorizationResult>;
+```
+
+Returns: `Promise<McpAuthorizationResult>`: A pending, settled, completed, or chained-authorization result.
+
+Throws: `InvalidStateError` when the flow is already being consumed.
+
+Throws: `ProtocolError` when the server stream violates lifecycle correlation or grammar.
+
+<Heading as="h4" id="api-mcpauthorizationflow-sessionid-propertysignature"><code>McpAuthorizationFlow.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-mcpauthorizationflowoptions-interface"><code>McpAuthorizationFlowOptions</code></Heading>
+
+Application-owned permission behavior for one authorization continuation. These options never choose an authorization status or browser policy. Automatic permission replies use only `permissionRequestOptions`, independently of the flow request options.
+
+```ts
+export interface McpAuthorizationFlowOptions
+```
+
+<Heading as="h4" id="api-mcpauthorizationflowoptions-onpermissionask-propertysignature"><code>McpAuthorizationFlowOptions.onPermissionAsk</code></Heading>
+
+Automatically answers only ordinary permission asks observed on the continuation.
+
+```ts
+onPermissionAsk?: PermissionAskResponder;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflowoptions-permissionrequestoptions-propertysignature"><code>McpAuthorizationFlowOptions.permissionRequestOptions</code></Heading>
+
+Request options used only for automatic permission replies.
+
+```ts
+permissionRequestOptions?: RequestOptions;
+```
+
 <Heading as="h3" id="api-mcpconnectorinventory-interface"><code>McpConnectorInventory</code></Heading>
 
 A current, nonhistorical snapshot of broker connector publication.
@@ -3214,7 +3431,7 @@ One accepted server run and its single-consumption event stream.
 export interface Run extends AsyncIterable<Event>
 ```
 
-Callable members: [`approve()`](#api-run-approve-methodsignature), [`cancel()`](#api-run-cancel-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
+Callable members: [`approve()`](#api-run-approve-methodsignature), [`cancel()`](#api-run-cancel-methodsignature), [`outcome()`](#api-run-outcome-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
 
 <Heading as="h4" id="api-run-approve-methodsignature"><code>Run.approve</code></Heading>
 
@@ -3249,6 +3466,18 @@ Returns: `Promise<void>`: A promise that resolves after the cancellation request
 readonly id: string;
 ```
 
+<Heading as="h4" id="api-run-outcome-methodsignature"><code>Run.outcome</code></Heading>
+
+Drains all remaining events and returns either completion or an authorization handoff.
+
+```ts
+outcome(): Promise<RunOutcome>;
+```
+
+Returns: `Promise<RunOutcome>`: The normal terminal outcome for this run.
+
+Throws: `InvalidStateError` when the run is already being consumed.
+
 <Heading as="h4" id="api-run-resolveask-methodsignature"><code>Run.resolveAsk</code></Heading>
 
 Resolves one pending ask on this run with the server's string verdict vocabulary.
@@ -3270,7 +3499,7 @@ Throws: `InvalidStateError` when used for a plan-approval ask.
 
 <Heading as="h4" id="api-run-result-methodsignature"><code>Run.result</code></Heading>
 
-Drains all remaining events and returns the typed terminal outcome.
+Drains all remaining events and returns the completed terminal result.
 
 ```ts
 result(): Promise<RunResult>;
@@ -3279,6 +3508,8 @@ result(): Promise<RunResult>;
 Returns: `Promise<RunResult>`: The terminal result for this run.
 
 Throws: `InvalidStateError` when the run is already being consumed.
+
+Throws: `RunAuthorizationRequiredError` when the run parks on external authorization.
 
 <Heading as="h4" id="api-run-sessionid-propertysignature"><code>Run.sessionId</code></Heading>
 
@@ -3299,6 +3530,58 @@ Parameters:
 - `text` (`string`): Instruction to apply to the active run.
 
 Returns: `Promise<void>`: A promise that resolves after the steering request is sent.
+
+<Heading as="h3" id="api-runauthorizationrequiredoutcome-interface"><code>RunAuthorizationRequiredOutcome</code></Heading>
+
+A run that handed off one pending external authorization. This detached value carries correlation only. The server retains lifecycle ownership.
+
+```ts
+export interface RunAuthorizationRequiredOutcome
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-authorization-propertysignature"><code>RunAuthorizationRequiredOutcome.authorization</code></Heading>
+
+```ts
+readonly authorization: EventOf<"authorization.required">;
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-outcome-propertysignature"><code>RunAuthorizationRequiredOutcome.outcome</code></Heading>
+
+```ts
+readonly outcome: "authorization_required";
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-runid-propertysignature"><code>RunAuthorizationRequiredOutcome.runId</code></Heading>
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-sessionid-propertysignature"><code>RunAuthorizationRequiredOutcome.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-runcompletedoutcome-interface"><code>RunCompletedOutcome</code></Heading>
+
+A normally completed run outcome returned by `Run.outcome()`.
+
+```ts
+export interface RunCompletedOutcome
+```
+
+<Heading as="h4" id="api-runcompletedoutcome-outcome-propertysignature"><code>RunCompletedOutcome.outcome</code></Heading>
+
+```ts
+readonly outcome: "completed";
+```
+
+<Heading as="h4" id="api-runcompletedoutcome-result-propertysignature"><code>RunCompletedOutcome.result</code></Heading>
+
+```ts
+readonly result: RunResult;
+```
 
 <Heading as="h3" id="api-runcontrols-interface"><code>RunControls</code></Heading>
 
@@ -4060,7 +4343,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -4220,6 +4503,20 @@ Parameters:
 - `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<McpConnectorInventory>`: A detached SDK-owned connector inventory projection.
+
+<Heading as="h4" id="api-session-mcpauthorization-methodsignature"><code>Session.mcpAuthorization</code></Heading>
+
+Binds one external authorization ID to this session without performing I/O.
+
+```ts
+mcpAuthorization(authorizationId: string): McpAuthorization;
+```
+
+Parameters:
+
+- `authorizationId` (`string`): Exact non-empty ID from an authorization event.
+
+Returns: `McpAuthorization`: A reusable correlation handle that makes no authorization-state assertion.
 
 <Heading as="h4" id="api-session-rename-methodsignature"><code>Session.rename</code></Heading>
 
@@ -6471,6 +6768,50 @@ A wire event kind currently understood by this SDK.
 export type KnownEventKind = (typeof MECATL_EVENT_KINDS)[number];
 ```
 
+<Heading as="h3" id="api-mcpauthorizationoperation-typealias"><code>McpAuthorizationOperation</code></Heading>
+
+The one-shot server transition requested by an authorization flow.
+
+```ts
+export type McpAuthorizationOperation = "recheck" | "cancel";
+```
+
+<Heading as="h3" id="api-mcpauthorizationresult-typealias"><code>McpAuthorizationResult</code></Heading>
+
+The authoritative result of one authorization recheck or cancellation. `pending` and `settled` have no continuation. `completed` carries one ordinary run result. `authorization_required` hands off a different authorization parked by the continuation.
+
+```ts
+export type McpAuthorizationResult = {
+    readonly outcome: "pending";
+    readonly status: "pending";
+    readonly authorization: EventOf<"authorization.required">;
+} | {
+    readonly outcome: "settled";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+} | {
+    readonly outcome: "completed";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+    readonly continuationRunId: string;
+    readonly continuation: RunResult;
+} | {
+    readonly outcome: "authorization_required";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+    readonly continuationRunId: string;
+    readonly nextAuthorization: EventOf<"authorization.required">;
+};
+```
+
+<Heading as="h3" id="api-mcpauthorizationstatus-typealias"><code>McpAuthorizationStatus</code></Heading>
+
+The closed authorization status vocabulary interpreted by the lifecycle helper. The server remains authoritative for every status. An unknown value is a protocol error in this lifecycle even though the general event union keeps raw status strings open.
+
+```ts
+export type McpAuthorizationStatus = "pending" | "granted" | "denied" | "cancelled" | "expired" | "interrupted" | "failed" | "closed";
+```
+
 <Heading as="h3" id="api-mcpconnectoravailability-typealias"><code>McpConnectorAvailability</code></Heading>
 
 One broker-snapshot availability value.
@@ -6573,6 +6914,14 @@ Retry classification fields carried by model-retry and result payloads.
 
 ```ts
 export type RetryDisposition = 0 | 1 | 2 | 3;
+```
+
+<Heading as="h3" id="api-runoutcome-typealias"><code>RunOutcome</code></Heading>
+
+The closed set of completion and authorization-park outcomes from `Run.outcome()`.
+
+```ts
+export type RunOutcome = RunCompletedOutcome | RunAuthorizationRequiredOutcome;
 ```
 
 <Heading as="h3" id="api-sdkcursor-typealias"><code>SdkCursor</code></Heading>

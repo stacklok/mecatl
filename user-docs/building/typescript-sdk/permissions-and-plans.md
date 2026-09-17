@@ -61,6 +61,102 @@ cancellation, or deadline after dispatch can reject the promise after the
 server accepts the verdict. Reconcile that ambiguous case from the session's
 durable activity before retrying.
 
+## Continue after MCP authorization
+
+Create a session-bound authorization handle from the handoff returned by
+`Run.outcome()`. The handle stores correlation only and performs no request or
+state check during construction:
+
+```ts
+const outcome = await run.outcome();
+if (outcome.outcome !== 'authorization_required') {
+  console.log(outcome.result.text);
+} else {
+  const authorization = session.mcpAuthorization(
+    outcome.authorization.payload.authorizationId
+  );
+  const url = await authorization.presentation({ timeoutMs: 10_000 });
+  renderAuthorizationLink(url);
+}
+```
+
+`presentation()` returns the server's current absolute HTTP(S) URL. Treat it as
+live sensitive data. Your application chooses how to display it and whether to
+open a browser. The SDK does not open, copy, cache, render, or persist the URL.
+The server also keeps presentation URLs out of stored events and snapshots.
+
+After the person completes the external flow, create one explicit recheck:
+
+```ts
+const flow = authorization.recheck(
+  {
+    onPermissionAsk: (ask) =>
+      ask.tool === 'Read' ? 'allow_once' : 'deny',
+    permissionRequestOptions: { timeoutMs: 10_000 },
+  },
+  { signal: recheckSignal, timeoutMs: 30_000 }
+);
+const result = await flow.result();
+```
+
+`recheck()` and `cancel()` each return a new lazy,
+single-consumption `McpAuthorizationFlow`. The operation starts when the first
+iterator `next()` or `result()` consumes the flow, not when your application
+creates the flow or requests its iterator. Request headers, callbacks, signals,
+and deadlines apply only to that flow, and the SDK adds exact session affinity.
+
+The result discriminant defines the next application action:
+
+|`outcome`|Meaning|
+|-|-|
+|`pending`|The same authorization remains pending. Its status is `pending`.|
+|`settled`|The authorization ended without a continuation. Its status is `granted`, `denied`, `cancelled`, `expired`, `interrupted`, `failed`, or `closed`.|
+|`completed`|A continuation finished with one ordinary `RunResult`.|
+|`authorization_required`|The continuation parked on a different authorization. Create a new handle from `nextAuthorization` and present its live URL.|
+
+Iteration yields the same decoded events in wire order. Choose iteration or
+`result()` once for each flow. An unknown status, mismatched session or
+authorization correlation, changed continuation run ID, or malformed terminal
+sequence throws `ProtocolError`.
+
+The application owns permission policy. `onPermissionAsk` receives only an
+ordinary permission ask observed on the continuation. Its verdict uses
+`permissionRequestOptions`, while manual `resolveAsk()` uses only the options
+passed to that method. Both controls address the exact observed continuation
+run. A plan-originated ask remains in the event stream and requires the
+separate plan workflow or explicit continuation cancellation. Servers need the
+`prompt_free_controls` feature for permission replies and
+`cancelContinuation()`; status-only flows do not require that feature.
+
+### Bound polling and recovery
+
+Choose the recheck cadence and its stopping condition in your application.
+The SDK performs no polling, mutation retry, transparent reconnect, durable
+watch, browser action, or authorization-state persistence. Cancelling a request
+releases the SDK's stream and controls, but the server remains authoritative
+for any transition committed before cancellation reached it.
+
+A response lost before your application observes the status or
+`continuationRunId` can be unrecoverable through this lifecycle. A later
+`recheck()` is a new one-shot mutation that succeeds only while the same
+authorization remains pending. If the earlier control cleared that pending
+state, the server returns its not-found error instead of replaying the result.
+Bound any deliberate retry and let that refusal surface.
+
+After observing `continuationRunId`, you can use `session.attach(runId)` or
+`session.activity()` where the deployment retains the needed activity. The
+lifecycle does not search that activity or guarantee retention.
+
+Disconnect effects depend on the continuation phase and transport. gRPC
+detaches and drains ordinary continuation work, but it cancels a continuation
+stranded on an ordinary permission ask. HTTP requests cancellation for a
+still-active continuation and drains it. After a continuation commits a later
+`authorization.required` park, either transport preserves that new pending
+authorization. Terminal races remain server-authoritative.
+
+For a complete package-export-only workflow, see
+[`mcp-authorization.ts`](https://github.com/stacklok/mecatl/blob/main/sdk/typescript/examples/mcp-authorization.ts).
+
 ## Resolve a plan during a live run
 
 Plan approval is separate from ordinary permission approval. Pass
@@ -108,6 +204,8 @@ needs the durable timeline across both run IDs.
 
 ## Next steps
 
+- [Work with sessions and runs](./sessions-and-runs.md) to consume completed or
+  authorization-parked runs.
 - [Resume durable activity](./durable-activity.md) to observe approved plans
   across both runs.
 - [Permissions and posture](/features/permissions-and-posture.md) for the

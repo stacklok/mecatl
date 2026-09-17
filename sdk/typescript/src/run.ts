@@ -56,13 +56,18 @@ export interface RunResult {
   readonly rawEvent: EventOf<"result">;
 }
 
-/** A normally completed run outcome. @public */
+/** A normally completed run outcome returned by `Run.outcome()`. @public */
 export interface RunCompletedOutcome {
   readonly outcome: "completed";
   readonly result: RunResult;
 }
 
-/** A run that handed off one pending external authorization. @public */
+/**
+ * A run that handed off one pending external authorization.
+ *
+ * This detached value carries correlation only. The server retains lifecycle ownership.
+ * @public
+ */
 export interface RunAuthorizationRequiredOutcome {
   readonly outcome: "authorization_required";
   readonly sessionId: string;
@@ -70,10 +75,15 @@ export interface RunAuthorizationRequiredOutcome {
   readonly authorization: EventOf<"authorization.required">;
 }
 
-/** The closed set of normal outcomes from Run.outcome(). @public */
+/** The closed set of completion and authorization-park outcomes from `Run.outcome()`. @public */
 export type RunOutcome = RunCompletedOutcome | RunAuthorizationRequiredOutcome;
 
-/** Run.result() consumed a valid authorization handoff instead of a completed result. @public */
+/**
+ * `Run.result()` consumed a valid authorization handoff instead of a completed result.
+ *
+ * Read `outcome` to create `Session.mcpAuthorization()` with the exact authorization ID.
+ * @public
+ */
 export class RunAuthorizationRequiredError extends InvalidStateError {
   readonly outcome: RunAuthorizationRequiredOutcome;
 
@@ -127,10 +137,11 @@ export interface Run extends AsyncIterable<Event> {
    */
   outcome(): Promise<RunOutcome>;
   /**
-   * Drains all remaining events and returns the typed terminal outcome.
+   * Drains all remaining events and returns the completed terminal result.
    *
    * @returns The terminal result for this run.
    * @throws `InvalidStateError` when the run is already being consumed.
+   * @throws `RunAuthorizationRequiredError` when the run parks on external authorization.
    */
   result(): Promise<RunResult>;
 }

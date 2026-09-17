@@ -134,7 +134,8 @@ while adding its session-affinity hint when the session ID can be represented.
 
 ## Choose one run-consumption mode
 
-Call `result()` when the application needs only the terminal outcome:
+Call `result()` when the application expects the run to complete with a terminal
+result:
 
 ```ts
 const run = await session.run('Summarize this repository');
@@ -156,10 +157,41 @@ for await (const event of run) {
 }
 ```
 
-A run can be iterated or drained with `result()`, once. Calling both is an
-invalid local lifecycle operation. Server-declared terminal outcomes such as
-cancellation, limits, or budget exhaustion resolve as `RunResult` values.
-Transport and protocol failures throw typed SDK errors.
+A run can be iterated, drained with `result()`, or drained with `outcome()`,
+once. Calling more than one of these methods is an invalid local lifecycle
+operation. Server-declared terminal outcomes such as cancellation, limits, or
+budget exhaustion resolve as `RunResult` values. Transport and protocol
+failures throw typed SDK errors.
+
+## Handle a run parked for MCP authorization
+
+Use `outcome()` when an MCP server can require external authorization. It
+returns either the completed result or a detached authorization handoff:
+
+```ts
+const run = await session.run('Use the configured MCP server');
+const outcome = await run.outcome();
+
+if (outcome.outcome === 'completed') {
+  console.log(outcome.result.text);
+} else {
+  const authorization = session.mcpAuthorization(
+    outcome.authorization.payload.authorizationId
+  );
+  console.log(await authorization.presentation());
+}
+```
+
+An authorization park is a normal run outcome. Event iteration yields the
+final `authorization.required` event and then ends. The completed-only
+`result()` method throws `RunAuthorizationRequiredError`; its `outcome`
+property carries the same handoff. All three paths release the SDK's live run
+ownership without cancelling or resolving the pending authorization.
+
+The handoff contains the exact session, run, call, and authorization
+correlation. It does not contain the presentation URL or transfer lifecycle
+authority to the SDK. Continue the workflow as described in
+[Handle permissions and plans](./permissions-and-plans.md#continue-after-mcp-authorization).
 
 ## Send controls to a live run
 
