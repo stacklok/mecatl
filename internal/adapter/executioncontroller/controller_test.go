@@ -84,6 +84,40 @@ func TestReconcileCreatesTokenlessNonRootPodAndRetainedPVC(t *testing.T) {
 		t.Fatal("tmp volume is not profile-bounded")
 	}
 }
+func TestTerminatingPodIsUnavailableDuringReconcile(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset()
+	r := NewReconciler(d, k, "ns", testProfiles())
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := k.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := metav1.Now()
+	pod.DeletionTimestamp = &now
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	if _, err := k.CoreV1().Pods("ns").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conditionTrue(got, "Ready") {
+		t.Fatalf("terminating pod remained ready: %v", got.Object["status"])
+	}
+}
+
 func TestRepeatedReconcileDoesNotRewriteUnchangedStatus(t *testing.T) {
 	ctx := context.Background()
 	env := testEnvironment()

@@ -24,11 +24,16 @@ func (r *Reconciler) reconcileLifecycle(ctx context.Context, env *unstructured.U
 	if operationID == "" || pvcUID == "" {
 		return r.setFenceUnknown(ctx, env, "lifecycle operation identity is malformed")
 	}
+	proofMatches := textNested(env.Object, "status", "terminationProof", operationIDField) == operationID && textNested(env.Object, "status", "terminationProof", "podUID") == podUID && textNested(env.Object, "status", "terminationProof", "pvcUID") == pvcUID && intNested(env.Object, "status", "terminationProof", "epoch") == intNested(op, "expectedEpoch")
+	podIdentityMatches := textNested(env.Object, "status", "pod", "uid") == podUID
+	if phase == "CreatingReplacement" {
+		podIdentityMatches = textNested(env.Object, "status", "pod", "uid") == "" && proofMatches
+	}
 	if kind == "DeleteRetiredEnvironment" {
 		return r.reconcileRetainedDelete(ctx, env, op, pvcName, pvcUID)
 	}
 	epoch := intNested(op, "expectedEpoch")
-	if podUID == "" || epoch <= 0 || textNested(env.Object, "status", "pod", "uid") != podUID || textNested(env.Object, "status", "pvc", "uid") != pvcUID || intNested(env.Object, "status", "epoch") != epoch {
+	if podUID == "" || epoch <= 0 || !podIdentityMatches || textNested(env.Object, "status", "pvc", "uid") != pvcUID || intNested(env.Object, "status", "epoch") != epoch {
 		return r.setFenceUnknown(ctx, env, "lifecycle operation no longer matches the exact executor and workspace")
 	}
 	pvc, err := r.kube.CoreV1().PersistentVolumeClaims(r.namespace).Get(ctx, pvcName, metav1.GetOptions{})
@@ -38,7 +43,6 @@ func (r *Reconciler) reconcileLifecycle(ctx context.Context, env *unstructured.U
 		}
 		return r.setFenceUnknown(ctx, env, "authoritative workspace identity is unavailable")
 	}
-	proofMatches := textNested(env.Object, "status", "terminationProof", operationIDField) == operationID && textNested(env.Object, "status", "terminationProof", "podUID") == podUID && textNested(env.Object, "status", "terminationProof", "pvcUID") == pvcUID && intNested(env.Object, "status", "terminationProof", "epoch") == epoch
 	switch phase {
 	case "Quiescing":
 		pod, getErr := r.kube.CoreV1().Pods(r.namespace).Get(ctx, podName, metav1.GetOptions{})
@@ -188,6 +192,7 @@ func (r *Reconciler) finishReplacement(ctx context.Context, env *unstructured.Un
 		}
 		_ = unstructured.SetNestedField(o.Object, epoch+1, "status", "epoch")
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": pod.Name, "uid": string(pod.UID)}, "status", "pod")
+		_ = unstructured.SetNestedMap(o.Object, map[string]any{operationIDField: operationID, "previousPodUID": text(op, "expectedPodUID"), "replacementPodUID": string(pod.UID), "pvcUID": text(op, "expectedPVCUID"), "previousEpoch": intNested(op, "expectedEpoch"), "replacementEpoch": epoch + 1}, "status", "lastReplacement")
 		unstructured.RemoveNestedField(o.Object, "status", "lifecycleOperation")
 		setConditionObject(o, "Ready", true, "ReplacementReady", "replacement executor is ready on the retained workspace")
 		return nil
@@ -195,11 +200,15 @@ func (r *Reconciler) finishReplacement(ctx context.Context, env *unstructured.Un
 }
 
 func (r *Reconciler) reconcileRetainedDelete(ctx context.Context, env *unstructured.Unstructured, op map[string]any, pvcName, pvcUID string) error {
-	if text(op, "phase") != "DeletingPVC" || !conditionTrue(env, "Retired") || !conditionTrue(env, "ExecutorTerminated") {
+	phase := text(op, "phase")
+	if (phase != "DeletingPVC" && phase != "ReleasingSlot") || !conditionTrue(env, "Retired") || !conditionTrue(env, "ExecutorTerminated") {
 		return r.setFenceUnknown(ctx, env, "retained deletion state is invalid")
 	}
 	pvc, err := r.kube.CoreV1().PersistentVolumeClaims(r.namespace).Get(ctx, pvcName, metav1.GetOptions{})
 	if err == nil {
+		if phase != "DeletingPVC" {
+			return r.setFenceUnknown(ctx, env, "retained PVC reappeared after deallocation began")
+		}
 		if string(pvc.UID) != pvcUID {
 			return r.setFenceUnknown(ctx, env, "retained PVC UID changed")
 		}
@@ -212,9 +221,15 @@ func (r *Reconciler) reconcileRetainedDelete(ctx context.Context, env *unstructu
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
+	if phase == "DeletingPVC" {
+		return r.setLifecyclePhase(ctx, env, text(op, "id"), "ReleasingSlot")
+	}
 	res := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace)
 	current, err := res.Get(ctx, env.GetName(), metav1.GetOptions{})
 	if err != nil {
+		return err
+	}
+	if err := releaseProfileSlot(ctx, r.kube, r.namespace, textNested(current.Object, "spec", "profile"), current.GetName()); err != nil {
 		return err
 	}
 	current.SetFinalizers(withoutString(current.GetFinalizers(), environmentFinalizer))
@@ -226,7 +241,7 @@ func (r *Reconciler) reconcileRetainedDelete(ctx context.Context, env *unstructu
 	if err := res.Delete(ctx, updated.GetName(), metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
-	return releaseProfileSlot(ctx, r.kube, r.namespace, textNested(updated.Object, "spec", "profile"), updated.GetName())
+	return nil
 }
 
 func withoutString(values []string, remove string) []string {

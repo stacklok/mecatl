@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -190,6 +191,29 @@ func (s *Store) ReserveSuccessor(ctx context.Context, ref executionenv.Environme
 		refs = append(refs, referenceRecord{BindingID: destination, State: executionenv.ReferencePendingCreate, OperationID: operation, SourceBindingID: source, CreatedAt: time.Now().UTC()})
 		return setReferenceRecords(o, refs)
 	})
+}
+
+func (s *Store) FindReferenceIntent(ctx context.Context, ref executionenv.EnvironmentRef, client, owner, binding string) (executionenv.ReferenceIntent, error) {
+	o, err := s.resources.Get(ctx, ref.ID, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return executionenv.ReferenceIntent{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "reference intent not found"}
+	}
+	if err != nil {
+		return executionenv.ReferenceIntent{}, err
+	}
+	if textNested(o.Object, "spec", "revision") != ref.Revision || textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
+		return executionenv.ReferenceIntent{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "reference intent not found"}
+	}
+	refs, err := referenceRecords(o)
+	if err != nil {
+		return executionenv.ReferenceIntent{}, err
+	}
+	for _, r := range refs {
+		if r.BindingID == binding && r.State != executionenv.ReferencePublished {
+			return executionenv.ReferenceIntent{Environment: ref, BindingID: r.BindingID, State: r.State, OperationID: r.OperationID, SourceBindingID: r.SourceBindingID, CreatedAt: r.CreatedAt}, nil
+		}
+	}
+	return executionenv.ReferenceIntent{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "reference intent not found"}
 }
 
 func (s *Store) ListReferenceIntentsForClient(ctx context.Context, client string, limit int) ([]executionenv.ReferenceIntent, error) {

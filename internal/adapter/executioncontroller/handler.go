@@ -91,6 +91,7 @@ type lifecycleBackend interface {
 	ConfirmReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
 	CancelReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
 	ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error)
+	FindReferenceIntent(context.Context, executionenv.EnvironmentRef, string, string, string) (executionenv.ReferenceIntent, error)
 }
 
 type ownerIntentBackend interface {
@@ -407,7 +408,20 @@ func (h *Handler) ListReferenceIntents(ctx context.Context, q *executionv1.ListR
 		return nil, lifecycleErr
 	}
 	var intents []executionenv.ReferenceIntent
-	if q.Owner != nil {
+	exactRef := refFromProto(q.GetEnvironment())
+	exactLookup := q.GetEnvironment() != nil || q.GetBindingId() != ""
+	if exactLookup {
+		owner, ok := ownerFromProto(q.GetOwner())
+		if !ok || !validRef(exactRef) || !validBinding(q.GetBindingId()) {
+			return nil, wireError(executionenv.CodeInvalidArgument, false)
+		}
+		intent, findErr := lifecycle.FindReferenceIntent(ctx, exactRef, c.id, ownerHash(owner), q.GetBindingId())
+		if findErr != nil {
+			return nil, backendError(findErr)
+		}
+		intent.Owner = owner
+		intents = []executionenv.ReferenceIntent{intent}
+	} else if q.Owner != nil {
 		owner, ok := ownerFromProto(q.Owner)
 		if !ok {
 			return nil, wireError(executionenv.CodeInvalidArgument, false)

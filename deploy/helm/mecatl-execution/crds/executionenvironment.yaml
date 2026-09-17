@@ -72,7 +72,6 @@ spec:
               storageSize: {type: string, minLength: 1}
               resources:
                 type: object
-                additionalProperties: false
                 required: [cpuRequest, memoryRequest, cpuLimit, memoryLimit]
                 properties:
                   cpuRequest: {type: string, minLength: 1}
@@ -93,7 +92,6 @@ spec:
                 maxItems: 32
                 items:
                   type: object
-                  additionalProperties: false
                   required: [operationID, fingerprint, expectedGrantGeneration, grantGeneration]
                   properties:
                     operationID: {type: string, minLength: 1, maxLength: 1024}
@@ -137,7 +135,16 @@ spec:
                   epoch: {type: integer, format: int64, minimum: 1}
                   grantGeneration: {type: integer, format: int64, minimum: 1}
                   expiresAt: {type: string, format: date-time}
-                  lastRenewOperationID: {type: string, maxLength: 1024}
+              renewReceipts:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  required: [operationID, fingerprint, expiresAt]
+                  properties:
+                    operationID: {type: string, minLength: 1, maxLength: 1024}
+                    fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                    expiresAt: {type: string, format: date-time}
               activeOperation:
                 type: object
                 required: [id, operation, startedAt, claimID, runID, epoch, holderID, renewedAt, expiresAt]
@@ -157,7 +164,7 @@ spec:
                 properties:
                   id: {type: string, minLength: 1, maxLength: 1024}
                   type: {type: string, enum: [ReplaceExecutor, RetireEnvironment, DeleteRetiredEnvironment]}
-                  phase: {type: string, enum: [Quiescing, WaitingForTermination, RemovingPodFinalizer, WaitingForPodDeletion, CreatingReplacement, DeletingPVC]}
+                  phase: {type: string, enum: [Quiescing, WaitingForTermination, RemovingPodFinalizer, WaitingForPodDeletion, CreatingReplacement, DeletingPVC, ReleasingSlot]}
                   expectedEpoch: {type: integer, format: int64, minimum: 1}
                   expectedPodUID: {type: string, maxLength: 128}
                   expectedPVCUID: {type: string, minLength: 1, maxLength: 128}
@@ -172,6 +179,16 @@ spec:
                   epoch: {type: integer, format: int64, minimum: 1}
                   podPhase: {type: string, enum: [Succeeded, Failed]}
                   observedAt: {type: string, format: date-time}
+              lastReplacement:
+                type: object
+                required: [operationID, previousPodUID, replacementPodUID, pvcUID, previousEpoch, replacementEpoch]
+                properties:
+                  operationID: {type: string, minLength: 1, maxLength: 1024}
+                  previousPodUID: {type: string, minLength: 1, maxLength: 128}
+                  replacementPodUID: {type: string, minLength: 1, maxLength: 128}
+                  pvcUID: {type: string, minLength: 1, maxLength: 128}
+                  previousEpoch: {type: integer, format: int64, minimum: 1}
+                  replacementEpoch: {type: integer, format: int64, minimum: 2}
               migrationOperation:
                 type: object
                 required: [id, fromSchema, expectedPodUID, expectedPVCUID]

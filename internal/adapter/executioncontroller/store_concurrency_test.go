@@ -22,6 +22,86 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
+func profileSlots(t *testing.T, kube *kubefake.Clientset) []string {
+	t.Helper()
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var slots []string
+	if err := executionenv.DecodeStrict([]byte(cm.Data[profileAllocationKey("go")]), &slots); err != nil {
+		t.Fatal(err)
+	}
+	return slots
+}
+
+func TestDefinitiveEnvironmentCreateFailureReleasesProfileSlot(t *testing.T) {
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	dynamicClient.PrependReactor("create", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: ExecutionEnvironmentGVR.Group, Resource: ExecutionEnvironmentGVR.Resource}, "env", errors.New("policy"))
+	})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
+	if _, err := store.EnsurePending(t.Context(), "client", "owner", "binding", "go", "fp", "op"); err == nil {
+		t.Fatal("definitive create rejection succeeded")
+	}
+	if slots := profileSlots(t, kube); len(slots) != 0 {
+		t.Fatalf("definitive create rejection leaked slots: %v", slots)
+	}
+}
+
+func TestAmbiguousEnvironmentCreateFailureRetainsProfileSlot(t *testing.T) {
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	dynamicClient.PrependReactor("create", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("transport outcome unknown")
+	})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
+	if _, err := store.EnsurePending(t.Context(), "client", "owner", "binding", "go", "fp", "op"); err == nil {
+		t.Fatal("ambiguous create failure succeeded")
+	}
+	if slots := profileSlots(t, kube); len(slots) != 1 {
+		t.Fatalf("ambiguous create outcome did not retain conservative capacity: %v", slots)
+	}
+}
+
+func TestRetainedDeleteWaitsForSlotReleaseBeforeRemovingCRFinalizer(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
+	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "delete", "type": "DeleteRetiredEnvironment", "phase": "DeletingPVC", "expectedPVCUID": "pvc-uid", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}, "status", "lifecycleOperation")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	allocationID := env.GetName()
+	raw := `["` + allocationID + `"]`
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): raw}})
+	var fail atomic.Bool
+	fail.Store(true)
+	kube.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if fail.Load() {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, profileAllocationConfigMap, errors.New("outage"))
+		}
+		return false, nil, nil
+	})
+	r := NewReconciler(dynamicClient, kube, "ns", testProfiles())
+	if err := r.Reconcile(t.Context(), env.GetName()); err != nil {
+		t.Fatalf("failed to persist deallocation phase: %v", err)
+	}
+	if err := r.Reconcile(t.Context(), env.GetName()); err == nil {
+		t.Fatal("slot authority outage did not stop deletion")
+	}
+	got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), env.GetName(), metav1.GetOptions{})
+	if err != nil || !contains(got.GetFinalizers(), environmentFinalizer) {
+		t.Fatalf("CR was not retained for retry: finalizers=%v err=%v", got.GetFinalizers(), err)
+	}
+	fail.Store(false)
+	if err := r.Reconcile(t.Context(), env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	if slots := profileSlots(t, kube); len(slots) != 0 {
+		t.Fatalf("retry did not release slot: %v", slots)
+	}
+}
+
 func TestConcurrentProfileReservationsEnforceHardLimit(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	ledger := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns", ResourceVersion: "1"}, Data: map[string]string{}}

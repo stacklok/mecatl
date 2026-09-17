@@ -7615,6 +7615,29 @@ func (s *Service) acquireExecution(ctx context.Context, st *runState, sess *sess
 	return env, nil
 }
 
+type executionRenewalDeadline interface {
+	RenewalDeadline() time.Time
+}
+
+func executionRenewDelay(handle ExecutionRunHandle, now time.Time) (time.Duration, bool) {
+	deadlineHandle, ok := handle.(executionRenewalDeadline)
+	if !ok {
+		return 20 * time.Second, true
+	}
+	remaining := deadlineHandle.RenewalDeadline().Sub(now)
+	if remaining <= 300*time.Millisecond {
+		return 0, false
+	}
+	delay := remaining / 3
+	if delay > 20*time.Second {
+		delay = 20 * time.Second
+	}
+	if delay < 100*time.Millisecond {
+		delay = 100 * time.Millisecond
+	}
+	return delay, delay < remaining
+}
+
 func (s *Service) startExecutionRenewal(_ session.SessionID, st *runState, run *agent.Run) {
 	st.executionMu.Lock()
 	if st.execution == nil || st.executionClosed {
@@ -7629,14 +7652,30 @@ func (s *Service) startExecutionRenewal(_ session.SessionID, st *runState, run *
 	st.executionMu.Unlock()
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(20 * time.Second)
-		defer ticker.Stop()
 		for {
+			delay, usable := executionRenewDelay(handle, time.Now())
+			if !usable {
+				s.logDiscoveryError(context.Background(), "execution ownership renewal failed", errors.New("execution grant has insufficient time remaining"))
+				run.Cancel()
+				return
+			}
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
 				return
-			case <-ticker.C:
-				renewCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+			case <-timer.C:
+				remaining := 10 * time.Second
+				if deadlineHandle, ok := handle.(executionRenewalDeadline); ok {
+					remaining = time.Until(deadlineHandle.RenewalDeadline()) / 2
+					if remaining <= 0 {
+						run.Cancel()
+						return
+					}
+				}
+				renewCtx, stop := context.WithTimeout(ctx, remaining)
 				err := handle.Renew(renewCtx)
 				stop()
 				if err != nil {

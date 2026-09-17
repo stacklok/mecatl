@@ -3,6 +3,7 @@ package executioncontroller
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
@@ -130,22 +131,71 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 	return out, err
 }
 
+func renewFingerprint(ref executionenv.EnvironmentRef, client, owner string, req executionenv.RunClaimRequest) string {
+	return fingerprint(ref.ID, ref.Revision, client, owner, req.BindingID, req.RunID, req.ClaimID, fmt.Sprint(req.Epoch), fmt.Sprint(req.GrantGeneration), req.TTL.String())
+}
+
+func replayRenewReceipt(o *unstructured.Unstructured, operationID, requestFingerprint string, now time.Time, claim executionenv.RunClaim) (executionenv.RunClaim, bool, error) {
+	receipts, _, err := unstructured.NestedSlice(o.Object, "status", "renewReceipts")
+	if err != nil {
+		return executionenv.RunClaim{}, false, &executionenv.Error{Code: executionenv.CodeConflict, Message: "run renewal receipts are invalid"}
+	}
+	for _, raw := range receipts {
+		receipt, ok := raw.(map[string]any)
+		if !ok || text(receipt, operationIDField) != operationID {
+			continue
+		}
+		if text(receipt, "fingerprint") != requestFingerprint {
+			return executionenv.RunClaim{}, true, &executionenv.Error{Code: executionenv.CodeConflict, Message: "run renewal operation conflicts"}
+		}
+		expires, parseErr := time.Parse(time.RFC3339Nano, text(receipt, "expiresAt"))
+		if parseErr != nil || !now.Before(expires) {
+			return executionenv.RunClaim{}, true, &executionenv.Error{Code: executionenv.CodeConflict, Message: "run renewal receipt is expired"}
+		}
+		claim.ExpiresAt = expires
+		return claim, true, nil
+	}
+	return executionenv.RunClaim{}, false, nil
+}
+
+func appendRenewReceipt(o *unstructured.Unstructured, operationID, requestFingerprint string, expires time.Time) error {
+	receipts, _, err := unstructured.NestedSlice(o.Object, "status", "renewReceipts")
+	if err != nil {
+		return err
+	}
+	receipts = append(receipts, map[string]any{operationIDField: operationID, "fingerprint": requestFingerprint, "expiresAt": expires.Format(time.RFC3339Nano)})
+	if len(receipts) > 32 {
+		receipts = receipts[len(receipts)-32:]
+	}
+	return unstructured.SetNestedSlice(o.Object, receipts, "status", "renewReceipts")
+}
+
 func (s *Store) RenewRun(ctx context.Context, ref executionenv.EnvironmentRef, client, owner string, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
 	ttl, err := boundedRunTTL(req.TTL)
 	if err != nil {
 		return executionenv.RunClaim{}, err
 	}
+	requestFingerprint := renewFingerprint(ref, client, owner, req)
 	var out executionenv.RunClaim
 	err = s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
 		cur, _, expiry, ok := activeRunFrom(o)
-		if !ok || !s.now().Before(expiry) || textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
+		if !ok || textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
+			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim mismatch"}
+		}
+		if replay, found, replayErr := replayRenewReceipt(o, req.OperationID, requestFingerprint, s.now(), cur); found {
+			out = replay
+			return replayErr
+		}
+		if !s.now().Before(expiry) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim mismatch"}
 		}
 		expires := s.now().Add(ttl)
 		m, _, _ := unstructured.NestedMap(o.Object, "status", "activeRun")
 		m["expiresAt"] = expires.Format(time.RFC3339Nano)
-		m["lastRenewOperationID"] = req.OperationID
 		if setErr := unstructured.SetNestedMap(o.Object, m, "status", "activeRun"); setErr != nil {
+			return setErr
+		}
+		if setErr := appendRenewReceipt(o, req.OperationID, requestFingerprint, expires); setErr != nil {
 			return setErr
 		}
 		cur.ExpiresAt = expires

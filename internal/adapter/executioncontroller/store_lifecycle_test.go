@@ -3,6 +3,7 @@ package executioncontroller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -24,6 +25,23 @@ func lifecycleEnvironment(now time.Time) *unstructured.Unstructured {
 			map[string]any{"bindingID": "source", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)},
 		}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 	}}
+}
+
+func TestEnsurePendingOwnedPersistsOwnerAttestation(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	store := NewStore(client, "ns", testProfiles(), nil)
+	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
+	allocation, err := store.EnsurePendingOwned(t.Context(), "client", ownerHash(owner), owner, "binding", "go", "fingerprint", "ensure-operation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), allocation.Environment.ID, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textNested(env.Object, "spec", "ownerIssuer") != owner.Issuer || textNested(env.Object, "spec", "ownerSubject") != owner.Subject {
+		t.Fatalf("owner attestation was not persisted: %v", env.Object["spec"])
+	}
 }
 
 func TestRunClaimIsEnvironmentWideAndExact(t *testing.T) {
@@ -73,6 +91,37 @@ func TestExpiredClaimWithActiveOperationCannotBeReplaced(t *testing.T) {
 	var controlled *executionenv.Error
 	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeFenceUnknown {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestExactReferenceIntentLookupIsNotTruncatedByGlobalLimit(t *testing.T) {
+	now := time.Now().UTC()
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
+	objects := make([]runtime.Object, 0, 67)
+	for i := 0; i < 66; i++ {
+		env := lifecycleEnvironment(now)
+		env.SetName(fmt.Sprintf("env-%02d", i))
+		_ = unstructured.SetNestedField(env.Object, fmt.Sprintf("rev-%02d", i), "spec", "revision")
+		_ = unstructured.SetNestedField(env.Object, ownerHash(owner), "spec", "ownerHash")
+		_ = unstructured.SetNestedField(env.Object, owner.Issuer, "spec", "ownerIssuer")
+		_ = unstructured.SetNestedField(env.Object, owner.Subject, "spec", "ownerSubject")
+		if err := setReferenceRecords(env, []referenceRecord{{BindingID: fmt.Sprintf("binding-%02d", i), State: executionenv.ReferencePendingDelete, OperationID: fmt.Sprintf("delete-%02d", i), CreatedAt: now}}); err != nil {
+			t.Fatal(err)
+		}
+		objects = append(objects, env)
+	}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...)
+	store := NewStore(client, "ns", testProfiles(), nil)
+	target := executionenv.EnvironmentRef{ID: "env-65", Revision: "rev-65"}
+	intent, err := store.FindReferenceIntent(t.Context(), target, "client", ownerHash(owner), "binding-65")
+	if err != nil || intent.OperationID != "delete-65" {
+		t.Fatalf("exact target beyond global list limit: intent=%+v err=%v", intent, err)
+	}
+	if _, err := store.FindReferenceIntent(t.Context(), target, "other-client", ownerHash(owner), "binding-65"); err == nil {
+		t.Fatal("other client enumerated exact intent")
+	}
+	if _, err := store.FindReferenceIntent(t.Context(), target, "client", ownerHash(executionenv.Owner{Issuer: "issuer", Subject: "mallory"}), "binding-65"); err == nil {
+		t.Fatal("other owner enumerated exact intent")
 	}
 }
 

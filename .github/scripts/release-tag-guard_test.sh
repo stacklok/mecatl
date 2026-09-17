@@ -69,4 +69,15 @@ run_fail v2.0.0 workflow_dispatch refs/heads/main "$main"
 run_fail v2.0.0 push refs/tags/v2.0.0 "$off_main"
 run_fail v1.2.3 schedule refs/heads/main "$main"
 
+workflow="$script_dir/../workflows/release.yml"
+# The privileged graph consumes only the commit emitted by a guard implementation
+# checked out from protected main; event-selected refs remain untrusted data.
+grep -F "if: github.event_name == 'push' || github.ref == 'refs/heads/main'" "$workflow" >/dev/null
+grep -F 'ref: refs/heads/main' "$workflow" >/dev/null
+if grep -F 'org.opencontainers.image.revision=${{ github.sha }}' "$workflow" >/dev/null; then
+  echo "release image revision still uses the event workflow SHA" >&2
+  exit 1
+fi
+[ "$(grep -Fc 'org.opencontainers.image.revision=${{ needs.guard.outputs.commit }}' "$workflow")" -eq 5 ]
+
 printf 'release tag guard tests passed\n'

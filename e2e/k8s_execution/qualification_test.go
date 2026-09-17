@@ -36,6 +36,9 @@ func TestKindExecutionQualification(t *testing.T) {
 	pki := filepath.Join(state, "pki")
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
+	applyMockScript(t, ctx, kubeconfig, "mock-script.json")
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
 
 	baseline := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev")
 	providerForward := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
@@ -59,7 +62,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-	if err := providerClient.CommitReference(ctx, executionenv.ReferenceRequest{Environment: first.Environment, Owner: owner, BindingID: binding, OperationID: "commit-" + operationID}); err != nil {
+	if err := providerClient.CommitReference(ctx, executionenv.ReferenceRequest{Environment: first.Environment, Owner: owner, BindingID: binding, OperationID: operationID}); err != nil {
 		t.Fatalf("commit reference: %v", err)
 	}
 	if first.Environment.ID == "" || first.Environment.Revision == "" {
@@ -495,7 +498,11 @@ func applyReattachScript(t *testing.T, ctx context.Context, kubeconfig, state st
 	t.Helper()
 	root := filepath.Clean(filepath.Join(state, "..", "..", ".."))
 	_ = root
-	source := filepath.Join(repoRoot(t), "deploy", "mecatl-execution-kind", "mock-script-reattach.json")
+	applyMockScript(t, ctx, kubeconfig, "mock-script-reattach.json")
+}
+func applyMockScript(t *testing.T, ctx context.Context, kubeconfig, filename string) {
+	t.Helper()
+	source := filepath.Join(repoRoot(t), "deploy", "mecatl-execution-kind", filename)
 	cmd := command(ctx, kubeconfig, "create", "configmap", "execution-mock", "-n", namespace, "--from-file=mock-script.json="+source, "--dry-run=client", "-o", "yaml")
 	rendered, err := cmd.Output()
 	if err != nil {

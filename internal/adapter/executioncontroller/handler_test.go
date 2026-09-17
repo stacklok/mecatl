@@ -98,6 +98,9 @@ func (*fakeBackend) CancelReferenceDelete(context.Context, executionenv.Environm
 func (*fakeBackend) ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error) {
 	return nil, nil
 }
+func (*fakeBackend) FindReferenceIntent(context.Context, executionenv.EnvironmentRef, string, string, string) (executionenv.ReferenceIntent, error) {
+	return executionenv.ReferenceIntent{}, nil
+}
 
 type adminFakeBackend struct {
 	*fakeBackend

@@ -224,6 +224,38 @@ EOF
   kube -n execution-qualification wait --for=condition=Ready pod/network-fixture pod/network-intruder --timeout=2m
 fi
 
+if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
+  legacy_profiles="$state/legacy-profiles.yaml"
+  cat >"$legacy_profiles" <<EOF
+profiles:
+  go:
+    image: $workload_image
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 20
+EOF
+  kube apply -f "$root/e2e/k8s_execution/fixture/legacyfixture/crd.yaml"
+  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
+  dev env KUBECONFIG="$kubeconfig" go run -tags kind_execution_e2e ./e2e/k8s_execution/fixture/legacyfixture execution-qualification "$legacy_profiles" "$state/legacy-migration.json"
+  kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration pod/executor-legacy-migration-malformed pod/executor-legacy-migration-insecure --timeout=3m
+  kube -n execution-qualification exec pod/executor-legacy-migration -- /bin/sh -c 'printf "prototype-data\n" > /workspace/migration-sentinel'
+  # Helm does not upgrade an existing CRD. Upgrade explicitly only after the
+  # API server persisted the legacy string references.
+  kube apply -f "$root/deploy/helm/mecatl-execution/crds/executionenvironment.yaml"
+  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
+fi
+
 kube -n execution-qualification create secret generic execution-security \
   --from-file=grant-k1.pem="$state/pki/grant-key.pem" --from-file=tls.crt="$state/pki/provider.crt" \
   --from-file=tls.key="$state/pki/provider.key" --from-file=clients.pem="$state/pki/ca.crt" --dry-run=client -o yaml | kube apply -f -
@@ -241,8 +273,9 @@ kube -n execution-qualification rollout status deployment/oidc-issuer --timeout=
 runtime_values=
 if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
   api_endpoint=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
+  api_endpoint_port=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].ports[0].port}')
   fixture_endpoint=$(kube -n execution-qualification get pod network-fixture -o jsonpath='{.status.podIP}')
-  case "$api_endpoint:$fixture_endpoint" in
+  case "$api_endpoint:$fixture_endpoint:$api_endpoint_port" in
     *[!0-9.:]*) echo "invalid discovered network-policy endpoint" >&2; exit 1 ;;
     :*|*:) echo "missing discovered network-policy endpoint" >&2; exit 1 ;;
   esac
@@ -256,6 +289,9 @@ provider:
   dnsCIDRs:
     - 10.96.0.10/32
 networkPolicy:
+  apiServerPorts:
+    - 443
+    - $api_endpoint_port
   workloadProfiles:
     go:
       egress:
@@ -286,7 +322,7 @@ helm_kube "$@" \
 kube -n execution-qualification create configmap execution-mock --from-file=mock-script.json="$root/deploy/mecatl-execution-kind/mock-script.json" --dry-run=client -o yaml | kube apply -f -
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" \
   --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
-  --set-string image.repository="${agent_image%@*}" --set-string image.digest="${agent_image#*@}" \
+  --set-string image.repository="${agent_image%@*}" --set-string image.digest="${agent_image#*@}" --set-string image.tag= \
   --wait --timeout=5m
 kube -n execution-qualification rollout restart deployment/mecak8s
 kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s

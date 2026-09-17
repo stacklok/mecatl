@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -117,14 +118,14 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 	if !apierrors.IsNotFound(err) {
 		return Allocation{}, fmt.Errorf("get execution environment: %w", err)
 	}
+	revision, err := randomID()
+	if err != nil {
+		return Allocation{}, err
+	}
 	if s.kube != nil {
 		if err := s.reserveProfileSlot(ctx, profile, name, p.Spec.MaxEnvironments); err != nil {
 			return Allocation{}, err
 		}
-	}
-	revision, err := randomID()
-	if err != nil {
-		return Allocation{}, err
 	}
 	spec := map[string]any{"schemaVersion": currentSchemaVersion, "allocationID": name, "revision": revision, "ownerHash": owner, "clientHash": hashText(client), "bindingID": binding, "requestFingerprint": fp, "profile": profile, "profileDigest": p.Digest, "image": p.Spec.Image, "storageClass": p.Spec.StorageClass, "storageSize": p.Spec.StorageSize, "resources": map[string]any{"cpuRequest": p.Spec.CPURequest, "memoryRequest": p.Spec.MemoryRequest, "cpuLimit": p.Spec.CPULimit, "memoryLimit": p.Spec.MemoryLimit}, "desired": "Active"}
 	if attested.Issuer != "" && attested.Subject != "" {
@@ -137,6 +138,11 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 		created, err = s.resources.Get(ctx, name, metav1.GetOptions{})
 	}
 	if err != nil {
+		if s.kube != nil && definitiveCreateRejection(err) {
+			if releaseErr := releaseProfileSlot(ctx, s.kube, s.namespace, profile, name); releaseErr != nil {
+				return Allocation{}, errors.Join(fmt.Errorf("create execution environment: %w", err), fmt.Errorf("release profile allocation: %w", releaseErr))
+			}
+		}
 		return Allocation{}, fmt.Errorf("create execution environment: %w", err)
 	}
 	if err := s.initializeStatus(ctx, created, binding, operationID); err != nil {
@@ -149,6 +155,10 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 	return allocationFrom(created, client, owner, binding, profile, fp)
 }
 
+func definitiveCreateRejection(err error) bool {
+	return apierrors.IsInvalid(err) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsBadRequest(err) || apierrors.IsMethodNotSupported(err) || apierrors.IsRequestEntityTooLargeError(err)
+}
+
 const profileAllocationConfigMap = "mecatl-execution-profile-allocations"
 
 func profileAllocationKey(profile string) string {
@@ -156,7 +166,7 @@ func profileAllocationKey(profile string) string {
 	return "profile-" + hex.EncodeToString(keySum[:16]) + ".json"
 }
 
-func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID string, limit int) error {
+func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID string, limit int) error { //nolint:gocyclo // Durable capacity CAS and CR reconciliation are intentionally one transaction loop.
 	cms := s.kube.CoreV1().ConfigMaps(s.namespace)
 	key := profileAllocationKey(profile)
 	for range 8 {
@@ -182,8 +192,10 @@ func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID st
 			return fmt.Errorf("list profile allocations: %w", err)
 		}
 		for i := range all.Items {
-			if textNested(all.Items[i].Object, "spec", "profile") == profile && textNested(all.Items[i].Object, "spec", "desired") != "Retired" && !slices.Contains(slots, all.Items[i].GetName()) {
-				slots = append(slots, all.Items[i].GetName())
+			item := &all.Items[i]
+			deallocating := conditionTrue(item, "Retired") && conditionTrue(item, "ExecutorTerminated") && textNested(item.Object, "status", "lifecycleOperation", "type") == "DeleteRetiredEnvironment" && textNested(item.Object, "status", "lifecycleOperation", "phase") == "ReleasingSlot"
+			if textNested(item.Object, "spec", "profile") == profile && !deallocating && !slices.Contains(slots, item.GetName()) {
+				slots = append(slots, item.GetName())
 			}
 		}
 		if len(slots) >= limit {
@@ -510,7 +522,7 @@ func (s *Store) retryUpdateStatus(ctx context.Context, name string, mutate func(
 }
 
 func (s *Store) retryUpdateStatusRaw(ctx context.Context, name string, mutate func(*unstructured.Unstructured) error) error {
-	for i := 0; i < 5; i++ {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cur, err := s.resources.Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
@@ -521,13 +533,13 @@ func (s *Store) retryUpdateStatusRaw(ctx context.Context, name string, mutate fu
 		if err := mutate(cur); err != nil {
 			return err
 		}
-		if _, err = s.resources.UpdateStatus(ctx, cur, metav1.UpdateOptions{}); err == nil {
-			return nil
-		} else if !apierrors.IsConflict(err) {
-			return err
-		}
+		_, err = s.resources.UpdateStatus(ctx, cur, metav1.UpdateOptions{})
+		return err
+	})
+	if apierrors.IsConflict(err) {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment changed concurrently", Retryable: true}
 	}
-	return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment changed concurrently", Retryable: true}
+	return err
 }
 func requireCurrentSchema(o *unstructured.Unstructured) error {
 	if intNested(o.Object, "spec", "schemaVersion") != currentSchemaVersion || intNested(o.Object, "status", "schemaVersion") != currentSchemaVersion {

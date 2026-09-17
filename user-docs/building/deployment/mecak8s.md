@@ -306,6 +306,12 @@ Shell, but do not ingest project instructions, rules, skills, or source from the
 remote PVC. Schedules, SkillDraft, background Shell, and delegated filesystem
 execution are outside this draft.
 
+Run claims and signed grants renew before the issued grant expiry, including when
+an operator configures a short grant TTL. Renewal operation receipts retain the
+newest 32 identities. Retrying an exact retained identity preserves the claim and
+original expiry (the replacement signature may carry a new nonce); conflicting or
+expired receipt replay is denied and never extends or resurrects the claim.
+
 The provider retains one PVC per logical environment. Session deletion and chart
 uninstall do not delete committed workspace data. Retirement requires no live
 references and a terminal executor; even then, this candidate retains the PVC.
@@ -314,6 +320,17 @@ A missing executor or lost terminal receipt moves the environment to
 accepts only a still-observable Pod in `Succeeded` or `Failed` phase with every
 container terminated and the exact PVC still present. If that proof is missing,
 use your platform's external fencing runbook; there is no acknowledgement flag.
+
+The built-in recovery RPC requires the same exact identity and an independently
+stable operation ID. It does not read a Secret and has no force or
+acknowledgement field:
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"recover-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RecoverEnvironment
+```
 
 #### Run an administrative lifecycle operation
 

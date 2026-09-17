@@ -324,6 +324,9 @@ func validatePVC(env *unstructured.Unstructured, p resolvedProfile, pvc *corev1.
 }
 
 func validatePod(env *unstructured.Unstructured, p resolvedProfile, pvcName string, pod *corev1.Pod) error { //nolint:gocyclo // Every security-sensitive immutable field is checked explicitly.
+	if pod.DeletionTimestamp != nil {
+		return errors.New("pod is terminating")
+	}
 	storedUID := textNested(env.Object, "status", "pod", "uid")
 	if pod.Labels["execution.mecatl.dev/environment"] != env.GetName() || pod.Labels["execution.mecatl.dev/profile"] != hashText(textNested(env.Object, "spec", "profile"))[:16] || (storedUID != "" && storedUID != string(pod.UID)) || len(pod.OwnerReferences) != 1 {
 		return errors.New("pod ownership identity mismatch")
@@ -433,6 +436,9 @@ func setConditionObject(o *unstructured.Unstructured, name string, status bool, 
 	_ = unstructured.SetNestedSlice(o.Object, next, "status", "conditions")
 }
 func podReady(p *corev1.Pod) bool {
+	if p == nil || p.DeletionTimestamp != nil {
+		return false
+	}
 	for _, c := range p.Status.Conditions {
 		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
 			return true

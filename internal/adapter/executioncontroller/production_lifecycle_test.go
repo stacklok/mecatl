@@ -59,15 +59,94 @@ func lifecycleAdminEnvironment(schema int64, refs []any) *unstructured.Unstructu
 }
 
 func terminalExecutor() *corev1.Pod {
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor", Namespace: "ns", UID: types.UID("pod-uid"), Finalizers: []string{executorFinalizer}, Labels: map[string]string{"execution.mecatl.dev/environment": "env"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "executor"}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}}}}}}
+	profile, _ := testProfiles().get("go")
+	noPriv, nonroot, ro := false, true, true
+	uid := int64(65532)
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor", Namespace: "ns", UID: types.UID("pod-uid"), Finalizers: []string{executorFinalizer}, Labels: map[string]string{"execution.mecatl.dev/environment": "env", "execution.mecatl.dev/profile": hashText("go")[:16]}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "execution.mecatl.dev/v1alpha1", Kind: "ExecutionEnvironment", Name: "env", UID: types.UID("env-uid"), Controller: &nonroot}}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: &noPriv, RuntimeClassName: &profile.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: profile.Spec.Image, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: profile.CPURequest, corev1.ResourceMemory: profile.MemoryRequest, corev1.ResourceEphemeralStorage: profile.EphemeralStorageRequest}, Limits: corev1.ResourceList{corev1.ResourceCPU: profile.CPULimit, corev1.ResourceMemory: profile.MemoryLimit, corev1.ResourceEphemeralStorage: profile.EphemeralStorageLimit}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &profile.TmpSizeLimit}}}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}}}}}}
 }
 
 func retainedPVC() *corev1.PersistentVolumeClaim {
-	return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "workspace", Namespace: "ns", UID: types.UID("pvc-uid"), Labels: map[string]string{"execution.mecatl.dev/environment": "env"}}}
+	profile, _ := testProfiles().get("go")
+	mode := corev1.PersistentVolumeFilesystem
+	return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "workspace", Namespace: "ns", UID: types.UID("pvc-uid"), Labels: map[string]string{"execution.mecatl.dev/environment": "env", "execution.mecatl.dev/revision": "rev", "execution.mecatl.dev/allocation-uid": "env-uid"}}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &profile.Spec.StorageClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, VolumeMode: &mode, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: profile.StorageSize}}}}
 }
 
 func adminRequestFixture() adminLifecycleRequest {
 	return adminLifecycleRequest{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, OwnerHash: "owner", Client: "client", ExpectedEpoch: 4, ExpectedPodUID: "pod-uid", ExpectedPVCUID: "pvc-uid", OperationID: "admin-operation"}
+}
+
+func TestHealthyTerminalPodCanStartLifecycleWithoutReadyCondition(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	setConditionObject(env, "Ready", false, "PodTerminated", "executor exited naturally")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
+	q := adminRequestFixture()
+	if err := store.RetireExact(t.Context(), q); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetireExact(t.Context(), q); err != nil {
+		t.Fatalf("retry was not idempotent: %v", err)
+	}
+	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if textNested(got.Object, "status", "terminationProof", operationIDField) != q.OperationID || textNested(got.Object, "status", "lifecycleOperation", "id") != q.OperationID {
+		t.Fatalf("terminal proof and lifecycle operation were not persisted: %v", got.Object["status"])
+	}
+}
+
+func TestHealthyTerminalLifecycleRejectsIncompleteEvidence(t *testing.T) {
+	cases := map[string]func(*corev1.Pod){
+		"missing pod": func(*corev1.Pod) {},
+		"init running": func(p *corev1.Pod) {
+			p.Spec.InitContainers = []corev1.Container{{Name: "init"}}
+			p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "init", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := lifecycleAdminEnvironment(2, []any{})
+			setConditionObject(env, "Ready", false, "PodTerminated", "executor exited naturally")
+			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			objects := []runtime.Object{retainedPVC()}
+			if name != "missing pod" {
+				pod := terminalExecutor()
+				mutate(pod)
+				objects = append(objects, pod)
+			}
+			store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(objects...))
+			if err := store.RetireExact(t.Context(), adminRequestFixture()); err == nil {
+				t.Fatal("incomplete terminal evidence admitted lifecycle")
+			}
+			got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+			if textNested(got.Object, "status", "terminationProof", "podUID") != "" || textNested(got.Object, "status", "lifecycleOperation", "id") != "" {
+				t.Fatalf("rejected evidence changed lifecycle state: %v", got.Object["status"])
+			}
+		})
+	}
+}
+
+func TestRetirementCompletionReceiptReplaysOnlyExactOperation(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	q := adminRequestFixture()
+	_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": q.OperationID, "type": "RetireEnvironment", "phase": "WaitingForPodDeletion", "expectedEpoch": int64(4), "expectedPodUID": q.ExpectedPodUID, "expectedPVCUID": q.ExpectedPVCUID, "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}, "status", "lifecycleOperation")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	r := NewReconciler(dynamicClient, kubefake.NewSimpleClientset(retainedPVC()), "ns", testProfiles())
+	if err := r.finishRetirement(t.Context(), env, q.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	if err := store.RetireExact(t.Context(), q); err != nil {
+		t.Fatalf("lost-reply retry failed: %v", err)
+	}
+	q.OperationID = "different-operation"
+	if err := store.RetireExact(t.Context(), q); err == nil {
+		t.Fatal("different operation silently succeeded against retired environment")
+	}
+	q = adminRequestFixture()
+	q.OwnerHash = "other-owner"
+	if err := store.RetireExact(t.Context(), q); err == nil {
+		t.Fatal("wrong subject replayed retirement receipt")
+	}
 }
 
 func TestOldSchemaFailsClosedAndExplicitMigrationConvertsReferences(t *testing.T) {
@@ -98,6 +177,24 @@ func TestOldSchemaFailsClosedAndExplicitMigrationConvertsReferences(t *testing.T
 	refs, err := referenceRecords(got)
 	if err != nil || len(refs) != 1 || refs[0].BindingID != "session-a" || refs[0].State != executionenv.ReferencePublished {
 		t.Fatalf("migrated refs=%+v err=%v", refs, err)
+	}
+}
+
+func TestInsecurePrototypeMigrationRejectedWithoutRewrite(t *testing.T) {
+	env := lifecycleAdminEnvironment(1, []any{"session-a"})
+	pod := terminalExecutor()
+	automount := true
+	pod.Spec.AutomountServiceAccountToken = &automount
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(pod, retainedPVC()))
+	q := adminRequestFixture()
+	q.ExpectedSchema = 1
+	if err := store.MigrateEnvironment(t.Context(), q); err == nil {
+		t.Fatal("insecure prototype executor migrated")
+	}
+	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if intNested(got.Object, "spec", "schemaVersion") != 1 || intNested(got.Object, "status", "schemaVersion") != 1 || intNested(got.Object, "status", "epoch") != 4 {
+		t.Fatalf("insecure prototype was rewritten: %v", got.Object)
 	}
 }
 
@@ -180,6 +277,22 @@ func TestRecoverMissingPodRemainsFenceUnknown(t *testing.T) {
 	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
 	if textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "terminationProof", "podUID") != "" {
 		t.Fatalf("missing executor changed fenced state: %v", got.Object["status"])
+	}
+}
+
+func TestCompletedReplacementReceiptReplaysExactOperation(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}})
+	q := adminRequestFixture()
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{operationIDField: q.OperationID, "previousPodUID": q.ExpectedPodUID, "replacementPodUID": "new-pod", "pvcUID": q.ExpectedPVCUID, "previousEpoch": int64(q.ExpectedEpoch), "replacementEpoch": int64(q.ExpectedEpoch + 1)}, "status", "lastReplacement")
+	_ = unstructured.SetNestedField(env.Object, int64(q.ExpectedEpoch+1), "status", "epoch")
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{"name": "executor", "uid": "new-pod"}, "status", "pod")
+	store := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env), "ns", testProfiles(), nil)
+	if err := store.ReplaceExecutor(t.Context(), q); err != nil {
+		t.Fatalf("exact completed replacement did not replay: %v", err)
+	}
+	q.OperationID = "different"
+	if err := store.ReplaceExecutor(t.Context(), q); err == nil {
+		t.Fatal("different operation replayed completed replacement")
 	}
 }
 

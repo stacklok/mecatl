@@ -132,7 +132,12 @@ message ReserveSuccessorRequest {
   string operation_id = 5;
 }
 message ReferenceReservationResponse { EnvironmentRef environment = 1; }
-message ListReferenceIntentsRequest { Owner owner = 1; int32 limit = 2; }
+message ListReferenceIntentsRequest {
+  Owner owner = 1;
+  int32 limit = 2;
+  EnvironmentRef environment = 3;
+  string binding_id = 4;
+}
 message ReferenceIntent {
   EnvironmentRef environment = 1;
   string binding_id = 2;

@@ -34,13 +34,25 @@ func (s *Store) RetireExact(ctx context.Context, q adminLifecycleRequest) error 
 	return s.startLifecycle(ctx, q, "RetireEnvironment", true)
 }
 
-func (s *Store) startLifecycle(ctx context.Context, q adminLifecycleRequest, kind string, requireNoRefs bool) error {
+func (s *Store) startLifecycle(ctx context.Context, q adminLifecycleRequest, kind string, requireNoRefs bool) error { //nolint:gocyclo // Exact admission keeps all identity and receipt checks together.
 	if q.ExpectedEpoch == 0 || q.ExpectedEpoch > math.MaxInt64 || q.ExpectedPodUID == "" || q.ExpectedPVCUID == "" || q.OperationID == "" {
 		return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "exact lifecycle identity is required"}
 	}
+	if err := s.persistObservedTerminalProof(ctx, q); err != nil {
+		return err
+	}
 	return s.retryUpdateStatus(ctx, q.Environment.ID, func(o *unstructured.Unstructured) error {
+		if kind == "ReplaceExecutor" && replacementReceiptMatches(o, q) {
+			return nil
+		}
 		if err := exactAdminSubject(o, q); err != nil {
 			return err
+		}
+		if kind == "RetireEnvironment" && conditionTrue(o, "Retired") {
+			if exactTerminationProofOperationMatches(o, q) {
+				return nil
+			}
+			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is already retired by another operation"}
 		}
 		if existing, found, _ := unstructured.NestedMap(o.Object, "status", "lifecycleOperation"); found {
 			if text(existing, "id") == q.OperationID && text(existing, "type") == kind && text(existing, "expectedPodUID") == q.ExpectedPodUID && text(existing, "expectedPVCUID") == q.ExpectedPVCUID && intNested(existing, "expectedEpoch") == int64(q.ExpectedEpoch) { //nolint:gosec // validated above.
@@ -71,10 +83,61 @@ func lifecycleAdmissionBlocked(o *unstructured.Unstructured, q adminLifecycleReq
 		!conditionTrue(o, "Ready") && !exactTerminationProofMatches(o, q)
 }
 
+func replacementReceiptMatches(o *unstructured.Unstructured, q adminLifecycleRequest) bool {
+	return textNested(o.Object, "status", "lastReplacement", operationIDField) == q.OperationID &&
+		textNested(o.Object, "status", "lastReplacement", "previousPodUID") == q.ExpectedPodUID &&
+		textNested(o.Object, "status", "lastReplacement", "pvcUID") == q.ExpectedPVCUID &&
+		intNested(o.Object, "status", "lastReplacement", "previousEpoch") == int64(q.ExpectedEpoch) //nolint:gosec // q.ExpectedEpoch is bounded by startLifecycle.
+}
+
 func exactTerminationProofMatches(o *unstructured.Unstructured, q adminLifecycleRequest) bool {
 	return textNested(o.Object, "status", "terminationProof", "podUID") == q.ExpectedPodUID &&
 		textNested(o.Object, "status", "terminationProof", "pvcUID") == q.ExpectedPVCUID &&
 		intNested(o.Object, "status", "terminationProof", "epoch") == int64(q.ExpectedEpoch) //nolint:gosec // q.ExpectedEpoch is bounded above.
+}
+
+func exactTerminationProofOperationMatches(o *unstructured.Unstructured, q adminLifecycleRequest) bool {
+	return exactTerminationProofMatches(o, q) && textNested(o.Object, "status", "terminationProof", operationIDField) == q.OperationID
+}
+
+func (s *Store) persistObservedTerminalProof(ctx context.Context, q adminLifecycleRequest) error { //nolint:gocyclo // Exact terminal proof deliberately fails closed at every observable mismatch.
+	o, err := s.resources.Get(ctx, q.Environment.ID, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if replacementReceiptMatches(o, q) {
+		return nil
+	}
+	if err := exactAdminSubject(o, q); err != nil {
+		return err
+	}
+	if conditionTrue(o, "Ready") || conditionTrue(o, "Retired") || exactTerminationProofOperationMatches(o, q) {
+		return nil
+	}
+	if textNested(o.Object, "status", "activeRun", "claimID") != "" || textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy || s.kube == nil {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not healthy and idle"}
+	}
+	podName, pvcName := textNested(o.Object, "status", "pod", "name"), textNested(o.Object, "status", "pvc", "name")
+	pod, err := s.kube.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil || string(pod.UID) != q.ExpectedPodUID || !podTerminal(pod) {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "exact terminal executor proof is unavailable"}
+	}
+	pvc, err := s.kube.CoreV1().PersistentVolumeClaims(s.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil || string(pvc.UID) != q.ExpectedPVCUID {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "exact workspace identity is unavailable"}
+	}
+	return s.retryUpdateStatus(ctx, q.Environment.ID, func(current *unstructured.Unstructured) error {
+		if err := exactAdminSubject(current, q); err != nil {
+			return err
+		}
+		if conditionTrue(current, "Ready") || exactTerminationProofOperationMatches(current, q) {
+			return nil
+		}
+		if textNested(current.Object, "status", "activeRun", "claimID") != "" || textNested(current.Object, "status", "activeOperation", "id") != "" || textNested(current.Object, "status", "fenceState") != fenceHealthy {
+			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not healthy and idle"}
+		}
+		return unstructured.SetNestedMap(current.Object, terminationProof(q, pod), "status", "terminationProof")
+	})
 }
 
 func exactAdminSubject(o *unstructured.Unstructured, q adminLifecycleRequest) error {
@@ -97,6 +160,9 @@ func (s *Store) RecoverEnvironment(ctx context.Context, q adminLifecycleRequest)
 		if err := exactAdminSubject(o, q); err != nil {
 			return err
 		}
+		if exactTerminationProofOperationMatches(o, q) {
+			return nil
+		}
 		if textNested(o.Object, "status", "fenceState") != "FenceUnknown" {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not fenced"}
 		}
@@ -104,6 +170,9 @@ func (s *Store) RecoverEnvironment(ctx context.Context, q adminLifecycleRequest)
 		return nil
 	}); err != nil {
 		return err
+	}
+	if podName == "" {
+		return nil
 	}
 	pod, err := s.kube.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil || string(pod.UID) != q.ExpectedPodUID || !podTerminal(pod) {
@@ -116,6 +185,9 @@ func (s *Store) RecoverEnvironment(ctx context.Context, q adminLifecycleRequest)
 	return s.retryUpdateStatus(ctx, q.Environment.ID, func(o *unstructured.Unstructured) error {
 		if err := exactAdminSubject(o, q); err != nil {
 			return err
+		}
+		if exactTerminationProofOperationMatches(o, q) {
+			return nil
 		}
 		proof := terminationProof(q, pod)
 		if err := unstructured.SetNestedMap(o.Object, proof, "status", "terminationProof"); err != nil {
@@ -281,6 +353,10 @@ func (s *Store) MigrateEnvironment(ctx context.Context, q adminLifecycleRequest)
 }
 
 func (s *Store) verifyRuntimeUIDs(ctx context.Context, o *unstructured.Unstructured, q adminLifecycleRequest) error {
+	profile, ok := s.profiles.get(textNested(o.Object, "spec", "profile"))
+	if !ok || profile.Digest != textNested(o.Object, "spec", "profileDigest") {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype profile is unavailable or changed"}
+	}
 	pod, err := s.kube.CoreV1().Pods(s.namespace).Get(ctx, textNested(o.Object, "status", "pod", "name"), metav1.GetOptions{})
 	if err != nil || string(pod.UID) != q.ExpectedPodUID {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype executor identity is not observable"}
@@ -288,6 +364,12 @@ func (s *Store) verifyRuntimeUIDs(ctx context.Context, o *unstructured.Unstructu
 	pvc, err := s.kube.CoreV1().PersistentVolumeClaims(s.namespace).Get(ctx, textNested(o.Object, "status", "pvc", "name"), metav1.GetOptions{})
 	if err != nil || string(pvc.UID) != q.ExpectedPVCUID {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype workspace identity is not observable"}
+	}
+	if err := validatePVC(o, profile, pvc); err != nil {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype workspace shape is incompatible"}
+	}
+	if err := validatePod(o, profile, pvc.Name, pod); err != nil {
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype executor shape is insecure or incompatible"}
 	}
 	return nil
 }

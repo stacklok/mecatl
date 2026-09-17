@@ -112,6 +112,9 @@ func (*integrationBackend) CancelReferenceDelete(context.Context, executionenv.E
 func (*integrationBackend) ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error) {
 	return nil, nil
 }
+func (*integrationBackend) FindReferenceIntent(context.Context, executionenv.EnvironmentRef, string, string, string) (executionenv.ReferenceIntent, error) {
+	return executionenv.ReferenceIntent{}, nil
+}
 
 func certificate(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, serverName string, client bool) (tls.Certificate, *x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()

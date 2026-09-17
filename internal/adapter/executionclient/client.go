@@ -184,6 +184,17 @@ func (c *Client) ListReferenceIntents(ctx context.Context, owner executionenv.Ow
 	return c.listReferenceIntents(ctx, &executionv1.ListReferenceIntentsRequest{Owner: ownerToProto(owner), Limit: 64})
 }
 
+func (c *Client) FindReferenceIntent(ctx context.Context, owner executionenv.Owner, environment executionenv.EnvironmentRef, binding string) (executionenv.ReferenceIntent, error) {
+	intents, err := c.listReferenceIntents(ctx, &executionv1.ListReferenceIntentsRequest{Owner: ownerToProto(owner), Limit: 1, Environment: refToProto(environment), BindingId: binding})
+	if err != nil {
+		return executionenv.ReferenceIntent{}, err
+	}
+	if len(intents) != 1 {
+		return executionenv.ReferenceIntent{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "reference intent not found"}
+	}
+	return intents[0], nil
+}
+
 func (c *Client) ListAllReferenceIntents(ctx context.Context) ([]executionenv.ReferenceIntent, error) {
 	return c.listReferenceIntents(ctx, &executionv1.ListReferenceIntentsRequest{Limit: 64})
 }
@@ -518,14 +529,17 @@ func (p *Provider) PrepareReferenceDelete(ctx context.Context, req server.Placem
 		return nil, err
 	}
 	op := ""
-	intents, err := p.client.ListReferenceIntents(ctx, owner)
-	if err != nil {
-		return nil, mapPlacementError(err)
-	}
-	for _, intent := range intents {
-		if intent.Environment.ID == req.Ref.ID && intent.Environment.Revision == req.Ref.Revision && intent.BindingID == string(req.SourceBindingID) && intent.State == executionenv.ReferencePendingDelete {
-			op = intent.OperationID
-			break
+	exact := executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}
+	intent, err := p.client.FindReferenceIntent(ctx, owner, exact, string(req.SourceBindingID))
+	if err == nil {
+		if intent.State != executionenv.ReferencePendingDelete || intent.Environment != exact || intent.BindingID != string(req.SourceBindingID) {
+			return nil, server.ErrPlacementChanged
+		}
+		op = intent.OperationID
+	} else {
+		var remote *executionenv.Error
+		if !errors.As(err, &remote) || remote.Code != executionenv.CodeNotFound {
+			return nil, mapPlacementError(err)
 		}
 	}
 	if op == "" {
@@ -582,6 +596,11 @@ type runHandle struct {
 }
 
 func (h *runHandle) Environment() tool.Environment { return h.environment }
+func (h *runHandle) RenewalDeadline() time.Time {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.credentials.expiry()
+}
 func (h *runHandle) Renew(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -900,6 +919,12 @@ func (g *grantContext) refresh(ctx context.Context) (executionenv.RequestContext
 		return executionenv.RequestContext{}, err
 	}
 	return g.current(ctx)
+}
+
+func (g *grantContext) expiry() time.Time {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.expiresAt
 }
 
 func (g *grantContext) replace(claim executionenv.RunClaim) {

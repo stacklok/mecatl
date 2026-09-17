@@ -30,7 +30,7 @@ func main() {
 	conn, err := net.DialTimeout("tcp", *target, *timeout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "connect denied or unavailable")
-		os.Exit(1)
+		os.Exit(42)
 	}
 	_ = conn.Close()
 	fmt.Println("connected")

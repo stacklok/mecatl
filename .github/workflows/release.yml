@@ -48,6 +48,7 @@ jobs:
   # KEEPS its own inline copy as well (like the pin gate it repeats): it is the one job that
   # writes outside this repository, so it re-verifies rather than inheriting.
   guard:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     name: Verify immutable release tag
     runs-on: ubuntu-24.04
     # 10, not 5: the v0.0.35 release was LOST because an unfiltered depth-0 clone
@@ -70,6 +71,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           filter: blob:none
+          # The guard implementation is trusted only from protected main. The tag
+          # and dispatch input remain data verified by that implementation.
+          ref: refs/heads/main
 
       - name: Verify and check out the immutable release tag
         id: verify
@@ -167,7 +171,7 @@ jobs:
             --image-refs=image-refs.txt \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecated \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ needs.guard.outputs.commit }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecated
           # The digest ref is the same image regardless of tag; take the first.
@@ -329,7 +333,7 @@ jobs:
             --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecatui \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ needs.guard.outputs.commit }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecatui
           # The digest ref is the same image regardless of tag; take the first.
@@ -486,7 +490,7 @@ jobs:
             --image-refs=image-refs.txt \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecak8s \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ needs.guard.outputs.commit }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecak8s
           # The digest ref is the same image regardless of tag; take the first.
@@ -603,6 +607,9 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ env.VERSION }}
             ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.guard.outputs.commit }}
       - name: Sign image
         run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
       - name: Generate SBOM
@@ -727,7 +734,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.title=slack-bot
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.guard.outputs.commit }}
             org.opencontainers.image.vendor=Stacklok
 
       # Sign/SBOM/attest the pushed manifest list BY DIGEST, matching the

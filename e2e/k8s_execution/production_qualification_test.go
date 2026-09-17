@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -45,6 +46,31 @@ func productionClient(t *testing.T, ctx context.Context, state, kubeconfig strin
 	return client, f
 }
 
+func productionReplicaClients(t *testing.T, ctx context.Context, state, kubeconfig string) ([2]*executionclient.Client, [2]string) {
+	t.Helper()
+	var pods corev1.PodList
+	raw := runKubectl(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/name=mecatl-execution", "-o", "json")
+	if err := json.Unmarshal(raw, &pods); err != nil || len(pods.Items) != 2 {
+		t.Fatalf("decode two provider replicas: pods=%d err=%v", len(pods.Items), err)
+	}
+	if pods.Items[0].UID == "" || pods.Items[1].UID == "" || pods.Items[0].UID == pods.Items[1].UID {
+		t.Fatal("provider replica Pod UIDs are missing or identical")
+	}
+	var clients [2]*executionclient.Client
+	var podUIDs [2]string
+	for i := range clients {
+		forward := portForward(t, ctx, kubeconfig, "pod/"+pods.Items[i].Name, 8443)
+		client, err := executionclient.New(forward.addr, loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients[i] = client
+		podUIDs[i] = string(pods.Items[i].UID)
+		t.Cleanup(func() { client.Close() })
+	}
+	return clients, podUIDs
+}
+
 func createProductionEnvironment(t *testing.T, ctx context.Context, c *executionclient.Client, suffix string) (executionenv.Owner, string, executionenv.AttachEnvironmentResponse) {
 	t.Helper()
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "production-" + suffix}
@@ -54,7 +80,7 @@ func createProductionEnvironment(t *testing.T, ctx context.Context, c *execution
 	if err != nil {
 		t.Fatalf("ensure production environment: %v", err)
 	}
-	if err := c.CommitReference(ctx, executionenv.ReferenceRequest{Environment: ensured.Environment, Owner: owner, BindingID: binding, OperationID: "commit-" + binding}); err != nil {
+	if err := c.CommitReference(ctx, executionenv.ReferenceRequest{Environment: ensured.Environment, Owner: owner, BindingID: binding, OperationID: op}); err != nil {
 		t.Fatalf("commit production reference: %v", err)
 	}
 	return owner, binding, waitReady(t, ctx, c, owner, binding, ensured.Environment)
@@ -73,6 +99,10 @@ func TestKindExecutionProductionNetworkPolicyEnforced(t *testing.T) {
 	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "network_probe.go", Data: probeSource}); err != nil {
 		t.Fatalf("install network probe in owned workspace: %v", err)
 	}
+	built, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go build -o network-probe network_probe.go", TimeoutMillis: 30000})
+	if err != nil || built.State != executionenv.CommandSucceeded || built.Result.ExitCode != 0 {
+		t.Fatalf("build network probe: state=%q exit=%d err=%v", built.State, built.Result.ExitCode, err)
+	}
 	fixtureIP := kubeValue(t, ctx, kubeconfig, "get", "pod/network-fixture", "-n", namespace, "-o", "jsonpath={.status.podIP}")
 	if out := runOwnedProbe(t, ctx, client, rc, fixtureIP+":8080"); out.State != executionenv.CommandSucceeded || out.Result.ExitCode != 0 {
 		t.Fatal("profile-specific package endpoint was not reachable")
@@ -83,14 +113,16 @@ func TestKindExecutionProductionNetworkPolicyEnforced(t *testing.T) {
 		"provider": providerIP + ":8443", "api": "10.96.0.1:443", "peer": peerIP + ":8080",
 		"dns": "10.96.0.10:53", "metadata": "169.254.169.254:80", "internet": "1.1.1.1:443",
 	} {
-		if out := runOwnedProbe(t, ctx, client, rc, endpoint); out.State == executionenv.CommandSucceeded {
-			t.Fatalf("default-denied executor reached %s", name)
+		out := runOwnedProbe(t, ctx, client, rc, endpoint)
+		if out.State != executionenv.CommandFailed || out.Result.State != executionenv.CommandFailed || out.Result.ExitCode != 42 {
+			t.Fatalf("default-denied executor probe %s state=%q result_state=%q exit=%d, want failed/failed/42", name, out.State, out.Result.State, out.Result.ExitCode)
 		}
 	}
 
 	out, err := command(ctx, kubeconfig, "exec", "-n", namespace, "pod/network-intruder", "--", "/ko-app/netprobe", "-target", providerIP+":8443", "-timeout", "2s").CombinedOutput()
-	if err == nil {
-		t.Fatalf("unrelated pod reached provider; output bytes=%d", len(out))
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
+		t.Fatalf("unrelated pod denial exit proof=%q err=%v, want 42", strings.TrimSpace(string(out)), err)
 	}
 	if got := resourceCount(t, ctx, kubeconfig, "pods -l app.kubernetes.io/name=mecatl-execution"); got != 2 {
 		t.Fatalf("ready provider replicas=%d, want 2", got)
@@ -99,7 +131,7 @@ func TestKindExecutionProductionNetworkPolicyEnforced(t *testing.T) {
 
 func runOwnedProbe(t *testing.T, ctx context.Context, c *executionclient.Client, rc executionenv.RequestContext, endpoint string) executionenv.CommandStartResponse {
 	t.Helper()
-	out, err := c.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go run network_probe.go " + endpoint, TimeoutMillis: 15000})
+	out, err := c.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "./network-probe " + endpoint, TimeoutMillis: 15000})
 	if err != nil {
 		t.Fatalf("network probe RPC failed: %v", err)
 	}
@@ -147,7 +179,11 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	defer cancel()
 	oldClient, forward := productionClient(t, ctx, state, kubeconfig)
 	owner, binding, attached := createProductionEnvironment(t, ctx, oldClient, "rotation")
-	oldRun, _ := acquireRun(t, ctx, oldClient, owner, binding, attached, "rotation-old-grant")
+	oldClaim, err := oldClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-old-grant", OperationID: "acquire-rotation-old-grant", TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRun := executionenv.RequestContext{Environment: oldClaim.Environment, Owner: owner, BindingID: binding, RunID: oldClaim.RunID, ClaimID: oldClaim.ClaimID, Epoch: oldClaim.Epoch, GrantGeneration: oldClaim.GrantGeneration, Grant: oldClaim.Grant}
 	if _, err := oldClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileCreate, Path: "rotation-sentinel.txt", Data: []byte("old-authority\n")}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +195,12 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if out, err := generator.CombinedOutput(); err != nil {
 		t.Fatalf("generate synthetic rotation material: %v: %s", err, out)
 	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cleanupCancel()
+		applySecurityCandidate(t, cleanupCtx, kubeconfig, rotationDir, filepath.Join(rotationDir, "restore-fixture-clients.json"), "bridge")
+		waitProviderReadyReplicas(t, cleanupCtx, kubeconfig, 2)
+	})
 
 	// A changed policy at the already-authoritative generation is rejected by
 	// both replicas. The old snapshot cannot continue authorizing RPCs while the
@@ -170,9 +212,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	applySecurityCandidate(t, ctx, kubeconfig, filepath.Join(state, "pki"), filepath.Join(state, "pki", "manifest.json"), "initial")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
-	if got, err := oldClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err != nil || string(got.Data) != "old-authority\n" {
-		t.Fatal("valid authority recovery lost or rewrote executor data")
-	}
+	waitFileContent(t, ctx, oldClient, oldRun, "rotation-sentinel.txt", "old-authority\n", "valid authority recovery")
 
 	// Generation 2 bridges client trust before changing the server certificate.
 	// The old connection remains usable, while a new-CA client can establish its
@@ -232,13 +272,34 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=240s")
-	if _, err := freshClient.File(ctx, executionenv.FileRequest{Context: newRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
+	postRestartForward := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
+	postRestartClient, err := executionclient.New(postRestartForward.addr, newTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer postRestartClient.Close()
+	if _, err := postRestartClient.File(ctx, executionenv.FileRequest{Context: newRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
 		t.Fatal("revoked generation became usable after provider restart")
 	}
 	// Restore fixture client compatibility through a higher generation; this is
 	// another forward rotation, never a high-water-mark rollback.
 	applySecurityCandidate(t, ctx, kubeconfig, rotationDir, filepath.Join(rotationDir, "restore-fixture-clients.json"), "bridge")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+}
+
+func waitFileContent(t *testing.T, ctx context.Context, client *executionclient.Client, rc executionenv.RequestContext, path, want, proof string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		got, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: path})
+		if err == nil && string(got.Data) == want {
+			return
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("%s did not authorize preserved data: %v", proof, lastErr)
 }
 
 func applySecurityCandidate(t *testing.T, ctx context.Context, kubeconfig, materialDir, manifest, mode string) {
@@ -297,19 +358,43 @@ func waitProviderReadyReplicas(t *testing.T, ctx context.Context, kubeconfig str
 func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
+	replicas, replicaUIDs := productionReplicaClients(t, ctx, state, kubeconfig)
+	client := replicas[0]
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "lifecycle")
 	first := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 	if first.SpecSchema != 2 || first.StatusSchema != 2 || first.PodUID == "" || first.PVCUID == "" {
 		t.Fatal("schema-v2 exact runtime identities were not persisted")
 	}
 
-	claim1, err := client.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "run-a", OperationID: "acquire-a", TTL: time.Minute})
-	if err != nil {
-		t.Fatal(err)
+	type acquireResult struct {
+		claim executionenv.RunClaim
+		err   error
 	}
-	if _, err := client.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "run-b", OperationID: "acquire-b", TTL: time.Minute}); err == nil || !isRemoteCode(err, executionenv.CodeConflict) {
-		t.Fatalf("second replica run acquisition was not excluded: %v", err)
+	startAcquire := make(chan struct{})
+	acquired := make(chan acquireResult, 2)
+	for i := range replicas {
+		i := i
+		go func() {
+			<-startAcquire
+			claim, err := replicas[i].AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: fmt.Sprintf("run-%d", i), OperationID: fmt.Sprintf("acquire-%d", i), TTL: time.Minute})
+			acquired <- acquireResult{claim: claim, err: err}
+		}()
+	}
+	close(startAcquire)
+	var claim1 executionenv.RunClaim
+	conflicts := 0
+	for range replicas {
+		result := <-acquired
+		if result.err == nil {
+			claim1 = result.claim
+		} else if isRemoteCode(result.err, executionenv.CodeConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("cross-replica run acquisition returned unexpected error: %v", result.err)
+		}
+	}
+	if claim1.ClaimID == "" || conflicts != 1 {
+		t.Fatalf("cross-replica run acquisition pod_uids=%v winner=%t conflicts=%d, want one each", replicaUIDs, claim1.ClaimID != "", conflicts)
 	}
 	statusWithClaim := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 	if statusWithClaim.ActiveGrantGeneration != claim1.GrantGeneration {
@@ -351,9 +436,33 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	}
 	release2()
 
-	newGeneration, err := client.RevokeEnvironment(ctx, attached.Environment, owner, reattached.GrantGeneration, "revoke-lifecycle")
-	if err != nil || newGeneration <= reattached.GrantGeneration {
-		t.Fatalf("revoke failed: generation=%d err=%v", newGeneration, err)
+	revokeResults := make(chan struct {
+		generation uint64
+		err        error
+	}, 2)
+	startRevoke := make(chan struct{})
+	for i := range replicas {
+		i := i
+		go func() {
+			<-startRevoke
+			generation, err := replicas[i].RevokeEnvironment(ctx, attached.Environment, owner, reattached.GrantGeneration, "revoke-lifecycle")
+			revokeResults <- struct {
+				generation uint64
+				err        error
+			}{generation: generation, err: err}
+		}()
+	}
+	close(startRevoke)
+	var newGeneration uint64
+	for range replicas {
+		result := <-revokeResults
+		if result.err != nil || result.generation <= reattached.GrantGeneration {
+			t.Fatalf("cross-replica revoke failed: generation=%d err=%v", result.generation, result.err)
+		}
+		if newGeneration != 0 && result.generation != newGeneration {
+			t.Fatalf("cross-replica revoke replay diverged: got=%d want=%d", result.generation, newGeneration)
+		}
+		newGeneration = result.generation
 	}
 	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc2, Operation: executionenv.OpFileRead, Path: "lifecycle-proof.txt"}); err == nil {
 		t.Fatal("revoked grant remained usable")
@@ -482,23 +591,25 @@ func kubeValue(t *testing.T, ctx context.Context, kubeconfig string, args ...str
 func TestKindExecutionProductionHolderLossFencesActiveOperation(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
-	serviceClient, _ := productionClient(t, ctx, state, kubeconfig)
-	owner, binding, attached := createProductionEnvironment(t, ctx, serviceClient, "holder-loss")
-	rc, _ := acquireRun(t, ctx, serviceClient, owner, binding, attached, "holder-loss-run")
+	replicas, replicaUIDs := productionReplicaClients(t, ctx, state, kubeconfig)
+	holderClient, survivingClient := replicas[0], replicas[1]
+	owner, binding, attached := createProductionEnvironment(t, ctx, holderClient, "holder-loss")
+	rc, _ := acquireRun(t, ctx, holderClient, owner, binding, attached, "holder-loss-run")
 	initial := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 
 	var providers corev1.PodList
-	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/name=mecatl-execution", "-o", "json"), &providers); err != nil || len(providers.Items) < 2 {
+	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/name=mecatl-execution", "-o", "json"), &providers); err != nil || len(providers.Items) != 2 {
 		t.Fatal("holder-loss proof requires two provider replicas")
 	}
-	holderPod := providers.Items[0].Name
-	holderForward := portForward(t, ctx, kubeconfig, "pod/"+holderPod, 8443)
-	holderTLS := loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
-	holderClient, err := executionclient.New(holderForward.addr, holderTLS)
-	if err != nil {
-		t.Fatal(err)
+	holderPod := ""
+	for i := range providers.Items {
+		if string(providers.Items[i].UID) == replicaUIDs[0] {
+			holderPod = providers.Items[i].Name
+		}
 	}
-	defer holderClient.Close()
+	if holderPod == "" {
+		t.Fatalf("holder replica UID %s no longer identifies a provider Pod", replicaUIDs[0])
+	}
 
 	commandDone := make(chan error, 1)
 	go func() {
@@ -509,10 +620,10 @@ func TestKindExecutionProductionHolderLossFencesActiveOperation(t *testing.T) {
 	runKubectl(t, ctx, kubeconfig, "delete", "pod/"+holderPod, "-n", namespace, "--wait=true", "--timeout=90s")
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=180s")
 
-	if _, err := serviceClient.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "second-writer", Data: []byte("must-not-run")}); err == nil {
+	if _, err := survivingClient.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "second-writer", Data: []byte("must-not-run")}); err == nil {
 		t.Fatal("surviving replica admitted an overlapping writer after holder loss")
 	}
-	if _, err := serviceClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "overlap-run", OperationID: "overlap-run-acquire", TTL: time.Minute}); err == nil {
+	if _, err := survivingClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "overlap-run", OperationID: "overlap-run-acquire", TTL: time.Minute}); err == nil {
 		t.Fatal("surviving replica admitted a new run while old operation ownership was unresolved")
 	}
 	fenced := waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool {
@@ -530,22 +641,22 @@ func TestKindExecutionProductionHolderLossFencesActiveOperation(t *testing.T) {
 
 	waitExecutorTerminal(t, ctx, kubeconfig, attached.Environment.ID)
 	recovery := executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: initial.Epoch, ExpectedPodUID: initial.PodUID, ExpectedPVCUID: initial.PVCUID, OperationID: "recover-holder-loss"}
-	if err := serviceClient.RecoverEnvironment(ctx, recovery); err != nil {
+	if err := survivingClient.RecoverEnvironment(ctx, recovery); err != nil {
 		t.Fatalf("recover exact terminal executor: %v", err)
 	}
-	if err := serviceClient.ReplaceExecutor(ctx, executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: initial.Epoch, ExpectedPodUID: initial.PodUID, ExpectedPVCUID: initial.PVCUID, OperationID: "replace-holder-loss"}); err != nil {
+	if err := survivingClient.ReplaceExecutor(ctx, executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: initial.Epoch, ExpectedPodUID: initial.PodUID, ExpectedPVCUID: initial.PVCUID, OperationID: "replace-holder-loss"}); err != nil {
 		t.Fatalf("replace recovered executor: %v", err)
 	}
 	replaced := waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool { return s.Ready && s.PodUID != "" && s.PodUID != initial.PodUID })
 	if replaced.PVCUID != initial.PVCUID {
 		t.Fatal("holder-loss recovery replaced the retained workspace")
 	}
-	reattached := waitReady(t, ctx, serviceClient, owner, binding, attached.Environment)
-	verify, release := acquireRun(t, ctx, serviceClient, owner, binding, reattached, "holder-loss-verify")
-	if _, err := serviceClient.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "holder-loss-nonce"}); err != nil {
+	reattached := waitReady(t, ctx, survivingClient, owner, binding, attached.Environment)
+	verify, release := acquireRun(t, ctx, survivingClient, owner, binding, reattached, "holder-loss-verify")
+	if _, err := survivingClient.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "holder-loss-nonce"}); err != nil {
 		t.Fatalf("post-recovery sentinel unavailable: %v", err)
 	}
-	if _, err := serviceClient.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "second-writer"}); err == nil {
+	if _, err := survivingClient.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "second-writer"}); err == nil {
 		t.Fatal("denied overlapping writer nevertheless reached the executor")
 	}
 	release()
@@ -571,7 +682,8 @@ func waitExecutorTerminal(t *testing.T, ctx context.Context, kubeconfig, environ
 func TestKindExecutionProductionQuotaSaturation(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
+	replicas, replicaUIDs := productionReplicaClients(t, ctx, state, kubeconfig)
+	client := replicas[0]
 
 	// First prove the provider's profile-wide CAS authority under concurrent
 	// requests. Exactly one distinct allocation may consume quota-cas's sole slot.
@@ -589,7 +701,7 @@ func TestKindExecutionProductionQuotaSaturation(t *testing.T) {
 			<-start
 			owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: fmt.Sprintf("quota-cas-%d", i)}
 			binding := fmt.Sprintf("quota-cas-%d-%d", i, time.Now().UnixNano())
-			out, err := client.Ensure(ctx, binding, "quota-cas", owner, "ensure-"+binding)
+			out, err := replicas[i].Ensure(ctx, binding, "quota-cas", owner, "ensure-"+binding)
 			results <- ensureResult{owner: owner, binding: binding, out: out, err: err}
 		}()
 	}
@@ -608,9 +720,9 @@ func TestKindExecutionProductionQuotaSaturation(t *testing.T) {
 		}
 	}
 	if accepted == nil || denied != 1 {
-		t.Fatalf("quota CAS accepted=%v resource_exhausted=%d, want one each", accepted != nil, denied)
+		t.Fatalf("quota CAS pod_uids=%v accepted=%v resource_exhausted=%d, want one each", replicaUIDs, accepted != nil, denied)
 	}
-	if err := client.CommitReference(ctx, executionenv.ReferenceRequest{Environment: accepted.out.Environment, Owner: accepted.owner, BindingID: accepted.binding, OperationID: "commit-" + accepted.binding}); err != nil {
+	if err := client.CommitReference(ctx, executionenv.ReferenceRequest{Environment: accepted.out.Environment, Owner: accepted.owner, BindingID: accepted.binding, OperationID: "ensure-" + accepted.binding}); err != nil {
 		t.Fatal(err)
 	}
 	waitReady(t, ctx, client, accepted.owner, accepted.binding, accepted.out.Environment)
@@ -660,7 +772,7 @@ func TestKindExecutionProductionQuotaSaturation(t *testing.T) {
 
 	all := append(allocations, *accepted)
 	for _, allocation := range all {
-		if err := client.CommitReference(ctx, executionenv.ReferenceRequest{Environment: allocation.out.Environment, Owner: allocation.owner, BindingID: allocation.binding, OperationID: "commit-" + allocation.binding}); err != nil {
+		if err := client.CommitReference(ctx, executionenv.ReferenceRequest{Environment: allocation.out.Environment, Owner: allocation.owner, BindingID: allocation.binding, OperationID: "ensure-" + allocation.binding}); err != nil {
 			t.Fatal(err)
 		}
 		waitReady(t, ctx, client, allocation.owner, allocation.binding, allocation.out.Environment)
@@ -703,6 +815,7 @@ func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=240s")
+	client, _ = productionClient(t, ctx, state, kubeconfig)
 	intents, err := client.ListReferenceIntents(ctx, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -748,49 +861,88 @@ func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	}
 }
 
-func TestKindExecutionProductionCompatiblePrototypeMigration(t *testing.T) {
+type legacyMigrationFixture struct {
+	Environment     executionenv.EnvironmentRef `json:"environment"`
+	Owner           executionenv.Owner          `json:"owner"`
+	Binding         string                      `json:"binding"`
+	PodUID          string                      `json:"pod_uid"`
+	PVCUID          string                      `json:"pvc_uid"`
+	Malformed       executionenv.EnvironmentRef `json:"malformed_environment"`
+	MalformedPodUID string                      `json:"malformed_pod_uid"`
+	MalformedPVCUID string                      `json:"malformed_pvc_uid"`
+	Insecure        executionenv.EnvironmentRef `json:"insecure_environment"`
+	InsecurePodUID  string                      `json:"insecure_pod_uid"`
+	InsecurePVCUID  string                      `json:"insecure_pvc_uid"`
+}
+
+func runKindExecutionProductionCompatiblePrototypeMigration(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
 	client, _ := productionClient(t, ctx, state, kubeconfig)
-	owner, binding, attached := createProductionEnvironment(t, ctx, client, "migration")
-	before := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-	rc, release := acquireRun(t, ctx, client, owner, binding, attached, "migration-seed")
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "migration-sentinel", Data: []byte("prototype-data\n")}); err != nil {
+	var fixture legacyMigrationFixture
+	raw, err := os.ReadFile(filepath.Join(state, "legacy-migration.json"))
+	if err != nil || json.Unmarshal(raw, &fixture) != nil {
+		t.Fatalf("load pre-upgrade legacy API fixture: %v", err)
+	}
+	if fixture.Environment.ID == "" || fixture.Environment.Revision == "" || fixture.PodUID == "" || fixture.PVCUID == "" || fixture.Binding == "" {
+		t.Fatal("pre-upgrade legacy API fixture identities are incomplete")
+	}
+
+	var stored map[string]any
+	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "executionenvironment", fixture.Environment.ID, "-n", namespace, "-o", "json"), &stored); err != nil {
 		t.Fatal(err)
 	}
-	release()
-
-	// The supported prototype profile is deliberately narrow: the stored CR,
-	// Pod, PVC, finalizer, ownership labels, and immutable security shape already
-	// match production; only schema markers and legacy reference encoding predate
-	// v2. Foreign or legacy-insecure Pods are never adopted by migration.
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+attached.Environment.ID, "-n", namespace, "--type=merge", "-p", `{"spec":{"schemaVersion":1}}`)
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+attached.Environment.ID, "-n", namespace, "--subresource=status", "--type=merge", "-p", `{"status":{"schemaVersion":1}}`)
-	waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool { return !s.Ready && s.ReadyReason == "IncompatibleSchema" })
-	if _, err := client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding}, Purpose: executionenv.PurposeSession}); err == nil {
+	status, _ := stored["status"].(map[string]any)
+	references, _ := status["references"].([]any)
+	if len(references) != 1 || references[0] != fixture.Binding {
+		t.Fatalf("legacy string references were not persisted through the real API upgrade: %#v", references)
+	}
+	before := readExecutionStatus(t, ctx, kubeconfig, fixture.Environment.ID)
+	if before.SpecSchema != 1 || before.StatusSchema != 1 || before.PodUID != fixture.PodUID || before.PVCUID != fixture.PVCUID {
+		t.Fatal("pre-upgrade fixture did not preserve schema-1 exact runtime identity")
+	}
+	if _, err := client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: fixture.Environment, Owner: fixture.Owner, BindingID: fixture.Binding}, Purpose: executionenv.PurposeSession}); err == nil {
 		t.Fatal("prototype schema attached before explicit migration")
 	}
-	if err := client.MigrateEnvironment(ctx, attached.Environment, owner, 1, "foreign-pod-uid", before.PVCUID, "migration-wrong-uid"); err == nil {
+	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, "foreign-pod-uid", before.PVCUID, "migration-wrong-uid"); err == nil {
 		t.Fatal("migration adopted a foreign Pod UID")
 	}
-	if err := client.MigrateEnvironment(ctx, attached.Environment, owner, 1, "", before.PVCUID, "migration-missing-uid"); err == nil {
+	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, "", before.PVCUID, "migration-missing-uid"); err == nil {
 		t.Fatal("migration accepted a missing runtime UID")
 	}
-	if err := client.MigrateEnvironment(ctx, attached.Environment, owner, 2, before.PodUID, before.PVCUID, "migration-unknown-version"); err == nil {
+	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 2, before.PodUID, before.PVCUID, "migration-unknown-version"); err == nil {
 		t.Fatal("migration accepted an unrecognized source schema")
 	}
-	if err := client.MigrateEnvironment(ctx, attached.Environment, owner, 1, before.PodUID, before.PVCUID, "migration-compatible-v1"); err != nil {
+	if err := client.MigrateEnvironment(ctx, fixture.Malformed, fixture.Owner, 1, fixture.MalformedPodUID, fixture.MalformedPVCUID, "migration-malformed-shape"); err == nil || !isRemoteCode(err, executionenv.CodeConflict) {
+		t.Fatalf("migration accepted a legacy reference shape outside the recognized prototype: %v", err)
+	}
+	if err := client.MigrateEnvironment(ctx, fixture.Insecure, fixture.Owner, 1, fixture.InsecurePodUID, fixture.InsecurePVCUID, "migration-insecure-runtime"); err == nil || !isRemoteCode(err, executionenv.CodeConflict) {
+		t.Fatalf("migration accepted an insecure legacy executor: %v", err)
+	}
+	if got := readExecutionStatus(t, ctx, kubeconfig, fixture.Insecure.ID); got.SpecSchema != 1 || got.StatusSchema != 1 {
+		t.Fatal("rejected insecure legacy executor was rewritten")
+	}
+	// Normalize the deliberately rejected test-owned object through the API so it
+	// cannot poison later client-scoped reference reconciliation in this retained cluster.
+	normalized := fmt.Sprintf(`[{"bindingID":"legacy-malformed-binding","state":"Published","operationID":"migration-fixture-normalize","createdAt":%q}]`, time.Now().UTC().Format(time.RFC3339Nano))
+	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+fixture.Malformed.ID, "-n", namespace, "--subresource=status", "--type=merge", "-p", `{"status":{"references":`+normalized+`}}`)
+	insecureNormalized := fmt.Sprintf(`[{"bindingID":"legacy-insecure-binding","state":"Published","operationID":"migration-insecure-fixture-normalize","createdAt":%q}]`, time.Now().UTC().Format(time.RFC3339Nano))
+	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment/"+fixture.Insecure.ID, "-n", namespace, "--subresource=status", "--type=merge", "-p", `{"status":{"references":`+insecureNormalized+`}}`)
+	if err := client.MigrateEnvironment(ctx, fixture.Malformed, fixture.Owner, 1, fixture.MalformedPodUID, fixture.MalformedPVCUID, "migration-normalized-shape"); err != nil {
+		t.Fatalf("normalize rejected migration fixture: %v", err)
+	}
+	if err := client.MigrateEnvironment(ctx, fixture.Environment, fixture.Owner, 1, before.PodUID, before.PVCUID, "migration-compatible-v1"); err != nil {
 		t.Fatalf("migrate compatible prototype: %v", err)
 	}
-	after := waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool { return s.Ready && s.SpecSchema == 2 && s.StatusSchema == 2 })
+	after := waitExecutionStatus(t, ctx, kubeconfig, fixture.Environment.ID, func(s executionStatus) bool { return s.Ready && s.SpecSchema == 2 && s.StatusSchema == 2 })
 	if after.PodUID != before.PodUID || after.PVCUID != before.PVCUID || after.Epoch != before.Epoch+1 {
 		t.Fatal("migration changed runtime identity or failed to advance only the fence epoch")
 	}
-	if got := executionReferences(t, ctx, kubeconfig, attached.Environment.ID); got[binding] != string(executionenv.ReferencePublished) {
-		t.Fatal("migration changed the published source reference")
+	if got := executionReferences(t, ctx, kubeconfig, fixture.Environment.ID); got[fixture.Binding] != string(executionenv.ReferencePublished) {
+		t.Fatal("migration did not convert the persisted legacy string reference")
 	}
-	reattached := waitReady(t, ctx, client, owner, binding, attached.Environment)
-	verify, verifyRelease := acquireRun(t, ctx, client, owner, binding, reattached, "migration-verify")
+	reattached := waitReady(t, ctx, client, fixture.Owner, fixture.Binding, fixture.Environment)
+	verify, verifyRelease := acquireRun(t, ctx, client, fixture.Owner, fixture.Binding, reattached, "migration-verify")
 	got, err := client.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "migration-sentinel"})
 	if err != nil || string(got.Data) != "prototype-data\n" {
 		t.Fatal("migration lost prototype workspace data")
@@ -813,10 +965,7 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 	source := createSession(t, ctx, agent.addr, alice)
 	assertMockJourney(t, prompt(t, ctx, agent.addr, source, alice, "run the scripted remote qualification"))
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
-	allocation, err := provider.Ensure(ctx, source, "go", owner, "clear-fork-lookup-"+source)
-	if err != nil {
-		t.Fatalf("resolve source placement: %v", err)
-	}
+	allocation := executionenv.EnsureEnvironmentResponse{Environment: environmentForBinding(t, ctx, kubeconfig, source)}
 	attached := waitReady(t, ctx, provider, owner, source, allocation.Environment)
 	before := readExecutionStatus(t, ctx, kubeconfig, allocation.Environment.ID)
 
@@ -867,6 +1016,37 @@ func TestKindExecutionProductionClearForkLifecycle(t *testing.T) {
 	if final.PVCUID != before.PVCUID || resourceCount(t, ctx, kubeconfig, "pvc -l execution.mecatl.dev/environment="+allocation.Environment.ID) != 1 {
 		t.Fatal("session deletion removed or replaced the retained workspace")
 	}
+}
+
+func environmentForBinding(t *testing.T, ctx context.Context, kubeconfig, binding string) executionenv.EnvironmentRef {
+	t.Helper()
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Revision string `json:"revision"`
+			} `json:"spec"`
+			Status struct {
+				References []struct {
+					BindingID string `json:"bindingID"`
+				} `json:"references"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "executionenvironments", "-n", namespace, "-o", "json"), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range list.Items {
+		for _, ref := range item.Status.References {
+			if ref.BindingID == binding && item.Metadata.Name != "" && item.Spec.Revision != "" {
+				return executionenv.EnvironmentRef{ID: item.Metadata.Name, Revision: item.Spec.Revision}
+			}
+		}
+	}
+	t.Fatalf("no exact execution environment owns binding %s", binding)
+	return executionenv.EnvironmentRef{}
 }
 
 func successorSession(t *testing.T, ctx context.Context, addr, source, token, operation string) string {
