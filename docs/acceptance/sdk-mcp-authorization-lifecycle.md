@@ -4,7 +4,7 @@
 **Work classification:** Architectural — this adds durable public TypeScript SDK resource, stream, status, result, and control contracts for a stateful session-bound authorization workflow.
 **Decision record:** [ADR 0348](../adr/0348-typescript-sdk-mcp-authorization-lifecycle.md)
 **Phase:** ergonomic TypeScript SDK MCP authorization lifecycle
-**Status:** in-progress, 2026-09-18. Implementation proceeds as a sequential stack layer above open Plan / Interface PR #1687 by explicit directing-user instruction and includes the attachment, termination, and correlation clarifications requested during review.
+**Status:** landed, 2026-09-18. The stacked implementation candidate satisfies the reviewed attachment, termination, and correlation contract; this transition becomes authoritative when the Implementation PR merges.
 **Delivery:** Split. The public SDK object model, Run parking contract, single-consumption stream grammar, control routing, and disconnect semantics require Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1469](https://github.com/stacklok/mecatl/issues/1469)
