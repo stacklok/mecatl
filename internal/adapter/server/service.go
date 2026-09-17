@@ -3064,8 +3064,7 @@ func (s *Service) Close() {
 	// stuck engine close (e.g. a wedged MCP transport) cannot stall shutdown
 	// unboundedly. On timeout the goroutine is abandoned (best-effort) and a
 	// WARN is logged; the leases still release so the process can exit.
-	done := make(chan struct{})
-	go func() {
+	s.waitBounded(func() {
 		for _, se := range engines {
 			if se.close != nil {
 				if err := se.close(); err != nil {
@@ -3073,14 +3072,7 @@ func (s *Service) Close() {
 				}
 			}
 		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(engineCloseTimeout):
-		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "timed out waiting for per-session engine close; abandoning",
-			"timeout", engineCloseTimeout.String())
-	}
+	}, "timed out waiting for per-session engine close; abandoning")
 	attachmentCtx, cancelAttachments := context.WithTimeout(context.Background(), engineCloseTimeout)
 	var attachmentWG sync.WaitGroup
 	for _, attachment := range brokerAttachments {
@@ -4778,19 +4770,14 @@ func (s *Service) resolveLiveRunAsk(ctx context.Context, id session.SessionID, s
 	if ctx.Err() != nil {
 		return RunAskAcknowledgement{}, ctx.Err()
 	}
-	if s.validateRunEntryGenerationLocked(id, generation) != nil || s.runs[id] != st || st.run == nil || st.cancelling || st.cancelSignaled || st.run.Outcome() != agent.RunOutcomeUnknown {
-		return RunAskAcknowledgement{}, checkExpectedRun(expectedRunID, "")
-	}
-	if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
+	run, err := s.liveRunForControlLocked(id, st, expectedRunID, generation)
+	if err != nil {
 		return RunAskAcknowledgement{}, err
 	}
-	if err := s.validateHeldLeaseLocked(id); err != nil {
-		return RunAskAcknowledgement{}, err
-	}
-	switch st.run.ResolveOrdinaryAsk(askID, verdict) {
+	switch run.ResolveOrdinaryAsk(askID, verdict) {
 	case agent.AskResolutionResolved:
 		st.resolvedAskID = askID
-		return RunAskAcknowledgement{RunID: st.run.RunID(), AskID: askID}, nil
+		return RunAskAcknowledgement{RunID: run.RunID(), AskID: askID}, nil
 	case agent.AskResolutionPlanOriginated:
 		return RunAskAcknowledgement{}, ErrPlanResolutionRequired
 	default:
@@ -4958,15 +4945,21 @@ func (s *Service) closeDetachedControlAdmission() {
 }
 
 func (s *Service) waitDetachedControlRelays() {
+	s.waitBounded(func() {
+		s.detachedControlWG.Wait()
+	}, "timed out waiting for detached control relays; abandoning")
+}
+
+func (s *Service) waitBounded(wait func(), timeoutWarning string) {
 	done := make(chan struct{})
 	go func() {
-		s.detachedControlWG.Wait()
+		wait()
 		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(engineCloseTimeout):
-		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "timed out waiting for detached control relays; abandoning",
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, timeoutWarning,
 			"timeout", engineCloseTimeout.String())
 	}
 }
@@ -5027,6 +5020,23 @@ func (s *Service) validateHeldLeaseLocked(id session.SessionID) error {
 	return nil
 }
 
+// liveRunForControlLocked applies the one exact-live transition gate shared by
+// every prompt-free run control. The caller holds st.persistMu and s.mu; keeping
+// the generation, registry, lifecycle, exact-run, and live-lease checks here
+// preserves one error precedence before each endpoint performs its own action.
+func (s *Service) liveRunForControlLocked(id session.SessionID, st *runState, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
+	if s.validateRunEntryGenerationLocked(id, generation) != nil || s.runs[id] != st || st.run == nil || st.cancelling || st.cancelSignaled || st.run.Outcome() != agent.RunOutcomeUnknown {
+		return nil, checkExpectedRun(expectedRunID, "")
+	}
+	if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
+		return nil, err
+	}
+	if err := s.validateHeldLeaseLocked(id); err != nil {
+		return nil, err
+	}
+	return st.run, nil
+}
+
 // CancelRun cancels only the exact addressed live run.
 func (s *Service) CancelRun(ctx context.Context, id session.SessionID, expectedRunID string) (RunControlAcknowledgement, error) {
 	if expectedRunID == "" {
@@ -5056,17 +5066,12 @@ func (s *Service) CancelRun(ctx context.Context, id session.SessionID, expectedR
 	if ctx.Err() != nil {
 		return RunControlAcknowledgement{}, ctx.Err()
 	}
-	if s.validateRunEntryGenerationLocked(id, generation) != nil || s.runs[id] != st || st.run == nil || st.cancelling || st.cancelSignaled || st.run.Outcome() != agent.RunOutcomeUnknown {
-		return RunControlAcknowledgement{}, checkExpectedRun(expectedRunID, "")
-	}
-	if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
-		return RunControlAcknowledgement{}, err
-	}
-	if err := s.validateHeldLeaseLocked(id); err != nil {
+	run, err := s.liveRunForControlLocked(id, st, expectedRunID, generation)
+	if err != nil {
 		return RunControlAcknowledgement{}, err
 	}
 	st.cancelSignaled = true
-	st.run.Cancel()
+	run.Cancel()
 	return RunControlAcknowledgement{RunID: expectedRunID}, nil
 }
 
@@ -5095,16 +5100,11 @@ func (s *Service) SteerRun(ctx context.Context, id session.SessionID, expectedRu
 	if ctx.Err() != nil {
 		return RunSteerAcknowledgement{}, ctx.Err()
 	}
-	if s.validateRunEntryGenerationLocked(id, generation) != nil || s.runs[id] != st || st.run == nil || st.cancelling || st.cancelSignaled || st.run.Outcome() != agent.RunOutcomeUnknown {
-		return RunSteerAcknowledgement{}, checkExpectedRun(expectedRunID, "")
-	}
-	if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
+	run, err := s.liveRunForControlLocked(id, st, expectedRunID, generation)
+	if err != nil {
 		return RunSteerAcknowledgement{}, err
 	}
-	if err := s.validateHeldLeaseLocked(id); err != nil {
-		return RunSteerAcknowledgement{}, err
-	}
-	outcome, err := st.run.EnqueueSteerWithMessageID(text, parts, messageID)
+	outcome, err := run.EnqueueSteerWithMessageID(text, parts, messageID)
 	if err != nil {
 		return RunSteerAcknowledgement{}, fmt.Errorf("server: steer enqueue: %w", err)
 	}
@@ -5142,16 +5142,11 @@ func (s *Service) cancelRunSteer(ctx context.Context, id session.SessionID, expe
 	if ctx.Err() != nil {
 		return RunSteerAcknowledgement{}, ctx.Err()
 	}
-	if s.validateRunEntryGenerationLocked(id, generation) != nil || s.runs[id] != st || st.run == nil || st.cancelling || st.cancelSignaled || st.run.Outcome() != agent.RunOutcomeUnknown {
-		return RunSteerAcknowledgement{}, checkExpectedRun(expectedRunID, "")
-	}
-	if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
+	run, err := s.liveRunForControlLocked(id, st, expectedRunID, generation)
+	if err != nil {
 		return RunSteerAcknowledgement{}, err
 	}
-	if err := s.validateHeldLeaseLocked(id); err != nil {
-		return RunSteerAcknowledgement{}, err
-	}
-	outcome, err := st.run.CancelSteer()
+	outcome, err := run.CancelSteer()
 	if err != nil {
 		return RunSteerAcknowledgement{}, fmt.Errorf("server: steer cancel: %w", err)
 	}
@@ -7887,11 +7882,8 @@ func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, stop c
 	if s.runs[id] != st || st.cancelling || s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
-	if s.cfg.SessionLease != nil && !s.leaseDisabled {
-		h := s.heldLeases[id]
-		if h == nil || !h.valid || h.ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
-		}
+	if err := s.validateHeldLeaseLocked(id); err != nil {
+		return nil, err
 	}
 	run := launch()
 	st.run = run
