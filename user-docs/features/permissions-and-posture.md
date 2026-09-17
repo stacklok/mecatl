@@ -219,9 +219,10 @@ matchers, modes, and checker failure handling.
 
 - `strict` preserves the built-in read-allow and mutate-ask floor.
 - `auto` and `yolo` preserve denies and configured asks.
-- Headless main-session asks can still wait indefinitely unless the deployment
-  configures the required permissions; headless child asks use the fail-safe
-  child path instead of waiting for a client.
+- Headless server deployments can leave main-session asks waiting for a client.
+  [`mecatequi` cancels its one-shot run](/building/deployment/mecatequi.md#headless-posture-and-permission-asks)
+  when an ask surfaces. Headless child asks use the fail-safe child path instead
+  of waiting for a client.
 - Project files are untrusted by default. Do not enable project trust for a
   repository whose instructions, hooks, skills, or Git metadata you have not
   reviewed.

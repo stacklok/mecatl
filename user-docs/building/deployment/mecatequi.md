@@ -238,9 +238,9 @@ corrupt both.
 |`--model`|`""`|Per-session passthrough model ID. Accepts any ID the provider serves, including IDs newer than the embedded catalog. Prefer this over `--default-model` for newer models.|
 |`--posture`|`""` (strict)|Permission posture. Use `auto` for autonomous CI. With `strict` and `--headless`, a main-agent permission ask cancels the run and exits 1.|
 |`--trust-project`|`false`|Trust this workspace for project content and read-only child shell access. No posture grants project trust in headless mode. Without this flag or a declared or remembered trust decision, Mecatl ignores project content such as `AGENTS.md` and does not give read-only children a shell.|
-|`--headless`|`true`|A single-shot CI run has no human approver. Child asks are denied or routed to the optional ask reviewer.|
+|`--headless`|`true`|Controls child permission requests. The default denies them or routes them to the optional ask reviewer. See [Headless posture and permission asks](#headless-posture-and-permission-asks).|
 |`--timeout`|`0` (disabled)|Wall-clock bound on the whole run (e.g. `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`.|
-|`--max-run-tokens`|`0` (unlimited)|Per-engine input and output token limit. Each child enforces its own inherited limit, so aggregate delegated usage can exceed this value. Crossing the limit produces `stop_reason: budget`.|
+|`--max-run-tokens`|`0` (unlimited)|Input and output token limit for each run. The parent and every child apply this limit to their own run, so their combined usage can exceed it. Crossing the limit produces `stop_reason: budget`.|
 |`--max-team-tokens`|`0` (unlimited)|Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team.|
 |`--max-turns`|`0` (deployment default)|Turn cap for this run. `0` inherits the composition default.|
 
@@ -288,6 +288,10 @@ default. `--subagent-ask-reviewer` enables a tool-less, one-turn LLM reviewer
 that can approve the current call only. A reviewer error leaves the call denied.
 This flag applies only in headless mode.
 
+`--headless=false` surfaces child asks instead. `mecatequi` has no approval
+interface, so the first surfaced ask cancels the run, produces
+`stop_reason: cancelled`, and exits 1.
+
 With `--posture strict` and `--headless`, the main agent has no approver. Its
 first permission ask cancels the run, produces `stop_reason: cancelled`, and
 exits 1 with guidance to add allow rules or choose another posture.
@@ -295,6 +299,9 @@ exits 1 with guidance to add allow rules or choose another posture.
 Use `--posture auto` for autonomous CI. It allows main-agent and child tool
 calls while retaining child prompt-injection defenses. Reserve `yolo` for a
 disposable, isolated, single-tenant environment.
+
+For shared posture behavior, project trust, and permission-rule precedence, see
+[Permissions and posture](/features/permissions-and-posture.md).
 
 ## What mecatequi does not support
 
@@ -322,5 +329,5 @@ exits 2.
   for other deployment options.
 - [Run mecated standalone](/building/deployment/mecated.md) for interactive
   clients and durable sessions.
-- [Configure permissions and guardrails](/building/what-you-get/permissions.md)
-  for autonomous runs.
+- [Configure permissions and posture](/features/permissions-and-posture.md) for
+  autonomous runs.
