@@ -331,6 +331,10 @@ PR after verification. There is no cleanup or status-only PR.
   ordinary ask resolution, cancellation, strict multimodal steering, and pending-steer
   retraction over gRPC and HTTP through `session.controls(runId)`, with request options,
   bounded correlated acknowledgements, and mandatory stale-run guards. Status: proposed.
+- [TypeScript SDK HTTP well-known-type JSON compatibility](sdk-http-wkt-json-compatibility.md) —
+  descriptor-guided Timestamp and Duration decoding for daemon stdlib-JSON responses across unary
+  HTTP and SSE, preserving ProtoJSON strings, typed failures, and the registered raw response.
+  Status: proposed.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
