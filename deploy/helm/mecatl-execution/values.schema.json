@@ -2,11 +2,32 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["provider", "service", "profiles"],
+  "required": ["provider", "service", "profiles", "networkPolicy", "resourceGovernance"],
   "properties": {
     "fullnameOverride": {"type":"string"},
-    "provider": {"type":"object","additionalProperties":false,"required":["image","clientURISANs","ownerAttesterURISANs","tlsSecretName","grantSigningSecretName"],"properties":{"image":{"type":"string","pattern":"@sha256:[0-9a-fA-F]{64}$"},"imagePullPolicy":{"enum":["Always","IfNotPresent","Never"]},"replicas":{"const":1},"clientURISANs":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","pattern":"^[a-z][a-z0-9+.-]*://"}},"ownerAttesterURISANs":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string"}},"administratorURISANs":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"tlsSecretName":{"type":"string","minLength":1},"grantSigningSecretName":{"type":"string","minLength":1},"grantKeyID":{"type":"string","minLength":1}}},
+    "provider": {
+      "type":"object", "additionalProperties":false,
+      "required":["image","replicas","securitySecretName","securityManifest","maxConcurrentStreams","maxConcurrentRPCs","maxConcurrentRPCsPerClient","apiServerCIDRs","dnsCIDRs","resources"],
+      "properties": {
+        "image":{"type":"string","pattern":"@sha256:[0-9a-fA-F]{64}$"},
+        "imagePullPolicy":{"enum":["Always","IfNotPresent","Never"]},
+        "replicas":{"type":"integer","minimum":2,"maximum":32},
+        "securitySecretName":{"type":"string","minLength":1},
+        "securityManifest":{"type":"string","minLength":2},
+        "securityReloadInterval":{"type":"string","pattern":"^[1-9][0-9]*(ms|s|m)$"},
+        "maxConcurrentStreams":{"type":"integer","minimum":1,"maximum":1024},
+        "maxConcurrentRPCs":{"type":"integer","minimum":1,"maximum":4096},
+        "maxConcurrentRPCsPerClient":{"type":"integer","minimum":1,"maximum":4096},
+        "healthPort":{"type":"integer","minimum":1,"maximum":65535},
+        "clientIngressSelectors":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["namespaceLabels","podLabels"],"properties":{"namespaceLabels":{"type":"object","minProperties":1,"additionalProperties":{"type":"string"}},"podLabels":{"type":"object","minProperties":1,"additionalProperties":{"type":"string"}}}}},
+        "apiServerCIDRs":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","pattern":"^[0-9a-fA-F:.]+/[0-9]+$"}},
+        "dnsCIDRs":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","pattern":"^[0-9a-fA-F:.]+/[0-9]+$"}},
+        "resources":{"type":"object","required":["requests","limits"],"properties":{"requests":{"type":"object","required":["cpu","memory","ephemeral-storage"]},"limits":{"type":"object","required":["cpu","memory","ephemeral-storage"]}}}
+      }
+    },
     "service":{"type":"object","additionalProperties":false,"required":["port"],"properties":{"port":{"type":"integer","minimum":1,"maximum":65535}}},
-    "profiles":{"type":"object","minProperties":1,"additionalProperties":{"type":"object","additionalProperties":false,"required":["image","storageClass","storageSize","cpuRequest","memoryRequest","cpuLimit","memoryLimit","maxFileBytes","maxCommandBytes","maxCommandDuration"],"properties":{"image":{"type":"string","pattern":"@sha256:[0-9a-fA-F]{64}$"},"storageClass":{"type":"string","minLength":1},"storageSize":{"type":"string","minLength":1},"cpuRequest":{"type":"string","minLength":1},"memoryRequest":{"type":"string","minLength":1},"cpuLimit":{"type":"string","minLength":1},"memoryLimit":{"type":"string","minLength":1},"maxFileBytes":{"type":"integer","minimum":1,"maximum":5242880},"maxCommandBytes":{"type":"integer","minimum":1,"maximum":1048576},"maxCommandDuration":{"type":"string","pattern":"^[1-9][0-9]*(ms|s|m)$"}}}}
+    "networkPolicy":{"type":"object","additionalProperties":false,"required":["enabled","dnsPorts","apiServerPorts","workloadProfiles"],"properties":{"enabled":{"const":true},"dnsPorts":{"type":"array","minItems":1,"items":{"type":"integer","minimum":1,"maximum":65535}},"apiServerPorts":{"type":"array","minItems":1,"items":{"type":"integer","minimum":1,"maximum":65535}},"workloadProfiles":{"type":"object","additionalProperties":{"type":"object","additionalProperties":false,"required":["egress"],"properties":{"egress":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["cidr","ports"],"properties":{"cidr":{"type":"string","pattern":"^[0-9a-fA-F:.]+/[0-9]+$"},"ports":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["port"],"properties":{"port":{"type":"integer","minimum":1,"maximum":65535},"protocol":{"enum":["TCP","UDP"]}}}}}}}}}}}},
+    "resourceGovernance":{"type":"object","additionalProperties":false,"required":["enabled","pods","persistentVolumeClaims","executionEnvironments","requestsCPU","requestsMemory","requestsStorage","limitsCPU","limitsMemory"],"properties":{"enabled":{"const":true},"pods":{"type":"string","minLength":1},"persistentVolumeClaims":{"type":"string","minLength":1},"executionEnvironments":{"type":"string","minLength":1},"requestsCPU":{"type":"string","minLength":1},"requestsMemory":{"type":"string","minLength":1},"requestsStorage":{"type":"string","minLength":1},"limitsCPU":{"type":"string","minLength":1},"limitsMemory":{"type":"string","minLength":1}}},
+    "profiles":{"type":"object","minProperties":1,"additionalProperties":{"type":"object","additionalProperties":false,"required":["image","storageClass","storageSize","cpuRequest","memoryRequest","cpuLimit","memoryLimit","ephemeralStorageRequest","ephemeralStorageLimit","tmpSizeLimit","runtimeClassName","maxFileBytes","maxCommandBytes","maxCommandDuration","maxEnvironments"],"properties":{"image":{"type":"string","pattern":"@sha256:[0-9a-fA-F]{64}$"},"storageClass":{"type":"string","minLength":1},"storageSize":{"type":"string","minLength":1},"cpuRequest":{"type":"string","minLength":1},"memoryRequest":{"type":"string","minLength":1},"cpuLimit":{"type":"string","minLength":1},"memoryLimit":{"type":"string","minLength":1},"ephemeralStorageRequest":{"type":"string","minLength":1},"ephemeralStorageLimit":{"type":"string","minLength":1},"tmpSizeLimit":{"type":"string","minLength":1},"runtimeClassName":{"type":"string","minLength":1},"maxFileBytes":{"type":"integer","minimum":1,"maximum":5242880},"maxCommandBytes":{"type":"integer","minimum":1,"maximum":1048576},"maxCommandDuration":{"type":"string","pattern":"^[1-9][0-9]*(ms|s|m)$"},"maxEnvironments":{"type":"integer","minimum":1,"maximum":10000}}}}
   }
 }

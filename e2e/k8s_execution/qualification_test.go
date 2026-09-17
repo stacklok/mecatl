@@ -103,7 +103,7 @@ func TestKindExecutionQualification(t *testing.T) {
 			return err
 		},
 		"environment retire": func() error {
-			return intruder.RetireEnvironment(ctx, executionenv.RetireEnvironmentRequest{Context: rc})
+			return intruder.RetireEnvironment(ctx, executionenv.RetireEnvironmentRequest{Environment: rc.Environment, Owner: rc.Owner, ExpectedEpoch: rc.Epoch, ExpectedPodUID: "wrong-pod", ExpectedPVCUID: "wrong-pvc", OperationID: "unauthorized-retire"})
 		},
 	} {
 		if err := call(); err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeUnauthenticated)) {

@@ -1,0 +1,10 @@
+{{- if gt (int .Values.provider.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+{{- end }}

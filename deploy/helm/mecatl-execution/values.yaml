@@ -2,16 +2,40 @@ fullnameOverride: ""
 provider:
   image: ""
   imagePullPolicy: IfNotPresent
-  replicas: 1
-  clientURISANs: []
-  ownerAttesterURISANs: []
-  administratorURISANs: []
-  tlsSecretName: ""
-  grantSigningSecretName: ""
-  grantKeyID: current
+  replicas: 2
+  securitySecretName: ""
+  securityManifest: ""
+  securityReloadInterval: 2s
+  maxConcurrentStreams: 64
+  maxConcurrentRPCs: 128
+  maxConcurrentRPCsPerClient: 32
+  healthPort: 8081
+  clientIngressSelectors: []
+  apiServerCIDRs: []
+  dnsCIDRs: []
+  resources:
+    requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi}
+    limits: {cpu: "1", memory: 512Mi, ephemeral-storage: 256Mi}
+  # Deprecated single-key/TLS settings are intentionally unsupported.
 service:
   port: 8443
+networkPolicy:
+  enabled: true
+  dnsPorts: [53]
+  apiServerPorts: [443]
+  workloadProfiles: {}
+resourceGovernance:
+  enabled: true
+  pods: "200"
+  persistentVolumeClaims: "100"
+  executionEnvironments: "100"
+  requestsCPU: "20"
+  requestsMemory: 40Gi
+  requestsStorage: 500Gi
+  limitsCPU: "40"
+  limitsMemory: 80Gi
 profiles: {}
+
 # Example profile (all fields are required):
 # profiles:
 #   go:
@@ -22,6 +46,11 @@ profiles: {}
 #     memoryRequest: 128Mi
 #     cpuLimit: "1"
 #     memoryLimit: 1Gi
+#     ephemeralStorageRequest: 64Mi
+#     ephemeralStorageLimit: 1Gi
+#     tmpSizeLimit: 256Mi
+#     runtimeClassName: gvisor
 #     maxFileBytes: 5242880
 #     maxCommandBytes: 1048576
 #     maxCommandDuration: 5m
+#     maxEnvironments: 100

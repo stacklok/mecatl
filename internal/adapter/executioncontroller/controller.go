@@ -3,7 +3,6 @@ package executioncontroller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -12,7 +11,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -28,6 +26,7 @@ import (
 
 const (
 	environmentFinalizer = "execution.mecatl.dev/retain-workspace"
+	executorFinalizer    = "execution.mecatl.dev/verify-termination"
 	fenceHealthy         = "Healthy"
 )
 
@@ -41,21 +40,18 @@ type Reconciler struct {
 	initOnce  sync.Once
 	initErr   error
 	ready     atomic.Bool
+	now       func() time.Time
 }
 
 // NewReconciler constructs a reconciler for one namespace.
 func NewReconciler(d dynamic.Interface, k kubernetes.Interface, namespace string, p *Profiles) *Reconciler {
-	return &Reconciler{dynamic: d, kube: k, namespace: namespace, profiles: p, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())}
+	return &Reconciler{dynamic: d, kube: k, namespace: namespace, profiles: p, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), now: func() time.Time { return time.Now().UTC() }}
 }
 
-// Initialize completes startup fencing and informer synchronization before the
-// provider may expose mutating APIs.
+// Initialize synchronizes informer caches before the provider may expose mutating APIs.
+// Startup never mutates operation ownership: another replica may still be its live holder.
 func (r *Reconciler) Initialize(ctx context.Context) error {
 	r.initOnce.Do(func() {
-		if err := r.fenceInterruptedOperations(ctx); err != nil {
-			r.initErr = err
-			return
-		}
 		factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(r.dynamic, 0, r.namespace, nil)
 		environments := factory.ForResource(ExecutionEnvironmentGVR).Informer()
 		_, err := environments.AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: r.enqueue, UpdateFunc: r.enqueueUpdate})
@@ -161,24 +157,6 @@ func (r *Reconciler) process(ctx context.Context) bool {
 	}
 	return true
 }
-func (r *Reconciler) fenceInterruptedOperations(ctx context.Context) error {
-	list, err := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("list execution environments for startup fencing: %w", err)
-	}
-	for i := range list.Items {
-		o := list.Items[i].DeepCopy()
-		if textNested(o.Object, "status", "activeOperation", "id") == "" {
-			continue
-		}
-		unstructured.RemoveNestedField(o.Object, "status", "activeOperation")
-		_ = unstructured.SetNestedField(o.Object, "FenceUnknown", "status", "fenceState")
-		if _, err := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace).UpdateStatus(ctx, o, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("fence interrupted environment %q: %w", o.GetName(), err)
-		}
-	}
-	return nil
-}
 
 // Reconcile converges one ExecutionEnvironment and its runtime resources.
 func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
@@ -189,6 +167,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if requireCurrentSchema(env) != nil {
+		return r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "explicit administrator migration to schema version 2 is required")
+	}
+	if expires := textNested(env.Object, "status", "activeOperation", "expiresAt"); expires != "" {
+		deadline, parseErr := time.Parse(time.RFC3339Nano, expires)
+		if parseErr != nil || !r.now().Before(deadline) {
+			return r.setFenceUnknown(ctx, env, "operation holder lease expired; operation identity retained for recovery")
+		}
 	}
 	profileName := textNested(env.Object, "spec", "profile")
 	p, ok := r.profiles.get(profileName)
@@ -205,6 +192,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 			return err
 		}
 		return nil
+	}
+	if textNested(env.Object, "status", "lifecycleOperation", "id") != "" {
+		return r.reconcileLifecycle(ctx, env)
 	}
 	if textNested(env.Object, "spec", "desired") == "Retiring" {
 		return r.reconcileRetiring(ctx, env)
@@ -232,13 +222,16 @@ func (r *Reconciler) ensurePVC(ctx context.Context, env *unstructured.Unstructur
 	pvcs := r.kube.CoreV1().PersistentVolumeClaims(r.namespace)
 	cur, err := pvcs.Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		if cur.Labels["execution.mecatl.dev/environment"] != env.GetName() {
-			return nil, errors.New("PVC ownership label mismatch")
+		if cur.Labels["execution.mecatl.dev/environment"] != env.GetName() || (textNested(env.Object, "status", "pvc", "uid") != "" && textNested(env.Object, "status", "pvc", "uid") != string(cur.UID)) {
+			return nil, errors.New("PVC ownership identity mismatch")
 		}
 		return cur, nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return nil, err
+	}
+	if textNested(env.Object, "status", "pvc", "uid") != "" {
+		return nil, errors.New("authoritative PVC disappeared; replacement is forbidden")
 	}
 	qty := p.StorageSize
 	mode := corev1.PersistentVolumeFilesystem
@@ -252,8 +245,8 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 	pods := r.kube.CoreV1().Pods(r.namespace)
 	cur, err := pods.Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		if cur.Labels["execution.mecatl.dev/environment"] != env.GetName() {
-			return nil, errors.New("pod ownership label mismatch")
+		if cur.Labels["execution.mecatl.dev/environment"] != env.GetName() || (textNested(env.Object, "status", "pod", "uid") != "" && textNested(env.Object, "status", "pod", "uid") != string(cur.UID)) {
+			return nil, errors.New("pod ownership identity mismatch")
 		}
 		return cur, nil
 	}
@@ -268,11 +261,14 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 	memReq := p.MemoryRequest
 	cpuLim := p.CPULimit
 	memLim := p.MemoryLimit
+	ephemeralReq := p.EphemeralStorageRequest
+	ephemeralLim := p.EphemeralStorageLimit
+	tmpLim := p.TmpSizeLimit
 	nonroot := true
 	uid := int64(65532)
 	noPriv := false
 	ro := true
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName()}, OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: &nonroot}}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: &noPriv, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: p.Spec.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: cpuReq, corev1.ResourceMemory: memReq}, Limits: corev1.ResourceList{corev1.ResourceCPU: cpuLim, corev1.ResourceMemory: memLim}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: quantityPtr("1Gi")}}}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName(), "execution.mecatl.dev/profile": hashText(textNested(env.Object, "spec", "profile"))[:16]}, Finalizers: []string{executorFinalizer}, OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: &nonroot}}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: &noPriv, RuntimeClassName: &p.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: p.Spec.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: cpuReq, corev1.ResourceMemory: memReq, corev1.ResourceEphemeralStorage: ephemeralReq}, Limits: corev1.ResourceList{corev1.ResourceCPU: cpuLim, corev1.ResourceMemory: memLim, corev1.ResourceEphemeralStorage: ephemeralLim}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &tmpLim}}}}}}
 	created, err := pods.Create(ctx, pod, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return pods.Get(ctx, name, metav1.GetOptions{})
@@ -283,8 +279,8 @@ func (r *Reconciler) reconcileRetiring(ctx context.Context, env *unstructured.Un
 	if textNested(env.Object, "status", "activeOperation", "id") != "" || textNested(env.Object, "status", "fenceState") != fenceHealthy {
 		return r.setCondition(ctx, env, "Retired", false, "NotQuiescent", "retirement waits for proven quiescence")
 	}
-	refs, _, _ := unstructured.NestedStringSlice(env.Object, "status", "references")
-	if len(refs) > 0 {
+	refs, refsErr := referenceRecords(env)
+	if refsErr != nil || len(refs) > 0 || textNested(env.Object, "status", "activeRun", "claimID") != "" {
 		return r.setCondition(ctx, env, "Retired", false, "Referenced", "retirement refused while references remain")
 	}
 	podName := textNested(env.Object, "status", "pod", "name")
@@ -314,8 +310,8 @@ func (r *Reconciler) reconcileRetiring(ctx context.Context, env *unstructured.Un
 	return nil
 }
 func (r *Reconciler) reconcileDeletion(ctx context.Context, res dynamic.ResourceInterface, env *unstructured.Unstructured) error {
-	refs, _, _ := unstructured.NestedStringSlice(env.Object, "status", "references")
-	if textNested(env.Object, "spec", "desired") != "Retiring" || !conditionTrue(env, "Retired") || len(refs) > 0 || textNested(env.Object, "status", "activeOperation", "id") != "" || textNested(env.Object, "status", "fenceState") != fenceHealthy {
+	refs, refsErr := referenceRecords(env)
+	if refsErr != nil || textNested(env.Object, "spec", "desired") != "Retiring" || !conditionTrue(env, "Retired") || len(refs) > 0 || textNested(env.Object, "status", "activeRun", "claimID") != "" || textNested(env.Object, "status", "activeOperation", "id") != "" || textNested(env.Object, "status", "fenceState") != fenceHealthy {
 		return r.setCondition(ctx, env, "DeletionBlocked", true, "RetentionSafety", "finalizer requires explicit completed retirement and proven quiescence")
 	}
 	pod := textNested(env.Object, "status", "pod", "name")
@@ -425,4 +421,3 @@ func resourceName(prefix, env string) string {
 	}
 	return strings.TrimRight(name, "-")
 }
-func quantityPtr(v string) *resource.Quantity { q := resource.MustParse(v); return &q }

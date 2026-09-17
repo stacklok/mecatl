@@ -20,28 +20,36 @@ type ProfilesFile struct {
 
 // ProfileSpec defines immutable image, storage, resource, and operation bounds.
 type ProfileSpec struct {
-	Image              string        `yaml:"image"`
-	StorageClass       string        `yaml:"storageClass"`
-	StorageSize        string        `yaml:"storageSize"`
-	CPURequest         string        `yaml:"cpuRequest"`
-	MemoryRequest      string        `yaml:"memoryRequest"`
-	CPULimit           string        `yaml:"cpuLimit"`
-	MemoryLimit        string        `yaml:"memoryLimit"`
-	MaxFileBytes       int64         `yaml:"maxFileBytes"`
-	MaxCommandBytes    int64         `yaml:"maxCommandBytes"`
-	MaxCommandDuration time.Duration `yaml:"maxCommandDuration"`
+	Image                   string        `yaml:"image"`
+	StorageClass            string        `yaml:"storageClass"`
+	StorageSize             string        `yaml:"storageSize"`
+	CPURequest              string        `yaml:"cpuRequest"`
+	MemoryRequest           string        `yaml:"memoryRequest"`
+	CPULimit                string        `yaml:"cpuLimit"`
+	MemoryLimit             string        `yaml:"memoryLimit"`
+	EphemeralStorageRequest string        `yaml:"ephemeralStorageRequest"`
+	EphemeralStorageLimit   string        `yaml:"ephemeralStorageLimit"`
+	TmpSizeLimit            string        `yaml:"tmpSizeLimit"`
+	RuntimeClassName        string        `yaml:"runtimeClassName"`
+	MaxFileBytes            int64         `yaml:"maxFileBytes"`
+	MaxCommandBytes         int64         `yaml:"maxCommandBytes"`
+	MaxCommandDuration      time.Duration `yaml:"maxCommandDuration"`
+	MaxEnvironments         int           `yaml:"maxEnvironments"`
 }
 
 // Profiles is a validated immutable profile registry.
 type Profiles struct{ byName map[string]resolvedProfile }
 type resolvedProfile struct {
-	Spec          ProfileSpec
-	Digest        string
-	StorageSize   resource.Quantity
-	CPURequest    resource.Quantity
-	MemoryRequest resource.Quantity
-	CPULimit      resource.Quantity
-	MemoryLimit   resource.Quantity
+	Spec                    ProfileSpec
+	Digest                  string
+	StorageSize             resource.Quantity
+	CPURequest              resource.Quantity
+	MemoryRequest           resource.Quantity
+	CPULimit                resource.Quantity
+	MemoryLimit             resource.Quantity
+	EphemeralStorageRequest resource.Quantity
+	EphemeralStorageLimit   resource.Quantity
+	TmpSizeLimit            resource.Quantity
 }
 
 // LoadProfiles reads and strictly validates an operator profile file.
@@ -84,8 +92,8 @@ func validateProfile(name string, s ProfileSpec) (resolvedProfile, error) {
 	if s.StorageClass == "" || s.StorageSize == "" {
 		return resolvedProfile{}, fmt.Errorf("profile %q requires explicit storage class and size", name)
 	}
-	if s.CPURequest == "" || s.MemoryRequest == "" || s.CPULimit == "" || s.MemoryLimit == "" {
-		return resolvedProfile{}, fmt.Errorf("profile %q requires explicit resource requests and limits", name)
+	if s.CPURequest == "" || s.MemoryRequest == "" || s.CPULimit == "" || s.MemoryLimit == "" || s.EphemeralStorageRequest == "" || s.EphemeralStorageLimit == "" || s.TmpSizeLimit == "" || s.RuntimeClassName == "" {
+		return resolvedProfile{}, fmt.Errorf("profile %q requires explicit resource requests, limits, tmp size, and runtime class", name)
 	}
 	quantities, err := resolveProfileQuantities(name, s)
 	if err != nil {
@@ -118,19 +126,35 @@ func resolveProfileQuantities(name string, s ProfileSpec) (resolvedProfile, erro
 	if err != nil {
 		return resolvedProfile{}, err
 	}
+	ephemeralRequest, err := positiveQuantity(name, "ephemeralStorageRequest", s.EphemeralStorageRequest)
+	if err != nil {
+		return resolvedProfile{}, err
+	}
+	ephemeralLimit, err := positiveQuantity(name, "ephemeralStorageLimit", s.EphemeralStorageLimit)
+	if err != nil {
+		return resolvedProfile{}, err
+	}
+	tmpLimit, err := positiveQuantity(name, "tmpSizeLimit", s.TmpSizeLimit)
+	if err != nil {
+		return resolvedProfile{}, err
+	}
 	if cpuRequest.Cmp(cpuLimit) > 0 {
 		return resolvedProfile{}, fmt.Errorf("profile %q cpuRequest exceeds cpuLimit", name)
 	}
 	if memoryRequest.Cmp(memoryLimit) > 0 {
 		return resolvedProfile{}, fmt.Errorf("profile %q memoryRequest exceeds memoryLimit", name)
 	}
-	return resolvedProfile{StorageSize: storage, CPURequest: cpuRequest, MemoryRequest: memoryRequest, CPULimit: cpuLimit, MemoryLimit: memoryLimit}, nil
+	if ephemeralRequest.Cmp(ephemeralLimit) > 0 || tmpLimit.Cmp(ephemeralLimit) > 0 {
+		return resolvedProfile{}, fmt.Errorf("profile %q ephemeral storage request or tmp limit exceeds ephemeral storage limit", name)
+	}
+	return resolvedProfile{StorageSize: storage, CPURequest: cpuRequest, MemoryRequest: memoryRequest, CPULimit: cpuLimit, MemoryLimit: memoryLimit, EphemeralStorageRequest: ephemeralRequest, EphemeralStorageLimit: ephemeralLimit, TmpSizeLimit: tmpLimit}, nil
 }
 
 func validExecutionBounds(s ProfileSpec) bool {
 	return s.MaxFileBytes > 0 && s.MaxFileBytes <= 5<<20 &&
 		s.MaxCommandBytes > 0 && s.MaxCommandBytes <= 1<<20 &&
-		s.MaxCommandDuration > 0 && s.MaxCommandDuration <= 30*time.Minute
+		s.MaxCommandDuration > 0 && s.MaxCommandDuration <= 30*time.Minute &&
+		s.MaxEnvironments > 0 && s.MaxEnvironments <= 10_000
 }
 
 func positiveQuantity(profile, field, value string) (resource.Quantity, error) {

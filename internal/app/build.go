@@ -2201,6 +2201,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 		PlacementProvider: placementProvider,
 		PlacementScope:    placementScope,
+		ExecutionAccess:   executionAccess(placementProvider),
+		ReferenceIntents:  referenceIntentLifecycle(placementProvider),
 		SessionReadLedger: sessionReadLedger,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
@@ -2708,6 +2710,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// subagent-*/parallel-*/team-* children the run-entry funnel's own repair
 	// (Step 3) never sees. See internal/app/session_reconcile.go.
 	staleSessionReconcileClose := startStaleSessionReconcile(cfg, svc)
+	referenceIntentReconcileClose := startReferenceIntentReconcile(ctx, svcCfg.ReferenceIntents, svc)
 
 	// Close tears down the main MCP manager AND any per-session client-MCP engines
 	// still registered (svc.Close), so a process exit leaks neither. It also cancels
@@ -2718,6 +2721,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		if assets.reflectionLifecycle != nil {
 			assets.reflectionLifecycle.close()
 		}
+		referenceIntentReconcileClose()
 		staleSessionReconcileClose()
 		childGCClose()
 		managedTempWorkerClose()

@@ -340,6 +340,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"LookupRun":                    {KindDerived, "in-memory run registry read; every caller-facing entry point (Cancel, Persist, Approve*, MaybeAutoApprovePlan) authorizes the session FIRST and only then consults this"},
 	"IsLive":                       {KindDerived, "combined Service-run and engine-child process-local registry; consumed by destructive maintenance, not a caller-facing verb"},
 	"MaintenanceMutationAvailable": {KindDerived, "read-only capability truth consumed by composition before scheduling automatic retention"},
+	"ReconcileReferenceIntents":    {KindDerived, "composition-owned maintenance joins provider-owned exact intents to durable sessions and invokes only exact retained callbacks"},
 	"FinishRun":                    {KindDerived, "deregisters an id the wire adapter already finished draining from its own authorized run"},
 	"PublishSessionEvent":          {KindDerived, "publishes to subscribers already registered via the (caller-owned) Subscribe for this id; PublishSessionEvent itself takes no ctx and makes no independent decision"},
 	"RecoverNotice":                {KindDerived, "pops a notice keyed by id that only the relay's own immediately-preceding, already-authorized StartRunContent call could have set"},

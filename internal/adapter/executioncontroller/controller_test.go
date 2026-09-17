@@ -50,6 +50,12 @@ func TestReconcileCreatesTokenlessNonRootPodAndRetainedPVC(t *testing.T) {
 	if c.SecurityContext == nil || c.SecurityContext.ReadOnlyRootFilesystem == nil || !*c.SecurityContext.ReadOnlyRootFilesystem || c.SecurityContext.AllowPrivilegeEscalation == nil || *c.SecurityContext.AllowPrivilegeEscalation {
 		t.Fatal("container security context is not hardened")
 	}
+	if p.Spec.RuntimeClassName == nil || *p.Spec.RuntimeClassName != "sandboxed" || c.Resources.Requests.Cpu().IsZero() || c.Resources.Requests.Memory().IsZero() || c.Resources.Requests.StorageEphemeral().IsZero() || c.Resources.Limits.StorageEphemeral().IsZero() {
+		t.Fatal("runtime class or resource bounds are missing")
+	}
+	if p.Spec.Volumes[1].EmptyDir == nil || p.Spec.Volumes[1].EmptyDir.SizeLimit == nil || p.Spec.Volumes[1].EmptyDir.SizeLimit.String() != "256Mi" {
+		t.Fatal("tmp volume is not profile-bounded")
+	}
 }
 func TestRepeatedReconcileDoesNotRewriteUnchangedStatus(t *testing.T) {
 	ctx := context.Background()
@@ -154,32 +160,36 @@ func conditionTransition(env *unstructured.Unstructured, name string) string {
 	return ""
 }
 
-func TestStartupFencesInterruptedOperationBeforeReady(t *testing.T) {
+func TestStartupDoesNotFenceLivePeerOperation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	env := testEnvironment()
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "old", "operation": "file.replace"}, "status", "activeOperation")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	r := NewReconciler(d, kubefake.NewSimpleClientset(), "ns", testProfiles())
-	if r.Ready() {
-		t.Fatal("reconciler reported ready before startup fencing")
+	peer := NewReconciler(d, kubefake.NewSimpleClientset(), "ns", testProfiles())
+	if r.Ready() || peer.Ready() {
+		t.Fatal("reconciler reported ready before cache synchronization")
 	}
 	if err := r.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !r.Ready() {
-		t.Fatal("reconciler did not report ready after startup fencing and cache sync")
+	if err := peer.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Ready() || !peer.Ready() {
+		t.Fatal("reconcilers did not report ready after cache synchronization")
 	}
 	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "activeOperation", "id") != "" {
-		t.Fatalf("status=%v", got.Object["status"])
+	if textNested(got.Object, "status", "fenceState") != "Healthy" || textNested(got.Object, "status", "activeOperation", "id") != "old" {
+		t.Fatalf("startup mutated a potentially live peer operation: status=%v", got.Object["status"])
 	}
 }
 func testProfiles() *Profiles {
-	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute}
+	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}
 	profile, err := validateProfile("go", spec)
 	if err != nil {
 		panic(err)
@@ -189,5 +199,5 @@ func testProfiles() *Profiles {
 	return &Profiles{byName: map[string]resolvedProfile{"go": profile}}
 }
 func testEnvironment() *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns", "uid": string(types.UID("uid"))}, "spec": map[string]any{"profile": "go", "profileDigest": "sha256:profile", "revision": "rev", "desired": "Active"}, "status": map[string]any{"epoch": int64(1), "references": []any{}, "fenceState": "Healthy"}}}
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns", "uid": string(types.UID("uid"))}, "spec": map[string]any{"schemaVersion": int64(2), "profile": "go", "profileDigest": "sha256:profile", "revision": "rev", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "references": []any{}, "fenceState": "Healthy"}}}
 }

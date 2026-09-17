@@ -16,8 +16,23 @@ service ExecutionProviderService {
   rpc ValidateProfile(ValidateProfileRequest) returns (ValidateProfileResponse);
   rpc EnsureEnvironment(EnsureEnvironmentRequest) returns (EnsureEnvironmentResponse);
   rpc AttachEnvironment(AttachEnvironmentRequest) returns (AttachEnvironmentResponse);
+  rpc AcquireRun(AcquireRunRequest) returns (RunClaimResponse);
+  rpc RenewRun(RenewRunRequest) returns (RunClaimResponse);
+  rpc ReleaseRun(ReleaseRunRequest) returns (google.protobuf.Empty);
+  rpc CommitReference(ReferenceMutationRequest) returns (google.protobuf.Empty);
+  rpc AbortReference(ReferenceMutationRequest) returns (google.protobuf.Empty);
+  rpc ReserveSuccessor(ReserveSuccessorRequest) returns (ReferenceReservationResponse);
+  rpc PrepareReferenceDelete(ReferenceMutationRequest) returns (google.protobuf.Empty);
+  rpc ConfirmReferenceDelete(ReferenceMutationRequest) returns (google.protobuf.Empty);
+  rpc CancelReferenceDelete(ReferenceMutationRequest) returns (google.protobuf.Empty);
+  rpc ListReferenceIntents(ListReferenceIntentsRequest) returns (ListReferenceIntentsResponse);
   rpc ReleaseReference(ReleaseReferenceRequest) returns (google.protobuf.Empty);
   rpc RetireEnvironment(RetireEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc ReplaceExecutor(ReplaceExecutorRequest) returns (google.protobuf.Empty);
+  rpc RecoverEnvironment(RecoverEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc DeleteRetiredEnvironment(DeleteRetiredEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc MigrateEnvironment(MigrateEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc RevokeEnvironment(RevokeEnvironmentRequest) returns (RevokeEnvironmentResponse);
   rpc Files(FileRequest) returns (FileResponse);
   rpc StartCommand(CommandStartRequest) returns (CommandStartResponse);
   rpc CommandStatus(CommandQueryRequest) returns (CommandStatusResponse);
@@ -32,6 +47,9 @@ message RequestContext {
   string binding_id = 3;
   uint64 epoch = 4;
   string grant = 5;
+  string run_id = 6;
+  string claim_id = 7;
+  uint64 grant_generation = 8;
 }
 
 message ValidateProfileRequest { string profile = 1; }
@@ -43,13 +61,14 @@ message ValidateProfileResponse {
   int64 max_command_bytes = 5;
   int64 max_command_duration_millis = 6;
 }
-message EnsureEnvironmentRequest { string binding_id = 1; string profile = 2; Owner owner = 3; }
+message EnsureEnvironmentRequest { string binding_id = 1; string profile = 2; Owner owner = 3; string operation_id = 4; }
 message EnsureEnvironmentResponse {
   EnvironmentRef environment = 1;
   uint64 epoch = 2;
   bool ready = 3;
   string grant = 4;
   google.protobuf.Timestamp grant_expires_at = 5;
+  uint64 grant_generation = 6;
 }
 message AttachEnvironmentRequest { RequestContext context = 1; string purpose = 2; }
 message AttachEnvironmentResponse {
@@ -58,9 +77,118 @@ message AttachEnvironmentResponse {
   bool ready = 3;
   string grant = 4;
   google.protobuf.Timestamp grant_expires_at = 5;
+  uint64 grant_generation = 6;
 }
+message AcquireRunRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string binding_id = 3;
+  string run_id = 4;
+  string operation_id = 5;
+  int64 ttl_millis = 6;
+}
+message RenewRunRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string binding_id = 3;
+  string run_id = 4;
+  string claim_id = 5;
+  uint64 epoch = 6;
+  string operation_id = 7;
+  int64 ttl_millis = 8;
+  uint64 grant_generation = 9;
+}
+message ReleaseRunRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string binding_id = 3;
+  string run_id = 4;
+  string claim_id = 5;
+  uint64 epoch = 6;
+  string operation_id = 7;
+  uint64 grant_generation = 8;
+}
+message RunClaimResponse {
+  EnvironmentRef environment = 1;
+  string binding_id = 2;
+  string run_id = 3;
+  string claim_id = 4;
+  uint64 epoch = 5;
+  uint64 grant_generation = 6;
+  string grant = 7;
+  google.protobuf.Timestamp expires_at = 8;
+}
+message ReferenceMutationRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string binding_id = 3;
+  string operation_id = 4;
+}
+message ReserveSuccessorRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string source_binding_id = 3;
+  string destination_binding_id = 4;
+  string operation_id = 5;
+}
+message ReferenceReservationResponse { EnvironmentRef environment = 1; }
+message ListReferenceIntentsRequest { Owner owner = 1; int32 limit = 2; }
+message ReferenceIntent {
+  EnvironmentRef environment = 1;
+  string binding_id = 2;
+  string state = 3;
+  string operation_id = 4;
+  string source_binding_id = 5;
+  google.protobuf.Timestamp created_at = 6;
+  Owner owner = 7;
+}
+message ListReferenceIntentsResponse { repeated ReferenceIntent intents = 1; }
 message ReleaseReferenceRequest { RequestContext context = 1; }
-message RetireEnvironmentRequest { RequestContext context = 1; }
+message RetireEnvironmentRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  uint64 expected_execution_epoch = 3;
+  string expected_pod_uid = 4;
+  string expected_pvc_uid = 5;
+  string operation_id = 6;
+}
+message ReplaceExecutorRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  uint64 expected_execution_epoch = 3;
+  string expected_pod_uid = 4;
+  string expected_pvc_uid = 5;
+  string operation_id = 6;
+}
+message RecoverEnvironmentRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  uint64 expected_execution_epoch = 3;
+  string expected_pod_uid = 4;
+  string expected_pvc_uid = 5;
+  string operation_id = 6;
+}
+message DeleteRetiredEnvironmentRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  string expected_pvc_uid = 3;
+  string operation_id = 4;
+}
+message RevokeEnvironmentRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  uint64 expected_grant_generation = 3;
+}
+message RevokeEnvironmentResponse { uint64 grant_generation = 1; }
+
+message MigrateEnvironmentRequest {
+  EnvironmentRef environment = 1;
+  Owner owner = 2;
+  uint32 expected_schema_version = 3;
+  string expected_pod_uid = 4;
+  string expected_pvc_uid = 5;
+  string operation_id = 6;
+}
 
 enum FileOperation {
   FILE_OPERATION_UNSPECIFIED = 0;

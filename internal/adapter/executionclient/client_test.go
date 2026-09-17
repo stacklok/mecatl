@@ -1,3 +1,4 @@
+//nolint:revive // Test doubles mirror the private protocol's complete method set.
 package executionclient
 
 import (
@@ -78,6 +79,40 @@ func (*integrationBackend) CancelCommand(context.Context, string, string, execut
 	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeInternal, Message: "unimplemented"}
 }
 
+func (b *integrationBackend) EnsurePending(ctx context.Context, client, owner, binding, profile, fp, _ string) (executioncontroller.Allocation, error) {
+	return b.Ensure(ctx, client, owner, binding, profile, fp)
+}
+func (b *integrationBackend) AcquireRun(_ context.Context, ref executionenv.EnvironmentRef, client, owner, binding, run, _ string, ttl time.Duration) (executionenv.RunClaim, error) {
+	return executionenv.RunClaim{Environment: ref, BindingID: binding, RunID: run, ClaimID: "claim", Epoch: b.allocation.Epoch + 1, GrantGeneration: 1, ExpiresAt: time.Now().Add(ttl)}, nil
+}
+func (b *integrationBackend) RenewRun(_ context.Context, _ executionenv.EnvironmentRef, _ string, _ string, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
+	return executionenv.RunClaim{Environment: req.Environment, BindingID: req.BindingID, RunID: req.RunID, ClaimID: req.ClaimID, Epoch: req.Epoch, GrantGeneration: 1, ExpiresAt: time.Now().Add(req.TTL)}, nil
+}
+func (*integrationBackend) ReleaseRun(context.Context, executionenv.EnvironmentRef, string, string, executionenv.RunClaimRequest) error {
+	return nil
+}
+func (*integrationBackend) CommitReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*integrationBackend) AbortReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*integrationBackend) ReserveSuccessor(context.Context, executionenv.EnvironmentRef, string, string, string, string, string) error {
+	return nil
+}
+func (*integrationBackend) PrepareReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*integrationBackend) ConfirmReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*integrationBackend) CancelReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*integrationBackend) ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error) {
+	return nil, nil
+}
+
 func certificate(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, serverName string, client bool) (tls.Certificate, *x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -150,17 +185,27 @@ func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	if binding.Commit != nil {
+		if err := binding.Commit(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	reattached, err := provider.Reattach(context.Background(), server.PlacementReattachRequest{Ref: binding.Ref, Principal: principal, BindingID: "session-real"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := reattached.Environment.Workspace().(tool.AuthorityResourceResolver)
+	handle, err := provider.AcquireRun(context.Background(), server.ExecutionRunRequest{Ref: reattached.Ref, Principal: principal, BindingID: "session-real", RunID: "run-real"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Release(context.Background())
+	runEnv := handle.Environment()
+	resolver := runEnv.Workspace().(tool.AuthorityResourceResolver)
 	target, root, err := resolver.AuthorityResourcePath("main.go")
 	if err != nil || target != "/workspace/main.go" || root != "/workspace" {
 		t.Fatalf("authority=(%q,%q) err=%v", target, root, err)
 	}
-	backend.expireNextRead = true
-	data, version, err := reattached.Environment.Workspace().ReadVersion(context.Background(), "main.go")
+	data, version, err := runEnv.Workspace().ReadVersion(context.Background(), "main.go")
 	if err != nil || string(data) != "from-grpc" {
 		t.Fatalf("read=%q err=%v", data, err)
 	}
@@ -168,11 +213,11 @@ func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *te
 	if err != nil || encoded != string([]byte{0xff, 0, 1}) {
 		t.Fatalf("opaque version=%q err=%v", encoded, err)
 	}
-	result, err := reattached.Environment.CommandRunner().Run(context.Background(), "go test ./...")
+	result, err := runEnv.CommandRunner().Run(context.Background(), "go test ./...")
 	if err != nil || result.Stdout != "ok\n" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	if backend.ensureCalls != 1 || backend.attachCalls < 3 || backend.fileCalls != 3 {
+	if backend.ensureCalls != 1 || backend.attachCalls < 2 || backend.fileCalls != 2 {
 		t.Fatalf("ensure=%d attach=%d file=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
 	}
 }
@@ -187,15 +232,15 @@ func TestCommandStatusIsUnimplementedOnlyAfterAuthorization(t *testing.T) {
 	}
 	defer client.Close()
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
-	ensured, err := client.Ensure(context.Background(), "binding", "coding", owner)
+	ensured, err := client.Ensure(context.Background(), "binding", "coding", owner, "create")
 	if err != nil {
 		t.Fatal(err)
 	}
-	attached, err := client.Attach(context.Background(), executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: ensured.Environment, Owner: owner, BindingID: "binding"}, Purpose: executionenv.PurposeSession})
+	claim, err := client.AcquireRun(context.Background(), executionenv.RunClaimRequest{Environment: ensured.Environment, Owner: owner, BindingID: "binding", RunID: "run", OperationID: "acquire", TTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc := executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: "binding", Epoch: attached.Epoch, Grant: attached.Grant}
+	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: "binding", RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}
 	_, err = client.rpc.CommandStatus(context.Background(), &executionv1.CommandQueryRequest{Context: contextToProto(rc), CommandId: "c1"})
 	if status.Code(err) != codes.Unimplemented {
 		t.Fatalf("authorized status code=%v", status.Code(err))

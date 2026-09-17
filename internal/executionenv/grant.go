@@ -27,28 +27,34 @@ type grantHeader struct {
 
 // GrantClaims binds a short-lived capability to one client, owner, environment, and epoch.
 type GrantClaims struct {
-	KeyID       string         `json:"-"`
-	Issuer      string         `json:"iss"`
-	Audience    string         `json:"aud"`
-	Client      string         `json:"client"`
-	OwnerHash   string         `json:"owner"`
-	BindingID   string         `json:"binding_id"`
-	Environment EnvironmentRef `json:"environment"`
-	Epoch       uint64         `json:"epoch"`
-	Operations  []Operation    `json:"operations"`
-	NotBefore   time.Time      `json:"not_before"`
-	ExpiresAt   time.Time      `json:"expires_at"`
-	Nonce       string         `json:"nonce"`
+	KeyID           string         `json:"-"`
+	Issuer          string         `json:"iss"`
+	Audience        string         `json:"aud"`
+	Client          string         `json:"client"`
+	OwnerHash       string         `json:"owner"`
+	BindingID       string         `json:"binding_id"`
+	RunID           string         `json:"run_id"`
+	ClaimID         string         `json:"claim_id"`
+	Environment     EnvironmentRef `json:"environment"`
+	Epoch           uint64         `json:"epoch"`
+	GrantGeneration uint64         `json:"grant_generation"`
+	Operations      []Operation    `json:"operations"`
+	NotBefore       time.Time      `json:"not_before"`
+	ExpiresAt       time.Time      `json:"expires_at"`
+	Nonce           string         `json:"nonce"`
 }
 
 // GrantExpectation defines the exact binding and operation required by a request.
 type GrantExpectation struct {
-	Client      string
-	OwnerHash   string
-	BindingID   string
-	Environment EnvironmentRef
-	Epoch       uint64
-	Operation   Operation
+	Client          string
+	OwnerHash       string
+	BindingID       string
+	RunID           string
+	ClaimID         string
+	Environment     EnvironmentRef
+	Epoch           uint64
+	GrantGeneration uint64
+	Operation       Operation
 }
 
 // GrantVerifier verifies signed grants against configured trust and revocation state.
@@ -140,7 +146,7 @@ func (v GrantVerifier) Verify(token string, e GrantExpectation) (GrantClaims, er
 	if _, ok := v.RevokedNonces[c.Nonce]; ok {
 		return c, errors.New("grant revoked")
 	}
-	if c.Client != e.Client || c.OwnerHash != e.OwnerHash || c.BindingID != e.BindingID || c.Environment != e.Environment || c.Epoch != e.Epoch {
+	if c.Client != e.Client || c.OwnerHash != e.OwnerHash || c.BindingID != e.BindingID || c.RunID != e.RunID || c.ClaimID != e.ClaimID || c.Environment != e.Environment || c.Epoch != e.Epoch || c.GrantGeneration != e.GrantGeneration {
 		return c, errors.New("grant binding mismatch")
 	}
 	for _, op := range c.Operations {
@@ -150,8 +156,10 @@ func (v GrantVerifier) Verify(token string, e GrantExpectation) (GrantClaims, er
 	}
 	return c, errors.New("grant does not authorize operation")
 }
+
+//nolint:gocyclo // Complete fail-closed claim validation is deliberately linear.
 func validateClaims(c GrantClaims) error {
-	if c.KeyID == "" || c.Issuer == "" || c.Audience == "" || c.Client == "" || c.OwnerHash == "" || c.BindingID == "" || c.Environment.ID == "" || c.Environment.Revision == "" || c.Epoch == 0 || c.Nonce == "" || c.NotBefore.IsZero() || c.ExpiresAt.IsZero() || !c.ExpiresAt.After(c.NotBefore) {
+	if c.KeyID == "" || c.Issuer == "" || c.Audience == "" || c.Client == "" || c.OwnerHash == "" || c.BindingID == "" || c.RunID == "" || c.ClaimID == "" || c.Environment.ID == "" || c.Environment.Revision == "" || c.Epoch == 0 || c.GrantGeneration == 0 || c.Nonce == "" || c.NotBefore.IsZero() || c.ExpiresAt.IsZero() || !c.ExpiresAt.After(c.NotBefore) {
 		return errors.New("incomplete grant claims")
 	}
 	if len(c.Operations) == 0 || len(c.Operations) > 32 {

@@ -1,3 +1,4 @@
+//nolint:revive // Private store methods implement adapter-only lifecycle interfaces.
 package executioncontroller
 
 import (
@@ -7,7 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
+	"math"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -25,6 +27,9 @@ var ExecutionEnvironmentGVR = schema.GroupVersionResource{Group: "execution.meca
 const (
 	maxReferences              = 64
 	environmentNotFoundMessage = "environment not found"
+	currentSchemaVersion       = int64(2)
+	operationLeaseTTL          = 30 * time.Second
+	transitioningMessage       = "environment is transitioning"
 )
 
 // ExecutorTransport dispatches one request to a fixed workload helper.
@@ -37,11 +42,26 @@ type Store struct {
 	resources dynamic.ResourceInterface
 	profiles  *Profiles
 	executor  ExecutorTransport
+	kube      kubernetes.Interface
+	namespace string
+	holderID  string
+	now       func() time.Time
+	opTTL     time.Duration
 }
 
 // NewStore constructs a namespace-scoped execution state store.
 func NewStore(client dynamic.Interface, namespace string, profiles *Profiles, executor ExecutorTransport) *Store {
-	return &Store{resources: client.Resource(ExecutionEnvironmentGVR).Namespace(namespace), profiles: profiles, executor: executor}
+	holder, err := randomID()
+	if err != nil {
+		holder = "unavailable"
+	}
+	return &Store{resources: client.Resource(ExecutionEnvironmentGVR).Namespace(namespace), profiles: profiles, executor: executor, namespace: namespace, holderID: holder, now: func() time.Time { return time.Now().UTC() }, opTTL: 30 * time.Second}
+}
+
+// WithKubeClient enables provider-owned executor and retained-volume lifecycle operations.
+func (s *Store) WithKubeClient(kube kubernetes.Interface) *Store {
+	s.kube = kube
+	return s
 }
 
 // ValidateProfile returns one validated immutable profile.
@@ -55,6 +75,22 @@ func (s *Store) ValidateProfile(_ context.Context, name string) (Profile, error)
 
 // Ensure idempotently allocates an environment for an immutable request fingerprint.
 func (s *Store) Ensure(ctx context.Context, client, owner, binding, profile, fp string) (Allocation, error) {
+	return s.EnsurePending(ctx, client, owner, binding, profile, fp, "legacy-"+fp)
+}
+
+func (s *Store) EnsurePending(ctx context.Context, client, owner, binding, profile, fp, operationID string) (Allocation, error) {
+	return s.ensurePending(ctx, client, owner, executionenv.Owner{}, binding, profile, fp, operationID)
+}
+
+// EnsurePendingOwned persists the attested principal needed for owner-safe intent reconciliation.
+func (s *Store) EnsurePendingOwned(ctx context.Context, client, expectedOwnerHash string, owner executionenv.Owner, binding, profile, fp, operationID string) (Allocation, error) {
+	if owner.Issuer == "" || owner.Subject == "" || ownerHash(owner) != expectedOwnerHash {
+		return Allocation{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "owner attestation is invalid"}
+	}
+	return s.ensurePending(ctx, client, expectedOwnerHash, owner, binding, profile, fp, operationID)
+}
+
+func (s *Store) ensurePending(ctx context.Context, client, owner string, attested executionenv.Owner, binding, profile, fp, operationID string) (Allocation, error) {
 	p, ok := s.profiles.get(profile)
 	if !ok {
 		return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "profile not found"}
@@ -62,23 +98,46 @@ func (s *Store) Ensure(ctx context.Context, client, owner, binding, profile, fp 
 	name := allocationName(client, owner, binding)
 	cur, err := s.resources.Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		if err := s.initializeStatus(ctx, cur, binding); err != nil {
+		if err := s.initializeStatus(ctx, cur, binding, operationID); err != nil {
 			return Allocation{}, err
 		}
 		cur, err = s.resources.Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return Allocation{}, err
 		}
+		if !referenceOperationMatches(cur, binding, operationID) {
+			return Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "reference operation conflicts with existing environment"}
+		}
 		return allocationFrom(cur, client, owner, binding, profile, fp)
 	}
 	if !apierrors.IsNotFound(err) {
 		return Allocation{}, fmt.Errorf("get execution environment: %w", err)
 	}
+	if s.kube != nil {
+		all, listErr := s.resources.List(ctx, metav1.ListOptions{})
+		if listErr != nil {
+			return Allocation{}, fmt.Errorf("count execution environments: %w", listErr)
+		}
+		profileCount := 0
+		for i := range all.Items {
+			if textNested(all.Items[i].Object, "spec", "profile") == profile && textNested(all.Items[i].Object, "spec", "desired") != "Retired" {
+				profileCount++
+			}
+		}
+		if profileCount >= p.Spec.MaxEnvironments {
+			return Allocation{}, &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "profile environment limit reached"}
+		}
+	}
 	revision, err := randomID()
 	if err != nil {
 		return Allocation{}, err
 	}
-	obj := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": name, "finalizers": []any{environmentFinalizer}}, "spec": map[string]any{"allocationID": name, "revision": revision, "ownerHash": owner, "clientHash": hashText(client), "bindingID": binding, "requestFingerprint": fp, "profile": profile, "profileDigest": p.Digest, "image": p.Spec.Image, "storageClass": p.Spec.StorageClass, "storageSize": p.Spec.StorageSize, "resources": map[string]any{"cpuRequest": p.Spec.CPURequest, "memoryRequest": p.Spec.MemoryRequest, "cpuLimit": p.Spec.CPULimit, "memoryLimit": p.Spec.MemoryLimit}, "desired": "Active"}}}
+	spec := map[string]any{"schemaVersion": currentSchemaVersion, "allocationID": name, "revision": revision, "ownerHash": owner, "clientHash": hashText(client), "bindingID": binding, "requestFingerprint": fp, "profile": profile, "profileDigest": p.Digest, "image": p.Spec.Image, "storageClass": p.Spec.StorageClass, "storageSize": p.Spec.StorageSize, "resources": map[string]any{"cpuRequest": p.Spec.CPURequest, "memoryRequest": p.Spec.MemoryRequest, "cpuLimit": p.Spec.CPULimit, "memoryLimit": p.Spec.MemoryLimit}, "desired": "Active"}
+	if attested.Issuer != "" && attested.Subject != "" {
+		spec["ownerIssuer"] = attested.Issuer
+		spec["ownerSubject"] = attested.Subject
+	}
+	obj := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": name, "finalizers": []any{environmentFinalizer}}, "spec": spec}}
 	created, err := s.resources.Create(ctx, obj, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		created, err = s.resources.Get(ctx, name, metav1.GetOptions{})
@@ -86,7 +145,7 @@ func (s *Store) Ensure(ctx context.Context, client, owner, binding, profile, fp 
 	if err != nil {
 		return Allocation{}, fmt.Errorf("create execution environment: %w", err)
 	}
-	if err := s.initializeStatus(ctx, created, binding); err != nil {
+	if err := s.initializeStatus(ctx, created, binding, operationID); err != nil {
 		return Allocation{}, err
 	}
 	created, err = s.resources.Get(ctx, name, metav1.GetOptions{})
@@ -95,18 +154,31 @@ func (s *Store) Ensure(ctx context.Context, client, owner, binding, profile, fp 
 	}
 	return allocationFrom(created, client, owner, binding, profile, fp)
 }
-func (s *Store) initializeStatus(ctx context.Context, env *unstructured.Unstructured, binding string) error {
-	if intNested(env.Object, "status", "epoch") > 0 {
-		return nil
+func (s *Store) initializeStatus(ctx context.Context, env *unstructured.Unstructured, binding, operationID string) error {
+	if operationID == "" {
+		return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "operation identity is required"}
 	}
-	return s.retryUpdateStatus(ctx, env.GetName(), func(o *unstructured.Unstructured) error {
+	if intNested(env.Object, "status", "epoch") > 0 {
+		return requireCurrentSchema(env)
+	}
+	return s.retryUpdateStatusRaw(ctx, env.GetName(), func(o *unstructured.Unstructured) error {
 		if intNested(o.Object, "status", "epoch") > 0 {
-			return nil
+			return requireCurrentSchema(o)
+		}
+		if intNested(o.Object, "spec", "schemaVersion") != currentSchemaVersion {
+			return incompatibleSchemaError()
+		}
+		if err := unstructured.SetNestedField(o.Object, currentSchemaVersion, "status", "schemaVersion"); err != nil {
+			return err
 		}
 		if err := unstructured.SetNestedField(o.Object, int64(1), "status", "epoch"); err != nil {
 			return err
 		}
-		if err := unstructured.SetNestedStringSlice(o.Object, []string{binding}, "status", "references"); err != nil {
+		if err := unstructured.SetNestedField(o.Object, int64(1), "status", "grantGeneration"); err != nil {
+			return err
+		}
+		ref := map[string]any{"bindingID": binding, "state": string(executionenv.ReferencePendingCreate), "operationID": operationID, "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		if err := unstructured.SetNestedSlice(o.Object, []any{ref}, "status", "references"); err != nil {
 			return err
 		}
 		return unstructured.SetNestedField(o.Object, fenceHealthy, "status", "fenceState")
@@ -136,8 +208,12 @@ func exactAllocation(o *unstructured.Unstructured, client, owner, binding string
 	if !ok {
 		return Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment epoch is invalid"}
 	}
+	generation := intNested(o.Object, "status", "grantGeneration")
+	if generation <= 0 {
+		return Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "grant generation is invalid"}
+	}
 	ready := conditionTrue(o, "Ready") && textNested(o.Object, "status", "fenceState") == fenceHealthy
-	return Allocation{Environment: executionenv.EnvironmentRef{ID: o.GetName(), Revision: revision}, Epoch: epoch, OwnerHash: owner, BindingID: binding, Client: client, Ready: ready}, nil
+	return Allocation{Environment: executionenv.EnvironmentRef{ID: o.GetName(), Revision: revision}, Epoch: epoch, GrantGeneration: uint64(generation), OwnerHash: owner, BindingID: binding, Client: client, Ready: ready}, nil
 }
 
 // Attach adds a binding reference only to the exact healthy environment.
@@ -154,16 +230,12 @@ func (s *Store) Attach(ctx context.Context, ref executionenv.EnvironmentRef, cli
 		if !a.Ready {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment is not ready at requested epoch"}
 		}
-		refs, _, _ := unstructured.NestedStringSlice(o.Object, "status", "references")
-		if !contains(refs, binding) {
-			if len(refs) >= maxReferences {
-				return &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "environment reference limit reached"}
-			}
-			refs = append(refs, binding)
-			sort.Strings(refs)
-			if err := unstructured.SetNestedStringSlice(o.Object, refs, "status", "references"); err != nil {
-				return err
-			}
+		refs, refsErr := referenceRecords(o)
+		if refsErr != nil {
+			return refsErr
+		}
+		if !attachedReference(refs, binding) {
+			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
 		}
 		out = a
 		return nil
@@ -174,6 +246,9 @@ func (s *Store) Attach(ctx context.Context, ref executionenv.EnvironmentRef, cli
 // ReleaseReference removes one binding reference without deleting the environment.
 func (s *Store) ReleaseReference(ctx context.Context, ref executionenv.EnvironmentRef, client, owner, binding string) error {
 	return s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
+		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
+		}
 		a, err := exactAllocation(o, client, owner, binding)
 		if err != nil {
 			return err
@@ -181,41 +256,20 @@ func (s *Store) ReleaseReference(ctx context.Context, ref executionenv.Environme
 		if a.Environment != ref {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
 		}
-		refs, _, _ := unstructured.NestedStringSlice(o.Object, "status", "references")
-		next := refs[:0]
-		for _, v := range refs {
-			if v != binding {
-				next = append(next, v)
+		refs, refsErr := referenceRecords(o)
+		if refsErr != nil {
+			return refsErr
+		}
+		for i := range refs {
+			if refs[i].BindingID == binding {
+				if refs[i].State != executionenv.ReferencePublished {
+					return &executionenv.Error{Code: executionenv.CodeConflict, Message: "reference has a pending transaction"}
+				}
+				return setReferenceRecords(o, append(refs[:i], refs[i+1:]...))
 			}
 		}
-		return unstructured.SetNestedStringSlice(o.Object, next, "status", "references")
+		return nil
 	})
-}
-
-// Retire requests controlled retirement of an unreferenced healthy environment.
-func (s *Store) Retire(ctx context.Context, ref executionenv.EnvironmentRef, owner string) error {
-	cur, err := s.resources.Get(ctx, ref.ID, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
-	}
-	if err != nil {
-		return err
-	}
-	if textNested(cur.Object, "spec", "ownerHash") != owner || textNested(cur.Object, "spec", "revision") != ref.Revision {
-		return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
-	}
-	refs, _, _ := unstructured.NestedStringSlice(cur.Object, "status", "references")
-	if len(refs) != 0 || textNested(cur.Object, "status", "activeOperation", "id") != "" || textNested(cur.Object, "status", "fenceState") != fenceHealthy {
-		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is referenced or not quiescent"}
-	}
-	if err := unstructured.SetNestedField(cur.Object, "Retiring", "spec", "desired"); err != nil {
-		return err
-	}
-	_, err = s.resources.Update(ctx, cur, metav1.UpdateOptions{})
-	if apierrors.IsConflict(err) {
-		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment changed concurrently", Retryable: true}
-	}
-	return err
 }
 
 // File performs one claimed and fenced filesystem operation.
@@ -251,6 +305,10 @@ func (*Store) CancelCommand(context.Context, string, string, executionenv.Comman
 	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "no active foreground stream is attached; external fencing is required"}
 }
 func (s *Store) execute(ctx context.Context, client, owner string, rc executionenv.RequestContext, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) { //nolint:gocyclo // Atomic claim, dispatch, and fencing remain one auditable transaction.
+	if rc.Epoch == 0 || rc.Epoch > math.MaxInt64 || rc.GrantGeneration == 0 || rc.GrantGeneration > math.MaxInt64 {
+		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "invalid execution epoch or grant generation"}
+	}
+	epochStatus := int64(rc.Epoch) //nolint:gosec // bounded above by MaxInt64.
 	if s.executor == nil {
 		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeNotReady, Message: "executor transport unavailable", Retryable: true}
 	}
@@ -261,6 +319,9 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 	var pod string
 	var maxFileBytes, maxCommandBytes int64
 	err = s.retryUpdateStatus(ctx, rc.Environment.ID, func(o *unstructured.Unstructured) error {
+		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
+		}
 		profile, ok := s.profiles.get(textNested(o.Object, "spec", "profile"))
 		if !ok || profile.Digest != textNested(o.Object, "spec", "profileDigest") {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment profile is unavailable"}
@@ -277,9 +338,16 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 				return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "command timeout exceeds profile bound"}
 			}
 		}
-		refs, _, _ := unstructured.NestedStringSlice(o.Object, "status", "references")
-		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || !contains(refs, rc.BindingID) {
+		refs, refsErr := referenceRecords(o)
+		if refsErr != nil {
+			return refsErr
+		}
+		claim, _, expiry, claimOK := activeRunFrom(o)
+		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || !publishedReference(refs, rc.BindingID) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+		}
+		if !claimOK || !time.Now().UTC().Before(expiry) || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
+			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim is not current"}
 		}
 		if textNested(o.Object, "spec", "revision") != rc.Environment.Revision || !epochMatches(o, rc.Epoch) || textNested(o.Object, "spec", "desired") != "Active" || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment is not ready at requested epoch"}
@@ -291,16 +359,25 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 		if pod == "" {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "executor pod is unavailable", Retryable: true}
 		}
-		return unstructured.SetNestedMap(o.Object, map[string]any{"id": opID, "operation": string(req.Operation), "startedAt": time.Now().UTC().Format(time.RFC3339Nano)}, "status", "activeOperation")
+		now := s.now()
+		return unstructured.SetNestedMap(o.Object, map[string]any{"id": opID, "operation": string(req.Operation), "startedAt": now.Format(time.RFC3339Nano), "claimID": rc.ClaimID, "runID": rc.RunID, "epoch": epochStatus, "holderID": s.holderID, "renewedAt": now.Format(time.RFC3339Nano), "expiresAt": now.Add(s.opTTL).Format(time.RFC3339Nano)}, "status", "activeOperation")
 	})
 	if err != nil {
 		return executionenv.ExecutorResponse{}, err
 	}
 	current, err := s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
-	if err != nil || textNested(current.Object, "spec", "ownerHash") != owner || textNested(current.Object, "spec", "clientHash") != hashText(client) || textNested(current.Object, "spec", "revision") != rc.Environment.Revision || !epochMatches(current, rc.Epoch) || textNested(current.Object, "status", "activeOperation", "id") != opID {
+	if err != nil || textNested(current.Object, "spec", "ownerHash") != owner || textNested(current.Object, "spec", "clientHash") != hashText(client) || textNested(current.Object, "spec", "revision") != rc.Environment.Revision || !epochMatches(current, rc.Epoch) || !operationMatches(current, opID, s.holderID, rc.ClaimID, rc.Epoch) {
 		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation identity changed before executor dispatch"}
 	}
-	resp, dispatchErr := s.executor.Execute(ctx, pod, req)
+	opCtx, stopLease := context.WithCancel(ctx)
+	leaseDone := make(chan error, 1)
+	go func() { leaseDone <- s.renewOperationLease(opCtx, rc.Environment.ID, opID, rc.ClaimID, rc.Epoch) }()
+	resp, dispatchErr := s.executor.Execute(opCtx, pod, req)
+	stopLease()
+	leaseErr := <-leaseDone
+	if leaseErr != nil && dispatchErr == nil {
+		dispatchErr = &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation lease renewal failed"}
+	}
 	if dispatchErr == nil && (int64(len(resp.Data)) > maxFileBytes || resp.Command != nil && int64(len(resp.Command.Stdout)+len(resp.Command.Stderr)) > maxCommandBytes) {
 		dispatchErr = &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "executor response exceeds profile bound"}
 	}
@@ -308,14 +385,13 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 	controlledTerminal := errors.As(dispatchErr, &controlledErr) && controlledErr.Code != executionenv.CodeFenceUnknown
 	terminal := controlledTerminal || dispatchErr == nil && (req.Operation != executionenv.OpCommandStart || resp.Command != nil && resp.Command.TerminalReceipt != "")
 	finishErr := s.retryUpdateStatus(context.WithoutCancel(ctx), rc.Environment.ID, func(o *unstructured.Unstructured) error {
-		if textNested(o.Object, "status", "activeOperation", "id") != opID {
+		if !operationMatches(o, opID, s.holderID, rc.ClaimID, rc.Epoch) {
 			return &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation ownership changed before completion"}
 		}
 		if terminal {
 			unstructured.RemoveNestedField(o.Object, "status", "activeOperation")
 			return nil
 		}
-		unstructured.RemoveNestedField(o.Object, "status", "activeOperation")
 		return unstructured.SetNestedField(o.Object, "FenceUnknown", "status", "fenceState")
 	})
 	if finishErr != nil {
@@ -330,6 +406,15 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 	return resp, nil
 }
 func (s *Store) retryUpdateStatus(ctx context.Context, name string, mutate func(*unstructured.Unstructured) error) error {
+	return s.retryUpdateStatusRaw(ctx, name, func(o *unstructured.Unstructured) error {
+		if err := requireCurrentSchema(o); err != nil {
+			return err
+		}
+		return mutate(o)
+	})
+}
+
+func (s *Store) retryUpdateStatusRaw(ctx context.Context, name string, mutate func(*unstructured.Unstructured) error) error {
 	for i := 0; i < 5; i++ {
 		cur, err := s.resources.Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
@@ -349,6 +434,17 @@ func (s *Store) retryUpdateStatus(ctx context.Context, name string, mutate func(
 	}
 	return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment changed concurrently", Retryable: true}
 }
+func requireCurrentSchema(o *unstructured.Unstructured) error {
+	if intNested(o.Object, "spec", "schemaVersion") != currentSchemaVersion || intNested(o.Object, "status", "schemaVersion") != currentSchemaVersion {
+		return incompatibleSchemaError()
+	}
+	return nil
+}
+
+func incompatibleSchemaError() error {
+	return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment schema is incompatible; explicit migration is required"}
+}
+
 func epochValue(o *unstructured.Unstructured) (uint64, bool) {
 	epoch, found, err := unstructured.NestedInt64(o.Object, "status", "epoch")
 	if err != nil || !found || epoch <= 0 {

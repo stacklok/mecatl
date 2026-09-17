@@ -229,6 +229,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"LostOwnershipCandidates",
 		"MaintenanceMutationAvailable",
 		"ManualDreamCapabilities",
+		"ReconcileReferenceIntents",
 		"MaybeAutoApprovePlan",
 		"OwnershipEnforced",
 		"Persist",

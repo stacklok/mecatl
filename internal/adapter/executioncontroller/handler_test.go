@@ -64,6 +64,40 @@ func (*fakeBackend) CancelCommand(context.Context, string, string, executionenv.
 	return executionenv.CommandStatusResponse{}, nil
 }
 
+func (f *fakeBackend) EnsurePending(ctx context.Context, client, owner, binding, profile, fp, _ string) (Allocation, error) {
+	return f.Ensure(ctx, client, owner, binding, profile, fp)
+}
+func (*fakeBackend) AcquireRun(_ context.Context, ref executionenv.EnvironmentRef, _ string, _ string, binding, run, _ string, ttl time.Duration) (executionenv.RunClaim, error) {
+	return executionenv.RunClaim{Environment: ref, BindingID: binding, RunID: run, ClaimID: "claim", Epoch: 2, GrantGeneration: 1, ExpiresAt: time.Now().Add(ttl)}, nil
+}
+func (*fakeBackend) RenewRun(_ context.Context, _ executionenv.EnvironmentRef, _ string, _ string, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
+	return executionenv.RunClaim{Environment: req.Environment, BindingID: req.BindingID, RunID: req.RunID, ClaimID: req.ClaimID, Epoch: req.Epoch, GrantGeneration: 1, ExpiresAt: time.Now().Add(req.TTL)}, nil
+}
+func (*fakeBackend) ReleaseRun(context.Context, executionenv.EnvironmentRef, string, string, executionenv.RunClaimRequest) error {
+	return nil
+}
+func (*fakeBackend) CommitReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*fakeBackend) AbortReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*fakeBackend) ReserveSuccessor(context.Context, executionenv.EnvironmentRef, string, string, string, string, string) error {
+	return nil
+}
+func (*fakeBackend) PrepareReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*fakeBackend) ConfirmReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*fakeBackend) CancelReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
+	return nil
+}
+func (*fakeBackend) ListReferenceIntents(context.Context, string, string, int) ([]executionenv.ReferenceIntent, error) {
+	return nil, nil
+}
+
 func authenticatedContext(id string) context.Context {
 	u, _ := url.Parse(id)
 	cert := &x509.Certificate{URIs: []*url.URL{u}}
@@ -106,7 +140,7 @@ func TestHandlerValidateIsReadOnlyAndEnsureIdempotent(t *testing.T) {
 	if backend.ensureCalls != 0 {
 		t.Fatal("validation allocated")
 	}
-	q := &executionv1.EnsureEnvironmentRequest{BindingId: "session-1", Profile: "go", Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}}
+	q := &executionv1.EnsureEnvironmentRequest{BindingId: "session-1", Profile: "go", Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, OperationId: "create"}
 	first, err := h.EnsureEnvironment(ctx, q)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +169,7 @@ func TestHandlerWithNilBackendRejectsEveryRPCWithoutPanicking(t *testing.T) {
 		func(valid bool) error {
 			var q *executionv1.EnsureEnvironmentRequest
 			if valid {
-				q = &executionv1.EnsureEnvironmentRequest{BindingId: "binding", Profile: "go", Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}}
+				q = &executionv1.EnsureEnvironmentRequest{BindingId: "binding", Profile: "go", Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, OperationId: "create"}
 			}
 			_, err := h.EnsureEnvironment(ctx, q)
 			return err
@@ -159,7 +193,7 @@ func TestHandlerWithNilBackendRejectsEveryRPCWithoutPanicking(t *testing.T) {
 		func(valid bool) error {
 			var q *executionv1.RetireEnvironmentRequest
 			if valid {
-				q = &executionv1.RetireEnvironmentRequest{Context: &executionv1.RequestContext{}}
+				q = &executionv1.RetireEnvironmentRequest{Environment: &executionv1.EnvironmentRef{}, Owner: &executionv1.Owner{}}
 			}
 			_, err := h.RetireEnvironment(ctx, q)
 			return err
@@ -212,11 +246,15 @@ func TestHandlerRejectsUnknownBackendCommandState(t *testing.T) {
 	backend.commandState = executionenv.CommandState("future")
 	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{"spiffe://cluster/ns/mecak8s": {MayAttestOwner: true}}, Signer: GrantSigner{KeyID: "k1", PrivateKey: priv, Issuer: "provider", Audience: "execution", Lifetime: time.Minute}, Verifier: executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{"k1": pub}, Issuer: "provider", Audience: "execution"}}, backend)
 	ctx := authenticatedContext("spiffe://cluster/ns/mecak8s")
-	ensured, err := h.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: "session-1", Profile: "go", Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}})
+	ensured, err := h.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: "session-1", Profile: "go", Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, OperationId: "create"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := &executionv1.CommandStartRequest{Context: &executionv1.RequestContext{Environment: ensured.Environment, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, BindingId: "session-1", Epoch: ensured.Epoch, Grant: ensured.Grant}, Command: "true"}
+	claim, err := h.AcquireRun(ctx, &executionv1.AcquireRunRequest{Environment: ensured.Environment, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, BindingId: "session-1", RunId: "run", OperationId: "acquire", TtlMillis: time.Minute.Milliseconds()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := &executionv1.CommandStartRequest{Context: &executionv1.RequestContext{Environment: claim.Environment, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, BindingId: "session-1", RunId: claim.RunId, ClaimId: claim.ClaimId, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}, Command: "true"}
 	if _, err := h.StartCommand(ctx, q); status.Code(err) != codes.Internal || status.Convert(err).Message() != "execution provider request failed" {
 		t.Fatalf("unexpected invalid-state result: code=%v message=%q", status.Code(err), status.Convert(err).Message())
 	}

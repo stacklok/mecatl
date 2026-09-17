@@ -37,11 +37,13 @@ func TestLoadProfilesStrictAndDigestPinned(t *testing.T) {
 
 func TestLoadProfilesRejectsInvalidQuantities(t *testing.T) {
 	cases := map[string]string{
-		"malformed":                 strings.Replace(validProfileYAML(), "cpuRequest: 100m", "cpuRequest: invalid", 1),
-		"zero":                      strings.Replace(validProfileYAML(), "memoryRequest: 128Mi", `memoryRequest: "0"`, 1),
-		"negative":                  strings.Replace(validProfileYAML(), `cpuLimit: "1"`, `cpuLimit: "-1"`, 1),
-		"cpu request over limit":    strings.Replace(validProfileYAML(), "cpuRequest: 100m", "cpuRequest: 2", 1),
-		"memory request over limit": strings.Replace(validProfileYAML(), "memoryLimit: 1Gi", "memoryLimit: 64Mi", 1),
+		"malformed":                    strings.Replace(validProfileYAML(), "cpuRequest: 100m", "cpuRequest: invalid", 1),
+		"zero":                         strings.Replace(validProfileYAML(), "memoryRequest: 128Mi", `memoryRequest: "0"`, 1),
+		"negative":                     strings.Replace(validProfileYAML(), `cpuLimit: "1"`, `cpuLimit: "-1"`, 1),
+		"cpu request over limit":       strings.Replace(validProfileYAML(), "cpuRequest: 100m", "cpuRequest: 2", 1),
+		"memory request over limit":    strings.Replace(validProfileYAML(), "memoryLimit: 1Gi", "memoryLimit: 64Mi", 1),
+		"ephemeral request over limit": strings.Replace(validProfileYAML(), "ephemeralStorageLimit: 1Gi", "ephemeralStorageLimit: 32Mi", 1),
+		"tmp over ephemeral limit":     strings.Replace(validProfileYAML(), "tmpSizeLimit: 256Mi", "tmpSizeLimit: 2Gi", 1),
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -87,8 +89,13 @@ func validProfileYAML() string {
     memoryRequest: 128Mi
     cpuLimit: "1"
     memoryLimit: 1Gi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: sandboxed
     maxFileBytes: 1048576
     maxCommandBytes: 65536
     maxCommandDuration: 1m
+    maxEnvironments: 100
 `
 }

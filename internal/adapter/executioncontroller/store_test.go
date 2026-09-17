@@ -16,7 +16,7 @@ import (
 
 func TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	profiles := &Profiles{byName: map[string]resolvedProfile{"go": {Digest: "sha256:profile", Spec: ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute}}, "other": {Digest: "sha256:other", Spec: ProfileSpec{Image: "example@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute}}}}
+	profiles := &Profiles{byName: map[string]resolvedProfile{"go": {Digest: "sha256:profile", Spec: ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}}, "other": {Digest: "sha256:other", Spec: ProfileSpec{Image: "example@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}}}}
 	s := NewStore(client, "ns", profiles, nil)
 	ctx := context.Background()
 	a, err := s.Ensure(ctx, "spiffe://client", "owner", "binding", "go", "fp1")
@@ -60,14 +60,14 @@ func (e *terminalErrorExecutor) Execute(context.Context, string, executionenv.Ex
 	return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "path not found"}
 }
 func TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences(t *testing.T) {
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"epoch": int64(1), "fenceState": "Healthy", "references": []any{"binding"}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	exec := &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
 	s := NewStore(client, "ns", testProfiles(), exec)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.StartCommand(ctx, "client", "owner", executionenv.CommandStartRequest{Context: executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", Epoch: 1}, Command: "sleep 10"})
+		_, err := s.StartCommand(ctx, "client", "owner", executionenv.CommandStartRequest{Context: executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 1, GrantGeneration: 1}, Command: "sleep 10"})
 		done <- err
 	}()
 	<-exec.started
@@ -88,8 +88,8 @@ func TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if textNested(fenced.Object, "status", "activeOperation", "id") != "" || textNested(fenced.Object, "status", "fenceState") != "FenceUnknown" {
-		t.Fatalf("status=%v", fenced.Object["status"])
+	if textNested(fenced.Object, "status", "activeOperation", "id") == "" || textNested(fenced.Object, "status", "fenceState") != "FenceUnknown" {
+		t.Fatalf("uncertain operation identity was not retained: status=%v", fenced.Object["status"])
 	}
 	_, err = s.Attach(context.Background(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "binding")
 	if !errors.As(err, &pe) || pe.Code != executionenv.CodeNotReady {
@@ -98,11 +98,11 @@ func TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences(t *testin
 }
 
 func TestControlledExecutorErrorClearsOperationWithoutFencing(t *testing.T) {
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"epoch": int64(1), "fenceState": "Healthy", "references": []any{"binding"}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	exec := &terminalErrorExecutor{}
 	s := NewStore(client, "ns", testProfiles(), exec)
-	_, err := s.File(context.Background(), "client", "owner", executionenv.FileRequest{Context: executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", Epoch: 1}, Operation: executionenv.OpFileRead, Path: "missing"})
+	_, err := s.File(context.Background(), "client", "owner", executionenv.FileRequest{Context: executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 1, GrantGeneration: 1}, Operation: executionenv.OpFileRead, Path: "missing"})
 	var pe *executionenv.Error
 	if !errors.As(err, &pe) || pe.Code != executionenv.CodeNotFound {
 		t.Fatalf("error=%v", err)

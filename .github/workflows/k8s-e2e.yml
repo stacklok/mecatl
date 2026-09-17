@@ -37,6 +37,14 @@ on:
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
       - deploy/helm/mecak8s/**
+      - deploy/helm/mecatl-execution/**
+      - cmd/mecatl-execution-provider/**
+      - cmd/mecatl-executor/**
+      - internal/adapter/executioncontroller/**
+      - internal/adapter/executionclient/**
+      - internal/executionenv/**
+      - contracts/proto/mecatl/execution/**
+      - e2e/k8s_execution/**
       - e2e/k8s/**
       - go.mod
       - go.sum
@@ -54,6 +62,14 @@ on:
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
       - deploy/helm/mecak8s/**
+      - deploy/helm/mecatl-execution/**
+      - cmd/mecatl-execution-provider/**
+      - cmd/mecatl-executor/**
+      - internal/adapter/executioncontroller/**
+      - internal/adapter/executionclient/**
+      - internal/executionenv/**
+      - contracts/proto/mecatl/execution/**
+      - e2e/k8s_execution/**
       - e2e/k8s/**
       - go.mod
       - go.sum

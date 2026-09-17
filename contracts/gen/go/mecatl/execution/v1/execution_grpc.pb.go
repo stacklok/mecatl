@@ -26,15 +26,30 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ExecutionProviderService_ValidateProfile_FullMethodName   = "/mecatl.execution.v1.ExecutionProviderService/ValidateProfile"
-	ExecutionProviderService_EnsureEnvironment_FullMethodName = "/mecatl.execution.v1.ExecutionProviderService/EnsureEnvironment"
-	ExecutionProviderService_AttachEnvironment_FullMethodName = "/mecatl.execution.v1.ExecutionProviderService/AttachEnvironment"
-	ExecutionProviderService_ReleaseReference_FullMethodName  = "/mecatl.execution.v1.ExecutionProviderService/ReleaseReference"
-	ExecutionProviderService_RetireEnvironment_FullMethodName = "/mecatl.execution.v1.ExecutionProviderService/RetireEnvironment"
-	ExecutionProviderService_Files_FullMethodName             = "/mecatl.execution.v1.ExecutionProviderService/Files"
-	ExecutionProviderService_StartCommand_FullMethodName      = "/mecatl.execution.v1.ExecutionProviderService/StartCommand"
-	ExecutionProviderService_CommandStatus_FullMethodName     = "/mecatl.execution.v1.ExecutionProviderService/CommandStatus"
-	ExecutionProviderService_CancelCommand_FullMethodName     = "/mecatl.execution.v1.ExecutionProviderService/CancelCommand"
+	ExecutionProviderService_ValidateProfile_FullMethodName          = "/mecatl.execution.v1.ExecutionProviderService/ValidateProfile"
+	ExecutionProviderService_EnsureEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/EnsureEnvironment"
+	ExecutionProviderService_AttachEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/AttachEnvironment"
+	ExecutionProviderService_AcquireRun_FullMethodName               = "/mecatl.execution.v1.ExecutionProviderService/AcquireRun"
+	ExecutionProviderService_RenewRun_FullMethodName                 = "/mecatl.execution.v1.ExecutionProviderService/RenewRun"
+	ExecutionProviderService_ReleaseRun_FullMethodName               = "/mecatl.execution.v1.ExecutionProviderService/ReleaseRun"
+	ExecutionProviderService_CommitReference_FullMethodName          = "/mecatl.execution.v1.ExecutionProviderService/CommitReference"
+	ExecutionProviderService_AbortReference_FullMethodName           = "/mecatl.execution.v1.ExecutionProviderService/AbortReference"
+	ExecutionProviderService_ReserveSuccessor_FullMethodName         = "/mecatl.execution.v1.ExecutionProviderService/ReserveSuccessor"
+	ExecutionProviderService_PrepareReferenceDelete_FullMethodName   = "/mecatl.execution.v1.ExecutionProviderService/PrepareReferenceDelete"
+	ExecutionProviderService_ConfirmReferenceDelete_FullMethodName   = "/mecatl.execution.v1.ExecutionProviderService/ConfirmReferenceDelete"
+	ExecutionProviderService_CancelReferenceDelete_FullMethodName    = "/mecatl.execution.v1.ExecutionProviderService/CancelReferenceDelete"
+	ExecutionProviderService_ListReferenceIntents_FullMethodName     = "/mecatl.execution.v1.ExecutionProviderService/ListReferenceIntents"
+	ExecutionProviderService_ReleaseReference_FullMethodName         = "/mecatl.execution.v1.ExecutionProviderService/ReleaseReference"
+	ExecutionProviderService_RetireEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/RetireEnvironment"
+	ExecutionProviderService_ReplaceExecutor_FullMethodName          = "/mecatl.execution.v1.ExecutionProviderService/ReplaceExecutor"
+	ExecutionProviderService_RecoverEnvironment_FullMethodName       = "/mecatl.execution.v1.ExecutionProviderService/RecoverEnvironment"
+	ExecutionProviderService_DeleteRetiredEnvironment_FullMethodName = "/mecatl.execution.v1.ExecutionProviderService/DeleteRetiredEnvironment"
+	ExecutionProviderService_MigrateEnvironment_FullMethodName       = "/mecatl.execution.v1.ExecutionProviderService/MigrateEnvironment"
+	ExecutionProviderService_RevokeEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment"
+	ExecutionProviderService_Files_FullMethodName                    = "/mecatl.execution.v1.ExecutionProviderService/Files"
+	ExecutionProviderService_StartCommand_FullMethodName             = "/mecatl.execution.v1.ExecutionProviderService/StartCommand"
+	ExecutionProviderService_CommandStatus_FullMethodName            = "/mecatl.execution.v1.ExecutionProviderService/CommandStatus"
+	ExecutionProviderService_CancelCommand_FullMethodName            = "/mecatl.execution.v1.ExecutionProviderService/CancelCommand"
 )
 
 // ExecutionProviderServiceClient is the client API for ExecutionProviderService service.
@@ -44,8 +59,23 @@ type ExecutionProviderServiceClient interface {
 	ValidateProfile(ctx context.Context, in *ValidateProfileRequest, opts ...grpc.CallOption) (*ValidateProfileResponse, error)
 	EnsureEnvironment(ctx context.Context, in *EnsureEnvironmentRequest, opts ...grpc.CallOption) (*EnsureEnvironmentResponse, error)
 	AttachEnvironment(ctx context.Context, in *AttachEnvironmentRequest, opts ...grpc.CallOption) (*AttachEnvironmentResponse, error)
+	AcquireRun(ctx context.Context, in *AcquireRunRequest, opts ...grpc.CallOption) (*RunClaimResponse, error)
+	RenewRun(ctx context.Context, in *RenewRunRequest, opts ...grpc.CallOption) (*RunClaimResponse, error)
+	ReleaseRun(ctx context.Context, in *ReleaseRunRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	CommitReference(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	AbortReference(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ReserveSuccessor(ctx context.Context, in *ReserveSuccessorRequest, opts ...grpc.CallOption) (*ReferenceReservationResponse, error)
+	PrepareReferenceDelete(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ConfirmReferenceDelete(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	CancelReferenceDelete(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ListReferenceIntents(ctx context.Context, in *ListReferenceIntentsRequest, opts ...grpc.CallOption) (*ListReferenceIntentsResponse, error)
 	ReleaseReference(ctx context.Context, in *ReleaseReferenceRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RetireEnvironment(ctx context.Context, in *RetireEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ReplaceExecutor(ctx context.Context, in *ReplaceExecutorRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RecoverEnvironment(ctx context.Context, in *RecoverEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DeleteRetiredEnvironment(ctx context.Context, in *DeleteRetiredEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	MigrateEnvironment(ctx context.Context, in *MigrateEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RevokeEnvironment(ctx context.Context, in *RevokeEnvironmentRequest, opts ...grpc.CallOption) (*RevokeEnvironmentResponse, error)
 	Files(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (*FileResponse, error)
 	StartCommand(ctx context.Context, in *CommandStartRequest, opts ...grpc.CallOption) (*CommandStartResponse, error)
 	CommandStatus(ctx context.Context, in *CommandQueryRequest, opts ...grpc.CallOption) (*CommandStatusResponse, error)
@@ -90,6 +120,106 @@ func (c *executionProviderServiceClient) AttachEnvironment(ctx context.Context, 
 	return out, nil
 }
 
+func (c *executionProviderServiceClient) AcquireRun(ctx context.Context, in *AcquireRunRequest, opts ...grpc.CallOption) (*RunClaimResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunClaimResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_AcquireRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) RenewRun(ctx context.Context, in *RenewRunRequest, opts ...grpc.CallOption) (*RunClaimResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunClaimResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_RenewRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) ReleaseRun(ctx context.Context, in *ReleaseRunRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ReleaseRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) CommitReference(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_CommitReference_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) AbortReference(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_AbortReference_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) ReserveSuccessor(ctx context.Context, in *ReserveSuccessorRequest, opts ...grpc.CallOption) (*ReferenceReservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReferenceReservationResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ReserveSuccessor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) PrepareReferenceDelete(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_PrepareReferenceDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) ConfirmReferenceDelete(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ConfirmReferenceDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) CancelReferenceDelete(ctx context.Context, in *ReferenceMutationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_CancelReferenceDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) ListReferenceIntents(ctx context.Context, in *ListReferenceIntentsRequest, opts ...grpc.CallOption) (*ListReferenceIntentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListReferenceIntentsResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ListReferenceIntents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *executionProviderServiceClient) ReleaseReference(ctx context.Context, in *ReleaseReferenceRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -104,6 +234,56 @@ func (c *executionProviderServiceClient) RetireEnvironment(ctx context.Context, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, ExecutionProviderService_RetireEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) ReplaceExecutor(ctx context.Context, in *ReplaceExecutorRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ReplaceExecutor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) RecoverEnvironment(ctx context.Context, in *RecoverEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_RecoverEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) DeleteRetiredEnvironment(ctx context.Context, in *DeleteRetiredEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_DeleteRetiredEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) MigrateEnvironment(ctx context.Context, in *MigrateEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_MigrateEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) RevokeEnvironment(ctx context.Context, in *RevokeEnvironmentRequest, opts ...grpc.CallOption) (*RevokeEnvironmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeEnvironmentResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_RevokeEnvironment_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -157,8 +337,23 @@ type ExecutionProviderServiceServer interface {
 	ValidateProfile(context.Context, *ValidateProfileRequest) (*ValidateProfileResponse, error)
 	EnsureEnvironment(context.Context, *EnsureEnvironmentRequest) (*EnsureEnvironmentResponse, error)
 	AttachEnvironment(context.Context, *AttachEnvironmentRequest) (*AttachEnvironmentResponse, error)
+	AcquireRun(context.Context, *AcquireRunRequest) (*RunClaimResponse, error)
+	RenewRun(context.Context, *RenewRunRequest) (*RunClaimResponse, error)
+	ReleaseRun(context.Context, *ReleaseRunRequest) (*emptypb.Empty, error)
+	CommitReference(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error)
+	AbortReference(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error)
+	ReserveSuccessor(context.Context, *ReserveSuccessorRequest) (*ReferenceReservationResponse, error)
+	PrepareReferenceDelete(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error)
+	ConfirmReferenceDelete(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error)
+	CancelReferenceDelete(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error)
+	ListReferenceIntents(context.Context, *ListReferenceIntentsRequest) (*ListReferenceIntentsResponse, error)
 	ReleaseReference(context.Context, *ReleaseReferenceRequest) (*emptypb.Empty, error)
 	RetireEnvironment(context.Context, *RetireEnvironmentRequest) (*emptypb.Empty, error)
+	ReplaceExecutor(context.Context, *ReplaceExecutorRequest) (*emptypb.Empty, error)
+	RecoverEnvironment(context.Context, *RecoverEnvironmentRequest) (*emptypb.Empty, error)
+	DeleteRetiredEnvironment(context.Context, *DeleteRetiredEnvironmentRequest) (*emptypb.Empty, error)
+	MigrateEnvironment(context.Context, *MigrateEnvironmentRequest) (*emptypb.Empty, error)
+	RevokeEnvironment(context.Context, *RevokeEnvironmentRequest) (*RevokeEnvironmentResponse, error)
 	Files(context.Context, *FileRequest) (*FileResponse, error)
 	StartCommand(context.Context, *CommandStartRequest) (*CommandStartResponse, error)
 	CommandStatus(context.Context, *CommandQueryRequest) (*CommandStatusResponse, error)
@@ -182,11 +377,56 @@ func (UnimplementedExecutionProviderServiceServer) EnsureEnvironment(context.Con
 func (UnimplementedExecutionProviderServiceServer) AttachEnvironment(context.Context, *AttachEnvironmentRequest) (*AttachEnvironmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AttachEnvironment not implemented")
 }
+func (UnimplementedExecutionProviderServiceServer) AcquireRun(context.Context, *AcquireRunRequest) (*RunClaimResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcquireRun not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) RenewRun(context.Context, *RenewRunRequest) (*RunClaimResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RenewRun not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) ReleaseRun(context.Context, *ReleaseRunRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReleaseRun not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) CommitReference(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CommitReference not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) AbortReference(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AbortReference not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) ReserveSuccessor(context.Context, *ReserveSuccessorRequest) (*ReferenceReservationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReserveSuccessor not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) PrepareReferenceDelete(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PrepareReferenceDelete not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) ConfirmReferenceDelete(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ConfirmReferenceDelete not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) CancelReferenceDelete(context.Context, *ReferenceMutationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelReferenceDelete not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) ListReferenceIntents(context.Context, *ListReferenceIntentsRequest) (*ListReferenceIntentsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListReferenceIntents not implemented")
+}
 func (UnimplementedExecutionProviderServiceServer) ReleaseReference(context.Context, *ReleaseReferenceRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReleaseReference not implemented")
 }
 func (UnimplementedExecutionProviderServiceServer) RetireEnvironment(context.Context, *RetireEnvironmentRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RetireEnvironment not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) ReplaceExecutor(context.Context, *ReplaceExecutorRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReplaceExecutor not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) RecoverEnvironment(context.Context, *RecoverEnvironmentRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecoverEnvironment not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) DeleteRetiredEnvironment(context.Context, *DeleteRetiredEnvironmentRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteRetiredEnvironment not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) MigrateEnvironment(context.Context, *MigrateEnvironmentRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MigrateEnvironment not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) RevokeEnvironment(context.Context, *RevokeEnvironmentRequest) (*RevokeEnvironmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RevokeEnvironment not implemented")
 }
 func (UnimplementedExecutionProviderServiceServer) Files(context.Context, *FileRequest) (*FileResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Files not implemented")
@@ -276,6 +516,186 @@ func _ExecutionProviderService_AttachEnvironment_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ExecutionProviderService_AcquireRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AcquireRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).AcquireRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_AcquireRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).AcquireRun(ctx, req.(*AcquireRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_RenewRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).RenewRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_RenewRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).RenewRun(ctx, req.(*RenewRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_ReleaseRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).ReleaseRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_ReleaseRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).ReleaseRun(ctx, req.(*ReleaseRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_CommitReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReferenceMutationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).CommitReference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_CommitReference_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).CommitReference(ctx, req.(*ReferenceMutationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_AbortReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReferenceMutationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).AbortReference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_AbortReference_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).AbortReference(ctx, req.(*ReferenceMutationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_ReserveSuccessor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReserveSuccessorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).ReserveSuccessor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_ReserveSuccessor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).ReserveSuccessor(ctx, req.(*ReserveSuccessorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_PrepareReferenceDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReferenceMutationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).PrepareReferenceDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_PrepareReferenceDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).PrepareReferenceDelete(ctx, req.(*ReferenceMutationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_ConfirmReferenceDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReferenceMutationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).ConfirmReferenceDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_ConfirmReferenceDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).ConfirmReferenceDelete(ctx, req.(*ReferenceMutationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_CancelReferenceDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReferenceMutationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).CancelReferenceDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_CancelReferenceDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).CancelReferenceDelete(ctx, req.(*ReferenceMutationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_ListReferenceIntents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListReferenceIntentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).ListReferenceIntents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_ListReferenceIntents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).ListReferenceIntents(ctx, req.(*ListReferenceIntentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ExecutionProviderService_ReleaseReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReleaseReferenceRequest)
 	if err := dec(in); err != nil {
@@ -308,6 +728,96 @@ func _ExecutionProviderService_RetireEnvironment_Handler(srv interface{}, ctx co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ExecutionProviderServiceServer).RetireEnvironment(ctx, req.(*RetireEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_ReplaceExecutor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplaceExecutorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).ReplaceExecutor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_ReplaceExecutor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).ReplaceExecutor(ctx, req.(*ReplaceExecutorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_RecoverEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecoverEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).RecoverEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_RecoverEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).RecoverEnvironment(ctx, req.(*RecoverEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_DeleteRetiredEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRetiredEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).DeleteRetiredEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_DeleteRetiredEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).DeleteRetiredEnvironment(ctx, req.(*DeleteRetiredEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_MigrateEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MigrateEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).MigrateEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_MigrateEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).MigrateEnvironment(ctx, req.(*MigrateEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_RevokeEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).RevokeEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_RevokeEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).RevokeEnvironment(ctx, req.(*RevokeEnvironmentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -404,12 +914,72 @@ var ExecutionProviderService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ExecutionProviderService_AttachEnvironment_Handler,
 		},
 		{
+			MethodName: "AcquireRun",
+			Handler:    _ExecutionProviderService_AcquireRun_Handler,
+		},
+		{
+			MethodName: "RenewRun",
+			Handler:    _ExecutionProviderService_RenewRun_Handler,
+		},
+		{
+			MethodName: "ReleaseRun",
+			Handler:    _ExecutionProviderService_ReleaseRun_Handler,
+		},
+		{
+			MethodName: "CommitReference",
+			Handler:    _ExecutionProviderService_CommitReference_Handler,
+		},
+		{
+			MethodName: "AbortReference",
+			Handler:    _ExecutionProviderService_AbortReference_Handler,
+		},
+		{
+			MethodName: "ReserveSuccessor",
+			Handler:    _ExecutionProviderService_ReserveSuccessor_Handler,
+		},
+		{
+			MethodName: "PrepareReferenceDelete",
+			Handler:    _ExecutionProviderService_PrepareReferenceDelete_Handler,
+		},
+		{
+			MethodName: "ConfirmReferenceDelete",
+			Handler:    _ExecutionProviderService_ConfirmReferenceDelete_Handler,
+		},
+		{
+			MethodName: "CancelReferenceDelete",
+			Handler:    _ExecutionProviderService_CancelReferenceDelete_Handler,
+		},
+		{
+			MethodName: "ListReferenceIntents",
+			Handler:    _ExecutionProviderService_ListReferenceIntents_Handler,
+		},
+		{
 			MethodName: "ReleaseReference",
 			Handler:    _ExecutionProviderService_ReleaseReference_Handler,
 		},
 		{
 			MethodName: "RetireEnvironment",
 			Handler:    _ExecutionProviderService_RetireEnvironment_Handler,
+		},
+		{
+			MethodName: "ReplaceExecutor",
+			Handler:    _ExecutionProviderService_ReplaceExecutor_Handler,
+		},
+		{
+			MethodName: "RecoverEnvironment",
+			Handler:    _ExecutionProviderService_RecoverEnvironment_Handler,
+		},
+		{
+			MethodName: "DeleteRetiredEnvironment",
+			Handler:    _ExecutionProviderService_DeleteRetiredEnvironment_Handler,
+		},
+		{
+			MethodName: "MigrateEnvironment",
+			Handler:    _ExecutionProviderService_MigrateEnvironment_Handler,
+		},
+		{
+			MethodName: "RevokeEnvironment",
+			Handler:    _ExecutionProviderService_RevokeEnvironment_Handler,
 		},
 		{
 			MethodName: "Files",

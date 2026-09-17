@@ -18,6 +18,20 @@ const (
 	defaultPlacementScope         = server.PlacementScope("deployment")
 )
 
+func referenceIntentLifecycle(provider server.PlacementProvider) server.ReferenceIntentLifecycle {
+	if profiled, ok := provider.(*profilePlacementProvider); ok {
+		lifecycle, _ := profiled.remote.(server.ReferenceIntentLifecycle)
+		return lifecycle
+	}
+	lifecycle, _ := provider.(server.ReferenceIntentLifecycle)
+	return lifecycle
+}
+
+func executionAccess(provider server.PlacementProvider) server.ExecutionAccess {
+	access, _ := provider.(server.ExecutionAccess)
+	return access
+}
+
 type profilePlacementProvider struct {
 	remote server.PlacementProvider
 	local  *localPlacementProvider
@@ -44,6 +58,63 @@ func (p *profilePlacementProvider) Reattach(ctx context.Context, req server.Plac
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	return remote.Reattach(ctx, req)
+}
+
+func (p *profilePlacementProvider) PrepareReferenceDelete(ctx context.Context, req server.PlacementSuccessorRequest) (server.ReferenceDeleteHandle, error) {
+	lifecycle, ok := p.remote.(server.ReferenceLifecycle)
+	if !ok || !lifecycle.Applies(req.Ref) {
+		return nil, server.ErrPlacementUnavailable
+	}
+	return lifecycle.PrepareReferenceDelete(ctx, req)
+}
+
+func (p *profilePlacementProvider) ListReferenceIntents(ctx context.Context, limit int) ([]server.ReferenceIntent, error) {
+	lifecycle, ok := p.remote.(server.ReferenceIntentLifecycle)
+	if !ok {
+		return nil, server.ErrPlacementUnavailable
+	}
+	return lifecycle.ListReferenceIntents(ctx, limit)
+}
+func (p *profilePlacementProvider) CommitReferenceIntent(ctx context.Context, intent server.ReferenceIntent) error {
+	lifecycle, ok := p.remote.(server.ReferenceIntentLifecycle)
+	if !ok {
+		return server.ErrPlacementUnavailable
+	}
+	return lifecycle.CommitReferenceIntent(ctx, intent)
+}
+func (p *profilePlacementProvider) ConfirmReferenceIntentDelete(ctx context.Context, intent server.ReferenceIntent) error {
+	lifecycle, ok := p.remote.(server.ReferenceIntentLifecycle)
+	if !ok {
+		return server.ErrPlacementUnavailable
+	}
+	return lifecycle.ConfirmReferenceIntentDelete(ctx, intent)
+}
+func (p *profilePlacementProvider) CancelReferenceIntentDelete(ctx context.Context, intent server.ReferenceIntent) error {
+	lifecycle, ok := p.remote.(server.ReferenceIntentLifecycle)
+	if !ok {
+		return server.ErrPlacementUnavailable
+	}
+	return lifecycle.CancelReferenceIntentDelete(ctx, intent)
+}
+
+func (p *profilePlacementProvider) ReserveSuccessor(ctx context.Context, req server.PlacementSuccessorRequest) (server.PlacementBinding, error) {
+	reservoir, ok := p.remote.(server.PlacementSuccessorReservoir)
+	if !ok {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	return reservoir.ReserveSuccessor(ctx, req)
+}
+
+func (p *profilePlacementProvider) Applies(ref session.EnvironmentRef) bool {
+	access, ok := p.remote.(server.ExecutionAccess)
+	return ok && access.Applies(ref)
+}
+func (p *profilePlacementProvider) AcquireRun(ctx context.Context, req server.ExecutionRunRequest) (server.ExecutionRunHandle, error) {
+	access, ok := p.remote.(server.ExecutionAccess)
+	if !ok || !access.Applies(req.Ref) {
+		return nil, server.ErrPlacementUnavailable
+	}
+	return access.AcquireRun(ctx, req)
 }
 
 // localPlacementProvider is the trusted composition default. It owns exactly

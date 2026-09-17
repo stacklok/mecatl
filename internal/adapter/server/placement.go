@@ -1,3 +1,4 @@
+//nolint:revive // Host-only lifecycle seams are exported solely for internal adapter composition.
 package server
 
 import (
@@ -5,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -122,15 +124,75 @@ type PlacementBinding struct {
 	Environment tool.Environment
 	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
-	// Close releases provisional provider resources. It is called after creation
-	// because ordinary bindings are reattached fresh at run entry.
-	Close func() error
+	// Commit publishes a provisional durable reference after the session store
+	// definitively publishes the matching binding. Close aborts it only while Commit
+	// has not succeeded; an ambiguous commit must remain recoverable.
+	Commit func(context.Context) error
+	Close  func() error
+}
+
+type ExecutionRunRequest struct {
+	Ref       session.EnvironmentRef
+	Principal *session.Principal
+	BindingID session.SessionID
+	RunID     string
+}
+
+type ExecutionRunHandle interface {
+	Environment() tool.Environment
+	Renew(context.Context) error
+	Release(context.Context) error
+}
+
+type ExecutionAccess interface {
+	Applies(session.EnvironmentRef) bool
+	AcquireRun(context.Context, ExecutionRunRequest) (ExecutionRunHandle, error)
 }
 
 // PlacementProvider owns placement authorization, atomic binding resolution,
 // and private environment construction.
 type PlacementProvider interface {
 	Bind(context.Context, PlacementBindRequest) (PlacementBinding, error)
+}
+
+type PlacementSuccessorRequest struct {
+	Ref                  session.EnvironmentRef
+	Principal            *session.Principal
+	SourceBindingID      session.SessionID
+	DestinationBindingID session.SessionID
+}
+
+type ReferenceDeleteHandle interface {
+	Confirm(context.Context) error
+	Cancel(context.Context) error
+}
+type ReferenceLifecycle interface {
+	Applies(session.EnvironmentRef) bool
+	PrepareReferenceDelete(context.Context, PlacementSuccessorRequest) (ReferenceDeleteHandle, error)
+}
+
+// ReferenceIntent is the owner-attested, exact provider operation retained after
+// an ambiguous publication or deletion outcome.
+type ReferenceIntent struct {
+	Ref             session.EnvironmentRef
+	Principal       *session.Principal
+	BindingID       session.SessionID
+	SourceBindingID session.SessionID
+	OperationID     string
+	PendingDelete   bool
+}
+
+// ReferenceIntentLifecycle is the optional host reconciliation seam. Its list is
+// scoped by the provider to the authenticated mTLS client and bounded by limit.
+type ReferenceIntentLifecycle interface {
+	ListReferenceIntents(context.Context, int) ([]ReferenceIntent, error)
+	CommitReferenceIntent(context.Context, ReferenceIntent) error
+	ConfirmReferenceIntentDelete(context.Context, ReferenceIntent) error
+	CancelReferenceIntentDelete(context.Context, ReferenceIntent) error
+}
+
+type PlacementSuccessorReservoir interface {
+	ReserveSuccessor(context.Context, PlacementSuccessorRequest) (PlacementBinding, error)
 }
 
 // PlacementDiscoveryRequest scopes alternate-worktree discovery to an owned
@@ -299,7 +361,17 @@ func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session
 	if !sess.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: placement did not provide an exact environment ref", ErrInvalidPlacementBinding)
 	}
-	return s.persistCreatedSession(ctx, sess, owner, request)
+	persisted, err := s.persistCreatedSession(ctx, sess, owner, request)
+	if err != nil || persisted != sess || placement == nil || placement.Commit == nil {
+		return persisted, err
+	}
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := placement.Commit(commitCtx); err != nil {
+		s.logPlacementProviderError(ctx, "commit reference", err)
+		return sess, fmt.Errorf("%w: session %q persisted but reference publication must be retried", ErrInternal, sess.ID)
+	}
+	return sess, nil
 }
 
 func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (session.EnvironmentRef, string, SessionProfile, error) {

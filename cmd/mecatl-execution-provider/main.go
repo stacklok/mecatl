@@ -3,23 +3,20 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -36,45 +33,25 @@ func main() {
 	}
 }
 func run() error { //nolint:gocyclo // Startup validation and owned-resource shutdown stay in one composition root.
-	var addr, namespace, profilesPath, certPath, keyPath, caPath, signingPath, keyID, issuer, audience, clients, attesters, admins string
+	var addr, healthAddr, namespace, profilesPath, manifestPath, keyDirectory, authorityConfigMap string
+	var reloadInterval time.Duration
+	var maxConcurrentStreams, maxConcurrentRPCs, maxConcurrentRPCsPerClient int
 	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
 	flag.StringVar(&namespace, "namespace", "", "managed Kubernetes namespace")
 	flag.StringVar(&profilesPath, "profiles", "/etc/mecatl-execution/profiles.yaml", "strict operator profile file")
-	flag.StringVar(&certPath, "tls-cert", "/etc/mecatl-execution/tls/tls.crt", "server certificate")
-	flag.StringVar(&keyPath, "tls-key", "/etc/mecatl-execution/tls/tls.key", "server private key")
-	flag.StringVar(&caPath, "client-ca", "/etc/mecatl-execution/tls/ca.crt", "client CA bundle")
-	flag.StringVar(&signingPath, "grant-signing-key", "/etc/mecatl-execution/grant/key.pem", "Ed25519 PKCS8 grant signing key")
-	flag.StringVar(&keyID, "grant-key-id", "current", "grant verification key id")
-	flag.StringVar(&issuer, "grant-issuer", "mecatl-execution-provider", "exact grant issuer")
-	flag.StringVar(&audience, "grant-audience", "mecatl-execution", "exact grant audience")
-	flag.StringVar(&clients, "client-uri-san", "", "comma-separated exact client URI SAN allowlist")
-	flag.StringVar(&attesters, "owner-attester-uri-san", "", "comma-separated client identities allowed to attest owners")
-	flag.StringVar(&admins, "administrator-uri-san", "", "comma-separated retirement administrators")
+	flag.StringVar(&healthAddr, "health-listen", ":8081", "operational HTTP health listen address; empty disables")
+	flag.StringVar(&manifestPath, "grant-keyring-manifest", "/etc/mecatl-execution/security/manifest.json", "versioned security manifest")
+	flag.StringVar(&keyDirectory, "grant-key-directory", "/etc/mecatl-execution/security", "projected security key and TLS directory")
+	flag.StringVar(&authorityConfigMap, "security-authority-configmap", "", "provider-owned security generation high-water ConfigMap")
+	flag.DurationVar(&reloadInterval, "security-reload-interval", 2*time.Second, "security material reload interval")
+	flag.IntVar(&maxConcurrentStreams, "max-concurrent-streams", 64, "maximum concurrent HTTP/2 streams per connection")
+	flag.IntVar(&maxConcurrentRPCs, "max-concurrent-rpcs", 128, "maximum active provider RPCs")
+	flag.IntVar(&maxConcurrentRPCsPerClient, "max-concurrent-rpcs-per-client", 32, "maximum active provider RPCs per authorized client")
 	flag.Parse()
-	if namespace == "" || clients == "" {
-		return errors.New("--namespace and --client-uri-san are required")
+	if namespace == "" || authorityConfigMap == "" || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
+		return errors.New("required identity or RPC concurrency bounds are invalid")
 	}
 	profiles, err := executioncontroller.LoadProfiles(profilesPath)
-	if err != nil {
-		return err
-	}
-	serverCert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return fmt.Errorf("load provider TLS identity: %w", err)
-	}
-	caPEM, err := os.ReadFile(caPath)
-	if err != nil {
-		return fmt.Errorf("load client CA: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return errors.New("client CA has no certificates")
-	}
-	priv, err := loadSigningKey(signingPath)
-	if err != nil {
-		return err
-	}
-	policies, err := clientPolicies(clients, attesters, admins)
 	if err != nil {
 		return err
 	}
@@ -90,14 +67,17 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if err != nil {
 		return err
 	}
+	security := executioncontroller.NewSecurityManager(manifestPath, keyDirectory, namespace, authorityConfigMap, kube)
+	if err := security.Reload(context.Background()); err != nil {
+		return fmt.Errorf("load security material: %w", err)
+	}
 	podexec := executioncontroller.NewPodExecutor(cfg, kube, namespace)
-	store := executioncontroller.NewStore(dyn, namespace, profiles, podexec)
+	store := executioncontroller.NewStore(dyn, namespace, profiles, podexec).WithKubeClient(kube)
 	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, profiles)
-	pub := priv.Public().(ed25519.PublicKey)
-	verifier := executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{keyID: pub}, Issuer: issuer, Audience: audience, MaxLifetime: 5 * time.Minute}
-	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Clients: policies, Signer: executioncontroller.GrantSigner{KeyID: keyID, PrivateKey: priv, Issuer: issuer, Audience: audience, Lifetime: time.Minute}, Verifier: verifier, Ready: reconciler.Ready}, store)
+	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Security: security, Ready: func() bool { return reconciler.Ready() && security.Ready() }}, store)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	go security.Run(ctx, reloadInterval)
 	if err := reconciler.Initialize(ctx); err != nil {
 		return fmt.Errorf("initialize controller: %w", err)
 	}
@@ -107,12 +87,45 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if err != nil {
 		return err
 	}
+	limiter, err := executioncontroller.NewRPCLimiter(security, maxConcurrentRPCs, maxConcurrentRPCsPerClient)
+	if err != nil {
+		return err
+	}
 	server := grpc.NewServer(
-		grpc.Creds(credentials.NewTLS(executioncontroller.TLSConfig(serverCert, pool))),
+		grpc.Creds(credentials.NewTLS(security.TLSConfig())),
+		grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor),
 		grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes),
 		grpc.MaxSendMsgSize(executionenv.MaxMessageBytes),
+		grpc.MaxConcurrentStreams(uint32(maxConcurrentStreams)), //nolint:gosec // validated to 1..1024 above.
+		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: 30 * time.Minute, MaxConnectionAgeGrace: 2 * time.Minute, Time: 2 * time.Minute, Timeout: 20 * time.Second}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 30 * time.Second, PermitWithoutStream: false}),
 	)
 	executionv1.RegisterExecutionProviderServiceServer(server, handler)
+	var healthServer *http.Server
+	if healthAddr != "" {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /live", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+		mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
+			if !reconciler.Ready() || !security.CheckReady(r.Context()) {
+				http.Error(w, "not ready", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+		healthServer = &http.Server{Addr: healthAddr, Handler: mux, ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 30 * time.Second}
+		go func() {
+			if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				cancel()
+			}
+		}()
+	}
+	defer func() {
+		if healthServer != nil {
+			shutdown, stop := context.WithTimeout(context.Background(), 3*time.Second)
+			defer stop()
+			_ = healthServer.Shutdown(shutdown)
+		}
+	}()
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ln) }()
 	select {
@@ -139,55 +152,4 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		}
 		return nil
 	}
-}
-func loadSigningKey(path string) (ed25519.PrivateKey, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("load grant signing key: %w", err)
-	}
-	block, _ := pem.Decode(b)
-	if block == nil || block.Type != "PRIVATE KEY" {
-		return nil, errors.New("grant signing key must be PKCS8 PEM")
-	}
-	raw, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, errors.New("grant signing key is invalid")
-	}
-	key, ok := raw.(ed25519.PrivateKey)
-	if !ok {
-		return nil, errors.New("grant signing key is not Ed25519")
-	}
-	return key, nil
-}
-func clientPolicies(clients, attesters, admins string) (map[string]executioncontroller.ClientPolicy, error) {
-	out := map[string]executioncontroller.ClientPolicy{}
-	for _, id := range splitList(clients) {
-		out[id] = executioncontroller.ClientPolicy{}
-	}
-	for _, id := range splitList(attesters) {
-		p, ok := out[id]
-		if !ok {
-			return nil, fmt.Errorf("owner attester %q is not a client", id)
-		}
-		p.MayAttestOwner = true
-		out[id] = p
-	}
-	for _, id := range splitList(admins) {
-		p, ok := out[id]
-		if !ok {
-			return nil, fmt.Errorf("administrator %q is not a client", id)
-		}
-		p.Administrator = true
-		out[id] = p
-	}
-	return out, nil
-}
-func splitList(v string) []string {
-	out := []string{}
-	for _, x := range strings.Split(v, ",") {
-		if x = strings.TrimSpace(x); x != "" {
-			out = append(out, x)
-		}
-	}
-	return out
 }

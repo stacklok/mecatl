@@ -1,11 +1,15 @@
 // Package executionclient implements the private mTLS client and placement adapter
 // for the independently deployed Kubernetes execution provider.
+//
+//nolint:revive // Private protocol methods are intentionally explicit across adapter boundaries.
 package executionclient
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -19,6 +23,7 @@ import (
 	"google.golang.org/grpc/codes"
 	grpccredentials "google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
@@ -106,9 +111,21 @@ func (c *Client) ValidateProfile(ctx context.Context, profile string) (execution
 	return executionenv.ValidateProfileResponse{Profile: v.Profile, Digest: v.Digest, Capabilities: v.Capabilities, MaxFileBytes: v.MaxFileBytes, MaxCommandBytes: v.MaxCommandBytes, MaxCommandDurationMillis: v.MaxCommandDurationMillis}, nil
 }
 
+func newOperationID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // Ensure idempotently allocates or resolves the environment for a binding.
-func (c *Client) Ensure(ctx context.Context, binding, profile string, owner executionenv.Owner) (executionenv.EnsureEnvironmentResponse, error) {
-	v, err := c.rpc.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: binding, Profile: profile, Owner: ownerToProto(owner)})
+func (c *Client) Ensure(ctx context.Context, binding, profile string, owner executionenv.Owner, operationIDs ...string) (executionenv.EnsureEnvironmentResponse, error) {
+	operationID := ""
+	if len(operationIDs) == 1 {
+		operationID = operationIDs[0]
+	}
+	v, err := c.rpc.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: binding, Profile: profile, Owner: ownerToProto(owner), OperationId: operationID})
 	if err != nil {
 		return executionenv.EnsureEnvironmentResponse{}, decodeError(ctx, err)
 	}
@@ -122,6 +139,86 @@ func (c *Client) Attach(ctx context.Context, req executionenv.AttachEnvironmentR
 		return executionenv.AttachEnvironmentResponse{}, decodeError(ctx, err)
 	}
 	return attachFromProto(v)
+}
+
+// AcquireRun acquires one environment-wide run claim.
+func (c *Client) AcquireRun(ctx context.Context, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
+	v, err := c.rpc.AcquireRun(ctx, &executionv1.AcquireRunRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), BindingId: req.BindingID, RunId: req.RunID, OperationId: req.OperationID, TtlMillis: req.TTL.Milliseconds()})
+	if err != nil {
+		return executionenv.RunClaim{}, decodeError(ctx, err)
+	}
+	return runClaimFromProto(v)
+}
+func (c *Client) RenewRun(ctx context.Context, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
+	v, err := c.rpc.RenewRun(ctx, &executionv1.RenewRunRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), BindingId: req.BindingID, RunId: req.RunID, ClaimId: req.ClaimID, Epoch: req.Epoch, GrantGeneration: req.GrantGeneration, OperationId: req.OperationID, TtlMillis: req.TTL.Milliseconds()})
+	if err != nil {
+		return executionenv.RunClaim{}, decodeError(ctx, err)
+	}
+	return runClaimFromProto(v)
+}
+func (c *Client) ReleaseRun(ctx context.Context, req executionenv.RunClaimRequest) error {
+	_, err := c.rpc.ReleaseRun(ctx, &executionv1.ReleaseRunRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), BindingId: req.BindingID, RunId: req.RunID, ClaimId: req.ClaimID, Epoch: req.Epoch, GrantGeneration: req.GrantGeneration, OperationId: req.OperationID})
+	return decodeError(ctx, err)
+}
+func (c *Client) referenceMutation(ctx context.Context, req executionenv.ReferenceRequest, call func(context.Context, *executionv1.ReferenceMutationRequest, ...grpc.CallOption) (*emptypb.Empty, error)) error {
+	_, err := call(ctx, &executionv1.ReferenceMutationRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), BindingId: req.BindingID, OperationId: req.OperationID})
+	return decodeError(ctx, err)
+}
+func (c *Client) CommitReference(ctx context.Context, req executionenv.ReferenceRequest) error {
+	return c.referenceMutation(ctx, req, c.rpc.CommitReference)
+}
+func (c *Client) AbortReference(ctx context.Context, req executionenv.ReferenceRequest) error {
+	return c.referenceMutation(ctx, req, c.rpc.AbortReference)
+}
+func (c *Client) PrepareReferenceDelete(ctx context.Context, req executionenv.ReferenceRequest) error {
+	return c.referenceMutation(ctx, req, c.rpc.PrepareReferenceDelete)
+}
+func (c *Client) ConfirmReferenceDelete(ctx context.Context, req executionenv.ReferenceRequest) error {
+	return c.referenceMutation(ctx, req, c.rpc.ConfirmReferenceDelete)
+}
+func (c *Client) CancelReferenceDelete(ctx context.Context, req executionenv.ReferenceRequest) error {
+	return c.referenceMutation(ctx, req, c.rpc.CancelReferenceDelete)
+}
+func (c *Client) ReserveSuccessor(ctx context.Context, req executionenv.ReferenceRequest) error {
+	_, err := c.rpc.ReserveSuccessor(ctx, &executionv1.ReserveSuccessorRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), SourceBindingId: req.SourceBindingID, DestinationBindingId: req.BindingID, OperationId: req.OperationID})
+	return decodeError(ctx, err)
+}
+
+func (c *Client) ListReferenceIntents(ctx context.Context, owner executionenv.Owner) ([]executionenv.ReferenceIntent, error) {
+	return c.listReferenceIntents(ctx, &executionv1.ListReferenceIntentsRequest{Owner: ownerToProto(owner), Limit: 64})
+}
+
+func (c *Client) ListAllReferenceIntents(ctx context.Context) ([]executionenv.ReferenceIntent, error) {
+	return c.listReferenceIntents(ctx, &executionv1.ListReferenceIntentsRequest{Limit: 64})
+}
+
+func (c *Client) listReferenceIntents(ctx context.Context, req *executionv1.ListReferenceIntentsRequest) ([]executionenv.ReferenceIntent, error) {
+	v, err := c.rpc.ListReferenceIntents(ctx, req)
+	if err != nil {
+		return nil, decodeError(ctx, err)
+	}
+	out := make([]executionenv.ReferenceIntent, 0, len(v.GetIntents()))
+	for _, intent := range v.GetIntents() {
+		created, timeErr := checkedTime(intent.GetCreatedAt())
+		if timeErr != nil {
+			return nil, sanitizedProviderError()
+		}
+		state := executionenv.ReferenceState(intent.GetState())
+		if state != executionenv.ReferencePendingCreate && state != executionenv.ReferencePendingDelete {
+			return nil, sanitizedProviderError()
+		}
+		owner := executionenv.Owner{}
+		ownerOK := intent.GetOwner() == nil
+		if intent.GetOwner() != nil {
+			owner = executionenv.Owner{Issuer: intent.GetOwner().GetIssuer(), Subject: intent.GetOwner().GetSubject()}
+			ownerOK = owner.Issuer != "" && owner.Subject != "" && len(owner.Issuer) <= executionenv.MaxIdentityBytes && len(owner.Subject) <= executionenv.MaxIdentityBytes
+		}
+		if !ownerOK {
+			return nil, sanitizedProviderError()
+		}
+		out = append(out, executionenv.ReferenceIntent{Environment: refFromProto(intent.GetEnvironment()), Owner: owner, BindingID: intent.GetBindingId(), State: state, OperationID: intent.GetOperationId(), SourceBindingID: intent.GetSourceBindingId(), CreatedAt: created})
+	}
+	return out, nil
 }
 
 // File executes one authorized filesystem operation.
@@ -171,7 +268,7 @@ func (c *Client) ReleaseReference(ctx context.Context, req executionenv.Referenc
 
 // RetireEnvironment requests administrative retirement.
 func (c *Client) RetireEnvironment(ctx context.Context, req executionenv.RetireEnvironmentRequest) error {
-	_, err := c.rpc.RetireEnvironment(ctx, &executionv1.RetireEnvironmentRequest{Context: contextToProto(req.Context)})
+	_, err := c.rpc.RetireEnvironment(ctx, &executionv1.RetireEnvironmentRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), ExpectedExecutionEpoch: req.ExpectedEpoch, ExpectedPodUid: req.ExpectedPodUID, ExpectedPvcUid: req.ExpectedPVCUID, OperationId: req.OperationID})
 	return decodeError(ctx, err)
 }
 
@@ -230,18 +327,30 @@ func refToProto(r executionenv.EnvironmentRef) *executionv1.EnvironmentRef {
 	return &executionv1.EnvironmentRef{Id: r.ID, Revision: r.Revision}
 }
 func contextToProto(v executionenv.RequestContext) *executionv1.RequestContext {
-	return &executionv1.RequestContext{Environment: refToProto(v.Environment), Owner: ownerToProto(v.Owner), BindingId: v.BindingID, Epoch: v.Epoch, Grant: v.Grant}
+	return &executionv1.RequestContext{Environment: refToProto(v.Environment), Owner: ownerToProto(v.Owner), BindingId: v.BindingID, RunId: v.RunID, ClaimId: v.ClaimID, Epoch: v.Epoch, GrantGeneration: v.GrantGeneration, Grant: v.Grant}
 }
 func refFromProto(r *executionv1.EnvironmentRef) executionenv.EnvironmentRef {
 	return executionenv.EnvironmentRef{ID: r.GetId(), Revision: r.GetRevision()}
 }
+func runClaimFromProto(v *executionv1.RunClaimResponse) (executionenv.RunClaim, error) {
+	expiry, err := checkedTime(v.GetExpiresAt())
+	if err != nil || v.GetClaimId() == "" || v.GetRunId() == "" || v.GetEpoch() == 0 || v.GetGrantGeneration() == 0 || v.GetGrant() == "" {
+		return executionenv.RunClaim{}, sanitizedProviderError()
+	}
+	return executionenv.RunClaim{Environment: refFromProto(v.GetEnvironment()), BindingID: v.GetBindingId(), RunID: v.GetRunId(), ClaimID: v.GetClaimId(), Epoch: v.GetEpoch(), GrantGeneration: v.GetGrantGeneration(), Grant: v.GetGrant(), ExpiresAt: expiry}, nil
+}
+
 func ensureFromProto(v *executionv1.EnsureEnvironmentResponse) (executionenv.EnsureEnvironmentResponse, error) {
-	expiry, err := checkedTime(v.GetGrantExpiresAt())
-	return executionenv.EnsureEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), Grant: v.GetGrant(), GrantExpiresAt: expiry}, err
+	if v == nil {
+		return executionenv.EnsureEnvironmentResponse{}, sanitizedProviderError()
+	}
+	return executionenv.EnsureEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), GrantGeneration: v.GetGrantGeneration()}, nil
 }
 func attachFromProto(v *executionv1.AttachEnvironmentResponse) (executionenv.AttachEnvironmentResponse, error) {
-	expiry, err := checkedTime(v.GetGrantExpiresAt())
-	return executionenv.AttachEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), Grant: v.GetGrant(), GrantExpiresAt: expiry}, err
+	if v == nil {
+		return executionenv.AttachEnvironmentResponse{}, sanitizedProviderError()
+	}
+	return executionenv.AttachEnvironmentResponse{Environment: refFromProto(v.GetEnvironment()), Epoch: v.GetEpoch(), Ready: v.GetReady(), GrantGeneration: v.GetGrantGeneration()}, nil
 }
 func checkedTime(v interface {
 	CheckValid() error
@@ -358,6 +467,204 @@ func NewProvider(client *Client, profile string) (*Provider, error) {
 	return &Provider{client: client, profile: profile}, nil
 }
 
+type referenceDeleteHandle struct {
+	client *Client
+	req    executionenv.ReferenceRequest
+}
+
+func (h *referenceDeleteHandle) Confirm(ctx context.Context) error {
+	return h.client.ConfirmReferenceDelete(ctx, h.req)
+}
+func (h *referenceDeleteHandle) Cancel(ctx context.Context) error {
+	return h.client.CancelReferenceDelete(ctx, h.req)
+}
+func (p *Provider) PrepareReferenceDelete(ctx context.Context, req server.PlacementSuccessorRequest) (server.ReferenceDeleteHandle, error) {
+	if !p.Applies(req.Ref) || req.SourceBindingID == "" {
+		return nil, server.ErrInvalidPlacementSelection
+	}
+	owner, err := ownerOf(req.Principal)
+	if err != nil {
+		return nil, err
+	}
+	op, err := newOperationID()
+	if err != nil {
+		return nil, server.ErrPlacementUnavailable
+	}
+	mutation := executionenv.ReferenceRequest{Environment: executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}, Owner: owner, BindingID: string(req.SourceBindingID), OperationID: op}
+	if err := p.client.PrepareReferenceDelete(ctx, mutation); err != nil {
+		return nil, mapPlacementError(err)
+	}
+	return &referenceDeleteHandle{client: p.client, req: mutation}, nil
+}
+
+func (p *Provider) ReserveSuccessor(ctx context.Context, req server.PlacementSuccessorRequest) (server.PlacementBinding, error) {
+	if !p.Applies(req.Ref) || req.SourceBindingID == "" || req.DestinationBindingID == "" {
+		return server.PlacementBinding{}, server.ErrInvalidPlacementSelection
+	}
+	owner, err := ownerOf(req.Principal)
+	if err != nil {
+		return server.PlacementBinding{}, err
+	}
+	op, err := newOperationID()
+	if err != nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	ref := executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}
+	if err := p.client.ReserveSuccessor(ctx, executionenv.ReferenceRequest{Environment: ref, Owner: owner, SourceBindingID: string(req.SourceBindingID), BindingID: string(req.DestinationBindingID), OperationID: op}); err != nil {
+		return server.PlacementBinding{}, mapPlacementError(err)
+	}
+	attached, err := p.client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: ref, Owner: owner, BindingID: string(req.SourceBindingID)}, Purpose: executionenv.PurposeSession})
+	if err != nil {
+		return server.PlacementBinding{}, mapPlacementError(err)
+	}
+	base, err := p.binding(owner, string(req.DestinationBindingID), attached)
+	if err != nil {
+		return server.PlacementBinding{}, err
+	}
+	return p.withReferenceTransaction(base, owner, string(req.DestinationBindingID), op), nil
+}
+
+func (p *Provider) Applies(ref session.EnvironmentRef) bool {
+	return ref.Kind == session.EnvironmentKind("kubernetes")
+}
+
+type runHandle struct {
+	provider    *Provider
+	owner       executionenv.Owner
+	claim       executionenv.RunClaimRequest
+	credentials *grantContext
+	environment tool.Environment
+	mu          sync.Mutex
+}
+
+func (h *runHandle) Environment() tool.Environment { return h.environment }
+func (h *runHandle) Renew(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	op, err := newOperationID()
+	if err != nil {
+		return err
+	}
+	h.claim.OperationID = op
+	claim, err := h.provider.client.RenewRun(ctx, h.claim)
+	if err != nil {
+		return err
+	}
+	h.claim.Epoch, h.claim.ClaimID = claim.Epoch, claim.ClaimID
+	h.credentials.replace(claim)
+	return nil
+}
+func (h *runHandle) Release(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	op, err := newOperationID()
+	if err != nil {
+		return err
+	}
+	h.claim.OperationID = op
+	return h.provider.client.ReleaseRun(ctx, h.claim)
+}
+
+func (p *Provider) ListReferenceIntents(ctx context.Context, limit int) ([]server.ReferenceIntent, error) {
+	if limit <= 0 || limit > 64 {
+		limit = 64
+	}
+	intents, err := p.client.ListAllReferenceIntents(ctx)
+	if err != nil {
+		return nil, mapPlacementError(err)
+	}
+	if len(intents) > limit {
+		intents = intents[:limit]
+	}
+	out := make([]server.ReferenceIntent, 0, len(intents))
+	for _, intent := range intents {
+		if intent.Owner.Issuer == "" || intent.Owner.Subject == "" || intent.BindingID == "" || intent.OperationID == "" {
+			return nil, server.ErrPlacementUnavailable
+		}
+		out = append(out, server.ReferenceIntent{
+			Ref:             toSessionRef(intent.Environment),
+			Principal:       &session.Principal{Issuer: intent.Owner.Issuer, Subject: intent.Owner.Subject},
+			BindingID:       session.SessionID(intent.BindingID),
+			SourceBindingID: session.SessionID(intent.SourceBindingID),
+			OperationID:     intent.OperationID,
+			PendingDelete:   intent.State == executionenv.ReferencePendingDelete,
+		})
+	}
+	return out, nil
+}
+
+func (p *Provider) referenceIntentRequest(intent server.ReferenceIntent) (executionenv.ReferenceRequest, error) {
+	owner, err := ownerOf(intent.Principal)
+	if err != nil || !p.Applies(intent.Ref) || intent.BindingID == "" || intent.OperationID == "" {
+		return executionenv.ReferenceRequest{}, server.ErrInvalidPlacementSelection
+	}
+	return executionenv.ReferenceRequest{Environment: executionenv.EnvironmentRef{ID: intent.Ref.ID, Revision: intent.Ref.Revision}, Owner: owner, BindingID: string(intent.BindingID), SourceBindingID: string(intent.SourceBindingID), OperationID: intent.OperationID}, nil
+}
+
+func (p *Provider) CommitReferenceIntent(ctx context.Context, intent server.ReferenceIntent) error {
+	req, err := p.referenceIntentRequest(intent)
+	if err != nil {
+		return err
+	}
+	return mapPlacementError(p.client.CommitReference(ctx, req))
+}
+func (p *Provider) ConfirmReferenceIntentDelete(ctx context.Context, intent server.ReferenceIntent) error {
+	req, err := p.referenceIntentRequest(intent)
+	if err != nil {
+		return err
+	}
+	return mapPlacementError(p.client.ConfirmReferenceDelete(ctx, req))
+}
+func (p *Provider) CancelReferenceIntentDelete(ctx context.Context, intent server.ReferenceIntent) error {
+	req, err := p.referenceIntentRequest(intent)
+	if err != nil {
+		return err
+	}
+	return mapPlacementError(p.client.CancelReferenceDelete(ctx, req))
+}
+
+func (p *Provider) AcquireRun(ctx context.Context, req server.ExecutionRunRequest) (server.ExecutionRunHandle, error) {
+	if !p.Applies(req.Ref) || req.BindingID == "" || req.RunID == "" {
+		return nil, server.ErrInvalidPlacementSelection
+	}
+	owner, err := ownerOf(req.Principal)
+	if err != nil {
+		return nil, err
+	}
+	intents, err := p.client.ListReferenceIntents(ctx, owner)
+	if err != nil {
+		return nil, mapPlacementError(err)
+	}
+	for _, intent := range intents {
+		if intent.Environment == (executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}) && intent.BindingID == string(req.BindingID) && intent.State == executionenv.ReferencePendingCreate {
+			if err := p.client.CommitReference(ctx, executionenv.ReferenceRequest{Environment: intent.Environment, Owner: owner, BindingID: intent.BindingID, OperationID: intent.OperationID}); err != nil {
+				return nil, mapPlacementError(err)
+			}
+		}
+	}
+	op, err := newOperationID()
+	if err != nil {
+		return nil, server.ErrPlacementUnavailable
+	}
+	claimReq := executionenv.RunClaimRequest{Environment: executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}, Owner: owner, BindingID: string(req.BindingID), RunID: req.RunID, OperationID: op, TTL: executionenv.DefaultRunTTL}
+	claim, err := p.client.AcquireRun(ctx, claimReq)
+	if err != nil {
+		return nil, mapPlacementError(err)
+	}
+	if toSessionRef(claim.Environment) != req.Ref || claim.BindingID != string(req.BindingID) || claim.RunID != req.RunID {
+		return nil, server.ErrPlacementChanged
+	}
+	credentials := &grantContext{client: p.client, context: executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: claim.BindingID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}, expiresAt: claim.ExpiresAt}
+	ws := &workspace{credentials: credentials}
+	runner := &runner{credentials: credentials}
+	env, envErr := tool.NewEnvironment(req.Ref, ws, memledger.New(), runner)
+	if envErr != nil {
+		return nil, server.ErrPlacementUnavailable
+	}
+	claimReq.ClaimID, claimReq.Epoch, claimReq.GrantGeneration = claim.ClaimID, claim.Epoch, claim.GrantGeneration
+	return &runHandle{provider: p, owner: owner, claim: claimReq, credentials: credentials, environment: env}, nil
+}
+
 // ValidatePlacement performs side-effect-free profile preflight.
 func (p *Provider) ValidatePlacement(ctx context.Context) error {
 	_, err := p.client.ValidateProfile(ctx, p.profile)
@@ -380,14 +687,18 @@ func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (s
 	if err != nil {
 		return server.PlacementBinding{}, err
 	}
-	ensured, err := p.client.Ensure(ctx, string(req.BindingID), p.profile, owner)
+	operationID, err := newOperationID()
+	if err != nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	ensured, err := p.client.Ensure(ctx, string(req.BindingID), p.profile, owner, operationID)
 	if err != nil {
 		return server.PlacementBinding{}, mapPlacementError(err)
 	}
 	if ensured.Environment.ID == "" || ensured.Environment.Revision == "" {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	return p.waitForBinding(ctx, owner, string(req.BindingID), ensured.Environment)
+	return p.waitForBinding(ctx, owner, string(req.BindingID), ensured.Environment, operationID)
 }
 
 // Reattach exactly resolves a persisted remote environment for its binding.
@@ -410,7 +721,7 @@ func (p *Provider) Reattach(ctx context.Context, req server.PlacementReattachReq
 	return p.binding(owner, string(req.BindingID), attached)
 }
 
-func (p *Provider) waitForBinding(ctx context.Context, owner executionenv.Owner, binding string, ref executionenv.EnvironmentRef) (server.PlacementBinding, error) {
+func (p *Provider) waitForBinding(ctx context.Context, owner executionenv.Owner, binding string, ref executionenv.EnvironmentRef, operationID string) (server.PlacementBinding, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -419,7 +730,11 @@ func (p *Provider) waitForBinding(ctx context.Context, owner executionenv.Owner,
 			if attached.Environment != ref {
 				return server.PlacementBinding{}, server.ErrPlacementChanged
 			}
-			return p.binding(owner, binding, attached)
+			base, bindErr := p.binding(owner, binding, attached)
+			if bindErr != nil {
+				return server.PlacementBinding{}, bindErr
+			}
+			return p.withReferenceTransaction(base, owner, binding, operationID), nil
 		}
 		if err != nil {
 			var remote *executionenv.Error
@@ -436,10 +751,10 @@ func (p *Provider) waitForBinding(ctx context.Context, owner executionenv.Owner,
 }
 
 func (p *Provider) binding(owner executionenv.Owner, binding string, attached executionenv.AttachEnvironmentResponse) (server.PlacementBinding, error) {
-	if !attached.Ready || attached.Environment.ID == "" || attached.Environment.Revision == "" || attached.Epoch == 0 || attached.Grant == "" || attached.GrantExpiresAt.IsZero() {
+	if !attached.Ready || attached.Environment.ID == "" || attached.Environment.Revision == "" || attached.Epoch == 0 {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	credentials := &grantContext{client: p.client, context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding, Epoch: attached.Epoch, Grant: attached.Grant}, expiresAt: attached.GrantExpiresAt}
+	credentials := &grantContext{client: p.client, context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding, Epoch: attached.Epoch, GrantGeneration: attached.GrantGeneration}, expiresAt: time.Time{}}
 	ws := &workspace{credentials: credentials}
 	runner := &runner{credentials: credentials}
 	sref := toSessionRef(attached.Environment)
@@ -449,6 +764,35 @@ func (p *Provider) binding(owner executionenv.Owner, binding string, attached ex
 	}
 	return server.PlacementBinding{Environment: env, Ref: sref, Metadata: server.PlacementMetadata{Kind: "kubernetes", Label: "Remote Kubernetes workspace", Revision: attached.Environment.Revision}}, nil
 }
+func (p *Provider) withReferenceTransaction(binding server.PlacementBinding, owner executionenv.Owner, bindingID, operationID string) server.PlacementBinding {
+	ref := executionenv.EnvironmentRef{ID: binding.Ref.ID, Revision: binding.Ref.Revision}
+	var mu sync.Mutex
+	finalized := false
+	binding.Commit = func(ctx context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if finalized {
+			return nil
+		}
+		// Once dispatched, a missing response is ambiguous: the provider may have
+		// committed. Close must never turn that uncertainty into an abort.
+		finalized = true
+		return p.client.CommitReference(ctx, executionenv.ReferenceRequest{Environment: ref, Owner: owner, BindingID: bindingID, OperationID: operationID})
+	}
+	binding.Close = func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if finalized {
+			return nil
+		}
+		finalized = true
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return p.client.AbortReference(ctx, executionenv.ReferenceRequest{Environment: ref, Owner: owner, BindingID: bindingID, OperationID: operationID})
+	}
+	return binding
+}
+
 func toSessionRef(ref executionenv.EnvironmentRef) session.EnvironmentRef {
 	return session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: ref.ID, Revision: ref.Revision}
 }
@@ -485,21 +829,19 @@ func (g *grantContext) refresh(ctx context.Context) (executionenv.RequestContext
 	return g.renew(ctx, true)
 }
 
-func (g *grantContext) renew(ctx context.Context, force bool) (executionenv.RequestContext, error) {
+func (g *grantContext) replace(claim executionenv.RunClaim) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !force && time.Until(g.expiresAt) > 10*time.Second {
-		return g.context, nil
+	g.context.RunID, g.context.ClaimID, g.context.Epoch, g.context.GrantGeneration, g.context.Grant = claim.RunID, claim.ClaimID, claim.Epoch, claim.GrantGeneration, claim.Grant
+	g.expiresAt = claim.ExpiresAt
+}
+
+func (g *grantContext) renew(_ context.Context, _ bool) (executionenv.RequestContext, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.context.Grant == "" || !time.Now().Before(g.expiresAt) {
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "run grant unavailable"}
 	}
-	attached, err := g.client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: g.context.Environment, Owner: g.context.Owner, BindingID: g.context.BindingID}, Purpose: executionenv.PurposeSession})
-	if err != nil {
-		return executionenv.RequestContext{}, err
-	}
-	if !attached.Ready || attached.Environment != g.context.Environment || attached.Epoch != g.context.Epoch || attached.Grant == "" || attached.GrantExpiresAt.IsZero() {
-		return executionenv.RequestContext{}, server.ErrPlacementChanged
-	}
-	g.context.Grant = attached.Grant
-	g.expiresAt = attached.GrantExpiresAt
 	return g.context, nil
 }
 

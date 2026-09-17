@@ -1,5 +1,7 @@
 // Package executionenv defines the private, versioned host-side execution-provider protocol.
 // It is intentionally not part of the public Harness API.
+//
+//nolint:revive // Private protocol types are exported only across internal adapter packages.
 package executionenv
 
 import "time"
@@ -23,30 +25,39 @@ type Operation string
 
 // Supported private-protocol operations.
 const (
-	OpAttach               Operation = "attach"
-	OpReferenceRelease     Operation = "reference.release"
-	OpRetire               Operation = "retire"
-	OpFileRead             Operation = "file.read"
-	OpFileResolveAuthority Operation = "file.resolve_authority"
-	OpFileStat             Operation = "file.stat"
-	OpFileCreate           Operation = "file.create"
-	OpFileReplace          Operation = "file.replace"
-	OpFileList             Operation = "file.list"
-	OpFileRemove           Operation = "file.remove"
-	OpFileRename           Operation = "file.rename"
-	OpFileCopy             Operation = "file.copy"
-	OpFileGlob             Operation = "file.glob"
-	OpFileGrep             Operation = "file.grep"
-	OpCommandStart         Operation = "command.start"
-	OpCommandStatus        Operation = "command.status"
-	OpCommandCancel        Operation = "command.cancel"
-	OpCommandStream        Operation = "command.stream"
+	OpAttach                 Operation = "attach"
+	OpAcquireRun             Operation = "run.acquire"
+	OpRenewRun               Operation = "run.renew"
+	OpReleaseRun             Operation = "run.release"
+	OpReferenceCommit        Operation = "reference.commit"
+	OpReferenceAbort         Operation = "reference.abort"
+	OpReferenceReserve       Operation = "reference.reserve"
+	OpReferenceDeletePrepare Operation = "reference.delete.prepare"
+	OpReferenceDeleteConfirm Operation = "reference.delete.confirm"
+	OpReferenceDeleteCancel  Operation = "reference.delete.cancel"
+	OpReferenceRelease       Operation = "reference.release"
+	OpRetire                 Operation = "retire"
+	OpFileRead               Operation = "file.read"
+	OpFileResolveAuthority   Operation = "file.resolve_authority"
+	OpFileStat               Operation = "file.stat"
+	OpFileCreate             Operation = "file.create"
+	OpFileReplace            Operation = "file.replace"
+	OpFileList               Operation = "file.list"
+	OpFileRemove             Operation = "file.remove"
+	OpFileRename             Operation = "file.rename"
+	OpFileCopy               Operation = "file.copy"
+	OpFileGlob               Operation = "file.glob"
+	OpFileGrep               Operation = "file.grep"
+	OpCommandStart           Operation = "command.start"
+	OpCommandStatus          Operation = "command.status"
+	OpCommandCancel          Operation = "command.cancel"
+	OpCommandStream          Operation = "command.stream"
 )
 
 // Valid reports whether the operation belongs to the closed protocol vocabulary.
 func (o Operation) Valid() bool {
 	switch o {
-	case OpAttach, OpReferenceRelease, OpRetire, OpFileRead, OpFileResolveAuthority, OpFileStat, OpFileCreate, OpFileReplace, OpFileList, OpFileRemove, OpFileRename, OpFileCopy, OpFileGlob, OpFileGrep, OpCommandStart, OpCommandStatus, OpCommandCancel, OpCommandStream:
+	case OpAttach, OpAcquireRun, OpRenewRun, OpReleaseRun, OpReferenceCommit, OpReferenceAbort, OpReferenceReserve, OpReferenceDeletePrepare, OpReferenceDeleteConfirm, OpReferenceDeleteCancel, OpReferenceRelease, OpRetire, OpFileRead, OpFileResolveAuthority, OpFileStat, OpFileCreate, OpFileReplace, OpFileList, OpFileRemove, OpFileRename, OpFileCopy, OpFileGlob, OpFileGrep, OpCommandStart, OpCommandStatus, OpCommandCancel, OpCommandStream:
 		return true
 	}
 	return false
@@ -66,11 +77,14 @@ type Owner struct {
 
 // RequestContext carries the exact authorization binding for an operation.
 type RequestContext struct {
-	Environment EnvironmentRef `json:"environment"`
-	Owner       Owner          `json:"owner"`
-	BindingID   string         `json:"binding_id"`
-	Epoch       uint64         `json:"epoch"`
-	Grant       string         `json:"grant"`
+	Environment     EnvironmentRef `json:"environment"`
+	Owner           Owner          `json:"owner"`
+	BindingID       string         `json:"binding_id"`
+	RunID           string         `json:"run_id"`
+	ClaimID         string         `json:"claim_id"`
+	Epoch           uint64         `json:"epoch"`
+	GrantGeneration uint64         `json:"grant_generation"`
+	Grant           string         `json:"grant"`
 }
 
 // ValidateProfileRequest selects an operator-defined profile for validation.
@@ -97,11 +111,12 @@ type EnsureEnvironmentRequest struct {
 
 // EnsureEnvironmentResponse returns allocation identity, readiness, and a short-lived grant.
 type EnsureEnvironmentResponse struct {
-	Environment    EnvironmentRef `json:"environment"`
-	Epoch          uint64         `json:"epoch"`
-	Ready          bool           `json:"ready"`
-	Grant          string         `json:"grant"`
-	GrantExpiresAt time.Time      `json:"grant_expires_at"`
+	Environment     EnvironmentRef `json:"environment"`
+	Epoch           uint64         `json:"epoch"`
+	Ready           bool           `json:"ready"`
+	GrantGeneration uint64         `json:"grant_generation"`
+	Grant           string         `json:"grant"`
+	GrantExpiresAt  time.Time      `json:"grant_expires_at"`
 }
 
 // AttachEnvironmentRequest requests exact reattachment to an existing environment.
@@ -115,11 +130,68 @@ const PurposeSession = "session"
 
 // AttachEnvironmentResponse returns exact attachment state and a refreshed grant.
 type AttachEnvironmentResponse struct {
-	Environment    EnvironmentRef `json:"environment"`
-	Epoch          uint64         `json:"epoch"`
-	Ready          bool           `json:"ready"`
-	Grant          string         `json:"grant"`
-	GrantExpiresAt time.Time      `json:"grant_expires_at"`
+	Environment     EnvironmentRef `json:"environment"`
+	Epoch           uint64         `json:"epoch"`
+	Ready           bool           `json:"ready"`
+	GrantGeneration uint64         `json:"grant_generation"`
+	Grant           string         `json:"grant"`
+	GrantExpiresAt  time.Time      `json:"grant_expires_at"`
+}
+
+const (
+	MinRunTTL            = 30 * time.Second
+	MaxRunTTL            = 5 * time.Minute
+	DefaultRunTTL        = time.Minute
+	DefaultRenewInterval = 20 * time.Second
+)
+
+type RunClaimRequest struct {
+	Environment     EnvironmentRef
+	Owner           Owner
+	BindingID       string
+	RunID           string
+	ClaimID         string
+	Epoch           uint64
+	GrantGeneration uint64
+	OperationID     string
+	TTL             time.Duration
+}
+
+type RunClaim struct {
+	Environment     EnvironmentRef
+	BindingID       string
+	RunID           string
+	ClaimID         string
+	Epoch           uint64
+	GrantGeneration uint64
+	Grant           string
+	ExpiresAt       time.Time
+}
+
+type ReferenceState string
+
+const (
+	ReferencePendingCreate ReferenceState = "PendingCreate"
+	ReferencePublished     ReferenceState = "Published"
+	ReferencePendingDelete ReferenceState = "PendingDelete"
+)
+
+type ReferenceRequest struct {
+	Environment     EnvironmentRef
+	Owner           Owner
+	BindingID       string
+	SourceBindingID string
+	OperationID     string
+}
+
+type ReferenceIntent struct {
+	Environment     EnvironmentRef
+	Owner           Owner
+	BindingID       string
+	State           ReferenceState
+	OperationID     string
+	SourceBindingID string
+	CreatedAt       time.Time
 }
 
 // ReferenceReleaseRequest releases one durable binding reference.
@@ -129,7 +201,12 @@ type ReferenceReleaseRequest struct {
 
 // RetireEnvironmentRequest requests controlled retirement without PVC deletion.
 type RetireEnvironmentRequest struct {
-	Context RequestContext `json:"context"`
+	Environment    EnvironmentRef `json:"environment"`
+	Owner          Owner          `json:"owner"`
+	ExpectedEpoch  uint64         `json:"expected_execution_epoch"`
+	ExpectedPodUID string         `json:"expected_pod_uid"`
+	ExpectedPVCUID string         `json:"expected_pvc_uid"`
+	OperationID    string         `json:"operation_id"`
 }
 
 // EmptyResponse is the successful response for operations without a payload.

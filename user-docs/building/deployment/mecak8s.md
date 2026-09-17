@@ -158,11 +158,11 @@ operator-controlled Kubernetes cluster. It runs as a separate service and
 controller with its own `mecatl-execution` chart. `mecak8s` remains a client: it
 has no Pod, PVC, custom-resource, or controller management permissions.
 
-This candidate is suitable for offline evaluation only. It does not yet provide
-run-wide execution ownership, complete successor reference binding and release,
-controlled executor replacement or PVC deletion, or complete signing-key
-rotation and revocation. Do not use it for hostile multitenancy or claim high
-availability from this configuration.
+This production candidate provides run-wide ownership, transactional references,
+controlled replacement and retirement, durable grant revocation, and reloadable
+TLS and signing material. Its default-deny network policy still requires an
+enforcing CNI; Kind's default kindnet is not isolation evidence. A configured
+RuntimeClass is an operator input, not by itself a hostile-workload guarantee.
 
 Before you install it, prepare these values through your trusted image and
 Secret delivery system:
@@ -170,11 +170,13 @@ Secret delivery system:
 - A digest-pinned provider image.
 - A digest-pinned workload image that contains `/mecatl-executor`, `/bin/sh`,
   and the toolchain needed by foreground commands.
-- A server mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
-- A separate Ed25519 grant-signing Secret containing `key.pem`.
+- One projected security Secret containing the provider certificate/key, client
+  CA bundle, and versioned Ed25519 grant keys. The chart never generates them.
+- A versioned `provider.securityManifest` as documented in
+  [Execution environments](/features/execution-environments.md#production-security-material).
 - A `mecak8s` client mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
-- Exact client URI SANs for the `mecak8s` identity. The identity that attests
-  OIDC owners must also appear in `provider.ownerAttesterURISANs`.
+- Explicit provider-client pod/namespace selectors, API-server CIDRs, and DNS
+  resolver CIDRs. Do not use `0.0.0.0/0`.
 
 The following profile shows every required chart key. Save it as
 `execution-values.yaml` and replace each placeholder:
@@ -183,15 +185,14 @@ The following profile shows every required chart key. Save it as
 provider:
   image: <PROVIDER_IMAGE>@sha256:<PROVIDER_DIGEST>
   imagePullPolicy: IfNotPresent
-  replicas: 1
-  clientURISANs:
-    - spiffe://<TRUST_DOMAIN>/client/mecak8s
-  ownerAttesterURISANs:
-    - spiffe://<TRUST_DOMAIN>/client/mecak8s
-  administratorURISANs: []
-  tlsSecretName: <PROVIDER_MTLS_SECRET>
-  grantSigningSecretName: <GRANT_SIGNING_SECRET>
-  grantKeyID: current
+  replicas: 2
+  securitySecretName: <PROJECTED_SECURITY_SECRET>
+  securityManifest: '<STRICT_JSON_MANIFEST>'
+  clientIngressSelectors:
+    - namespaceLabels: {kubernetes.io/metadata.name: <CLIENT_NAMESPACE>}
+      podLabels: {app.kubernetes.io/name: mecak8s}
+  apiServerCIDRs: [<API_SERVER_IP>/32]
+  dnsCIDRs: [<CLUSTER_DNS_IP>/32]
 
 service:
   port: 8443
@@ -205,9 +206,31 @@ profiles:
     memoryRequest: 128Mi
     cpuLimit: "1"
     memoryLimit: 1Gi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: <RUNTIME_CLASS>
     maxFileBytes: 5242880
     maxCommandBytes: 1048576
     maxCommandDuration: 5m
+    maxEnvironments: 100
+
+networkPolicy:
+  enabled: true
+  dnsPorts: [53]
+  apiServerPorts: [443]
+  workloadProfiles: {} # default deny; add explicit coding egress only if required
+
+resourceGovernance:
+  enabled: true
+  pods: "200"
+  persistentVolumeClaims: "100"
+  executionEnvironments: "100"
+  requestsCPU: "20"
+  requestsMemory: 40Gi
+  requestsStorage: 500Gi
+  limitsCPU: "40"
+  limitsMemory: 80Gi
 ```
 
 Install the provider chart separately from `mecak8s`:
