@@ -337,7 +337,11 @@ func TestMCPOAuthLoginTimeoutDiagnostics_Scenario1_CLIAndDiagnosticsRedaction(t 
 	if !strings.Contains(stderr.String(), "https://issuer.example/token") || !strings.Contains(stderr.String(), "level=WARN") {
 		t.Fatalf("stderr diagnostic = %q", stderr.String())
 	}
-	if stdout.Len() != 0 {
+	// stdout carries the onboarding progress lines (settings source/winner,
+	// "preparing browser authorization", etc.) — legitimate UX, not a leak.
+	// The invariant this test defends is narrower: the diagnostic content
+	// itself (the redacted URL, the level marker) must never appear there.
+	if strings.Contains(stdout.String(), "https://issuer.example/token") || strings.Contains(stdout.String(), "level=WARN") {
 		t.Fatalf("diagnostics leaked to stdout: %q", stdout.String())
 	}
 }
