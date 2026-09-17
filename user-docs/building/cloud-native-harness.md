@@ -80,17 +80,22 @@ agent's filesystem, credentials, or durable session state to interact with it.
 
 ### Can another agent harness use Mecatl as its runtime?
 
-Not as a drop-in backend. Mecatl is both the agent harness and the runtime.
-You can build a client on top of Mecatl using the [gRPC or HTTP/SSE
+Not as a drop-in backend. Mecatl is both the agent harness and the runtime, but
+it separates the runtime from the client that you use to interact with it.
+
+Tools such as Claude Code, Claude Desktop, and Codex generally bundle the user
+interface, agent loop, context, and tools together on your machine. Mecatl
+breaks those pieces apart. Its engine can run locally or remotely on Kubernetes,
+while `mecatui` and future web or desktop interfaces act as clients connected to
+the same runtime.
+
+You can build another client on top of Mecatl using the [gRPC or HTTP/SSE
 APIs](/building/deployment/grpc-http.md) or the [TypeScript
-SDK](/building/getting-started/typescript-sdk.md).
+SDK](/building/getting-started/typescript-sdk.md). An existing harness would
+need a dedicated integration to hand its agent loop over to Mecatl.
 
-Products such as Claude Desktop and Codex Desktop already run their own agent
-loops and manage context and tool calls themselves. They would need a dedicated
-integration to hand that work over to Mecatl.
-
-When we talk about a future desktop client, we mean a desktop interface built
-for Mecatl, rather than support for swapping Mecatl into an existing harness.
+When we say that desktop support is on the roadmap, we mean a Mecatl desktop
+client. It does not mean that Claude Desktop itself will become a Mecatl client.
 
 ## Where this is going
 
