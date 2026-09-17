@@ -578,16 +578,41 @@ func TestADR_0344_Scenario2_SharedTemplateProjectionAndElide(t *testing.T) {
 		t.Fatalf("wide elide = %q, %v (width %d), want %q within 5", got, err, ansi.StringWidth(got), "界界…")
 	}
 
+	unsafeInput := statusline.Input{Session: statusline.Session{Title: "a<b>&def"}, Terminal: statusline.Terminal{HeaderAvailCols: 80}}
+	if got, err := mustTitleRenderer(t, "{{elide 10 .Session.Title}}").Render(unsafeInput); err != nil || got != "a<b>&def" {
+		t.Fatalf("title elide must measure visible text and preserve it as plain text: %q, %v", got, err)
+	}
+
+	if _, err := statusline.NewTitleRenderer("{{contextMeter .Context}}"); err == nil {
+		t.Fatal("title template must not expose StatusML-producing contextMeter")
+	}
+
 	source := newSource(*settings.StatusCustomization)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(input)
+	source.Submit(unsafeInput)
 	select {
 	case <-source.Changed():
 	case <-time.After(time.Second):
 		t.Fatal("template status source did not publish")
 	}
-	if got := source.Latest().Header.Spans[0].Text; got != "abc…" {
-		t.Fatalf("status template elide = %q, want %q", got, "abc…")
+	if got := source.Latest().Header.Spans[0].Text; got != "a<b…" {
+		t.Fatalf("status template elide must preserve escaped visible text = %q, want %q", got, "a<b…")
+	}
+
+	escapedSource := statusline.NewTemplateSource(statusline.TemplateSet{Header: statusline.SurfaceTemplates{
+		Full:    "<header><text>{{elide 10 .Session.Title}}</text></header>",
+		Compact: "<header><text>{{elide 10 .Session.Title}}</text></header>",
+		Minimal: "<header><text>{{elide 10 .Session.Title}}</text></header>",
+	}}, 0)
+	t.Cleanup(func() { _ = escapedSource.Close(context.Background()) })
+	escapedSource.Submit(unsafeInput)
+	select {
+	case <-escapedSource.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("escaped template status source did not publish")
+	}
+	if got := escapedSource.Latest().Header.Spans[0].Text; got != "a<b>&def" {
+		t.Fatalf("status template elide must retain visible escaped text = %q, want %q", got, "a<b>&def")
 	}
 }
 

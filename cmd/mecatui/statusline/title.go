@@ -30,7 +30,7 @@ func newTitleTemplateInput(input Input) titleTemplateInput {
 // catches template expressions which parse successfully but cannot execute
 // against the status projection.
 func NewTitleRenderer(source string) (*TitleRenderer, error) {
-	t, err := template.New("terminal_title").Funcs(templateFuncs()).Option("missingkey=error").Parse(source)
+	t, err := template.New("terminal_title").Funcs(titleTemplateFuncs()).Option("missingkey=error").Parse(source)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,11 @@ func (r *TitleRenderer) Render(input Input) (string, error) {
 	return html.UnescapeString(output.String()), nil
 }
 
-func templateFuncs() template.FuncMap {
+func titleTemplateFuncs() template.FuncMap {
+	return template.FuncMap{"elide": elide}
+}
+
+func statusTemplateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"contextMeter":        contextMeter,
 		"contextMeterCompact": contextMeterCompact,
@@ -64,14 +68,14 @@ func elide(width int, value any) string {
 	if width <= 0 {
 		return ""
 	}
-	text := stringifyTemplateValue(value)
+	text := html.UnescapeString(stringifyTemplateValue(value))
 	if ansi.StringWidth(text) <= width {
-		return text
+		return html.EscapeString(text)
 	}
 	if width == 1 {
 		return "…"
 	}
-	return ansi.Truncate(text, width, "…")
+	return html.EscapeString(ansi.Truncate(text, width, "…"))
 }
 
 func stringifyTemplateValue(value any) string {
