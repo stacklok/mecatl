@@ -12,6 +12,7 @@ export const cannedMockReply =
 
 export interface ReadyDocument {
   api_major: number;
+  fixture_control_url?: string;
   grpc_address: string;
   http_address?: string;
   schema: string;
@@ -29,7 +30,12 @@ export interface Daemon {
   restart(options?: DaemonRestartOptions): Promise<void>;
 }
 
+export interface AuthorizationDaemon extends Daemon {
+  completeAuthorization(url: string, decision: "grant" | "deny"): Promise<void>;
+}
+
 export interface DaemonOptions {
+  authorization?: boolean;
   durable?: boolean;
   http?: boolean;
   script?: string;
@@ -159,6 +165,34 @@ export async function withDaemon<T>(
   }
 }
 
+export async function withAuthorizationDaemon<T>(
+  options: Omit<DaemonOptions, "authorization"> & { script: string },
+  run: (daemon: AuthorizationDaemon) => Promise<T>,
+): Promise<T> {
+  return withDaemon({ ...options, authorization: true }, async (daemon) => {
+    const controlURL = daemon.ready.fixture_control_url;
+    if (controlURL === undefined) {
+      throw new Error("authorization fixture daemon omitted its control URL");
+    }
+    const authorizationDaemon: AuthorizationDaemon = {
+      ...daemon,
+      completeAuthorization: async (url, decision) => {
+        const response = await fetch(controlURL, {
+          body: JSON.stringify({ decision, url }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        });
+        if (!response.ok) {
+          throw new Error(
+            `authorization fixture control failed (${response.status}): ${await response.text()}`,
+          );
+        }
+      },
+    };
+    return run(authorizationDaemon);
+  });
+}
+
 async function startDaemon(
   options: DaemonOptions,
   readyFile: string,
@@ -169,21 +203,42 @@ async function startDaemon(
   userModelDirectory: string,
   environment: NodeJS.ProcessEnv,
 ): Promise<RunningDaemon> {
-  const args = [
-    "serve",
-    "--mock",
-    "--workspace",
-    workspace,
-    "--ready-file",
-    readyFile,
-    "--metrics-addr",
-    "",
-    "--no-soul",
-    "--user-model-dir",
-    userModelDirectory,
-    "--no-scheduler",
-    "--flight-recorder=false",
-  ];
+  const authorization = options.authorization === true;
+  const args = authorization
+    ? [
+        "--workspace",
+        workspace,
+        "--ready-file",
+        readyFile,
+        "--user-model-dir",
+        userModelDirectory,
+        "--script",
+        options.script ?? "",
+        "--permission-config",
+        join(dirname(readyFile), "authorization-permissions.yaml"),
+      ]
+    : [
+        "serve",
+        "--mock",
+        "--workspace",
+        workspace,
+        "--ready-file",
+        readyFile,
+        "--metrics-addr",
+        "",
+        "--no-soul",
+        "--user-model-dir",
+        userModelDirectory,
+        "--no-scheduler",
+        "--flight-recorder=false",
+      ];
+  if (authorization) {
+    await writeFile(
+      join(dirname(readyFile), "authorization-permissions.yaml"),
+      "permissions:\n  allow:\n    - mcp__fixture__one\n    - mcp__fixture__two\n",
+      "utf8",
+    );
+  }
   if (options.durable === true) {
     args.push("--store-dir", storeDirectory);
   }
@@ -200,9 +255,10 @@ async function startDaemon(
       options.http === true ? (previousReady?.http_address ?? "127.0.0.1:0") : "",
     );
   }
-  if (options.script !== undefined) args.push("--mock-script", options.script);
+  if (!authorization && options.script !== undefined) args.push("--mock-script", options.script);
 
-  const child = spawn(join(repositoryRoot, "bin", "mecated"), args, {
+  const binary = authorization ? "mecatl-sdk-authorization-fixture" : "mecated";
+  const child = spawn(join(repositoryRoot, "bin", binary), args, {
     cwd: repositoryRoot,
     env: environment,
     stdio: ["ignore", "ignore", "pipe"],

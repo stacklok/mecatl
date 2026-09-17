@@ -167,6 +167,10 @@ class AuthorizationInput implements AsyncIterable<AuthorizationRequest> {
         this.close();
         return { done: true, value: undefined };
       },
+      throw: async (error?: unknown) => {
+        this.close();
+        throw error;
+      },
     };
   }
 }

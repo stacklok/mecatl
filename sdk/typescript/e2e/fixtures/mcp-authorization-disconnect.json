@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "disconnect-call",
+          "name": "mcp__fixture__one",
+          "args": { "request": "disconnect" }
+        }
+      ]
+    },
+    { "delay_ms": 1000, "text": "continuation survived disconnect" }
+  ]
+}

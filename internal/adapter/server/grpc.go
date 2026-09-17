@@ -1735,6 +1735,9 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 		select {
 		case err := <-controlDone:
 			controlDone = nil
+			if errors.Is(err, io.EOF) && parkedOnAsk {
+				h.svc.cancelRegisteredRun(id, result.Run)
+			}
 			if err != nil && !errors.Is(err, io.EOF) {
 				if sendErr == nil {
 					sendErr = err

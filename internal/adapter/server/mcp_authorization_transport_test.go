@@ -34,6 +34,7 @@ type recheckAuthorizationStream struct {
 	sendCalls    int
 	recvErr      error
 	recvErred    chan struct{}
+	eofAfterAsk  chan struct{}
 	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
 }
 
@@ -55,6 +56,10 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 		}
 		return nil, s.recvErr
 	}
+	if s.eofAfterAsk != nil {
+		<-s.eofAfterAsk
+		return nil, io.EOF
+	}
 	if s.requestCh != nil {
 		select {
 		case req := <-s.requestCh:
@@ -73,6 +78,9 @@ func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthoriza
 	}
 	if s.approveOnAsk && response.GetEvent().GetType() == "permission.ask" {
 		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE}}}
+	}
+	if s.eofAfterAsk != nil && response.GetEvent().GetType() == "permission.ask" {
+		close(s.eofAfterAsk)
 	}
 	return nil
 }
@@ -337,6 +345,33 @@ func TestMCPAuthorizationGRPCControlEOFDrainsContinuationWithoutCancellingIt(t *
 	}
 	if persisted.State != session.StateCompleted {
 		t.Fatalf("persisted EOF continuation state = %q, want %q", persisted.State, session.StateCompleted)
+	}
+}
+
+func TestMCPAuthorizationGRPCControlEOFCancelsStrandedPermissionContinuation(t *testing.T) {
+	followup := session.NewToolCall("followup-call", "protected", nil)
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
+		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue after a stranded ask"))
+	stream := &recheckAuthorizationStream{
+		ctx:         t.Context(),
+		eofAfterAsk: make(chan struct{}),
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+
+	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); err != nil {
+		t.Fatal(err)
+	}
+	if got := stream.responses[len(stream.responses)-1].GetEvent().GetResult().GetStop(); got != "cancelled" {
+		t.Fatalf("terminal stop = %q, want cancelled", got)
+	}
+	persisted, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != session.StateCancelled {
+		t.Fatalf("persisted EOF permission continuation state = %q, want %q", persisted.State, session.StateCancelled)
 	}
 }
 
