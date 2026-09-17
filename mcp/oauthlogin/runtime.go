@@ -42,7 +42,7 @@ const (
 	// AnthropicRedirectURL is the fixed callback URI accepted for Anthropic
 	// subscription login. It is IPv4-literal, so it needs no companion
 	// listener.
-	AnthropicRedirectURL = "http://127.0.0.1:54545/callback"
+	AnthropicRedirectURL = "http://127.0.0.1:54545/callback" //nolint:gosec // G101 false-positive on a loopback callback URL; not a credential
 )
 
 var (

@@ -45,7 +45,7 @@ type endpointSet struct {
 	deviceRedirect string
 }
 
-var defaultEndpoints = endpointSet{
+var defaultEndpoints = endpointSet{ //nolint:gosec // G101 false-positive on the word "token" in endpoint URLs; these are public provider addresses, not credentials
 	authorize:      "https://auth.openai.com/oauth/authorize",
 	token:          "https://auth.openai.com/oauth/token",
 	deviceUserCode: "https://auth.openai.com/api/accounts/deviceauth/usercode",

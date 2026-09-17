@@ -219,3 +219,48 @@ func TestRenewableHandlesAccessOnlyGrant(t *testing.T) {
 		t.Fatalf("refreshes = %d, want none without a refresh token", got)
 	}
 }
+
+// A request cancelled mid-exchange must not strand the grant. The provider
+// retires the submitted refresh token as soon as it rotates, so abandoning the
+// exchange would discard a replacement for a token that is already dead,
+// leaving the account permanently unable to refresh.
+func TestRenewableCompletesRefreshDespiteCallerCancellation(t *testing.T) {
+	now := time.Now()
+	store := &memoryStore{tokens: OAuthTokens{
+		AccessToken:  codextest.Token(now.Add(10*time.Second), "acct-cancel"),
+		RefreshToken: "refresh-original",
+		AccountID:    "acct-cancel",
+		ExpiresAt:    now.Add(10 * time.Second),
+	}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	released := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Cancel the caller while the provider is mid-rotation.
+		cancel()
+		<-released
+		if err := r.Context().Err(); err != nil {
+			t.Errorf("refresh inherited the caller's cancellation: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  codextest.Token(now.Add(time.Hour), "acct-rotated"),
+			"refresh_token": "refresh-rotated",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	renewable := renewer(t, store, server, func() time.Time { return now })
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(released)
+	}()
+	if _, err := renewable.Credential(ctx); err != nil {
+		t.Fatalf("renewal did not survive caller cancellation: %v", err)
+	}
+
+	saved, saves := store.snapshot()
+	if saves != 1 || saved.RefreshToken != "refresh-rotated" {
+		t.Fatalf("rotated grant was not persisted: saves=%d token=%q", saves, saved.RefreshToken)
+	}
+}

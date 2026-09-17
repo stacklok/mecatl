@@ -12,6 +12,11 @@ import (
 // lapse between the check and the provider receiving the request.
 const refreshSkew = time.Minute
 
+// renewTimeout bounds one renewal, including persistence. It replaces the
+// caller's deadline rather than extending it, so renewal cannot hang a request
+// indefinitely while still being immune to that request's cancellation.
+const renewTimeout = 30 * time.Second
+
 // ErrNoGrant reports that no subscription grant is available to renew.
 var ErrNoGrant = errors.New("openai-codex: no subscription grant is stored; run a subscription login")
 
@@ -85,11 +90,20 @@ func (c *RenewableCredential) Credential(ctx context.Context) (Credential, error
 		return c.tokens.Credential(now)
 	}
 
-	rotated, err := refresh(ctx, c.client, c.tokens.RefreshToken, c.endpoints)
+	// Refresh and persist must not inherit the caller's cancellation. The
+	// provider retires the submitted refresh token the moment it rotates, so a
+	// request abandoned mid-exchange would discard a grant that is already
+	// dead server-side, leaving the stored one permanently invalid and forcing
+	// a fresh interactive login. The operation is bounded by its own deadline
+	// instead.
+	renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), renewTimeout)
+	defer cancel()
+
+	rotated, err := refresh(renewCtx, c.client, c.tokens.RefreshToken, c.endpoints)
 	if err != nil {
 		return Credential{}, err
 	}
-	if err := c.store.Save(ctx, rotated); err != nil {
+	if err := c.store.Save(renewCtx, rotated); err != nil {
 		return Credential{}, err
 	}
 	c.tokens = rotated
