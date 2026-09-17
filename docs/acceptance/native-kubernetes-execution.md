@@ -11,7 +11,9 @@
 **Plan PR:** draft on `plan/native-kubernetes-execution`.
 **Approved baseline:** absent; observed repository baseline `16a8e3b735bdc26f4c958cdf24fd1e7ac00a38f9` is evidence only.
 
-All named verification tests below describe future implementation proof, not existing coverage.
+The verification names in each acceptance item are stable requirement labels. The
+proof map below names the current implementation tests and leaves cluster-only
+proof explicit for the production Kind/CNI qualification worker.
 
 The smallest demonstrable slice is an independently deployed execution environment provider service
 with its own controller and executors. Mecak8s is an optional client: its adapter obtains a persistent
@@ -164,6 +166,45 @@ so the focused task must not inherit ambient provider credentials.
   - verify: `TestNativeKubernetesExecution_Scenario7_LiveQualificationIsExplicit`
 - AC7.5: A trusted runtime-only loader may consume the approved credential directly from its protected file channel and create a narrowly scoped HARNESS-only Secret through a protected channel before child processes or tools can inherit it. The agent never accesses the file or Secret; failures are redacted, and the credential never appears in model/tool output, argv, Helm values, disk manifests, git, logs, artifacts, or the execution workload. Mock tests do not access it.
   - verify: `TestNativeKubernetesExecution_Scenario7_LiveSecretAndSpendBoundary`
+
+## Implementation proof map
+
+This map does not change the plan's draft status. A production KIND test named
+below records implemented coverage, not a successful qualification result; only
+a completed fresh-Docker production run supplies that proof. "Kind pending" means the unit or
+fake-client boundary exists, but the positive enforcing-CNI cluster proof must
+land under `task e2e:k8s:execution:production`.
+
+| Acceptance | Current proof |
+|---|---|
+| AC1.1 | `internal/app/remote_execution_test.go` (`TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`) |
+| AC1.2 | `deploy/helm/mecatl-execution/chart_test.go` (`TestChartRetainsCRDAndDoesNotGrantSecretAPI`) |
+| AC1.3 | `internal/adapter/executioncontroller/handler_test.go` (`TestHandlerValidateIsReadOnlyAndEnsureIdempotent`); `internal/adapter/executioncontroller/controller_test.go` (`TestInitializeRefusesMissingRuntimeClassBeforeCreatingPods`) |
+| AC1.4 | `internal/adapter/executioncontroller/controller_test.go` (`TestStartupDoesNotFenceLivePeerOperation`) |
+| AC2.1 | `internal/adapter/executioncontroller/handler_test.go` (`TestHandlerValidateIsReadOnlyAndEnsureIdempotent`) |
+| AC2.2 | `internal/adapter/executioncontroller/store_test.go` (`TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift`); `TestReconcileRefusesForeignExistingPVCWithoutPersistingUID` |
+| AC2.3 | `internal/adapter/executioncontroller/profiles_test.go` (`TestLoadProfilesStrictAndDigestPinned`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionQuotaSaturation`) |
+| AC3.1 | `internal/adapter/executionclient/client_test.go` (`TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly`); full Kind file-tool matrix pending |
+| AC3.2 | `internal/adapter/executionclient/service_integration_test.go` (`TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain`) |
+| AC3.3 | `internal/adapter/executioncontroller/security_test.go` (`TestSecurityManagerGuardsEveryRPCOnExistingConnection`); `internal/adapter/executioncontroller/handler_test.go` (`TestHandlerRequiresAllowlistedCanonicalURISAN`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionSecurityRotation`) |
+| AC3.4 | `internal/adapter/executioncontroller/store_test.go` (`TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionHolderLossFencesActiveOperation`) |
+| AC4.1 | `internal/adapter/executioncontroller/store_lifecycle_test.go` (`TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionPendingDeleteOutageRecovery`) |
+| AC4.2 | `internal/adapter/executioncontroller/store_revoke_test.go` (`TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`); `TestAcquireRunAndRevokeUseResourceVersionCAS`; `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionSecurityRotation`) |
+| AC4.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go` (`TestExpiredOperationLeaseFencesWithoutClearingIdentity`, `TestRecoverMissingPodRemainsFenceUnknown`, `TestRecoveredTerminalProofCanStartExactReplacement`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionHolderLossFencesActiveOperation`) |
+| AC5.1 | `internal/adapter/executionclient/client_test.go` (`TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionSecurityRotation`, `TestKindExecutionProductionReplicaLifecycle`) |
+| AC5.2 | `internal/adapter/executioncontroller/production_lifecycle_test.go` (`TestReplacementPersistsTerminalProofBeforeRemovingPodFinalizer`) |
+| AC5.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go` (`TestReplacementQuiescesAndPendingReferenceBlocksRetirement`) |
+| AC5.4 | `internal/adapter/executionclient/reference_ambiguity_test.go` (`TestAmbiguousCommitIsRetainedAndNeverAbortedByCleanup`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionPendingDeleteOutageRecovery`) |
+| AC5.5 | `deploy/helm/mecatl-execution/chart_test.go` (`TestChartHasNoDeletionHook`) |
+| AC5.6 | Documentation inspection plus `task docs` |
+| AC6.1 | `internal/app/remote_execution_test.go` (`TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`) |
+| AC6.2 | `internal/app/remote_execution_test.go` (`TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`, `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`) |
+| AC6.3 | `internal/adapter/executioncontroller/store_lifecycle_test.go` (`TestReferenceTransactionsRetainUnknownAndNeverChangeSource`); `e2e/k8s_execution/production_qualification_test.go` (`TestKindExecutionProductionClearForkLifecycle`) |
+| AC7.1 | `.github/workflows/k8s-e2e.yml` invokes `task e2e:k8s:execution:production`; enforcing-CNI fixture pending |
+| AC7.2 | `e2e/k8s_execution/qualification_test.go` (`TestKindExecutionQualification`); production-profile run pending |
+| AC7.3 | `.github/workflows/k8s-e2e.yml` bounds uploads to 1 MiB and CI cleanup is ownership-scoped; CNI failure bundle test pending |
+| AC7.4 | `e2e/k8s_execution/live_qualification_test.go` (`TestKindExecutionLiveQualification`) |
+| AC7.5 | `e2e/k8s_execution/fixture/credentialloader/main_test.go` (`TestLoadCredentialAndRedaction`, `TestDeletePinsReceiptUIDAndLeavesReplacement`) |
 
 ## Out of scope
 

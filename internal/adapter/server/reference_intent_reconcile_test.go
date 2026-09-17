@@ -80,7 +80,7 @@ func TestReferenceIntentReconciliationIsOwnerAndRefExact(t *testing.T) {
 	if len(lifecycle.confirmed) != 1 || lifecycle.confirmed[0] != "delete-gone" {
 		t.Fatalf("confirmed=%v", lifecycle.confirmed)
 	}
-	if len(lifecycle.reset) != 1 || lifecycle.reset[0] != "delete-restored" {
-		t.Fatalf("cancelled=%v", lifecycle.reset)
+	if len(lifecycle.reset) != 0 {
+		t.Fatalf("ambiguous present delete was cancelled=%v", lifecycle.reset)
 	}
 }

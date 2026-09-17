@@ -16,7 +16,9 @@ rules:
   verbs: ["get", "update", "patch"]
 - apiGroups: [""]
   resources: ["configmaps"]
-  resourceNames: [{{ printf "%s-security-authority" (include "mecatl-execution.fullname" .) | quote }}]
+  resourceNames:
+  - {{ printf "%s-security-authority" (include "mecatl-execution.fullname" .) | quote }}
+  - "mecatl-execution-profile-allocations"
   verbs: ["get", "update"]
 - apiGroups: [""]
   resources: ["pods"]
@@ -40,3 +42,36 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "mecatl-execution.fullname" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s-profile-preflight" .Release.Namespace (include "mecatl-execution.fullname" .) }}
+rules:
+- apiGroups: ["node.k8s.io"]
+  resources: ["runtimeclasses"]
+  resourceNames:
+{{- range $name, $profile := .Values.profiles }}
+  - {{ $profile.runtimeClassName | quote }}
+{{- end }}
+  verbs: ["get"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  resourceNames:
+{{- range $name, $profile := .Values.profiles }}
+  - {{ $profile.storageClass | quote }}
+{{- end }}
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s-profile-preflight" .Release.Namespace (include "mecatl-execution.fullname" .) }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "mecatl-execution.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-%s-profile-preflight" .Release.Namespace (include "mecatl-execution.fullname" .) }}

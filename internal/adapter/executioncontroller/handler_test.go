@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,27 @@ func (*fakeBackend) ListReferenceIntents(context.Context, string, string, int) (
 	return nil, nil
 }
 
+type adminFakeBackend struct {
+	*fakeBackend
+	migratedSchema int64
+}
+
+func (*adminFakeBackend) ReplaceExecutor(context.Context, adminLifecycleRequest) error { return nil }
+func (*adminFakeBackend) RetireExact(context.Context, adminLifecycleRequest) error     { return nil }
+func (*adminFakeBackend) RecoverEnvironment(context.Context, adminLifecycleRequest) error {
+	return nil
+}
+func (*adminFakeBackend) DeleteRetiredEnvironment(context.Context, adminLifecycleRequest) error {
+	return nil
+}
+func (b *adminFakeBackend) MigrateEnvironment(_ context.Context, req adminLifecycleRequest) error {
+	b.migratedSchema = req.ExpectedSchema
+	return nil
+}
+func (*adminFakeBackend) RevokeEnvironment(context.Context, executionenv.EnvironmentRef, string, string, uint64, string) (uint64, error) {
+	return 2, nil
+}
+
 func authenticatedContext(id string) context.Context {
 	u, _ := url.Parse(id)
 	cert := &x509.Certificate{URIs: []*url.URL{u}}
@@ -107,6 +129,27 @@ func structTLSState(cert *x509.Certificate) (s tls.ConnectionState) {
 	s.PeerCertificates = []*x509.Certificate{cert}
 	s.VerifiedChains = [][]*x509.Certificate{{cert}}
 	return s
+}
+
+func TestMigrateEnvironmentRequiresExpectedSchemaPresence(t *testing.T) {
+	backend := &adminFakeBackend{fakeBackend: newFakeBackend()}
+	id := "spiffe://cluster/ns/admin"
+	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{id: {Administrator: true}}}, backend)
+	ctx := authenticatedContext(id)
+	base := &executionv1.MigrateEnvironmentRequest{Environment: &executionv1.EnvironmentRef{Id: "env", Revision: "rev"}, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, ExpectedPodUid: "pod", ExpectedPvcUid: "pvc", OperationId: "migrate"}
+	if _, err := h.MigrateEnvironment(ctx, base); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("omitted schema code=%v", status.Code(err))
+	}
+	zero := uint32(0)
+	base.ExpectedSchemaVersion = &zero
+	if _, err := h.MigrateEnvironment(ctx, base); err != nil || backend.migratedSchema != 0 {
+		t.Fatalf("explicit zero rejected: schema=%d err=%v", backend.migratedSchema, err)
+	}
+	unknown := uint32(2)
+	base.ExpectedSchemaVersion = &unknown
+	if _, err := h.MigrateEnvironment(ctx, base); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("unknown schema code=%v", status.Code(err))
+	}
 }
 
 func TestHandlerBlocksAllRequestsUntilStartupReady(t *testing.T) {
@@ -283,5 +326,12 @@ func TestWireErrorDoesNotExposeBackendMessage(t *testing.T) {
 	}
 	if details := st.Details(); len(details) != 1 || details[0].(*executionv1.ErrorDetail).Code != string(executionenv.CodeInternal) {
 		t.Fatalf("unknown error detail=%v", details)
+	}
+	fenced := status.Convert(backendError(&executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "/var/run/provider/private-key"}))
+	if fenced.Code() != codes.FailedPrecondition || strings.Contains(fenced.Message(), "/var/") {
+		t.Fatalf("fence error leaked or mapped incorrectly: code=%v message=%q", fenced.Code(), fenced.Message())
+	}
+	if details := fenced.Details(); len(details) != 1 || details[0].(*executionv1.ErrorDetail).Code != string(executionenv.CodeFenceUnknown) {
+		t.Fatalf("fence error detail=%v", details)
 	}
 }

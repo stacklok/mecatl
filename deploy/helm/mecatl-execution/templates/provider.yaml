@@ -21,6 +21,12 @@ metadata:
   name: {{ include "mecatl-execution.fullname" . }}-security-authority
 data: {}
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mecatl-execution-profile-allocations
+data: {}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

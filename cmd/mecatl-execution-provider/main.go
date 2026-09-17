@@ -48,8 +48,8 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	flag.IntVar(&maxConcurrentRPCs, "max-concurrent-rpcs", 128, "maximum active provider RPCs")
 	flag.IntVar(&maxConcurrentRPCsPerClient, "max-concurrent-rpcs-per-client", 32, "maximum active provider RPCs per authorized client")
 	flag.Parse()
-	if namespace == "" || authorityConfigMap == "" || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
-		return errors.New("required identity or RPC concurrency bounds are invalid")
+	if namespace == "" || authorityConfigMap == "" || reloadInterval <= 0 || reloadInterval > time.Minute || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
+		return errors.New("required identity, security reload interval, or RPC concurrency bounds are invalid")
 	}
 	profiles, err := executioncontroller.LoadProfiles(profilesPath)
 	if err != nil {
@@ -106,8 +106,12 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /live", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 		mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
-			if !reconciler.Ready() || !security.CheckReady(r.Context()) {
-				http.Error(w, "not ready", http.StatusServiceUnavailable)
+			if !reconciler.Ready() {
+				http.Error(w, "not ready: "+reconciler.ReadinessReason(), http.StatusServiceUnavailable)
+				return
+			}
+			if !security.CheckReady(r.Context()) {
+				http.Error(w, "not ready: security-authority-or-expiry", http.StatusServiceUnavailable)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)

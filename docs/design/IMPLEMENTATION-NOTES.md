@@ -6536,9 +6536,9 @@ deny-dominant (the inner fold runs first — a configured Deny or configured Ask
 reaches the checker). Default `false` is the byte-identical un-routed posture table. See
 `docs/adr/0080-guardrail-routed-escape-checking.md`.
 
-### Experimental native Kubernetes execution provider
+### Native Kubernetes execution provider
 
-The opt-in candidate composes a separately deployed provider through
+The opt-in provider composes a separately deployed provider through
 `internal/adapter/executionclient/client.go` (`Provider`). The private
 `mecatl.execution.v1.ExecutionProviderService` gRPC API uses private protocol
 `execution-grpc/1`. It requires mTLS, authenticates exactly one allowlisted URI SAN, binds short-lived
@@ -6565,11 +6565,25 @@ client-side substitute.
 Composition selects this path only when `Config.RemoteExecution` is set. The
 remote catalog excludes local project ingestion, schedules, SkillDraft,
 Parallel, and Team, while explicit `profile:"no-fs"` still selects the existing
-no-FS placement. The `mecatl-execution` and `mecak8s` charts remain independent.
-The current candidate does not complete run-wide execution ownership, successor
-binding/reference release, controlled executor replacement or PVC deletion, or
-multi-key rotation/revocation. Unproven executor loss remains `FenceUnknown` and
-has no automated takeover.
+no-FS placement. The `mecatl-execution` and `mecak8s` charts remain independent. Run claims,
+transactional references, replacement, retirement, retained-PVC deletion,
+schema migration, and generation-based grant revocation persist their exact
+operation identities in CR status and use resource-version CAS across replicas.
+Prototype migration is explicitly limited to schema 0/1 objects whose existing
+Pod and PVC UIDs are observable and whose runtime resources already satisfy the
+current ownership, finalizer, `RestartPolicyNever`, profile, and security shape;
+foreign, missing, or legacy-insecure runtime resources are refused rather than
+adopted. Operators must reconstruct an incompatible prototype as a new current
+allocation after separately preserving its data; migration never force-deletes
+or silently replaces it.
+The controller validates the configured RuntimeClass and StorageClass names
+before readiness, then synchronizes informer caches without clearing peer
+operations. Security reload publishes one immutable TLS/client-policy/grant-key
+snapshot only after matching the durable authority ConfigMap high-water record.
+Unproven executor loss remains `FenceUnknown`; only exact built-in terminal proof
+or an external platform fencing procedure can recover it. Remote project
+sources, background commands, schedules, and delegated filesystem execution
+remain deliberately unsupported.
 
 ### Server-owned session placement and worktree successors (ADR 0291)
 

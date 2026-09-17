@@ -17,6 +17,36 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
+func TestPodTerminalRequiresEveryDeclaredContainerByName(t *testing.T) {
+	terminated := corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}
+	base := &corev1.Pod{Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: "init"}}, Containers: []corev1.Container{{Name: "executor"}}}, Status: corev1.PodStatus{Phase: corev1.PodSucceeded, InitContainerStatuses: []corev1.ContainerStatus{{Name: "init", State: terminated}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: terminated}}}}
+	if !podTerminal(base) {
+		t.Fatal("exact terminated init and regular containers were rejected")
+	}
+	cases := map[string]func(*corev1.Pod){
+		"init waiting": func(p *corev1.Pod) {
+			p.Status.InitContainerStatuses[0].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}
+		},
+		"init running": func(p *corev1.Pod) {
+			p.Status.InitContainerStatuses[0].State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+		},
+		"missing init": func(p *corev1.Pod) { p.Status.InitContainerStatuses = nil },
+		"duplicate regular": func(p *corev1.Pod) {
+			p.Status.ContainerStatuses = append(p.Status.ContainerStatuses, p.Status.ContainerStatuses[0])
+		},
+		"wrong regular name": func(p *corev1.Pod) { p.Status.ContainerStatuses[0].Name = "other" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			pod := base.DeepCopy()
+			mutate(pod)
+			if podTerminal(pod) {
+				t.Fatal("invalid container evidence proved terminal")
+			}
+		})
+	}
+}
+
 func lifecycleAdminEnvironment(schema int64, refs []any) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment",
@@ -114,6 +144,28 @@ func TestRecoverRequiresExactTerminalPodAndPersistsProof(t *testing.T) {
 	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
 	if textNested(got.Object, "status", "fenceState") != fenceHealthy || textNested(got.Object, "status", "activeOperation", "id") != "" || textNested(got.Object, "status", "terminationProof", "podUID") != "pod-uid" {
 		t.Fatalf("recovery proof/status=%v", got.Object["status"])
+	}
+}
+
+func TestRecoveredTerminalProofCanStartExactReplacement(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
+	setConditionObject(env, "Ready", false, "FenceUnknown", "holder lost")
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "uncertain", "claimID": "claim", "epoch": int64(4)}, "status", "activeOperation")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
+	q := adminRequestFixture()
+	q.OperationID = "recover-op"
+	if err := store.RecoverEnvironment(t.Context(), q); err != nil {
+		t.Fatal(err)
+	}
+	q.OperationID = "replace-op"
+	if err := store.ReplaceExecutor(t.Context(), q); err != nil {
+		t.Fatalf("exact replacement after terminal recovery: %v", err)
+	}
+	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if textNested(got.Object, "status", "lifecycleOperation", "id") != "replace-op" {
+		t.Fatalf("replacement operation missing after recovery: %v", got.Object["status"])
 	}
 }
 

@@ -87,6 +87,9 @@ func TestNativeRunClaimHeldUntilActualDrainRelease(t *testing.T) {
 	for range second.Events() {
 	}
 	svc.FinishRun(sess.ID, second)
+	svc.FinishRun(sess.ID, second)
+	svc.Close()
+	svc.Close()
 	if provider.acquires.Load() != 2 || provider.releases.Load() != 2 {
 		t.Fatalf("after continuation acquires=%d releases=%d", provider.acquires.Load(), provider.releases.Load())
 	}

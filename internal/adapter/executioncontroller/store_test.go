@@ -14,6 +14,25 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
+func TestRenewRunRejectsExpiredClaimAtBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Format(time.RFC3339Nano)}}}}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	store := NewStore(client, "ns", testProfiles(), nil)
+	store.now = func() time.Time { return now }
+	req := executionenv.RunClaimRequest{BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 7, GrantGeneration: 3, OperationID: "renew", TTL: executionenv.MinRunTTL}
+	if _, err := store.RenewRun(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", req); err == nil {
+		t.Fatal("renewal at the expiry boundary resurrected the claim")
+	}
+	got, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expiry := textNested(got.Object, "status", "activeRun", "expiresAt"); expiry != now.Format(time.RFC3339Nano) {
+		t.Fatalf("expired claim changed to %q", expiry)
+	}
+}
+
 func TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	profiles := &Profiles{byName: map[string]resolvedProfile{"go": {Digest: "sha256:profile", Spec: ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}}, "other": {Digest: "sha256:other", Spec: ProfileSpec{Image: "example@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}}}}

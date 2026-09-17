@@ -7,8 +7,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net/url"
@@ -36,11 +39,22 @@ func main() {
 	must(issue(dir, "mecak8s", ca, caKey, nil, "spiffe://mecatl.test/client/mecak8s", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
 	must(issue(dir, "intruder", ca, caKey, nil, "spiffe://mecatl.test/client/intruder", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
 	grantPub, grantKey, err := ed25519.GenerateKey(rand.Reader)
-	_ = grantPub
 	must(err)
 	grantDER, err := x509.MarshalPKCS8PrivateKey(grantKey)
 	must(err)
 	write(filepath.Join(dir, "grant-key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: grantDER}), 0o600)
+	fingerprint := sha256.Sum256(grantPub)
+	manifest, err := json.Marshal(map[string]any{
+		"version": 1, "generation": 1, "issuer": "https://mecatl.execution.test", "audience": "mecatl-execution", "activeKeyID": "k1", "grantTTL": "1m", "clockSkew": "5s",
+		"keys": []any{map[string]any{"id": "k1", "version": 1, "file": "grant-k1.pem", "publicKeySHA256": hex.EncodeToString(fingerprint[:]), "activateAt": now.Add(-time.Minute).Format(time.RFC3339), "verifyUntil": now.Add(5 * time.Hour).Format(time.RFC3339), "state": "active"}},
+		"tls":  map[string]any{"certificateFile": "tls.crt", "privateKeyFile": "tls.key", "clientCAFile": "clients.pem"},
+		"clients": []any{
+			map[string]any{"uri": "spiffe://mecatl.test/client/mecak8s", "mayAttestOwner": true, "administrator": true},
+			map[string]any{"uri": "spiffe://mecatl.test/client/intruder", "mayAttestOwner": true, "administrator": false},
+		},
+	})
+	must(err)
+	write(filepath.Join(dir, "manifest.json"), append(manifest, '\n'), 0o600)
 	must(issue(dir, "oidc", ca, caKey, []string{"oidc-issuer", "oidc-issuer.execution-qualification.svc", "oidc-issuer.execution-qualification.svc.cluster.local"}, "", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}))
 	jwtKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	must(err)

@@ -54,18 +54,25 @@ func TestKindExecutionQualification(t *testing.T) {
 
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
 	binding := fmt.Sprintf("direct-binding-%d", time.Now().UnixNano())
-	first, err := providerClient.Ensure(ctx, binding, "go", owner)
+	operationID := fmt.Sprintf("direct-ensure-%d", time.Now().UnixNano())
+	first, err := providerClient.Ensure(ctx, binding, "go", owner, operationID)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
+	}
+	if err := providerClient.CommitReference(ctx, executionenv.ReferenceRequest{Environment: first.Environment, Owner: owner, BindingID: binding, OperationID: "commit-" + operationID}); err != nil {
+		t.Fatalf("commit reference: %v", err)
 	}
 	if first.Environment.ID == "" || first.Environment.Revision == "" {
 		t.Fatal("ensure returned an empty exact environment reference")
 	}
 	ready := waitReady(t, ctx, providerClient, owner, binding, first.Environment)
+	if os.Getenv("MECATL_EXECUTION_QUAL_PROFILE") == "production" {
+		assertProductionExecutorPod(t, ctx, kubeconfig, first.Environment.ID)
+	}
 	if ready.Environment != first.Environment {
 		t.Fatalf("ready reference drifted: got %+v want %+v", ready.Environment, first.Environment)
 	}
-	second, err := providerClient.Ensure(ctx, binding, "go", owner)
+	second, err := providerClient.Ensure(ctx, binding, "go", owner, operationID)
 	if err != nil {
 		t.Fatalf("repeat ensure: %v", err)
 	}
@@ -120,19 +127,35 @@ func TestKindExecutionQualification(t *testing.T) {
 	bob := fixtureToken(t, ctx, tokenForward.addr, pki, "bob")
 	tokenForward.stop()
 	agentForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	beforeNoFS := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev")
+	status, noFSBody := request(t, ctx, http.MethodPost, "http://"+agentForward.addr+"/v1/sessions", alice, []byte(`{"profile":"no-fs","mode":"default"}`))
+	if status != http.StatusCreated {
+		t.Fatalf("create no-fs session status=%d body=%s", status, noFSBody)
+	}
+	if afterNoFS := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); afterNoFS != beforeNoFS {
+		t.Fatalf("no-fs session allocated execution resources: before=%d after=%d", beforeNoFS, afterNoFS)
+	}
 	sessionID := createSession(t, ctx, agentForward.addr, alice)
 	body := prompt(t, ctx, agentForward.addr, sessionID, alice, "run the scripted remote qualification")
 	if err := os.WriteFile(filepath.Join(state, "mock-journey.sse"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{"write-proof", "read-before-edit", "edit-proof", "copy-proof", "move-proof", "write-mod", "write-test", "shell-go-test", "remove-moved", "read-final", "moved.txt", "proof.txt:1:beta", "REMOTE_EXECUTION_QUALIFICATION_COMPLETE", "ok"} {
-		if !bytes.Contains(body, []byte(marker)) {
-			t.Fatalf("SSE result omitted %q (%s)", marker, mockSSEStatus(body))
-		}
+	assertMockJourney(t, body)
+	lookup, err := providerClient.Ensure(ctx, sessionID, "go", owner, "independent-lookup-"+sessionID)
+	if err != nil {
+		t.Fatalf("resolve harness environment: %v", err)
 	}
-	if bytes.Contains(body, []byte(`"is_error":true`)) {
-		t.Fatal("scripted remote tool journey contained an error result")
+	attached := waitReady(t, ctx, providerClient, owner, sessionID, lookup.Environment)
+	rc, releaseVerification := acquireRun(t, ctx, providerClient, owner, sessionID, attached, fmt.Sprintf("independent-verify-%d", time.Now().UnixNano()))
+	proof, err := providerClient.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "proof.txt"})
+	if err != nil || string(proof.Data) != "beta\n" {
+		t.Fatalf("independent file proof failed: err=%v", err)
 	}
+	verification, err := providerClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go test ./...", TimeoutMillis: 120000})
+	if err != nil || verification.State != executionenv.CommandSucceeded || verification.Result.ExitCode != 0 {
+		t.Fatalf("independent go test proof failed: err=%v state=%s", err, verification.State)
+	}
+	releaseVerification()
 	if status := getSession(t, ctx, agentForward.addr, sessionID, bob); status != http.StatusNotFound {
 		t.Fatalf("different OIDC owner read status = %d, want 404", status)
 	}
@@ -156,6 +179,73 @@ func TestKindExecutionQualification(t *testing.T) {
 	}
 	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != baseline+2 {
 		t.Fatalf("post-restart environments = %d, want baseline + direct + session (%d)", got, baseline+2)
+	}
+}
+
+func assertMockJourney(t *testing.T, body []byte) {
+	t.Helper()
+	expected := map[string]struct {
+		name string
+		key  string
+		want string
+	}{
+		"write-proof": {"Write", "path", "proof.txt"}, "read-before-edit": {"Read", "path", "proof.txt"},
+		"edit-proof": {"Edit", "path", "proof.txt"}, "copy-proof": {"Copy", "destination", "copy.txt"},
+		"move-proof": {"Move", "destination", "moved.txt"}, "glob-proof": {"Glob", "pattern", "*.txt"},
+		"grep-proof": {"Grep", "pattern", "beta"}, "write-mod": {"Write", "path", "go.mod"},
+		"write-test": {"Write", "path", "remote_test.go"}, "shell-go-test": {"Shell", "command", "go test ./..."},
+		"remove-moved": {"Remove", "path", "moved.txt"}, "read-final": {"Read", "path", "proof.txt"},
+	}
+	calls := map[string]string{}
+	results := map[string]*mecatlv1.ToolResult{}
+	stop := ""
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		if !bytes.HasPrefix(line, []byte("data: ")) {
+			continue
+		}
+		var ev mecatlv1.Event
+		if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &ev); err != nil {
+			t.Fatalf("decode harness SSE event: %v", err)
+		}
+		if ev.ToolCall != nil {
+			want, ok := expected[ev.ToolCall.Id]
+			if !ok {
+				t.Fatalf("unexpected tool call id %q", ev.ToolCall.Id)
+			}
+			if ev.ToolCall.Name != want.name {
+				t.Fatalf("tool call %s name=%s want=%s", ev.ToolCall.Id, ev.ToolCall.Name, want.name)
+			}
+			var args map[string]json.RawMessage
+			var got string
+			if json.Unmarshal([]byte(ev.ToolCall.Args), &args) != nil || json.Unmarshal(args[want.key], &got) != nil || got != want.want {
+				t.Fatalf("tool call %s did not carry expected structured argument", ev.ToolCall.Id)
+			}
+			calls[ev.ToolCall.Id] = ev.ToolCall.Name
+		}
+		if ev.ToolResult != nil {
+			results[ev.ToolResult.CallId] = ev.ToolResult
+		}
+		if ev.Result != nil {
+			stop = ev.Result.Stop
+		}
+	}
+	for id := range expected {
+		if calls[id] == "" {
+			t.Fatalf("missing structured tool call %s (%s)", id, mockSSEStatus(body))
+		}
+		result := results[id]
+		if result == nil || result.IsError {
+			t.Fatalf("tool call %s has no correlated successful result", id)
+		}
+	}
+	if result := results["shell-go-test"]; !strings.Contains(result.Content, "[exit code: 0]") {
+		t.Fatal("model-issued exact go test did not return exit code 0")
+	}
+	if result := results["read-final"]; !strings.Contains(result.Content, "beta") {
+		t.Fatal("final Read result did not contain persisted proof")
+	}
+	if stop != "end_turn" {
+		t.Fatalf("mock harness stop=%q, want end_turn", stop)
 	}
 }
 
@@ -192,6 +282,23 @@ func classifyMockToolError(content string) string {
 		}
 	}
 	return "other_redacted"
+}
+
+func acquireRun(t *testing.T, ctx context.Context, c *executionclient.Client, owner executionenv.Owner, binding string, attached executionenv.AttachEnvironmentResponse, runID string) (executionenv.RequestContext, func()) {
+	t.Helper()
+	operationID := "acquire-" + runID
+	claim, err := c.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: runID, OperationID: operationID, TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("acquire run: %v", err)
+	}
+	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}
+	release := func() {
+		err := c.ReleaseRun(context.WithoutCancel(ctx), executionenv.RunClaimRequest{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, OperationID: "release-" + runID})
+		if err != nil {
+			t.Errorf("release run: %v", err)
+		}
+	}
+	return rc, release
 }
 
 func waitReady(t *testing.T, ctx context.Context, c *executionclient.Client, owner executionenv.Owner, binding string, ref executionenv.EnvironmentRef) executionenv.AttachEnvironmentResponse {

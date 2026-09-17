@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -173,4 +174,25 @@ func (p *Profiles) get(name string) (resolvedProfile, bool) {
 	}
 	v, ok := p.byName[name]
 	return v, ok
+}
+
+func (p *Profiles) clusterResources() (runtimeClasses, storageClasses []string) {
+	if p == nil {
+		return nil, nil
+	}
+	runtimes := make(map[string]struct{}, len(p.byName))
+	storage := make(map[string]struct{}, len(p.byName))
+	for _, profile := range p.byName {
+		runtimes[profile.Spec.RuntimeClassName] = struct{}{}
+		storage[profile.Spec.StorageClass] = struct{}{}
+	}
+	for name := range runtimes {
+		runtimeClasses = append(runtimeClasses, name)
+	}
+	for name := range storage {
+		storageClasses = append(storageClasses, name)
+	}
+	sort.Strings(runtimeClasses)
+	sort.Strings(storageClasses)
+	return runtimeClasses, storageClasses
 }

@@ -58,7 +58,7 @@ func activeRunFrom(o *unstructured.Unstructured) (executionenv.RunClaim, string,
 	}
 	generation := uint64(generationValue) //nolint:gosec // positivity is checked immediately above.
 	claim := executionenv.RunClaim{Environment: executionenv.EnvironmentRef{ID: o.GetName(), Revision: textNested(o.Object, "spec", "revision")}, BindingID: text(m, "bindingID"), RunID: text(m, "runID"), ClaimID: text(m, "claimID"), Epoch: epoch, GrantGeneration: generation, ExpiresAt: expires}
-	return claim, text(m, "operationID"), expires, err == nil && epochOK && generation > 0 && claim.BindingID != "" && claim.RunID != "" && claim.ClaimID != ""
+	return claim, text(m, operationIDField), expires, err == nil && epochOK && generation > 0 && claim.BindingID != "" && claim.RunID != "" && claim.ClaimID != ""
 }
 
 //nolint:gocyclo // Run ownership admission keeps every CAS precondition in one auditable transition.
@@ -93,7 +93,7 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 				out = current
 				return nil
 			}
-			if time.Now().UTC().Before(expires) {
+			if s.now().Before(expires) {
 				return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment has an active run"}
 			}
 			if textNested(o.Object, "status", "activeOperation", "id") != "" {
@@ -113,7 +113,7 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if idErr != nil {
 			return idErr
 		}
-		expires := time.Now().UTC().Add(ttl)
+		expires := s.now().Add(ttl)
 		generation := intNested(o.Object, "status", "grantGeneration")
 		if generation <= 0 {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "grant generation is invalid"}
@@ -121,7 +121,7 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if setErr := unstructured.SetNestedField(o.Object, epochStatus, "status", "epoch"); setErr != nil {
 			return setErr
 		}
-		if setErr := unstructured.SetNestedMap(o.Object, map[string]any{"bindingID": binding, "runID": runID, "claimID": claimID, "operationID": operationID, "ownerHash": owner, "clientHash": hashText(client), "epoch": epochStatus, "grantGeneration": generation, "expiresAt": expires.Format(time.RFC3339Nano)}, "status", "activeRun"); setErr != nil {
+		if setErr := unstructured.SetNestedMap(o.Object, map[string]any{"bindingID": binding, "runID": runID, "claimID": claimID, operationIDField: operationID, "ownerHash": owner, "clientHash": hashText(client), "epoch": epochStatus, "grantGeneration": generation, "expiresAt": expires.Format(time.RFC3339Nano)}, "status", "activeRun"); setErr != nil {
 			return setErr
 		}
 		out = executionenv.RunClaim{Environment: ref, BindingID: binding, RunID: runID, ClaimID: claimID, Epoch: epoch, GrantGeneration: uint64(generation), ExpiresAt: expires}
@@ -137,11 +137,11 @@ func (s *Store) RenewRun(ctx context.Context, ref executionenv.EnvironmentRef, c
 	}
 	var out executionenv.RunClaim
 	err = s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
-		cur, _, _, ok := activeRunFrom(o)
-		if !ok || textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
+		cur, _, expiry, ok := activeRunFrom(o)
+		if !ok || !s.now().Before(expiry) || textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim mismatch"}
 		}
-		expires := time.Now().UTC().Add(ttl)
+		expires := s.now().Add(ttl)
 		m, _, _ := unstructured.NestedMap(o.Object, "status", "activeRun")
 		m["expiresAt"] = expires.Format(time.RFC3339Nano)
 		m["lastRenewOperationID"] = req.OperationID

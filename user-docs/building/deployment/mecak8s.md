@@ -151,32 +151,33 @@ delegation cannot add filesystem access that the parent lacks.
 See [Execution environments](/features/execution-environments.md) for the
 shared placement, no-FS, child-environment, and reattachment model.
 
-### Experimental Kubernetes execution provider
+### Kubernetes execution provider
 
-The repository contains a draft, experimental execution provider for an
-operator-controlled Kubernetes cluster. It runs as a separate service and
-controller with its own `mecatl-execution` chart. `mecak8s` remains a client: it
-has no Pod, PVC, custom-resource, or controller management permissions.
+The optional execution provider runs as a separate service and controller with its
+own `mecatl-execution` chart. `mecak8s` remains a client and receives no Pod,
+PVC, custom-resource, or controller management permissions.
 
-This production candidate provides run-wide ownership, transactional references,
-controlled replacement and retirement, durable grant revocation, and reloadable
-TLS and signing material. Its default-deny network policy still requires an
-enforcing CNI; Kind's default kindnet is not isolation evidence. A configured
-RuntimeClass is an operator input, not by itself a hostile-workload guarantee.
+The provider supplies run-wide ownership, transactional references, controlled
+replacement and retirement, durable grant revocation, and reloadable TLS and
+signing material. Production isolation requires a CNI that enforces NetworkPolicy
+and a RuntimeClass that supplies the isolation promised by your platform.
 
-Before you install it, prepare these values through your trusted image and
-Secret delivery system:
+Before installation, provide these values through your trusted image and Secret
+delivery system:
 
-- A digest-pinned provider image.
-- A digest-pinned workload image that contains `/mecatl-executor`, `/bin/sh`,
-  and the toolchain needed by foreground commands.
-- One projected security Secret containing the provider certificate/key, client
-  CA bundle, and versioned Ed25519 grant keys. The chart never generates them.
-- A versioned `provider.securityManifest` as documented in
-  [Execution environments](/features/execution-environments.md#production-security-material).
+- Digest-pinned provider and workload images. The workload image must contain
+  `/mecatl-executor`, `/bin/sh`, and the toolchain used by foreground commands.
+- A projected security Secret with the keys `grant-k1.pem`, `tls.crt`, `tls.key`,
+  and `clients.pem`. The Secret bytes remain externally managed. Mount rotation
+  uses the projected volume's `..data` link, without `subPath`.
 - A `mecak8s` client mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
-- Explicit provider-client pod/namespace selectors, API-server CIDRs, and DNS
-  resolver CIDRs. Do not use `0.0.0.0/0`.
+- Explicit provider-client pod and namespace selectors, API-server CIDRs, and DNS
+  resolver CIDRs.
+
+The provider validates every configured RuntimeClass and StorageClass with
+cluster-scoped `get` requests before it becomes ready. The chart grants those
+requests only for the names present in `profiles`; it grants no cluster-wide list
+or watch access.
 
 The following profile shows every required chart key. Save it as
 `execution-values.yaml` and replace each placeholder:
@@ -187,7 +188,39 @@ provider:
   imagePullPolicy: IfNotPresent
   replicas: 2
   securitySecretName: <PROJECTED_SECURITY_SECRET>
-  securityManifest: '<STRICT_JSON_MANIFEST>'
+  securityManifest: |
+    {
+      "version": 1,
+      "generation": 42,
+      "issuer": "https://execution.example.com",
+      "audience": "mecatl-execution",
+      "activeKeyID": "k1",
+      "grantTTL": "1m",
+      "clockSkew": "5s",
+      "keys": [{
+        "id": "k1",
+        "version": 1,
+        "file": "grant-k1.pem",
+        "publicKeySHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "activateAt": "2027-01-01T00:00:00Z",
+        "verifyUntil": "2027-01-02T00:00:00Z",
+        "state": "active"
+      }],
+      "tls": {
+        "certificateFile": "tls.crt",
+        "privateKeyFile": "tls.key",
+        "clientCAFile": "clients.pem"
+      },
+      "clients": [{
+        "uri": "spiffe://cluster.example.com/ns/mecatl/sa/mecak8s",
+        "mayAttestOwner": true,
+        "administrator": false
+      }, {
+        "uri": "spiffe://cluster.example.com/ns/mecatl/sa/execution-admin",
+        "mayAttestOwner": false,
+        "administrator": true
+      }]
+    }
   clientIngressSelectors:
     - namespaceLabels: {kubernetes.io/metadata.name: <CLIENT_NAMESPACE>}
       podLabels: {app.kubernetes.io/name: mecak8s}
@@ -229,9 +262,17 @@ resourceGovernance:
   requestsCPU: "20"
   requestsMemory: 40Gi
   requestsStorage: 500Gi
+  requestsEphemeralStorage: 40Gi
   limitsCPU: "40"
   limitsMemory: 80Gi
+  limitsEphemeralStorage: 80Gi
 ```
+
+Replace the all-zero `publicKeySHA256` with the SHA-256 fingerprint of the
+Ed25519 public key corresponding to `grant-k1.pem`. Replace the sample activation
+and verification dates with a current, reviewed rotation window. Increase
+`generation` for every authority change, including a CA, client policy,
+issuer/audience, key state, key window, or TLS identity change.
 
 Install the provider chart separately from `mecak8s`:
 
@@ -269,22 +310,111 @@ The provider retains one PVC per logical environment. Session deletion and chart
 uninstall do not delete committed workspace data. Retirement requires no live
 references and a terminal executor; even then, this candidate retains the PVC.
 A missing executor or lost terminal receipt moves the environment to
-`FenceUnknown` and requires external operator fencing. There is no automated
-recovery from that state.
+`FenceUnknown` and requires external operator fencing. The built-in recovery RPC
+accepts only a still-observable Pod in `Succeeded` or `Failed` phase with every
+container terminated and the exact PVC still present. If that proof is missing,
+use your platform's external fencing runbook; there is no acknowledgement flag.
+
+#### Run an administrative lifecycle operation
+
+Administrative RPCs are client-scoped. The administrator certificate must present
+the same canonical URI identity that originated the environment and the request
+must carry the exact owner. You can issue a separate short-lived administrator
+certificate with that URI and mark the URI `administrator: true` during the
+maintenance window. A namespace-wide administrator policy is not part of this
+contract.
+
+First capture the private identity while the environment still has a reference:
+
+```sh
+kubectl --namespace <NAMESPACE> get executionenvironment <ENVIRONMENT_ID> \
+  -o jsonpath='{.spec.revision}{"\n"}{.spec.ownerIssuer}{"\n"}{.spec.ownerSubject}{"\n"}{.status.epoch}{"\n"}{.status.pod.uid}{"\n"}{.status.pvc.uid}{"\n"}{.status.grantGeneration}{"\n"}'
+```
+
+Record those seven lines as `<REVISION>`, `<OWNER_ISSUER>`, `<OWNER_SUBJECT>`,
+`<EPOCH>`, `<POD_UID>`, `<PVC_UID>`, and `<GRANT_GENERATION>`. The owner hash is
+not reversible, so retain the bounded `spec.ownerIssuer` and `spec.ownerSubject`
+attestation in your authorized operations record before removing the final
+reference.
+
+Set file references to trusted, mounted mTLS material. Keep private-key bytes out
+of shell arguments and manifests:
+
+```sh
+EXECUTION_ENDPOINT=mecatl-execution.<NAMESPACE>.svc:8443
+CA_FILE=/var/run/secrets/mecatl-admin/ca.crt
+CERT_FILE=/var/run/secrets/mecatl-admin/tls.crt
+KEY_FILE=/var/run/secrets/mecatl-admin/tls.key
+PROTO=contracts/proto/mecatl/execution/v1/execution.proto
+```
+
+Replace one executor by reusing the same operation ID for every retry:
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"replace-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/ReplaceExecutor
+```
+
+To retire and then delete retained storage, call `RetireEnvironment` with the same
+identity fields and a new stable operation ID. Poll until
+`.status.conditions[?(@.type=="Retired")].status` is `True`, then call
+`DeleteRetiredEnvironment` with the retained PVC UID and another stable operation
+ID. The provider refuses either request while references, claims, identity proof,
+or UID checks are incomplete.
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"retire-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RetireEnvironment
+kubectl --namespace <NAMESPACE> wait executionenvironment/<ENVIRONMENT_ID> \
+  --for='jsonpath={.status.conditions[?(@.type=="Retired")].status}=True' \
+  --timeout=10m
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedPvcUid":"<PVC_UID>","operationId":"delete-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/DeleteRetiredEnvironment
+```
+
+Revoke grants with the current generation and a stable operation ID. The response
+returns the new generation; retrying the identical request returns the same
+receipt. An old grant is denied after this CAS succeeds.
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedGrantGeneration":"<GRANT_GENERATION>","operationId":"revoke-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment
+```
+
+Migration requires proto presence for `expectedSchemaVersion`. Supply exactly `0`
+or `1`, plus the exact observable Pod and PVC UIDs. Omission, an unknown version,
+or missing proof is refused without changing the resource.
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedSchemaVersion":1,"expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"migrate-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/MigrateEnvironment
+```
 
 Foreground command cancellation is cooperative and bounded. The helper attempts
 to terminate the command process group and reports a terminal receipt. If it
 cannot prove termination, the environment is fenced instead of admitting more
 work. There is no detached command status or cancellation API in this draft.
 
-The focused qualification task is `task e2e:k8s:execution`. It requires a generic
-local Go, `ko`, Podman, Kind, Helm, and `kubectl` toolchain. Optional toolbox use
+The focused qualification task is `task e2e:k8s:execution`. It requires Go,
+`ko`, Docker or rootless Podman, Kind, Helm, and `kubectl`. Optional toolbox use
 requires explicit `MECATL_EXECUTION_DEV_TOOLBOX` and
 `MECATL_EXECUTION_K8S_TOOLBOX` values. The task uses a synthetic OIDC issuer and
 the mock model provider, creates a unique state directory and Kind cluster, and
-retains both for inspection. It performs no cleanup. Kind's default kindnet does
-not enforce NetworkPolicy, so this flow provides no NetworkPolicy isolation
-evidence.
+retains both for inspection. CI invokes
+`task e2e:k8s:execution:production` and automatically removes only its uniquely
+owned cluster. The production target is the home for the enforcing-CNI network
+and lifecycle fixture; until that fixture passes, Kind qualification is not
+NetworkPolicy isolation evidence.
 
 When `execution.enabled` is `false`, the `mecak8s` chart mounts no execution mTLS
 Secret and passes no execution-provider flags. The separate provider chart and

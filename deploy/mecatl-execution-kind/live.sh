@@ -56,10 +56,14 @@ recorded_kubeconfig=$(owned_value kubeconfig) || { echo "owned kubeconfig identi
 context=$(optional_owned_value context) || { echo "owned context identity invalid" >&2; exit 1; }
 [ -n "$context" ] || context="kind-$cluster"
 [ "$context" = "kind-$cluster" ] || { echo "owned context mismatch" >&2; exit 1; }
-label=$(podman inspect "${cluster}-control-plane" --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}')
+runtime=$(owned_value runtime) || { echo "owned container runtime unavailable" >&2; exit 1; }
+[ "$runtime" = docker ] || [ "$runtime" = podman ] || { echo "owned container runtime invalid" >&2; exit 1; }
+profile=$(owned_value profile) || { echo "owned qualification profile unavailable" >&2; exit 1; }
+[ "$profile" = production ] || { echo "live qualification requires a completed production-state fixture" >&2; exit 1; }
+label=$($runtime inspect "${cluster}-control-plane" --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}')
 [ "$label" = "$cluster" ] || { echo "owned Kind container label mismatch" >&2; exit 1; }
 
-export KIND_EXPERIMENTAL_PROVIDER=podman
+if [ "$runtime" = podman ]; then export KIND_EXPERIMENTAL_PROVIDER=podman; else unset KIND_EXPERIMENTAL_PROVIDER; fi
 export KUBECONFIG=$kubeconfig
 export REGISTRY_AUTH_FILE="$state/registry-auth.json"
 dev() {
@@ -75,30 +79,30 @@ kube_jq() {
   if [ -n "$MECATL_EXECUTION_K8S_TOOLBOX" ]; then toolbox run -c "$MECATL_EXECUTION_K8S_TOOLBOX" jq "$@"; else jq "$@"; fi
 }
 [ "$(kube config current-context)" = "$context" ] || { echo "owned kube context mismatch" >&2; exit 1; }
-build_ko() { package=$1 repo=$2; dev env KIND_EXPERIMENTAL_PROVIDER=podman KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1; }
+build_ko() { package=$1 repo=$2; dev env KIND_EXPERIMENTAL_PROVIDER="${KIND_EXPERIMENTAL_PROVIDER:-}" KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1; }
 pin_loaded() {
   tagged=$1
-  digest=$(podman exec "${cluster}-control-plane" ctr -n k8s.io images ls | awk -v ref="$tagged" '$1 == ref {print $3; exit}')
+  digest=$($runtime exec "${cluster}-control-plane" ctr -n k8s.io images ls | awk -v ref="$tagged" '$1 == ref {print $3; exit}')
   [ -n "$digest" ] || { echo "loaded image digest unavailable" >&2; exit 1; }
   pinned="${tagged%:*}@${digest}"
-  podman exec "${cluster}-control-plane" ctr -n k8s.io images tag "$tagged" "$pinned" >/dev/null
+  $runtime exec "${cluster}-control-plane" ctr -n k8s.io images tag "$tagged" "$pinned" >/dev/null
   printf '%s\n' "$pinned"
 }
 load_image() {
   tagged=$1
   archive="$state/images/live-$(printf '%s' "$tagged" | sha256sum | cut -c1-16).tar"
-  podman save "$tagged" -o "$archive" >/dev/null
+  $runtime save "$tagged" -o "$archive" >/dev/null
   kind load image-archive "$archive" --name "$cluster"
   pin_loaded "$tagged"
 }
 
 provider_tag=$(build_ko ./cmd/mecatl-execution-provider ko.local/mecatl-execution-provider)
 agent_tag=$(build_ko ./cmd/mecak8s ko.local/mecak8s)
-podman image exists docker.io/library/golang:1.27 || podman pull docker.io/library/golang:1.27 >/dev/null
-go_digest=$(podman image inspect docker.io/library/golang:1.27 --format '{{.Digest}}')
+$runtime image inspect docker.io/library/golang:1.27 >/dev/null 2>&1 || $runtime pull docker.io/library/golang:1.27 >/dev/null
+go_digest=$($runtime image inspect docker.io/library/golang:1.27 --format '{{.Digest}}')
 go_image="docker.io/library/golang@${go_digest}"
 workload_tag=localhost/mecatl-execution-workload:e2e
-podman build --build-arg GO_IMAGE="$go_image" -f "$root/build/execution-workload/Dockerfile" -t "$workload_tag" "$root" >/dev/null
+$runtime build --build-arg GO_IMAGE="$go_image" -f "$root/build/execution-workload/Dockerfile" -t "$workload_tag" "$root" >/dev/null
 provider_image=$(load_image "$provider_tag")
 agent_image=$(load_image "$agent_tag")
 workload_image=$(load_image "$workload_tag")
@@ -110,30 +114,10 @@ kube -n local-path-storage get configmap local-path-config -o json \
   | kube_jq --arg image "$workload_image" '.data["helperPod.yaml"] |= sub("image: [^\\n]+"; "image: " + $image)' \
   | kube replace -f -
 
-# Qualification identities are synthetic and intentionally short-lived. Rotate
-# them before any rollout so an owned cluster can be safely reused hours later.
-dev env -i HOME="$HOME" PATH="$PATH" go run -tags kind_execution_e2e ./e2e/k8s_execution/fixture/pki "$state/pki"
-kube -n execution-qualification create secret generic execution-provider-tls \
-  --from-file=ca.crt="$state/pki/ca.crt" --from-file=tls.crt="$state/pki/provider.crt" --from-file=tls.key="$state/pki/provider.key" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification create secret generic execution-client-tls \
-  --from-file=ca.crt="$state/pki/ca.crt" --from-file=tls.crt="$state/pki/mecak8s.crt" --from-file=tls.key="$state/pki/mecak8s.key" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification create secret generic execution-intruder-tls \
-  --from-file=ca.crt="$state/pki/ca.crt" --from-file=tls.crt="$state/pki/intruder.crt" --from-file=tls.key="$state/pki/intruder.key" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification create secret generic execution-grant-key --from-file=key.pem="$state/pki/grant-key.pem" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification create secret generic oidc-fixture-identity \
-  --from-file=tls.crt="$state/pki/oidc.crt" --from-file=tls.key="$state/pki/oidc.key" --from-file=jwt-key.pem="$state/pki/oidc-jwt-key.pem" --dry-run=client -o yaml | kube apply -f -
-kube -n execution-qualification rollout restart deployment/oidc-issuer
-kube -n execution-qualification rollout status deployment/oidc-issuer --timeout=180s
-
-# First qualify the migrated typed-gRPC path under the deterministic mock model.
+# Consume the already-qualified synthetic security state. Live mode never
+# regenerates or replaces the execution Secret/keyring, and never reads it back.
+# A real provider credential is staged only after this deterministic rerun passes.
 kube -n execution-qualification create configmap execution-mock --from-file=mock-script.json="$root/deploy/mecatl-execution-kind/mock-script.json" --dry-run=client -o yaml | kube apply -f -
-helm_kube upgrade --install mecatl-execution "$root/deploy/helm/mecatl-execution" --namespace execution-qualification \
-  --set fullnameOverride=mecatl-execution --set-string provider.image="$provider_image" --set provider.imagePullPolicy=IfNotPresent \
-  --set provider.tlsSecretName=execution-provider-tls --set provider.grantSigningSecretName=execution-grant-key \
-  --set 'provider.clientURISANs={spiffe://mecatl.test/client/mecak8s,spiffe://mecatl.test/client/intruder}' \
-  --set 'provider.ownerAttesterURISANs={spiffe://mecatl.test/client/mecak8s,spiffe://mecatl.test/client/intruder}' \
-  --set 'provider.administratorURISANs={spiffe://mecatl.test/client/mecak8s}' --set-string profiles.go.image="$workload_image" --reuse-values --wait --timeout=4m
-kube -n execution-qualification rollout restart deployment/mecatl-execution
 kube -n execution-qualification rollout status deployment/mecatl-execution --timeout=240s
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
   --set-string image.repository="${agent_image%@*}" --set-string image.digest="${agent_image#*@}" --wait --timeout=5m

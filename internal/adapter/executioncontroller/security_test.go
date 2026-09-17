@@ -4,21 +4,34 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
+
+	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func TestSecurityManagerReloadRollbackAndRecovery(t *testing.T) {
@@ -57,6 +70,16 @@ func TestSecurityManagerReloadRollbackAndRecovery(t *testing.T) {
 	}
 	if !manager.Ready() {
 		t.Fatal("valid snapshot is not ready")
+	}
+	manifest.Clients[0].Administrator = false
+	writeManifest(t, manifestPath, manifest)
+	if err := manager.Reload(t.Context()); err == nil || manager.Ready() {
+		t.Fatal("same-generation client policy drift was accepted")
+	}
+	manifest.Clients[0].Administrator = true
+	writeManifest(t, manifestPath, manifest)
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatalf("restore same generation: %v", err)
 	}
 	manifest.Generation = 0
 	writeManifest(t, manifestPath, manifest)
@@ -123,6 +146,229 @@ func TestSecurityLedgerRejectsKeyVersionRollbackAcrossRestart(t *testing.T) {
 	changed, err := advanceSecurityLedger(&ledger, candidate)
 	if err != nil || !changed || candidate.fingerprints["key:2"] != "old" {
 		t.Fatalf("monotonic rotation failed: changed=%v err=%v fingerprints=%v", changed, err, candidate.fingerprints)
+	}
+}
+
+func TestSecurityManagerGuardsEveryRPCOnExistingConnection(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	caPEM, serverPEM, serverKeyPEM, clientCert := rpcSecurityPKI(t, now, "spiffe://example/client")
+	grantPub, grantPriv, _ := ed25519.GenerateKey(rand.Reader)
+	writePKCS8(t, filepath.Join(dir, "grant.pem"), grantPriv)
+	for name, contents := range map[string][]byte{"server.crt": serverPEM, "server.key": serverKeyPEM, "clients.pem": caPEM} {
+		if err := os.WriteFile(filepath.Join(dir, name), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fp := sha256.Sum256(grantPub)
+	manifest := securityManifest{Version: 1, Generation: 1, Issuer: "issuer", Audience: "audience", ActiveKeyID: "k1", GrantTTLText: "1m", ClockSkewText: "5s", Keys: []securityKeyManifest{{ID: "k1", Version: 1, File: "grant.pem", PublicSHA256: hex.EncodeToString(fp[:]), ActivateAt: now.Add(-time.Minute), VerifyUntil: now.Add(time.Hour), State: "active"}}, TLS: securityTLSManifest{CertificateFile: "server.crt", PrivateKeyFile: "server.key", ClientCAFile: "clients.pem"}, Clients: []securityClientManifest{{URI: "spiffe://example/client", MayAttestOwner: true}}}
+	manifestPath := filepath.Join(dir, "manifest.json")
+	writeManifest(t, manifestPath, manifest)
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "authority", Namespace: "ns"}, Data: map[string]string{}})
+	manager := NewSecurityManager(manifestPath, dir, "ns", "authority", kube)
+	manager.now = func() time.Time { return now }
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", testProfiles(), nil)
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(manager.TLSConfig())))
+	executionv1.RegisterExecutionProviderServiceServer(server, NewHandler(HandlerConfig{Security: manager}, store))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(caPEM)
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS13, ServerName: "provider.test", RootCAs: roots, Certificates: []tls.Certificate{clientCert}})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := executionv1.NewExecutionProviderServiceClient(conn)
+	call := func() error {
+		_, err := client.ValidateProfile(t.Context(), &executionv1.ValidateProfileRequest{Profile: "go"})
+		return err
+	}
+	if err := call(); err != nil {
+		t.Fatalf("initial RPC: %v", err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), "authority", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoritativeState := cm.Data[securityStateDataKey]
+	var drifted securityLedger
+	if err := executionenv.DecodeStrict([]byte(authoritativeState), &drifted); err != nil {
+		t.Fatal(err)
+	}
+	drifted.Digest = strings.Repeat("0", 64)
+	raw, _ := json.Marshal(drifted)
+	cm.Data[securityStateDataKey] = string(raw)
+	if _, err := kube.CoreV1().ConfigMaps("ns").Update(t.Context(), cm, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(); status.Code(err) != codes.Unauthenticated || manager.Ready() {
+		t.Fatalf("old snapshot survived durable authority drift: ready=%v err=%v", manager.Ready(), err)
+	}
+	cm, _ = kube.CoreV1().ConfigMaps("ns").Get(t.Context(), "authority", metav1.GetOptions{})
+	cm.Data[securityStateDataKey] = authoritativeState
+	if _, err := kube.CoreV1().ConfigMaps("ns").Update(t.Context(), cm, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	newCAPEM, newServerPEM, newServerKeyPEM, _ := rpcSecurityPKI(t, now, "spiffe://example/other")
+	for name, contents := range map[string][]byte{"server.crt": newServerPEM, "server.key": newServerKeyPEM, "clients.pem": newCAPEM} {
+		if err := os.WriteFile(filepath.Join(dir, name), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest.Generation = 2
+	writeManifest(t, manifestPath, manifest)
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("old connection survived CA rotation: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(`{"version":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reload(t.Context()); err == nil {
+		t.Fatal("invalid manifest reloaded")
+	}
+	if err := call(); status.Code(err) != codes.Unavailable {
+		t.Fatalf("RPC remained authorized during invalid manifest: %v", err)
+	}
+	for name, contents := range map[string][]byte{"server.crt": serverPEM, "server.key": serverKeyPEM, "clients.pem": caPEM} {
+		if err := os.WriteFile(filepath.Join(dir, name), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest.Generation = 3
+	writeManifest(t, manifestPath, manifest)
+	if err := manager.Reload(t.Context()); err != nil || call() != nil {
+		t.Fatalf("valid generation did not recover existing connection: %v", err)
+	}
+}
+
+func rpcSecurityPKI(t *testing.T, now time.Time, clientURI string) ([]byte, []byte, []byte, tls.Certificate) {
+	t.Helper()
+	caPub, caKey, _ := ed25519.GenerateKey(rand.Reader)
+	ca := &x509.Certificate{SerialNumber: big.NewInt(101), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, caPub, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := func(serial int64, uriText string, usages []x509.ExtKeyUsage, dns []string) ([]byte, ed25519.PrivateKey) {
+		pub, key, _ := ed25519.GenerateKey(rand.Reader)
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(serial), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: usages, DNSNames: dns}
+		if uriText != "" {
+			u, _ := url.Parse(uriText)
+			tmpl.URIs = []*url.URL{u}
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, pub, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return der, key
+	}
+	serverDER, serverKey := issue(102, "spiffe://example/provider", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"provider.test"})
+	clientDER, clientKey := issue(103, clientURI, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, nil)
+	encodeKey := func(key ed25519.PrivateKey) []byte {
+		raw, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw})
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), encodeKey(serverKey), tls.Certificate{Certificate: [][]byte{clientDER}, PrivateKey: clientKey}
+}
+
+func TestAuthorityDigestCoversSecurityMeaningfulState(t *testing.T) {
+	base := securityManifest{Version: 1, Generation: 7, Issuer: "issuer", Audience: "audience", ActiveKeyID: "k1", GrantTTLText: "1m", ClockSkewText: "5s", Keys: []securityKeyManifest{{ID: "k1", Version: 1, File: "key.pem", PublicSHA256: "fingerprint", ActivateAt: time.Unix(1, 0).UTC(), VerifyUntil: time.Unix(100, 0).UTC(), State: "active"}}, TLS: securityTLSManifest{CertificateFile: "server.crt", PrivateKeyFile: "server.key", ClientCAFile: "ca.pem"}, Clients: []securityClientManifest{{URI: "spiffe://example/client"}}}
+	digest := func(m securityManifest, ca, server string) string {
+		t.Helper()
+		ttl, err := time.ParseDuration(m.GrantTTLText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		skew, err := time.ParseDuration(m.ClockSkewText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := authorityDigest(m, ttl, skew, map[string]string{"k1:1": "fingerprint"}, []string{ca}, server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	original := digest(base, "ca-1", "server-1")
+	mutations := map[string]func(*securityManifest){
+		"capability":      func(m *securityManifest) { m.Clients[0].Administrator = true },
+		"key revoke":      func(m *securityManifest) { m.Keys[0].State = "revoked" },
+		"active key":      func(m *securityManifest) { m.ActiveKeyID = "k2" },
+		"activation time": func(m *securityManifest) { m.Keys[0].ActivateAt = m.Keys[0].ActivateAt.Add(time.Second) },
+		"grant ttl":       func(m *securityManifest) { m.GrantTTLText = "2m" },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			candidate.Keys = slices.Clone(base.Keys)
+			candidate.Clients = slices.Clone(base.Clients)
+			mutate(&candidate)
+			if digest(candidate, "ca-1", "server-1") == original {
+				t.Fatal("mutation did not change authority digest")
+			}
+		})
+	}
+	if digest(base, "ca-2", "server-1") == original || digest(base, "ca-1", "server-2") == original {
+		t.Fatal("CA or server identity swap did not change authority digest")
+	}
+}
+
+func TestSecurityManagerSigningWindowIsCheckedOnEveryRequest(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	grantPub, grantPriv, _ := ed25519.GenerateKey(rand.Reader)
+	writePKCS8(t, filepath.Join(dir, "grant.pem"), grantPriv)
+	caPEM, serverCert, serverKey := syntheticPKI(t, now)
+	for name, contents := range map[string][]byte{"server.crt": serverCert, "server.key": serverKey, "clients.pem": caPEM} {
+		if err := os.WriteFile(filepath.Join(dir, name), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fp := sha256.Sum256(grantPub)
+	manifest := securityManifest{Version: 1, Generation: 1, Issuer: "issuer", Audience: "audience", ActiveKeyID: "k1", GrantTTLText: "1m", ClockSkewText: "5s", Keys: []securityKeyManifest{{ID: "k1", Version: 1, File: "grant.pem", PublicSHA256: hex.EncodeToString(fp[:]), ActivateAt: now.Add(-time.Minute), VerifyUntil: now.Add(10 * time.Second), State: "active"}}, TLS: securityTLSManifest{CertificateFile: "server.crt", PrivateKeyFile: "server.key", ClientCAFile: "clients.pem"}, Clients: []securityClientManifest{{URI: "spiffe://example/client", MayAttestOwner: true}}}
+	manifestPath := filepath.Join(dir, "manifest.json")
+	writeManifest(t, manifestPath, manifest)
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "authority", Namespace: "ns"}, Data: map[string]string{}})
+	manager := NewSecurityManager(manifestPath, dir, "ns", "authority", kube)
+	clock := now
+	manager.now = func() time.Time { return clock }
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(HandlerConfig{Security: manager}, &fakeBackend{})
+	claim := executionenv.RunClaim{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 1, GrantGeneration: 1}
+	if _, expiry, err := h.signClaim(t.Context(), claim, "spiffe://example/client", "owner"); err != nil || expiry.After(manifest.Keys[0].VerifyUntil) {
+		t.Fatalf("initial sign expiry=%v err=%v", expiry, err)
+	}
+	clock = manifest.Keys[0].VerifyUntil
+	if manager.Ready() {
+		t.Fatal("expired active key remained ready between reload ticks")
+	}
+	if _, _, err := h.signClaim(t.Context(), claim, "spiffe://example/client", "owner"); err == nil {
+		t.Fatal("expired active key signed between reload ticks")
+	}
+	manifest.Generation = 2
+	manifest.Keys[0].VerifyUntil = clock.Add(time.Hour)
+	writeManifest(t, manifestPath, manifest)
+	if err := manager.Reload(t.Context()); err != nil || !manager.Ready() {
+		t.Fatalf("corrected generation did not recover: ready=%v err=%v", manager.Ready(), err)
 	}
 }
 

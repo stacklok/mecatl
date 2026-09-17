@@ -48,7 +48,7 @@ func (s *Store) startLifecycle(ctx context.Context, q adminLifecycleRequest, kin
 			}
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "another lifecycle operation is active"}
 		}
-		if textNested(o.Object, "status", "activeRun", "claimID") != "" || textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy || !conditionTrue(o, "Ready") {
+		if lifecycleAdmissionBlocked(o, q) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not healthy and idle"}
 		}
 		refs, err := referenceRecords(o)
@@ -62,6 +62,19 @@ func (s *Store) startLifecycle(ctx context.Context, q adminLifecycleRequest, kin
 		setConditionObject(o, "Ready", false, "Quiescing", "administrator lifecycle operation is quiescing the executor")
 		return unstructured.SetNestedMap(o.Object, operation, "status", "lifecycleOperation")
 	})
+}
+
+func lifecycleAdmissionBlocked(o *unstructured.Unstructured, q adminLifecycleRequest) bool {
+	return textNested(o.Object, "status", "activeRun", "claimID") != "" ||
+		textNested(o.Object, "status", "activeOperation", "id") != "" ||
+		textNested(o.Object, "status", "fenceState") != fenceHealthy ||
+		!conditionTrue(o, "Ready") && !exactTerminationProofMatches(o, q)
+}
+
+func exactTerminationProofMatches(o *unstructured.Unstructured, q adminLifecycleRequest) bool {
+	return textNested(o.Object, "status", "terminationProof", "podUID") == q.ExpectedPodUID &&
+		textNested(o.Object, "status", "terminationProof", "pvcUID") == q.ExpectedPVCUID &&
+		intNested(o.Object, "status", "terminationProof", "epoch") == int64(q.ExpectedEpoch) //nolint:gosec // q.ExpectedEpoch is bounded above.
 }
 
 func exactAdminSubject(o *unstructured.Unstructured, q adminLifecycleRequest) error {
@@ -115,19 +128,53 @@ func (s *Store) RecoverEnvironment(ctx context.Context, q adminLifecycleRequest)
 }
 
 func terminationProof(q adminLifecycleRequest, pod *corev1.Pod) map[string]any {
-	return map[string]any{"operationID": q.OperationID, "podUID": q.ExpectedPodUID, "pvcUID": q.ExpectedPVCUID, "epoch": int64(q.ExpectedEpoch), "podPhase": string(pod.Status.Phase), "observedAt": time.Now().UTC().Format(time.RFC3339Nano)} //nolint:gosec // epoch is validated by caller.
+	return map[string]any{operationIDField: q.OperationID, "podUID": q.ExpectedPodUID, "pvcUID": q.ExpectedPVCUID, "epoch": int64(q.ExpectedEpoch), "podPhase": string(pod.Status.Phase), "observedAt": time.Now().UTC().Format(time.RFC3339Nano)} //nolint:gosec // epoch is validated by caller.
 }
 
 func podTerminal(pod *corev1.Pod) bool {
-	if pod == nil || pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed || len(pod.Status.ContainerStatuses) != len(pod.Spec.Containers) || len(pod.Spec.Containers) == 0 {
+	if pod == nil || pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed || len(pod.Spec.Containers) == 0 {
 		return false
 	}
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.State.Terminated == nil {
+	if !allDeclaredContainersTerminated(pod.Spec.InitContainers, pod.Status.InitContainerStatuses) || !allDeclaredContainersTerminated(pod.Spec.Containers, pod.Status.ContainerStatuses) {
+		return false
+	}
+	return allDeclaredContainersTerminated(pod.Spec.EphemeralContainers, pod.Status.EphemeralContainerStatuses)
+}
+
+func allDeclaredContainersTerminated[T interface {
+	corev1.Container | corev1.EphemeralContainer
+}](declared []T, statuses []corev1.ContainerStatus) bool {
+	if len(statuses) != len(declared) {
+		return false
+	}
+	names := make(map[string]struct{}, len(declared))
+	for _, container := range declared {
+		var name string
+		switch c := any(container).(type) {
+		case corev1.Container:
+			name = c.Name
+		case corev1.EphemeralContainer:
+			name = c.Name
+		}
+		if name == "" {
 			return false
 		}
+		names[name] = struct{}{}
 	}
-	return true
+	if len(names) != len(declared) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(statuses))
+	for _, status := range statuses {
+		if _, declared := names[status.Name]; !declared || status.State.Terminated == nil {
+			return false
+		}
+		if _, duplicate := seen[status.Name]; duplicate {
+			return false
+		}
+		seen[status.Name] = struct{}{}
+	}
+	return len(seen) == len(names)
 }
 
 // DeleteRetiredEnvironment starts exact deletion of an explicitly retained workspace.
@@ -260,7 +307,7 @@ func migrateReferenceRecords(o *unstructured.Unstructured, operationID string, n
 			out = append(out, referenceRecord{BindingID: item, State: executionenv.ReferencePublished, OperationID: "migration-" + operationID, CreatedAt: now})
 		case map[string]any:
 			created, parseErr := time.Parse(time.RFC3339Nano, text(item, "createdAt"))
-			r := referenceRecord{BindingID: text(item, "bindingID"), State: executionenv.ReferenceState(text(item, "state")), OperationID: text(item, "operationID"), SourceBindingID: text(item, "sourceBindingID"), CreatedAt: created}
+			r := referenceRecord{BindingID: text(item, "bindingID"), State: executionenv.ReferenceState(text(item, "state")), OperationID: text(item, operationIDField), SourceBindingID: text(item, "sourceBindingID"), CreatedAt: created}
 			if parseErr != nil || r.BindingID == "" || r.OperationID == "" || r.State != executionenv.ReferencePendingCreate && r.State != executionenv.ReferencePublished && r.State != executionenv.ReferencePendingDelete {
 				return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype references are malformed"}
 			}

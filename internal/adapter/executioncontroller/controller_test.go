@@ -2,10 +2,13 @@ package executioncontroller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -14,6 +17,30 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestReconcileRefusesForeignExistingPVCWithoutPersistingUID(t *testing.T) {
+	ctx := context.Background()
+	env := testEnvironment()
+	env.SetFinalizers([]string{environmentFinalizer})
+	foreign := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "workspace-test", Namespace: "ns", UID: types.UID("foreign"), Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName(), "execution.mecatl.dev/revision": "rev"}}}
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset(foreign)
+	r := NewReconciler(d, k, "ns", testProfiles())
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid := textNested(got.Object, "status", "pvc", "uid"); uid != "" {
+		t.Fatalf("foreign PVC UID persisted as authoritative: %q", uid)
+	}
+	pods, err := k.CoreV1().Pods("ns").List(ctx, metav1.ListOptions{})
+	if err != nil || len(pods.Items) != 0 {
+		t.Fatalf("executor created over foreign PVC: pods=%d err=%v", len(pods.Items), err)
+	}
+}
 
 func TestReconcileCreatesTokenlessNonRootPodAndRetainedPVC(t *testing.T) {
 	ctx := context.Background()
@@ -131,9 +158,23 @@ func TestRuntimeAndRelevantStatusUpdatesEnqueue(t *testing.T) {
 	if r.queue.Len() != 3 {
 		t.Fatalf("relevant status update was not queued: len=%d", r.queue.Len())
 	}
-	controllerStatus := newEnv.DeepCopy()
+	lifecycle := newEnv.DeepCopy()
+	_ = unstructured.SetNestedMap(lifecycle.Object, map[string]any{"id": "retire", "phase": "Quiescing"}, "status", "lifecycleOperation")
+	lifecycleQueue := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), kubefake.NewSimpleClientset(), "ns", testProfiles())
+	lifecycleQueue.enqueueUpdate(newEnv, lifecycle)
+	if lifecycleQueue.queue.Len() != 1 {
+		t.Fatalf("lifecycle start was not queued: len=%d", lifecycleQueue.queue.Len())
+	}
+	advanced := lifecycle.DeepCopy()
+	_ = unstructured.SetNestedField(advanced.Object, "WaitingForTermination", "status", "lifecycleOperation", "phase")
+	phaseQueue := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), kubefake.NewSimpleClientset(), "ns", testProfiles())
+	phaseQueue.enqueueUpdate(lifecycle, advanced)
+	if phaseQueue.queue.Len() != 1 {
+		t.Fatalf("lifecycle phase change was not queued: len=%d", phaseQueue.queue.Len())
+	}
+	controllerStatus := advanced.DeepCopy()
 	_ = unstructured.SetNestedField(controllerStatus.Object, "pod", "status", "pod", "name")
-	r.enqueueUpdate(newEnv, controllerStatus)
+	r.enqueueUpdate(advanced, controllerStatus)
 	if r.queue.Len() != 3 {
 		t.Fatalf("controller-owned status update was queued: len=%d", r.queue.Len())
 	}
@@ -166,8 +207,8 @@ func TestStartupDoesNotFenceLivePeerOperation(t *testing.T) {
 	env := testEnvironment()
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "old", "operation": "file.replace"}, "status", "activeOperation")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	r := NewReconciler(d, kubefake.NewSimpleClientset(), "ns", testProfiles())
-	peer := NewReconciler(d, kubefake.NewSimpleClientset(), "ns", testProfiles())
+	r := NewReconciler(d, profileResourceClient(), "ns", testProfiles())
+	peer := NewReconciler(d, profileResourceClient(), "ns", testProfiles())
 	if r.Ready() || peer.Ready() {
 		t.Fatal("reconciler reported ready before cache synchronization")
 	}
@@ -188,6 +229,30 @@ func TestStartupDoesNotFenceLivePeerOperation(t *testing.T) {
 		t.Fatalf("startup mutated a potentially live peer operation: status=%v", got.Object["status"])
 	}
 }
+func TestInitializeRefusesMissingRuntimeClassBeforeCreatingPods(t *testing.T) {
+	kube := kubefake.NewSimpleClientset(&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "standard"}})
+	r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), kube, "ns", testProfiles())
+	err := r.Initialize(t.Context())
+	if err == nil || !strings.Contains(err.Error(), `profile preflight: RuntimeClass "sandboxed" unavailable`) {
+		t.Fatalf("Initialize error = %v", err)
+	}
+	if r.Ready() {
+		t.Fatal("reconciler reported ready after failed profile preflight")
+	}
+	for _, action := range kube.Actions() {
+		if action.GetVerb() == "create" && action.GetResource().Resource == "pods" {
+			t.Fatal("profile preflight created a Pod")
+		}
+	}
+}
+
+func profileResourceClient() *kubefake.Clientset {
+	return kubefake.NewSimpleClientset(
+		&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "sandboxed"}},
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "standard"}},
+	)
+}
+
 func testProfiles() *Profiles {
 	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}
 	profile, err := validateProfile("go", spec)

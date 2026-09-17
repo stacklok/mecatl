@@ -18,8 +18,16 @@ func TestChartRetainsCRDAndDoesNotGrantSecretAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(rbac), "secrets") || strings.Contains(string(rbac), "clusterrole") {
-		t.Fatal("provider RBAC must be namespaced and have no Secret access")
+	if strings.Contains(string(rbac), "secrets") {
+		t.Fatal("provider RBAC must have no Secret access")
+	}
+	for _, required := range []string{"kind: ClusterRole", `resources: ["runtimeclasses"]`, `resources: ["storageclasses"]`, "resourceNames:", `verbs: ["get"]`} {
+		if !strings.Contains(string(rbac), required) {
+			t.Fatalf("profile preflight RBAC missing %q", required)
+		}
+	}
+	if strings.Contains(string(rbac), `resources: ["*"]`) {
+		t.Fatal("cluster-scoped profile preflight RBAC must not grant wildcard resources")
 	}
 }
 func TestChartHasNoDeletionHook(t *testing.T) {
@@ -59,7 +67,7 @@ func TestProductionHardeningIsFailClosed(t *testing.T) {
 			t.Fatalf("provider hardening missing %q", required)
 		}
 	}
-	for _, required := range []string{"workload-default-deny", "ingress: []", "egress: []", "ResourceQuota", "LimitRange", "count/executionenvironments.execution.mecatl.dev"} {
+	for _, required := range []string{"workload-default-deny", "ingress: []", "egress: []", "ResourceQuota", "LimitRange", "count/executionenvironments.execution.mecatl.dev", "requests.ephemeral-storage", "limits.ephemeral-storage"} {
 		if !strings.Contains(string(network), required) {
 			t.Fatalf("network/resource hardening missing %q", required)
 		}

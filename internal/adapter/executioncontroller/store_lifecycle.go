@@ -32,7 +32,7 @@ func referenceRecords(o *unstructured.Unstructured) ([]referenceRecord, error) {
 			return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "legacy environment references require explicit migration"}
 		}
 		created, parseErr := time.Parse(time.RFC3339Nano, text(m, "createdAt"))
-		r := referenceRecord{BindingID: text(m, "bindingID"), State: executionenv.ReferenceState(text(m, "state")), OperationID: text(m, "operationID"), SourceBindingID: text(m, "sourceBindingID"), CreatedAt: created}
+		r := referenceRecord{BindingID: text(m, "bindingID"), State: executionenv.ReferenceState(text(m, "state")), OperationID: text(m, operationIDField), SourceBindingID: text(m, "sourceBindingID"), CreatedAt: created}
 		if parseErr != nil || r.BindingID == "" || r.OperationID == "" || (r.State != executionenv.ReferencePendingCreate && r.State != executionenv.ReferencePublished && r.State != executionenv.ReferencePendingDelete) {
 			return nil, &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment references are invalid"}
 		}
@@ -45,7 +45,7 @@ func setReferenceRecords(o *unstructured.Unstructured, refs []referenceRecord) e
 	sort.Slice(refs, func(i, j int) bool { return refs[i].BindingID < refs[j].BindingID })
 	raw := make([]any, len(refs))
 	for i, r := range refs {
-		raw[i] = map[string]any{"bindingID": r.BindingID, "state": string(r.State), "operationID": r.OperationID, "sourceBindingID": r.SourceBindingID, "createdAt": r.CreatedAt.UTC().Format(time.RFC3339Nano)}
+		raw[i] = map[string]any{"bindingID": r.BindingID, "state": string(r.State), operationIDField: r.OperationID, "sourceBindingID": r.SourceBindingID, "createdAt": r.CreatedAt.UTC().Format(time.RFC3339Nano)}
 	}
 	return unstructured.SetNestedSlice(o.Object, raw, "status", "references")
 }

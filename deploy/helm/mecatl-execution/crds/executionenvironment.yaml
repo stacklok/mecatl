@@ -88,6 +88,18 @@ spec:
               epoch: {type: integer, format: int64, minimum: 1}
               fenceState: {type: string, enum: [Healthy, FenceUnknown]}
               grantGeneration: {type: integer, format: int64, minimum: 1}
+              revocationReceipts:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [operationID, fingerprint, expectedGrantGeneration, grantGeneration]
+                  properties:
+                    operationID: {type: string, minLength: 1, maxLength: 1024}
+                    fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                    expectedGrantGeneration: {type: integer, format: int64, minimum: 1}
+                    grantGeneration: {type: integer, format: int64, minimum: 1}
               references:
                 type: array
                 maxItems: 64
@@ -114,7 +126,7 @@ spec:
                   uid: {type: string}
               activeRun:
                 type: object
-                required: [bindingID, runID, claimID, operationID, ownerHash, clientHash, epoch, expiresAt]
+                required: [bindingID, runID, claimID, operationID, ownerHash, clientHash, epoch, grantGeneration, expiresAt]
                 properties:
                   bindingID: {type: string, maxLength: 253}
                   runID: {type: string, maxLength: 1024}
@@ -123,6 +135,7 @@ spec:
                   ownerHash: {type: string, pattern: "^[0-9a-f]{64}$"}
                   clientHash: {type: string, pattern: "^[0-9a-f]{64}$"}
                   epoch: {type: integer, format: int64, minimum: 1}
+                  grantGeneration: {type: integer, format: int64, minimum: 1}
                   expiresAt: {type: string, format: date-time}
                   lastRenewOperationID: {type: string, maxLength: 1024}
               activeOperation:

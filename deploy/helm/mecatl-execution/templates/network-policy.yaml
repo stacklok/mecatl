@@ -82,8 +82,10 @@ spec:
     requests.cpu: {{ .Values.resourceGovernance.requestsCPU | quote }}
     requests.memory: {{ .Values.resourceGovernance.requestsMemory | quote }}
     requests.storage: {{ .Values.resourceGovernance.requestsStorage | quote }}
+    requests.ephemeral-storage: {{ .Values.resourceGovernance.requestsEphemeralStorage | quote }}
     limits.cpu: {{ .Values.resourceGovernance.limitsCPU | quote }}
     limits.memory: {{ .Values.resourceGovernance.limitsMemory | quote }}
+    limits.ephemeral-storage: {{ .Values.resourceGovernance.limitsEphemeralStorage | quote }}
 ---
 apiVersion: v1
 kind: LimitRange

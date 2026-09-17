@@ -178,13 +178,14 @@ message RevokeEnvironmentRequest {
   EnvironmentRef environment = 1;
   Owner owner = 2;
   uint64 expected_grant_generation = 3;
+  string operation_id = 4;
 }
 message RevokeEnvironmentResponse { uint64 grant_generation = 1; }
 
 message MigrateEnvironmentRequest {
   EnvironmentRef environment = 1;
   Owner owner = 2;
-  uint32 expected_schema_version = 3;
+  optional uint32 expected_schema_version = 3;
   string expected_pod_uid = 4;
   string expected_pvc_uid = 5;
   string operation_id = 6;

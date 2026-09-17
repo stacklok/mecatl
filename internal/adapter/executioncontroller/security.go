@@ -13,11 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -37,6 +38,7 @@ const (
 	maxSecurityKeys         = 64
 	maxSecurityClients      = 256
 	securityStateDataKey    = "state.json"
+	keyStateRevoked         = "revoked"
 )
 
 type securityKeyManifest struct {
@@ -75,10 +77,18 @@ type securityManifest struct {
 	Clients       []securityClientManifest `json:"clients"`
 }
 
+type keyValidity struct {
+	activateAt, verifyUntil time.Time
+	state                   string
+}
+
 type securitySnapshot struct {
 	generation   uint64
+	digest       string
 	signer       GrantSigner
 	verifier     executionenv.GrantVerifier
+	keyValidity  map[string]keyValidity
+	activeWindow keyValidity
 	tlsConfig    *tls.Config
 	clientCAs    *x509.CertPool
 	clients      map[string]ClientPolicy
@@ -88,6 +98,7 @@ type securitySnapshot struct {
 
 type securityLedger struct {
 	Generation   uint64            `json:"generation"`
+	Digest       string            `json:"digest"`
 	Fingerprints map[string]string `json:"fingerprints"`
 }
 
@@ -108,8 +119,9 @@ func NewSecurityManager(manifestPath, keyDirectory, namespace, configMap string,
 
 // Ready reports whether the current snapshot is authoritative and unexpired.
 func (m *SecurityManager) Ready() bool {
+	now := m.now()
 	s := m.current.Load()
-	return m.ready.Load() && s != nil && m.now().Before(s.validUntil)
+	return m.ready.Load() && snapshotValidAt(s, now)
 }
 
 // CheckReady verifies that the loaded snapshot still matches durable authority.
@@ -139,6 +151,9 @@ func (m *SecurityManager) Run(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
+	if interval > time.Minute {
+		interval = time.Minute
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -163,11 +178,12 @@ func (m *SecurityManager) TLSConfig() *tls.Config {
 }
 
 func (m *SecurityManager) authorize(ctx context.Context, leaf *x509.Certificate) (string, ClientPolicy, error) {
-	s, err := m.authoritative(ctx)
+	now := m.now()
+	s, err := m.authoritativeAt(ctx, now)
 	if err != nil {
 		return "", ClientPolicy{}, err
 	}
-	opts := x509.VerifyOptions{Roots: s.clientCAs, Intermediates: x509.NewCertPool(), CurrentTime: m.now(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	opts := x509.VerifyOptions{Roots: s.clientCAs, Intermediates: x509.NewCertPool(), CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
 	if _, err := leaf.Verify(opts); err != nil {
 		return "", ClientPolicy{}, err
 	}
@@ -187,8 +203,12 @@ func (m *SecurityManager) material(ctx context.Context) (*securitySnapshot, erro
 }
 
 func (m *SecurityManager) authoritative(ctx context.Context) (*securitySnapshot, error) {
+	return m.authoritativeAt(ctx, m.now())
+}
+
+func (m *SecurityManager) authoritativeAt(ctx context.Context, now time.Time) (*securitySnapshot, error) {
 	s := m.current.Load()
-	if !m.Ready() || s == nil || m.kube == nil {
+	if !m.ready.Load() || !snapshotValidAt(s, now) || m.kube == nil {
 		return nil, errors.New("security material is not ready")
 	}
 	cm, err := m.kube.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.configMap, metav1.GetOptions{})
@@ -197,11 +217,27 @@ func (m *SecurityManager) authoritative(ctx context.Context) (*securitySnapshot,
 		return nil, err
 	}
 	var ledger securityLedger
-	if err := json.Unmarshal([]byte(cm.Data[securityStateDataKey]), &ledger); err != nil || ledger.Generation != s.generation || !sameFingerprints(ledger.Fingerprints, s.fingerprints) {
+	if err := executionenv.DecodeStrict([]byte(cm.Data[securityStateDataKey]), &ledger); err != nil || ledger.Generation != s.generation || ledger.Digest != s.digest || !maps.Equal(ledger.Fingerprints, s.fingerprints) {
 		m.ready.Store(false)
 		return nil, errors.New("loaded security generation is not authoritative")
 	}
 	return s, nil
+}
+
+func snapshotValidAt(s *securitySnapshot, now time.Time) bool {
+	return s != nil && !now.Before(s.activeWindow.activateAt) && now.Before(s.activeWindow.verifyUntil) && now.Before(s.validUntil)
+}
+
+func (s *securitySnapshot) verifierAt(now time.Time) executionenv.GrantVerifier {
+	v := s.verifier
+	v.Keys = make(map[string]ed25519.PublicKey, len(s.verifier.Keys))
+	for id, key := range s.verifier.Keys {
+		window := s.keyValidity[id]
+		if window.state != keyStateRevoked && !now.Before(window.activateAt) && now.Before(window.verifyUntil) {
+			v.Keys[id] = key
+		}
+	}
+	return v
 }
 
 func (m *SecurityManager) load() (*securitySnapshot, error) {
@@ -215,11 +251,11 @@ func (m *SecurityManager) load() (*securitySnapshot, error) {
 	}
 	defer func() { _ = root.Close() }()
 
-	keys, active, fingerprints, err := m.loadGrantKeys(root, mf)
+	keys, active, fingerprints, windows, activeWindow, err := m.loadGrantKeys(root, mf)
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig, clientCAs, validUntil, err := m.loadTLS(root, mf.TLS)
+	tlsConfig, clientCAs, tlsValidUntil, caFingerprints, serverFingerprint, err := m.loadTLS(root, mf.TLS)
 	if err != nil {
 		return nil, err
 	}
@@ -227,8 +263,22 @@ func (m *SecurityManager) load() (*securitySnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	digest, err := authorityDigest(mf, ttl, skew, fingerprints, caFingerprints, serverFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	validUntil := tlsValidUntil
+	now := m.now()
+	for _, window := range windows {
+		if window.state != keyStateRevoked && window.verifyUntil.Before(validUntil) {
+			validUntil = window.verifyUntil
+		}
+		if window.state != keyStateRevoked && now.Before(window.activateAt) && window.activateAt.Before(validUntil) {
+			validUntil = window.activateAt
+		}
+	}
 	return &securitySnapshot{
-		generation: mf.Generation,
+		generation: mf.Generation, digest: digest,
 		signer: GrantSigner{
 			KeyID: mf.ActiveKeyID, PrivateKey: active, Issuer: mf.Issuer,
 			Audience: mf.Audience, Lifetime: ttl,
@@ -236,6 +286,7 @@ func (m *SecurityManager) load() (*securitySnapshot, error) {
 		verifier: executionenv.GrantVerifier{
 			Keys: keys, Issuer: mf.Issuer, Audience: mf.Audience, MaxLifetime: ttl + skew,
 		},
+		keyValidity: windows, activeWindow: activeWindow,
 		tlsConfig: tlsConfig, clientCAs: clientCAs, clients: clients,
 		validUntil: validUntil, fingerprints: fingerprints,
 	}, nil
@@ -246,14 +297,9 @@ func (m *SecurityManager) loadManifest() (securityManifest, time.Duration, time.
 	if err != nil {
 		return securityManifest{}, 0, 0, fmt.Errorf("read security manifest: %w", err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(manifestBytes))
-	dec.DisallowUnknownFields()
 	var mf securityManifest
-	if err := dec.Decode(&mf); err != nil {
+	if err := executionenv.DecodeStrict(manifestBytes, &mf); err != nil {
 		return securityManifest{}, 0, 0, fmt.Errorf("decode security manifest: %w", err)
-	}
-	if err := ensureJSONEOF(dec); err != nil {
-		return securityManifest{}, 0, 0, err
 	}
 	if mf.Version != securityManifestVersion || mf.Generation == 0 || mf.Generation > math.MaxInt64 || mf.Issuer == "" || mf.Audience == "" || mf.ActiveKeyID == "" || len(mf.Keys) == 0 || len(mf.Keys) > maxSecurityKeys || len(mf.Clients) == 0 || len(mf.Clients) > maxSecurityClients {
 		return securityManifest{}, 0, 0, errors.New("security manifest identity or bounds are invalid")
@@ -269,84 +315,114 @@ func (m *SecurityManager) loadManifest() (securityManifest, time.Duration, time.
 	return mf, ttl, skew, nil
 }
 
-func (m *SecurityManager) loadGrantKeys(root *os.Root, mf securityManifest) (map[string]ed25519.PublicKey, ed25519.PrivateKey, map[string]string, error) {
+func (m *SecurityManager) loadGrantKeys(root *os.Root, mf securityManifest) (map[string]ed25519.PublicKey, ed25519.PrivateKey, map[string]string, map[string]keyValidity, keyValidity, error) {
 	keys := make(map[string]ed25519.PublicKey, len(mf.Keys))
 	fingerprints := make(map[string]string, len(mf.Keys))
+	windows := make(map[string]keyValidity, len(mf.Keys))
 	seenVersion := map[uint64]bool{}
 	seenID := map[string]bool{}
 	var active ed25519.PrivateKey
+	var activeWindow keyValidity
 	now := m.now()
 	for _, km := range mf.Keys {
 		if !validKeyManifest(km, seenID, seenVersion) {
-			return nil, nil, nil, errors.New("security key entry is invalid or duplicated")
+			return nil, nil, nil, nil, keyValidity{}, errors.New("security key entry is invalid or duplicated")
 		}
 		seenID[km.ID] = true
 		seenVersion[km.Version] = true
 		key, err := readEd25519(root, km.File)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("load security key %q: %w", km.ID, err)
+			return nil, nil, nil, nil, keyValidity{}, fmt.Errorf("load security key %q: %w", km.ID, err)
 		}
 		pub := key.Public().(ed25519.PublicKey)
 		sum := sha256.Sum256(pub)
 		fp := hex.EncodeToString(sum[:])
 		if !strings.EqualFold(fp, km.PublicSHA256) {
-			return nil, nil, nil, fmt.Errorf("security key %q fingerprint mismatch", km.ID)
+			return nil, nil, nil, nil, keyValidity{}, fmt.Errorf("security key %q fingerprint mismatch", km.ID)
 		}
 		fingerprints[km.ID+":"+strconv.FormatUint(km.Version, 10)] = fp
-		if km.State != "revoked" && !now.Before(km.ActivateAt) && now.Before(km.VerifyUntil) {
+		window := keyValidity{activateAt: km.ActivateAt, verifyUntil: km.VerifyUntil, state: km.State}
+		windows[km.ID] = window
+		if km.State != keyStateRevoked {
 			keys[km.ID] = pub
 		}
 		if km.ID == mf.ActiveKeyID {
 			if km.State != "active" || now.Before(km.ActivateAt) || !now.Before(km.VerifyUntil) {
-				return nil, nil, nil, errors.New("active grant key is outside its activation window")
+				return nil, nil, nil, nil, keyValidity{}, errors.New("active grant key is outside its activation window")
 			}
 			active = key
+			activeWindow = window
 		}
 	}
 	if active == nil {
-		return nil, nil, nil, errors.New("active grant key is missing")
+		return nil, nil, nil, nil, keyValidity{}, errors.New("active grant key is missing")
 	}
-	return keys, active, fingerprints, nil
+	return keys, active, fingerprints, windows, activeWindow, nil
 }
 
 func validKeyManifest(km securityKeyManifest, seenID map[string]bool, seenVersion map[uint64]bool) bool {
 	return validKeyID(km.ID) && !seenID[km.ID] && km.Version != 0 && !seenVersion[km.Version] && validBaseName(km.File) &&
-		(km.State == "active" || km.State == "verify-only" || km.State == "revoked") &&
+		(km.State == "active" || km.State == "verify-only" || km.State == keyStateRevoked) &&
 		!km.VerifyUntil.IsZero() && km.VerifyUntil.After(km.ActivateAt)
 }
 
-func (m *SecurityManager) loadTLS(root *os.Root, manifest securityTLSManifest) (*tls.Config, *x509.CertPool, time.Time, error) {
+func (m *SecurityManager) loadTLS(root *os.Root, manifest securityTLSManifest) (*tls.Config, *x509.CertPool, time.Time, []string, string, error) {
 	certPEM, err := readRootFile(root, manifest.CertificateFile)
 	if err != nil {
-		return nil, nil, time.Time{}, err
+		return nil, nil, time.Time{}, nil, "", err
 	}
 	keyPEM, err := readRootFile(root, manifest.PrivateKeyFile)
 	if err != nil {
-		return nil, nil, time.Time{}, err
+		return nil, nil, time.Time{}, nil, "", err
 	}
 	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, nil, time.Time{}, fmt.Errorf("load TLS identity: %w", err)
+		return nil, nil, time.Time{}, nil, "", fmt.Errorf("load TLS identity: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(serverCert.Certificate[0])
 	if err != nil {
-		return nil, nil, time.Time{}, err
+		return nil, nil, time.Time{}, nil, "", err
 	}
 	now := m.now()
 	if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) || !hasUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-		return nil, nil, time.Time{}, errors.New("server certificate is not currently valid for server authentication")
+		return nil, nil, time.Time{}, nil, "", errors.New("server certificate is not currently valid for server authentication")
 	}
 	serverCert.Leaf = leaf
 	caPEM, err := readRootFile(root, manifest.ClientCAFile)
 	if err != nil {
-		return nil, nil, time.Time{}, err
+		return nil, nil, time.Time{}, nil, "", err
 	}
 	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, nil, time.Time{}, errors.New("client CA bundle has no certificates")
+	caFingerprints, err := appendCAs(pool, caPEM)
+	if err != nil {
+		return nil, nil, time.Time{}, nil, "", err
 	}
+	serverSum := sha256.Sum256(leaf.Raw)
 	cfg := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}, ClientAuth: tls.RequireAnyClientCert}
-	return cfg, pool, leaf.NotAfter, nil
+	return cfg, pool, leaf.NotAfter, caFingerprints, hex.EncodeToString(serverSum[:]), nil
+}
+
+func appendCAs(pool *x509.CertPool, pemBytes []byte) ([]string, error) {
+	var fingerprints []string
+	for len(bytes.TrimSpace(pemBytes)) != 0 {
+		block, rest := pem.Decode(pemBytes)
+		if block == nil || block.Type != "CERTIFICATE" {
+			return nil, errors.New("client CA bundle is invalid")
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !cert.IsCA {
+			return nil, errors.New("client CA bundle contains an invalid CA certificate")
+		}
+		pool.AddCert(cert)
+		sum := sha256.Sum256(cert.Raw)
+		fingerprints = append(fingerprints, hex.EncodeToString(sum[:]))
+		pemBytes = rest
+	}
+	if len(fingerprints) == 0 {
+		return nil, errors.New("client CA bundle has no certificates")
+	}
+	slices.Sort(fingerprints)
+	return fingerprints, nil
 }
 
 func clientPolicies(entries []securityClientManifest) (map[string]ClientPolicy, error) {
@@ -366,6 +442,35 @@ func clientPolicies(entries []securityClientManifest) (map[string]ClientPolicy, 
 		clients[entry.URI] = ClientPolicy{MayAttestOwner: entry.MayAttestOwner, Administrator: entry.Administrator}
 	}
 	return clients, nil
+}
+
+func authorityDigest(mf securityManifest, ttl, skew time.Duration, keyFingerprints map[string]string, caFingerprints []string, serverFingerprint string) (string, error) {
+	keys := slices.Clone(mf.Keys)
+	slices.SortFunc(keys, func(a, b securityKeyManifest) int { return strings.Compare(a.ID, b.ID) })
+	clients := slices.Clone(mf.Clients)
+	slices.SortFunc(clients, func(a, b securityClientManifest) int { return strings.Compare(a.URI, b.URI) })
+	canonical := struct {
+		Version                       int
+		Generation                    uint64
+		Issuer, Audience, ActiveKeyID string
+		GrantTTL, ClockSkew           int64
+		Keys                          []securityKeyManifest
+		TLS                           securityTLSManifest
+		Clients                       []securityClientManifest
+		KeyFingerprints               map[string]string
+		CAFingerprints                []string
+		ServerFingerprint             string
+	}{
+		Version: mf.Version, Generation: mf.Generation, Issuer: mf.Issuer, Audience: mf.Audience, ActiveKeyID: mf.ActiveKeyID,
+		GrantTTL: int64(ttl), ClockSkew: int64(skew), Keys: keys, TLS: mf.TLS, Clients: clients,
+		KeyFingerprints: keyFingerprints, CAFingerprints: slices.Clone(caFingerprints), ServerFingerprint: serverFingerprint,
+	}
+	raw, err := json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func (m *SecurityManager) publishGeneration(ctx context.Context, s *securitySnapshot) error {
@@ -416,7 +521,7 @@ func (m *SecurityManager) readSecurityLedger(ctx context.Context, cms corev1clie
 	}
 	ledger := securityLedger{Fingerprints: map[string]string{}}
 	if raw := cm.Data[securityStateDataKey]; raw != "" {
-		if err := json.Unmarshal([]byte(raw), &ledger); err != nil || ledger.Fingerprints == nil {
+		if err := executionenv.DecodeStrict([]byte(raw), &ledger); err != nil || ledger.Generation == 0 || ledger.Digest == "" || ledger.Fingerprints == nil || len(ledger.Fingerprints) > maxSecurityKeys {
 			return nil, false, securityLedger{}, errors.New("security authority state is invalid")
 		}
 	}
@@ -428,10 +533,10 @@ func advanceSecurityLedger(ledger *securityLedger, s *securitySnapshot) (bool, e
 		return false, errors.New("security manifest generation rollback rejected")
 	}
 	if s.generation == ledger.Generation && ledger.Generation != 0 {
-		if !containsFingerprints(ledger.Fingerprints, s.fingerprints) {
-			return false, errors.New("security generation fingerprint drift rejected")
+		if ledger.Digest != s.digest || !containsFingerprints(ledger.Fingerprints, s.fingerprints) {
+			return false, errors.New("security generation authority drift rejected")
 		}
-		s.fingerprints = cloneFingerprints(ledger.Fingerprints)
+		s.fingerprints = maps.Clone(ledger.Fingerprints)
 		return false, nil
 	}
 	for identity, fp := range s.fingerprints {
@@ -448,7 +553,8 @@ func advanceSecurityLedger(ledger *securityLedger, s *securitySnapshot) (bool, e
 		return false, errors.New("security key tombstone limit reached; rotate issuer")
 	}
 	ledger.Generation = s.generation
-	s.fingerprints = cloneFingerprints(ledger.Fingerprints)
+	ledger.Digest = s.digest
+	s.fingerprints = maps.Clone(ledger.Fingerprints)
 	return true, nil
 }
 
@@ -494,13 +600,6 @@ func validKeyID(v string) bool {
 	}
 	return true
 }
-func ensureJSONEOF(dec *json.Decoder) error {
-	var extra any
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("security manifest has trailing data")
-	}
-	return nil
-}
 func hasUsage(usages []x509.ExtKeyUsage, wanted x509.ExtKeyUsage) bool {
 	for _, u := range usages {
 		if u == wanted || u == x509.ExtKeyUsageAny {
@@ -516,14 +615,6 @@ func containsFingerprints(authority, candidate map[string]string) bool {
 		}
 	}
 	return true
-}
-
-func cloneFingerprints(source map[string]string) map[string]string {
-	clone := make(map[string]string, len(source))
-	for identity, fingerprint := range source {
-		clone[identity] = fingerprint
-	}
-	return clone
 }
 
 func keyVersionAdvances(authority map[string]string, identity string) bool {
@@ -543,23 +634,6 @@ func keyVersionAdvances(authority map[string]string, identity string) bool {
 		}
 		previousVersion, err := strconv.ParseUint(previous[previousSeparator+1:], 10, 64)
 		if err != nil || version <= previousVersion {
-			return false
-		}
-	}
-	return true
-}
-
-func sameFingerprints(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	keys := make([]string, 0, len(a))
-	for k := range a {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if a[k] != b[k] {
 			return false
 		}
 	}

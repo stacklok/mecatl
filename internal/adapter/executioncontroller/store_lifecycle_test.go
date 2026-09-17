@@ -3,6 +3,7 @@ package executioncontroller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -72,6 +73,56 @@ func TestExpiredClaimWithActiveOperationCannotBeReplaced(t *testing.T) {
 	var controlled *executionenv.Error
 	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeFenceUnknown {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestClientScopedIntentReconciliationRejectsEachOwnerMutationWithoutSideEffects(t *testing.T) {
+	now := time.Now().UTC()
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
+	mutations := map[string]func(*unstructured.Unstructured){
+		"owner hash": func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, hashText("other-owner"), "spec", "ownerHash")
+		},
+		"owner issuer": func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "other-issuer", "spec", "ownerIssuer")
+		},
+		"owner subject": func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, "mallory", "spec", "ownerSubject")
+		},
+		"client binding": func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(o.Object, hashText("other-client"), "spec", "clientHash")
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			env := lifecycleEnvironment(now)
+			_ = unstructured.SetNestedField(env.Object, ownerHash(owner), "spec", "ownerHash")
+			_ = unstructured.SetNestedField(env.Object, owner.Issuer, "spec", "ownerIssuer")
+			_ = unstructured.SetNestedField(env.Object, owner.Subject, "spec", "ownerSubject")
+			refs, err := referenceRecords(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refs = append(refs, referenceRecord{BindingID: "pending", State: executionenv.ReferencePendingDelete, OperationID: "delete", CreatedAt: now})
+			if err := setReferenceRecords(env, refs); err != nil {
+				t.Fatal(err)
+			}
+			mutate(env)
+			before := env.DeepCopy()
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			store := NewStore(client, "ns", testProfiles(), nil)
+			intents, listErr := store.ListReferenceIntentsForClient(t.Context(), "client", 64)
+			if listErr == nil && len(intents) != 0 {
+				t.Fatalf("mutated identity exposed intents: %+v", intents)
+			}
+			after, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before.Object, after.Object) {
+				t.Fatal("negative reconciliation mutated durable state")
+			}
+		})
 	}
 }
 

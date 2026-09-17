@@ -38,7 +38,7 @@ func (r *Reconciler) reconcileLifecycle(ctx context.Context, env *unstructured.U
 		}
 		return r.setFenceUnknown(ctx, env, "authoritative workspace identity is unavailable")
 	}
-	proofMatches := textNested(env.Object, "status", "terminationProof", "operationID") == operationID && textNested(env.Object, "status", "terminationProof", "podUID") == podUID && textNested(env.Object, "status", "terminationProof", "pvcUID") == pvcUID && intNested(env.Object, "status", "terminationProof", "epoch") == epoch
+	proofMatches := textNested(env.Object, "status", "terminationProof", operationIDField) == operationID && textNested(env.Object, "status", "terminationProof", "podUID") == podUID && textNested(env.Object, "status", "terminationProof", "pvcUID") == pvcUID && intNested(env.Object, "status", "terminationProof", "epoch") == epoch
 	switch phase {
 	case "Quiescing":
 		pod, getErr := r.kube.CoreV1().Pods(r.namespace).Get(ctx, podName, metav1.GetOptions{})
@@ -223,7 +223,10 @@ func (r *Reconciler) reconcileRetainedDelete(ctx context.Context, env *unstructu
 		return err
 	}
 	uid := updated.GetUID()
-	return res.Delete(ctx, updated.GetName(), metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+	if err := res.Delete(ctx, updated.GetName(), metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return releaseProfileSlot(ctx, r.kube, r.namespace, textNested(updated.Object, "spec", "profile"), updated.GetName())
 }
 
 func withoutString(values []string, remove string) []string {

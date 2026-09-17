@@ -32,8 +32,10 @@ resourceGovernance:
   requestsCPU: "20"
   requestsMemory: 40Gi
   requestsStorage: 500Gi
+  requestsEphemeralStorage: 40Gi
   limitsCPU: "40"
   limitsMemory: 80Gi
+  limitsEphemeralStorage: 80Gi
 profiles: {}
 
 # Example profile (all fields are required):

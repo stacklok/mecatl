@@ -6,11 +6,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,6 +33,7 @@ const (
 	currentSchemaVersion       = int64(2)
 	operationLeaseTTL          = 30 * time.Second
 	transitioningMessage       = "environment is transitioning"
+	operationIDField           = "operationID"
 )
 
 // ExecutorTransport dispatches one request to a fixed workload helper.
@@ -114,18 +118,8 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 		return Allocation{}, fmt.Errorf("get execution environment: %w", err)
 	}
 	if s.kube != nil {
-		all, listErr := s.resources.List(ctx, metav1.ListOptions{})
-		if listErr != nil {
-			return Allocation{}, fmt.Errorf("count execution environments: %w", listErr)
-		}
-		profileCount := 0
-		for i := range all.Items {
-			if textNested(all.Items[i].Object, "spec", "profile") == profile && textNested(all.Items[i].Object, "spec", "desired") != "Retired" {
-				profileCount++
-			}
-		}
-		if profileCount >= p.Spec.MaxEnvironments {
-			return Allocation{}, &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "profile environment limit reached"}
+		if err := s.reserveProfileSlot(ctx, profile, name, p.Spec.MaxEnvironments); err != nil {
+			return Allocation{}, err
 		}
 	}
 	revision, err := randomID()
@@ -154,6 +148,107 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 	}
 	return allocationFrom(created, client, owner, binding, profile, fp)
 }
+
+const profileAllocationConfigMap = "mecatl-execution-profile-allocations"
+
+func profileAllocationKey(profile string) string {
+	keySum := sha256.Sum256([]byte(profile))
+	return "profile-" + hex.EncodeToString(keySum[:16]) + ".json"
+}
+
+func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID string, limit int) error {
+	cms := s.kube.CoreV1().ConfigMaps(s.namespace)
+	key := profileAllocationKey(profile)
+	for range 8 {
+		cm, err := cms.Get(ctx, profileAllocationConfigMap, metav1.GetOptions{})
+		exists := true
+		if apierrors.IsNotFound(err) {
+			exists = false
+			cm = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: s.namespace}, Data: map[string]string{}}
+		} else if err != nil {
+			return fmt.Errorf("read profile allocation authority: %w", err)
+		}
+		var slots []string
+		if raw := cm.Data[key]; raw != "" {
+			if err := executionenv.DecodeStrict([]byte(raw), &slots); err != nil || len(slots) > limit {
+				return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is invalid"}
+			}
+		}
+		if slices.Contains(slots, allocationID) {
+			return nil
+		}
+		all, err := s.resources.List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("list profile allocations: %w", err)
+		}
+		for i := range all.Items {
+			if textNested(all.Items[i].Object, "spec", "profile") == profile && textNested(all.Items[i].Object, "spec", "desired") != "Retired" && !slices.Contains(slots, all.Items[i].GetName()) {
+				slots = append(slots, all.Items[i].GetName())
+			}
+		}
+		if len(slots) >= limit {
+			return &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "profile environment limit reached"}
+		}
+		slots = append(slots, allocationID)
+		slices.Sort(slots)
+		raw, err := json.Marshal(slots)
+		if err != nil {
+			return err
+		}
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		cm.Data[key] = string(raw)
+		if exists {
+			_, err = cms.Update(ctx, cm, metav1.UpdateOptions{})
+		} else {
+			_, err = cms.Create(ctx, cm, metav1.CreateOptions{})
+		}
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("reserve profile allocation: %w", err)
+		}
+	}
+	return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority changed concurrently", Retryable: true}
+}
+
+func releaseProfileSlot(ctx context.Context, kube kubernetes.Interface, namespace, profile, allocationID string) error {
+	cms := kube.CoreV1().ConfigMaps(namespace)
+	key := profileAllocationKey(profile)
+	for range 8 {
+		cm, err := cms.Get(ctx, profileAllocationConfigMap, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var slots []string
+		if err := executionenv.DecodeStrict([]byte(cm.Data[key]), &slots); err != nil {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is invalid"}
+		}
+		index := slices.Index(slots, allocationID)
+		if index < 0 {
+			return nil
+		}
+		slots = append(slots[:index], slots[index+1:]...)
+		raw, err := json.Marshal(slots)
+		if err != nil {
+			return err
+		}
+		cm.Data[key] = string(raw)
+		if _, err = cms.Update(ctx, cm, metav1.UpdateOptions{}); err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) {
+			return err
+		}
+	}
+	return errors.New("profile allocation authority changed concurrently")
+}
+
 func (s *Store) initializeStatus(ctx context.Context, env *unstructured.Unstructured, binding, operationID string) error {
 	if operationID == "" {
 		return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "operation identity is required"}
@@ -177,7 +272,7 @@ func (s *Store) initializeStatus(ctx context.Context, env *unstructured.Unstruct
 		if err := unstructured.SetNestedField(o.Object, int64(1), "status", "grantGeneration"); err != nil {
 			return err
 		}
-		ref := map[string]any{"bindingID": binding, "state": string(executionenv.ReferencePendingCreate), "operationID": operationID, "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		ref := map[string]any{"bindingID": binding, "state": string(executionenv.ReferencePendingCreate), operationIDField: operationID, "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}
 		if err := unstructured.SetNestedSlice(o.Object, []any{ref}, "status", "references"); err != nil {
 			return err
 		}

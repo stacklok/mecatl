@@ -100,12 +100,13 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	}
 	defer client.Close()
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
-	ensured, err := client.Ensure(ctx, created.SessionId, "go", owner)
+	ensured, err := client.Ensure(ctx, created.SessionId, "go", owner, "qualification-reattach")
 	if err != nil {
 		t.Fatal("typed execution reattachment lookup failed")
 	}
 	attached := waitReady(t, ctx, client, owner, created.SessionId, ensured.Environment)
-	rc := executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: created.SessionId, Epoch: attached.Epoch, Grant: attached.Grant}
+	rc, release := acquireRun(t, ctx, client, owner, created.SessionId, attached, fmt.Sprintf("live-verify-%d", time.Now().UnixNano()))
+	defer release()
 	artifactCount := 0
 	file, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "arithmetic/sum.go"})
 	if err != nil || !strings.Contains(string(file.Data), "return a + b") || !strings.Contains(string(file.Data), nonce) {

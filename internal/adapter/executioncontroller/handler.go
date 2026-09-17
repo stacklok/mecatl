@@ -104,7 +104,7 @@ type adminLifecycleBackend interface {
 	RecoverEnvironment(context.Context, adminLifecycleRequest) error
 	DeleteRetiredEnvironment(context.Context, adminLifecycleRequest) error
 	MigrateEnvironment(context.Context, adminLifecycleRequest) error
-	RevokeEnvironment(context.Context, executionenv.EnvironmentRef, string, string, uint64) (uint64, error)
+	RevokeEnvironment(context.Context, executionenv.EnvironmentRef, string, string, uint64, string) (uint64, error)
 }
 
 // Handler is the authenticated private execution-provider gRPC service.
@@ -137,6 +137,9 @@ func (h *Handler) client(ctx context.Context) (authenticatedClient, error) {
 		return authenticatedClient{}, wireError(executionenv.CodeUnauthenticated, false)
 	}
 	if h.cfg.Security != nil {
+		if !h.cfg.Security.Ready() {
+			return authenticatedClient{}, wireError(executionenv.CodeNotReady, true)
+		}
 		id, policy, err := h.cfg.Security.authorize(ctx, leaf)
 		if err != nil {
 			return authenticatedClient{}, wireError(executionenv.CodeUnauthenticated, false)
@@ -468,7 +471,7 @@ func (h *Handler) RecoverEnvironment(ctx context.Context, q *executionv1.Recover
 	if err := h.adminLifecycleBackend.RecoverEnvironment(ctx, req); err != nil {
 		var controlled *executionenv.Error
 		if errors.As(err, &controlled) && controlled.Code == executionenv.CodeFenceUnknown {
-			return nil, status.Error(codes.FailedPrecondition, "execution provider request failed; independent termination proof or external fencing is required")
+			return nil, wireError(executionenv.CodeFenceUnknown, false)
 		}
 		return nil, backendError(err)
 	}
@@ -497,7 +500,7 @@ func (h *Handler) MigrateEnvironment(ctx context.Context, q *executionv1.Migrate
 	if err != nil {
 		return nil, err
 	}
-	if q.GetExpectedSchemaVersion() > 1 {
+	if q == nil || q.ExpectedSchemaVersion == nil || q.GetExpectedSchemaVersion() > 1 {
 		return nil, wireError(executionenv.CodeInvalidArgument, false)
 	}
 	req.ExpectedEpoch = 0
@@ -515,10 +518,13 @@ func (h *Handler) RevokeEnvironment(ctx context.Context, q *executionv1.RevokeEn
 	if err != nil {
 		return nil, err
 	}
-	if h.adminLifecycleBackend == nil || !c.policy.Administrator || !ownerOK || !validRef(ref) || q.GetExpectedGrantGeneration() == 0 || q.GetExpectedGrantGeneration() > math.MaxInt64 {
+	if h.adminLifecycleBackend == nil || !c.policy.Administrator || !ownerOK || !validRef(ref) {
 		return nil, wireError(executionenv.CodePermissionDenied, false)
 	}
-	generation, err := h.adminLifecycleBackend.RevokeEnvironment(ctx, ref, c.id, ownerHash(owner), q.GetExpectedGrantGeneration())
+	if q.GetExpectedGrantGeneration() == 0 || q.GetExpectedGrantGeneration() > math.MaxInt64 || !validOperationID(q.GetOperationId()) {
+		return nil, wireError(executionenv.CodeInvalidArgument, false)
+	}
+	generation, err := h.adminLifecycleBackend.RevokeEnvironment(ctx, ref, c.id, ownerHash(owner), q.GetExpectedGrantGeneration(), q.GetOperationId())
 	if err != nil {
 		return nil, backendError(err)
 	}
@@ -614,11 +620,12 @@ func (h *Handler) authorize(ctx context.Context, p *executionv1.RequestContext, 
 	oh := ownerHash(rc.Owner)
 	verifier := h.cfg.Verifier
 	if h.cfg.Security != nil {
-		material, materialErr := h.cfg.Security.material(ctx)
+		now := h.cfg.Security.now()
+		material, materialErr := h.cfg.Security.authoritativeAt(ctx, now)
 		if materialErr != nil {
 			return c, "", rc, wireError(executionenv.CodeNotReady, true)
 		}
-		verifier = material.verifier
+		verifier = material.verifierAt(now)
 	}
 	if _, err := verifier.Verify(rc.Grant, executionenv.GrantExpectation{Client: c.id, OwnerHash: oh, BindingID: rc.BindingID, RunID: rc.RunID, ClaimID: rc.ClaimID, Environment: rc.Environment, Epoch: rc.Epoch, GrantGeneration: rc.GrantGeneration, Operation: op}); err != nil {
 		if errors.Is(err, executionenv.ErrGrantExpired) {
@@ -765,18 +772,28 @@ func validRef(v executionenv.EnvironmentRef) bool {
 
 func (h *Handler) signClaim(ctx context.Context, claim executionenv.RunClaim, client, owner string) (string, time.Time, error) {
 	signer := h.cfg.Signer
+	now := time.Now().UTC()
+	var signingDeadline time.Time
 	if h.cfg.Security != nil {
-		material, err := h.cfg.Security.material(ctx)
+		now = h.cfg.Security.now()
+		material, err := h.cfg.Security.authoritativeAt(ctx, now)
 		if err != nil {
 			return "", time.Time{}, err
 		}
 		signer = material.signer
+		signingDeadline = material.activeWindow.verifyUntil
 	}
 	life := signer.Lifetime
 	if life <= 0 {
 		life = time.Minute
 	}
-	now, expiry := time.Now().UTC(), time.Now().UTC().Add(life)
+	expiry := now.Add(life)
+	if !signingDeadline.IsZero() && signingDeadline.Before(expiry) {
+		expiry = signingDeadline
+	}
+	if !now.Before(expiry) {
+		return "", time.Time{}, errors.New("active signing key is expired")
+	}
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return "", time.Time{}, err
@@ -823,12 +840,18 @@ func wireError(code executionenv.ErrorCode, retry bool) error {
 		grpcCode = codes.AlreadyExists
 	case executionenv.CodeConflict, executionenv.CodeVersionMismatch:
 		grpcCode = codes.Aborted
-	case executionenv.CodeNotReady, executionenv.CodeFenceUnknown:
+	case executionenv.CodeNotReady:
 		grpcCode = codes.Unavailable
+	case executionenv.CodeFenceUnknown:
+		grpcCode = codes.FailedPrecondition
 	case executionenv.CodeResourceExhausted:
 		grpcCode = codes.ResourceExhausted
 	}
-	st := status.New(grpcCode, "execution provider request failed")
+	message := "execution provider request failed"
+	if code == executionenv.CodeFenceUnknown {
+		message = "execution provider request failed; verify termination independently or use external fencing"
+	}
+	st := status.New(grpcCode, message)
 	with, err := st.WithDetails(&executionv1.ErrorDetail{Code: string(code), Retryable: retry})
 	if err == nil {
 		st = with

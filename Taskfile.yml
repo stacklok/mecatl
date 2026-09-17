@@ -511,13 +511,27 @@ tasks:
       Run the focused mock-only Kind qualification for the optional Kubernetes
       execution provider. It uses a unique cluster and explicit kubeconfig under
       .scratch, builds/loads immutable local images, and never reads a provider
-      credential. The owned cluster is intentionally retained; the command prints
-      the exact human-confirmed cleanup command. NOT part of task test.
+      credential. Docker is the default; set CONTAINER_ENGINE=podman for rootless
+      Podman. The owned cluster is intentionally retained; the command prints the
+      exact human-confirmed cleanup command. NOT part of task test.
     preconditions:
-      - sh: command -v kind >/dev/null 2>&1 && command -v podman >/dev/null 2>&1
-        msg: "kind and rootless Podman are required"
+      - sh: command -v kind >/dev/null 2>&1
+        msg: "kind is required"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-docker}"
+          case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) exit 1 ;; esac
+        msg: "CONTAINER_ENGINE must be docker or podman and available on PATH"
     cmds:
       - deploy/mecatl-execution-kind/run.sh
+
+  e2e:k8s:execution:production:
+    desc: |
+      Run the deterministic production-network and lifecycle execution-provider
+      qualification. CI sets MECATL_EXECUTION_QUAL_CI=1 so its uniquely owned Kind
+      cluster is removed automatically; local runs retain it for inspection and
+      print the human-confirmed cleanup command. No model credential is used.
+    cmds:
+      - MECATL_EXECUTION_QUAL_PROFILE=production task e2e:k8s:execution
 
   e2e:k8s:execution:live:
     desc: |
@@ -909,6 +923,7 @@ tasks:
       - task: lint:action-templates
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
+      - sh .github/scripts/release-tag-guard_test.sh
 
   lint:action-templates:
     desc: |

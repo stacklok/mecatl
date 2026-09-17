@@ -120,11 +120,7 @@ func newOperationID() (string, error) {
 }
 
 // Ensure idempotently allocates or resolves the environment for a binding.
-func (c *Client) Ensure(ctx context.Context, binding, profile string, owner executionenv.Owner, operationIDs ...string) (executionenv.EnsureEnvironmentResponse, error) {
-	operationID := ""
-	if len(operationIDs) == 1 {
-		operationID = operationIDs[0]
-	}
+func (c *Client) Ensure(ctx context.Context, binding, profile string, owner executionenv.Owner, operationID string) (executionenv.EnsureEnvironmentResponse, error) {
 	v, err := c.rpc.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: binding, Profile: profile, Owner: ownerToProto(owner), OperationId: operationID})
 	if err != nil {
 		return executionenv.EnsureEnvironmentResponse{}, decodeError(ctx, err)
@@ -266,9 +262,42 @@ func (c *Client) ReleaseReference(ctx context.Context, req executionenv.Referenc
 	return decodeError(ctx, err)
 }
 
+// ReplaceExecutor requests UID-checked administrative executor replacement.
+func (c *Client) ReplaceExecutor(ctx context.Context, req executionenv.RetireEnvironmentRequest) error {
+	_, err := c.rpc.ReplaceExecutor(ctx, &executionv1.ReplaceExecutorRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), ExpectedExecutionEpoch: req.ExpectedEpoch, ExpectedPodUid: req.ExpectedPodUID, ExpectedPvcUid: req.ExpectedPVCUID, OperationId: req.OperationID})
+	return decodeError(ctx, err)
+}
+
 // RetireEnvironment requests administrative retirement.
 func (c *Client) RetireEnvironment(ctx context.Context, req executionenv.RetireEnvironmentRequest) error {
 	_, err := c.rpc.RetireEnvironment(ctx, &executionv1.RetireEnvironmentRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), ExpectedExecutionEpoch: req.ExpectedEpoch, ExpectedPodUid: req.ExpectedPodUID, ExpectedPvcUid: req.ExpectedPVCUID, OperationId: req.OperationID})
+	return decodeError(ctx, err)
+}
+
+// DeleteRetiredEnvironment deletes retained storage after retirement proof.
+func (c *Client) DeleteRetiredEnvironment(ctx context.Context, ref executionenv.EnvironmentRef, owner executionenv.Owner, expectedPVCUID, operationID string) error {
+	_, err := c.rpc.DeleteRetiredEnvironment(ctx, &executionv1.DeleteRetiredEnvironmentRequest{Environment: refToProto(ref), Owner: ownerToProto(owner), ExpectedPvcUid: expectedPVCUID, OperationId: operationID})
+	return decodeError(ctx, err)
+}
+
+// RevokeEnvironment atomically fences grants and replays a matching operation receipt.
+func (c *Client) RevokeEnvironment(ctx context.Context, ref executionenv.EnvironmentRef, owner executionenv.Owner, expectedGeneration uint64, operationID string) (uint64, error) {
+	out, err := c.rpc.RevokeEnvironment(ctx, &executionv1.RevokeEnvironmentRequest{Environment: refToProto(ref), Owner: ownerToProto(owner), ExpectedGrantGeneration: expectedGeneration, OperationId: operationID})
+	if err != nil {
+		return 0, decodeError(ctx, err)
+	}
+	return out.GetGrantGeneration(), nil
+}
+
+// MigrateEnvironment upgrades one explicitly identified legacy schema.
+func (c *Client) MigrateEnvironment(ctx context.Context, ref executionenv.EnvironmentRef, owner executionenv.Owner, expectedSchema uint32, podUID, pvcUID, operationID string) error {
+	_, err := c.rpc.MigrateEnvironment(ctx, &executionv1.MigrateEnvironmentRequest{Environment: refToProto(ref), Owner: ownerToProto(owner), ExpectedSchemaVersion: &expectedSchema, ExpectedPodUid: podUID, ExpectedPvcUid: pvcUID, OperationId: operationID})
+	return decodeError(ctx, err)
+}
+
+// RecoverEnvironment clears a fence only after the provider verifies exact terminal evidence.
+func (c *Client) RecoverEnvironment(ctx context.Context, req executionenv.RetireEnvironmentRequest) error {
+	_, err := c.rpc.RecoverEnvironment(ctx, &executionv1.RecoverEnvironmentRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), ExpectedExecutionEpoch: req.ExpectedEpoch, ExpectedPodUid: req.ExpectedPodUID, ExpectedPvcUid: req.ExpectedPVCUID, OperationId: req.OperationID})
 	return decodeError(ctx, err)
 }
 
@@ -312,8 +341,10 @@ func grpcCodeForError(code executionenv.ErrorCode) codes.Code {
 		return codes.AlreadyExists
 	case executionenv.CodeConflict, executionenv.CodeVersionMismatch:
 		return codes.Aborted
-	case executionenv.CodeNotReady, executionenv.CodeFenceUnknown:
+	case executionenv.CodeNotReady:
 		return codes.Unavailable
+	case executionenv.CodeFenceUnknown:
+		return codes.FailedPrecondition
 	case executionenv.CodeResourceExhausted:
 		return codes.ResourceExhausted
 	default:
@@ -486,9 +517,22 @@ func (p *Provider) PrepareReferenceDelete(ctx context.Context, req server.Placem
 	if err != nil {
 		return nil, err
 	}
-	op, err := newOperationID()
+	op := ""
+	intents, err := p.client.ListReferenceIntents(ctx, owner)
 	if err != nil {
-		return nil, server.ErrPlacementUnavailable
+		return nil, mapPlacementError(err)
+	}
+	for _, intent := range intents {
+		if intent.Environment.ID == req.Ref.ID && intent.Environment.Revision == req.Ref.Revision && intent.BindingID == string(req.SourceBindingID) && intent.State == executionenv.ReferencePendingDelete {
+			op = intent.OperationID
+			break
+		}
+	}
+	if op == "" {
+		op, err = newOperationID()
+		if err != nil {
+			return nil, server.ErrPlacementUnavailable
+		}
 	}
 	mutation := executionenv.ReferenceRequest{Environment: executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}, Owner: owner, BindingID: string(req.SourceBindingID), OperationID: op}
 	if err := p.client.PrepareReferenceDelete(ctx, mutation); err != nil {
@@ -662,7 +706,9 @@ func (p *Provider) AcquireRun(ctx context.Context, req server.ExecutionRunReques
 		return nil, server.ErrPlacementUnavailable
 	}
 	claimReq.ClaimID, claimReq.Epoch, claimReq.GrantGeneration = claim.ClaimID, claim.Epoch, claim.GrantGeneration
-	return &runHandle{provider: p, owner: owner, claim: claimReq, credentials: credentials, environment: env}, nil
+	handle := &runHandle{provider: p, owner: owner, claim: claimReq, credentials: credentials, environment: env}
+	credentials.renewClaim = handle.Renew
+	return handle, nil
 }
 
 // ValidatePlacement performs side-effect-free profile preflight.
@@ -815,18 +861,45 @@ func mapPlacementError(err error) error {
 }
 
 type grantContext struct {
-	mu        sync.Mutex
-	client    *Client
-	context   executionenv.RequestContext
-	expiresAt time.Time
+	mu         sync.Mutex
+	client     *Client
+	context    executionenv.RequestContext
+	expiresAt  time.Time
+	renewClaim func(context.Context) error
 }
 
-func (g *grantContext) current(ctx context.Context) (executionenv.RequestContext, error) {
-	return g.renew(ctx, false)
+func (g *grantContext) current(_ context.Context) (executionenv.RequestContext, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.context.Grant == "" || !time.Now().Before(g.expiresAt) {
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "run grant unavailable", Retryable: true}
+	}
+	return g.context, nil
 }
 
 func (g *grantContext) refresh(ctx context.Context) (executionenv.RequestContext, error) {
-	return g.renew(ctx, true)
+	g.mu.Lock()
+	before := g.context.Grant
+	if before == "" || !time.Now().Before(g.expiresAt) {
+		g.mu.Unlock()
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "active run grant expired; retry the run", Retryable: true}
+	}
+	renew := g.renewClaim
+	g.mu.Unlock()
+	g.mu.Lock()
+	if g.context.Grant != before && time.Now().Before(g.expiresAt) {
+		out := g.context
+		g.mu.Unlock()
+		return out, nil
+	}
+	g.mu.Unlock()
+	if renew == nil {
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "active run grant cannot be refreshed", Retryable: true}
+	}
+	if err := renew(ctx); err != nil {
+		return executionenv.RequestContext{}, err
+	}
+	return g.current(ctx)
 }
 
 func (g *grantContext) replace(claim executionenv.RunClaim) {
@@ -834,15 +907,6 @@ func (g *grantContext) replace(claim executionenv.RunClaim) {
 	defer g.mu.Unlock()
 	g.context.RunID, g.context.ClaimID, g.context.Epoch, g.context.GrantGeneration, g.context.Grant = claim.RunID, claim.ClaimID, claim.Epoch, claim.GrantGeneration, claim.Grant
 	g.expiresAt = claim.ExpiresAt
-}
-
-func (g *grantContext) renew(_ context.Context, _ bool) (executionenv.RequestContext, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.context.Grant == "" || !time.Now().Before(g.expiresAt) {
-		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "run grant unavailable"}
-	}
-	return g.context, nil
 }
 
 // workspace is bound to one provider-issued environment grant.

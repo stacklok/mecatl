@@ -116,18 +116,64 @@ chart does not generate keys or certificates. The manifest is strict JSON with
 this shape:
 
 ```json
-{"version":1,"generation":7,"issuer":"https://issuer.example","audience":"mecatl-execution","activeKeyID":"grant-2026-09","grantTTL":"1m","clockSkew":"5s","keys":[{"id":"grant-2026-09","version":7,"file":"grant-2026-09.pem","publicKeySHA256":"<hex SHA-256 of Ed25519 public key>","activateAt":"2026-09-17T00:00:00Z","verifyUntil":"2026-09-17T01:00:00Z","state":"active"}],"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key","clientCAFile":"client-ca.pem"},"clients":[{"uri":"spiffe://example/mecatl","mayAttestOwner":true,"administrator":false}]}
+{
+  "version": 1,
+  "generation": 42,
+  "issuer": "https://execution.example.com",
+  "audience": "mecatl-execution",
+  "activeKeyID": "k1",
+  "grantTTL": "1m",
+  "clockSkew": "5s",
+  "keys": [
+    {
+      "id": "k1",
+      "version": 1,
+      "file": "grant-k1.pem",
+      "publicKeySHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "activateAt": "2027-01-01T00:00:00Z",
+      "verifyUntil": "2027-01-02T00:00:00Z",
+      "state": "active"
+    }
+  ],
+  "tls": {
+    "certificateFile": "tls.crt",
+    "privateKeyFile": "tls.key",
+    "clientCAFile": "clients.pem"
+  },
+  "clients": [
+    {
+      "uri": "spiffe://cluster.example.com/ns/mecatl/sa/mecak8s",
+      "mayAttestOwner": true,
+      "administrator": false
+    },
+    {
+      "uri": "spiffe://cluster.example.com/ns/mecatl/sa/execution-admin",
+      "mayAttestOwner": false,
+      "administrator": true
+    }
+  ]
+}
 ```
 
-Use only basename file names. Kubernetes projected-volume `..data` symlinks are
-supported, but paths escaping the mounted directory are rejected. Increase
-`generation` for every change. Key IDs and `(id, version)` fingerprints cannot be
+The all-zero fingerprint and 2027 dates are non-secret example values. Replace
+them with the public-key fingerprint and a reviewed active window before use.
+
+Use only basename file names. The projected Secret keys in this example are
+`grant-k1.pem`, `tls.crt`, `tls.key`, and `clients.pem`; an external secret manager
+owns their bytes. Kubernetes projected-volume `..data` symlinks are supported,
+but paths escaping the mounted directory are rejected. Increase `generation` for
+every authority change. Key IDs and `(id, version)` fingerprints cannot be
 reused; the provider persists a bounded high-water ledger in its authority
 ConfigMap. Keep retired keys as `verify-only` until all grants expire, then mark
 them `revoked`. Invalid, incomplete, rolled-back, or newly expired material makes
 readiness fail and denies new RPC authorization until corrected. The provider
 re-verifies the peer certificate and URI policy against the current client CA on
-every RPC, including RPCs on an existing HTTP/2 connection.
+every RPC, including RPCs on an existing HTTP/2 connection. Profile-resource or
+controller-cache startup failures terminate the provider with that bounded reason
+class before it accepts traffic. A failed `/ready` response reports
+`security-authority-or-expiry`. Inspect provider logs and the named RuntimeClass,
+StorageClass, and authority ConfigMap metadata; the endpoint never returns key or
+certificate contents.
 
 `RevokeEnvironment` is an administrator-only, exact-reference CAS. Supply the
 current positive grant generation; success increments it without changing the
