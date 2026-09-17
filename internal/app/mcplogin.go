@@ -119,6 +119,14 @@ func loginMCPAuthorize(cfg mcp.ServerConfig, diag port.Diagnostics, run func(oau
 		server, err := mcp.Connect(ctx, loginCfg, diag)
 		if err != nil {
 			operationDiagnostic = err
+			// mcp.Connect already redacts its returned error (RedactErrorValue),
+			// so logging it here cannot leak a credential-bearing URL. This is
+			// the single choke point every login-connect failure passes through,
+			// regardless of which inner layer (transport, token restore, DCR,
+			// MCP handshake) actually produced it.
+			if diag != nil {
+				diag.Log(ctx, port.LevelWarn, "mcp: login connect failed", "err", err)
+			}
 			if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthUnavailable) || errors.Is(err, mcp.ErrOAuthDCRRecoveryRequired) {
 				operationCategory = ErrMCPLoginAuthorization
 			} else {
