@@ -169,9 +169,13 @@ export type {
   PermissionAskResponder,
   PermissionVerdict,
   Run,
+  RunAuthorizationRequiredOutcome,
+  RunCompletedOutcome,
   RunOptions,
+  RunOutcome,
   RunResult,
 } from "./run.js";
+export { RunAuthorizationRequiredError } from "./run.js";
 export type {
   RunControls,
   RunSteerAcknowledgement,
