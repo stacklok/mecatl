@@ -8,7 +8,7 @@
 **Delivery:** Split. The exported SDK contract, correlation rules, ephemeral presentation value, and terminal-state semantics merit approval before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1467](https://github.com/stacklok/mecatl/issues/1467).
-**Plan PR:** pending creation from this proposed contract
+**Plan PR:** [stacklok/mecatl#1688](https://github.com/stacklok/mecatl/pull/1688)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 An SDK consumer can inspect one owned session's broker connector inventory and drive its
