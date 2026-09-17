@@ -95,8 +95,8 @@ type trustOutcome struct {
 	persisted bool
 }
 
-const trustDisclosure = "Trust enables Git-backed project authority: project soul, agents, commands, skills, ALLOW grants, and read-only child worktree/Git operations over repository-controlled configuration. Project DENY and ASK rules always apply."
-const untrustedDisclosure = "Git-backed project authority stays disabled: project soul, agents, commands, skills, ALLOW grants, and read-only child worktree/Git operations over repository-controlled configuration. Project DENY and ASK rules still apply."
+const trustDisclosure = "Trust enables project-provided instructions, model settings, soul, agents, commands, skills, agent memory, and ALLOW rules. It also enables Git status, worktree features, and Shell access for read-only subagents and team members when available. Project DENY and ASK rules always apply."
+const untrustedDisclosure = "Project-provided instructions, model settings, soul, agents, commands, skills, agent memory, and ALLOW rules stay disabled. Git status, worktree features, and Shell access for read-only subagents and team members also stay disabled. Project DENY and ASK rules still apply."
 
 // resolveTrustForRun runs the pre-TUI trust gate and returns the per-run trust
 // outcome. It NEVER errors out of band and NEVER blocks: a Remember write failure

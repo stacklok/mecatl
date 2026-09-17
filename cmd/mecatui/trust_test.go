@@ -215,7 +215,7 @@ func TestTrustPromptCopyCoversEveryOperatorOutcome(t *testing.T) {
 	}{
 		{"remember", "t\n", false, ttyOn, "workspace trusted and remembered"},
 		{"once", "o\n", false, ttyOn, "this run only (not remembered)"},
-		{"decline", "n\n", false, ttyOn, "project authority stays disabled"},
+		{"decline", "n\n", false, ttyOn, "Project-provided instructions"},
 		{"drift", "n\n", true, ttyOn, "CHANGED since you trusted it"},
 		{"non-tty", "t\n", false, ttyOff, "stdin is not a terminal"},
 	} {
@@ -227,7 +227,20 @@ func TestTrustPromptCopyCoversEveryOperatorOutcome(t *testing.T) {
 			if !strings.Contains(got, tc.want) {
 				t.Fatalf("output missing outcome %q: %q", tc.want, got)
 			}
-			for _, phrase := range []string{"repository-controlled configuration", "soul", "ALLOW grants", "Project DENY and ASK rules"} {
+			for _, phrase := range []string{
+				"project-provided instructions",
+				"model settings",
+				"soul",
+				"agents",
+				"commands",
+				"skills",
+				"agent memory",
+				"ALLOW rules",
+				"Git status",
+				"worktree features",
+				"Shell access for read-only subagents and team members",
+				"Project DENY and ASK rules",
+			} {
 				if !strings.Contains(strings.ToLower(got), strings.ToLower(phrase)) {
 					t.Fatalf("output missing disclosure %q: %q", phrase, got)
 				}

@@ -288,22 +288,24 @@ func TestSoulWheelConsumedWhileOpen(t *testing.T) {
 	}
 }
 
-// TestSoulDriftedLabel asserts a drifted user soul explains that it changed since
-// it was last approved (the soulTrustLabel drift branch is otherwise uncovered).
+// TestSoulDriftedLabel asserts a drifted user or project soul explains that it
+// changed since Mecatl last recorded it.
 func TestSoulDriftedLabel(t *testing.T) {
-	fs := &fakeSoul{soul: client.Soul{
-		Content:    "You are terse.",
-		SizeBytes:  14,
-		Present:    true,
-		Provenance: client.SoulProvenanceUser,
-		Trusted:    true,
-		Drifted:    true,
-	}}
-	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
-	mm, cmd := m.runSoul()
-	m = feedCmd(t, mm.(Model), cmd)
-	if !strings.Contains(stripANSIstr(m.View().Content), "changed since it was last approved") {
-		t.Errorf("a drifted soul should explain that it changed, got:\n%s", stripANSIstr(m.View().Content))
+	for _, provenance := range []client.SoulProvenance{client.SoulProvenanceUser, client.SoulProvenanceProject} {
+		fs := &fakeSoul{soul: client.Soul{
+			Content:    "You are terse.",
+			SizeBytes:  14,
+			Present:    true,
+			Provenance: provenance,
+			Trusted:    true,
+			Drifted:    true,
+		}}
+		m := newSoulModel(t, fs, client.Capabilities{Soul: true})
+		mm, cmd := m.runSoul()
+		m = feedCmd(t, mm.(Model), cmd)
+		if !strings.Contains(stripANSIstr(m.View().Content), "changed since Mecatl last recorded it") {
+			t.Errorf("a drifted %v soul should explain that it changed, got:\n%s", provenance, stripANSIstr(m.View().Content))
+		}
 	}
 }
 
