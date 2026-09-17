@@ -153,6 +153,10 @@ func newMecatuiProgram(ctx context.Context, deps ui.Deps, title *terminalTitleCo
 	return tea.NewProgram(ui.New(deps), tea.WithContext(ctx), tea.WithOutput(title))
 }
 
+func closeTerminalTitle(title *terminalTitleController) error {
+	return title.Close()
+}
+
 func run(argv []string) error {
 	return runWithOptions(argv, runOptions{})
 }
@@ -406,10 +410,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	prog := newMecatuiProgram(ctx, deps, title)
 	finalModel, runErr := prog.Run()
 	interrupted := ctx.Err() != nil
-	if runErr == nil && !interrupted {
-		if err := title.Close(); err != nil {
-			runErr = err
-		}
+	if err := closeTerminalTitle(title); runErr == nil && err != nil {
+		runErr = err
 	}
 
 	runCleanup(forceExit, func() {
