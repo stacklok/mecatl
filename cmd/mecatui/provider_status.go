@@ -304,7 +304,8 @@ func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[st
 	for _, provider := range stockAPIKeyProviders {
 		statuses = append(statuses, builtinAPIKeyStatus(provider, shadowed[provider.id], keys))
 	}
-	return append(statuses, codexProviderStatus(keys))
+	statuses = append(statuses, codexProviderStatus(keys))
+	return applyStoredSubscriptions(keys, statuses)
 }
 
 func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
@@ -317,8 +318,41 @@ func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
 	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: "see manual OpenAI Codex token guidance at https://mecatl.dev/docs/features/choose-models#reuse-a-manual-openai-codex-token; no login, refresh, import, or removal here"}
 }
 
+// applyStoredSubscriptions reports a subscription sign-in as the credential in
+// effect. Without this a signed-in provider renders as "not configured", which
+// is both wrong and the exact state an operator checks status to confirm.
+//
+// An API key still takes precedence, so when both exist the key is named as
+// the credential in use and the sign-in is called out as shadowed.
+func applyStoredSubscriptions(keys cliconfig.ResolvedCredentials, statuses []providerStatus) []providerStatus {
+	stored := storedSubscriptionsFor(context.Background())
+	if len(stored) == 0 {
+		return statuses
+	}
+	for i := range statuses {
+		subscription, ok := stored[statuses[i].Name]
+		if !ok {
+			continue
+		}
+		if shadowedBy := cliconfig.SubscriptionShadowedBy(keys, statuses[i].Name); shadowedBy != "" {
+			statuses[i].Auth += "; subscription sign-in stored but shadowed by " + shadowedBy
+			continue
+		}
+		statuses[i].Configured = true
+		statuses[i].Auth = "subscription sign-in"
+		if subscription.Account != "" {
+			statuses[i].Auth += " (" + subscription.Account + ")"
+		}
+		statuses[i].Next = "ready to use"
+	}
+	return statuses
+}
+
+// storedSubscriptionsFor is a seam so status rendering stays testable without
+// a provisioned credential store.
+var storedSubscriptionsFor = cliconfig.StoredSubscriptions
+
 func builtinAPIKeyStatus(provider stockAPIKeyProvider, shadowed bool, keys cliconfig.ResolvedCredentials) providerStatus {
-	available := provider.credential(keys) != ""
 	return providerStatus{
 		Name: provider.id, Class: providerClassBuiltin, AuthMethod: providerAuthAPIKey,
 		Configured: available, Auth: configuredSource(available, shadowed),
