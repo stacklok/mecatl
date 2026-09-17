@@ -198,8 +198,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		applySecurityCandidate(t, cleanupCtx, kubeconfig, rotationDir, filepath.Join(rotationDir, "restore-fixture-clients.json"), "bridge")
-		waitProviderReadyReplicas(t, cleanupCtx, kubeconfig, 2)
+		restoreFixtureSecurity(t, cleanupCtx, kubeconfig, rotationDir)
 	})
 
 	// A changed policy at the already-authoritative generation is rejected by
@@ -212,7 +211,15 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	applySecurityCandidate(t, ctx, kubeconfig, filepath.Join(state, "pki"), filepath.Join(state, "pki", "manifest.json"), "initial")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
-	waitFileContent(t, ctx, oldClient, oldRun, "rotation-sentinel.txt", "old-authority\n", "valid authority recovery")
+	recovered, err := oldClient.RenewRun(ctx, executionenv.RunClaimRequest{Environment: oldRun.Environment, Owner: owner, BindingID: binding, RunID: oldRun.RunID, ClaimID: oldRun.ClaimID, Epoch: oldRun.Epoch, GrantGeneration: oldRun.GrantGeneration, OperationID: "renew-rotation-recovered-grant", TTL: time.Minute})
+	if isRemoteCode(err, executionenv.CodeConflict) {
+		recovered, err = oldClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-recovered-grant", OperationID: "acquire-rotation-recovered-grant", TTL: time.Minute})
+	}
+	if err != nil {
+		t.Fatalf("establish fresh claim after authority recovery: code=%s", remoteErrorCode(err))
+	}
+	recoveredRun := executionenv.RequestContext{Environment: recovered.Environment, Owner: owner, BindingID: binding, RunID: recovered.RunID, ClaimID: recovered.ClaimID, Epoch: recovered.Epoch, GrantGeneration: recovered.GrantGeneration, Grant: recovered.Grant}
+	waitFileContent(t, ctx, oldClient, recoveredRun, "rotation-sentinel.txt", "old-authority\n", "valid authority recovery")
 
 	// Generation 2 bridges client trust before changing the server certificate.
 	// The old connection remains usable, while a new-CA client can establish its
@@ -230,9 +237,9 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	defer newClient.Close()
 	newAttached := waitReady(t, ctx, newClient, owner, binding, attached.Environment)
-	renewed, err := newClient.RenewRun(ctx, executionenv.RunClaimRequest{Environment: oldRun.Environment, Owner: owner, BindingID: binding, RunID: oldRun.RunID, ClaimID: oldRun.ClaimID, Epoch: oldRun.Epoch, GrantGeneration: oldRun.GrantGeneration, OperationID: "rotation-renew-k2", TTL: time.Minute})
+	renewed, err := newClient.RenewRun(ctx, executionenv.RunClaimRequest{Environment: recoveredRun.Environment, Owner: owner, BindingID: binding, RunID: recoveredRun.RunID, ClaimID: recoveredRun.ClaimID, Epoch: recoveredRun.Epoch, GrantGeneration: recoveredRun.GrantGeneration, OperationID: "rotation-renew-k2", TTL: time.Minute})
 	if err != nil {
-		t.Fatalf("renew old claim under bridge authority: %v", err)
+		t.Fatalf("renew recovered claim under bridge authority: code=%s", remoteErrorCode(err))
 	}
 	newRun := executionenv.RequestContext{Environment: renewed.Environment, Owner: owner, BindingID: binding, RunID: renewed.RunID, ClaimID: renewed.ClaimID, Epoch: renewed.Epoch, GrantGeneration: renewed.GrantGeneration, Grant: renewed.Grant}
 
@@ -244,7 +251,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	if _, err := oldClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
 		t.Fatal("established client signed by the removed CA remained authorized")
 	}
-	if _, err := newClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
+	if _, err := newClient.File(ctx, executionenv.FileRequest{Context: recoveredRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
 		t.Fatal("grant signed by revoked k1 remained authorized through the new client")
 	}
 	if got, err := newClient.File(ctx, executionenv.FileRequest{Context: newRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err != nil || string(got.Data) != "old-authority\n" {
@@ -283,8 +290,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	}
 	// Restore fixture client compatibility through a higher generation; this is
 	// another forward rotation, never a high-water-mark rollback.
-	applySecurityCandidate(t, ctx, kubeconfig, rotationDir, filepath.Join(rotationDir, "restore-fixture-clients.json"), "bridge")
-	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+	restoreFixtureSecurity(t, ctx, kubeconfig, rotationDir)
 }
 
 func waitFileContent(t *testing.T, ctx context.Context, client *executionclient.Client, rc executionenv.RequestContext, path, want, proof string) {
@@ -311,8 +317,13 @@ func applySecurityCandidate(t *testing.T, ctx context.Context, kubeconfig, mater
 		secretArgs = append(secretArgs, "--from-file=tls.crt="+filepath.Join(pki, "provider.crt"), "--from-file=tls.key="+filepath.Join(pki, "provider.key"), "--from-file=clients.pem="+filepath.Join(pki, "ca.crt"))
 	case "bridge":
 		secretArgs = append(secretArgs, "--from-file=grant-k2.pem="+filepath.Join(materialDir, "grant-k2.pem"), "--from-file=tls.crt="+filepath.Join(pki, "provider.crt"), "--from-file=tls.key="+filepath.Join(pki, "provider.key"), "--from-file=clients.pem="+filepath.Join(materialDir, "bridge-clients.pem"))
-	case "final":
-		secretArgs = append(secretArgs, "--from-file=grant-k2.pem="+filepath.Join(materialDir, "grant-k2.pem"), "--from-file=tls.crt="+filepath.Join(materialDir, "provider-new.crt"), "--from-file=tls.key="+filepath.Join(materialDir, "provider-new.key"), "--from-file=clients.pem="+filepath.Join(materialDir, "final-clients.pem"))
+	case "final", "restore":
+		secretArgs = append(secretArgs, "--from-file=grant-k2.pem="+filepath.Join(materialDir, "grant-k2.pem"), "--from-file=tls.crt="+filepath.Join(materialDir, "provider-new.crt"), "--from-file=tls.key="+filepath.Join(materialDir, "provider-new.key"))
+		if mode == "final" {
+			secretArgs = append(secretArgs, "--from-file=clients.pem="+filepath.Join(materialDir, "final-clients.pem"))
+		} else {
+			secretArgs = append(secretArgs, "--from-file=clients.pem="+filepath.Join(materialDir, "bridge-clients.pem"))
+		}
 	default:
 		t.Fatalf("unknown security candidate mode %q", mode)
 	}
@@ -320,6 +331,26 @@ func applySecurityCandidate(t *testing.T, ctx context.Context, kubeconfig, mater
 	applyKubectlInput(t, ctx, kubeconfig, runKubectl(t, ctx, kubeconfig, secretArgs...))
 	config := runKubectl(t, ctx, kubeconfig, "create", "configmap", "mecatl-execution-security-manifest", "-n", namespace, "--from-file=manifest.json="+manifest, "--dry-run=client", "-o", "yaml")
 	applyKubectlInput(t, ctx, kubeconfig, config)
+}
+
+func restoreFixtureSecurity(t *testing.T, ctx context.Context, kubeconfig, rotationDir string) {
+	t.Helper()
+	applySecurityCandidate(t, ctx, kubeconfig, rotationDir, filepath.Join(rotationDir, "restore-fixture-clients.json"), "restore")
+	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
+
+	pki := filepath.Join(os.Getenv("MECATL_EXECUTION_QUAL_STATE"), "pki")
+	roots, err := os.ReadFile(filepath.Join(rotationDir, "client-roots.pem"))
+	if err != nil {
+		t.Fatal("read synthetic provider trust bundle")
+	}
+	if err := os.WriteFile(filepath.Join(pki, "provider-roots.pem"), roots, 0o600); err != nil {
+		t.Fatal("publish synthetic provider trust bundle")
+	}
+	clientSecret := runKubectl(t, ctx, kubeconfig, "create", "secret", "generic", "execution-client-tls", "-n", namespace,
+		"--from-file=ca.crt="+filepath.Join(rotationDir, "client-roots.pem"), "--from-file=tls.crt="+filepath.Join(pki, "mecak8s.crt"), "--from-file=tls.key="+filepath.Join(pki, "mecak8s.key"), "--dry-run=client", "-o", "yaml")
+	applyKubectlInput(t, ctx, kubeconfig, clientSecret)
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
 }
 
 func applyKubectlInput(t *testing.T, ctx context.Context, kubeconfig string, input []byte) {
@@ -411,16 +442,17 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wrong := executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: first.Epoch, ExpectedPodUID: "wrong-pod-uid", ExpectedPVCUID: first.PVCUID, OperationID: "replace-wrong"}
+	current := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
+	stale, wrong, exact := replacementProofRequests(attached.Environment, owner, first, current)
+	if err := client.ReplaceExecutor(ctx, stale); err == nil {
+		t.Fatal("stale-epoch replacement unexpectedly succeeded")
+	}
 	if err := client.ReplaceExecutor(ctx, wrong); err == nil {
 		t.Fatal("wrong Pod UID replacement unexpectedly succeeded")
 	}
 	if got := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID).PodUID; got != first.PodUID {
 		t.Fatal("wrong-UID replacement changed executor")
 	}
-	exact := wrong
-	exact.ExpectedPodUID = first.PodUID
-	exact.OperationID = "replace-exact"
 	if err := client.ReplaceExecutor(ctx, exact); err != nil {
 		t.Fatalf("replace exact executor: %v", err)
 	}
@@ -508,6 +540,15 @@ type executionStatus struct {
 	ReadyReason                        string
 }
 
+func replacementProofRequests(ref executionenv.EnvironmentRef, owner executionenv.Owner, staleStatus, current executionStatus) (executionenv.RetireEnvironmentRequest, executionenv.RetireEnvironmentRequest, executionenv.RetireEnvironmentRequest) {
+	stale := executionenv.RetireEnvironmentRequest{Environment: ref, Owner: owner, ExpectedEpoch: staleStatus.Epoch, ExpectedPodUID: staleStatus.PodUID, ExpectedPVCUID: staleStatus.PVCUID, OperationID: "replace-stale-epoch"}
+	wrong := executionenv.RetireEnvironmentRequest{Environment: ref, Owner: owner, ExpectedEpoch: current.Epoch, ExpectedPodUID: "wrong-pod-uid", ExpectedPVCUID: current.PVCUID, OperationID: "replace-wrong"}
+	exact := wrong
+	exact.ExpectedPodUID = current.PodUID
+	exact.OperationID = "replace-exact"
+	return stale, wrong, exact
+}
+
 func readExecutionStatus(t *testing.T, ctx context.Context, kubeconfig, name string) executionStatus {
 	t.Helper()
 	var object map[string]any
@@ -570,6 +611,28 @@ func waitExecutionStatus(t *testing.T, ctx context.Context, kubeconfig, name str
 	return executionStatus{}
 }
 
+func waitActiveOperationOrCommandError(t *testing.T, ctx context.Context, kubeconfig, name string, commandDone <-chan error) {
+	t.Helper()
+	deadline := time.NewTimer(4 * time.Minute)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-commandDone:
+			t.Fatalf("command ended before active-operation publication: code=%s", remoteErrorCode(err))
+		case <-ticker.C:
+			if readExecutionStatus(t, ctx, kubeconfig, name).ActiveOperationID != "" {
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("active-operation publication timed out while command remained in flight")
+		case <-ctx.Done():
+			t.Fatal("active-operation publication context ended")
+		}
+	}
+}
+
 func waitResourceAbsent(t *testing.T, ctx context.Context, kubeconfig, resource, name string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Minute)
@@ -616,7 +679,7 @@ func TestKindExecutionProductionHolderLossFencesActiveOperation(t *testing.T) {
 		_, commandErr := holderClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: `nohup sh -c 'sleep 45; kill 1' >/dev/null 2>&1 & i=0; trap '' HUP TERM; while [ $i -lt 90 ]; do i=$((i+1)); printf '%s\n' "$i" > holder-loss-nonce; sleep 1; done`, TimeoutMillis: 110000})
 		commandDone <- commandErr
 	}()
-	waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool { return s.ActiveOperationID != "" })
+	waitActiveOperationOrCommandError(t, ctx, kubeconfig, attached.Environment.ID, commandDone)
 	runKubectl(t, ctx, kubeconfig, "delete", "pod/"+holderPod, "-n", namespace, "--wait=true", "--timeout=90s")
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=180s")
 

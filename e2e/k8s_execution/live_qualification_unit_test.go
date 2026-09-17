@@ -8,7 +8,25 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
+
+func TestReplacementProofRequestsUsePostClaimEpochForPositiveRequest(t *testing.T) {
+	ref := executionenv.EnvironmentRef{ID: "fixture", Revision: "revision"}
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
+	staleStatus := executionStatus{Epoch: 4, PodUID: "pod", PVCUID: "pvc"}
+	current := executionStatus{Epoch: 6, PodUID: "pod", PVCUID: "pvc"}
+	stale, wrong, exact := replacementProofRequests(ref, owner, staleStatus, current)
+	if stale.ExpectedEpoch != staleStatus.Epoch || stale.ExpectedPodUID != staleStatus.PodUID {
+		t.Fatal("stale negative request did not preserve the pre-claim authority")
+	}
+	if wrong.ExpectedEpoch != current.Epoch || wrong.ExpectedPodUID == current.PodUID {
+		t.Fatal("wrong-UID negative request did not use current authority")
+	}
+	if exact.ExpectedEpoch != current.Epoch || exact.ExpectedPodUID != current.PodUID || exact.ExpectedPVCUID != current.PVCUID {
+		t.Fatal("positive exact request did not use post-release authoritative state")
+	}
+}
 
 func TestModelRanExactShellRequiresDecodedCommandAndMatchingCallID(t *testing.T) {
 	call := func(id, args string) *mecatlv1.Event {

@@ -144,11 +144,8 @@ func TestKindExecutionQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMockJourney(t, body)
-	lookup, err := providerClient.Ensure(ctx, sessionID, "go", owner, "independent-lookup-"+sessionID)
-	if err != nil {
-		t.Fatalf("resolve harness environment: %v", err)
-	}
-	attached := waitReady(t, ctx, providerClient, owner, sessionID, lookup.Environment)
+	lookup := environmentForBinding(t, ctx, kubeconfig, sessionID)
+	attached := waitReady(t, ctx, providerClient, owner, sessionID, lookup)
 	rc, releaseVerification := acquireRun(t, ctx, providerClient, owner, sessionID, attached, fmt.Sprintf("independent-verify-%d", time.Now().UnixNano()))
 	proof, err := providerClient.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "proof.txt"})
 	if err != nil || string(proof.Data) != "beta\n" {
@@ -322,9 +319,26 @@ func isRemoteCode(err error, code executionenv.ErrorCode) bool {
 	return errors.As(err, &remote) && remote.Code == code
 }
 
+func remoteErrorCode(err error) string {
+	if err == nil {
+		return "none"
+	}
+	var remote *executionenv.Error
+	if errors.As(err, &remote) && remote.Code.Valid() {
+		return string(remote.Code)
+	}
+	return "transport"
+}
+
 func loadTLS(t *testing.T, dir, name, serverName string) *tls.Config {
 	t.Helper()
-	cfg, err := executionclient.LoadTLSConfig(executionclient.TLSFiles{CA: filepath.Join(dir, "ca.crt"), Cert: filepath.Join(dir, name+".crt"), Key: filepath.Join(dir, name+".key")})
+	ca := filepath.Join(dir, "provider-roots.pem")
+	if _, err := os.Stat(ca); errors.Is(err, os.ErrNotExist) {
+		ca = filepath.Join(dir, "ca.crt")
+	} else if err != nil {
+		t.Fatal("inspect synthetic provider trust bundle")
+	}
+	cfg, err := executionclient.LoadTLSConfig(executionclient.TLSFiles{CA: ca, Cert: filepath.Join(dir, name+".crt"), Key: filepath.Join(dir, name+".key")})
 	if err != nil {
 		t.Fatal(err)
 	}

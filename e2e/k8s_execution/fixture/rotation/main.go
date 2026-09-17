@@ -25,7 +25,10 @@ func main() {
 	if len(os.Args) != 3 {
 		panic("usage: rotation INITIAL_PKI OUTPUT_DIRECTORY")
 	}
-	initial, out := os.Args[1], os.Args[2]
+	generate(os.Args[1], os.Args[2])
+}
+
+func generate(initial, out string) {
 	must(os.MkdirAll(out, 0o700))
 	now := time.Now().UTC()
 	oldCA := read(filepath.Join(initial, "ca.crt"))
