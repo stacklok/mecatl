@@ -16,11 +16,18 @@ import {
   type MecatlError,
   SESSION_ID_HEADER_NAME,
   ServerError,
+  type Session,
   TransportError,
   WorkspaceEnrollmentStatus,
 } from "../src/index.js";
 
 const sessionId = "workspace-transport-session";
+const workspaceTargetMethods = new Set([
+  "ListSessionMcpConnectors",
+  "ConnectWorkspaceServices",
+  "RetryWorkspaceEnrollment",
+  "CancelWorkspaceEnrollment",
+]);
 
 interface RecordedCall {
   readonly header: Headers;
@@ -32,54 +39,58 @@ interface RecordedCall {
 
 class RecordingTransport implements Transport {
   readonly calls: RecordedCall[] = [];
+  readonly rejectedTargetCalls: string[] = [];
+  rejectTargets = false;
   readonly #delegate: Transport;
 
-  constructor() {
-    this.#delegate = createRouterTransport((router) => {
-      router.service(HarnessService, {
-        cancelWorkspaceEnrollment: (request, context) => {
-          context.responseHeader.set("x-response", "cancel-header");
-          context.responseTrailer.set("x-response", "cancel-trailer");
-          return {
-            enrollmentId: request.enrollmentId,
-            requiredServices: 2,
-            status: "cancelled",
-          };
-        },
-        connectWorkspaceServices: (_request, context) => {
-          context.responseHeader.set("x-response", "connect-header");
-          context.responseTrailer.set("x-response", "connect-trailer");
-          return {
-            enrollmentId: "enrollment-1",
-            presentationUrl: "https://example.com/authorize",
-            requiredServices: 2,
-            status: "pending",
-          };
-        },
-        getCompatibilityInfo: () => ({ apiMajor: 1 }),
-        getSession: (request) => ({ session: { sessionId: request.sessionId } }),
-        listSessionMcpConnectors: (_request, context) => {
-          context.responseHeader.set("x-response", "list-header");
-          context.responseTrailer.set("x-response", "list-trailer");
-          return {
-            availability: "available",
-            connectors: [{ catalogueState: "discovered", name: "calendar", toolCount: 3 }],
-            enrollmentState: "pending",
-            totalConnectors: 1,
-          };
-        },
-        retryWorkspaceEnrollment: (_request, context) => {
-          context.responseHeader.set("x-response", "retry-header");
-          context.responseTrailer.set("x-response", "retry-trailer");
-          return {
-            enrollmentId: "enrollment-2",
-            presentationUrl: "http://127.0.0.1/authorize",
-            requiredServices: 2,
-            status: "pending",
-          };
-        },
+  constructor(delegate?: Transport) {
+    this.#delegate =
+      delegate ??
+      createRouterTransport((router) => {
+        router.service(HarnessService, {
+          cancelWorkspaceEnrollment: (request, context) => {
+            context.responseHeader.set("x-response", "cancel-header");
+            context.responseTrailer.set("x-response", "cancel-trailer");
+            return {
+              enrollmentId: request.enrollmentId,
+              requiredServices: 2,
+              status: "cancelled",
+            };
+          },
+          connectWorkspaceServices: (_request, context) => {
+            context.responseHeader.set("x-response", "connect-header");
+            context.responseTrailer.set("x-response", "connect-trailer");
+            return {
+              enrollmentId: "enrollment-1",
+              presentationUrl: "https://example.com/authorize",
+              requiredServices: 2,
+              status: "pending",
+            };
+          },
+          getCompatibilityInfo: () => ({ apiMajor: 1 }),
+          getSession: (request) => ({ session: { sessionId: request.sessionId } }),
+          listSessionMcpConnectors: (_request, context) => {
+            context.responseHeader.set("x-response", "list-header");
+            context.responseTrailer.set("x-response", "list-trailer");
+            return {
+              availability: "available",
+              connectors: [{ catalogueState: "discovered", name: "calendar", toolCount: 3 }],
+              enrollmentState: "pending",
+              totalConnectors: 1,
+            };
+          },
+          retryWorkspaceEnrollment: (_request, context) => {
+            context.responseHeader.set("x-response", "retry-header");
+            context.responseTrailer.set("x-response", "retry-trailer");
+            return {
+              enrollmentId: "enrollment-2",
+              presentationUrl: "http://127.0.0.1/authorize",
+              requiredServices: 2,
+              status: "pending",
+            };
+          },
+        });
       });
-    });
   }
 
   async unary<I extends DescMessage, O extends DescMessage>(
@@ -90,6 +101,10 @@ class RecordingTransport implements Transport {
     input: MessageInitShape<I>,
     contextValues?: ContextValues,
   ): Promise<UnaryResponse<I, O>> {
+    if (this.rejectTargets && workspaceTargetMethods.has(method.name)) {
+      this.rejectedTargetCalls.push(method.name);
+      throw new Error(`pre-aborted ${method.name} reached the transport`);
+    }
     this.calls.push({ header: new Headers(header), input, method: method.name, signal, timeoutMs });
     return this.#delegate.unary(method, signal, timeoutMs, header, input, contextValues);
   }
@@ -113,6 +128,68 @@ async function spinUntil(predicate: () => boolean): Promise<void> {
   }
   throw new Error("condition was not reached");
 }
+
+async function drainEventLoop(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+}
+
+it("pre-aborted workspace enrollment requests never reach either transport", async () => {
+  const methods: ReadonlyArray<{
+    readonly invoke: (session: Session, signal: AbortSignal) => Promise<unknown>;
+    readonly name: string;
+  }> = [
+    {
+      invoke: (session, signal) => session.listMcpConnectors({ signal }),
+      name: "listMcpConnectors",
+    },
+    {
+      invoke: (session, signal) => session.connectWorkspaceServices({ signal }),
+      name: "connectWorkspaceServices",
+    },
+    {
+      invoke: (session, signal) => session.retryWorkspaceEnrollment("pending-1", { signal }),
+      name: "retryWorkspaceEnrollment",
+    },
+    {
+      invoke: (session, signal) => session.cancelWorkspaceEnrollment("pending-1", { signal }),
+      name: "cancelWorkspaceEnrollment",
+    },
+  ];
+
+  for (const transportKind of ["grpc", "http"] as const) {
+    const delegate =
+      transportKind === "grpc"
+        ? undefined
+        : createHttpTransport({
+            baseUrl: "http://mecatl.test",
+            fetch: async (input) => {
+              const path = new URL(String(input)).pathname;
+              if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
+              if (path === `/v1/sessions/${sessionId}`)
+                return Response.json({ session_id: sessionId });
+              throw new Error(`unexpected pre-aborted HTTP request ${path}`);
+            },
+          });
+    const transport = new RecordingTransport(delegate);
+    const client = connect({ transport, transportKind });
+    const session = await client.sessions.get(sessionId);
+    transport.rejectTargets = true;
+
+    for (const { invoke, name } of methods) {
+      const controller = new AbortController();
+      controller.abort(new Error(`pre-aborted ${name}`));
+      await expect(invoke(session, controller.signal)).rejects.toMatchObject({
+        transport: transportKind,
+      });
+    }
+    await drainEventLoop();
+
+    expect(transport.rejectedTargetCalls).toEqual([]);
+    expect(transport.calls.filter(({ method }) => workspaceTargetMethods.has(method))).toEqual([]);
+    await client.close();
+  }
+});
 
 it("workspace enrollment has equivalent grpc and http request semantics", async () => {
   const grpcTransport = new RecordingTransport();
@@ -351,14 +428,28 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
     ["internal", Code.Internal, ServerError],
   ] as const) {
     const requestId = `grpc-${code}`;
+    const calls: string[] = [];
     const client = connect({
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
+          cancelWorkspaceEnrollment: () => {
+            calls.push("cancel");
+            return {};
+          },
           connectWorkspaceServices: () => {
+            calls.push(`connect:${code}`);
             throw statusError(code, status, requestId);
           },
           getCompatibilityInfo: () => ({ apiMajor: 1 }),
           getSession: (request) => ({ session: { sessionId: request.sessionId } }),
+          listSessionMcpConnectors: () => {
+            calls.push("inventory");
+            return {};
+          },
+          retryWorkspaceEnrollment: () => {
+            calls.push("retry");
+            return {};
+          },
         });
       }),
     });
@@ -373,6 +464,8 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
     expect(error).toMatchObject({ requestId, transport: "grpc" });
     if (error === undefined) throw new Error("expected workspace enrollment error");
     if (expected === ServerError) expect(error.code).toBe(code);
+    await drainEventLoop();
+    expect(calls).toEqual([`connect:${code}`]);
     await client.close();
   }
 
@@ -384,12 +477,14 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
     ["internal", 500, ServerError],
   ] as const) {
     const requestId = `http-${code}`;
+    const calls: string[] = [];
     const client = connect({
       baseUrl: "http://mecatl.test",
       fetch: async (input) => {
         const path = new URL(String(input)).pathname;
         if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
         if (path === `/v1/sessions/${sessionId}`) return Response.json({ session_id: sessionId });
+        calls.push(path);
         return Response.json(
           { code, detail: "rejected", request_id: requestId },
           { headers: { "content-type": "application/problem+json" }, status },
@@ -407,20 +502,26 @@ it("workspace enrollment cancellation and failures stay typed", async () => {
     expect(error).toMatchObject({ requestId, transport: "http" });
     if (error === undefined) throw new Error("expected workspace enrollment error");
     if (expected === ServerError) expect(error.code).toBe(code);
+    await drainEventLoop();
+    expect(calls).toEqual([`/v1/sessions/${sessionId}/workspace-enrollment/connect`]);
     await client.close();
   }
 
+  const offlineCalls: string[] = [];
   const offline = connect({
     baseUrl: "http://mecatl.test",
     fetch: async (input) => {
       const path = new URL(String(input)).pathname;
       if (path === "/v1/compatibility") return Response.json({ api_major: 1 });
       if (path === `/v1/sessions/${sessionId}`) return Response.json({ session_id: sessionId });
+      offlineCalls.push(path);
       throw new Error("offline");
     },
   });
   const offlineSession = await offline.sessions.get(sessionId);
   await expect(offlineSession.connectWorkspaceServices()).rejects.toBeInstanceOf(TransportError);
+  await drainEventLoop();
+  expect(offlineCalls).toEqual([`/v1/sessions/${sessionId}/workspace-enrollment/connect`]);
   await offline.close();
 });
 
@@ -440,6 +541,10 @@ it("workspace enrollment lost acknowledgements do not trigger follow-up work", a
         },
         getCompatibilityInfo: () => ({ apiMajor: 1 }),
         getSession: (request) => ({ session: { sessionId: request.sessionId } }),
+        listSessionMcpConnectors: () => {
+          calls.push("inventory");
+          return {};
+        },
         retryWorkspaceEnrollment: (request) => {
           calls.push(`retry:${request.enrollmentId}`);
           if (!recovered) {
@@ -459,7 +564,7 @@ it("workspace enrollment lost acknowledgements do not trigger follow-up work", a
   const session = await client.sessions.get(sessionId);
 
   await expect(session.connectWorkspaceServices()).rejects.toBeInstanceOf(TransportError);
-  await Promise.resolve();
+  await drainEventLoop();
   expect(calls).toEqual(["connect:pending-1"]);
 
   await expect(session.retryWorkspaceEnrollment("pending-1")).resolves.toEqual({
@@ -468,6 +573,7 @@ it("workspace enrollment lost acknowledgements do not trigger follow-up work", a
     requiredServices: 2,
     status: WorkspaceEnrollmentStatus.Pending,
   });
+  await drainEventLoop();
   expect(calls).toEqual(["connect:pending-1", "retry:pending-1"]);
 
   await expect(session.retryWorkspaceEnrollment("pending-2")).rejects.toBeInstanceOf(
@@ -476,7 +582,7 @@ it("workspace enrollment lost acknowledgements do not trigger follow-up work", a
   await expect(session.cancelWorkspaceEnrollment("pending-2")).rejects.toBeInstanceOf(
     TransportError,
   );
-  await Promise.resolve();
+  await drainEventLoop();
   expect(calls).toEqual([
     "connect:pending-1",
     "retry:pending-1",

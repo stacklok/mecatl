@@ -12,11 +12,17 @@ Use a session's MCP connector inventory to decide whether your application
 should offer workspace enrollment. Your application controls when to observe,
 retry, or cancel enrollment and how to present an authorization URL.
 
+## Prerequisites
+
+Before you begin, connect an authenticated Mecatl `Client` and obtain a bound
+`Session` that the same principal owns. Keep the client and session open while
+your application completes the enrollment workflow.
+
 ## Check deployment capabilities
 
 Read the server's compatibility descriptor before offering the workflow:
 
-```ts
+```ts title="Check workspace enrollment support"
 const compatibility = await client.server.compatibility();
 
 const canInspectConnectors =
@@ -33,7 +39,7 @@ request. A deployment or session can change after capability discovery.
 
 Call `listMcpConnectors()` on the session that owns the workspace:
 
-```ts
+```ts title="Inspect connector inventory"
 import {
   McpConnectorAvailability,
   McpConnectorEnrollmentState,
@@ -72,7 +78,7 @@ not make that claim.
 
 Call `connectWorkspaceServices()` once in response to an application action:
 
-```ts
+```ts title="Start or observe enrollment"
 import {
   type Session,
   WorkspaceEnrollmentStatus,
@@ -99,6 +105,12 @@ The SDK does not open a browser or schedule another observation. Your
 application decides how to present the URL and when to call
 `connectWorkspaceServices()` again to observe progress.
 
+After the authorization flow finishes, have your application make its next
+explicitly scheduled `connectWorkspaceServices()` call. Verify that the returned
+status is `WorkspaceEnrollmentStatus.Connected`. If the status remains
+`WorkspaceEnrollmentStatus.Pending`, use your application's policy to decide
+whether and when to observe again. The SDK never repeats the call for you.
+
 Control results use this separate state vocabulary:
 
 | Status                                      | Interpretation                                                                             |
@@ -118,7 +130,7 @@ Keep the `enrollmentId` while your application owns a pending workflow. If the
 application loses a presentation URL but retains that ID, explicitly replace
 the pending enrollment:
 
-```ts
+```ts title="Retry a pending enrollment"
 const replacement = await session.retryWorkspaceEnrollment(enrollmentId);
 const replacementPresentationUrl =
   replacement.status === WorkspaceEnrollmentStatus.Pending
@@ -132,7 +144,7 @@ so your presentation function should accept `string | undefined`.
 
 Cancel an exact pending correlation when the application abandons the flow:
 
-```ts
+```ts title="Cancel a pending enrollment"
 const result = await session.cancelWorkspaceEnrollment(enrollmentId);
 ```
 

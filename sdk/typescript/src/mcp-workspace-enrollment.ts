@@ -140,9 +140,15 @@ function workspaceEnrollmentStatus(value: string): WorkspaceEnrollmentStatus {
 
 function validPresentationUrl(value: string): boolean {
   if (value.trim() !== value) return false;
+  if (value.includes("\\")) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) return false;
+  }
+  if (!/^https?:\/\/[^/?#]/u.test(value)) return false;
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.host !== "";
   } catch {
     return false;
   }

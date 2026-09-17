@@ -1,7 +1,11 @@
+import { create } from "@bufbuild/protobuf";
 import { createRouterTransport } from "@connectrpc/connect";
 import { expect, it } from "vitest";
 import { connectTransport } from "../src/client.js";
-import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
+import {
+  HarnessService,
+  ListSessionMcpConnectorsResponseSchema,
+} from "../src/gen/mecatl/v1/harness_pb.js";
 import {
   connect,
   McpConnectorAvailability,
@@ -11,6 +15,7 @@ import {
   type Session,
   WorkspaceEnrollmentStatus,
 } from "../src/index.js";
+import { projectMcpConnectorInventory } from "../src/mcp-workspace-enrollment.js";
 
 it("session MCP connector inventory projects every typed protocol state", async () => {
   const sessionId = "inventory-session";
@@ -105,6 +110,43 @@ it("session MCP connector inventory projects every typed protocol state", async 
   ]);
   expect(targetCalls).toEqual(Array.from({ length: responses.length }, () => "inventory"));
   await client.close();
+});
+
+it("session MCP connector inventory projection is detached from its protobuf source", () => {
+  const response = create(ListSessionMcpConnectorsResponseSchema, {
+    availability: "available",
+    connectors: [{ catalogueState: "discovered", name: "calendar", toolCount: 3 }],
+    enrollmentState: "completed",
+    totalConnectors: 1,
+    truncated: false,
+  });
+
+  const inventory = projectMcpConnectorInventory(response);
+  response.availability = "unavailable";
+  response.enrollmentState = "not_started";
+  response.totalConnectors = 2;
+  response.truncated = true;
+  const connector = response.connectors[0];
+  if (connector === undefined) throw new Error("expected seeded connector");
+  connector.catalogueState = "hidden";
+  connector.name = "mutated";
+  connector.toolCount = 0;
+  response.connectors.push({
+    $typeName: "mecatl.v1.McpConnectorStatus",
+    catalogueState: "declared",
+    name: "added",
+    toolCount: 1,
+  });
+
+  expect(inventory).toEqual({
+    availability: McpConnectorAvailability.Available,
+    connectors: [
+      { catalogueState: McpConnectorCatalogueState.Discovered, name: "calendar", toolCount: 3 },
+    ],
+    enrollmentState: McpConnectorEnrollmentState.Completed,
+    totalConnectors: 1,
+    truncated: false,
+  });
 });
 
 it("workspace enrollment methods preserve correlation and state transitions", async () => {
@@ -242,6 +284,30 @@ it("workspace enrollment methods preserve correlation and state transitions", as
     {
       enrollmentId: "wrong-scheme",
       presentationUrl: "file:///secret/path",
+      requiredServices: 1,
+      status: "pending",
+    },
+    {
+      enrollmentId: "backslash-authority",
+      presentationUrl: String.raw`https:\\evil.example/path`,
+      requiredServices: 1,
+      status: "pending",
+    },
+    {
+      enrollmentId: "embedded-newline",
+      presentationUrl: "https://example.com/authorize\nevil",
+      requiredServices: 1,
+      status: "pending",
+    },
+    {
+      enrollmentId: "embedded-control",
+      presentationUrl: "https://example.com/authorize\u0001evil",
+      requiredServices: 1,
+      status: "pending",
+    },
+    {
+      enrollmentId: "embedded-delete",
+      presentationUrl: "https://example.com/authorize\u007fevil",
       requiredServices: 1,
       status: "pending",
     },
