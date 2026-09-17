@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-02
 - Scope: `sdk/typescript/src/` — the `WatchSessionEvents` envelope union, `SessionActivity` / `AttachedRun`, `session.attach()` / `session.activity()`, cursor encoding and checkpointing, the reconnect authority, the attachment error vocabulary, and the connection-status monitor. Client-side only.
-- Superseded by: [ADR 0346](./0346-run-id-addressed-prompt-free-controls.md) (Decision 6 only)
+- Superseded by: [ADR 0347](./0347-run-id-addressed-prompt-free-controls.md) (Decision 6 only)
 
 ## Context
 

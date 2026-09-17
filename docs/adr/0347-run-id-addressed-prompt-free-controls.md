@@ -1,4 +1,4 @@
-# ADR 0346 — Run-ID-addressed prompt-free controls
+# ADR 0347 — Run-ID-addressed prompt-free controls
 
 - Status: Proposed
 - Date: 2026-09-16

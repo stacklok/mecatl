@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — this adds durable public protobuf, HTTP, generated Go, and TypeScript SDK contracts for mutating an explicitly addressed run without owning its event stream.
-**Decision record:** [ADR 0346](../adr/0346-run-id-addressed-prompt-free-controls.md)
+**Decision record:** [ADR 0347](../adr/0347-run-id-addressed-prompt-free-controls.md)
 **Phase:** ergonomic detached run controls
 **Status:** proposed, 2026-09-16. The user approved the strict run binding and public SDK shape; ready for Plan / Interface review.
 **Delivery:** Split. The new wire methods, bounded rehydration behavior, stale-run rule, and exported SDK resource need human review before implementation changes public contracts.
@@ -163,7 +163,7 @@ Run identity follows [ADR 0249](../adr/0249-durable-run-identity.md), while perm
 - AC3.3: `cancel` signals only the exact current run and validates the echoed run ID before resolving `void`; its terminal `cancelled` result remains observable only through an owned stream or durable watch.
   - verify: vitest:sdk/typescript/test/run-controls.test.ts#Y2FuY2VsIHZhbGlkYXRlcyBleGFjdCBydW4gYWNrbm93bGVkZ2VtZW50IGJlZm9yZSByZXNvbHZpbmc — `sdk/typescript/test/run-controls.test.ts :: "cancel validates exact run acknowledgement before resolving"`
 - AC3.4: Every operation follows the normative service matrix. An ended, cancelling, cancelled, or replacement target is `stale_run_control`; only exact ask resolution may rehydrate a matching persisted awaiting run, while cancel returns `no_active_run` and steer/retraction are stale in that row. Delayed controls never land on a newer run, and stale details reveal no replacement run ID.
-  - verify: `TestADR_0346_StaleControlCannotMutateSuccessor`
+  - verify: `TestADR_0347_StaleControlCannotMutateSuccessor`
 - AC3.5: Missing/mismatched acknowledgement IDs, absent response fields, wrong response JSON types, and malformed enum values raise `ProtocolError` and never appear as successful controls. HTTP validation consults raw JSON so an omitted empty `message_id` is distinguishable from a present empty string; unrelated unknown response fields remain compatible.
   - verify: vitest:sdk/typescript/test/run-controls.test.ts#cmVzb2x2ZSBhbmQgY2FuY2VsIHJlamVjdCBtYWxmb3JtZWQgYWNrbm93bGVkZ2VtZW50cw — `sdk/typescript/test/run-controls.test.ts :: "resolve and cancel reject malformed acknowledgements"`
 
@@ -177,7 +177,7 @@ Steering reuses the existing [multimodal content contract](../adr/0251-multimoda
 - AC4.2: A caller-supplied `messageId` is transmitted verbatim; omission transmits empty correlation rather than inventing one. A valid steer returns only `{ outcome: "accepted"|"appended", runId, messageId }` after exact response-correlation validation.
   - verify: vitest:sdk/typescript/test/run-controls.test.ts#c3RlZXIgcHJlc2VydmVzIG9wdGlvbmFsIG1lc3NhZ2UgY29ycmVsYXRpb24gYW5kIG5hcnJvd3Mgb3V0Y29tZXM — `sdk/typescript/test/run-controls.test.ts :: "steer preserves optional message correlation and narrows outcomes"`
 - AC4.3: A steer that loses the terminal race or names an absent/replacement run returns typed `stale_run_control`, does not return `too_late`, and never promotes or starts a successor run.
-  - verify: `TestADR_0346_StrictSteerNeverPromotes`
+  - verify: `TestADR_0347_StrictSteerNeverPromotes`
 - AC4.4: `cancelSteer` returns only `{ outcome: "retracted"|"none_pending", runId, messageId }`; it crosses the captured generation, non-cancelling, exact-run, and live-lease gates under the service lock before atomically retracting the complete pending bundle. It remains idempotent when the exact live run has no pending bundle and cannot retract already-drained history.
   - verify: vitest:sdk/typescript/test/run-controls.test.ts#Y2FuY2VsU3RlZXIgcmV0dXJucyBuYXJyb3dlZCBjb3JyZWxhdGVkIGFja25vd2xlZGdlbWVudHM — `sdk/typescript/test/run-controls.test.ts :: "cancelSteer returns narrowed correlated acknowledgements"`
 - AC4.5: Concurrent drain, cancellation, registry replacement, generation invalidation, and lease loss linearize before or after retraction: success reflects the winning exact-live transition, and every losing arm returns its registered error without touching a successor or an unowned inbox.
