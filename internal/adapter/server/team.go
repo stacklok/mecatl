@@ -443,7 +443,9 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 		agent.WithTeamOwner(ts.owner),
 		agent.WithTeamReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
 	}
-	if s.cfg.RootAuthority != nil {
+	if s.cfg.RootAuthorityForOperation != nil {
+		opts = append(opts, agent.WithRootAuthority(s.cfg.RootAuthorityForOperation(ctx, session.SessionKindTeamMember)))
+	} else if s.cfg.RootAuthority != nil {
 		opts = append(opts, agent.WithRootAuthority(s.cfg.RootAuthority(session.SessionKindTeamMember)))
 	}
 	if s.cfg.TeamGoalUntrusted {

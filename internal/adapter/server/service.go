@@ -356,6 +356,9 @@ type Config struct {
 	// this callback with its assembled catalog. Carryover forks copy their source
 	// authority instead of invoking it.
 	RootAuthority func(session.SessionKind) session.Authority
+	// RootAuthorityForOperation mints authority from the runtime pinned in ctx for
+	// direct operations that build roots after their operation boundary.
+	RootAuthorityForOperation func(context.Context, session.SessionKind) session.Authority
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode

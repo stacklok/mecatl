@@ -2243,6 +2243,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRuntimeRootAuthority(assets.rootCatalog, assets.mcpRuntimes, kind)
 		},
+		RootAuthorityForOperation: func(ctx context.Context, kind session.SessionKind) session.Authority {
+			return mintOperationRootAuthority(ctx, assets.rootCatalog, assets.mcpRuntimes, kind)
+		},
 		SharedEngineRoot: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// ADR 0237 applied to outbound MCP: the same deployment-policy discipline —
 		// decided by the cmd/ main from its listener topology, passed through here,

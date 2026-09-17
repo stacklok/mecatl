@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,13 +321,13 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	}
 	runRuntimes.close()
 
-	// Direct teams retain declarations only until RunTeam. Publication between
-	// CreateTeam and RunTeam must retire the old runtime and build every member and
-	// referenced specialist from the operation pin acquired by RunTeam.
+	// Direct teams retain declarations only until RunTeam. Publication after
+	// RunTeam pins but before member construction must build every member and
+	// referenced specialist, including root authority, from that operation pin.
 	const teamTool = "mcp__svc__echo"
 	teamRuntimes := newMCPRuntimeSet(nil)
 	teamOldManager := connectMainManager(t, "svc", newMCPTestServerPrefixed(t, "team-old:"))
-	teamOld := &mcpReconcileCandidate{manager: teamOldManager, generation: 1, tools: toolMetadata(teamOldManager.Tools())}
+	teamOld := &mcpReconcileCandidate{manager: teamOldManager, generation: 1, tools: append(toolMetadata(teamOldManager.Tools()), mcpToolMeta{Name: "mcp__old__only"})}
 	if !teamRuntimes.publish(nil, teamOld) {
 		t.Fatal("publish direct-team revision 1")
 	}
@@ -350,24 +351,31 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 		Name: "team-ref", Description: "uses the pinned referenced service", Origin: tool.AgentOriginExplicit,
 		MCPServers: []agents.AgentMCPServer{{Name: "svc"}},
 	}})
-	teamAssets := catalogAssets{mcpRuntimes: teamRuntimes, agentReg: teamDefs}
+	teamAssets := catalogAssets{rootCatalog: tool.NewCatalog(), mcpRuntimes: teamRuntimes, agentReg: teamDefs}
 	var teamServerCfg server.Config
 	applyTeamConfig(&teamServerCfg, teamCfg, teamReg, teamProvider, teamOldManager, teamDefs, nil, teamAssets)
 	teamStore := memstore.New()
-	rootNames := []string{teamTool}
-	for name := range agent.MemberToolNames() {
-		rootNames = append(rootNames, name)
-	}
 	teamServerCfg.Engine = initial
 	teamServerCfg.Store = teamStore
 	teamServerCfg.SharedEngineRoot = teamCfg.Workspace
 	teamServerCfg.OperationPin = teamRuntimes.pin
 	teamServerCfg.OperationRevision = mcpRuntimeRevision
-	teamServerCfg.RootAuthority = func(session.SessionKind) session.Authority {
-		return session.Authority{
-			CapabilitySet: governance.CapabilitySet{Tools: rootNames, FileSystem: true},
-			Provenance:    "test", DefinitionIdentity: "test",
+	teamServerCfg.RootAuthority = func(kind session.SessionKind) session.Authority {
+		return mintRuntimeRootAuthority(teamAssets.rootCatalog, teamRuntimes, kind)
+	}
+	teamServerCfg.RootAuthorityForOperation = func(ctx context.Context, kind session.SessionKind) session.Authority {
+		return mintOperationRootAuthority(ctx, teamAssets.rootCatalog, teamRuntimes, kind)
+	}
+	operationFactory := teamServerCfg.MemberEngineForOperation
+	factoryPinned := make(chan struct{})
+	releaseFactory := make(chan struct{})
+	var blockedFactory atomic.Bool
+	teamServerCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory {
+		if blockedFactory.CompareAndSwap(false, true) {
+			close(factoryPinned)
+			<-releaseFactory
 		}
+		return operationFactory(ctx)
 	}
 	teamSvc, err := newTestServerService(teamServerCfg)
 	if err != nil {
@@ -381,22 +389,37 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 		t.Fatal(err)
 	}
 	teamNewManager := connectMainManager(t, "svc", newMCPTestServerPrefixed(t, "team-new:"))
-	teamNew := &mcpReconcileCandidate{manager: teamNewManager, generation: 2, tools: toolMetadata(teamNewManager.Tools())}
+	teamNew := &mcpReconcileCandidate{manager: teamNewManager, generation: 2, tools: append(toolMetadata(teamNewManager.Tools()), mcpToolMeta{Name: "mcp__new__only"})}
+	runDone := make(chan error, 1)
+	go func() {
+		_, runErr := teamSvc.RunTeam(context.Background(), teamID, func(agent.TeamEvent) {})
+		runDone <- runErr
+	}()
+	select {
+	case <-factoryPinned:
+	case <-time.After(time.Second):
+		t.Fatal("direct RunTeam did not pin before member construction")
+	}
 	if !teamRuntimes.publish(teamOld, teamNew) {
 		t.Fatal("publish direct-team revision 2")
 	}
-	if !teamOld.isClosed() {
-		t.Fatal("created-but-unrun direct team retained the retired runtime")
+	if teamOld.isClosed() {
+		t.Fatal("direct-team operation pin did not retain old runtime")
 	}
-	if _, err := teamSvc.RunTeam(context.Background(), teamID, func(agent.TeamEvent) {}); err != nil {
+	close(releaseFactory)
+	if err := <-runDone; err != nil {
 		t.Fatal(err)
 	}
 	member, err := teamStore.Load(context.Background(), agent.MemberSessionID(teamID, "lead"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := latestToolResult(member, "team-call"); !strings.Contains(got, "team-new:work") {
-		t.Fatalf("direct RunTeam member did not use its run-time pin: %q", got)
+	if got := latestToolResult(member, "team-call"); !strings.Contains(got, "team-old:work") {
+		t.Fatalf("direct RunTeam member did not use its pinned runtime: %q", got)
+	}
+	memberAuthority, ok := member.BoundAuthority()
+	if !ok || !memberAuthority.CapabilitySet.Contains(governance.CapabilitySet{Tools: []string{"mcp__old__only"}}) || memberAuthority.CapabilitySet.Contains(governance.CapabilitySet{Tools: []string{"mcp__new__only"}}) {
+		t.Fatalf("direct RunTeam member authority did not use pinned names: %+v", memberAuthority)
 	}
 	newTeamID, _, err := teamSvc.CreateTeamOnDefaultPlacement(context.Background(), "current", "use the current service", 0, []agent.MemberSpec{{
 		Name: "lead", Lead: true, AgentType: "team-ref", InitialPrompt: "call the service once",
@@ -584,6 +607,74 @@ func newRuntimeSurfaceServer(t *testing.T, version string, readStarted chan<- st
 	httpServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
 	t.Cleanup(httpServer.Close)
 	return httpServer.URL
+}
+
+func TestBuiltCloseWaitsForPinnedMCPTransport(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "close-order", Version: "v1"}, nil)
+	remote.AddResource(&mcpsdk.Resource{URI: "test://blocked", Name: "blocked"}, func(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return &mcpsdk.ReadResourceResult{Contents: []*mcpsdk.ResourceContents{{URI: req.Params.URI, Text: "settled"}}}, nil
+	})
+	var transportCloses atomic.Int32
+	sdkHandler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			transportCloses.Add(1)
+		}
+		sdkHandler.ServeHTTP(w, r)
+	}))
+	defer httpServer.Close()
+
+	built, err := buildIsolated(t, context.Background(), Config{
+		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		MCPServers: []mcp.ServerConfig{{Name: "svc", URL: httpServer.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		contents, readErr := built.Service.ReadMcpResource(context.Background(), "svc", "test://blocked")
+		if readErr == nil && contents.Text != "settled" {
+			readErr = fmt.Errorf("contents = %q", contents.Text)
+		}
+		readDone <- readErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("resource read did not reach blocked transport")
+	}
+	closeDone := make(chan struct{})
+	go func() {
+		built.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+		t.Fatal("Built.Close returned before the pinned MCP transport settled")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-readDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Built.Close hung after the pinned transport settled")
+	}
+	built.Close()
+	if got := transportCloses.Load(); got != 1 {
+		t.Fatalf("transport close callbacks = %d, want 1", got)
+	}
 }
 
 func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *testing.T) {

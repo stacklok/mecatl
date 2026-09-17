@@ -399,6 +399,61 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 	})
 
 	t.Run("actual-service-grant-count-and-name-byte-bounds", func(t *testing.T) {
+		t.Run("historical-authority-bound", func(t *testing.T) {
+			makeNames := func(n int) []string {
+				names := make([]string, n)
+				for i := range names {
+					names[i] = fmt.Sprintf("historical_tool_%05d", i)
+				}
+				return names
+			}
+			newHistoricalFixture := func(t *testing.T, initial, active []string) (*server.Service, *refreshStore, session.SessionID) {
+				t.Helper()
+				store := &refreshStore{Store: memstore.New()}
+				eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "test"})
+				svc, err := newPlacementTestService(server.Config{
+					Engine: eng, Store: store, OwnershipEnforced: true,
+					RootAuthority: func(session.SessionKind) session.Authority {
+						return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: append([]string(nil), initial...)}, Provenance: "test"}
+					},
+					MCPRefresh: func(context.Context) (server.MCPRefreshSnapshot, error) {
+						return server.MCPRefreshSnapshot{Revision: 7, ToolNames: append([]string(nil), active...)}, nil
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				sess, err := svc.CreateSession(ownerCtx, session.ModeDefault, session.Limits{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				store.mu.Lock()
+				store.saves = 0
+				store.mu.Unlock()
+				return svc, store, sess.ID
+			}
+
+			atBound := makeNames(16_384)
+			svc, store, id := newHistoricalFixture(t, atBound, atBound[:1])
+			got, err := svc.RefreshMcpSources(ownerCtx, id)
+			if err != nil || got.Changed || store.saveCount() != 0 {
+				t.Fatalf("at bound result=%+v err=%v saves=%d", got, err, store.saveCount())
+			}
+
+			overBound := makeNames(16_385)
+			svc, store, id = newHistoricalFixture(t, overBound, overBound[:1])
+			if _, err := svc.RefreshMcpSources(ownerCtx, id); !errors.Is(err, server.ErrFailedPrecondition) || store.saveCount() != 0 {
+				t.Fatalf("over bound err=%v saves=%d", err, store.saveCount())
+			}
+
+			legacyAbove512 := makeNames(513)
+			svc, store, id = newHistoricalFixture(t, legacyAbove512, []string{"mcp__new__call"})
+			got, err = svc.RefreshMcpSources(ownerCtx, id)
+			if err != nil || !got.Changed || store.saveCount() != 1 {
+				t.Fatalf("valid >512 result=%+v err=%v saves=%d", got, err, store.saveCount())
+			}
+		})
+
 		t.Run("union-count-bound", func(t *testing.T) {
 			names := make([]string, 1_025)
 			for i := range names {

@@ -113,12 +113,13 @@ type mcpSourceReconciler struct {
 	after    func(time.Duration) <-chan time.Time
 	trigger  chan struct{}
 
-	mu      sync.Mutex
-	waiters []chan mcpReconcileReply
-	lkg     map[string]mcpSourceSnapshot
-	current *mcpReconcileCandidate
-	status  serveradapter.MCPSourceStatus
-	closed  bool
+	mu          sync.Mutex
+	waiters     []chan mcpReconcileReply
+	lkg         map[string]mcpSourceSnapshot
+	current     *mcpReconcileCandidate
+	ownsCurrent bool
+	status      serveradapter.MCPSourceStatus
+	closed      bool
 
 	cyclesDone     atomic.Int64
 	nextGen        atomic.Uint64
@@ -308,26 +309,29 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		result.candidate = old
 		return result, nil
 	}
-	r.mu.Lock()
-	r.current = candidate
-	r.mu.Unlock()
 	r.preparingGen.CompareAndSwap(generation, 0)
-	if r.publish != nil && !r.publish(old, candidate) {
-		r.mu.Lock()
-		if r.current == candidate {
-			r.current = old
+	if r.publish != nil {
+		if !r.publish(old, candidate) {
+			candidate.close()
+			result.candidate = old
+			result.stale = true
+			result.diagnostics = appendBoundedDiagnostic(result.diagnostics, "MCP runtime publication is pending integration")
+			return result, nil
 		}
+		r.mu.Lock()
+		r.current = candidate
+		r.ownsCurrent = false
 		r.mu.Unlock()
-		candidate.close()
-		result.candidate = old
-		result.stale = true
-		result.diagnostics = appendBoundedDiagnostic(result.diagnostics, "MCP runtime publication is pending integration")
-		return result, nil
-	}
-	// A publication hook owns displaced-runtime retirement. Without one, preserve
-	// the reconciler's original immediate-close behavior for unit embeddings.
-	if old != nil && r.publish == nil {
-		old.close()
+	} else {
+		r.mu.Lock()
+		r.current = candidate
+		r.ownsCurrent = true
+		r.mu.Unlock()
+		// Without a publication hook, preserve the reconciler's original
+		// immediate-close behavior for unit embeddings.
+		if old != nil {
+			old.close()
+		}
 	}
 	result.candidate = candidate
 	result.changed = true
@@ -401,9 +405,13 @@ func (r *mcpSourceReconciler) Close() {
 		r.wg.Wait()
 		r.mu.Lock()
 		current := r.current
+		owned := r.ownsCurrent
 		r.current = nil
+		r.ownsCurrent = false
 		r.mu.Unlock()
-		current.close()
+		if owned {
+			current.close()
+		}
 	})
 }
 

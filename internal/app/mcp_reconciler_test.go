@@ -41,6 +41,48 @@ func candidateFromConfigs(configs []mcp.ServerConfig, generation uint64) *mcpRec
 	return &mcpReconcileCandidate{configs: cloneMCPConfigs(configs), generation: generation}
 }
 
+func TestMCPSourceReconcilerCloseOwnership(t *testing.T) {
+	t.Run("accepted-publication-transfers-ownership", func(t *testing.T) {
+		runtimes := newMCPRuntimeSet(nil)
+		r := newMCPSourceReconciler(mcpReconcilerOptions{
+			sources: []mcpsource.Source{&reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "live", URL: "http://live/mcp"}}}},
+			build: func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
+				return candidateFromConfigs(configs, 1), nil
+			},
+			publish: runtimes.publish,
+		})
+		result, err := r.Reconcile(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Close()
+		if result.candidate.isClosed() {
+			t.Fatal("reconciler closed runtime-set-owned current candidate")
+		}
+		runtimes.close()
+		if !result.candidate.isClosed() {
+			t.Fatal("runtime set did not close accepted candidate")
+		}
+	})
+
+	t.Run("default-publication-retains-reconciler-ownership", func(t *testing.T) {
+		r := newMCPSourceReconciler(mcpReconcilerOptions{
+			sources: []mcpsource.Source{&reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "live", URL: "http://live/mcp"}}}},
+			build: func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
+				return candidateFromConfigs(configs, 1), nil
+			},
+		})
+		result, err := r.Reconcile(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Close()
+		if !result.candidate.isClosed() {
+			t.Fatal("reconciler leaked its current candidate")
+		}
+	})
+}
+
 func TestMCPSourceReconciliation_Scenario1_OrderedSourcesLKGAndEmpty(t *testing.T) {
 	static := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "same", URL: "http://static/mcp"}}}
 	toolhive := &reconciliationSource{name: "toolhive(default)", cfgs: []mcp.ServerConfig{{Name: "same", URL: "http://toolhive/mcp"}, {Name: "dynamic", URL: "http://dynamic/mcp"}}}
