@@ -73,6 +73,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/rename", h.renameSession},
 		{"POST /v1/sessions/{id}/delete", h.deleteSession},
 		{"POST /v1/sessions/{id}/compact", h.compactSession},
+		{"POST /v1/sessions/{id}/mcp-refresh", h.refreshMcpSources},
 		{"GET /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation", h.mcpAuthorizationPresentation},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck", h.recheckMCPAuthorization},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel", h.cancelMCPAuthorization},
@@ -358,6 +359,7 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 // surfaces cannot drift.
 type serverCapabilitiesJSON struct {
 	MCPConnectorStatus bool                              `json:"mcp_connector_status"`
+	MCPRefresh         bool                              `json:"mcp_refresh"`
 	MCP                bool                              `json:"mcp"`
 	SlashCommands      bool                              `json:"slash_commands"`
 	Memory             bool                              `json:"memory"`
@@ -388,6 +390,7 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 	}
 	return &serverCapabilitiesJSON{
 		MCPConnectorStatus: c.GetMcpConnectorStatus(),
+		MCPRefresh:         c.GetMcpRefresh(),
 		MCP:                c.GetMcp(),
 		SlashCommands:      c.GetSlashCommands(),
 		Memory:             c.GetMemory(),
@@ -1420,6 +1423,26 @@ func (h *HTTPHandler) compactSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.CompactSessionResponse{Compacted: result.Changed})
 }
 
+// refreshMcpSources handles bodyless POST /v1/sessions/{id}/mcp-refresh.
+func (h *HTTPHandler) refreshMcpSources(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 2))
+	if err != nil || len(body) != 0 {
+		writeError(w, http.StatusBadRequest, "request body must be empty")
+		return
+	}
+	result, err := h.svc.RefreshMcpSources(r.Context(), session.SessionID(id))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.RefreshMcpSourcesResponse{Revision: result.Revision, Changed: result.Changed})
+}
+
 // cancelBody is the OPTIONAL JSON body of POST /v1/sessions/{id}/cancel.
 //
 // The endpoint predates it and must keep accepting an empty body, so decoding is
@@ -2122,12 +2145,12 @@ func (h *HTTPHandler) listSessionMcpConnectors(w http.ResponseWriter, r *http.Re
 
 // listMcpSources handles GET /v1/mcp/sources.
 func (h *HTTPHandler) listMcpSources(w http.ResponseWriter, r *http.Request) {
-	infos := h.svc.ListMcpSources(r.Context())
-	out := make([]*mecatlv1.McpSource, 0, len(infos))
-	for _, s := range infos {
+	cached := h.svc.ListMcpSources(r.Context())
+	out := make([]*mecatlv1.McpSource, 0, len(cached.Sources))
+	for _, s := range cached.Sources {
 		out = append(out, toProtoMcpSource(s))
 	}
-	writeJSON(w, http.StatusOK, &mecatlv1.ListMcpSourcesResponse{Sources: out})
+	writeJSON(w, http.StatusOK, &mecatlv1.ListMcpSourcesResponse{Sources: out, Revision: cached.Revision, Stale: cached.Stale, Reconciling: cached.Reconciling})
 }
 
 // listToolHiveGroups handles GET /v1/mcp/toolhive/groups.

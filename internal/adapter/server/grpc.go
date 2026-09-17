@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -1135,12 +1136,24 @@ func (h *HarnessServer) GetCompatibilityInfo(ctx context.Context, _ *mecatlv1.Ge
 
 // ListMcpSources returns the resolved MCP source inventory snapshot.
 func (h *HarnessServer) ListMcpSources(ctx context.Context, _ *mecatlv1.ListMcpSourcesRequest) (*mecatlv1.ListMcpSourcesResponse, error) {
-	infos := h.svc.ListMcpSources(ctx)
-	out := make([]*mecatlv1.McpSource, 0, len(infos))
-	for _, s := range infos {
+	cached := h.svc.ListMcpSources(ctx)
+	out := make([]*mecatlv1.McpSource, 0, len(cached.Sources))
+	for _, s := range cached.Sources {
 		out = append(out, toProtoMcpSource(s))
 	}
-	return &mecatlv1.ListMcpSourcesResponse{Sources: out}, nil
+	return &mecatlv1.ListMcpSourcesResponse{Sources: out, Revision: cached.Revision, Stale: cached.Stale, Reconciling: cached.Reconciling}, nil
+}
+
+// RefreshMcpSources reconciles direct MCP and grants additions to an eligible owned root.
+func (h *HarnessServer) RefreshMcpSources(ctx context.Context, req *mecatlv1.RefreshMcpSourcesRequest) (*mecatlv1.RefreshMcpSourcesResponse, error) {
+	if req == nil || req.GetSessionId() == "" {
+		return nil, toStatus(fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
+	}
+	result, err := h.svc.RefreshMcpSources(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.RefreshMcpSourcesResponse{Revision: result.Revision, Changed: result.Changed}, nil
 }
 
 // ListToolHiveGroups returns the distinct, non-empty ToolHive groups derived

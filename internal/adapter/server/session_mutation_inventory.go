@@ -78,7 +78,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"driveSessionMigration":                 {SessionMutationLeaseOwned, "job checkpoints are job-lease-owned and each family rewrite delegates to migrateOneFamily"},
 	"CancelSessionMigration":                {SessionMutationLeaseOwned, "migration job cancellation is protected by the backend job-scoped acquisition"},
 	"ApplySessionCleanup":                   {SessionMutationLeaseOwned, "each family deletion delegates to the run-entry and maintenance-lease retention path"},
-	"deleteAbandonedMembers":                {SessionMutationLeaseProven, "team creation acquires every member lease before publication and keeps it through abandoned-family cleanup"},
+	"deleteAbandonedMembers":                {SessionMutationLeaseProven, "team setup acquires every member lease before publication and keeps it through abandoned-family cleanup"},
 	"repairRunningAtRunEntry":               {SessionMutationLeaseProven, "run-entry has acquired the session lease before crash-orphan repair save"},
 	"GetSession":                            {SessionMutationReadOnly, "loads and authorizes an authoritative snapshot without changing the durable family"},
 	"GetTranscript":                         {SessionMutationReadOnly, "projects an authorized snapshot without changing the durable family"},

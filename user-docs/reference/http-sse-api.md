@@ -164,7 +164,8 @@ and trusted driver storage retain the exact private
 |`GET /v1/mcp/resources/read`|read one MCP resource by URI|
 |`GET /v1/mcp/prompts`|the MCP prompt inventory|
 |`POST /v1/mcp/prompts/get`|expand one MCP prompt (rendered messages)|
-|`GET /v1/mcp/sources`|the resolved MCP source inventory|
+|`GET /v1/mcp/sources`|cached published/pre-shadow MCP sources plus revision, stale, and reconciling status|
+|`POST /v1/sessions/{id}/mcp-refresh`|bodyless direct MCP refresh for an eligible owned root; returns request-pinned revision and changed|
 |`GET /v1/mcp/toolhive/groups`|the ToolHive groups in the resolved inventory|
 
 Manual dream generation sends the selected bounded memory values/descriptions to

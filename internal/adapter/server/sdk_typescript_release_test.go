@@ -56,8 +56,8 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		t.Fatalf("stale generated mecatl.v1 service catalog/exclusion decision: %v", missing)
 	}
 
-	wantCounts := map[string]int{"HarnessService": 74, "ScheduleService": 10}
-	wantKeys := make(map[string]struct{}, 84)
+	wantCounts := map[string]int{"HarnessService": 75, "ScheduleService": 10}
+	wantKeys := make(map[string]struct{}, 85)
 	for service := range targetServices {
 		methods := descriptorsByService[service]
 		if len(methods) != wantCounts[service] {

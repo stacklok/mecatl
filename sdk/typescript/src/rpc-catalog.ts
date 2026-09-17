@@ -551,6 +551,15 @@ const rpcCatalogRows = [
     http: http("GET", "/v1/mcp/sources", [], [], "none", "json"),
   }),
   rpc({
+    key: "HarnessService.RefreshMcpSources",
+    service: "HarnessService",
+    method: "RefreshMcpSources",
+    shape: "unary",
+    backingService: "RefreshMcpSources",
+    grpc: grpc(HarnessService.method.refreshMcpSources),
+    http: http("POST", "/v1/sessions/{id}/mcp-refresh", ["id=session_id"], [], "none", "json"),
+  }),
+  rpc({
     key: "HarnessService.ListToolHiveGroups",
     service: "HarnessService",
     method: "ListToolHiveGroups",

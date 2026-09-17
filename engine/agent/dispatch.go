@@ -525,7 +525,7 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 	t, known := e.lookupTool(r, pendingCall.Name)
 	e.openCard(r, turnIdx, pendingCall)
 	if !known {
-		res := session.NewToolError(pendingCall.ID, fmt.Sprintf("unknown tool %q", pendingCall.Name))
+		res := unavailableOrUnknownToolResult(sess, pendingCall)
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}
@@ -595,6 +595,13 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 	return e.postPreToolUse(ctx, r, sess, env, turnIdx, pre.effective, t, enqueue)
 }
 
+func unavailableOrUnknownToolResult(sess *session.Session, call session.ToolCall) session.ToolResult {
+	if authority, bound := sess.BoundAuthority(); strings.HasPrefix(call.Name, "mcp__") && bound && authority.CapabilitySet.AllowsTool(call.Name) {
+		return session.NewToolError(call.ID, "tool is currently unavailable; do not retry unless the catalog changes")
+	}
+	return session.NewToolError(call.ID, fmt.Sprintf("unknown tool %q", call.Name))
+}
+
 // runOne handles a single (mutating or unknown) tool call serially: authorize,
 // pre-hook, execute, post-hook. It returns the result and a cancelled flag.
 func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, known bool, enqueue time.Time) (session.ToolResult, *dispatchPark, bool) {
@@ -606,7 +613,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 		// the gate" invariant). The card carries the unknown name + args so the client
 		// can render it and then mark it failed when the error result arrives.
 		e.openCard(r, turnIdx, c)
-		res := session.NewToolError(c.ID, fmt.Sprintf("unknown tool %q", c.Name))
+		res := unavailableOrUnknownToolResult(sess, c)
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}

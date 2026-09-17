@@ -349,6 +349,7 @@ describe("session projections", () => {
         "manualDream",
         "mcp",
         "mcpConnectorStatus",
+        "mcpRefresh",
         "memory",
         "modelSelection",
         "posture",

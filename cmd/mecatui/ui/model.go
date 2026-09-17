@@ -509,7 +509,8 @@ type Model struct {
 	sessionsActionRequestToken     uint64
 	// mcpRequestToken identifies broker inventory work across MCP panel lifetimes.
 	// A panel-local refresh generation alone restarts at one after reopen.
-	mcpRequestToken uint64
+	mcpRequestToken        uint64
+	mcpRefreshRequestToken uint64
 	// freshSessionBinding is true only for a session created by this UI's initial
 	// create flow or /clear successor, never for adopted, resumed, or handoff bindings.
 	freshSessionBinding bool

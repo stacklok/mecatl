@@ -199,7 +199,18 @@ session's authenticated membership, descriptions, schemas, and read-only hints. 
 omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is frozen for the session, so later runs and token refreshes do not
 rediscover it. Initial enrollment performs a fresh discovery; an explicit owner-controlled
 refresh may perform the same whole-bundle discovery after a completed turn or after broker
-process loss. A failure admits no mixed or partial catalogue. In a broker-only
+process loss. A failure admits no mixed or partial catalogue.
+
+Direct/global MCP uses a separate Build-owned reconciler. ToolHive-only bounded
+polling, current-runtime list notifications, and explicit refresh build complete
+immutable runtime candidates and publish one revision atomically. Root runs,
+direct teams, and resource/prompt operations pin one revision. Automatic cycles
+update availability without widening durable authority; an explicit owned-session
+refresh stable-unions missing active direct names. `ListMcpSources` reads cached
+published/pre-shadow inventory and revision, stale, and reconciling status without
+probing.
+
+In a broker-only
 session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
 same frozen route and authorization transaction, applies bounded in-memory jq before normal
 result rendering, and never opens a direct upstream connection or exposes the raw successful

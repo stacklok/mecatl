@@ -88,7 +88,7 @@ describe("RPC transport catalog", () => {
       }
     }
 
-    expect(transport.calls).toHaveLength(84);
+    expect(transport.calls).toHaveLength(85);
     expect(transport.calls.sort()).toEqual(
       Object.values(RPC_CATALOG)
         .map(({ method }) => method)
@@ -101,7 +101,7 @@ describe("RPC transport catalog", () => {
       ...Object.values(HarnessService.method).map((method) => `HarnessService.${method.name}`),
       ...Object.values(ScheduleService.method).map((method) => `ScheduleService.${method.name}`),
     ];
-    expect(descriptorKeys).toHaveLength(84);
+    expect(descriptorKeys).toHaveLength(85);
     expect(Object.keys(RPC_CATALOG).sort()).toEqual(descriptorKeys.sort());
 
     const omitted = "HarnessService.GetSession";

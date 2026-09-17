@@ -617,6 +617,9 @@ export interface McpInventory {
     // Warning: (ae-forgotten-export) The symbol "ReadMcpResourceRequest" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "ReadMcpResourceResponse" needs to be exported by the entry point index.d.ts
     readResource(request: ReadMcpResourceRequest, options?: RequestOptions): Promise<ReadMcpResourceResponse>;
+    // Warning: (ae-forgotten-export) The symbol "RefreshMcpSourcesRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "RefreshMcpSourcesResponse" needs to be exported by the entry point index.d.ts
+    refresh(request: RefreshMcpSourcesRequest, options?: RequestOptions): Promise<RefreshMcpSourcesResponse>;
 }
 
 // @public

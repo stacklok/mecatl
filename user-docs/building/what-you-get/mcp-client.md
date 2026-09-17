@@ -79,9 +79,12 @@ for profile configuration and recovery.
 
 ### ToolHive discovery
 
-Mecatl discovers running ToolHive MCP servers by default, so they do not need
-`--mcp-server` entries. Use `--toolhive=false` to disable discovery or
-`--toolhive-group <group>` to select a group.
+Mecatl keeps one immutable direct MCP runtime and reconciles ToolHive discovery on
+one bounded polling loop. A successful complete candidate publishes additions and
+removals together. If source consultation or candidate construction fails, Mecatl
+keeps the last usable runtime and marks the cached source status stale. Use
+`--toolhive=false` to disable discovery or `--toolhive-group <group>` to select a
+group.
 
 ## Tool namespacing
 
@@ -115,9 +118,9 @@ Mecatl does not automatically replay a server-declared failure, including
 structured JSON-RPC 400/404 responses and HTTP 429/502/503/504 responses. This
 avoids running a mutating operation twice when its first response is ambiguous.
 
-The startup catalog remains stable across a reconnect. Restart Mecatl to adopt a
-changed tool list. Operator logs report when a reconnect starts, succeeds, or
-fails.
+A reconnect keeps the operation's pinned runtime revision. Source reconciliation
+publishes a complete replacement only after all desired servers connect and list
+their tools, resources, and prompts successfully.
 
 ## Resources and prompts
 
@@ -169,14 +172,31 @@ connection.
 
 ## Server-initiated notifications
 
-When a server sends `tools/list_changed`, `prompts/list_changed`, or
-`resources/list_changed`, Mecatl marks that list as stale. It refreshes the list
-the next time a session reads it instead of making a network call in the
-notification handler.
+When a current server sends `tools/list_changed`, `prompts/list_changed`, or
+`resources/list_changed`, Mecatl reconciles all three contract lists through the
+same bounded path as ToolHive polling. Notifications from a retired runtime do
+not affect the current publication.
 
-New sessions receive the refreshed catalog. An in-flight session keeps its
-existing catalog, so calling a tool that the server removed returns an error
-rather than changing the session's tools while it runs.
+A run or direct team operation keeps the runtime revision it started with. The
+next operation pins the current publication, so it sees a successful addition or
+removal without mixing old schemas with new dispatch targets.
+
+## Refresh MCP tools for a session
+
+Automatic reconciliation updates availability but does not grant newly added
+names to an existing session. Run `/mcp-refresh` in `mecatui`, call
+`RefreshMcpSources`, or send a bodyless `POST` to
+`/v1/sessions/<SESSION_ID>/mcp-refresh` while the owned root session is idle or
+completed. The operation adds currently active direct MCP names to that session's
+existing name authority. It preserves completed state and does not reopen the
+conversation.
+
+A name that disappears is unavailable but remains in the session's durable name
+authority. If the exact name returns, the existing grant applies again. A refresh
+response reports the runtime revision considered by that request and whether its
+reconciliation cycle or authority union changed anything. Inspect
+`ListMcpSources` for the cached revision, stale, and reconciliation status; the
+status call does not probe upstream servers.
 
 ## Authentication and credentials
 

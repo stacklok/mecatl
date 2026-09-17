@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -120,6 +121,35 @@ func (s *Server) listPrompts(ctx context.Context) ([]Prompt, error) {
 		out = append(out, promptFromSDK(s.name, p))
 	}
 	return out, nil
+}
+
+func (s *Server) listPromptsBounded(ctx context.Context, sess *mcpsdk.ClientSession, budget *CandidateListBudget) ([]Prompt, error) {
+	var out []Prompt
+	cursor := ""
+	seen := make(map[string]struct{})
+	for {
+		page, err := sess.ListPrompts(ctx, &mcpsdk.ListPromptsParams{Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			return nil, errors.New("mcp: nil prompts list page")
+		}
+		if err := budget.consumePage(len(page.Prompts)); err != nil {
+			return nil, err
+		}
+		for _, prompt := range page.Prompts {
+			out = append(out, promptFromSDK(s.name, prompt))
+		}
+		if page.NextCursor == "" {
+			return out, nil
+		}
+		if _, duplicate := seen[page.NextCursor]; duplicate {
+			return nil, errors.New("mcp: prompts list cursor cycle")
+		}
+		seen[page.NextCursor] = struct{}{}
+		cursor = page.NextCursor
+	}
 }
 
 // getPrompt expands a named prompt with the given arguments and returns the

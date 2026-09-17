@@ -702,11 +702,10 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
   its reason.
   - verify: inspection — a CI job's composition is a workflow fact, not a unit-testable one; review checks the `sdk` job in `.github/workflows/ci.yml`
 - AC10.13: A callback tool reached through the **default**
-  `--authority-evaluator local` is denied by the capability-set evaluator, with
-  the run still reaching its terminal. This pins the known limitation recorded
-  under "Deferred decisions and known risks" so the eventual `RootAuthority`
-  widening has a failing test to flip rather than a silent behaviour change.
-  - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSBjYWxsYmFjayB0b29sIGlzIGRlbmllZCBieSB0aGUgZGVmYXVsdCBjYXBhYmlsaXR5LXNldCBldmFsdWF0b3I — `sdk/typescript/e2e/tool.e2e.test.ts :: "a callback tool is denied by the default capability-set evaluator"`
+  `--authority-evaluator local` is authorized in the session's capability set,
+  executes successfully, and lets the run reach its terminal. This pins the
+  production authority widening for session-mounted client MCP tools.
+  - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSBjYWxsYmFjayB0b29sIGlzIGF1dGhvcml6ZWQgdW5kZXIgdGhlIGRlZmF1bHQgY2FwYWJpbGl0eS1zZXQgZXZhbHVhdG9y — `sdk/typescript/e2e/tool.e2e.test.ts :: "a callback tool is authorized under the default capability-set evaluator"`
 
 ---
 
@@ -856,30 +855,6 @@ suites under `sdk/typescript/`, cited per AC.
   `mcp.Register` is skip-and-continue with only a server-side WARN, and
   `CreateSessionResponse` carries no tool inventory. Closing it properly needs a
   server-side mounted-tool inventory, which is out of scope.
-- **BLOCKING FOR REAL USE — a callback tool is denied under the default
-  `--authority-evaluator local`.** `mintRootAuthority`
-  ([`internal/app/root_authority.go`](../../internal/app/root_authority.go)) mints
-  the root capability set from the process-wide `assets.rootCatalog`, and
-  `Service.RootAuthority`
-  ([`internal/adapter/server/service.go`](../../internal/adapter/server/service.go))
-  is a `func(session.SessionKind) session.Authority` that never sees a session's
-  `mcp_servers` additions. A client MCP tool therefore mounts into the
-  per-session catalog but is absent from the capability set, and
-  `localauthority.Evaluator`
-  ([`engine/adapter/localauthority/localauthority.go`](../../engine/adapter/localauthority/localauthority.go))
-  denies it after the permission ask has already been allowed. Observed on the
-  real wire: `tool.result` carries `tool "mcp__sdk__lookup" denied by authority:
-  tool is absent from the capability set`, `isError: true`. `spawn()` does not
-  pass `--authority-evaluator`, so **every default SDK deployment hits this** —
-  the M3 callback-tool feature is wire-complete but not usable end-to-end until
-  it is fixed. The fix must widen `RootAuthority` to carry the session's client
-  MCP tool names, which is production `internal/adapter/server/` work and
-  outside this plan's edit surface; it is tracked as a follow-up rather than
-  patched here. Scenario 10's fixtures pass `--authority-evaluator noop` so the
-  suite proves the SDK half — host handshake, dispatch, schema validation,
-  refusals, ask routing — rather than silently re-proving the denial, and
-  AC10.13 pins the default-posture denial so the limitation is test-covered and
-  the eventual fix has a failing test to flip.
 - **A hand-written MCP host is a standing compatibility liability.** Five
   methods and one response shape today, verified against the real Go client only
   by Scenario 10. A protocol revision that changes the handshake is SDK work,
