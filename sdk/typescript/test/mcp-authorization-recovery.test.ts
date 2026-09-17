@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InvalidStateError, ProtocolError, ServerError } from "../src/index.js";
 import {
@@ -14,6 +14,10 @@ import {
 } from "./mcp-authorization-control-fixture.js";
 
 describe("MCP authorization recovery boundaries", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("concurrent MCP authorization flows cannot cross consume or correlate", async () => {
     const instance = await harness({
       streams: [
@@ -47,77 +51,124 @@ describe("MCP authorization recovery boundaries", () => {
   });
 
   it("MCP authorization flow cancellation releases only SDK owned resources", async () => {
-    let markControlStarted: () => void = () => undefined;
-    const controlStarted = new Promise<void>((resolve) => {
-      markControlStarted = resolve;
-    });
-    let markControlAborted: () => void = () => undefined;
-    const controlAborted = new Promise<void>((resolve) => {
-      markControlAborted = resolve;
-    });
-    const returned = await harness({
-      streams: [{ events: continuation(ask("ask-auto")), hold: true }],
-      unary: (method, _input, signal) => {
-        if (method !== "ResolveRunAsk") return undefined;
-        markControlStarted();
-        return new Promise<never>((_resolve, reject) => {
-          const abort = () => {
-            markControlAborted();
-            reject(signal?.reason ?? new Error("automatic control aborted"));
-          };
-          if (signal?.aborted === true) abort();
-          else signal?.addEventListener("abort", abort, { once: true });
-        });
-      },
-    });
-    const permissionController = new AbortController();
-    const streamController = new AbortController();
-    const returnedFlow = returned.session.mcpAuthorization(authorizationId).recheck(
-      {
-        onPermissionAsk: () => "allow_once",
-        permissionRequestOptions: {
-          headers: { "x-lifetime": "automatic-control" },
-          signal: permissionController.signal,
-          timeoutMs: 501,
-        },
-      },
-      {
-        headers: { "x-lifetime": "flow-stream" },
-        signal: streamController.signal,
-        timeoutMs: 500,
-      },
-    );
-    const iterator = returnedFlow[Symbol.asyncIterator]();
-    await iterator.next();
-    await iterator.next();
-    await iterator.next();
-    await controlStarted;
-    const streamCall = returned.transport.calls.find(
-      (call) => call.method === "RecheckMcpAuthorization",
-    );
-    const controlCall = returned.transport.calls.find((call) => call.method === "ResolveRunAsk");
-    expect(streamCall?.headers.get("x-lifetime")).toBe("flow-stream");
-    expect(streamCall?.timeoutMs).toBe(500);
-    expect(controlCall?.headers.get("x-lifetime")).toBe("automatic-control");
-    expect(controlCall?.timeoutMs).toBe(501);
-    expect(controlCall?.signal?.aborted).toBe(false);
-    expect(controlCall?.signal).not.toBe(streamCall?.signal);
+    vi.useFakeTimers();
 
-    const returnedResult = iterator.return?.();
-    const controlAbortedWithFlow = controlCall?.signal?.aborted === true;
-    const permissionCallerStayedLive = !permissionController.signal.aborted;
-    if (!controlAbortedWithFlow) permissionController.abort(new Error("test cleanup"));
-    await controlAborted;
-    await returnedResult;
-    expect(controlAbortedWithFlow).toBe(true);
-    expect(permissionCallerStayedLive).toBe(true);
-    expect(streamController.signal.aborted).toBe(false);
-    expect(returned.transport.activeStreams).toBe(0);
-    expect(returned.transport.closedStreams).toBe(1);
-    expect(
-      returned.transport.calls.filter((call) => call.method === "RecheckMcpAuthorization"),
-    ).toHaveLength(1);
-    expect(returned.transport.calls.some((call) => call.method === "CancelRun")).toBe(false);
+    async function pausedFlowLifetime(
+      trigger: (context: {
+        readonly controller: AbortController;
+        readonly iterator: AsyncIterator<unknown>;
+      }) => Promise<void>,
+    ) {
+      let releaseLateVerdict: (verdict: "deny") => void = () => undefined;
+      const lateVerdict = new Promise<"deny">((resolve) => {
+        releaseLateVerdict = resolve;
+      });
+      let lateResponderSignal: AbortSignal | undefined;
+      let markControlStarted: () => void = () => undefined;
+      const controlStarted = new Promise<void>((resolve) => {
+        markControlStarted = resolve;
+      });
+      let markControlAborted: () => void = () => undefined;
+      const controlAborted = new Promise<void>((resolve) => {
+        markControlAborted = resolve;
+      });
+      const instance = await harness({
+        streams: [{ events: continuation(ask("ask-late"), ask("ask-auto")), hold: true }],
+        unary: (method, _input, signal) => {
+          if (method !== "ResolveRunAsk") return undefined;
+          markControlStarted();
+          return new Promise<never>((_resolve, reject) => {
+            const abort = () => {
+              markControlAborted();
+              reject(signal?.reason ?? new Error("automatic control aborted"));
+            };
+            if (signal?.aborted === true) abort();
+            else signal?.addEventListener("abort", abort, { once: true });
+          });
+        },
+      });
+      const permissionController = new AbortController();
+      const streamController = new AbortController();
+      const flow = instance.session.mcpAuthorization(authorizationId).recheck(
+        {
+          onPermissionAsk: (permission, signal) => {
+            if (permission.askId === "ask-late") {
+              lateResponderSignal = signal;
+              return lateVerdict;
+            }
+            return "allow_once";
+          },
+          permissionRequestOptions: {
+            headers: { "x-lifetime": "automatic-control" },
+            signal: permissionController.signal,
+            timeoutMs: 501,
+          },
+        },
+        {
+          headers: { "x-lifetime": "flow-stream" },
+          signal: streamController.signal,
+          timeoutMs: 500,
+        },
+      );
+      const iterator = flow[Symbol.asyncIterator]();
+      await iterator.next();
+      await iterator.next();
+      await iterator.next();
+      await iterator.next();
+      await controlStarted;
+      const streamCall = instance.transport.calls.find(
+        (call) => call.method === "RecheckMcpAuthorization",
+      );
+      const controlCall = instance.transport.calls.find((call) => call.method === "ResolveRunAsk");
+      expect(streamCall?.headers.get("x-lifetime")).toBe("flow-stream");
+      expect(streamCall?.timeoutMs).toBe(500);
+      expect(controlCall?.headers.get("x-lifetime")).toBe("automatic-control");
+      expect(controlCall?.timeoutMs).toBe(501);
+      expect(controlCall?.signal?.aborted).toBe(false);
+      expect(lateResponderSignal?.aborted).toBe(false);
+      expect(controlCall?.signal).not.toBe(streamCall?.signal);
+
+      await trigger({ controller: streamController, iterator });
+      const controlAbortedWithFlow = controlCall?.signal?.aborted === true;
+      const responderAbortedWithFlow = lateResponderSignal?.aborted === true;
+      const permissionCallerStayedLive = !permissionController.signal.aborted;
+      if (!controlAbortedWithFlow) permissionController.abort(new Error("test cleanup"));
+      if (!responderAbortedWithFlow) await iterator.return?.();
+      await controlAborted;
+      releaseLateVerdict("deny");
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(controlAbortedWithFlow).toBe(true);
+      expect(responderAbortedWithFlow).toBe(true);
+      expect(permissionCallerStayedLive).toBe(true);
+      expect(instance.transport.activeStreams).toBe(0);
+      expect(instance.transport.closedStreams).toBe(1);
+      expect(
+        instance.transport.calls.filter((call) => call.method === "ResolveRunAsk"),
+      ).toHaveLength(1);
+      expect(
+        instance.transport.calls.filter((call) => call.method === "RecheckMcpAuthorization"),
+      ).toHaveLength(1);
+      expect(instance.transport.calls.some((call) => call.method === "CancelRun")).toBe(false);
+      await instance.client.close();
+    }
+
+    await pausedFlowLifetime(async ({ controller }) => {
+      controller.abort(new Error("caller cancelled while consumption was paused"));
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    await pausedFlowLifetime(async ({ controller }) => {
+      await vi.advanceTimersByTimeAsync(500);
+      expect(controller.signal.aborted).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    await pausedFlowLifetime(async ({ controller, iterator }) => {
+      await iterator.return?.();
+      expect(controller.signal.aborted).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
 
     const lost = await harness({ streams: [{ error: new Error("wire lost") }] });
     await expect(
@@ -133,7 +184,6 @@ describe("MCP authorization recovery boundaries", () => {
     await closed.client.close();
     await expect(closeResult).rejects.toBeDefined();
     expect(closed.transport.activeStreams).toBe(0);
-    await returned.client.close();
     await lost.client.close();
   });
 

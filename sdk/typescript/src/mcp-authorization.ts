@@ -5,7 +5,7 @@ import type {
   MessageInitShape,
   MessageShape,
 } from "@bufbuild/protobuf";
-import type { CallOptions } from "@connectrpc/connect";
+import { type CallOptions, Code, ConnectError } from "@connectrpc/connect";
 
 import { InvalidStateError, normalizeError, ProtocolError, type TransportKind } from "./errors.js";
 import { decodeEvent, type Event, type EventOf } from "./events.js";
@@ -275,6 +275,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   #ended = false;
   #events: AsyncIterator<RecheckMcpAuthorizationResponse> | undefined;
   #input: AuthorizationInput | undefined;
+  #releaseRequestLifetime: (() => void) | undefined;
   #nextAuthorization: EventOf<"authorization.required"> | undefined;
   readonly #knownAsks = new Set<string>();
   readonly #pendingAsks = new Map<string, PendingAsk>();
@@ -384,8 +385,11 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     }
 
     const abort = new AbortController();
-    const signal =
-      callerSignal === undefined ? abort.signal : AbortSignal.any([callerSignal, abort.signal]);
+    this.#abort = abort;
+    this.#bindRequestLifetime(abort, callerSignal, this.#requestOptions?.timeoutMs);
+    if (abort.signal.aborted) {
+      throw normalizeError(abort.signal.reason, this.#operations.transportKind);
+    }
     const input = new AuthorizationInput({
       authorizationId: this.authorizationId,
       sessionId: this.sessionId,
@@ -397,9 +401,8 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     const stream = this.#operations.stream(
       method as typeof HarnessService.method.recheckMcpAuthorization,
       input,
-      { ...this.#requestOptions, signal },
+      { ...this.#requestOptions, signal: abort.signal },
     );
-    this.#abort = abort;
     this.#input = input;
     this.#events = stream[Symbol.asyncIterator]() as AsyncIterator<RecheckMcpAuthorizationResponse>;
     let released = false;
@@ -410,6 +413,31 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
       unregister();
     };
     unregister = this.#operations.registerRun(() => this.#close());
+  }
+
+  #bindRequestLifetime(
+    abort: AbortController,
+    callerSignal: AbortSignal | undefined,
+    timeoutMs: number | undefined,
+  ): void {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const expire = (reason: unknown) => {
+      if (abort.signal.aborted) return;
+      abort.abort(reason);
+      void this.#close();
+    };
+    const callerAbort = () => expire(callerSignal?.reason);
+    callerSignal?.addEventListener("abort", callerAbort, { once: true });
+    this.#releaseRequestLifetime = () => {
+      callerSignal?.removeEventListener("abort", callerAbort);
+      if (deadline !== undefined) clearTimeout(deadline);
+      this.#releaseRequestLifetime = undefined;
+    };
+    if (timeoutMs === undefined) return;
+    const deadlineExceeded = () =>
+      expire(new ConnectError("the operation timed out", Code.DeadlineExceeded));
+    if (timeoutMs <= 0) deadlineExceeded();
+    else deadline = setTimeout(deadlineExceeded, timeoutMs);
   }
 
   async #next(): Promise<IteratorResult<Event>> {
@@ -669,6 +697,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   async #close(): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
+    this.#releaseRequestLifetime?.();
     this.#retireAllAsks();
     this.#abort?.abort();
     this.#input?.close();
