@@ -8,7 +8,7 @@
 **Delivery:** Split. The recursive descriptor-guided conversion, fail-closed numeric rules, raw-response preservation, and release documentation deserve interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1631](https://github.com/stacklok/mecatl/issues/1631).
-**Plan PR:** absent until opened
+**Plan PR:** [#1684](https://github.com/stacklok/mecatl/pull/1684)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 Let the TypeScript SDK consume the daemon's existing standard-library JSON encoding of
