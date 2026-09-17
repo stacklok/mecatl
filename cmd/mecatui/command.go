@@ -131,7 +131,11 @@ type invocationResolution struct {
 	remaining      []string
 	providerAction string
 	providerName   string
-	err            error
+	// typedCommand marks a resolution produced from argv rather than
+	// synthesized by a guided wizard. Only a typed command needs flag
+	// discoverability hints; a wizard has already stated the choice it made.
+	typedCommand bool
+	err          error
 }
 
 // resolveInvocation classifies argv (the FULL arg vector, argv[0] included as
@@ -354,11 +358,11 @@ func resolveProviderCredentialCommand(args []string) (invocationResolution, bool
 		// provider that has no subscription login, so the error names the
 		// provider rather than the argv shape.
 		if len(args) == 2 || providerLoginFlags(args[2:]) {
-			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:]}, true
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:], typedCommand: true}, true
 		}
 	case providerActionLogout:
 		if len(args) == 2 || providerLogoutFlags(args[2:]) {
-			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:]}, true
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:], typedCommand: true}, true
 		}
 	}
 	return invocationResolution{}, false

@@ -1155,7 +1155,7 @@ func assertSecurityHeaders(t *testing.T, header http.Header) {
 func TestSubscriptionRedirectsAreAccepted(t *testing.T) {
 	for redirect, want := range map[string]fixedRedirectConfig{
 		CodexRedirectURL:     {address: "127.0.0.1:1455", host: "localhost:1455", path: "/auth/callback", companion: "[::1]:1455"},
-		AnthropicRedirectURL: {address: "127.0.0.1:54545", host: "127.0.0.1:54545", path: "/callback"},
+		AnthropicRedirectURL: {address: "127.0.0.1:54545", host: "localhost:54545", path: "/callback", companion: "[::1]:54545"},
 	} {
 		if _, err := New(Options{RedirectURL: redirect}); err != nil {
 			t.Fatalf("rejected redirect %q: %v", redirect, err)

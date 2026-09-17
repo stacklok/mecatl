@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,22 +232,35 @@ func refresh(ctx context.Context, client *http.Client, previous OAuthTokens, end
 	return next, nil
 }
 
+// authorizeURL builds the authorization request.
+//
+// Parameter ORDER is reproduced from the first-party client, not left to Go's
+// map iteration: url.Values.Encode sorts keys alphabetically, and claude.ai
+// answered the sorted form with "Authorization failed / Invalid request
+// format". The endpoint is bespoke rather than a generic OAuth server, so the
+// query is assembled in the client's exact sequence.
 func authorizeURL(endpoints endpointSet, state, redirectURL, challenge string) string {
-	query := url.Values{}
-	for key, value := range map[string]string{
+	ordered := [][2]string{
 		// The provider requires this marker on the authorization request.
-		"code":                  "true",
-		"client_id":             oauthClientID,
-		"response_type":         "code",
-		"redirect_uri":          redirectURL,
-		"scope":                 oauthScope,
-		"code_challenge":        challenge,
-		"code_challenge_method": "S256",
-		"state":                 state,
-	} {
-		query.Set(key, value)
+		{"code", "true"},
+		{"client_id", oauthClientID},
+		{"response_type", "code"},
+		{"redirect_uri", redirectURL},
+		{"scope", oauthScope},
+		{"code_challenge", challenge},
+		{"code_challenge_method", "S256"},
+		{"state", state},
 	}
-	return endpoints.authorize + "?" + query.Encode()
+	var query strings.Builder
+	for i, pair := range ordered {
+		if i > 0 {
+			query.WriteByte('&')
+		}
+		query.WriteString(url.QueryEscape(pair[0]))
+		query.WriteByte('=')
+		query.WriteString(url.QueryEscape(pair[1]))
+	}
+	return endpoints.authorize + "?" + query.String()
 }
 
 // exchangeCode swaps the authorization code for a grant. A pasted code may
@@ -445,10 +459,13 @@ func newPKCE() (verifier, challenge string, err error) {
 	return verifier, base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
+// newState mints the CSRF nonce as 32 lowercase hex characters. The reference
+// client renders 16 random bytes as hex; base64url would introduce "-" and "_"
+// into a value this endpoint has not been observed to accept.
 func newState() (string, error) {
 	raw := make([]byte, stateBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", errors.New("anthropic: generate authorization state: failed")
 	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
+	return hex.EncodeToString(raw), nil
 }

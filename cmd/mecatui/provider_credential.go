@@ -116,7 +116,7 @@ func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolutio
 		// prompt blocks on input: an operator who wants the subscription
 		// otherwise sees only an API-key prompt and has no way to discover
 		// the flag from here.
-		if isSubscriptionProvider(res.providerName) {
+		if res.typedCommand && isSubscriptionProvider(res.providerName) {
 			_, _ = fmt.Fprintf(stderr,
 				"Reading an API key for %s. To sign in with a %s subscription instead, cancel and run:\n  mecatui providers login %s --subscription\n",
 				res.providerName, subscriptionProviders[res.providerName], res.providerName)

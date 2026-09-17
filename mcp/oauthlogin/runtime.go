@@ -40,9 +40,12 @@ const (
 	CodexRedirectURL = "http://localhost:1455/auth/callback"
 
 	// AnthropicRedirectURL is the fixed callback URI accepted for Anthropic
-	// subscription login. It is IPv4-literal, so it needs no companion
-	// listener.
-	AnthropicRedirectURL = "http://127.0.0.1:54545/callback" //nolint:gosec // G101 false-positive on a loopback callback URL; not a credential
+	// subscription login. The host is the NAME "localhost", matching the
+	// first-party client exactly: redirect matching is an exact string
+	// comparison, and the IPv4 literal is a different string that the
+	// provider rejects with "Invalid request format". Because the host is a
+	// name, the listener must cover every loopback family it can resolve to.
+	AnthropicRedirectURL = "http://localhost:54545/callback" //nolint:gosec // G101 false-positive on a loopback callback URL; not a credential
 )
 
 var (
@@ -372,7 +375,7 @@ func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
 	case CodexRedirectURL:
 		return fixedRedirectConfig{address: "127.0.0.1:1455", host: "localhost:1455", path: "/auth/callback", companion: "[::1]:1455"}, true
 	case AnthropicRedirectURL:
-		return fixedRedirectConfig{address: "127.0.0.1:54545", host: "127.0.0.1:54545", path: "/callback"}, true
+		return fixedRedirectConfig{address: "127.0.0.1:54545", host: "localhost:54545", path: "/callback", companion: "[::1]:54545"}, true
 	default:
 		return fixedRedirectConfig{}, false
 	}
