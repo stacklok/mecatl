@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
@@ -339,11 +340,20 @@ func applyStoredSubscriptions(keys cliconfig.ResolvedCredentials, statuses []pro
 			continue
 		}
 		statuses[i].Configured = true
-		statuses[i].Auth = "subscription sign-in"
+		statuses[i].Auth = "signed in"
 		if subscription.Account != "" {
 			statuses[i].Auth += " (" + subscription.Account + ")"
 		}
 		statuses[i].Next = "ready to use"
+		if deadline := subscription.GrantExpiresAt; !deadline.IsZero() {
+			statuses[i].Auth += ", expires " + deadline.Format(time.DateOnly)
+			// Refresh cannot extend the grant family, so the only remedy is a
+			// fresh sign-in; say that while there is still time to act.
+			if time.Until(deadline) < 7*24*time.Hour {
+				statuses[i].Next = "sign in again before " + deadline.Format(time.DateOnly) +
+					"; refresh cannot extend this grant"
+			}
+		}
 	}
 	return statuses
 }

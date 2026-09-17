@@ -4,17 +4,26 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"time"
 
 	"github.com/adrg/xdg"
 
+	"github.com/stacklok/mecatl/internal/adapter/anthropicsub"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/subcred"
 )
 
 // StoredSubscription describes a persisted sign-in without exposing its
 // tokens. Account identifies the signed-in identity for display.
+//
+// GrantExpiresAt is the absolute deadline of the grant family where the
+// provider enforces one. It is zero when the provider does not, or when the
+// authorization instant was not recorded. Anthropic expires a grant about a
+// month after the interactive login regardless of refresh, so surfacing it is
+// what stops that arriving as an unexplained refusal.
 type StoredSubscription struct {
-	Account string
+	Account        string
+	GrantExpiresAt time.Time
 }
 
 // StoredSubscriptions reports the subscription sign-ins present on this host,
@@ -46,7 +55,11 @@ func StoredSubscriptions(ctx context.Context) map[string]StoredSubscription {
 		if account == "" {
 			account = grant.AccountID
 		}
-		stored[provider] = StoredSubscription{Account: account}
+		entry := StoredSubscription{Account: account}
+		if provider == subcred.ProviderAnthropic && !grant.AuthorizedAt.IsZero() {
+			entry.GrantExpiresAt = grant.AuthorizedAt.Add(anthropicsub.GrantLifetime)
+		}
+		stored[provider] = entry
 	}
 	return stored
 }
