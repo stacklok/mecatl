@@ -255,7 +255,7 @@ func TestSDKRunControls_Scenario3_ResolveOrdinaryAsk(t *testing.T) {
 	planSvc.FinishRun(planSession.ID, planRun)
 }
 
-func TestADR_0346_StaleControlCannotMutateSuccessor(t *testing.T) {
+func TestADR_0347_StaleControlCannotMutateSuccessor(t *testing.T) {
 	successorEntered := make(chan struct{})
 	releaseSuccessor := make(chan struct{})
 	var requestCount atomic.Int64
@@ -385,7 +385,7 @@ func TestADR_0346_StaleControlCannotMutateSuccessor(t *testing.T) {
 	})
 }
 
-func TestADR_0346_StrictSteerNeverPromotes(t *testing.T) {
+func TestADR_0347_StrictSteerNeverPromotes(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("must not run")), allowRules())
 	sess, _ := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	run, _ := svc.StartRun(t.Context(), sess.ID, "one")

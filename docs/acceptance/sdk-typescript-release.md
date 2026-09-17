@@ -239,7 +239,7 @@ storage health/migration/cleanup namespaces.
   pagination, cached state, or client-side maintenance job state machine.
   - verify: vitest:sdk/typescript/test/namespaces-ops.test.ts#dGhlIG9wZXJhdGlvbmFsIG5hbWVzcGFjZSBiYXRjaCBhZGRzIG5vIGJlc3Bva2Ugd2lyZSB0eXBlcw — `sdk/typescript/test/namespaces-ops.test.ts :: "the operational namespace batch adds no bespoke wire types"`
 - AC4.4: This batch made all 84 descriptor operations then present callable
-  through the public raw seam. [ADR-0346](../adr/0346-run-id-addressed-prompt-free-controls.md)
+  through the public raw seam. [ADR-0347](../adr/0347-run-id-addressed-prompt-free-controls.md)
   later added four run-control RPCs, so the current exact catalog proof covers
   all 88; every non-team unary operation has a discoverable named
   client/session namespace where #821 calls for one.

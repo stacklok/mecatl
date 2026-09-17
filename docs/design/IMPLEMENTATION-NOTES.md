@@ -8985,7 +8985,7 @@ contract. This keeps watch disposal independent from mutation and avoids silentl
 meaning of the attachment API.
 
 `sdk/typescript/src/run-controls.ts` (`RunControls`) owns the prompt-free SDK resource added by ADR
-0346. `sdk/typescript/src/client.ts` (`Session.controls`) constructs it synchronously from the
+0347. `sdk/typescript/src/client.ts` (`Session.controls`) constructs it synchronously from the
 session-affined unary operation bag, without probing, opening Converse, or registering a
 `WatchConnection`. Each method gates through the same cached compatibility path using the caller's
 `RequestOptions`, then invokes exactly one generated unary descriptor. There is no retry, legacy
