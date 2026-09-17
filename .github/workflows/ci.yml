@@ -157,6 +157,21 @@ jobs:
             echo "site_relevant=$site_relevant"
           } >> "$GITHUB_OUTPUT"
 
+      # Validate the path classifiers HERE, in the always-run changes job — never
+      # in a flag-gated Go job. These tests decide which jobs run; if they lived in
+      # test-race-root-a (gated on go_relevant) a `go`/`docs_only`/`site`
+      # misclassification could skip the very tests that would catch it, and the
+      # always() aggregators would then report success on the gap. Pure bash, no Go
+      # toolchain, so they are cheap to run on every push/PR.
+      - name: Validate path classifiers
+        run: |
+          bash .github/scripts/docs-only-changes_test.sh
+          bash .github/scripts/docs-only-workflow_test.sh
+          bash .github/scripts/macos-relevant-changes_test.sh
+          bash .github/scripts/macos-relevant-workflow_test.sh
+          bash .github/scripts/relevant-changes_test.sh
+          bash .github/scripts/relevant-changes-workflow_test.sh
+
   sdk:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
     needs: changes
@@ -690,12 +705,6 @@ jobs:
           bash .github/scripts/race-test_test.sh
           bash .github/scripts/race-vet-off-workflow_test.sh
           bash .github/scripts/race-aggregate-workflow_test.sh
-          bash .github/scripts/docs-only-changes_test.sh
-          bash .github/scripts/docs-only-workflow_test.sh
-          bash .github/scripts/macos-relevant-changes_test.sh
-          bash .github/scripts/macos-relevant-workflow_test.sh
-          bash .github/scripts/relevant-changes_test.sh
-          bash .github/scripts/relevant-changes-workflow_test.sh
           bash .github/scripts/deslop-workflow_test.sh
       - name: go test -race (root-a and modules)
         env:
@@ -1461,6 +1470,47 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  user-docs-gate:
+    name: User docs (gate)
+    needs: [changes, user-docs]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Required-check aggregator for the Docusaurus build, mirroring `lint`/`test`.
+    # `user-docs` is gated on site_relevant, and a job skipped via `if:` reports as
+    # SUCCESS for branch protection — so gating a required check directly would let
+    # a classifier bug that wrongly marks a content change site-irrelevant turn the
+    # gate green having never built the site or checked link integrity. This job
+    # ALWAYS runs: it turns a legitimate skip (non-site change) into a real pass
+    # while a genuine build failure stays red. Point branch protection at THIS job
+    # ("User docs (gate)"), not `user-docs` directly.
+    steps:
+      - name: Require applicable user-docs coverage
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SITE_RELEVANT: ${{ needs.changes.outputs.site_relevant }}
+          USER_DOCS_RESULT: ${{ needs.user-docs.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGES_RESULT" != success ]]; then
+            echo "changes job did not succeed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          # A non-site change legitimately skips the Docusaurus build; require the
+          # skip so a job that should have run but didn't is caught.
+          if [[ "$SITE_RELEVANT" != true ]]; then
+            if [[ "$USER_DOCS_RESULT" != skipped ]]; then
+              echo "non-site-relevant user-docs job was not skipped: user-docs=$USER_DOCS_RESULT" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          if [[ "$USER_DOCS_RESULT" != success ]]; then
+            echo "user-docs coverage failed: user-docs=$USER_DOCS_RESULT" >&2
+            exit 1
+          fi
 
   domain-model:
     name: Domain model

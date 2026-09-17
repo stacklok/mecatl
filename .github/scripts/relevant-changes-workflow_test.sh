@@ -158,6 +158,37 @@ if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block lint)"; th
 fi
 require 'non-go-relevant analysis job was not skipped' 'the lint aggregator must require analysis skipped for a non-Go change'
 
+# The Docusaurus build is a required check gated directly on site_relevant, and a
+# job skipped via `if:` reports as success for branch protection. It therefore
+# needs an always() aggregator (like test/lint) so a classifier bug that wrongly
+# marks a content change site-irrelevant cannot let the gate go green unbuilt.
+udg="$(job_block user-docs-gate)"
+if [[ -z "$udg" ]]; then
+  fail 'a user-docs-gate aggregator must exist to protect the site build required check'
+else
+  grep -Fq 'if: always()' <<<"$udg" || fail 'user-docs-gate must run with if: always()'
+  grep -Fq 'needs: [changes, user-docs]' <<<"$udg" || fail 'user-docs-gate must need [changes, user-docs]'
+  grep -Fq 'SITE_RELEVANT: ${{ needs.changes.outputs.site_relevant }}' <<<"$udg" \
+    || fail 'user-docs-gate must read site_relevant'
+  grep -Fq 'non-site-relevant user-docs job was not skipped' <<<"$udg" \
+    || fail 'user-docs-gate must require user-docs skipped for a non-site change'
+  grep -Fq 'USER_DOCS_RESULT" != success' <<<"$udg" \
+    || fail 'user-docs-gate must require user-docs success for a site-relevant change'
+fi
+
+# The path classifiers decide which jobs run, so their self-tests must live in the
+# always-run `changes` job — never a flag-gated Go job that a misclassification
+# could skip. Pin that the changes job runs the relevant-changes tests and that
+# they are NOT (also) left in the go_relevant-gated test-race-root-a.
+changes_block="$(job_block changes)"
+grep -Fq 'bash .github/scripts/relevant-changes_test.sh' <<<"$changes_block" \
+  || fail 'the changes job must run relevant-changes_test.sh (always-run, not flag-gated)'
+grep -Fq 'bash .github/scripts/relevant-changes-workflow_test.sh' <<<"$changes_block" \
+  || fail 'the changes job must run relevant-changes-workflow_test.sh (always-run, not flag-gated)'
+if grep -Fq 'bash .github/scripts/relevant-changes_test.sh' <<<"$(job_block test-race-root-a)"; then
+  fail 'classifier tests must not run in the go_relevant-gated test-race-root-a (self-gating blind spot)'
+fi
+
 if [[ "$failures" -ne 0 ]]; then
   exit 1
 fi
