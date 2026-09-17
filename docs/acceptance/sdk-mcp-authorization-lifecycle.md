@@ -8,7 +8,7 @@
 **Delivery:** Split. The public SDK object model, Run parking contract, single-consumption stream grammar, control routing, and disconnect semantics require Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1469](https://github.com/stacklok/mecatl/issues/1469)
-**Plan PR:** absent until the draft decisions are approved
+**Plan PR:** [stacklok/mecatl#1687](https://github.com/stacklok/mecatl/pull/1687)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 An SDK consumer can receive a normal authorization-parked outcome from an ordinary
