@@ -2,3 +2,7 @@ allowBuilds:
   esbuild: true
 onlyBuiltDependencies:
   - esbuild
+# Vitest 5.0.0 shipped broken strict declarations; both fixes are merged upstream.
+# Remove this patch once a release includes vitest-dev/vitest#11141 and #11175.
+patchedDependencies:
+  vitest@5.0.0: ../../patches/vitest@5.0.0.patch
