@@ -336,3 +336,89 @@ func TestRenewingPolicyRequiresSource(t *testing.T) {
 		t.Fatal("a renewing policy was built with no credential source")
 	}
 }
+
+// scriptedSource yields a different credential per call, so a policy that
+// captured one at construction is distinguishable from one that resolves per
+// request.
+type scriptedSource struct {
+	creds []Credential
+	err   error
+	calls int
+}
+
+func (s *scriptedSource) Credential(context.Context) (Credential, error) {
+	if s.err != nil {
+		return Credential{}, s.err
+	}
+	credential := s.creds[min(s.calls, len(s.creds)-1)]
+	s.calls++
+	return credential, nil
+}
+
+func credentialFor(t *testing.T, account string, expiry time.Time) Credential {
+	t.Helper()
+	credential, err := NewCredential(codextest.Token(expiry, account), account, "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return credential
+}
+
+// A rotation between two requests must reach the wire on the second. A policy
+// holding a captured credential would keep sending the retired one.
+func TestRenewingPolicyFollowsRotationAcrossRequests(t *testing.T) {
+	now := time.Now()
+	source := &scriptedSource{creds: []Credential{
+		credentialFor(t, "acct-first", now.Add(time.Hour)),
+		credentialFor(t, "acct-second", now.Add(2*time.Hour)),
+	}}
+	captured := &headerCapturingTransport{}
+	policy, err := NewRenewingRequestPolicy(source, func() time.Time { return now }, captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	accounts := make([]string, 0, 2)
+	for range 2 {
+		req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodGet, BaseURL+"/models?client_version=1.0.0", nil)
+		if reqErr != nil {
+			t.Fatal(reqErr)
+		}
+		req.Host = ""
+		resp, rtErr := policy.RoundTrip(req)
+		if rtErr != nil {
+			t.Fatal(rtErr)
+		}
+		_ = resp.Body.Close()
+		accounts = append(accounts, captured.header.Get("ChatGPT-Account-ID"))
+	}
+	if accounts[0] != "acct-first" || accounts[1] != "acct-second" {
+		t.Fatalf("accounts across requests = %v, want the rotation to take effect", accounts)
+	}
+	if source.calls != 2 {
+		t.Fatalf("credential resolutions = %d, want one per request", source.calls)
+	}
+}
+
+// A source that cannot produce a credential must fail the request. Falling
+// back to the zero snapshot would send an empty bearer token and an empty
+// account header, which the provider answers with an opaque 401.
+func TestRenewingPolicySourceErrorFailsRequestClosed(t *testing.T) {
+	sentinel := errors.New("grant unavailable")
+	captured := &headerCapturingTransport{}
+	policy, err := NewRenewingRequestPolicy(&scriptedSource{err: sentinel}, time.Now, captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, BaseURL+"/models?client_version=1.0.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = ""
+	if _, err := policy.RoundTrip(req); !errors.Is(err, sentinel) {
+		t.Fatalf("error = %v, want the source failure", err)
+	}
+	if captured.header != nil {
+		t.Fatalf("a request reached the provider without a credential: %v", captured.header)
+	}
+}
