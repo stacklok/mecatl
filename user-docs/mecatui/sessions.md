@@ -40,6 +40,16 @@ normal exit, `mecatui` also writes a machine-readable handoff to standard error:
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
 
+## Inspect the active session during a run
+
+Run `/session` at any point after a session is bound, including while the agent
+is responding or waiting on a tool. Mecatui opens the read-only details overlay
+with the full session ID. Press `c` to copy that exact ID, then press `esc` to
+close the overlay and return focus to the conversation. Opening the overlay
+does not cancel, pause, or steer the run.
+
+When no session is bound, `/session` keeps the `no active session` response.
+
 ## Browse and maintain stored sessions
 
 Open the session inventory without creating a session:

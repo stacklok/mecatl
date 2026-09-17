@@ -314,13 +314,9 @@ type Deps struct {
 	// that strip OSC52 or users who prefer native selection.
 	NoMouse bool
 
-	// NoWindowTitle suppresses the dynamic terminal window/tab title, leaving the
-	// title at the bare "mecatui" (no phase word, no session title). Default
-	// false (the title is dynamic: "<title> — <status word> mecatui"). Set true by
-	// --terminal-title=off / MECATUI_NO_TERMINAL_TITLE=1 — the escape hatch for
-	// terminals/multiplexers where a set title does more harm than good (or where
-	// the per-phase churn is unwanted).
-	NoWindowTitle bool
+	// TerminalTitle receives the display-safe snapshot during View. Its implementation
+	// writes only through Bubble Tea's configured output writer.
+	TerminalTitle func(statusline.Input)
 
 	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,
 	// and DebugAsk remain narrow compatibility aliases for their original surfaces.

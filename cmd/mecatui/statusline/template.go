@@ -62,11 +62,7 @@ func firstTemplate(given, fallback string) string {
 	return fallback
 }
 func parseStatusTemplate(name, source, fallback string) statusTemplate {
-	funcs := template.FuncMap{
-		"contextMeter":        contextMeter,
-		"contextMeterCompact": contextMeterCompact,
-		"contextMeterMinimal": contextMeterMinimal,
-	}
+	funcs := statusTemplateFuncs()
 	fallbackTemplate, err := template.New(name).Funcs(funcs).Option("missingkey=error").Parse(fallback)
 	if err != nil {
 		return statusTemplate{}
@@ -120,8 +116,8 @@ func statusSurfaceText(surface Surface) string {
 }
 func defaultHeaderTemplates() SurfaceTemplates {
 	return SurfaceTemplates{
-		Full:    `<header><primary>mecatui · session {{.Session.Handle}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
-		Compact: `<header><primary>mecatui · {{.Session.Handle}} · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}</header>`,
+		Full:    `<header><primary>mecatui · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
+		Compact: `<header><primary>mecatui · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}</header>`,
 		Minimal: `<header><primary>mecatui</primary></header>`,
 	}
 }

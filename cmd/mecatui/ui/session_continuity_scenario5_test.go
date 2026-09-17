@@ -94,6 +94,73 @@ func TestSessionContinuityUX_Scenario5_RebindMatrix(t *testing.T) {
 	}
 }
 
+func TestADR_0344_Scenario4_SessionDetailsOpenWhileRunning(t *testing.T) {
+	cb := &fakeClipboard{}
+	m := newScenario5Model(t, cb)
+	m.sessionID = "full-running-session-id"
+	m.sessionState = "running"
+	m.phase = phaseRunning
+
+	mm, cmd := m.openSessionDetails()
+	got := mm.(Model)
+	if cmd == nil {
+		t.Fatal("running /session should refresh the bound session details")
+	}
+	if !got.sessionDetailsOpen {
+		t.Fatal("running /session did not open the details overlay")
+	}
+	if got.sessionDetails().ID != m.sessionID {
+		t.Fatalf("details ID = %q, want full bound ID %q", got.sessionDetails().ID, m.sessionID)
+	}
+	mm, copyCmd, handled := got.onSessionDetailsKey(tea.KeyPressMsg{Code: 'c'})
+	if !handled || copyCmd == nil {
+		t.Fatal("running /session should offer copying the full ID")
+	}
+	applyAll(mm.(Model), copyCmd())
+	if len(cb.wrote) != 1 || string(cb.wrote[0]) != m.sessionID {
+		t.Fatalf("copied ID = %q, want full bound ID %q", cb.wrote, m.sessionID)
+	}
+}
+
+func TestADR_0344_Scenario4_SessionDetailsDoNotInterruptRun(t *testing.T) {
+	m := newScenario5Model(t, &fakeClipboard{})
+	m.sessionID = "live-session"
+	m.phase = phaseRunning
+	m.prompt.Focus()
+
+	mm, _ := m.openSessionDetails()
+	m = mm.(Model)
+	if m.phase != phaseRunning {
+		t.Fatalf("opening /session changed phase to %v, want running", m.phase)
+	}
+	if m.prompt.Focused() {
+		t.Fatal("overlay should temporarily capture input focus")
+	}
+
+	mm, _, handled := m.onSessionDetailsKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	if !handled || m.sessionDetailsOpen || m.phase != phaseRunning {
+		t.Fatalf("closing /session changed live run state: handled=%t open=%t phase=%v", handled, m.sessionDetailsOpen, m.phase)
+	}
+	if !m.prompt.Focused() {
+		t.Fatal("closing /session did not return focus to the live conversation")
+	}
+}
+
+func TestADR_0344_Scenario4_NoSessionGuardRemains(t *testing.T) {
+	m := newScenario5Model(t, &fakeClipboard{})
+	m.sessionID = ""
+	m.phase = phaseRunning
+
+	mm, cmd := m.openSessionDetails()
+	m = mm.(Model)
+	if cmd != nil || m.sessionDetailsOpen {
+		t.Fatal("/session without a bound session must not open or refresh details")
+	}
+	if got := stripANSIstr(m.statusMsg); got != "no active session" {
+		t.Fatalf("no-session response = %q, want %q", got, "no active session")
+	}
+}
 func driveSessionRebindJourney(t *testing.T, journey string, cb client.Clipboard) (Model, string) {
 	t.Helper()
 	m := newScenario5Model(t, cb)

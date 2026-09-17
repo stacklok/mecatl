@@ -26,15 +26,9 @@ func TestPredictableSessionHandles_Scenario1_SharedNormalHandle(t *testing.T) {
 	if got := stripANSIstr(m.renderHeader()); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
 		t.Fatalf("header does not use bare handle %q: %q", want, got)
 	}
-	if got := m.windowTitle(); !strings.Contains(got, " "+want+" — ") || strings.Contains(got, "#"+want) {
-		t.Fatalf("ordinary window title = %q, want bare handle %q", got, want)
-	}
 	m.deps.DebugTarget = id
 	if got := stripANSIstr(m.renderHeader()); !strings.Contains(got, "DEBUG target "+want) || strings.Contains(got, "#"+want) {
 		t.Fatalf("debugger target chrome does not use bare handle %q: %q", want, got)
-	}
-	if got := m.windowTitle(); !strings.HasPrefix(got, "DEBUG "+want+" — ") {
-		t.Fatalf("debug window title = %q, want debugger handle %q", got, want)
 	}
 
 	st := newSessionsPanelState()
@@ -131,8 +125,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		m.sessionID = id
 		m.sessionTitle = "debug"
 		presentations := map[string]string{
-			"header":         stripANSIstr(m.renderHeader()),
-			"debugger title": m.windowTitle(),
+			"header": stripANSIstr(m.renderHeader()),
 		}
 		st := newSessionsPanelState()
 		st.loading, st.loadState = false, sessionsComplete
@@ -140,7 +133,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		st.syncFilter()
 		presentations["sessions"] = stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, ""))
 		for name, rendered := range presentations {
-			if !strings.Contains(rendered, want) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
+			if (name != "header" && !strings.Contains(rendered, want)) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
 				t.Fatalf("%s does not use terminal-safe shared handle %q: %q", name, want, rendered)
 			}
 		}
@@ -176,8 +169,8 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		for _, span := range source.Latest().Header.Spans {
 			shipped.WriteString(span.Text)
 		}
-		if got := shipped.String(); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
-			t.Fatalf("shipped template does not use bare handle %q: %q", want, got)
+		if got := shipped.String(); strings.Contains(got, want) || strings.Contains(got, "#"+want) {
+			t.Fatalf("shipped template leaked opt-in handle %q: %q", want, got)
 		}
 	}
 

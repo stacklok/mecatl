@@ -101,7 +101,7 @@ refreshes it.
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
-|`Session.Handle`|string|Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field in protocol v2; no digest alias is emitted.|
+|`Session.Handle`|string|Fixed 12-column ordinary session handle available to custom status and terminal-title templates: safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field in protocol v2; no digest alias is emitted.|
 |`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
 |`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
 |`Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route`|strings|Provider/model routing identifiers, display label, and observed downstream route.|
@@ -315,6 +315,54 @@ surface with a stale marker when it fits, or falls back to the shipped default.
 For the lower-level client architecture and the complete source lifecycle, see
 the
 [status-line section in `docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#local-status-lines).
+
+## Customize the terminal title
+
+`mecatui` owns the terminal title and sends it through the same serialized output
+path as the interface. It emits OSC 0 when the rendered title changes and clears
+it on a clean exit. The title is plain text, so StatusML tags and command output
+never become part of it.
+
+Configure the title in the client-owned
+`$XDG_CONFIG_HOME/mecatui/settings.yaml` file (normally
+`~/.config/mecatui/settings.yaml`):
+
+```yaml
+terminal_title:
+  enabled: true
+  template: '{{if .Session.Title}}{{.Session.Title}} · {{.MainAgent.State}} · mecatui{{else}}mecatui{{end}}'
+```
+
+The setting applies to embedded and connected clients. The shipped template
+uses the session title and agent state, and falls back to `mecatui` before a
+session title exists. It does not include the session handle. Add
+`.Session.Handle` when you want a handle in the title. The title template gets
+the same display-safe input as status templates, including `Session`, `Model`,
+`Context`, `Usage`, `Workspace`, `Terminal`, `MainAgent`, `Delegation`, and
+`Clock` values. The title-specific projection excludes `Workspace.Path`; exact
+local roots remain available only to status templates and direct status commands.
+It also supports `elide WIDTH VALUE`: a non-positive width is
+empty, a fitting value is unchanged, width `1` is `…`, and wider values are
+truncated to the widest prefix that fits plus `…`.
+
+Title writes follow this precedence:
+
+1. `--terminal-title=off` disables the controller, while
+   `--terminal-title=on` enables it even when settings disable it. Both forms
+   accept `true`, `false`, `1`, and `0`.
+2. When the flag is absent, `MECATUI_NO_TERMINAL_TITLE=1` or `true` disables
+   title writes.
+3. When neither explicit control applies, `terminal_title.enabled` controls
+   the feature. The default is enabled.
+
+The renderer removes terminal controls, collapses whitespace to single spaces,
+and bounds the title before constructing OSC 0. A terminal emulator or
+multiplexer decides whether and where to show OSC 0, so a tab or pane label can
+remain unchanged even when `mecatui` emits a title. Disable titles when the
+terminal environment owns title presentation or filters OSC sequences. Invalid
+YAML, unknown fields, and invalid title templates stop startup with an error
+that identifies `terminal_title` or `terminal_title.template`. Restart
+`mecatui` after changing this file; settings are not hot-reloaded.
 
 ## Next steps
 

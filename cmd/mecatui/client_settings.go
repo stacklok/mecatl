@@ -27,13 +27,39 @@ import (
 type clientSettings struct {
 	Keymap              map[string]string    `yaml:"keymap"`
 	StatusCustomization *statusCustomization `yaml:"status_customization"`
+	TerminalTitle       terminalTitleSettings
+}
+
+type terminalTitleSettings struct {
+	Enabled  bool
+	Template string
+}
+
+type terminalTitleSettingsYAML struct {
+	Enabled  *bool  `yaml:"enabled"`
+	Template string `yaml:"template"`
+}
+
+const shippedTerminalTitleTemplate = "{{if .Session.Title}}{{.Session.Title}} · {{.MainAgent.State}} · mecatui{{else}}mecatui{{end}}"
+
+func shippedTerminalTitleSettings() terminalTitleSettings {
+	return terminalTitleSettings{Enabled: true, Template: shippedTerminalTitleTemplate}
+}
+
+func newTitleRenderer(settings terminalTitleSettings) (*statusline.TitleRenderer, error) {
+	return statusline.NewTitleRenderer(settings.Template)
+}
+
+func defaultClientSettings() clientSettings {
+	return clientSettings{TerminalTitle: shippedTerminalTitleSettings()}
 }
 
 // clientSettingsYAML is the strict decode shape. A duration stays textual until
 // after the strict YAML decode so the accepted duration syntax is explicit.
 type clientSettingsYAML struct {
-	Keymap              map[string]string        `yaml:"keymap"`
-	StatusCustomization *statusCustomizationYAML `yaml:"status_customization"`
+	Keymap              map[string]string          `yaml:"keymap"`
+	StatusCustomization *statusCustomizationYAML   `yaml:"status_customization"`
+	TerminalTitle       *terminalTitleSettingsYAML `yaml:"terminal_title"`
 }
 
 type statusCustomizationYAML struct {
@@ -127,12 +153,12 @@ func splitKeymap(raw map[string]string) map[string][]string {
 func readClientSettings() (clientSettings, error) {
 	path := clientSettingsPath(xdgconfig.OSEnv)
 	if path == "" {
-		return clientSettings{}, nil
+		return defaultClientSettings(), nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return clientSettings{}, nil
+			return defaultClientSettings(), nil
 		}
 		return clientSettings{}, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -155,7 +181,28 @@ func readClientSettings() (clientSettings, error) {
 		}
 		return clientSettings{}, fmt.Errorf("parsing %s: invalid status_customization configuration", path)
 	}
-	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status}, nil
+	title, err := decodeTerminalTitle(raw.TerminalTitle)
+	if err != nil {
+		return clientSettings{}, fmt.Errorf("parsing %s: terminal_title.template: %w", path, err)
+	}
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title}, nil
+}
+
+func decodeTerminalTitle(raw *terminalTitleSettingsYAML) (terminalTitleSettings, error) {
+	if raw == nil {
+		return shippedTerminalTitleSettings(), nil
+	}
+	out := shippedTerminalTitleSettings()
+	if raw.Enabled != nil {
+		out.Enabled = *raw.Enabled
+	}
+	if raw.Template != "" {
+		out.Template = raw.Template
+	}
+	if _, err := newTitleRenderer(out); err != nil {
+		return terminalTitleSettings{}, err
+	}
+	return out, nil
 }
 
 func clientSettingsSchemaError(path string, err error) error {
@@ -163,16 +210,16 @@ func clientSettingsSchemaError(path string, err error) error {
 
 	diagnostic := yamldiag.Classify("parse client settings", err)
 	if diagnostic.HasLocation {
-		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
+		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type, including terminal_title; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
 	}
-	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type; %s)", path, guidance)
+	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type, including terminal_title; %s)", path, guidance)
 }
 func clientKeymapSyntaxError(path string, err error) error {
 	var documentError *yamldiag.DocumentError
 	if errors.As(err, &documentError) && documentError.Location.HasLocation {
-		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema)", path, documentError.Location.Line, documentError.Location.Column)
+		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema, including terminal_title)", path, documentError.Location.Line, documentError.Location.Column)
 	}
-	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema)", path)
+	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema, including terminal_title)", path)
 }
 
 // readClientKeymap reads the CLIENT-owned settings file
@@ -340,15 +387,12 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 //
 // The merged map then goes through keymap.Parse + keymap.Validate unchanged:
 // an invalid override still fails startup.
-func applyKeyOverridesToDeps(cfg config, deps *ui.Deps) error {
+func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
 	legacyMap, legacySet, err := readLegacyKeymap()
 	if err != nil {
 		return err
 	}
-	clientMap, _, err := readClientKeymap()
-	if err != nil {
-		return err
-	}
+	clientMap := splitKeymap(settings.Keymap)
 	cliMap := keyOverridesFromConfig(cfg)
 	merged := mergeKeymaps(mergeKeymaps(legacyMap, clientMap), cliMap)
 	if legacySet {
