@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this repairs the existing hand-written TypeScript SDK HTTP/SSE decoder without changing protobuf, exported APIs, server behavior, or a durable architecture decision.
 **Decision record:** None — ADR 0279 already assigns daemon HTTP/SSE decoding to the hand-written SDK transport, and the fix stays inside that boundary.
 **Phase:** HTTP transport compatibility
-**Status:** in-progress, 2026-09-17. Implementation is integrated on the stacked candidate branch and undergoing aggregate validation.
+**Status:** landed, 2026-09-17. All acceptance criteria and aggregate validation gates pass on the stacked implementation candidate.
 **Delivery:** Split. The recursive descriptor-guided conversion, fail-closed numeric rules, raw-response preservation, and release documentation deserve interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1631](https://github.com/stacklok/mecatl/issues/1631).
