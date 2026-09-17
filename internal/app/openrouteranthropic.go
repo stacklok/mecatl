@@ -1,10 +1,10 @@
 package app
 
 import (
-	"net/url"
 	"strings"
 
 	"github.com/stacklok/mecatl/provider/openai"
+	"github.com/stacklok/mecatl/provider/openaichat"
 )
 
 // openRouterAnthropicSegment is the OpenRouter model-id namespace whose models
@@ -28,30 +28,15 @@ const openRouterAnthropicSegment = "anthropic/"
 // non-standard shape gets their path preserved rather than silently rewritten.
 // "" in, "" out, and "" out on any parse failure — the caller treats that as
 // "no Anthropic surface for this endpoint" and registers nothing.
+//
+// It is deriveGatewayBaseURL with an EMPTY segment, which is exactly what "the
+// SDK appends the version itself" means: the ToolHive sibling passes "anthropic"
+// because that gateway exposes the surface at a sub-path, and OpenRouter passes
+// nothing because its Anthropic surface IS the /api root. Sharing the one
+// derivation is what keeps the sanitisation rules from drifting between two
+// call sites that must obey the same ADR 0334 contract.
 func openRouterAnthropicBaseURL(openAIBaseURL string) string {
-	if openAIBaseURL == "" {
-		return ""
-	}
-	u, err := url.Parse(openAIBaseURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.ForceQuery = false
-	u.Fragment = ""
-	u.RawFragment = ""
-	u.RawPath = ""
-	clean := strings.TrimRight(u.Path, "/")
-	switch {
-	case clean == "/v1":
-		u.Path = ""
-	case strings.HasSuffix(clean, "/v1"):
-		u.Path = strings.TrimSuffix(clean, "/v1")
-	default:
-		u.Path = clean
-	}
-	return u.String()
+	return deriveGatewayBaseURL(openAIBaseURL, "", true)
 }
 
 // isOpenRouterAnthropicModel reports whether an OpenRouter model id executes on
@@ -65,26 +50,41 @@ func isOpenRouterAnthropicModel(id string) bool {
 // promptCachedFor reports whether a session on (providerID, modelID) will have
 // its conversation prefix cached, for the ModelInfo.prompt_cached picker signal.
 //
-// After ADR 0346 the honest answer is "yes, unless caching is switched off",
-// because the protocol-native breakpoint is armed on every Responses endpoint
-// and Messages entries cache unconditionally. The three ways to be true:
+// It answers PER PROTOCOL, because the three protocols ask for a cache in three
+// different ways and one of them cannot ask at all:
 //
-//   - --no-prompt-cache is not set, AND
-//   - a native Anthropic Messages entry (unconditional), or
-//   - an OpenAI-Responses entry, which now always carries a breakpoint — except
-//     the canonical OpenAI endpoint on a model that predates explicit
-//     breakpoints, where implicit caching covers it anyway.
+//   - Anthropic Messages — true. cache_control is native to the protocol and the
+//     adapter emits it on every endpoint.
+//   - OpenAI Responses — true. ADR 0346 arms the protocol-native
+//     prompt_cache_breakpoint on every endpoint, dialect or no dialect. The
+//     canonical OpenAI endpoint gates the marker on the model, but implicit
+//     caching covers the pre-breakpoint models there anyway, so the answer is
+//     still yes.
+//   - OpenAI Chat Completions — true ONLY under the canonical-OpenAI dialect,
+//     where the endpoint caches IMPLICITLY with nothing sent. openaichat has no
+//     breakpoint mechanism, so for every other Chat Completions endpoint —
+//     opencode, and every custom api_flavor: openai-chat-completions definition
+//     today — mecatl sends no cache ask whatsoever and this is honestly FALSE.
 //
-// So the signal no longer marks the ADR-0100-era "this endpoint emits nothing"
-// case, because that case no longer exists. It now reports only whether mecatl
-// asks for caching at all. Whether a given upstream HONOURS the ask is not
-// statically knowable, and this must not pretend otherwise.
+// --no-prompt-cache forces false regardless, and an unregistered provider is
+// false because nothing will run there.
+//
+// The signal no longer marks the ADR-0100-era "this endpoint emits nothing"
+// case for Responses, because ADR 0346 abolished it there. It reports only
+// whether mecatl asks for caching at all. Whether a given upstream HONOURS the
+// ask is not statically knowable, and this must not pretend otherwise.
 func promptCachedFor(reg *providerRegistry, cfg Config, providerID string, _ string) bool {
 	if cfg.PromptCacheDisabled {
 		return false
 	}
-	_, ok := reg.Lookup(providerID)
-	return ok
+	entry, ok := reg.Lookup(providerID)
+	if !ok {
+		return false
+	}
+	if entry.protocol == protocolOpenAIChatCompletions {
+		return openaichatCacheDialectFor(providerID, entry.baseURL, cfg) == openaichat.CacheDialectOpenAI
+	}
+	return true
 }
 
 // promptCacheSource labels WHERE a provider's resolved cache posture came from,
@@ -98,8 +98,18 @@ func promptCacheSource(reg *providerRegistry, cfg Config, providerID string) str
 	if !ok {
 		return "unregistered"
 	}
-	if entry.anthropicProtocol {
+	switch entry.protocol {
+	case protocolAnthropicMessages:
 		return "native Anthropic Messages (breakpoints + ttl)"
+	case protocolOpenAIChatCompletions:
+		// Never "responses breakpoint": this entry does not speak Responses, and
+		// openaichat has no breakpoint to send. Under the canonical-OpenAI dialect
+		// the endpoint caches implicitly with nothing on the wire; anywhere else
+		// mecatl asks for nothing, and the operator needs to read that plainly.
+		if openaichatCacheDialectFor(providerID, entry.baseURL, cfg) == openaichat.CacheDialectOpenAI {
+			return "chat completions implicit + cache key (no breakpoint in this protocol)"
+		}
+		return "none: chat completions has no cache breakpoint and this endpoint has no dialect"
 	}
 	switch cacheDialectFor(providerID, entry.baseURL, cfg) {
 	case openai.CacheDialectOpenAI:
