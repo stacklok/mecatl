@@ -511,6 +511,32 @@ func runMCPAddContext(ctx context.Context, args []string, stdout, stderr io.Writ
 	return runMCPLoginContext(ctx, []string{parsed.name, mcpFileFlag, path}, stdout, stderr)
 }
 
+func readMCPConfirmation(ctx context.Context, input io.Reader) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	result := make(chan struct {
+		text string
+		err  error
+	}, 1)
+	go func() {
+		text, err := bufio.NewReader(input).ReadString('\n')
+		result <- struct {
+			text string
+			err  error
+		}{text, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case outcome := <-result:
+		if outcome.err != nil && !errors.Is(outcome.err, io.EOF) {
+			return "", outcome.err
+		}
+		return outcome.text, nil
+	}
+}
+
 func publishMCPAdd(ctx context.Context, path string, before mcpSettingsSnapshot, parsed mcpLifecycleArgs, issuer string, stdout io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -526,9 +552,9 @@ func publishMCPAdd(ctx context.Context, path string, before mcpSettingsSnapshot,
 		Name: parsed.name, URL: parsed.url, Issuer: issuer, Settings: before.data,
 		CredentialRoot: credentialRoot, FileKeyPath: keyPath, CredentialStore: parsed.custody,
 		Attended: term.IsTerminal(int(os.Stdin.Fd())),
-		ConfirmFile: func(context.Context) (bool, error) {
+		ConfirmFile: func(confirmCtx context.Context) (bool, error) {
 			_, _ = fmt.Fprint(stdout, "MCP keyring unavailable; store the key in a protected file instead? [y/N] ")
-			answer, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+			answer, readErr := readMCPConfirmation(confirmCtx, os.Stdin)
 			if readErr != nil && !errors.Is(readErr, io.EOF) {
 				return false, readErr
 			}

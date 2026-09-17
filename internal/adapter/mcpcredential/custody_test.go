@@ -175,9 +175,38 @@ func TestPendingMarkerRecoversCreatedFileAndPublishesReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: BackendFile, LocatorSHA256: locatorDigest(BackendFile, locator), InitSHA256: strings.Repeat("a", 64)}
+	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: BackendFile, LocatorSHA256: locatorDigest(BackendFile, locator), InitSHA256: keyDigest(key)}
 	if err := publishMarker(root, pending, false); err != nil {
 		t.Fatal(err)
+	}
+	if got := InspectMarker(root); got != MarkerRecovery {
+		t.Fatalf("pending marker inspection = %q, want %q", got, MarkerRecovery)
+	}
+	if _, err := Open(context.Background(), root, BackendFile, keyPath, nil); err == nil || !strings.Contains(err.Error(), "requires recovery") {
+		t.Fatalf("Open pending error = %v, want recovery-required", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(make([]byte, 32))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath}); err == nil {
+		t.Fatal("pending recovery adopted an artifact with the wrong identity")
+	}
+	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(key)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pending.InitSHA256 = keyDigest(key)
+	// The marker remains pending after the failed recovery and cancellation.
+	if err := publishMarker(root, pending, true); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Resolve(cancelled, root, Options{Requested: BackendFile, FilePath: keyPath}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled recovery error = %v", err)
+	}
+	marker, err := readMarker(root)
+	if err != nil || marker.State != markerPending {
+		t.Fatalf("cancelled recovery finalized marker: %#v, %v", marker, err)
 	}
 	got, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath})
 	if err != nil {
@@ -187,7 +216,7 @@ func TestPendingMarkerRecoversCreatedFileAndPublishesReady(t *testing.T) {
 	if string(got.Key) != string(key) {
 		t.Fatal("pending recovery changed the file key")
 	}
-	marker, err := readMarker(root)
+	marker, err = readMarker(root)
 	if err != nil || marker.State != markerReady {
 		t.Fatalf("marker = %#v, %v", marker, err)
 	}
