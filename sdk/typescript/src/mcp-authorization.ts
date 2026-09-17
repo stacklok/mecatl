@@ -14,8 +14,11 @@ import {
   type RecheckMcpAuthorizationRequestSchema,
   type RecheckMcpAuthorizationResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
+import type { PromptCapabilities } from "./media.js";
 import type { RequestOptions } from "./namespaces-core.js";
+import { PLAN_APPROVAL_TOOL } from "./plan.js";
 import type { PermissionAskResponder, PermissionVerdict, RunResult } from "./run.js";
+import { createRunControls, type RunControls } from "./run-controls.js";
 
 /** The closed authorization status vocabulary interpreted by the lifecycle helper. @public */
 export type McpAuthorizationStatus =
@@ -98,6 +101,8 @@ export interface McpAuthorization {
 
 export interface McpAuthorizationOperations {
   assertOpen(): void;
+  features(options?: RequestOptions): Promise<ReadonlySet<string>>;
+  promptCapabilities(): PromptCapabilities | undefined;
   registerRun(cancel: () => Promise<void>): () => void;
   readonly transportKind: TransportKind;
   stream<I extends DescMessage, O extends DescMessage>(
@@ -114,6 +119,7 @@ export interface McpAuthorizationOperations {
 
 type ConsumptionMode = "events" | "result";
 type TerminalStatus = Exclude<McpAuthorizationStatus, "pending">;
+type PendingAsk = { readonly controller: AbortController; readonly plan: boolean };
 
 const authorizationStatuses = new Set<McpAuthorizationStatus>([
   "pending",
@@ -170,7 +176,10 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   readonly operation: McpAuthorizationOperation;
   readonly sessionId: string;
   readonly #operations: McpAuthorizationOperations;
+  readonly #flowOptions: McpAuthorizationFlowOptions;
   readonly #requestOptions: RequestOptions | undefined;
+  readonly #controlFailure: Promise<never>;
+  readonly #rejectControlFailure: (error: unknown) => void;
   #abort: AbortController | undefined;
   #authorization: EventOf<"authorization.required"> | EventOf<"authorization.resolved"> | undefined;
   #consumption: ConsumptionMode | undefined;
@@ -180,9 +189,12 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   #events: AsyncIterator<RecheckMcpAuthorizationResponse> | undefined;
   #input: AuthorizationInput | undefined;
   #nextAuthorization: EventOf<"authorization.required"> | undefined;
+  readonly #knownAsks = new Set<string>();
+  readonly #pendingAsks = new Map<string, PendingAsk>();
   #release: (() => void) | undefined;
   #repeatSeen = false;
   #result: McpAuthorizationResult | undefined;
+  #runControls: RunControls | undefined;
 
   constructor(
     sessionId: string,
@@ -196,8 +208,14 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     this.authorizationId = authorizationId;
     this.operation = operation;
     this.#operations = operations;
-    void flowOptions;
+    this.#flowOptions = flowOptions;
     this.#requestOptions = requestOptions;
+    let rejectControlFailure: (error: unknown) => void = () => undefined;
+    this.#controlFailure = new Promise<never>((_resolve, reject) => {
+      rejectControlFailure = reject;
+    });
+    void this.#controlFailure.catch(() => undefined);
+    this.#rejectControlFailure = rejectControlFailure;
   }
 
   get continuationRunId(): string | undefined {
@@ -232,20 +250,31 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     requestOptions?: RequestOptions,
   ): Promise<void> {
     this.#operations.assertOpen();
-    void askId;
-    void verdict;
-    void requestOptions;
-    throw new InvalidStateError("The authorization continuation has no observed permission ask", {
-      transport: this.#operations.transportKind,
-    });
+    const pending = this.#pendingAsks.get(askId);
+    if (pending === undefined) {
+      throw new InvalidStateError(
+        `The authorization continuation has no pending permission ask ${askId}`,
+        { transport: this.#operations.transportKind },
+      );
+    }
+    if (pending.plan) {
+      throw new InvalidStateError(
+        `Plan approval ask ${askId} must be resolved through the plan workflow`,
+        { transport: this.#operations.transportKind },
+      );
+    }
+    await this.#resolvePendingAsk(askId, verdict, pending, requestOptions);
   }
 
   async cancelContinuation(requestOptions?: RequestOptions): Promise<void> {
     this.#operations.assertOpen();
-    void requestOptions;
-    throw new InvalidStateError("The authorization continuation run has not been observed", {
-      transport: this.#operations.transportKind,
-    });
+    const controls = this.#runControls;
+    if (controls === undefined) {
+      throw new InvalidStateError("The authorization continuation run has not been observed", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    await controls.cancel(requestOptions);
   }
 
   #claim(mode: ConsumptionMode): void {
@@ -301,7 +330,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     if (this.#ended) return { done: true, value: undefined };
     try {
       await this.#start();
-      const next = await this.#events?.next();
+      const next = await Promise.race([this.#events?.next(), this.#controlFailure]);
       if (next === undefined || next.done) return await this.#finishEOF();
       const raw = next.value.event;
       if (raw === undefined)
@@ -326,7 +355,16 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     if (event.runId === "") {
       throw this.#protocol("An authorization continuation event has no run id");
     }
-    this.#continuationRunId ??= event.runId;
+    if (this.#continuationRunId === undefined) {
+      this.#continuationRunId = event.runId;
+      this.#runControls = createRunControls(this.sessionId, event.runId, {
+        assertOpen: () => this.#operations.assertOpen(),
+        features: (options) => this.#operations.features(options),
+        promptCapabilities: () => this.#operations.promptCapabilities(),
+        transportKind: this.#operations.transportKind,
+        unary: (method, input, options) => this.#operations.unary(method, input, options),
+      });
+    }
     if (event.runId !== this.#continuationRunId) {
       throw this.#protocol("The authorization continuation changed run id");
     }
@@ -358,9 +396,91 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
         );
       }
       this.#nextAuthorization = event;
+      this.#retireAllAsks();
       return;
     }
-    if (event.kind === "result") this.#continuationTerminal = event;
+    if (event.kind === "permission.ask") {
+      this.#startAsk(event);
+      return;
+    }
+    if (event.kind === "permission.retract" || event.kind === "approval") {
+      this.#retireAsk(event.payload.askId);
+      return;
+    }
+    if (event.kind === "result") {
+      this.#continuationTerminal = event;
+      this.#retireAllAsks();
+    }
+  }
+
+  #startAsk(event: EventOf<"permission.ask">): void {
+    const askId = event.payload.askId;
+    if (askId === "" || this.#knownAsks.has(askId)) {
+      throw this.#protocol("The authorization continuation returned an invalid permission ask");
+    }
+    this.#knownAsks.add(askId);
+    const pending = {
+      controller: new AbortController(),
+      plan: event.payload.tool === PLAN_APPROVAL_TOOL,
+    };
+    this.#pendingAsks.set(askId, pending);
+    if (pending.plan) return;
+    const responder = this.#flowOptions.onPermissionAsk;
+    if (responder === undefined) return;
+
+    void (async () => {
+      let verdict: PermissionVerdict | undefined;
+      try {
+        verdict = await responder(event.payload, pending.controller.signal);
+      } catch {
+        return;
+      }
+      if (verdict === undefined || pending.controller.signal.aborted) return;
+      try {
+        await this.#resolvePendingAsk(
+          askId,
+          verdict,
+          pending,
+          this.#flowOptions.permissionRequestOptions,
+        );
+      } catch (error) {
+        if (!this.#ended) this.#rejectControlFailure(error);
+      }
+    })();
+  }
+
+  async #resolvePendingAsk(
+    askId: string,
+    verdict: PermissionVerdict,
+    pending: PendingAsk,
+    requestOptions: RequestOptions | undefined,
+  ): Promise<void> {
+    if (this.#pendingAsks.get(askId) !== pending || pending.plan) {
+      throw new InvalidStateError(`Permission ask ${askId} is no longer pending`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    const controls = this.#runControls;
+    if (controls === undefined) {
+      throw new InvalidStateError("The authorization continuation run has not been observed", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    this.#pendingAsks.delete(askId);
+    pending.controller.abort();
+    await controls.resolveAsk(askId, verdict, requestOptions);
+  }
+
+  #retireAsk(askId: string): void {
+    const pending = this.#pendingAsks.get(askId);
+    if (pending === undefined) return;
+    this.#pendingAsks.delete(askId);
+    pending.controller.abort();
+  }
+
+  #retireAllAsks(): void {
+    for (const pending of this.#pendingAsks.values()) pending.controller.abort();
+    this.#pendingAsks.clear();
   }
 
   #validateAuthoritative(
@@ -447,6 +567,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   async #close(): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
+    this.#retireAllAsks();
     this.#abort?.abort();
     this.#input?.close();
     try {
