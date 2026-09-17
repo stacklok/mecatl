@@ -62,7 +62,7 @@ func firstTemplate(given, fallback string) string {
 	return fallback
 }
 func parseStatusTemplate(name, source, fallback string) statusTemplate {
-	funcs := templateFuncs()
+	funcs := statusTemplateFuncs()
 	fallbackTemplate, err := template.New(name).Funcs(funcs).Option("missingkey=error").Parse(fallback)
 	if err != nil {
 		return statusTemplate{}
