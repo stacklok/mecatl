@@ -180,6 +180,30 @@ func (f *dcrMetadataFixture) options(t *testing.T, store credentialstore.Store) 
 	return opts
 }
 
+func TestDirectMCPOnboarding_Scenario1_DCRResponseAndTokenMatrix(t *testing.T) {
+	request := &oauthex.ClientRegistrationMetadata{RedirectURIs: []string{"http://127.0.0.1:49152/callback"}, GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"}, TokenEndpointAuthMethod: "none", Scope: "openid"}
+	for _, tc := range []struct {
+		name, returned string
+		valid          bool
+	}{
+		{name: "omitted scope", valid: true},
+		{name: "openid", returned: "openid", valid: true},
+		{name: "advertised addition", returned: "openid profile", valid: true},
+		{name: "unadvertised addition", returned: "openid admin", valid: false},
+		{name: "missing required", returned: "profile", valid: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &oauthex.ClientRegistrationResponse{ClientID: "client", TokenEndpointAuthMethod: "none", RedirectURIs: append([]string(nil), request.RedirectURIs...), GrantTypes: append([]string(nil), request.GrantTypes...), ResponseTypes: append([]string(nil), request.ResponseTypes...), Scope: tc.returned}
+			if got := validDCRRegistrationResponse(response, request, []string{"openid", "profile"}); got != tc.valid {
+				t.Fatalf("registration response valid = %v, want %v", got, tc.valid)
+			}
+		})
+	}
+	if _, err := oauthDCRGrantToken(oauthDCRGrantEnvelope{State: "active", Token: &oauthDCRTokenEnvelope{AccessToken: "access", TokenType: "Bearer"}}); err != nil {
+		t.Fatalf("minimal access token was rejected: %v", err)
+	}
+}
+
 func TestDCRRegistrationResponseScopesMayExpandWithinAdvertisedSet(t *testing.T) {
 	request := &oauthex.ClientRegistrationMetadata{
 		RedirectURIs:            []string{"http://127.0.0.1:49152/oauth/callback/test"},

@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/goccy/go-yaml"
+
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpcredential"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -119,16 +120,18 @@ func profileKind(server permconfig.MCPServerProfile) string {
 	return "oauth"
 }
 
+const credentialStatusUnknown = "unknown"
+
 func credentialStatus(server permconfig.MCPServerProfile) string {
 	if server.Auth.OAuth == nil {
 		if server.Auth.Mode == "none" {
 			return "ready"
 		}
-		return "unknown"
+		return credentialStatusUnknown
 	}
 	credentials := server.Auth.OAuth.Credentials
 	if credentials.Mode != "local" || credentials.Local == nil || credentials.Local.Key == nil {
-		return "unknown"
+		return credentialStatusUnknown
 	}
 	switch mcpcredential.InspectMarker(credentials.Local.Root) {
 	case mcpcredential.MarkerMissing:
@@ -140,9 +143,9 @@ func credentialStatus(server permconfig.MCPServerProfile) string {
 	case mcpcredential.MarkerRecovery:
 		return "recovery required"
 	case mcpcredential.MarkerPresent:
-		return "unknown"
+		return credentialStatusUnknown
 	default:
-		return "unknown"
+		return credentialStatusUnknown
 	}
 }
 

@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -117,6 +121,46 @@ func TestDirectMCPOnboarding_Scenario5_BoundedTruthfulStatus(t *testing.T) {
 	}
 }
 
+func TestDirectMCPOnboarding_ListProhibitsNetworkCustodyBrowserAndMutation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { requests++ }))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	data := strings.Replace(mcpLoginOAuthYAML("local", "local", root), "https://mcp.example/mcp", server.URL, 1)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MECATL_LIST_CANARY", "must-not-be-read")
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	if err := runMCPList([]string{"--file", path}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 || strings.Contains(output.String(), "must-not-be-read") {
+		t.Fatalf("list performed network/custody access: requests=%d output=%q", requests, output.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("list mutated settings")
+	}
+	if _, err := os.Stat(path + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("list created mutation lock: %v", err)
+	}
+	if strings.Contains(output.String(), "authorize") || strings.Contains(output.String(), "browser") {
+		t.Fatalf("list presented browser flow: %q", output.String())
+	}
+}
 func TestMCPSettingsLockSerializesSafeLock(t *testing.T) {
 	path, err := mcpSettingsFile(filepath.Join(t.TempDir(), "settings.yaml"))
 	if err != nil {
@@ -261,7 +305,79 @@ func TestMCPAddDefaultSettingsPathFollowsXDGNotOSNative(t *testing.T) {
 	}
 }
 
-func TestMCPAddCommandProgressAndLoginDelegation(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario3_ConfigErrorsNameBrokenLayer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "malformed", data: []byte("mcp:\n  servers: [\n")},
+		{name: "wrong schema", data: []byte("mcp: nope\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := os.WriteFile(path, tc.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := runMCPList([]string{"--file", path}, io.Discard); err == nil || !strings.Contains(err.Error(), path) {
+				t.Fatalf("list error = %v, want selected path", err)
+			} else if strings.Contains(err.Error(), "server is not configured") {
+				t.Fatalf("list degraded broken config to absence: %v", err)
+			}
+		})
+	}
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	if err := os.Mkdir(missing, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMCPList([]string{"--file", missing}, io.Discard); err == nil || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("unreadable list error = %v, want selected path", err)
+	}
+}
+
+func TestDirectMCPOnboarding_Scenario2_ExternalAndSharedCustody(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	server := permconfig.MCPServerProfile{Name: "external", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Credentials: permconfig.MCPOAuthCredentialProfile{Mode: "environment"}}}}
+	if got := mcpCredentialStatus(server); got != "unknown" {
+		t.Fatalf("external-key status = %q, want unknown without reading the key", got)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("external-key inspection created local custody: %v", err)
+	}
+}
+
+func TestDirectMCPOnboarding_Scenario4_CleanupEveryTerminalPath(t *testing.T) {
+	configHome, stateHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	original := []byte("{}\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscover, oldLogin := discoverMCPDirectIssuer, executeMCPLogin
+	t.Cleanup(func() { discoverMCPDirectIssuer, executeMCPLogin = oldDiscover, oldLogin })
+	discoverMCPDirectIssuer = func(context.Context, string) (mcp.DirectIssuerDiscovery, error) {
+		return mcp.DirectIssuerDiscovery{Issuer: "https://issuer.example"}, nil
+	}
+	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options, app.MCPLoginOptions) error {
+		return app.ErrMCPLoginConnect
+	}
+	if err := runMCPAdd([]string{"cleanup", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("login failure was ignored")
+	}
+	settings, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), "name: 'cleanup'") {
+		t.Fatalf("failed login lost published retry profile: %s", settings)
+	}
+	if strings.Contains(string(settings), "access-token") {
+		t.Fatal("failed login persisted an access token in settings")
+	}
+}
+
+func TestDirectMCPOnboarding_Scenario4_ProgressAndVerification(t *testing.T) {
 	configHome, stateHome := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_STATE_HOME", stateHome)
@@ -280,6 +396,10 @@ func TestMCPAddCommandProgressAndLoginDelegation(t *testing.T) {
 		if server.Name != "Calendar" || server.OAuth == nil {
 			t.Fatalf("login server = %#v", server)
 		}
+		published, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(published), "name: 'Calendar'") {
+			t.Fatalf("login handoff occurred before settings publication: %q, %v", published, err)
+		}
 		return nil
 	}
 	var output strings.Builder
@@ -294,6 +414,11 @@ func TestMCPAddCommandProgressAndLoginDelegation(t *testing.T) {
 	if loginCalls != 1 {
 		t.Fatalf("login calls = %d, want one", loginCalls)
 	}
+	for _, canary := range []string{"access-token", "client-secret", "https://issuer.example/oauth/authorize"} {
+		if strings.Contains(output.String(), canary) {
+			t.Fatalf("add output leaked %q: %q", canary, output.String())
+		}
+	}
 	settings, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -305,7 +430,7 @@ func TestMCPAddCommandProgressAndLoginDelegation(t *testing.T) {
 	}
 }
 
-func TestMCPListCommandIsNonPresentingForEnvironmentCredentials(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario5_ListIsOfflineAndNonPresenting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.yaml")
 	if err := os.WriteFile(path, []byte(mcpLoginOAuthYAML("secret", "environment", "")), 0o600); err != nil {
 		t.Fatal(err)
@@ -324,7 +449,7 @@ func TestMCPListCommandIsNonPresentingForEnvironmentCredentials(t *testing.T) {
 	}
 }
 
-func TestMCPRemoveCommandHandlesMissingLifecycle(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario6_MissingLifecycleRemovesProfileOnly(t *testing.T) {
 	fixture := newMCPLoginDCRFixture(t)
 	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	path := filepath.Join(t.TempDir(), "settings.yaml")
@@ -351,5 +476,216 @@ func TestMCPRemoveCommandHandlesMissingLifecycle(t *testing.T) {
 	}
 	if strings.Contains(string(remaining), "connector") {
 		t.Fatalf("profile remained after missing-lifecycle removal: %s", remaining)
+	}
+}
+
+func TestDirectMCPOnboarding_Scenario6_RemovalStateMachine(t *testing.T) {
+	fixture := newMCPLoginDCRFixture(t)
+	root := filepath.Join(t.TempDir(), "credentials")
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err := os.WriteFile(settings, []byte(mcpLoginDCRYAML(fixture, root)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := loadMCPLoginProfiles([]string{settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, ok := profiles.OAuthServer("connector")
+	if !ok {
+		profiles.Close()
+		t.Fatal("connector seed profile missing")
+	}
+	mcp.AllowOAuthLoopbackForTest(t, server.OAuth)
+	mcp.TrustOAuthCertificateForTest(t, server.OAuth, fixture.server.Certificate())
+	prepared, callbackPath, err := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, mcp.OAuthDCRLoginReuse)
+	if err != nil {
+		profiles.Close()
+		t.Fatal(err)
+	}
+	prepared.RedirectURL = "http://127.0.0.1:49152" + callbackPath
+	prepared.Presenter = mcp.OAuthPresenterFunc(func(_ context.Context, raw string) (*auth.AuthorizationResult, error) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &auth.AuthorizationResult{Code: "fixture-code", State: u.Query().Get("state"), Iss: fixture.server.URL}, nil
+	})
+	controller, err := mcp.NewOAuthController(context.Background(), fixture.resource(), prepared)
+	if err != nil {
+		profiles.Close()
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodGet, fixture.resource(), nil)
+	if err != nil {
+		controller.Close()
+		profiles.Close()
+		t.Fatal(err)
+	}
+	resp := &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{"WWW-Authenticate": {`Bearer scope="openid"`}}, Body: io.NopCloser(strings.NewReader(""))}
+	if err := controller.Authorize(context.Background(), req, resp); err != nil {
+		controller.Close()
+		profiles.Close()
+		t.Fatal(err)
+	}
+	if err := controller.Close(); err != nil {
+		profiles.Close()
+		t.Fatal(err)
+	}
+	if err := runMCPRemove([]string{"connector", "--file", settings}, io.Discard); err != nil {
+		profiles.Close()
+		t.Fatal(err)
+	}
+	key := dcrLoginRecordKey("mecatl/mcp/oauth-dcr-lifecycle-key/v1", "connector")
+	record, err := server.OAuth.CredentialStore.Get(context.Background(), key)
+	profiles.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(record.Value), `"state":"removed"`) {
+		t.Fatalf("lifecycle record = %s, want removed tombstone", record.Value)
+	}
+	remaining, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(remaining), "connector") {
+		t.Fatalf("settings retained removed profile: %s", remaining)
+	}
+}
+func TestDirectMCPOnboarding_Scenario1_FailureHasNoSideEffects(t *testing.T) {
+	configHome, stateHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	original := []byte("mcp:\n  servers: []\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscover := discoverMCPDirectIssuer
+	t.Cleanup(func() { discoverMCPDirectIssuer = oldDiscover })
+	discoverMCPDirectIssuer = func(context.Context, string) (mcp.DirectIssuerDiscovery, error) {
+		return mcp.DirectIssuerDiscovery{}, errors.New("discovery fixture failed")
+	}
+	var output strings.Builder
+	if err := runMCPAdd([]string{"calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, &output, io.Discard); err == nil {
+		t.Fatal("discovery failure was ignored")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("discovery failure changed settings: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(stateHome, "mecatl", "mcp-credentials")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("discovery failure created custody state: %v", err)
+	}
+	if strings.Contains(output.String(), "selecting credential custody") || strings.Contains(output.String(), "settings saved") {
+		t.Fatalf("discovery failure continued onboarding: %q", output.String())
+	}
+}
+
+func TestDirectMCPOnboarding_AddCustodyFailureLeavesSettingsUnpublished(t *testing.T) {
+	configBase, stateHome := t.TempDir(), t.TempDir()
+	configHome := filepath.Join(configBase, "config")
+	// publishMCPAdd derives the file-custody key path from XDG_CONFIG_HOME.
+	// Make that path a regular file so custody fails before the settings CAS.
+	if err := os.WriteFile(configHome, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	original := []byte("mcp:\n  servers: []\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscover := discoverMCPDirectIssuer
+	t.Cleanup(func() { discoverMCPDirectIssuer = oldDiscover })
+	discoverMCPDirectIssuer = func(context.Context, string) (mcp.DirectIssuerDiscovery, error) {
+		return mcp.DirectIssuerDiscovery{Issuer: "https://issuer.example"}, nil
+	}
+	var output strings.Builder
+	if err := runMCPAdd([]string{"calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, &output, io.Discard); err == nil {
+		t.Fatal("custody failure was ignored")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("custody failure published settings: %q", got)
+	}
+	if strings.Contains(output.String(), "settings saved") {
+		t.Fatalf("custody failure reached publication: %q", output.String())
+	}
+}
+
+func TestDirectMCPOnboarding_AddLoginFailureLeavesPublishedProfileForRetry(t *testing.T) {
+	configHome, stateHome := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscover, oldLogin := discoverMCPDirectIssuer, executeMCPLogin
+	t.Cleanup(func() { discoverMCPDirectIssuer, executeMCPLogin = oldDiscover, oldLogin })
+	discoverMCPDirectIssuer = func(context.Context, string) (mcp.DirectIssuerDiscovery, error) {
+		return mcp.DirectIssuerDiscovery{Issuer: "https://issuer.example"}, nil
+	}
+	loginCalls := 0
+	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options, app.MCPLoginOptions) error {
+		loginCalls++
+		return app.ErrMCPLoginConnect
+	}
+	if err := runMCPAdd([]string{"Calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("login failure was ignored")
+	}
+	if loginCalls != 1 {
+		t.Fatalf("login calls = %d, want one", loginCalls)
+	}
+	settings, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), "name: 'Calendar'") {
+		t.Fatalf("login failure removed published retry profile: %s", settings)
+	}
+}
+
+func TestDirectMCPOnboarding_RemovePreservesWrappingKeyAndSettingsOnRecoveryFailure(t *testing.T) {
+	fixture := newMCPLoginDCRFixture(t)
+	root := filepath.Join(t.TempDir(), "credentials")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err := os.WriteFile(settings, []byte(mcpLoginDCRYAML(fixture, root)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldRemove := removeMCPOAuthDCR
+	t.Cleanup(func() { removeMCPOAuthDCR = oldRemove })
+	removeMCPOAuthDCR = func(context.Context, string, mcp.OAuthOptions) (mcp.OAuthDCRRemovalResult, error) {
+		return mcp.OAuthDCRRemovalResult{}, mcp.NewOAuthDCRRecoveryError(mcp.OAuthDCRRecoveryPending)
+	}
+	before, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runMCPRemove([]string{"connector", "--file", settings}, io.Discard); err == nil {
+		t.Fatal("recovery-required removal succeeded")
+	}
+	after, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("recovery-required removal changed settings")
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("recovery-required removal deleted wrapping-key custody root: %v", err)
 	}
 }

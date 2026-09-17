@@ -537,15 +537,7 @@ func runMCPList(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func mcpProfileKind(server permconfig.MCPServerProfile) string {
-	if server.Auth.OAuth == nil {
-		return server.Auth.Mode
-	}
-	if client := server.Auth.OAuth.Client; client.Mode != "" {
-		return "oauth/" + client.Mode
-	}
-	return "oauth"
-}
+const mcpCredentialStatusUnknown = "unknown"
 
 // mcpCredentialStatus deliberately performs only bounded, non-presenting
 // inspection. In particular, it never opens a keyring, reads an environment
@@ -555,15 +547,15 @@ func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
 		if server.Auth.Mode == "none" {
 			return "ready"
 		}
-		return "unknown"
+		return mcpCredentialStatusUnknown
 	}
 	credentials := server.Auth.OAuth.Credentials
 	switch credentials.Mode {
 	case "environment":
-		return "unknown" // The value is intentionally not read by list.
+		return mcpCredentialStatusUnknown // The value is intentionally not read by list.
 	case "local":
 		if credentials.Local == nil || credentials.Local.Key == nil {
-			return "unknown"
+			return mcpCredentialStatusUnknown
 		}
 		switch mcpcredential.InspectMarker(credentials.Local.Root) {
 		case mcpcredential.MarkerMissing:
@@ -575,12 +567,12 @@ func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
 		case mcpcredential.MarkerRecovery:
 			return "recovery required"
 		case mcpcredential.MarkerPresent:
-			return "unknown" // Presence of custody metadata is not proof of a grant.
+			return mcpCredentialStatusUnknown // Presence of custody metadata is not proof of a grant.
 		default:
-			return "unknown"
+			return mcpCredentialStatusUnknown
 		}
 	default:
-		return "unknown"
+		return mcpCredentialStatusUnknown
 	}
 }
 

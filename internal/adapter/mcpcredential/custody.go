@@ -117,11 +117,16 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 type MarkerInspection string
 
 const (
-	MarkerMissing     MarkerInspection = "missing"
+	// MarkerMissing means the custody marker does not exist.
+	MarkerMissing MarkerInspection = "missing"
+	// MarkerUnavailable means the custody root or marker cannot be inspected.
 	MarkerUnavailable MarkerInspection = "unavailable"
-	MarkerLocked      MarkerInspection = "locked"
-	MarkerRecovery    MarkerInspection = "recovery required"
-	MarkerPresent     MarkerInspection = "present"
+	// MarkerLocked means the custody root is locked.
+	MarkerLocked MarkerInspection = "locked"
+	// MarkerRecovery means the marker requires recovery.
+	MarkerRecovery MarkerInspection = "recovery required"
+	// MarkerPresent means the custody marker is valid.
+	MarkerPresent MarkerInspection = "present"
 )
 
 // InspectMarker checks only the root-pinned custody marker. It never opens a

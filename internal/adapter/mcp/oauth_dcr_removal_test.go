@@ -15,6 +15,22 @@ import (
 
 type removalStore struct{ credentialstore.Store }
 
+type retryDeleteStore struct {
+	credentialstore.Store
+	failed bool
+}
+
+func (s *retryDeleteStore) Delete(ctx context.Context, key []byte, expected credentialstore.Version) error {
+	if !s.failed {
+		s.failed = true
+		if err := s.Store.Delete(ctx, key, expected); err != nil {
+			return err
+		}
+		return errors.New("delete response lost after commit")
+	}
+	return s.Store.Delete(ctx, key, expected)
+}
+
 func (removalStore) Capabilities() credentialstore.Capabilities {
 	return credentialstore.Capabilities{Persistent: true, CrossProcessCAS: true}
 }
@@ -81,6 +97,56 @@ func TestRemoveOAuthDCRResumesRemovingAfterCrash(t *testing.T) {
 	}
 }
 
+func TestRemoveOAuthDCRRetriesLostDeleteResponseAndPreservesOtherKey(t *testing.T) {
+	opts, base, lifecycleKey := removalFixture(t, oauthDCRStateReady)
+	store := &retryDeleteStore{Store: base}
+	opts.CredentialStore = removalStore{Store: store}
+	sentinel := []byte("wrapping-key-metadata-must-survive")
+	otherKey := []byte("unrelated-wrapping-key")
+	if _, err := store.Put(context.Background(), otherKey, sentinel, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := RemoveOAuthDCR(context.Background(), "https://connector.example/mcp", opts)
+	if err != nil || !result.LifecycleFound {
+		t.Fatalf("remove after lost delete response = %#v, %v", result, err)
+	}
+	if _, err := store.Get(context.Background(), otherKey); err != nil {
+		t.Fatalf("unrelated wrapping-key record was removed: %v", err)
+	}
+	stored, err := store.Get(context.Background(), lifecycleKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := decodeOAuthDCRRecordRaw(stored.Value)
+	if err != nil || record.State != oauthDCRStateRemoved {
+		t.Fatalf("retried lifecycle record = %#v, %v", record, err)
+	}
+}
+
+func TestDirectMCPOnboarding_Scenario6_UnsafeStateBlocksRemoval(t *testing.T) {
+	for _, state := range []string{oauthDCRStatePending} {
+		t.Run(state, func(t *testing.T) {
+			opts, _, _ := removalFixture(t, state)
+			if _, err := RemoveOAuthDCR(context.Background(), "https://connector.example/mcp", opts); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+				t.Fatalf("remove state %q = %v, want recovery required", state, err)
+			}
+		})
+	}
+	t.Run("corrupt", func(t *testing.T) {
+		opts, store, key := removalFixture(t, oauthDCRStatePending)
+		stored, err := store.Get(context.Background(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		corrupt := bytes.Replace(stored.Value, []byte(`"state":"pending"`), []byte(`"state":"corrupt"`), 1)
+		if _, err := store.Put(context.Background(), key, corrupt, &stored.Version); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RemoveOAuthDCR(context.Background(), "https://connector.example/mcp", opts); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
+			t.Fatalf("remove corrupt state = %v, want recovery required", err)
+		}
+	})
+}
 func TestRemoveOAuthDCRBlocksPendingAndAllowsMissing(t *testing.T) {
 	opts, _, _ := removalFixture(t, oauthDCRStatePending)
 	if _, err := RemoveOAuthDCR(context.Background(), "https://connector.example/mcp", opts); !errors.Is(err, ErrOAuthDCRRecoveryRequired) {
@@ -110,7 +176,7 @@ func TestRemoveOAuthDCRBlocksReadOnlyStore(t *testing.T) {
 // generation and perform a genuinely new upstream registration — it must NOT
 // be classified as corrupt/recovery-required the way every other non-ready,
 // non-pending state is.
-func TestPrepareOAuthDCRLoginAfterRemovalRegistersFreshClient(t *testing.T) {
+func TestDirectMCPOnboarding_Scenario6_TombstonePermitsFreshRegistration(t *testing.T) {
 	fixture := newDCRMetadataFixture(t)
 	resource, store := fixture.server.URL+"/gw/mcp", newDCRMemoryStore(t)
 	opts := fixture.options(t, store)

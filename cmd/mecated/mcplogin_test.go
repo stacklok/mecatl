@@ -373,6 +373,65 @@ func mcpLoginOAuthYAML(name, mode, root string) string {
 	return "mcp:\n  servers:\n    - name: " + name + "\n      url: https://mcp.example/mcp\n      auth:\n        mode: oauth\n        oauth:\n          profile: work\n          principal: operator\n          issuer: https://issuer.example\n          client:\n            mode: cimd\n            cimd: {document_url: https://client.example/metadata.json}\n          scopes: [read]\n          credentials:\n            mode: " + mode + "\n            " + credentials + "\n          network: {additional_origins: [https://client.example], private_origins: [], max_redirects: 0}\n"
 }
 
+func TestDirectMCPOnboarding_Scenario4_OutputConfinement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err := os.WriteFile(path, []byte(mcpLoginOAuthYAML("gateway", "local", filepath.Join(t.TempDir(), "credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldLogin := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = oldLogin })
+	const authorizationURL = "https://issuer.example/oauth/authorize?code=terminal-only"
+	executeMCPLogin = func(_ context.Context, _ mcp.ServerConfig, opts oauthlogin.Options, _ app.MCPLoginOptions) error {
+		if opts.URLWriter == nil || !opts.NoBrowser {
+			t.Fatalf("no-browser options = %#v", opts)
+		}
+		_, _ = fmt.Fprintln(opts.URLWriter, authorizationURL)
+		return nil
+	}
+	var noBrowser strings.Builder
+	if err := runMCPLogin([]string{"gateway", "--file", path, "--no-browser"}, &noBrowser); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(noBrowser.String(), authorizationURL) || !strings.Contains(noBrowser.String(), "succeeded for gateway") {
+		t.Fatalf("no-browser output = %q", noBrowser.String())
+	}
+
+	executeMCPLogin = func(_ context.Context, _ mcp.ServerConfig, opts oauthlogin.Options, _ app.MCPLoginOptions) error {
+		if opts.NoBrowser || opts.URLWriter != nil {
+			t.Fatalf("ordinary login unexpectedly exposed URL output: %#v", opts)
+		}
+		return nil
+	}
+	var ordinary strings.Builder
+	if err := runMCPLogin([]string{"gateway", "--file", path}, &ordinary); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ordinary.String(), authorizationURL) {
+		t.Fatalf("ordinary login output leaked terminal URL: %q", ordinary.String())
+	}
+}
+
+func TestDirectMCPOnboarding_Scenario4_DCRRecoveryPreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	t.Setenv("MECATL_LOGIN_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err := os.WriteFile(path, []byte(mcpLoginOAuthYAML("gateway", "local", filepath.Join(t.TempDir(), "credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldLogin := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = oldLogin })
+	const canary = "registration-response-secret"
+	executeMCPLogin = func(context.Context, mcp.ServerConfig, oauthlogin.Options, app.MCPLoginOptions) error {
+		return errors.Join(app.ErrMCPLoginAuthorization, mcp.NewOAuthDCRRecoveryError(mcp.OAuthDCRRecoveryResponseInvalid), errors.New(canary))
+	}
+	got := runMCPLogin([]string{"gateway", "--file", path}, io.Discard)
+	if got == nil || !strings.Contains(got.Error(), "provider returned a registration response") || !strings.Contains(got.Error(), "--retry-dcr-registration") {
+		t.Fatalf("DCR recovery remedy = %v", got)
+	}
+	if strings.Contains(got.Error(), canary) || strings.Contains(got.Error(), "--reset-dcr-registration") {
+		t.Fatalf("DCR recovery remedy leaked detail or wrong action: %v", got)
+	}
+}
 func TestMCPLoginArgsAcceptServerInteractionAndConfigSelectionOnly(t *testing.T) {
 	for _, test := range []struct {
 		args      []string
