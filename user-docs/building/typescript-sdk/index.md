@@ -34,6 +34,8 @@ to run one prompt against a private offline daemon.
   handlers to sessions created by a private daemon.
 - [Inspect a server before creating a session](./server-discovery.md) to check
   compatibility, deployment capabilities, and safe build identity.
+- [Enroll MCP workspace services](./mcp-connectors.md) to inspect a session's
+  connector inventory and drive whole-bundle enrollment.
 
 The SDK also exposes typed namespaces for models, agents, skills, teams,
 schedules, learning, MCP inventory, and storage operations. See the

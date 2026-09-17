@@ -102,6 +102,17 @@ export { MECATL_EVENT_KINDS } from "./events.js";
 export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
 export type {
+  McpConnectorInventory,
+  McpConnectorStatus,
+  WorkspaceEnrollment,
+} from "./mcp-workspace-enrollment.js";
+export {
+  McpConnectorAvailability,
+  McpConnectorCatalogueState,
+  McpConnectorEnrollmentState,
+  WorkspaceEnrollmentStatus,
+} from "./mcp-workspace-enrollment.js";
+export type {
   AudioPromptPart,
   ImagePromptPart,
   MediaPartOptions,

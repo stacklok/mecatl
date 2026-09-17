@@ -80,6 +80,14 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
+| [`McpConnectorAvailability`](#api-mcpconnectoravailability-typealias) | Type alias |
+| [`McpConnectorAvailability`](#api-mcpconnectoravailability-variable) | Variable |
+| [`McpConnectorCatalogueState`](#api-mcpconnectorcataloguestate-typealias) | Type alias |
+| [`McpConnectorCatalogueState`](#api-mcpconnectorcataloguestate-variable) | Variable |
+| [`McpConnectorEnrollmentState`](#api-mcpconnectorenrollmentstate-typealias) | Type alias |
+| [`McpConnectorEnrollmentState`](#api-mcpconnectorenrollmentstate-variable) | Variable |
+| [`McpConnectorInventory`](#api-mcpconnectorinventory-interface) | Interface |
+| [`McpConnectorStatus`](#api-mcpconnectorstatus-interface) | Interface |
 | [`McpInventory`](#api-mcpinventory-interface) | Interface |
 | [`MECATL_ATTACH_FILTERED_KINDS`](#api-mecatl-attach-filtered-kinds-variable) | Variable |
 | [`MECATL_ERROR_CODES`](#api-mecatl-error-codes-variable) | Variable |
@@ -202,6 +210,9 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`WatchEventEnvelope`](#api-watcheventenvelope-interface) | Interface |
 | [`WatchGapEnvelope`](#api-watchgapenvelope-interface) | Interface |
 | [`withSessionAffinity`](#api-withsessionaffinity-function) | Function |
+| [`WorkspaceEnrollment`](#api-workspaceenrollment-interface) | Interface |
+| [`WorkspaceEnrollmentStatus`](#api-workspaceenrollmentstatus-typealias) | Type alias |
+| [`WorkspaceEnrollmentStatus`](#api-workspaceenrollmentstatus-variable) | Variable |
 | [`Worktrees`](#api-worktrees-interface) | Interface |
 
 ## Classes
@@ -2493,6 +2504,86 @@ readonly projectMemory?: DreamTargetCapability;
 readonly userModel?: DreamTargetCapability;
 ```
 
+<Heading as="h3" id="api-mcpconnectorinventory-interface"><code>McpConnectorInventory</code></Heading>
+
+A current, nonhistorical snapshot of broker connector publication.
+
+```ts
+export interface McpConnectorInventory
+```
+
+<Heading as="h4" id="api-mcpconnectorinventory-availability-propertysignature"><code>McpConnectorInventory.availability</code></Heading>
+
+Whether the process-local broker snapshot is available.
+
+```ts
+readonly availability: McpConnectorAvailability;
+```
+
+<Heading as="h4" id="api-mcpconnectorinventory-connectors-propertysignature"><code>McpConnectorInventory.connectors</code></Heading>
+
+Ordered bounded connector display rows.
+
+```ts
+readonly connectors: readonly McpConnectorStatus[];
+```
+
+<Heading as="h4" id="api-mcpconnectorinventory-enrollmentstate-propertysignature"><code>McpConnectorInventory.enrollmentState</code></Heading>
+
+Aggregate whole-bundle enrollment state.
+
+```ts
+readonly enrollmentState: McpConnectorEnrollmentState;
+```
+
+<Heading as="h4" id="api-mcpconnectorinventory-totalconnectors-propertysignature"><code>McpConnectorInventory.totalConnectors</code></Heading>
+
+Total connector count before server-side truncation.
+
+```ts
+readonly totalConnectors: number;
+```
+
+<Heading as="h4" id="api-mcpconnectorinventory-truncated-propertysignature"><code>McpConnectorInventory.truncated</code></Heading>
+
+Whether the connector rows omit entries because of the server bound.
+
+```ts
+readonly truncated: boolean;
+```
+
+<Heading as="h3" id="api-mcpconnectorstatus-interface"><code>McpConnectorStatus</code></Heading>
+
+A bounded connector display row. It is not a routing handle.
+
+```ts
+export interface McpConnectorStatus
+```
+
+<Heading as="h4" id="api-mcpconnectorstatus-cataloguestate-propertysignature"><code>McpConnectorStatus.catalogueState</code></Heading>
+
+Broker-local catalogue publication state.
+
+```ts
+readonly catalogueState: McpConnectorCatalogueState;
+```
+
+<Heading as="h4" id="api-mcpconnectorstatus-name-propertysignature"><code>McpConnectorStatus.name</code></Heading>
+
+Display name supplied by the server.
+
+```ts
+readonly name: string;
+```
+
+<Heading as="h4" id="api-mcpconnectorstatus-toolcount-propertysignature"><code>McpConnectorStatus.toolCount</code></Heading>
+
+Number of published tools when the catalogue state makes that count meaningful.
+
+```ts
+readonly toolCount: number;
+```
+
 <Heading as="h3" id="api-mcpinventory-interface"><code>McpInventory</code></Heading>
 
 MCP resource, prompt, source, and ToolHive-group inventory operations.
@@ -3969,7 +4060,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -4005,6 +4096,23 @@ Returns: `Promise<AttachedRun>`: A single-consumption durable stream bound to th
 Throws: `NoRunsError` when no run can be selected.
 
 Throws: `CursorScopeError` when a cursor would widen its original filter.
+
+<Heading as="h4" id="api-session-cancelworkspaceenrollment-methodsignature"><code>Session.cancelWorkspaceEnrollment</code></Heading>
+
+Cancels one exact workspace-enrollment correlation. The SDK accepts terminal server outcomes and leaves a future `unknown` value uninterpreted. It sends no follow-up request.
+
+```ts
+cancelWorkspaceEnrollment(enrollmentId: string, options?: RequestOptions): Promise<WorkspaceEnrollment>;
+```
+
+Parameters:
+
+- `enrollmentId` (`string`): Exact enrollment correlation to cancel.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<WorkspaceEnrollment>`: The terminal server result, or `unknown` for a future result state.
+
+Throws: `ProtocolError` when the returned correlation differs or a known result is pending.
 
 <Heading as="h4" id="api-session-clear-methodsignature"><code>Session.clear</code></Heading>
 
@@ -4049,6 +4157,22 @@ Parameters:
 
 Returns: `Promise<boolean>`: Whether the server reduced the model-visible history.
 
+<Heading as="h4" id="api-session-connectworkspaceservices-methodsignature"><code>Session.connectWorkspaceServices</code></Heading>
+
+Starts or observes this session's whole-bundle workspace enrollment. Each invocation performs one target request. The SDK does not poll, retry, open a browser, or retain the returned presentation URL.
+
+```ts
+connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<WorkspaceEnrollment>`: The immediate enrollment state and an ephemeral URL while pending.
+
+Throws: `ProtocolError` when the successful response is structurally malformed.
+
 <Heading as="h4" id="api-session-controls-methodsignature"><code>Session.controls</code></Heading>
 
 Creates prompt-free controls bound to one exact run without opening a watch.
@@ -4082,6 +4206,20 @@ Returns: `Promise<void>`: A promise that resolves after the server removes the s
 ```ts
 readonly id: string;
 ```
+
+<Heading as="h4" id="api-session-listmcpconnectors-methodsignature"><code>Session.listMcpConnectors</code></Heading>
+
+Reads the current broker connector inventory for this session. The inventory describes broker-local publication rather than connector health or enrollment-attempt history. This method performs one target request and never starts enrollment or a direct MCP operation.
+
+```ts
+listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<McpConnectorInventory>`: A detached SDK-owned connector inventory projection.
 
 <Heading as="h4" id="api-session-rename-methodsignature"><code>Session.rename</code></Heading>
 
@@ -4130,6 +4268,23 @@ Parameters:
 Returns: `Promise<Run>`: The same single-consumption run lifecycle returned by run().
 
 Throws: `SessionBusyError` when the session already has an active run.
+
+<Heading as="h4" id="api-session-retryworkspaceenrollment-methodsignature"><code>Session.retryWorkspaceEnrollment</code></Heading>
+
+Replaces one exact pending workspace-enrollment correlation. Use this explicit operation when the application retained a pending correlation but lost its presentation URL. The SDK performs no automatic recovery after an ambiguous unary result.
+
+```ts
+retryWorkspaceEnrollment(enrollmentId: string, options?: RequestOptions): Promise<WorkspaceEnrollment>;
+```
+
+Parameters:
+
+- `enrollmentId` (`string`): Exact prior enrollment correlation to replace.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<WorkspaceEnrollment>`: A replacement enrollment with a distinct correlation.
+
+Throws: `ProtocolError` when the replacement correlation is missing or unchanged.
 
 <Heading as="h4" id="api-session-run-methodsignature"><code>Session.run</code></Heading>
 
@@ -6136,6 +6291,46 @@ readonly kind: "gap";
 readonly phase: "gap";
 ```
 
+<Heading as="h3" id="api-workspaceenrollment-interface"><code>WorkspaceEnrollment</code></Heading>
+
+The immediate result of one whole-bundle workspace-enrollment operation.
+
+```ts
+export interface WorkspaceEnrollment
+```
+
+<Heading as="h4" id="api-workspaceenrollment-enrollmentid-propertysignature"><code>WorkspaceEnrollment.enrollmentId</code></Heading>
+
+Opaque correlation for this enrollment attempt.
+
+```ts
+readonly enrollmentId: string;
+```
+
+<Heading as="h4" id="api-workspaceenrollment-presentationurl-propertysignature"><code>WorkspaceEnrollment.presentationUrl</code></Heading>
+
+Ephemeral application-facing HTTP(S) launch URL, present only while pending.
+
+```ts
+readonly presentationUrl?: string;
+```
+
+<Heading as="h4" id="api-workspaceenrollment-requiredservices-propertysignature"><code>WorkspaceEnrollment.requiredServices</code></Heading>
+
+Number of services that the whole bundle requires.
+
+```ts
+readonly requiredServices: number;
+```
+
+<Heading as="h4" id="api-workspaceenrollment-status-propertysignature"><code>WorkspaceEnrollment.status</code></Heading>
+
+Current operation state, or `unknown` for a future wire value.
+
+```ts
+readonly status: WorkspaceEnrollmentStatus;
+```
+
 <Heading as="h3" id="api-worktrees-interface"><code>Worktrees</code></Heading>
 
 Session-scoped worktree inventory operations.
@@ -6274,6 +6469,30 @@ A wire event kind currently understood by this SDK.
 
 ```ts
 export type KnownEventKind = (typeof MECATL_EVENT_KINDS)[number];
+```
+
+<Heading as="h3" id="api-mcpconnectoravailability-typealias"><code>McpConnectorAvailability</code></Heading>
+
+One broker-snapshot availability value.
+
+```ts
+export type McpConnectorAvailability = (typeof McpConnectorAvailability)[keyof typeof McpConnectorAvailability];
+```
+
+<Heading as="h3" id="api-mcpconnectorcataloguestate-typealias"><code>McpConnectorCatalogueState</code></Heading>
+
+One connector catalogue-publication value.
+
+```ts
+export type McpConnectorCatalogueState = (typeof McpConnectorCatalogueState)[keyof typeof McpConnectorCatalogueState];
+```
+
+<Heading as="h3" id="api-mcpconnectorenrollmentstate-typealias"><code>McpConnectorEnrollmentState</code></Heading>
+
+One aggregate connector-enrollment value.
+
+```ts
+export type McpConnectorEnrollmentState = (typeof McpConnectorEnrollmentState)[keyof typeof McpConnectorEnrollmentState];
 ```
 
 <Heading as="h3" id="api-mecatlerrorcode-typealias"><code>MecatlErrorCode</code></Heading>
@@ -6464,6 +6683,14 @@ One decoded durable-watch delivery envelope.
 export type WatchEnvelope = WatchEventEnvelope | WatchBoundaryEnvelope | WatchGapEnvelope | UnknownWatchEnvelope;
 ```
 
+<Heading as="h3" id="api-workspaceenrollmentstatus-typealias"><code>WorkspaceEnrollmentStatus</code></Heading>
+
+One workspace-enrollment operation state.
+
+```ts
+export type WorkspaceEnrollmentStatus = (typeof WorkspaceEnrollmentStatus)[keyof typeof WorkspaceEnrollmentStatus];
+```
+
 ## Variables
 
 <Heading as="h3" id="api-max-media-part-bytes-variable"><code>MAX_MEDIA_PART_BYTES</code></Heading>
@@ -6488,6 +6715,45 @@ Maximum image and audio parts in one prompt.
 
 ```ts
 MAX_PROMPT_MEDIA_PARTS = 16
+```
+
+<Heading as="h3" id="api-mcpconnectoravailability-variable"><code>McpConnectorAvailability</code></Heading>
+
+Availability of the process-local broker snapshot for one session.
+
+```ts
+McpConnectorAvailability: {
+    readonly Available: "available";
+    readonly Unavailable: "unavailable";
+    readonly Unknown: "unknown";
+}
+```
+
+<Heading as="h3" id="api-mcpconnectorcataloguestate-variable"><code>McpConnectorCatalogueState</code></Heading>
+
+Broker-local catalogue publication state for one connector.
+
+```ts
+McpConnectorCatalogueState: {
+    readonly Hidden: "hidden";
+    readonly Declared: "declared";
+    readonly Discovered: "discovered";
+    readonly Unknown: "unknown";
+}
+```
+
+<Heading as="h3" id="api-mcpconnectorenrollmentstate-variable"><code>McpConnectorEnrollmentState</code></Heading>
+
+Aggregate workspace-enrollment state reported by connector inventory.
+
+```ts
+McpConnectorEnrollmentState: {
+    readonly NotRequired: "not_required";
+    readonly NotStarted: "not_started";
+    readonly Pending: "pending";
+    readonly Completed: "completed";
+    readonly Unknown: "unknown";
+}
 ```
 
 <Heading as="h3" id="api-mecatl-attach-filtered-kinds-variable"><code>MECATL_ATTACH_FILTERED_KINDS</code></Heading>
@@ -6585,4 +6851,20 @@ Known watch-session-events feature identifier.
 
 ```ts
 WATCH_SESSION_EVENTS_FEATURE: "watch_session_events"
+```
+
+<Heading as="h3" id="api-workspaceenrollmentstatus-variable"><code>WorkspaceEnrollmentStatus</code></Heading>
+
+State returned by a whole-bundle workspace-enrollment operation.
+
+```ts
+WorkspaceEnrollmentStatus: {
+    readonly Pending: "pending";
+    readonly Connected: "connected";
+    readonly Denied: "denied";
+    readonly Cancelled: "cancelled";
+    readonly Expired: "expired";
+    readonly Failed: "failed";
+    readonly Unknown: "unknown";
+}
 ```

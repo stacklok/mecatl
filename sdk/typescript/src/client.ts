@@ -14,6 +14,7 @@ import {
   IncompatibleServerError,
   InvalidStateError,
   MecatlError,
+  normalizeError,
   ProtocolError,
   ServerError,
   SessionBusyError,
@@ -32,6 +33,12 @@ import {
   type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
+import {
+  type McpConnectorInventory,
+  projectMcpConnectorInventory,
+  projectWorkspaceEnrollment,
+  type WorkspaceEnrollment,
+} from "./mcp-workspace-enrollment.js";
 import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
 import {
   type Agents,
@@ -190,6 +197,59 @@ export interface ClearSessionOptions {
 /** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
+  /**
+   * Reads the current broker connector inventory for this session.
+   *
+   * The inventory describes broker-local publication rather than connector
+   * health or enrollment-attempt history. This method performs one target
+   * request and never starts enrollment or a direct MCP operation.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns A detached SDK-owned connector inventory projection.
+   */
+  listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
+  /**
+   * Starts or observes this session's whole-bundle workspace enrollment.
+   *
+   * Each invocation performs one target request. The SDK does not poll, retry,
+   * open a browser, or retain the returned presentation URL.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The immediate enrollment state and an ephemeral URL while pending.
+   * @throws `ProtocolError` when the successful response is structurally malformed.
+   */
+  connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment>;
+  /**
+   * Replaces one exact pending workspace-enrollment correlation.
+   *
+   * Use this explicit operation when the application retained a pending
+   * correlation but lost its presentation URL. The SDK performs no automatic
+   * recovery after an ambiguous unary result.
+   *
+   * @param enrollmentId - Exact prior enrollment correlation to replace.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns A replacement enrollment with a distinct correlation.
+   * @throws `ProtocolError` when the replacement correlation is missing or unchanged.
+   */
+  retryWorkspaceEnrollment(
+    enrollmentId: string,
+    options?: RequestOptions,
+  ): Promise<WorkspaceEnrollment>;
+  /**
+   * Cancels one exact workspace-enrollment correlation.
+   *
+   * The SDK accepts terminal server outcomes and leaves a future `unknown`
+   * value uninterpreted. It sends no follow-up request.
+   *
+   * @param enrollmentId - Exact enrollment correlation to cancel.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The terminal server result, or `unknown` for a future result state.
+   * @throws `ProtocolError` when the returned correlation differs or a known result is pending.
+   */
+  cancelWorkspaceEnrollment(
+    enrollmentId: string,
+    options?: RequestOptions,
+  ): Promise<WorkspaceEnrollment>;
   /**
    * Creates prompt-free controls bound to one exact run without opening a watch.
    *
@@ -477,6 +537,13 @@ function sessionAffinityOperations(
   };
 }
 
+function assertRequestNotAborted(
+  options: RequestOptions | undefined,
+  transport: TransportKind,
+): void {
+  if (options?.signal?.aborted === true) throw normalizeError(options.signal.reason, transport);
+}
+
 type DisposableTransport = Transport & {
   close?: () => Promise<void> | void;
   [Symbol.asyncDispose]?: () => Promise<void>;
@@ -533,6 +600,68 @@ class SessionImpl implements Session {
       transportKind: this.#operations.transportKind,
       unary: (method, input, options) => this.#operations.unary(method, input, options),
     });
+  }
+
+  async listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(options, this.#operations.transportKind);
+    const response = await this.#operations.unary(
+      HarnessService.method.listSessionMcpConnectors,
+      { sessionId: this.id },
+      options,
+    );
+    return projectMcpConnectorInventory(response);
+  }
+
+  async connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(options, this.#operations.transportKind);
+    const response = await this.#operations.unary(
+      HarnessService.method.connectWorkspaceServices,
+      { sessionId: this.id },
+      options,
+    );
+    return projectWorkspaceEnrollment(
+      response,
+      { kind: "connect" },
+      this.#operations.transportKind,
+    );
+  }
+
+  async retryWorkspaceEnrollment(
+    enrollmentId: string,
+    options?: RequestOptions,
+  ): Promise<WorkspaceEnrollment> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(options, this.#operations.transportKind);
+    const response = await this.#operations.unary(
+      HarnessService.method.retryWorkspaceEnrollment,
+      { enrollmentId, sessionId: this.id },
+      options,
+    );
+    return projectWorkspaceEnrollment(
+      response,
+      { enrollmentId, kind: "retry" },
+      this.#operations.transportKind,
+    );
+  }
+
+  async cancelWorkspaceEnrollment(
+    enrollmentId: string,
+    options?: RequestOptions,
+  ): Promise<WorkspaceEnrollment> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(options, this.#operations.transportKind);
+    const response = await this.#operations.unary(
+      HarnessService.method.cancelWorkspaceEnrollment,
+      { enrollmentId, sessionId: this.id },
+      options,
+    );
+    return projectWorkspaceEnrollment(
+      response,
+      { enrollmentId, kind: "cancel" },
+      this.#operations.transportKind,
+    );
   }
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {

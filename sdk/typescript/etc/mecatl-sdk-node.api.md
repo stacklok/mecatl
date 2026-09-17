@@ -634,6 +634,55 @@ export const MAX_PROMPT_MEDIA_BYTES: number;
 export const MAX_PROMPT_MEDIA_PARTS = 16;
 
 // @public
+export const McpConnectorAvailability: {
+    readonly Available: "available";
+    readonly Unavailable: "unavailable";
+    readonly Unknown: "unknown";
+};
+
+// @public
+export type McpConnectorAvailability = (typeof McpConnectorAvailability)[keyof typeof McpConnectorAvailability];
+
+// @public
+export const McpConnectorCatalogueState: {
+    readonly Hidden: "hidden";
+    readonly Declared: "declared";
+    readonly Discovered: "discovered";
+    readonly Unknown: "unknown";
+};
+
+// @public
+export type McpConnectorCatalogueState = (typeof McpConnectorCatalogueState)[keyof typeof McpConnectorCatalogueState];
+
+// @public
+export const McpConnectorEnrollmentState: {
+    readonly NotRequired: "not_required";
+    readonly NotStarted: "not_started";
+    readonly Pending: "pending";
+    readonly Completed: "completed";
+    readonly Unknown: "unknown";
+};
+
+// @public
+export type McpConnectorEnrollmentState = (typeof McpConnectorEnrollmentState)[keyof typeof McpConnectorEnrollmentState];
+
+// @public
+export interface McpConnectorInventory {
+    readonly availability: McpConnectorAvailability;
+    readonly connectors: readonly McpConnectorStatus[];
+    readonly enrollmentState: McpConnectorEnrollmentState;
+    readonly totalConnectors: number;
+    readonly truncated: boolean;
+}
+
+// @public
+export interface McpConnectorStatus {
+    readonly catalogueState: McpConnectorCatalogueState;
+    readonly name: string;
+    readonly toolCount: number;
+}
+
+// @public
 export interface McpInventory {
     // Warning: (ae-forgotten-export) The symbol "GetMcpPromptRequest" needs to be exported by the entry point node.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetMcpPromptResponse" needs to be exported by the entry point node.d.ts
@@ -1184,16 +1233,20 @@ export type ServerPosture = (typeof ServerPosture)[keyof typeof ServerPosture];
 export interface Session {
     activity(options?: AttachOptions): Promise<SessionActivity>;
     attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
+    cancelWorkspaceEnrollment(enrollmentId: string, options?: RequestOptions): Promise<WorkspaceEnrollment>;
     clear(options?: ClearSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
     close(options?: RequestOptions): Promise<void>;
     compact(options?: RequestOptions): Promise<boolean>;
+    connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment>;
     controls(runId: string): RunControls;
     delete(options?: RequestOptions): Promise<void>;
     // (undocumented)
     readonly id: string;
+    listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
     rename(title: string, options?: RequestOptions): Promise<SessionSnapshot>;
     resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
     retry(options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
+    retryWorkspaceEnrollment(enrollmentId: string, options?: RequestOptions): Promise<WorkspaceEnrollment>;
     run(prompt: PromptInput, options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;
     setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot>;
     snapshot(options?: RequestOptions): Promise<SessionSnapshot>;
@@ -1930,6 +1983,28 @@ export interface WatchGapEnvelope {
 
 // @public
 export function withSessionAffinity(sessionId: string, options?: CallOptions): CallOptions;
+
+// @public
+export interface WorkspaceEnrollment {
+    readonly enrollmentId: string;
+    readonly presentationUrl?: string;
+    readonly requiredServices: number;
+    readonly status: WorkspaceEnrollmentStatus;
+}
+
+// @public
+export const WorkspaceEnrollmentStatus: {
+    readonly Pending: "pending";
+    readonly Connected: "connected";
+    readonly Denied: "denied";
+    readonly Cancelled: "cancelled";
+    readonly Expired: "expired";
+    readonly Failed: "failed";
+    readonly Unknown: "unknown";
+};
+
+// @public
+export type WorkspaceEnrollmentStatus = (typeof WorkspaceEnrollmentStatus)[keyof typeof WorkspaceEnrollmentStatus];
 
 // @public
 export interface Worktrees {
