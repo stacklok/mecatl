@@ -35,7 +35,7 @@ func TestDirectMCPOnboarding_Scenario3_AddOrderingAndResiduals(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
 	defer server.Close()
-	if err := runMCPAdd([]string{"calendar", server.URL, "--file", target, "--credential-store", "file"}, io.Discard); err == nil {
+	if err := runMCPAdd([]string{"calendar", server.URL, "--file", target, "--credential-store", "file"}, io.Discard, io.Discard); err == nil {
 		t.Fatal("add accepted a target shadowed by another MCP source")
 	}
 	if requests != 0 {
@@ -50,7 +50,7 @@ func TestDirectMCPOnboarding_Scenario3_BrokerModeRejectedBeforeDiscoveryOrCustod
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	err := runMCPAdd([]string{"calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, &output)
+	err := runMCPAdd([]string{"calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, &output, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "mcp.mode is broker") {
 		t.Fatalf("broker add error = %v, want explicit broker rejection", err)
 	}
@@ -283,7 +283,7 @@ func TestMCPAddCommandProgressAndLoginDelegation(t *testing.T) {
 		return nil
 	}
 	var output strings.Builder
-	if err := runMCPAdd([]string{"Calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, &output); err != nil {
+	if err := runMCPAdd([]string{"Calendar", "https://mcp.example/mcp", "--file", path, "--credential-store", "file"}, &output, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range []string{"writable target:", "discovering protected resource", "selecting credential custody", "settings saved", "succeeded for Calendar"} {

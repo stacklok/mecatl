@@ -409,7 +409,7 @@ func secureMCPSettingsDir(path string) error {
 	return nil
 }
 
-func runMCPAdd(args []string, stdout io.Writer) error {
+func runMCPAdd(args []string, stdout, stderr io.Writer) error {
 	parsed, err := parseMCPLifecycleArgs(mcpAddCommand, args)
 	if err != nil {
 		return err
@@ -472,7 +472,7 @@ func runMCPAdd(args []string, stdout io.Writer) error {
 	}
 	unlock()
 	unlock = nil
-	return runMCPLogin([]string{parsed.name, mcpFileFlag, path}, stdout)
+	return runMCPLogin([]string{parsed.name, mcpFileFlag, path}, stdout, stderr)
 }
 
 func publishMCPAdd(path string, before mcpSettingsSnapshot, parsed mcpLifecycleArgs, issuer string, stdout io.Writer) error {
