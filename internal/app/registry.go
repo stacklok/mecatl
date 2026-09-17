@@ -18,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/anthropicsub"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 	"github.com/stacklok/mecatl/internal/adapter/openaibearer"
@@ -598,6 +599,14 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// provider switch, and the capability intersection treat it as data (no change).
 	if key := providerKey(cfg.AnthropicKey, providerAnthropic, detect); key != "" {
 		entries[providerAnthropic] = newAnthropicEntryFor(cfg, providerAnthropic, key, builtinBaseURL(cfg, providerAnthropic), meta, true)
+	} else if cfg.AnthropicSubscription != nil {
+		// A subscription grant is not an API key: it travels as a bearer token
+		// and the provider only honors it on a request carrying the
+		// first-party client's shape. The transport owns both, so the adapter
+		// is constructed with no API key and its HTTP client replaced.
+		subscriptionClient := &http.Client{Transport: &anthropicsub.Transport{Source: cfg.AnthropicSubscription}}
+		entries[providerAnthropic] = newAnthropicEntryFor(cfg, providerAnthropic, "", builtinBaseURL(cfg, providerAnthropic), meta, true,
+			anthropic.WithRequestOption(anthropicoption.WithHTTPClient(subscriptionClient)))
 	}
 
 	unavailableNative, err := addCustomProviderEntries(ctx, entries, cfg, meta)
