@@ -6,7 +6,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -42,7 +41,8 @@ type teamState struct {
 	view   teamView
 	cursor int    // selected row in the roster (an index into the render order)
 	member string // the focused member's name (teamFocus)
-	scroll int    // rendered-line offset in focus/tasks/findings
+	roster boundedList
+	detail boundedViewport
 }
 
 // openTeam opens the roster overlay over the most-recent populated Team card.
@@ -102,8 +102,8 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	}
 	if m.team.view == teamFocus {
-		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
-			m.team.scroll = next
+		if next, handled := m.navigateAgentsDetail(msg, m.team.detail); handled {
+			m.team.detail = next
 			return m, nil, true
 		}
 		// Focus pane: esc returns to the roster; x cancels the focused member (live
@@ -113,7 +113,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		case key.Matches(msg, m.keys.Close):
 			m.team.view = teamRoster
 			m.team.member = ""
-			m.team.scroll = 0
+			m.team.detail.offset = 0
 		case key.Matches(msg, m.keys.CancelChild):
 			mm, cmd := m.cancelTeamLane(b, teamFindLane(b, m.team.member))
 			return mm, cmd, true
@@ -121,8 +121,8 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	if m.team.view == teamTasks {
-		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
-			m.team.scroll = next
+		if next, handled := m.navigateAgentsDetail(msg, m.team.detail); handled {
+			m.team.detail = next
 			return m, nil, true
 		}
 		// Subagent sub-view: BOTH esc and 't' return to the roster (t toggles, esc steps
@@ -130,13 +130,13 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		// consumed (the list is height-windowed, no live viewport).
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Tasks) {
 			m.team.view = teamRoster
-			m.team.scroll = 0
+			m.team.detail.offset = 0
 		}
 		return m, nil, true
 	}
 	if m.team.view == teamFindings {
-		if next, handled := m.navigateAgentsDetail(msg, m.team.scroll); handled {
-			m.team.scroll = next
+		if next, handled := m.navigateAgentsDetail(msg, m.team.detail); handled {
+			m.team.detail = next
 			return m, nil, true
 		}
 		// Findings sub-view: BOTH esc and 'f' return to the roster (f toggles, esc
@@ -144,7 +144,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		// live viewport.
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Findings) {
 			m.team.view = teamRoster
-			m.team.scroll = 0
+			m.team.detail.offset = 0
 		}
 		return m, nil, true
 	}
@@ -160,23 +160,21 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // visible window is derived from it at render time (teamWindow), so a roster
 // that grows under the overlay never desyncs a stored scroll offset.
 func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cmd) {
-	n := len(b.teamLanes)
-	th, hk, width, height := m.agentsListGeometry()
-	page := agentsListPageSize(th, height, teamSelectableList(th, m.team, b, hk, width))
+	th, hk, width, _ := m.agentsListGeometry()
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m.closeTeam()
 	case key.Matches(msg, m.keys.Tasks):
 		m.team.view = teamTasks
-		m.team.scroll = 0
+		m.team.detail.offset = 0
 		return m, nil
 	case key.Matches(msg, m.keys.Findings):
 		m.team.view = teamFindings
-		m.team.scroll = 0
+		m.team.detail.offset = 0
 		return m, nil
 	}
-	if next, handled := navigateRosterCursor(msg, m.keys, m.team.cursor, n, page); handled {
-		m.team.cursor = next
+	if next, control, handled := m.navigateAgentsList(msg, teamSelectableList(th, m.team, b, hk, width)); handled {
+		m.team.cursor, m.team.roster = next, control
 		return m, nil
 	}
 	switch {
@@ -187,7 +185,7 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		}
 		m.team.member = b.teamLanes[order[m.team.cursor]].name
 		m.team.view = teamFocus
-		m.team.scroll = 0
+		m.team.detail.offset = 0
 		return m, nil
 	case key.Matches(msg, m.keys.CancelChild):
 		order := teamLaneOrder(b.teamLanes)
@@ -197,25 +195,6 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		return m.cancelTeamLane(b, &b.teamLanes[order[m.team.cursor]])
 	}
 	return m, nil
-}
-
-// navigateRosterCursor applies the shared roster navigation keys to cursor.
-func navigateRosterCursor(msg tea.KeyPressMsg, keys keyMap, cursor, total, page int) (next int, handled bool) {
-	switch {
-	case key.Matches(msg, keys.Up):
-		return clampCursor(cursor-1, total), true
-	case key.Matches(msg, keys.Down):
-		return clampCursor(cursor+1, total), true
-	case key.Matches(msg, keys.ScrollU):
-		return clampCursor(cursor-page, total), true
-	case key.Matches(msg, keys.ScrollD):
-		return clampCursor(cursor+page, total), true
-	case key.Matches(msg, keys.JumpTop):
-		return clampCursor(0, total), true
-	case key.Matches(msg, keys.JumpEnd):
-		return clampCursor(total-1, total), true
-	}
-	return cursor, false
 }
 
 // cancelTeamLane sends a CancelChild frame for one team member's session id (the
@@ -230,22 +209,6 @@ func (m Model) cancelTeamLane(b *block, ln *teamLane) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.cancelChildByID(ln.sessionID, "member "+sanitizeTerminal(ln.name))
-}
-
-// clampCursor clamps a candidate cursor index to [0, n-1] (and to 0 when the
-// roster is empty), so all the jump/page math can be written without per-call
-// bounds checks.
-func clampCursor(i, n int) int {
-	if n <= 0 {
-		return 0
-	}
-	if i < 0 {
-		return 0
-	}
-	if i >= n {
-		return n - 1
-	}
-	return i
 }
 
 // maxTeamFocusLines is the ABSOLUTE ceiling on how many lines of a focused
@@ -314,18 +277,17 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 	}
 	order := teamLaneOrder(b.teamLanes)
 	nameW := teamNameWidth(b.teamLanes, order)
-	cursor := clampCursor(st.cursor, len(order))
+	cursor := clampBounded(st.cursor, len(order))
 	list := agentsSelectableList{
 		header: header,
 		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth),
 		cursor: cursor, muted: muted, noun: "rows",
+		bodyWidth: bodyWidth, control: st.roster,
 	}
-	for row, laneIndex := range order {
-		style, prefix := muted, "  "
-		if row == cursor {
-			style, prefix = th.Style("spinner"), "▶ "
-		}
-		list.rows = append(list.rows, renderTeamRosterRow(style, prefix, &b.teamLanes[laneIndex], nameW, b.teamDone, bodyWidth))
+	for _, laneIndex := range order {
+		lane := &b.teamLanes[laneIndex]
+		list.ids = append(list.ids, lane.name)
+		list.rows = append(list.rows, teamRosterTitle(lane, nameW, b.teamDone)+"\n    "+teamRosterWork(lane, b.teamDone)+"\n    "+teamRosterRuntime(lane))
 	}
 	return list
 }
@@ -336,20 +298,6 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 		bodyWidth = widths[0]
 	}
 	return teamSelectableList(th, st, b, hk, bodyWidth).render(th, height)
-}
-
-// renderTeamRosterRow uses three fixed physical lines: identity, work summary, and
-// runtime metadata. Each line is clipped to its own budget instead of allowing an
-// arbitrary wrap to split related fields across rows.
-func renderTeamRosterRow(style lipgloss.Style, prefix string, ln *teamLane, nameW int, teamDone bool, bodyWidth int) string {
-	title := teamRosterTitle(ln, nameW, teamDone)
-	work, runtime := teamRosterWork(ln, teamDone), teamRosterRuntime(ln)
-	if bodyWidth > 0 {
-		title = truncateDisplayWidth(title, max(1, bodyWidth-lipgloss.Width(prefix)))
-		work = truncateDisplayWidth(work, max(1, bodyWidth-4))
-		runtime = truncateDisplayWidth(runtime, max(1, bodyWidth-4))
-	}
-	return style.Render(prefix + title + "\n    " + work + "\n    " + runtime)
 }
 
 func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
@@ -437,14 +385,14 @@ func teamRosterSubhead(b *block) string {
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
 func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyWidth, height int) string {
-	return renderTeamFocusAt(th, b, member, 0, hk, bodyWidth, height)
+	return renderTeamFocusAt(th, b, member, boundedViewport{}, hk, bodyWidth, height)
 }
 
-func renderTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk helpKeys, bodyWidth, height int) string {
-	return prepareTeamFocusAt(th, b, member, scroll, hk, bodyWidth)(height)
+func renderTeamFocusAt(th theme.Theme, b *block, member string, detail boundedViewport, hk helpKeys, bodyWidth, height int) string {
+	return prepareTeamFocusAt(th, b, member, detail, hk, bodyWidth)(height)
 }
 
-func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamFocusAt(th theme.Theme, b *block, member string, detail boundedViewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
@@ -469,15 +417,7 @@ func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk 
 	out.WriteString("\n\n")
 	prefix := out.String()
 
-	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
-	// The trace is ALREADY rendered (carries ANSI; its text was sanitized at the
-	// source in renderTrace). It must NOT go through truncateLines, which
-	// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
-	// line count ANSI-safely instead, to the rows that fit the terminal height.
-	var traceLines []string
-	if trace := r.renderTrace(ln.trace); trace != "" {
-		traceLines = strings.Split(trace, "\n")
-	}
+	traceLines := renderedTraceLines(th, hk, bodyWidth, ln.trace)
 	failure := ""
 	// A benched-on-error member surfaces WHY its last failed round failed, mirroring
 	// the subagent focus pane's failure block (issue #331). Rendered ONLY when the
@@ -494,13 +434,16 @@ func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk 
 		lead = hk.cancelChild + " cancel · " + lead
 	}
 	return func(height int) string {
-		w := renderedLineWindow(scroll, len(traceLines), teamFocusRows(height))
+		control := detail
+		control.setGeometry(bodyWidth, teamFocusRows(height), 0, boundedClip)
+		view := control.view(traceLines)
 		body := prefix
 		if len(traceLines) == 0 {
 			body += muted.Render("(no activity yet)")
 		} else {
-			body += strings.Join(traceLines[w.start:w.end], "\n")
+			body += strings.Join(view.rows, "\n")
 		}
+		w := boundedViewportBounds(view, control.height)
 		hint := agentsDetailHint(hk, w, lead)
 		return body + failure + "\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth)
 	}
@@ -645,18 +588,18 @@ func agentsDetailHint(hk helpKeys, w renderedLineWindowBounds, lead string) stri
 }
 
 func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
-	return renderTeamTasksAt(th, b, 0, hk, height, widths...)
+	return renderTeamTasksAt(th, b, boundedViewport{}, hk, height, widths...)
 }
 
-func renderTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
+func renderTeamTasksAt(th theme.Theme, b *block, detail boundedViewport, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	return prepareTeamTasksAt(th, b, scroll, hk, bodyWidth)(height)
+	return prepareTeamTasksAt(th, b, detail, hk, bodyWidth)(height)
 }
 
-func prepareTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamTasksAt(th theme.Theme, b *block, detail boundedViewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	muted := th.Style("muted")
 	prefix := renderDelegationRows(th.Style("askTitle"), "", "tasks", bodyWidth) + "\n" +
 		renderDelegationRows(muted, "", teamTasksSummary(b.teamTasks), bodyWidth) + "\n\n"
@@ -667,8 +610,11 @@ func prepareTeamTasksAt(th theme.Theme, b *block, scroll int, hk helpKeys, bodyW
 	}
 	lines := renderedTaskLines(th, b, bodyWidth)
 	return func(height int) string {
-		w := renderedLineWindow(scroll, len(lines), teamTasksRows(height))
-		return prefix + strings.Join(lines[w.start:w.end], "\n") + "\n\n" +
+		control := detail
+		control.setGeometry(bodyWidth, teamTasksRows(height), 0, boundedClip)
+		view := control.view(lines)
+		w := boundedViewportBounds(view, control.height)
+		return prefix + strings.Join(view.rows, "\n") + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.tasks)), bodyWidth)
 	}
 }
@@ -767,18 +713,18 @@ func renderedFindingLines(th theme.Theme, b *block, bodyWidth int) []string {
 }
 
 func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
-	return renderTeamFindingsAt(th, b, 0, hk, height, widths...)
+	return renderTeamFindingsAt(th, b, boundedViewport{}, hk, height, widths...)
 }
 
-func renderTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, height int, widths ...int) string {
+func renderTeamFindingsAt(th theme.Theme, b *block, detail boundedViewport, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
 	}
-	return prepareTeamFindingsAt(th, b, scroll, hk, bodyWidth)(height)
+	return prepareTeamFindingsAt(th, b, detail, hk, bodyWidth)(height)
 }
 
-func prepareTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamFindingsAt(th theme.Theme, b *block, detail boundedViewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	muted := th.Style("muted")
 	prefix := renderDelegationRows(th.Style("askTitle"), "", "findings", bodyWidth) + "\n" +
 		renderDelegationRows(muted, "", teamFindingsSummary(b.teamFindings), bodyWidth) + "\n\n"
@@ -789,8 +735,11 @@ func prepareTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, bo
 	}
 	lines := renderedFindingLines(th, b, bodyWidth)
 	return func(height int) string {
-		w := renderedLineWindow(scroll, len(lines), teamFindingsRows(height))
-		return prefix + strings.Join(lines[w.start:w.end], "\n") + "\n\n" +
+		control := detail
+		control.setGeometry(bodyWidth, teamFindingsRows(height), 0, boundedClip)
+		view := control.view(lines)
+		w := boundedViewportBounds(view, control.height)
+		return prefix + strings.Join(view.rows, "\n") + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.findings)), bodyWidth)
 	}
 }

@@ -642,7 +642,7 @@ func itoa3(i int) string {
 // SELECTED row in the rendered window and pushes an early row out of view.
 func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 	fm := manyModels(30)
-	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 
@@ -669,7 +669,7 @@ func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 // top, the first row is visible again (the window follows the cursor up too).
 func TestModelsWindowFollowsCursorPastTop(t *testing.T) {
 	fm := manyModels(30)
-	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 
@@ -926,7 +926,7 @@ func TestModelsErrorRenders(t *testing.T) {
 // RPC error), must NOT keep rendering the stale status's remediation line
 // beneath the new, unrelated error — a failed ListModels carries no
 // statuses. Both the state-clear (updateModelsMsg) and the render-time
-// defense (renderModelsPanel gated on st.err == nil) are exercised by
+// defense (modelsState.Render gates on st.err == nil) are exercised by
 // asserting the FINAL rendered view.
 func TestModelsErrorClearsStaleProviderStatuses(t *testing.T) {
 	statuses := []client.ProviderStatus{
@@ -1378,7 +1378,7 @@ func TestModelsPickerNoActiveMarkerWhenSelectionAbsent(t *testing.T) {
 	if m.modelCatalog.active != kept {
 		t.Fatalf("models.active = %+v, want the kept %+v", m.modelCatalog.active, kept)
 	}
-	panel := renderModelsPanel(m.deps.Theme, m.modelCatalog, *modelsSurface(t, m), m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30, modelsPanelFixedRows(*modelsSurface(t, m), "", defaultHelpKeys())))
+	panel := m.View().Content
 	rows := strings.Split(stripANSIstr(panel), "\n")
 	for _, row := range rows {
 		if strings.Contains(row, "●") && !strings.Contains(row, "● current") {

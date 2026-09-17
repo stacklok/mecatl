@@ -56,10 +56,12 @@ for its explicit limitations.
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
-`mecatui`. Filter the server's inventory, select a model, and press **Enter**.
-The picker warns that the choice creates a peer session and carries over the
-visible conversation. Replaying a long history may be costly. The existing
-session's provider and base model do not change.
+`mecatui`. Filter the server's inventory and use the keyboard or a primary click
+on a visible model row to move the selection. The mouse wheel scrolls the
+viewport while the selection remains pinned. Press **Enter** to switch to the
+selected model. The picker warns that the choice creates a peer session and
+carries over the visible conversation. Replaying a long history may be costly. The existing session's
+provider and base model do not change.
 
 A switch across providers keeps the visible conversation but drops private
 provider state that the new provider cannot understand.

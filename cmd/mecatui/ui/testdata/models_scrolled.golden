@@ -1,24 +1,10 @@
  mecatui  ·  session sess-test-00  ·  gpt-5  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                     ┃
-┃  Models  (28–30 of 30)                                                                              ┃
-┃  current: gpt-5 (server default)                                                                    ┃
-┃  > filter models…                                                                                   ┃
-┃                                                                                                     ┃
-┃  Switching models is expensive as it clears caches.                                                 ┃
-┃                                                                                                     ┃
-┃       prov · model-027                                                                              ┃
-┃       prov · model-028                                                                              ┃
-┃  ╭─────────────────────────╮                                                                        ┃
-┃  │  ›    prov · model-029  │                                                                        ┃
-┃  ╰─────────────────────────╯                                                                        ┃
-┃                                                                                                     ┃
-┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
-┃  ● current  ★ global default                                                                        ┃
-┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
-┃                                                                                                     ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                                               ┏━━━━┓
+                                               ┃    ┃
+                                               ┃    ┃
+                                               ┃    ┃
+                                               ┗━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

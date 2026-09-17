@@ -1,5 +1,6 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
+
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃  ▸ Subagents    Parallel    Teams                                                            ┃
@@ -13,13 +14,12 @@
   ┃    ◐ trace config loading #r-c1d3                                                            ┃
   ┃      Shell… · 11 tools · ↑0 ↓0                                                               ┃
   ┃    ✓ map test coverage #r-d0c4                                                               ┃
-  ┃      done · 9 tools · ↑15K ↓4K                                                               ┃
-  ┃    ✗ check error handling #r-e9b5                                                            ┃
-  ┃      error · 2 tools · ↑3K ↓500                                                              ┃
+  ┃    · +1 rows below                                                                           ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

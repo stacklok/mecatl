@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -56,6 +57,42 @@ func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 	}
 }
 
+func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
+	models := make([]client.ModelInfo, 40)
+	for i := range models {
+		models[i] = client.ModelInfo{ProviderID: "provider", ID: fmt.Sprintf("model-%d", i), DisplayName: fmt.Sprintf("Model %d", i)}
+	}
+	fm := &fakeModels{models: models}
+	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	m = resize(m, 40, 15)
+	s := modelsSurface(t, m)
+	_, _ = s.Render(40, 15)
+
+	s.list.setCursor(5)
+	s.cursor = s.list.cursor
+	s.list.scroll(boundedLineDown)
+	beforeTop := s.list.view().rows[0]
+	if s.list.cursorID != "provider\x00model-5" || beforeTop.id == "" {
+		t.Fatalf("refresh setup cursor/top = %q/%q", s.list.cursorID, beforeTop.id)
+	}
+
+	reordered := append([]client.ModelInfo{models[5], models[0], models[1]}, models[2:5]...)
+	reordered = append(reordered, models[6:]...)
+	// The picker receives the newly reconciled catalog before its next frame. Render
+	// owns the geometry/list refresh that must retain the stable selection.
+	s.catalog.models, s.filtered = reordered, reordered
+	_, _ = s.Render(40, 15)
+	s = modelsSurface(t, m)
+	if got := s.list.cursorID; got != "provider\x00model-5" {
+		t.Fatalf("reordered refresh selected %q, want provider/model-5", got)
+	}
+	if afterTop := s.list.view().rows[0]; afterTop.id != beforeTop.id || afterTop.itemLine != beforeTop.itemLine {
+		t.Fatalf("reordered refresh top anchor = {%q,%d}, want {%q,%d}", afterTop.id, afterTop.itemLine, beforeTop.id, beforeTop.itemLine)
+	}
+}
+
 func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
@@ -76,8 +113,8 @@ func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
 
 func TestModelsSwitchDisclosureIsOneWarningLine(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	picker := modelsState{filter: textinput.New()}
-	got := renderModelsPanel(th, modelCatalog{}, picker, client.Capabilities{}, "", defaultHelpKeys(), modelsMinRows)
+	picker := modelsState{filter: textinput.New(), deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: defaultHelpKeys()}}
+	got, _ := picker.Render(100, 30)
 
 	if strings.Count(modelSwitchDisclosure, "\n") != 0 {
 		t.Fatalf("disclosure must be one line, got %q", modelSwitchDisclosure)
@@ -99,8 +136,9 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 		filtered: []client.ModelInfo{model},
 		filter:   textinput.New(),
 	}
+	picker.deps = surfaceDeps{theme: th, keys: defaultKeys(), marks: defaultHelpKeys()}
 	statusLine := providerStatusLine(status)
-	got := renderModelsPanel(th, picker.catalog, picker, client.Capabilities{}, "", defaultHelpKeys(), modelsMinRows)
+	got, _ := picker.Render(100, 30)
 
 	if !strings.Contains(got, th.Style("errorText").Render(statusLine)) {
 		t.Fatalf("provider status must use the error style:\n%s", got)
@@ -109,17 +147,20 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 		t.Fatalf("provider status must not use the muted style:\n%s", got)
 	}
 	plain := stripANSIstr(got)
-	if !strings.Contains(plain, "openai · GPT-5") || !strings.Contains(plain, "\n\n"+statusLine+"\n") {
-		t.Fatalf("provider status must be separated from model rows:\n%s", plain)
+	if !strings.Contains(plain, "openai · GPT-5") || !strings.Contains(plain, statusLine) {
+		t.Fatalf("provider status and model rows must both render through the real surface:\n%s", plain)
 	}
 
 	withoutStatus := picker
 	withoutStatus.catalog.statuses = nil
-	if got, want := modelsPanelFixedRows(picker, "", defaultHelpKeys()), modelsPanelFixedRows(withoutStatus, "", defaultHelpKeys())+2; got != want {
-		t.Fatalf("fixed rows with a separated status = %d, want %d", got, want)
+	withPrefix, withSuffix := modelsFixedLines(picker, "")
+	withoutPrefix, withoutSuffix := modelsFixedLines(withoutStatus, "")
+	if got, want := len(withPrefix)+len(withSuffix), len(withoutPrefix)+len(withoutSuffix)+1; got != want {
+		t.Fatalf("actual chrome rows with status = %d, want %d", got, want)
 	}
 	picker.deps = surfaceDeps{keys: defaultKeys(), theme: th}
-	_, _ = picker.Render(100, modelsPanelFixedRows(picker, "", defaultHelpKeys())+4)
+	prefix, suffix := modelsFixedLines(picker, "")
+	_, _ = picker.Render(100, len(prefix)+len(suffix)+4)
 	if picker.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want 4 after status separation", picker.rowBudget)
 	}
@@ -136,12 +177,13 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		filtered: models,
 		deps:     surfaceDeps{keys: defaultKeys(), theme: theme.New("aztec", theme.AztecPalette())},
 	}
-	_, _ = s.Render(100, modelsPanelFixedRows(*s, "", defaultHelpKeys())+4)
+	prefix, suffix := modelsFixedLines(*s, "")
+	_, _ = s.Render(100, len(prefix)+len(suffix)+4)
 	if s.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if s.cursor != 4 {
-		t.Fatalf("cursor after pgdown = %d, want current Render page budget 4", s.cursor)
+	if s.cursor != 3 {
+		t.Fatalf("cursor after pgdown = %d, want first item after the effective 3-row window", s.cursor)
 	}
 }

@@ -177,7 +177,7 @@ func (m Model) onSchedulePanelActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		m.schedule.cursor = 0
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollBottom):
-		m.schedule.cursor = clampModelsCursor(len(m.schedule.filtered)-1, len(m.schedule.filtered))
+		m.schedule.cursor = clampBounded(len(m.schedule.filtered)-1, len(m.schedule.filtered))
 		return m, nil, true
 	case key.Matches(msg, m.keys.Choose):
 		return m.openScheduleInspect()

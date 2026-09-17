@@ -58,6 +58,13 @@ func testAgentsDetailScrolling(t *testing.T) {
 			m = tc.setup(m)
 
 			m = pressDetail(m, 'e')
+			activeOffset := m.team.detail.offset
+			if m.agentsTab == tabSubagents {
+				activeOffset = m.subagents.detail.offset
+			}
+			if activeOffset == 0 {
+				t.Fatal("JumpEnd did not update boundedViewport source offset")
+			}
 			end := stripANSIstr(m.View().Content)
 			if !strings.Contains(end, "detail-29") || strings.Contains(end, "detail-00") {
 				t.Fatalf("JumpEnd did not reveal only the final hidden content:\n%s", end)
@@ -72,7 +79,7 @@ func testAgentsDetailScrolling(t *testing.T) {
 			m = pressDetail(m, 'u')
 			up := stripANSIstr(m.View().Content)
 			if up == end {
-				t.Fatalf("Up did not scroll one rendered line (sub=%d team=%d):\n%s", m.subagents.scroll, m.team.scroll, up)
+				t.Fatalf("Up did not scroll one rendered line (sub=%d team=%d):\n%s", m.subagents.detail.offset, m.team.detail.offset, up)
 			}
 			m = pressDetail(m, 'p')
 			pageUp := stripANSIstr(m.View().Content)
@@ -100,9 +107,9 @@ func testAgentsDetailScrolling(t *testing.T) {
 			}
 			_, resizedWindow := m.agentsDetailMetrics()
 			wantMax := maxScrollOffset(30, resizedWindow)
-			gotOffset := m.team.scroll
+			gotOffset := m.team.detail.offset
 			if m.agentsTab == tabSubagents {
-				gotOffset = m.subagents.scroll
+				gotOffset = m.subagents.detail.offset
 			}
 			if gotOffset != wantMax {
 				t.Fatalf("resize left offset %d, want clamped %d", gotOffset, wantMax)
