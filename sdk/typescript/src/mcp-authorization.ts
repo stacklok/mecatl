@@ -20,7 +20,13 @@ import { PLAN_APPROVAL_TOOL } from "./plan.js";
 import type { PermissionAskResponder, PermissionVerdict, RunResult } from "./run.js";
 import { createRunControls, type RunControls } from "./run-controls.js";
 
-/** The closed authorization status vocabulary interpreted by the lifecycle helper. @public */
+/**
+ * The closed authorization status vocabulary interpreted by the lifecycle helper.
+ *
+ * The server remains authoritative for every status. An unknown value is a protocol error in
+ * this lifecycle even though the general event union keeps raw status strings open.
+ * @public
+ */
 export type McpAuthorizationStatus =
   | "pending"
   | "granted"
@@ -31,18 +37,30 @@ export type McpAuthorizationStatus =
   | "failed"
   | "closed";
 
-/** The server transition requested by one authorization flow. @public */
+/** The one-shot server transition requested by an authorization flow. @public */
 export type McpAuthorizationOperation = "recheck" | "cancel";
 
-/** Application-owned behavior for one authorization continuation. @public */
+/**
+ * Application-owned permission behavior for one authorization continuation.
+ *
+ * These options never choose an authorization status or browser policy. Automatic permission
+ * replies use only `permissionRequestOptions`, independently of the flow request options.
+ * @public
+ */
 export interface McpAuthorizationFlowOptions {
-  /** Automatically answers ordinary permission asks observed on the continuation. */
+  /** Automatically answers only ordinary permission asks observed on the continuation. */
   onPermissionAsk?: PermissionAskResponder;
   /** Request options used only for automatic permission replies. */
   permissionRequestOptions?: RequestOptions;
 }
 
-/** The authoritative result of one authorization recheck or cancellation. @public */
+/**
+ * The authoritative result of one authorization recheck or cancellation.
+ *
+ * `pending` and `settled` have no continuation. `completed` carries one ordinary run result.
+ * `authorization_required` hands off a different authorization parked by the continuation.
+ * @public
+ */
 export type McpAuthorizationResult =
   | {
       readonly outcome: "pending";
@@ -69,30 +87,95 @@ export type McpAuthorizationResult =
       readonly nextAuthorization: EventOf<"authorization.required">;
     };
 
-/** One lazy, single-consumption authorization control and optional continuation. @public */
+/**
+ * One lazy, single-consumption authorization control and optional continuation.
+ *
+ * Calling `recheck()` or `cancel()` creates this flow without I/O. The first iterator `next()` or
+ * `result()` performs the one control request with exact session affinity. Iteration and
+ * `result()` are mutually exclusive. Request cancellation releases SDK-owned resources but does
+ * not determine whether the server committed the control. The SDK does not poll, retry, reconnect,
+ * or scan durable activity automatically.
+ * @public
+ */
 export interface McpAuthorizationFlow extends AsyncIterable<Event> {
   readonly sessionId: string;
   readonly authorizationId: string;
   readonly operation: McpAuthorizationOperation;
   readonly continuationRunId: string | undefined;
+  /**
+   * Resolves one observed ordinary permission ask on the exact continuation run.
+   *
+   * @param askId - ID of a pending ask already observed on this flow.
+   * @param verdict - Application-owned permission decision to send unchanged.
+   * @param requestOptions - Options used only for this permission mutation.
+   * @returns A promise that resolves after the server accepts the decision.
+   * @throws `InvalidStateError` when the ask is unknown, no longer pending, or plan-originated.
+   * @throws `UnsupportedFeatureError` when the server lacks `prompt_free_controls`.
+   */
   resolveAsk(
     askId: string,
     verdict: PermissionVerdict,
     requestOptions?: RequestOptions,
   ): Promise<void>;
+  /**
+   * Requests cancellation of the exact continuation run already observed by this flow.
+   *
+   * @param requestOptions - Options used only for this cancellation mutation.
+   * @returns A promise that resolves after the server accepts the request.
+   * @throws `InvalidStateError` before a continuation run is observed.
+   * @throws `UnsupportedFeatureError` when the server lacks `prompt_free_controls`.
+   */
   cancelContinuation(requestOptions?: RequestOptions): Promise<void>;
+  /**
+   * Starts and drains this flow as its single consumption mode.
+   *
+   * @returns A pending, settled, completed, or chained-authorization result.
+   * @throws `InvalidStateError` when the flow is already being consumed.
+   * @throws `ProtocolError` when the server stream violates lifecycle correlation or grammar.
+   */
   result(): Promise<McpAuthorizationResult>;
 }
 
-/** A reusable session-bound correlation handle for one server-owned authorization. @public */
+/**
+ * A reusable session-bound correlation handle for one server-owned authorization.
+ *
+ * Construction stores exact correlation only. It performs no I/O and makes no state or authority
+ * claim. The handle does not persist credentials or lifecycle truth. Every presentation lookup and
+ * control request receives automatic session affinity.
+ * @public
+ */
 export interface McpAuthorization {
   readonly sessionId: string;
   readonly authorizationId: string;
+  /**
+   * Reads the live presentation URL for this authorization.
+   *
+   * The application owns display and browser policy. The SDK validates and returns the HTTP(S)
+   * string without opening, copying, caching, rendering, or persisting it.
+   *
+   * @param requestOptions - Request headers, callbacks, cancellation signal, and deadline.
+   * @returns The server's current absolute HTTP(S) presentation URL.
+   * @throws `ProtocolError` when the response has no valid absolute HTTP(S) URL.
+   */
   presentation(requestOptions?: RequestOptions): Promise<string>;
+  /**
+   * Creates one lazy authorization recheck flow.
+   *
+   * @param options - Permission handling for a possible continuation.
+   * @param requestOptions - Options used only when this flow starts.
+   * @returns A distinct, transport-lazy, single-consumption flow.
+   */
   recheck(
     options?: McpAuthorizationFlowOptions,
     requestOptions?: RequestOptions,
   ): McpAuthorizationFlow;
+  /**
+   * Creates one lazy authorization cancellation flow.
+   *
+   * @param options - Permission handling for a possible continuation.
+   * @param requestOptions - Options used only when this flow starts.
+   * @returns A distinct, transport-lazy, single-consumption flow.
+   */
   cancel(
     options?: McpAuthorizationFlowOptions,
     requestOptions?: RequestOptions,

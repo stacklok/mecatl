@@ -637,11 +637,8 @@ export const MAX_PROMPT_MEDIA_PARTS = 16;
 export interface McpAuthorization {
     // (undocumented)
     readonly authorizationId: string;
-    // (undocumented)
     cancel(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
-    // (undocumented)
     presentation(requestOptions?: RequestOptions): Promise<string>;
-    // (undocumented)
     recheck(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
     // (undocumented)
     readonly sessionId: string;
@@ -651,15 +648,12 @@ export interface McpAuthorization {
 export interface McpAuthorizationFlow extends AsyncIterable<Event_2> {
     // (undocumented)
     readonly authorizationId: string;
-    // (undocumented)
     cancelContinuation(requestOptions?: RequestOptions): Promise<void>;
     // (undocumented)
     readonly continuationRunId: string | undefined;
     // (undocumented)
     readonly operation: McpAuthorizationOperation;
-    // (undocumented)
     resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
-    // (undocumented)
     result(): Promise<McpAuthorizationResult>;
     // (undocumented)
     readonly sessionId: string;

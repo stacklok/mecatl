@@ -349,6 +349,34 @@ Deno 2.x without unstable resolution flags. See
 [ADR 0279](adr/0279-typescript-sdk-architecture.md) and
 [ADR 0339](adr/0339-typescript-sdk-deno.md).
 
+An ordinary `Run` can complete with a terminal result or park on
+`authorization.required`. `Run.outcome()` represents both as normal detached values;
+event iteration also ends cleanly after the park, while completed-only `Run.result()`
+raises `RunAuthorizationRequiredError` with the same handoff. Each remains a mutually
+exclusive consumption mode and releases the Session's live-run registration without
+changing the server's pending authorization.
+
+`Session.mcpAuthorization(authorizationId)` binds the handoff to the existing
+session-affined operation bag. The reusable handle asserts no state and stores no
+credential or lifecycle truth. `presentation()` returns one validated live HTTP(S) URL
+for application-owned display without opening or persisting it. Each `recheck()` or
+`cancel()` creates a distinct lazy, single-consumption flow. First consumption starts one
+exact-affinity control request. The flow validates the authoritative status and optional
+continuation into pending, settled, completed, or chained-authorization results. The SDK
+does not poll, retry a mutation, reconnect, or choose a permission verdict. Automatic
+permission responses use their separately declared request options and the existing
+prompt-free exact-run controls.
+
+Request cancellation releases only SDK-owned resources. The server decides what committed
+before disconnect. gRPC detaches and drains ordinary continuation work but cancels a run
+stranded on an ordinary permission ask. HTTP requests cancellation of a still-active
+continuation and drains it. Both leave a follow-up authorization intact after its park is
+committed. An application that observed the continuation run ID may use existing attach or
+activity APIs for explicit recovery where storage retains it. Before that correlation is
+observed, a lost control response can be unrecoverable, and a new recheck succeeds only if
+the original authorization is still pending. See
+[ADR 0348](adr/0348-typescript-sdk-mcp-authorization-lifecycle.md).
+
 The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
 already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
 shell; creates a private per-client runtime directory; and launches the fixed UDS-only,

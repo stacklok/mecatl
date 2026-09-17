@@ -198,7 +198,12 @@ export interface ClearSessionOptions {
 /** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
-  /** Binds one external authorization ID to this session without performing I/O. */
+  /**
+   * Binds one external authorization ID to this session without performing I/O.
+   *
+   * @param authorizationId - Exact non-empty ID from an authorization event.
+   * @returns A reusable correlation handle that makes no authorization-state assertion.
+   */
   mcpAuthorization(authorizationId: string): McpAuthorization;
   /**
    * Reads the current broker connector inventory for this session.

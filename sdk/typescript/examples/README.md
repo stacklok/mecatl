@@ -16,6 +16,7 @@ the ESM `./node` entry point. Deno 2.9.3 through Deno 2.x uses `./deno` for gRPC
 | [`callback-tool.ts`](./callback-tool.ts) | Register one local callback tool before session creation. |
 | [`browser-bff.ts`](./browser-bff.ts) | Show the browser side of the recommended same-origin BFF deployment. This is guidance, not shipped BFF server code. |
 | [`permissions.ts`](./permissions.ts) | Resolve permission asks with a narrow callback. |
+| [`mcp-authorization.ts`](./mcp-authorization.ts) | Present and explicitly recheck a parked MCP authorization, including chained authorization and bounded recovery. |
 | [`run-events.ts`](./run-events.ts) | Consume one run as a typed event stream. |
 | [`multimodal.ts`](./multimodal.ts) | Send text and a local image in one prompt. |
 | [`durable-attachment.ts`](./durable-attachment.ts) | Resume durable cross-run activity from an application-owned cursor. |
