@@ -134,11 +134,14 @@ func TestWirePerfSinksFoldsInPreexistingTap(t *testing.T) {
 	// A dedicated short-path temp dir for the admin unix socket: t.TempDir()
 	// embeds this test's (long) name in the path, which overflows the OS unix
 	// socket path length limit.
-	runtimeDir, err := os.MkdirTemp("", "embedperf")
+	runtimeDir, err := os.MkdirTemp(darwinShortSocketBase, "embedperf")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(runtimeDir) })
+	if adminSocket := filepath.Join(runtimeDir, adminSocketName); !unixSocketPathFits(adminSocket) {
+		t.Fatalf("test admin socket path is too long: %q (%d bytes)", adminSocket, len(adminSocket))
+	}
 
 	ps, err := setupPerf(context.Background(), PerfConfig{Enabled: true}, &cfg, runtimeDir)
 	if err != nil {
