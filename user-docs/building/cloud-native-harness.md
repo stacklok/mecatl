@@ -76,6 +76,8 @@ The same loop can support local terminal work, remote services, embedded
 applications, and Kubernetes deployments. A client does not need to own the
 agent's filesystem, credentials, or durable session state to interact with it.
 
+## Frequently asked questions
+
 ### Can another agent harness use Mecatl as its runtime?
 
 Not as a drop-in backend. Mecatl is both the agent harness and the runtime.
