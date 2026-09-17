@@ -193,9 +193,18 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()
 		var st streamState
+		observed := false
+		observe := func(terminal bool, outcome string) {
+			if observed {
+				return
+			}
+			observed = true
+			port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: outcome})
+		}
 		for stream.Next() {
 			select {
 			case <-ctx.Done():
+				observe(false, "cancelled")
 				return
 			default:
 			}
@@ -209,6 +218,7 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			if terr != nil {
 				// A translation-layer failure (e.g. tool-args over the size cap) is
 				// terminal — surface it and stop.
+				observe(st.finished, "stream_error")
 				yield(port.Chunk{}, terr)
 				return
 			}
@@ -217,8 +227,10 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			// Don't report a plain context cancellation as a stream error; the
 			// caller cancelled deliberately.
 			if ctx.Err() != nil {
+				observe(false, "cancelled")
 				return
 			}
+			observe(st.finished, "stream_error")
 			yield(port.Chunk{}, openaichatStreamErr(err, err.Error(), st.completionID))
 			return
 		}
@@ -230,11 +242,18 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			// successful tool-executing turn). Surface a truncation error instead
 			// (retryable pre-commit; terminal once a committing chunk has gone out).
 			if ctx.Err() != nil {
+				observe(false, "cancelled")
 				return
 			}
+			observe(false, "incomplete")
 			yield(port.Chunk{}, errTruncatedStream)
 			return
 		}
+		outcome := "complete"
+		if st.stop == session.StopError {
+			outcome = "incomplete"
+		}
+		observe(true, outcome)
 		// Finished cleanly: flush the buffered terminal (tool calls, usage, done).
 		for _, c := range finalize(&st) {
 			if !yield(c, nil) {

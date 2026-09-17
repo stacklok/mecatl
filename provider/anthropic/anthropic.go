@@ -325,20 +325,39 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()
 		var st streamState
+		observed := false
+		observe := func(terminal bool, outcome string) {
+			if observed {
+				return
+			}
+			observed = true
+			port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: outcome})
+		}
 		for stream.Next() {
 			select {
 			case <-ctx.Done():
+				observe(false, "cancelled")
 				return
 			default:
 			}
 			event := stream.Current()
 			chunks, terr := translate(event, &st)
+			if st.done {
+				outcome := "complete"
+				if terr != nil {
+					outcome = "stream_error"
+				} else if mapStop(st.stopReason) == session.StopError {
+					outcome = "incomplete"
+				}
+				observe(true, outcome)
+			}
 			for _, c := range chunks {
 				if !yield(c, nil) {
 					return
 				}
 			}
 			if terr != nil {
+				observe(st.done, "stream_error")
 				yield(port.Chunk{}, terr)
 				return
 			}
@@ -347,9 +366,17 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			// Don't report a plain context cancellation as a stream error; the
 			// caller cancelled deliberately.
 			if ctx.Err() != nil {
+				observe(false, "cancelled")
 				return
 			}
+			observe(false, "stream_error")
 			yield(port.Chunk{}, anthropicStreamErr(err, err.Error()))
+			return
+		}
+		if ctx.Err() != nil {
+			observe(false, "cancelled")
+		} else if !st.done {
+			observe(false, "incomplete")
 		}
 	}, nil
 }

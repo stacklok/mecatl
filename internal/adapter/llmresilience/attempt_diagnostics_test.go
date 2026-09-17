@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"iter"
 	"net"
 	"strings"
 	"syscall"
@@ -54,6 +56,54 @@ func requireDecisionFields(t *testing.T, record diagRecord, want map[string]any)
 		if got := argValue(record.args, forbidden); got != nil {
 			t.Errorf("forbidden %s field = %#v", forbidden, got)
 		}
+	}
+}
+
+type structuralAttemptProvider struct{ calls int }
+
+func (*structuralAttemptProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *structuralAttemptProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.calls++
+	call := p.calls
+	return func(yield func(port.Chunk, error) bool) {
+		if call == 1 {
+			terminal := false
+			port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: "stream_error"})
+			yield(port.Chunk{}, io.ErrUnexpectedEOF)
+			return
+		}
+		terminal := true
+		port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: "complete"})
+		yield(port.Chunk{Kind: port.ChunkText, Text: "ok"}, nil)
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+	}, nil
+}
+
+func TestADR_0346_Scenario3_RetryCorrelation(t *testing.T) {
+	provider := &structuralAttemptProvider{}
+	var observations []session.NetworkAttemptPayload
+	ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {
+		observations = append(observations, row)
+	})
+	seq, err := Wrap(provider, Config{MaxAttempts: 2}).Stream(ctx, port.LLMRequest{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := drain(t, seq); err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("observations = %d, want one final row per outer attempt", len(observations))
+	}
+	if observations[0].Attempt != 1 || observations[0].Decision != "retry" || observations[0].StreamOutcome != "stream_error" ||
+		observations[1].Attempt != 2 || observations[1].Decision != "terminal" || observations[1].StreamOutcome != "complete" {
+		t.Fatalf("retry observations = %+v", observations)
+	}
+	if observations[1].ProviderTerminalObserved == nil || !*observations[1].ProviderTerminalObserved {
+		t.Fatalf("successful terminal evidence = %+v", observations[1])
 	}
 }
 
@@ -121,8 +171,8 @@ func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 			t.Fatalf("diagnostic leaked producer token %q: %q", secret, rendered)
 		}
 	}
-	if len(observations) != 1 {
-		t.Fatalf("attempt observations = %d, want 1", len(observations))
+	if len(observations) != 2 {
+		t.Fatalf("attempt observations = %d, want retry and successful final rows", len(observations))
 	}
 	observation := observations[0]
 	if observation.SessionID != "session-409" || observation.RunSerial != 17 || observation.Turn != 3 ||
@@ -130,6 +180,9 @@ func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 		observation.Decision != "retry" || observation.FailureClass != "connect" || observation.HTTPStatus != 503 ||
 		observation.InBandStatus != 429 || observation.CorrelationKind != "request" || observation.CorrelationDigest != wantDigest {
 		t.Fatalf("typed observation = %+v", observation)
+	}
+	if final := observations[1]; final.Attempt != 2 || final.StreamOutcome != "unavailable" || final.ProviderTerminalObserved != nil {
+		t.Fatalf("successful final observation = %+v", final)
 	}
 	marshaled, err := json.Marshal(observation)
 	if err != nil {

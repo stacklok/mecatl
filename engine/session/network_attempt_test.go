@@ -22,6 +22,43 @@ func TestNetworkCorrelationDigestIsOneWayFixedAndDomainSeparated(t *testing.T) {
 	}
 }
 
+func TestADR_0346_Scenario2_InvalidEvidenceRejected(t *testing.T) {
+	terminal := true
+	base := NetworkAttemptPayload{
+		Attempt: 1, MaxAttempts: 1, RetryDisposition: "unknown", StreamProgress: "complete",
+		Decision: "terminal", SuppressionReason: "unknown", FailureClass: "unknown",
+	}
+	for _, valid := range []NetworkAttemptPayload{
+		base,
+		func() NetworkAttemptPayload { row := base; row.StreamOutcome = "unavailable"; return row }(),
+		func() NetworkAttemptPayload {
+			row := base
+			row.StreamOutcome = "complete"
+			row.ProviderTerminalObserved = &terminal
+			return row
+		}(),
+	} {
+		if _, ok := CanonicalNetworkAttempt(valid, "trusted", 1, 0); !ok {
+			t.Fatalf("valid structural evidence rejected: %+v", valid)
+		}
+	}
+	for _, invalid := range []NetworkAttemptPayload{
+		func() NetworkAttemptPayload { row := base; row.StreamOutcome = "healthy"; return row }(),
+		func() NetworkAttemptPayload { row := base; row.StreamOutcome = "complete"; return row }(),
+		func() NetworkAttemptPayload { row := base; row.ProviderTerminalObserved = &terminal; return row }(),
+		func() NetworkAttemptPayload {
+			row := base
+			row.StreamOutcome = "unavailable"
+			row.ProviderTerminalObserved = &terminal
+			return row
+		}(),
+	} {
+		if _, ok := CanonicalNetworkAttempt(invalid, "trusted", 1, 0); ok {
+			t.Errorf("invalid structural evidence accepted: %+v", invalid)
+		}
+	}
+}
+
 func TestCanonicalNetworkAttemptValidatesWholePayloadAndBindsTrustedCorrelation(t *testing.T) {
 	digest, _ := NetworkCorrelationDigest("request", "sk-live-SECRET")
 	valid := NetworkAttemptPayload{

@@ -33,6 +33,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
@@ -374,11 +375,23 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 	defer func() { _ = stream.Close() }()
 
 	st := streamState{providerRoute: p.metadataHeader}
+	observed := false
+	observe := func(terminal bool, outcome string) {
+		if observed {
+			return
+		}
+		observed = true
+		port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: outcome})
+	}
 	for stream.Next() {
 		if ctx.Err() != nil {
+			observe(false, "cancelled")
 			return emitted, false, nil
 		}
 		chunks, terr := translate(stream.Current(), &st)
+		if st.done {
+			observe(true, st.streamOutcome)
+		}
 		for _, c := range chunks {
 			emitted = true
 			if !yield(c, nil) {
@@ -396,8 +409,10 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 		// Don't report a plain context cancellation as a stream error; the
 		// caller cancelled deliberately.
 		if ctx.Err() != nil {
+			observe(false, "cancelled")
 			return emitted, false, nil
 		}
+		observe(false, "stream_error")
 		return emitted, false, withHTTPErrorMetadata(streamErr)
 	}
 	if !st.done && ctx.Err() == nil {
@@ -408,7 +423,11 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 		// text to a successful StopEndTurn (loop.go finishTurnNoTools). Surface
 		// a truncation error instead (retryable pre-commit; terminal once a
 		// committing chunk has gone out, by the no-replay rule).
+		observe(false, "incomplete")
 		return emitted, false, errTruncatedStream
+	}
+	if ctx.Err() != nil {
+		observe(false, "cancelled")
 	}
 	return emitted, false, nil
 }

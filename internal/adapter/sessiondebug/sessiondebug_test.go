@@ -286,6 +286,30 @@ func (errorLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event
 
 var _ port.EventLog = errorLog{}
 
+func TestADR_0346_Scenario4_DebuggerProjection(t *testing.T) {
+	store, target := seededTarget(t, nil)
+	log := memstore.NewEventLog()
+	terminal := true
+	rows := []session.NetworkAttemptPayload{
+		{SessionID: target.ID, RunSerial: 1, Attempt: 1, MaxAttempts: 1, Decision: "terminal", SuppressionReason: "unknown", RetryDisposition: "unknown", StreamProgress: "complete", FailureClass: "unknown", ProviderTerminalObserved: &terminal, StreamOutcome: "complete"},
+		{SessionID: target.ID, RunSerial: 2, Attempt: 1, MaxAttempts: 1, Decision: "terminal", SuppressionReason: "permanent", RetryDisposition: "permanent", StreamProgress: "precommit", FailureClass: "http"},
+	}
+	for i := range rows {
+		if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &rows[i]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := execute(t, New(target.ID, store, log), `{"view":"network"}`)
+	for _, want := range []string{`"provider_terminal_observed":true`, `"stream_outcome":"complete"`, `"stream_outcome":"unavailable"`, `"successful_attempts_timed":false`} {
+		if !strings.Contains(got.Content, want) {
+			t.Fatalf("debugger projection missing %q: %s", want, got.Content)
+		}
+	}
+	if strings.Contains(got.Content, `"session_id"`) {
+		t.Fatalf("debugger projection exposed target identity: %s", got.Content)
+	}
+}
+
 func TestNetworkEvidenceIsolationPaginationAndAvailability(t *testing.T) {
 	store, target := seededTarget(t, nil)
 	missing := execute(t, New(target.ID, store, nil), `{"view":"network"}`)
