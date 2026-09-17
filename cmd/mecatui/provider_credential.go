@@ -112,14 +112,13 @@ func isBuiltinAPIKeyProvider(provider string) bool {
 func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolution, authPath string, stdout, stderr io.Writer) error {
 	var key *string
 	if res.providerAction == providerActionLogin {
-		// A provider that also supports signing in must say so before the key
+		// A provider with a subscription counterpart must name it before the
 		// prompt blocks on input: an operator who wants the subscription
-		// otherwise sees only an API-key prompt and has no way to discover
-		// the flag from here.
-		if res.typedCommand && isSubscriptionProvider(res.providerName) {
-			_, _ = fmt.Fprintf(stderr,
-				"Reading an API key for %s. To sign in with a %s subscription instead, cancel and run:\n  mecatui providers login %s --subscription\n",
-				res.providerName, subscriptionProviders[res.providerName], res.providerName)
+		// otherwise sees only an API-key prompt with no way to discover the
+		// command from here. Only a typed command gets this; a wizard has
+		// already presented the choice it made.
+		if res.typedCommand {
+			writeSubscriptionHint(res.providerName, stderr)
 		}
 		if err := writeProviderKeyGuidance(stderr, res.providerName); err != nil {
 			return err

@@ -229,3 +229,31 @@ func warnSubscriptionShadowed(shadowedBy string, out io.Writer) error {
 		shadowedBy)
 	return err
 }
+
+// subscriptionCounterpart maps an API-key provider to the subscription login
+// that serves the same vendor. `anthropic` signs in under its own id with a
+// flag, because it keeps an API-key path; `openai` has no subscription of its
+// own and points at the separate `openai-codex` provider.
+var subscriptionCounterpart = map[string]string{
+	subcred.ProviderAnthropic:   subcred.ProviderAnthropic,
+	subcred.ProviderOpenAICodex: subcred.ProviderOpenAICodex,
+	"openai":                    subcred.ProviderOpenAICodex,
+}
+
+// writeSubscriptionHint names the subscription alternative for a provider
+// whose API key is about to be read. Providers with no subscription
+// counterpart print nothing.
+func writeSubscriptionHint(provider string, out io.Writer) {
+	counterpart, ok := subscriptionCounterpart[provider]
+	if !ok {
+		return
+	}
+	command := "mecatui providers login " + counterpart
+	if counterpart == provider {
+		// Same provider, so the subscription path is opt-in by flag.
+		command += " --subscription"
+	}
+	_, _ = fmt.Fprintf(out,
+		"Reading an API key for %s. To use a %s subscription instead, cancel and run:\n  %s\n",
+		provider, subscriptionProviders[counterpart], command)
+}
