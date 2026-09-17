@@ -12,8 +12,8 @@ import (
 
 const terminalTitleRunes = 160
 
-// terminalTitleController owns title emission through Bubble Tea's renderer
-// output writer. Set runs during View; Write is the renderer-serialized path.
+// terminalTitleController is the sole terminal-title output authority. Set runs
+// during View; its mutex serializes OSC updates with Bubble Tea frame writes.
 type terminalTitleController struct {
 	mu        sync.Mutex
 	output    io.Writer
@@ -24,6 +24,7 @@ type terminalTitleController struct {
 	wrote     bool
 	debug     bool
 	renderErr error
+	writeErr  error
 }
 
 func newTerminalTitleController(output io.Writer, enabled bool, renderer *statusline.TitleRenderer) *terminalTitleController {
@@ -40,7 +41,7 @@ func terminalTitleEnabled(cfg config, settings terminalTitleSettings) bool {
 func (c *terminalTitleController) Set(input statusline.Input) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.enabled || c.renderErr != nil {
+	if !c.enabled || c.renderErr != nil || c.writeErr != nil {
 		return
 	}
 	title, err := c.renderer.Render(input)
@@ -52,6 +53,21 @@ func (c *terminalTitleController) Set(input statusline.Input) {
 		title = "DEBUG " + title
 	}
 	c.pending = sanitizeTerminalTitle(title)
+	c.flush()
+}
+
+func (c *terminalTitleController) flush() {
+	if c.pending == c.last || (c.pending == "" && !c.wrote) {
+		return
+	}
+	if _, err := io.WriteString(c.output, "\x1b]0;"+c.pending+"\a"); err != nil {
+		c.writeErr = err
+		return
+	}
+	c.last = c.pending
+	if c.last != "" {
+		c.wrote = true
+	}
 }
 
 func (c *terminalTitleController) Write(p []byte) (int, error) {
@@ -60,14 +76,8 @@ func (c *terminalTitleController) Write(p []byte) (int, error) {
 	if c.renderErr != nil {
 		return 0, c.renderErr
 	}
-	if c.enabled && c.pending != c.last && (c.pending != "" || c.wrote) {
-		if _, err := io.WriteString(c.output, "\x1b]0;"+c.pending+"\a"); err != nil {
-			return 0, err
-		}
-		c.last = c.pending
-		if c.last != "" {
-			c.wrote = true
-		}
+	if c.writeErr != nil {
+		return 0, c.writeErr
 	}
 	return c.output.Write(p)
 }
@@ -75,6 +85,9 @@ func (c *terminalTitleController) Write(p []byte) (int, error) {
 func (c *terminalTitleController) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.writeErr != nil {
+		return c.writeErr
+	}
 	if c.enabled && c.wrote && c.last != "" {
 		if _, err := io.WriteString(c.output, "\x1b]0;\a"); err != nil {
 			return err
@@ -90,11 +103,11 @@ func sanitizeTerminalTitle(value string) string {
 	space := true
 	count := 0
 	for _, r := range value {
-		if unicode.IsSpace(r) {
-			space = true
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			continue
 		}
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unicode.IsSpace(r) {
+			space = true
 			continue
 		}
 		if space && out.Len() > 0 {

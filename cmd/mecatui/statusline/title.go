@@ -13,16 +13,35 @@ import (
 type TitleRenderer struct{ template *template.Template }
 
 type titleTemplateInput struct {
-	templateInput
-	Workspace titleTemplateWorkspace
+	Version    uint8
+	Server     templateServer
+	Session    templateSession
+	Model      templateModel
+	Usage      templateUsage
+	Context    templateContext
+	Workspace  titleTemplateWorkspace
+	Terminal   Terminal
+	MainAgent  templateMainAgent
+	Delegation templateDelegation
+	Clock      templateClock
 }
 
 type titleTemplateWorkspace struct{ Location, Name templateText }
 
 func newTitleTemplateInput(input Input) titleTemplateInput {
+	projection := newTemplateInput(input)
 	return titleTemplateInput{
-		templateInput: newTemplateInput(input),
-		Workspace:     titleTemplateWorkspace{escapeTemplateText(input.Workspace.Location), escapeTemplateText(input.Workspace.Name)},
+		Version:    projection.Version,
+		Server:     projection.Server,
+		Session:    projection.Session,
+		Model:      projection.Model,
+		Usage:      projection.Usage,
+		Context:    projection.Context,
+		Workspace:  titleTemplateWorkspace{projection.Workspace.Location, projection.Workspace.Name},
+		Terminal:   projection.Terminal,
+		MainAgent:  projection.MainAgent,
+		Delegation: projection.Delegation,
+		Clock:      projection.Clock,
 	}
 }
 

@@ -15,6 +15,9 @@ func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}}"))
 
 	controller.Set(statusline.Input{Session: statusline.Session{Title: "first"}, MainAgent: statusline.MainAgent{State: "idle"}})
+	if got := output.String(); got != "\x1b]0;first · idle\a" {
+		t.Fatalf("title change must be delivered without a Bubble Tea frame: %q", got)
+	}
 	if _, err := controller.Write([]byte("frame one")); err != nil {
 		t.Fatalf("write first frame: %v", err)
 	}
@@ -110,7 +113,24 @@ func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing
 	})
 }
 
+func TestTerminalTitleCleanupAfterGracefulCancellation(t *testing.T) {
+	var output bytes.Buffer
+	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
+	controller.Set(statusline.Input{Session: statusline.Session{Title: "running"}})
+
+	if err := closeTerminalTitle(controller); err != nil {
+		t.Fatalf("close title after context cancellation: %v", err)
+	}
+	if got := output.String(); got != "\x1b]0;running\a\x1b]0;\a" {
+		t.Fatalf("graceful cancellation cleanup = %q, want title followed by one clear", got)
+	}
+}
+
 func TestADR_0344_Scenario1_SanitizesRenderedTitle(t *testing.T) {
+	if got := sanitizeTerminalTitle("one\u0085two"); got != "onetwo" {
+		t.Fatalf("terminal control must be stripped before whitespace collapse: %q", got)
+	}
+
 	var output bytes.Buffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
 	controller.Set(statusline.Input{Session: statusline.Session{Title: " one\x1b]2;injected\a\u007f\u0085\u2000two\u200b\nthree\t " + strings.Repeat("x", 512)}})
@@ -209,6 +229,9 @@ func TestADR_0344_Scenario3_LocalAndRemotePresentation(t *testing.T) {
 	}
 	if outputs[0] != outputs[1] || strings.Contains(outputs[0], "/private/workspace") {
 		t.Fatalf("embedded=%q connect=%q; title must be connection-independent and path-free", outputs[0], outputs[1])
+	}
+	if got := renderTitle(t, "{{printf \"%+v\" .}}", input); strings.Contains(got, "/private/workspace") {
+		t.Fatalf("formatted title projection leaked workspace path: %q", got)
 	}
 	if _, err := statusline.NewTitleRenderer("{{.Workspace.Path}}"); err == nil || !strings.Contains(err.Error(), "Path") {
 		t.Fatalf("title Workspace.Path projection error = %v, want unavailable-field error", err)
