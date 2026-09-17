@@ -32,7 +32,11 @@ export interface StreamPlan {
 export interface HarnessOptions {
   readonly features?: readonly string[];
   readonly streams?: readonly StreamPlan[];
-  readonly unary?: (method: string, input: Record<string, unknown>) => unknown;
+  readonly unary?: (
+    method: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+  ) => unknown | Promise<unknown>;
 }
 
 export class LifecycleTransport implements Transport {
@@ -65,7 +69,7 @@ export class LifecycleTransport implements Transport {
       signal,
       timeoutMs,
     });
-    const supplied = this.#unary?.(method.name, input as Record<string, unknown>);
+    const supplied = await this.#unary?.(method.name, input as Record<string, unknown>, signal);
     if (supplied instanceof Error) throw supplied;
     let value: unknown = supplied;
     if (value === undefined) {

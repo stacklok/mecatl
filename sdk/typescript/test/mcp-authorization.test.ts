@@ -243,6 +243,14 @@ describe("MCP authorization lifecycle", () => {
     const handle = session.mcpAuthorization(authorizationId);
 
     expect(handle).toMatchObject({ authorizationId, sessionId });
+    let emptyIdError: unknown;
+    try {
+      session.mcpAuthorization("");
+    } catch (error) {
+      emptyIdError = error;
+    }
+    expect(emptyIdError).toBeInstanceOf(InvalidStateError);
+    expect(emptyIdError).toMatchObject({ code: "invalid_state", transport: "local" });
     expect(transport.calls).toHaveLength(before);
     expectTypeOf(handle).toEqualTypeOf<McpAuthorization>();
     await client.close();
