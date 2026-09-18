@@ -272,6 +272,7 @@ describe("MCP authorization lifecycle", () => {
     await expect(handle.presentation(requestOptions)).resolves.toBe(
       "https://identity.example/authorize",
     );
+    await expect(handle.presentation()).resolves.toBe("https://identity.example/authorize");
     const call = transport.calls.find(
       (candidate) => candidate.method === "GetMcpAuthorizationPresentation",
     );
@@ -286,7 +287,7 @@ describe("MCP authorization lifecycle", () => {
     expect(responseTrailers).toEqual(["presentation-trailer"]);
     expect(
       transport.calls.filter((candidate) => candidate.method === "GetMcpAuthorizationPresentation"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     await client.close();
   });
 
@@ -486,6 +487,22 @@ describe("MCP authorization lifecycle", () => {
     const cases: WireEvent[][] = [
       [original, repeated, message("changed-run"), terminal("changed-run")],
       [original, message(), terminal()],
+      [
+        original,
+        authorization("authorization.resolved", "granted", {
+          authorizationId: "authorization-changed",
+          runId: continuationRunId,
+        }),
+        terminal(),
+      ],
+      [
+        original,
+        authorization("authorization.resolved", "granted", {
+          callId: "call-changed",
+          runId: continuationRunId,
+        }),
+        terminal(),
+      ],
       [original, repeated, repeated, terminal()],
       [original, repeated, terminal(), terminal()],
       [original, repeated, terminal(), message()],
@@ -493,6 +510,33 @@ describe("MCP authorization lifecycle", () => {
         original,
         repeated,
         authorization("authorization.required", "pending", {
+          runId: continuationRunId,
+        }),
+      ],
+      [
+        original,
+        repeated,
+        authorization("authorization.required", "pending", {
+          authorizationId: "",
+          callId: "next-call",
+          runId: continuationRunId,
+        }),
+      ],
+      [
+        original,
+        repeated,
+        authorization("authorization.required", "pending", {
+          authorizationId: "authorization-next",
+          callId: "",
+          runId: continuationRunId,
+        }),
+      ],
+      [
+        original,
+        repeated,
+        authorization("authorization.required", "granted", {
+          authorizationId: "authorization-next",
+          callId: "next-call",
           runId: continuationRunId,
         }),
       ],

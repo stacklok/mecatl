@@ -30,6 +30,11 @@ export interface StreamPlan {
 }
 
 export interface HarnessOptions {
+  readonly beforeUnaryDispatch?: (
+    method: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+  ) => void | Promise<void>;
   readonly features?: readonly string[];
   readonly streams?: readonly StreamPlan[];
   readonly watchStreams?: readonly StreamPlan[];
@@ -46,11 +51,13 @@ export class LifecycleTransport implements Transport {
   closedStreams = 0;
   maxActiveStreams = 0;
   readonly #features: readonly string[];
+  readonly #beforeUnaryDispatch: HarnessOptions["beforeUnaryDispatch"];
   readonly #streams: StreamPlan[];
   readonly #unary: HarnessOptions["unary"];
   readonly #watchStreams: StreamPlan[];
 
   constructor(options: HarnessOptions = {}) {
+    this.#beforeUnaryDispatch = options.beforeUnaryDispatch;
     this.#features = options.features ?? ["prompt_free_controls", "watch_session_events"];
     this.#streams = [...(options.streams ?? [])];
     this.#unary = options.unary;
@@ -66,6 +73,9 @@ export class LifecycleTransport implements Transport {
     contextValues?: ContextValues,
   ): Promise<UnaryResponse<I, O>> {
     void contextValues;
+    await this.#beforeUnaryDispatch?.(method.name, input as Record<string, unknown>, signal);
+    if (signal?.aborted === true)
+      throw signal.reason ?? new Error("request aborted before dispatch");
     this.calls.push({
       headers: new Headers(headers),
       input,

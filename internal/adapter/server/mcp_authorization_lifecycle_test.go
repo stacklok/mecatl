@@ -270,6 +270,14 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 }
 
 func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, false, turns...)
+}
+
+func newInteractiveLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, true, turns...)
+}
+
+func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, interactive bool, turns ...mockllm.Turn) lifecycleFixture {
 	t.Helper()
 	store := memstore.New()
 	mutation := &lifecycleTool{}
@@ -280,14 +288,14 @@ func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatu
 		for _, one := range tools {
 			catalog.MustRegister(one)
 		}
-		return agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Store: store, Model: "mock"})
+		return agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Store: store, Model: "mock", Interactive: interactive})
 	}
 	shared := buildEngine(nil)
 	var builtTools [][]string
 	var builtSpecs [][]mcp.ServerConfig
 	cfg := Config{
 		Engine: shared, Store: store, PlacementProvider: lifecyclePlacementProvider{}, PlacementScope: "test",
-		MCPBroker: broker, Now: now, AuthorizationTimer: timer,
+		MCPBroker: broker, Now: now, AuthorizationTimer: timer, Interactive: interactive,
 	}
 	// Avoid spelling the MCP config type in the fixture closure by assigning the
 	// correctly typed factory separately.
