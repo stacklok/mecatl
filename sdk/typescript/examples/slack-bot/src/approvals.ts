@@ -118,8 +118,13 @@ function verdictLabel(verdict: PermissionVerdict): string {
   }
 }
 
+/** Truncates to `max` characters INCLUDING the ellipsis (panel-review, samuv: appending "…"
+ * after a full `max`-length slice produced `max + 1` characters, which could push a card
+ * title/subtitle one character past Slack's exact 150-char limit and get the whole ask
+ * rejected — denying it, via the fail-closed catch below, for a reason that had nothing to do
+ * with the ask itself). */
 function clamp(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max)}…` : value;
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

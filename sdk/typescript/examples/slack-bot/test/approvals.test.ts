@@ -425,4 +425,20 @@ describe("PermissionApprovalGateway args rendering", () => {
     });
     expect(card).not.toHaveProperty("body");
   });
+
+  it("truncates a too-long subtitle to exactly 150 characters, never 151 (panel-review, samuv)", async () => {
+    const client = fakeClient();
+    const gateway = new PermissionApprovalGateway(client);
+    // originLabel alone (via "Requested from <originLabel>") pushes the subtitle to 151+ raw
+    // characters before clamping — long enough to catch an off-by-one in the truncation itself.
+    const originLabel = "x".repeat(200);
+    const responder = gateway.createResponder(fakeContext({ originLabel }));
+    void responder(fakeAsk({ reason: "" }), new AbortController().signal);
+    await flush();
+
+    const [card] = firstPostedBlocks(client) as [Record<string, unknown>];
+    const subtitle = card.subtitle as { text: string; type: string };
+    expect(subtitle.text).toHaveLength(150);
+    expect(subtitle.text.endsWith("…")).toBe(true);
+  });
 });

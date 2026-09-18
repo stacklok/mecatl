@@ -240,7 +240,6 @@ async function runPrompt(
   approvals: PermissionApprovalGateway,
   origin: "dm" | "channel",
 ): Promise<void> {
-  await setSessionStatus(app, channelId, statusThreadTs, "processing");
   // Agent Session streaming is thread-scoped, so this uses the same canonical
   // root as status, fallback replies, cancellation, and the mecatl session key.
   const stream = new SlackTextStream(
@@ -261,6 +260,13 @@ async function runPrompt(
       text,
       (delta) => stream.append(delta),
       onPermissionAsk,
+      // Fired from INSIDE the bridge's per-thread queue, once this call's own
+      // run actually starts/settles — not eagerly here, where a second
+      // same-thread message could otherwise overwrite a still-pending run's
+      // `suspended` status with `processing` before its own turn arrives
+      // (panel-review, samuv).
+      () => setSessionStatus(app, channelId, statusThreadTs, "processing"),
+      () => setSessionStatus(app, channelId, statusThreadTs, "active"),
     );
     if (stream.started) await stream.stop();
     // `!stream.started` (never streamed at all) and `stream.failed` (streamed
@@ -286,8 +292,6 @@ async function runPrompt(
     await notifyError(
       isStuckExternalAuthorization(error) ? EXTERNAL_AUTH_MESSAGE : FAILURE_MESSAGE,
     );
-  } finally {
-    await setSessionStatus(app, channelId, statusThreadTs, "active");
   }
 }
 

@@ -16,6 +16,10 @@ export interface PromptOutcome {
 /** Invoked with each incremental text chunk as the run streams, in order. */
 export type DeltaHandler = (delta: string) => void | Promise<void>;
 
+/** Invoked once a queued prompt actually starts (`onStart`) or once it settles, success or
+ * failure (`onSettle`) — the run's real lifecycle, not the caller's own queueing call. */
+export type LifecycleHook = () => void | Promise<void>;
+
 /**
  * Detects the "session has a live external authorization" failed-precondition
  * error (#1283): a first-use ToolHive connector needs an interactive OAuth
@@ -84,15 +88,29 @@ export class MecatlBridge {
    * left pending until the run ends or is cancelled (see the SDK's
    * `RunImpl#startPermissionResponder`) — callers that need real approvals
    * must always pass one.
+   *
+   * `onStart`/`onSettle`, if given, fire exactly when THIS call's own
+   * queued execution actually begins/ends — not when `handlePrompt` is
+   * called, which can be well before its turn if an earlier prompt on the
+   * same thread is still running (panel-review, samuv: reflecting Slack
+   * session status from the caller's own call site, before it joins this
+   * queue, let a second same-thread message overwrite the first run's
+   * `suspended` status with `processing` while the first was still waiting
+   * on a human). Driving status from here instead ties it to the run that
+   * is actually active.
    */
   async handlePrompt(
     threadKey: string,
     text: string,
     onDelta?: DeltaHandler,
     onPermissionAsk?: PermissionAskResponder,
+    onStart?: LifecycleHook,
+    onSettle?: LifecycleHook,
   ): Promise<PromptOutcome> {
     const previous = this.#queues.get(threadKey) ?? Promise.resolve();
-    const next = previous.then(() => this.#runPrompt(threadKey, text, onDelta, onPermissionAsk));
+    const next = previous.then(() =>
+      this.#runPrompt(threadKey, text, onDelta, onPermissionAsk, onStart, onSettle),
+    );
     // Swallow so an awaited failure doesn't become an unhandled rejection on the queue chain.
     this.#queues.set(
       threadKey,
@@ -122,7 +140,10 @@ export class MecatlBridge {
     text: string,
     onDelta: DeltaHandler | undefined,
     onPermissionAsk: PermissionAskResponder | undefined,
+    onStart: LifecycleHook | undefined,
+    onSettle: LifecycleHook | undefined,
   ): Promise<PromptOutcome> {
+    await onStart?.();
     const session = await this.#sessionFor(threadKey);
     try {
       // session.run() itself — not just the run's event stream — must be inside
@@ -164,6 +185,7 @@ export class MecatlBridge {
       throw error;
     } finally {
       this.#runs.delete(threadKey);
+      await onSettle?.();
     }
   }
 

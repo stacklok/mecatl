@@ -159,4 +159,63 @@ describe("MecatlBridge", () => {
       { script: fixture("permission-ask.json") },
     );
   });
+
+  it("does not fire a second prompt's onStart until the first's onSettle, even while the first is stalled on an ask (panel-review, samuv)", async () => {
+    await withMockDaemon(
+      async ({ baseUrl }) => {
+        const bridge = new MecatlBridge({ baseUrl });
+        try {
+          const events: string[] = [];
+          let releaseAsk: (verdict: "allow_once") => void = () => {};
+          const askHeld = new Promise<"allow_once">((resolve) => {
+            releaseAsk = resolve;
+          });
+
+          const first = bridge.handlePrompt(
+            "channel:thread-1",
+            "approve the scripted write",
+            undefined,
+            () => askHeld,
+            () => {
+              events.push("first:start");
+            },
+            () => {
+              events.push("first:settle");
+            },
+          );
+
+          // Give the first run time to actually reach the ask and stall on it.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          expect(events).toEqual(["first:start"]);
+
+          const second = bridge.handlePrompt(
+            "channel:thread-1",
+            "hello",
+            undefined,
+            undefined,
+            () => {
+              events.push("second:start");
+            },
+            () => {
+              events.push("second:settle");
+            },
+          );
+
+          // The second call is queued behind the first — its onStart must not fire
+          // just because handlePrompt() was called; only once it's actually dequeued.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          expect(events).toEqual(["first:start"]);
+
+          releaseAsk("allow_once");
+          await first;
+          await second;
+
+          expect(events).toEqual(["first:start", "first:settle", "second:start", "second:settle"]);
+        } finally {
+          await bridge.close();
+        }
+      },
+      { script: fixture("permission-ask.json") },
+    );
+  });
 });

@@ -250,6 +250,8 @@ describe("registerAgentSessions", () => {
       "hi",
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -415,10 +417,21 @@ describe("registerAgentSessions", () => {
   });
 
   it("starts separate sessions for separate top-level DM messages", async () => {
-    const handlePrompt = vi.fn().mockImplementation(async (_threadKey, text, onDelta) => {
-      await onDelta(`reply to ${text}`);
-      return { sessionId: `session-${text}`, stopReason: "end_turn", text: `reply to ${text}` };
-    });
+    const handlePrompt = vi
+      .fn()
+      .mockImplementation(
+        async (_threadKey, text, onDelta, _onPermissionAsk, onStart, onSettle) => {
+          await onStart();
+          await onDelta(`reply to ${text}`);
+          const outcome = {
+            sessionId: `session-${text}`,
+            stopReason: "end_turn",
+            text: `reply to ${text}`,
+          };
+          await onSettle();
+          return outcome;
+        },
+      );
     const fake = setUp(fakeBridge(handlePrompt), fakeConfig());
 
     for (const [text, ts] of [
@@ -446,11 +459,15 @@ describe("registerAgentSessions", () => {
       "first",
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
     );
     expect(handlePrompt).toHaveBeenNthCalledWith(
       2,
       "D1:200.002",
       "second",
+      expect.any(Function),
+      expect.any(Function),
       expect.any(Function),
       expect.any(Function),
     );
@@ -499,6 +516,8 @@ describe("registerAgentSessions", () => {
     expect(handlePrompt).toHaveBeenCalledWith(
       "D1:200.001",
       "follow up",
+      expect.any(Function),
+      expect.any(Function),
       expect.any(Function),
       expect.any(Function),
     );
