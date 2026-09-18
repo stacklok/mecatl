@@ -100,7 +100,7 @@ export interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisp
 /** A durable activity stream bound to one run. @public */
 export interface AttachedRun extends SessionActivity {
   readonly runId: string;
-  /** True until this attachment observes its run's terminal result. */
+  /** True until this attachment observes its run's terminal result or valid authorization park. */
   readonly live: boolean;
   /**
    * Cancels the attached run using its exact run ID.
@@ -347,6 +347,20 @@ function envelopeEvent(envelope: WatchEnvelope): Event | undefined {
   return envelope.kind === "event" || envelope.kind === "unknown" ? envelope.event : undefined;
 }
 
+function isAuthorizationPark(event: Event | undefined, runId: string): boolean {
+  return (
+    event?.kind === "authorization.required" &&
+    event.runId === runId &&
+    event.payload.status === "pending" &&
+    event.payload.authorizationId !== "" &&
+    event.payload.callId !== ""
+  );
+}
+
+function isAttachedRunTerminal(event: Event | undefined, runId: string): boolean {
+  return event?.runId === runId && (event.kind === "result" || isAuthorizationPark(event, runId));
+}
+
 async function requireWatchFeature(operations: AttachmentOperations): Promise<void> {
   const features = await operations.features();
   if (!features.has(WATCH_SESSION_EVENTS_FEATURE)) {
@@ -588,7 +602,7 @@ class SessionActivityImpl implements SessionActivity {
         yield envelope;
         if (envelope.kind === "gap") throw new ActivityGapError();
         this.#checkpoint(envelope);
-        if (this.#runId !== undefined && event?.runId === this.#runId && event.kind === "result") {
+        if (this.#runId !== undefined && isAttachedRunTerminal(event, this.#runId)) {
           return;
         }
       }
@@ -668,7 +682,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
         if (event.kind === "permission.retract" || event.kind === "approval") {
           liveState.pendingAsks.delete(event.payload.askId);
         }
-        if (event.kind === "result") {
+        if (isAttachedRunTerminal(event, runId)) {
           liveState.value = false;
           liveState.pendingAsks.clear();
         }

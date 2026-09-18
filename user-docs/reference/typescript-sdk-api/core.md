@@ -1019,7 +1019,7 @@ Returns: `Promise<void>`: A promise that resolves after the cancellation request
 
 <Heading as="h4" id="api-attachedrun-live-propertysignature"><code>AttachedRun.live</code></Heading>
 
-True until this attachment observes its run's terminal result.
+True until this attachment observes its run's terminal result or valid authorization park.
 
 ```ts
 readonly live: boolean;
