@@ -343,6 +343,10 @@ PR after verification. There is no cleanup or status-only PR.
   descriptor-guided Timestamp and Duration decoding for daemon stdlib-JSON responses across unary
   HTTP and SSE, preserving ProtoJSON strings, typed failures, and the registered raw response.
   Status: proposed.
+- [TypeScript SDK malformed-success decoding](sdk-malformed-success-decoding.md) -
+  cause-free protocol errors for malformed successful unary HTTP and ordinary SSE payloads,
+  retaining safe status and request-ID metadata while preserving server, transport, and
+  cancellation causes. Status: proposed.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
