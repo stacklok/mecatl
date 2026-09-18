@@ -607,51 +607,6 @@ func readFileKey(path string) ([]byte, error) {
 	return decodeKey(b)
 }
 
-func readOrCreateFileKey(path string, allowPendingArtifact bool) ([]byte, error) {
-	b, err := readPrivateFile(path, maxKeyBytes)
-	if err == nil {
-		return decodeKey(b)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("MCP file credential key cannot be read")
-	}
-	if err := secureMkdirAll(filepath.Dir(path)); err != nil {
-		return nil, errors.New("MCP file credential-key directory cannot be created")
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, errors.New("MCP key generation failed")
-	}
-	encoded := []byte(base64.StdEncoding.EncodeToString(key))
-	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
-	if errors.Is(err, unix.EEXIST) {
-		clear(key)
-		if allowPendingArtifact {
-			return readFileKey(path)
-		}
-		return nil, errors.New("MCP file credential key is unmarked")
-	}
-	if err != nil {
-		clear(key)
-		return nil, errors.New("MCP file credential key cannot be created")
-	}
-	if stErr := verifyPrivateFD(fd); stErr != nil {
-		_ = unix.Close(fd)
-		clear(key)
-		return nil, errors.New("MCP file credential key cannot be created")
-	}
-	if err = writeAll(fd, encoded); err == nil {
-		err = unix.Fsync(fd)
-	}
-	if closeErr := unix.Close(fd); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		clear(key)
-		return nil, errors.New("MCP file credential key cannot be written")
-	}
-	return key, nil
-}
 func writeAll(fd int, data []byte) error {
 	for len(data) > 0 {
 		n, err := unix.Write(fd, data)
