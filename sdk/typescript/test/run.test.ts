@@ -262,15 +262,27 @@ describe("run choreography", () => {
           if (sequence === 3) {
             yield {
               event: {
-                authorization: { authorizationId: "", callId: "", status: "granted" },
+                authorization: {
+                  authorizationId: "authorization-3",
+                  callId: "call-3",
+                  status: "granted",
+                },
                 runId,
                 type: "authorization.required",
               },
             };
             return;
           }
+          if (sequence === 4) {
+            yield authorizationRequired(runId, "", "call-4");
+            return;
+          }
+          if (sequence === 5) {
+            yield authorizationRequired(runId, "authorization-5", "");
+            return;
+          }
           yield terminal(runId);
-          if (sequence === 4) yield terminal(runId, "error", "duplicate");
+          if (sequence === 6) yield terminal(runId, "error", "duplicate");
         },
       });
     });
@@ -290,7 +302,13 @@ describe("run choreography", () => {
     await expect(truncated.outcome()).rejects.toBeInstanceOf(ProtocolError);
     await expect(truncated.result()).rejects.toBeInstanceOf(InvalidStateError);
 
-    await expect(session.run("malformed authorization")).rejects.toBeInstanceOf(ProtocolError);
+    for (const prompt of [
+      "wrong authorization status",
+      "empty authorization ID",
+      "empty call ID",
+    ]) {
+      await expect(session.run(prompt)).rejects.toBeInstanceOf(ProtocolError);
+    }
 
     const duplicate = await session.run("duplicate terminal");
     await expect(duplicate.outcome()).rejects.toBeInstanceOf(ProtocolError);

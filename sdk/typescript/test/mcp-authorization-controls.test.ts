@@ -90,6 +90,15 @@ describe("MCP authorization continuation controls", () => {
     ).resolves.toBeUndefined();
     const manualCall = manual.transport.calls.find((call) => call.method === "ResolveRunAsk");
     expect(manualCall?.headers.get("x-authority")).toBe("manual");
+    const resolvedCallCount = manual.transport.calls.filter(
+      (call) => call.method === "ResolveRunAsk",
+    ).length;
+    await expect(manualFlow.resolveAsk("ask-manual", "allow_once")).rejects.toBeInstanceOf(
+      InvalidStateError,
+    );
+    expect(manual.transport.calls.filter((call) => call.method === "ResolveRunAsk")).toHaveLength(
+      resolvedCallCount,
+    );
     await iter.next();
     await iter.next();
     await expect(manualFlow.resolveAsk("ask-retracted", "deny")).rejects.toBeInstanceOf(
@@ -100,6 +109,50 @@ describe("MCP authorization continuation controls", () => {
     );
     await automatic.client.close();
     await manual.client.close();
+  });
+
+  it("MCP authorization retirement suppresses an admitted automatic verdict", async () => {
+    let releaseDispatch: () => void = () => undefined;
+    const dispatchGate = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+    let markSetup: () => void = () => undefined;
+    const setup = new Promise<void>((resolve) => {
+      markSetup = resolve;
+    });
+    let admittedSignal: AbortSignal | undefined;
+    const instance = await harness({
+      beforeUnaryDispatch: async (method, _input, signal) => {
+        if (method !== "ResolveRunAsk") return;
+        admittedSignal = signal;
+        markSetup();
+        await dispatchGate;
+      },
+      streams: [{ events: continuation(ask("ask-retired"), retract("ask-retired"), result()) }],
+    });
+    const flow = instance.session.mcpAuthorization(authorizationId).recheck({
+      onPermissionAsk: () => "allow_once",
+    });
+    const iterator = flow[Symbol.asyncIterator]();
+    await iterator.next();
+    await iterator.next();
+    await iterator.next();
+    await setup;
+    expect(admittedSignal?.aborted).toBe(false);
+
+    await iterator.next();
+    expect(admittedSignal?.aborted).toBe(true);
+    releaseDispatch();
+    await flush();
+    expect(instance.transport.calls.filter((call) => call.method === "ResolveRunAsk")).toHaveLength(
+      0,
+    );
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { kind: "result" },
+    });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+    await instance.client.close();
   });
 
   it("MCP authorization continuation controls are exact run and feature gated", async () => {

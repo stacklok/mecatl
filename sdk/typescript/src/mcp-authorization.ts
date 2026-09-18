@@ -272,6 +272,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   readonly #operations: McpAuthorizationOperations;
   readonly #flowOptions: McpAuthorizationFlowOptions;
   readonly #requestOptions: RequestOptions | undefined;
+  readonly #automaticControls = new Map<string, AbortController>();
   readonly #controlFailure: Promise<never>;
   readonly #rejectControlFailure: (error: unknown) => void;
   readonly #closed: Promise<typeof flowClosed>;
@@ -524,7 +525,14 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
         features: (options) => this.#operations.features(options),
         promptCapabilities: () => this.#operations.promptCapabilities(),
         transportKind: this.#operations.transportKind,
-        unary: (method, input, options) => this.#operations.unary(method, input, options),
+        unary: (method, input, options) => {
+          if (options?.signal?.aborted === true) {
+            return Promise.reject(
+              normalizeError(options.signal.reason, this.#operations.transportKind),
+            );
+          }
+          return this.#operations.unary(method, input, options);
+        },
       });
     }
     if (event.runId !== this.#continuationRunId) {
@@ -598,15 +606,22 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
         return;
       }
       if (verdict === undefined || pending.controller.signal.aborted) return;
+      const automaticControl = new AbortController();
       try {
         await this.#resolvePendingAsk(
           askId,
           verdict,
           pending,
-          this.#automaticControlOptions(this.#flowOptions.permissionRequestOptions),
+          this.#automaticControlOptions(
+            this.#flowOptions.permissionRequestOptions,
+            automaticControl.signal,
+          ),
+          automaticControl,
         );
       } catch (error) {
-        if (!this.#ended) this.#rejectControlFailure(error);
+        if (!this.#ended && !automaticControl.signal.aborted) {
+          this.#rejectControlFailure(error);
+        }
       }
     })();
   }
@@ -616,6 +631,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     verdict: PermissionVerdict,
     pending: PendingAsk,
     requestOptions: RequestOptions | undefined,
+    automaticControl?: AbortController,
   ): Promise<void> {
     if (this.#pendingAsks.get(askId) !== pending || pending.plan) {
       throw new InvalidStateError(`Permission ask ${askId} is no longer pending`, {
@@ -630,10 +646,23 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     }
     this.#pendingAsks.delete(askId);
     pending.controller.abort();
-    await controls.resolveAsk(askId, verdict, requestOptions);
+    if (automaticControl !== undefined) this.#automaticControls.set(askId, automaticControl);
+    try {
+      await controls.resolveAsk(askId, verdict, requestOptions);
+    } finally {
+      if (
+        automaticControl !== undefined &&
+        this.#automaticControls.get(askId) === automaticControl
+      ) {
+        this.#automaticControls.delete(askId);
+      }
+    }
   }
 
-  #automaticControlOptions(requestOptions: RequestOptions | undefined): RequestOptions {
+  #automaticControlOptions(
+    requestOptions: RequestOptions | undefined,
+    askSignal: AbortSignal,
+  ): RequestOptions {
     const lifetimeSignal = this.#abort?.signal;
     if (lifetimeSignal === undefined) {
       throw this.#protocol("The authorization flow has no active request lifetime");
@@ -642,12 +671,17 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
       ...requestOptions,
       signal:
         requestOptions?.signal === undefined
-          ? lifetimeSignal
-          : AbortSignal.any([requestOptions.signal, lifetimeSignal]),
+          ? AbortSignal.any([askSignal, lifetimeSignal])
+          : AbortSignal.any([requestOptions.signal, askSignal, lifetimeSignal]),
     };
   }
 
   #retireAsk(askId: string): void {
+    const automaticControl = this.#automaticControls.get(askId);
+    if (automaticControl !== undefined) {
+      this.#automaticControls.delete(askId);
+      automaticControl.abort();
+    }
     const pending = this.#pendingAsks.get(askId);
     if (pending === undefined) return;
     this.#pendingAsks.delete(askId);
@@ -655,6 +689,8 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   }
 
   #retireAllAsks(): void {
+    for (const control of this.#automaticControls.values()) control.abort();
+    this.#automaticControls.clear();
     for (const pending of this.#pendingAsks.values()) pending.controller.abort();
     this.#pendingAsks.clear();
   }
