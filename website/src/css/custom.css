@@ -88,8 +88,6 @@
   border-bottom: 1px solid var(--mec-border);
   background: var(--mec-surface);
   box-shadow: none;
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
-  backdrop-filter: blur(14px) saturate(1.2);
 }
 
 .navbar__inner {
