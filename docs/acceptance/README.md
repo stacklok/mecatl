@@ -227,6 +227,7 @@ PR after verification. There is no cleanup or status-only PR.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
+- [Durable model-stream structural evidence](model-stream-structural-evidence.md) — bounded, content-free summaries for successful, incomplete, errored, and cancelled provider attempts, retained only for target-bound debugger inspection. Status: proposed.
 - [Session debugger lineage lock](session-debug-lineage-lock.md) — root debug
   inspection avoids global lineage traversal while related and descendant-scoped
   evidence keeps its existing bounded, fail-closed revalidation. Status: draft.

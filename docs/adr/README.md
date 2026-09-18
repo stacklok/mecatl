@@ -221,6 +221,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0020 — Diagnostics](./0020-diagnostics.md)
 - [0045 — Explicit-bucket latency histograms (zero-config quantiles on `/metrics`)](./0045-explicit-bucket-latency-histograms.md)
 - [0098 — Telemetry for the headless binaries (mecatequi, mecak8s)](./0098-headless-telemetry.md)
+- [0347 — Durable model-stream structural evidence](./0347-durable-model-stream-structural-evidence.md) *(accepted; implementation pending approved plan)*
 - [0338 — Product (adoption) metrics over OTLP](./0338-product-metrics.md)
 
 ### Governance & trust
