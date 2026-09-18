@@ -261,7 +261,7 @@ func TestMCPLoginUsesExplicitOperatorPrecedence(t *testing.T) {
 	}
 }
 
-func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
+func TestRunMCPLoginExecutionPathUsesFixedCallback(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	t.Setenv("MECATL_LOGIN_KEY", key)
 	t.Setenv("MECATL_LOGIN_CREDENTIAL", base64.StdEncoding.EncodeToString([]byte("opaque")))
@@ -278,8 +278,8 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
 		}
-		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != "" {
-			t.Fatalf("runtime options = %#v; no-browser or random-path default was not forwarded", opts)
+		if !opts.NoBrowser || opts.URLWriter == nil || !opts.PinCallbackPath || opts.RedirectURL != "" {
+			t.Fatalf("runtime options = %#v; no-browser or pinned-callback-path was not forwarded", opts)
 		}
 		if loginOpts.DCRAction != mcp.OAuthDCRLoginRetryRegistration {
 			t.Fatalf("login options = %#v", loginOpts)

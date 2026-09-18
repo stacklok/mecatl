@@ -267,7 +267,25 @@ func runMCPLoginContext(ctx context.Context, args []string, stdout io.Writer, st
 	}
 
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: preparing browser authorization")
-	opts := oauthlogin.Options{NoBrowser: parsed.noBrowser}
+	// PinCallbackPath fixes the callback's path (not its port) for the preregistered
+	// and CIMD client kinds loadOAuthClient (mcpprofile.go) populates directly onto
+	// opts.Client: both commit to a redirect_uri that must be registered ahead of
+	// time, and a random callback path can never match a value fixed in advance.
+	// Both target MCP-shaped, RFC 8252-aware authorization servers, which accept any
+	// port for a registered loopback redirect_uri as long as the path matches — so
+	// unlike oauthlogin.ExactRedirectURL (a fully fixed callback, port included, for
+	// a general-purpose OIDC target that cannot be assumed to implement RFC 8252
+	// dynamic-port matching), this login still gets an unpredictable port every run,
+	// preserving the squatting resistance a foreseeable port would give up.
+	//
+	// A DCR-configured server (opts.Client.DCR) never reaches this fixed path: it
+	// registers its own random redirect_uri at registration time and is driven
+	// through LoginMCPWithOptions's AuthorizeWithCallbackPath call instead, whose
+	// explicit registration-bound callback path always takes priority over
+	// PinCallbackPath (see oauthlogin.resolveCallbackMode's case order) — so setting
+	// PinCallbackPath here unconditionally is safe for every client kind
+	// selectMCPLoginServer can return.
+	opts := oauthlogin.Options{NoBrowser: parsed.noBrowser, PinCallbackPath: true}
 	if parsed.noBrowser {
 		opts.URLWriter = stdout
 	}

@@ -781,6 +781,165 @@ func TestFixedRedirectValidationIsStrict(t *testing.T) {
 	}
 }
 
+// TestPinCallbackPathUsesFixedPathEphemeralPort proves PinCallbackPath fixes only the
+// callback PATH: two successive Authorize calls both land on fixedCallbackPath, but get
+// different ports, since RFC 8252 dynamic-port matching (which the client this option is
+// for already relies on) never checks the port.
+func TestPinCallbackPathUsesFixedPathEphemeralPort(t *testing.T) {
+	var redirect string
+	runtime, err := New(Options{
+		PinCallbackPath: true,
+		Launcher: launcherFunc(func(_ context.Context, _ string) error {
+			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+			if got := request(t, valid).status; got != http.StatusOK {
+				t.Fatalf("valid status = %d", got)
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorizeOnce := func() string {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		err := runtime.Authorize(ctx, testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+			redirect = got
+			result, err := present(ctx, "https://as.example.test/authorize?state=s")
+			if err != nil {
+				return err
+			}
+			if result.Code != "good" {
+				t.Fatalf("result = %#v", result)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return redirect
+	}
+
+	first := authorizeOnce()
+	second := authorizeOnce()
+
+	for _, redirect := range []string{first, second} {
+		// Assert against the literal, not just fixedCallbackPath: a coordinated wrong
+		// change to that constant must still fail this test.
+		if !strings.HasSuffix(redirect, "/oauth/callback") {
+			t.Fatalf("redirect = %q, want suffix %q", redirect, "/oauth/callback")
+		}
+	}
+	firstPort := strings.TrimSuffix(strings.TrimPrefix(first, "http://127.0.0.1:"), fixedCallbackPath)
+	secondPort := strings.TrimSuffix(strings.TrimPrefix(second, "http://127.0.0.1:"), fixedCallbackPath)
+	if firstPort == "" || secondPort == "" {
+		t.Fatalf("could not extract ports from %q, %q", first, second)
+	}
+	if firstPort == secondPort {
+		t.Fatalf("both authorizations bound the same port %q; PinCallbackPath must not fix the port", firstPort)
+	}
+}
+
+// TestPinCallbackPathUnauthenticatedFloodDoesNotSpendAttempts mirrors
+// TestExactRedirectUnauthenticatedFloodDoesNotSpendAttempts: a pinned path is public and
+// pre-registered exactly like ExactRedirectURL, so it must get the same attemptFixedRoute
+// policy (ambient probes never exhaust the attempt budget).
+func TestPinCallbackPathUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T) {
+	var redirect string
+	runtime, err := New(Options{
+		PinCallbackPath: true,
+		Launcher: launcherFunc(func(_ context.Context, _ string) error {
+			for i := range 2 * maxRequestAttempts {
+				var req *http.Request
+				switch i % 3 {
+				case 0:
+					req, _ = http.NewRequest(http.MethodGet, callbackURL(redirect, "probe", "wrong-state", testIssuer), nil)
+				case 1:
+					req, _ = http.NewRequest(http.MethodPost, redirect+"?state=wrong-state", nil)
+				default:
+					req, _ = http.NewRequest(http.MethodGet, redirect+"?state=%zz", nil)
+				}
+				if got := request(t, req).status; got < 400 {
+					t.Fatalf("probe %d status = %d", i, got)
+				}
+			}
+			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+			if got := request(t, valid).status; got != http.StatusOK {
+				t.Fatalf("valid status after pinned-path flood = %d", got)
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = runtime.Authorize(ctx, testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+		redirect = got
+		result, err := present(ctx, "https://as.example.test/authorize?state=s")
+		if err == nil && result.Code != "good" {
+			t.Fatalf("result = %#v", result)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPinCallbackPathAndRedirectURLAreMutuallyExclusive proves New refuses the
+// nonsensical combination rather than silently preferring one or the other.
+func TestPinCallbackPathAndRedirectURLAreMutuallyExclusive(t *testing.T) {
+	if _, err := New(Options{RedirectURL: ExactRedirectURL, PinCallbackPath: true}); err == nil {
+		t.Fatal("accepted RedirectURL and PinCallbackPath set together")
+	}
+}
+
+// TestPinCallbackPathDoesNotOverrideRegistrationBoundPath proves a DCR client's
+// own registration-bound callback path (AuthorizeWithCallbackPath) always wins over
+// a Runtime-wide PinCallbackPath, since mecated shares one Runtime across every
+// client kind selectMCPLoginServer can return: were PinCallbackPath to win, a DCR
+// login would present a redirect_uri the authorization server never registered.
+func TestPinCallbackPathDoesNotOverrideRegistrationBoundPath(t *testing.T) {
+	path := callbackPrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, callbackBytes))
+	var redirect string
+	runtime, err := New(Options{
+		PinCallbackPath: true,
+		Launcher: launcherFunc(func(_ context.Context, _ string) error {
+			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+			if got := request(t, valid).status; got != http.StatusOK {
+				t.Fatalf("valid status = %d", got)
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = runtime.AuthorizeWithCallbackPath(ctx, testIssuer, path, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+		redirect = got
+		result, err := present(ctx, "https://as.example.test/authorize?state=s")
+		if err != nil {
+			return err
+		}
+		if result.Code != "good" {
+			t.Fatalf("result = %#v", result)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, parseErr := url.Parse(redirect)
+	if parseErr != nil || parsed.Path != path {
+		t.Fatalf("redirect = %q, want registration-bound path %q despite PinCallbackPath", redirect, path)
+	}
+}
+
 func TestCancellationWhileWaitingForCallback(t *testing.T) {
 	started := make(chan struct{})
 	var redirect string
