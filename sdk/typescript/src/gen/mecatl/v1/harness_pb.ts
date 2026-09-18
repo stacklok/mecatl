@@ -10286,9 +10286,10 @@ export const HarnessService: GenService<{
   /**
    * Converse drives one run. The first frame MUST be `prompt` or `retry`; later
    * frames may carry controls. A received second `prompt` or `retry` is rejected
-   * with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
-   * `result` event, then closes the stream; controls still in transit may instead
-   * observe normal stream completion. A context cancel from the client aborts the run.
+   * with INVALID_ARGUMENT. The server streams `Event` envelopes until either a
+   * terminal `result` or a pending `authorization.required` park, then closes the
+   * stream; controls still in transit may instead observe normal stream completion.
+   * A context cancel from the client aborts the run.
    *
    * @generated from rpc mecatl.v1.HarnessService.Converse
    */

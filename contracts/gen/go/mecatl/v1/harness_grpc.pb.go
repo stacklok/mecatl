@@ -183,9 +183,10 @@ type HarnessServiceClient interface {
 	ForkSession(ctx context.Context, in *ForkSessionRequest, opts ...grpc.CallOption) (*ForkSessionResponse, error)
 	// Converse drives one run. The first frame MUST be `prompt` or `retry`; later
 	// frames may carry controls. A received second `prompt` or `retry` is rejected
-	// with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
-	// `result` event, then closes the stream; controls still in transit may instead
-	// observe normal stream completion. A context cancel from the client aborts the run.
+	// with INVALID_ARGUMENT. The server streams `Event` envelopes until either a
+	// terminal `result` or a pending `authorization.required` park, then closes the
+	// stream; controls still in transit may instead observe normal stream completion.
+	// A context cancel from the client aborts the run.
 	Converse(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConverseRequest, ConverseResponse], error)
 	// ResolveRunAsk resolves one ordinary permission ask on the exact addressed
 	// run without opening or owning its event stream.
@@ -1428,9 +1429,10 @@ type HarnessServiceServer interface {
 	ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error)
 	// Converse drives one run. The first frame MUST be `prompt` or `retry`; later
 	// frames may carry controls. A received second `prompt` or `retry` is rejected
-	// with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
-	// `result` event, then closes the stream; controls still in transit may instead
-	// observe normal stream completion. A context cancel from the client aborts the run.
+	// with INVALID_ARGUMENT. The server streams `Event` envelopes until either a
+	// terminal `result` or a pending `authorization.required` park, then closes the
+	// stream; controls still in transit may instead observe normal stream completion.
+	// A context cancel from the client aborts the run.
 	Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error
 	// ResolveRunAsk resolves one ordinary permission ask on the exact addressed
 	// run without opening or owning its event stream.

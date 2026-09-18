@@ -1,7 +1,7 @@
 # ADR 0348 — TypeScript SDK MCP authorization lifecycle
 
 - Status: Proposed
-- Date: 2026-09-17
+- Date: 2026-09-18
 - Scope: `sdk/typescript/` MCP authorization ergonomics over the existing HarnessService presentation, recheck, cancel, run-control, and event contracts
 - Supersedes: ADR 0304 Decision 3 only for admitting an MCP authorization lifecycle as another justified ergonomic resource; Team and RunControls remain unchanged
 - Superseded by: none
@@ -125,10 +125,12 @@ Server-declared denial and other terminal statuses are values, not thrown errors
 
 If another frame follows, its first non-empty run ID fixes `continuationRunId`, and every
 continuation frame must retain it. The continuation must contain exactly one repeated
-copy of the original resolved authorization payload. It then ends in exactly one of two
+copy of the original resolved authorization payload, including the original authorization
+and call IDs. Other continuation events are correlated by the pinned run ID rather than
+the original call ID. It then ends in exactly one of two
 ways: one terminal `result` with no following event, returned as `outcome: "completed"`
 with an ordinary `RunResult`; or a different `authorization.required` with pending
-status, non-empty call ID, and the continuation run ID, returned after clean EOF as
+status, its own non-empty call ID, and the continuation run ID, returned after clean EOF as
 `outcome: "authorization_required"` with `nextAuthorization`. Missing or duplicate
 original resolution, a changed run ID, a second result, a same-ID or malformed chained
 authorization, an event after a terminal result, or continuation EOF without either
@@ -156,6 +158,11 @@ behavior across transports. A server without `prompt_free_controls` may still re
 status-only authorization result, but a continuation that needs a permission decision
 or explicit cancellation fails with the existing typed unsupported-feature error.
 
+Manual and automatic controls address only the observed continuation run and ask IDs.
+A manual control admitted before flow termination retains its caller-owned request lifetime
+through setup and dispatch. Invocations after termination fail locally without starting an
+RPC.
+
 The responder is application policy. `undefined` leaves an ask pending for manual
 resolution; `deny`, `allow_once`, and `allow_always` are sent to the server unchanged.
 The SDK never infers a verdict, upgrades a denial, or treats an authorization status as
@@ -168,9 +175,18 @@ prompt-free plan-approval authority.
 
 The `RequestOptions` supplied to `presentation`, `recheck`, and `cancel` retain headers,
 callbacks, deadlines, caller signals, client-close cancellation, and automatic session
-affinity. A request abort ends that request and rejects the flow with the normalized
-transport error. It does not cause an automatic recheck, cancel, durable watch, or
-browser action.
+affinity. A request abort ends that request. A caller-supplied `MecatlError` is preserved;
+other caller aborts and transport losses are normalized to `TransportError`, deadlines
+reject with `ServerError` whose `status === Code.DeadlineExceeded`, and client close uses
+the client's existing `InvalidStateError`. It does not cause an automatic recheck, cancel,
+durable watch, or browser action.
+
+Valid EOF resolves `result()` to its typed result and resolves a pending or later iterator
+`next()` with `{ done: true }`. Explicit iterator `return()` also completes a pending read
+cleanly. Every terminal path closes the response iterator, registration, timer, and caller
+listener once; aborts responders and flow-owned automatic controls; suppresses late
+verdicts; and makes later manual controls fail locally. An already-admitted manual control
+keeps only its caller-owned request lifetime.
 
 The existing server remains authoritative for what happened before a disconnect. In
 particular, gRPC detaches and continues ordinary work after losing its control stream,
@@ -182,9 +198,13 @@ SDK documents these phase-specific effects rather than claiming one transport-ne
 disconnect outcome.
 
 Once a continuation run ID was observed, an application can use the ordinary durable
-`Session.attach(runId)` and activity APIs where supported. Suitable retained session
-activity may also reveal correlation after loss, but this lifecycle neither scans nor
-guarantees that log. Before the ID or authoritative status is observed, a lost mutation
+`Session.attach(runId)` and activity APIs where supported. Exact-run attachment treats a
+replayed `authorization.required` as a terminal park only when it carries the attached run
+ID, `pending` status, and non-empty authorization and call IDs. It yields and checkpoints
+that event, marks the attachment not live, clears pending asks, and closes without waiting
+for a `result`; session-wide activity remains open. Suitable retained session activity may
+also reveal correlation after loss, but this lifecycle neither scans nor guarantees that
+log. Before the ID or authoritative status is observed, a lost mutation
 is ambiguous and may be unrecoverable: a fresh exact-correlation recheck is a new
 one-shot control that succeeds only if the original authorization remains pending. If
 the prior control committed and cleared it, the same-ID recheck returns the server's
@@ -193,8 +213,10 @@ automatically replayed.
 
 ### 8. Reuse the wire and correct both HTTP classifications
 
-No protobuf, Go API, server transition, event, snapshot, persistence, feature, or error
-code changes. The SDK continues to invoke the three existing HarnessService descriptors.
+No protobuf wire-shape, Go API, server transition, event, snapshot, persistence, feature,
+or error-code changes. The `Converse` source comment is corrected to document closure after
+either a terminal `result` or a pending `authorization.required` park, and regenerated
+bindings carry that comment. The SDK continues to invoke the three existing HarnessService descriptors.
 The RPC catalog classifies the HTTP recheck and cancel routes as `requestBody: "none"`,
 matching the server's correlation-only path contract; the current `"json"`
 classification incorrectly serializes `{}` and must be corrected. Those rows also set
