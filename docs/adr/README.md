@@ -80,6 +80,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0340 - Deno owns local daemons through Deno.Command](./0340-typescript-sdk-deno-command.md) *(supersedes ADR 0339 for the Deno public entry-point and local-process decisions)*
 - [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
 - [0347 — Run-ID-addressed prompt-free controls](./0347-run-id-addressed-prompt-free-controls.md) *(proposed; supersedes ADR 0288 Decision 6 and ADR 0304 Decision 3 in part)*
+- [0348 - Cause-free TypeScript SDK malformed-success decoding](./0348-typescript-sdk-malformed-success-decoding.md) *(proposed; narrows decoder diagnostics at the HTTP successful-response boundary)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
