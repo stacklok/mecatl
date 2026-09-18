@@ -152,6 +152,7 @@ PR after verification. There is no cleanup or status-only PR.
   attributable Linux and macOS command/job temporary storage with a permission-visible
   system escape and deterministic crash-residue reaping. Status: landed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
+- [MCP source reconciliation](mcp-source-reconciliation.md) — bounded ToolHive polling, MCP notifications, and manual refresh publish immutable direct MCP runtimes while preserving exact-name authority; explicit owner refresh unions additions. Status: proposed.
 - [Mecatui-owned configurable terminal titles](mecatui-terminal-title-controller.md) — replaces Bubble Tea title emission with a renderer-serialized OSC 0 controller, user-global plain-text title templates over display-safe status facts, explicit disablement precedence, and live-run `/session` identity access. Status: proposed.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
 - [Broker MCP status](broker-mcp-status.md) — approved owner-scoped broker connector
