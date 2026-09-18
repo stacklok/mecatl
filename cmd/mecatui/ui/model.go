@@ -25,6 +25,28 @@ import (
 
 const unknownLabel = "unknown"
 
+// LifecycleNotifier receives the session-lifecycle transitions the reducer
+// observes, for a client that mirrors them to an external channel — a host
+// editor's agent lifecycle hook (see cmd/mecatui/agenthook). The ui owns this
+// narrow consumer interface so its import surface stays client+theme only;
+// *agenthook.Notifier satisfies it. A nil LifecycleNotifier is the "no external
+// channel" state and every method must be a no-op, so the reducer holds one and
+// never branches on it.
+//
+// Start is idempotent within a run (the notifier dedupes to one busy signal);
+// Stop fires once per run and is a no-op with no preceding Start; both are
+// best-effort and non-blocking (they must never delay or fail the run).
+type LifecycleNotifier interface {
+	// Start signals the agent began work (the run's first turn).
+	Start(ctx context.Context, sessionID string)
+	// PermissionRequest signals the agent is blocked on a human approval. It
+	// does not affect the run's busy state (a Stop must still follow).
+	PermissionRequest(ctx context.Context, sessionID, message string)
+	// Stop signals the run reached a terminal state; failed selects the error
+	// terminal, message is an optional preview for the notification.
+	Stop(ctx context.Context, sessionID string, failed bool, message string)
+}
+
 // SessionCreator creates a server-side session and returns its id together with
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be
@@ -296,6 +318,14 @@ type Deps struct {
 
 	// Ctx is the program-level context; per-run stream contexts derive from it.
 	Ctx context.Context //nolint:containedctx // stored to parent per-run stream cancels
+
+	// AgentHook mirrors the session lifecycle to the host tool's AGENT LIFECYCLE
+	// HOOK, in the cross-vendor hook schema Claude Code originated and Codex
+	// adopted. nil when no supported host is detected — the ordinary standalone
+	// run — so the reducer's nil check reflects real absence. Start fires on the
+	// run's first turn, PermissionRequest on a MAIN (non-child) approval ask, and
+	// Stop on the terminal result. See cmd/mecatui/agenthook.
+	AgentHook LifecycleNotifier
 
 	// NoAltScreen disables the alternate screen buffer, rendering inline in the
 	// terminal's normal buffer. Default false (full-screen TUI on the alt screen).

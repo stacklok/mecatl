@@ -132,6 +132,14 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 		m.phase = phaseAwaitingApproval
 		m.activeTool = ""
 		m.toolProgress = ""
+		// Host hook PermissionRequest: the agent is blocked on a human. Only a
+		// MAIN-session ask counts — a host drives terminal status from the main
+		// loop, never a surfaced subagent ask (isChildAsk). Fire only when this
+		// ask becomes the visible head, so a queued/deduped ask does not double
+		// the notification.
+		if m.deps.AgentHook != nil && !isChildAsk(msg.AskID, m.sessionID) {
+			m.deps.AgentHook.PermissionRequest(m.deps.Ctx, m.sessionID, msg.Reason)
+		}
 	}
 	return m.afterEvent()
 }
