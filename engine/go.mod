@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/engine
 
-go 1.27
+go 1.27.0
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
