@@ -218,4 +218,31 @@ describe("MecatlBridge", () => {
       { script: fixture("permission-ask.json") },
     );
   });
+
+  it("still fires onSettle if session creation itself fails (panel-review, samuv follow-up)", async () => {
+    // Nothing listens here, so sessions.create() (and #sessionFor) rejects before a session
+    // or run ever exists — onStart has already fired by then, so onSettle must still fire too,
+    // or Slack status would be stuck at "processing" forever.
+    const bridge = new MecatlBridge({ baseUrl: "http://127.0.0.1:1" });
+    try {
+      const events: string[] = [];
+      await expect(
+        bridge.handlePrompt(
+          "channel:thread-1",
+          "hello",
+          undefined,
+          undefined,
+          () => {
+            events.push("start");
+          },
+          () => {
+            events.push("settle");
+          },
+        ),
+      ).rejects.toThrow();
+      expect(events).toEqual(["start", "settle"]);
+    } finally {
+      await bridge.close();
+    }
+  });
 });

@@ -144,8 +144,13 @@ export class MecatlBridge {
     onSettle: LifecycleHook | undefined,
   ): Promise<PromptOutcome> {
     await onStart?.();
-    const session = await this.#sessionFor(threadKey);
     try {
+      // `#sessionFor` itself is inside this try too (panel-review, samuv,
+      // follow-up on #1707): `onStart` has already fired by this point, so a
+      // session-creation failure (e.g. the daemon is unreachable) must still
+      // reach `finally`'s `onSettle` below — otherwise Slack status is left
+      // stuck at "processing" forever with no run to ever resolve it.
+      const session = await this.#sessionFor(threadKey);
       // session.run() itself — not just the run's event stream — must be inside
       // this try (#1289 review, samuv): the server can reject a session with a
       // live external authorization at RUN ADMISSION, before the SDK's run()
