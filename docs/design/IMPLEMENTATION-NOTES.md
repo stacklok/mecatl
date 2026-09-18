@@ -8944,14 +8944,16 @@ missing advertised `watch_session_events` feature is the existing local
 `no_event_log`, and delegation-child `invalid_argument` errors pass through the shared
 server-error normalization unchanged. Scheduled-fire session ids (`sched--*`) are not
 client-rejected. `AttachedRun.live` is backed by iterator state, not captured at
-construction: delivery of that run's decoded `result` flips the getter to false and
-ends the attached iterator.
+construction: delivery of that run's decoded `result` or a valid pending
+`authorization.required` park with exact run correlation and non-empty authorization and
+call IDs flips the getter to false and ends the attached iterator.
 
 The lifecycle remains one `WatchSessionEvents` request and one iterator in
 `sdk/typescript/src/watch.ts`: replay envelopes, the replay-to-live boundary, live appends,
-and the terminal `result` are consumed in wire order. Encountering that terminal in replay
-ends an already-finished attachment immediately; no follow read is requested. `AttachOptions`
-adds `from: "start" | "now" | SdkCursor` plus `includeLogOnly`, and
+and the terminal `result` or valid pending authorization park are consumed in wire order.
+Encountering either terminal in replay ends an already-finished attachment immediately; no
+follow read is requested. `AttachOptions` adds `from: "start" | "now" | SdkCursor` plus
+`includeLogOnly`, and
 `Session.activity(options)` accepts the same checkpoint input. The opt-in bypasses only the
 derived event-kind filter, so it adds records without changing existing order or cursor values.
 The `now` arm is deliberately a yield-time client filter, not a
@@ -9026,7 +9028,8 @@ cannot publish `offline` between a resumable failure and `WatchConnection` takin
 re-probes still update the request input, and precedence prevents their success from masking a
 retrying peer. A terminal compatibility floor also updates the request input so the deployment fact
 survives automatic iterator cleanup until a later successful exchange clears it. Removing the
-attachment entry on close cannot cancel a run.
+attachment entry on close cannot cancel a run. A valid pending `authorization.required` for
+the attachment's exact run ends the attachment without ending session activity.
 
 Attachment entries do not participate in `ConnectionStatusStore.subscribe` accounting. Only the
 first real status subscriber installs the browser visibility listener and schedules the 30-second
