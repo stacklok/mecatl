@@ -33,6 +33,7 @@ import {
   type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
+import { createMcpAuthorization, type McpAuthorization } from "./mcp-authorization.js";
 import {
   type McpConnectorInventory,
   projectMcpConnectorInventory,
@@ -197,6 +198,13 @@ export interface ClearSessionOptions {
 /** A durable Mecatl session handle. @public */
 export interface Session {
   readonly id: string;
+  /**
+   * Binds one external authorization ID to this session without performing I/O.
+   *
+   * @param authorizationId - Exact non-empty ID from an authorization event.
+   * @returns A reusable correlation handle that makes no authorization-state assertion.
+   */
+  mcpAuthorization(authorizationId: string): McpAuthorization;
   /**
    * Reads the current broker connector inventory for this session.
    *
@@ -662,6 +670,13 @@ class SessionImpl implements Session {
       { enrollmentId, kind: "cancel" },
       this.#operations.transportKind,
     );
+  }
+
+  mcpAuthorization(authorizationId: string): McpAuthorization {
+    return createMcpAuthorization(this.id, authorizationId, {
+      ...this.#operations,
+      promptCapabilities: () => this.#promptCapabilities,
+    });
   }
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
@@ -1605,12 +1620,19 @@ function unwrapEvents(
   transport: TransportKind,
   release: () => void,
 ): AsyncIterator<Event> {
+  let returned = false;
+  const close = async () => {
+    release();
+    if (returned) return;
+    returned = true;
+    await responses.return?.();
+  };
   return {
     next: async () => {
       try {
         const next = await responses.next();
         if (next.done) {
-          release();
+          await close();
           return { done: true, value: undefined };
         }
         const event = next.value.event;
@@ -1628,6 +1650,10 @@ function unwrapEvents(
         release();
         throw error;
       }
+    },
+    return: async () => {
+      await close();
+      return { done: true, value: undefined };
     },
   };
 }

@@ -598,6 +598,67 @@ export const MAX_PROMPT_MEDIA_BYTES: number;
 export const MAX_PROMPT_MEDIA_PARTS = 16;
 
 // @public
+export interface McpAuthorization {
+    // (undocumented)
+    readonly authorizationId: string;
+    cancel(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
+    presentation(requestOptions?: RequestOptions): Promise<string>;
+    recheck(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
+    // (undocumented)
+    readonly sessionId: string;
+}
+
+// @public
+export interface McpAuthorizationFlow extends AsyncIterable<Event_2> {
+    // (undocumented)
+    readonly authorizationId: string;
+    cancelContinuation(requestOptions?: RequestOptions): Promise<void>;
+    // (undocumented)
+    readonly continuationRunId: string | undefined;
+    // (undocumented)
+    readonly operation: McpAuthorizationOperation;
+    resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
+    result(): Promise<McpAuthorizationResult>;
+    // (undocumented)
+    readonly sessionId: string;
+}
+
+// @public
+export interface McpAuthorizationFlowOptions {
+    onPermissionAsk?: PermissionAskResponder;
+    permissionRequestOptions?: RequestOptions;
+}
+
+// @public
+export type McpAuthorizationOperation = "recheck" | "cancel";
+
+// @public
+export type McpAuthorizationResult = {
+    readonly outcome: "pending";
+    readonly status: "pending";
+    readonly authorization: EventOf<"authorization.required">;
+} | {
+    readonly outcome: "settled";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+} | {
+    readonly outcome: "completed";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+    readonly continuationRunId: string;
+    readonly continuation: RunResult;
+} | {
+    readonly outcome: "authorization_required";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+    readonly continuationRunId: string;
+    readonly nextAuthorization: EventOf<"authorization.required">;
+};
+
+// @public
+export type McpAuthorizationStatus = "pending" | "granted" | "denied" | "cancelled" | "expired" | "interrupted" | "failed" | "closed";
+
+// @public
 export const McpConnectorAvailability: {
     readonly Available: "available";
     readonly Unavailable: "unavailable";
@@ -916,11 +977,39 @@ export interface Run extends AsyncIterable<Event_2> {
     cancel(): Promise<void>;
     // (undocumented)
     readonly id: string;
+    outcome(): Promise<RunOutcome>;
     resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
     result(): Promise<RunResult>;
     // (undocumented)
     readonly sessionId: string;
     steer(text: string): Promise<void>;
+}
+
+// @public
+export class RunAuthorizationRequiredError extends InvalidStateError {
+    constructor(outcome: RunAuthorizationRequiredOutcome, options: Omit<MecatlErrorOptions, "code">);
+    // (undocumented)
+    readonly outcome: RunAuthorizationRequiredOutcome;
+}
+
+// @public
+export interface RunAuthorizationRequiredOutcome {
+    // (undocumented)
+    readonly authorization: EventOf<"authorization.required">;
+    // (undocumented)
+    readonly outcome: "authorization_required";
+    // (undocumented)
+    readonly runId: string;
+    // (undocumented)
+    readonly sessionId: string;
+}
+
+// @public
+export interface RunCompletedOutcome {
+    // (undocumented)
+    readonly outcome: "completed";
+    // (undocumented)
+    readonly result: RunResult;
 }
 
 // @public
@@ -938,6 +1027,9 @@ export interface RunOptions {
     onPermissionAsk?: PermissionAskResponder;
     onPlanApproval?: PlanApprovalResponder;
 }
+
+// @public
+export type RunOutcome = RunCompletedOutcome | RunAuthorizationRequiredOutcome;
 
 // @public
 export interface RunResult {
@@ -1166,6 +1258,7 @@ export interface Session {
     // (undocumented)
     readonly id: string;
     listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
+    mcpAuthorization(authorizationId: string): McpAuthorization;
     rename(title: string, options?: RequestOptions): Promise<SessionSnapshot>;
     resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
     retry(options?: RunOptions, requestOptions?: RequestOptions): Promise<Run>;

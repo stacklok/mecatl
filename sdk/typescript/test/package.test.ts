@@ -248,6 +248,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/index.d.ts.map",
     "package/dist/index.js",
     "package/dist/index.js.map",
+    "package/dist/mcp-authorization.d.ts",
+    "package/dist/mcp-authorization.d.ts.map",
+    "package/dist/mcp-authorization.js",
+    "package/dist/mcp-authorization.js.map",
     "package/dist/mcp-workspace-enrollment.d.ts",
     "package/dist/mcp-workspace-enrollment.d.ts.map",
     "package/dist/mcp-workspace-enrollment.js",
@@ -659,6 +663,230 @@ if (JSON.stringify(SessionMode) !== JSON.stringify({ Unspecified: 0, Default: 1,
   );
   for (const operation of ["snapshot()", "transcript()", "rename", "setMode", "clear()", "retry()"])
     expect(guide).toContain(operation);
+});
+
+test("MCP authorization lifecycle is exported documented and API reviewed", () => {
+  const consumer = join(consumerRoot, "mcp-authorization-lifecycle.mts");
+  writeFileSync(
+    consumer,
+    `
+import {
+  RunAuthorizationRequiredError,
+  type EventOf,
+  type McpAuthorization,
+  type McpAuthorizationFlow,
+  type McpAuthorizationFlowOptions,
+  type McpAuthorizationOperation,
+  type McpAuthorizationResult,
+  type McpAuthorizationStatus,
+  type RequestOptions,
+  type Run,
+  type RunAuthorizationRequiredOutcome,
+  type RunCompletedOutcome,
+  type RunOutcome,
+  type Session,
+} from "@stacklok-oss/mecatl-sdk";
+import {
+  RunAuthorizationRequiredError as NodeRunAuthorizationRequiredError,
+  type McpAuthorization as NodeMcpAuthorization,
+  type McpAuthorizationFlow as NodeMcpAuthorizationFlow,
+  type McpAuthorizationFlowOptions as NodeMcpAuthorizationFlowOptions,
+  type McpAuthorizationOperation as NodeMcpAuthorizationOperation,
+  type McpAuthorizationResult as NodeMcpAuthorizationResult,
+  type McpAuthorizationStatus as NodeMcpAuthorizationStatus,
+  type RunAuthorizationRequiredOutcome as NodeRunAuthorizationRequiredOutcome,
+  type RunCompletedOutcome as NodeRunCompletedOutcome,
+  type RunOutcome as NodeRunOutcome,
+} from "@stacklok-oss/mecatl-sdk/node";
+import {
+  RunAuthorizationRequiredError as DenoRunAuthorizationRequiredError,
+  type McpAuthorization as DenoMcpAuthorization,
+  type McpAuthorizationFlow as DenoMcpAuthorizationFlow,
+  type McpAuthorizationFlowOptions as DenoMcpAuthorizationFlowOptions,
+  type McpAuthorizationOperation as DenoMcpAuthorizationOperation,
+  type McpAuthorizationResult as DenoMcpAuthorizationResult,
+  type McpAuthorizationStatus as DenoMcpAuthorizationStatus,
+  type RunAuthorizationRequiredOutcome as DenoRunAuthorizationRequiredOutcome,
+  type RunCompletedOutcome as DenoRunCompletedOutcome,
+  type RunOutcome as DenoRunOutcome,
+} from "@stacklok-oss/mecatl-sdk/deno";
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends
+  (<Value>() => Value extends Right ? 1 : 2) ? true : false;
+type Assert<Value extends true> = Value;
+
+declare const session: Session;
+declare const run: Run;
+const authorization: McpAuthorization = session.mcpAuthorization("authorization-1");
+const presentation: Promise<string> = authorization.presentation({ timeoutMs: 1_000 });
+const flow: McpAuthorizationFlow = authorization.recheck(
+  { onPermissionAsk: () => "allow_once", permissionRequestOptions: { timeoutMs: 500 } },
+  { timeoutMs: 2_000 },
+);
+const outcome: Promise<RunOutcome> = run.outcome();
+const completedOnly = run.result();
+type Handle = Assert<Equal<
+  Session["mcpAuthorization"],
+  (authorizationId: string) => McpAuthorization
+>>;
+type Presentation = Assert<Equal<
+  McpAuthorization["presentation"],
+  (requestOptions?: RequestOptions) => Promise<string>
+>>;
+type Recheck = Assert<Equal<
+  McpAuthorization["recheck"],
+  (options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions) => McpAuthorizationFlow
+>>;
+type Cancel = Assert<Equal<
+  McpAuthorization["cancel"],
+  (options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions) => McpAuthorizationFlow
+>>;
+type Status = Assert<Equal<
+  McpAuthorizationStatus,
+  "pending" | "granted" | "denied" | "cancelled" | "expired" | "interrupted" | "failed" | "closed"
+>>;
+type Operation = Assert<Equal<McpAuthorizationOperation, "recheck" | "cancel">>;
+type Pending = Extract<McpAuthorizationResult, { outcome: "pending" }>;
+type Chained = Extract<McpAuthorizationResult, { outcome: "authorization_required" }>;
+type PendingEvent = Assert<Equal<Pending["authorization"], EventOf<"authorization.required">>>;
+type ChainedEvent = Assert<Equal<Chained["nextAuthorization"], EventOf<"authorization.required">>>;
+type RunModes = Assert<Equal<
+  RunOutcome,
+  RunCompletedOutcome | RunAuthorizationRequiredOutcome
+>>;
+type RuntimeParity = Assert<Equal<
+  typeof RunAuthorizationRequiredError,
+  typeof NodeRunAuthorizationRequiredError
+>> & Assert<Equal<
+  typeof RunAuthorizationRequiredError,
+  typeof DenoRunAuthorizationRequiredError
+>>;
+type NodeParity = Assert<Equal<
+  readonly [
+    NodeMcpAuthorization,
+    NodeMcpAuthorizationFlow,
+    NodeMcpAuthorizationFlowOptions,
+    NodeMcpAuthorizationOperation,
+    NodeMcpAuthorizationResult,
+    NodeMcpAuthorizationStatus,
+    NodeRunCompletedOutcome,
+    NodeRunAuthorizationRequiredOutcome,
+    NodeRunOutcome,
+  ],
+  readonly [
+    McpAuthorization,
+    McpAuthorizationFlow,
+    McpAuthorizationFlowOptions,
+    McpAuthorizationOperation,
+    McpAuthorizationResult,
+    McpAuthorizationStatus,
+    RunCompletedOutcome,
+    RunAuthorizationRequiredOutcome,
+    RunOutcome,
+  ]
+>>;
+type DenoParity = Assert<Equal<
+  readonly [
+    DenoMcpAuthorization,
+    DenoMcpAuthorizationFlow,
+    DenoMcpAuthorizationFlowOptions,
+    DenoMcpAuthorizationOperation,
+    DenoMcpAuthorizationResult,
+    DenoMcpAuthorizationStatus,
+    DenoRunCompletedOutcome,
+    DenoRunAuthorizationRequiredOutcome,
+    DenoRunOutcome,
+  ],
+  readonly [
+    McpAuthorization,
+    McpAuthorizationFlow,
+    McpAuthorizationFlowOptions,
+    McpAuthorizationOperation,
+    McpAuthorizationResult,
+    McpAuthorizationStatus,
+    RunCompletedOutcome,
+    RunAuthorizationRequiredOutcome,
+    RunOutcome,
+  ]
+>>;
+void [authorization, presentation, flow, outcome, completedOnly];
+export type {
+  Cancel,
+  ChainedEvent,
+  DenoParity,
+  Handle,
+  NodeParity,
+  Operation,
+  PendingEvent,
+  Presentation,
+  Recheck,
+  RunModes,
+  RuntimeParity,
+  Status,
+};
+`,
+  );
+
+  const typecheck = spawnSync(
+    process.execPath,
+    [
+      join(packageRoot, "node_modules", "typescript", "bin", "tsc"),
+      "--noEmit",
+      "--strict",
+      "--target",
+      "ES2022",
+      "--lib",
+      "ESNext,DOM,DOM.Iterable",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--types",
+      "node",
+      "--typeRoots",
+      join(packageRoot, "node_modules", "@types"),
+      consumer,
+    ],
+    { cwd: consumerRoot, encoding: "utf8" },
+  );
+  expect(typecheck.stderr).toBe("");
+  expect(typecheck.stdout).toBe("");
+  expect(typecheck.status).toBe(0);
+
+  const symbols = [
+    "McpAuthorization",
+    "McpAuthorizationFlow",
+    "McpAuthorizationFlowOptions",
+    "McpAuthorizationOperation",
+    "McpAuthorizationResult",
+    "McpAuthorizationStatus",
+    "RunAuthorizationRequiredError",
+    "RunAuthorizationRequiredOutcome",
+    "RunCompletedOutcome",
+    "RunOutcome",
+  ];
+  for (const report of ["mecatl-sdk.api.md", "mecatl-sdk-node.api.md", "mecatl-sdk-deno.api.md"]) {
+    const api = readFileSync(join(packageRoot, "etc", report), "utf8");
+    for (const symbol of symbols) expect(api, `${report} exports ${symbol}`).toContain(symbol);
+  }
+
+  const referenceRoot = resolve(packageRoot, "../../user-docs/reference/typescript-sdk-api");
+  const coreReference = readFileSync(join(referenceRoot, "core.md"), "utf8");
+  for (const symbol of symbols) {
+    expect(coreReference).toContain(`id="api-${symbol.toLowerCase()}-`);
+  }
+  for (const entrypoint of ["node.md", "deno.md"]) {
+    const reference = readFileSync(join(referenceRoot, entrypoint), "utf8");
+    expect(reference).toContain("The entry point also exports the [shared core API](./core.md).");
+  }
+
+  const releaseWorkflow = readFileSync(
+    resolve(packageRoot, "../../.github/workflows/create-sdk-typescript-release-pr.yml"),
+    "utf8",
+  );
+  expect(releaseWorkflow).toContain('"sdk/typescript",');
+  expect(releaseWorkflow).toContain('":(exclude)sdk/typescript/CHANGELOG.md",');
 });
 
 test("run controls are exported documented and api reviewed", () => {

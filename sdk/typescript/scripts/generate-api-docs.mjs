@@ -133,6 +133,8 @@ function validateDocumentation(items, entryPoint) {
   const missing = [];
   const detailedCallableTypes = new Set([
     "AttachedRun",
+    "McpAuthorization",
+    "McpAuthorizationFlow",
     "NodeClient",
     "PlanResolution",
     "Run",

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -18,8 +19,10 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 type recheckAuthorizationStream struct {
@@ -34,6 +37,7 @@ type recheckAuthorizationStream struct {
 	sendCalls    int
 	recvErr      error
 	recvErred    chan struct{}
+	eofAfterAsk  chan struct{}
 	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
 }
 
@@ -55,6 +59,10 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 		}
 		return nil, s.recvErr
 	}
+	if s.eofAfterAsk != nil {
+		<-s.eofAfterAsk
+		return nil, io.EOF
+	}
 	if s.requestCh != nil {
 		select {
 		case req := <-s.requestCh:
@@ -73,6 +81,9 @@ func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthoriza
 	}
 	if s.approveOnAsk && response.GetEvent().GetType() == "permission.ask" {
 		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE}}}
+	}
+	if s.eofAfterAsk != nil && response.GetEvent().GetType() == "permission.ask" {
+		close(s.eofAfterAsk)
 	}
 	return nil
 }
@@ -337,6 +348,118 @@ func TestMCPAuthorizationGRPCControlEOFDrainsContinuationWithoutCancellingIt(t *
 	}
 	if persisted.State != session.StateCompleted {
 		t.Fatalf("persisted EOF continuation state = %q, want %q", persisted.State, session.StateCompleted)
+	}
+}
+
+func TestMCPAuthorizationGRPCControlEOFCancelsStrandedPermissionContinuation(t *testing.T) {
+	followup := session.NewToolCall("followup-call", "protected", nil)
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
+		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue after a stranded ask"))
+	stream := &recheckAuthorizationStream{
+		ctx:         t.Context(),
+		eofAfterAsk: make(chan struct{}),
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+
+	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); err != nil {
+		t.Fatal(err)
+	}
+	if got := stream.responses[len(stream.responses)-1].GetEvent().GetResult().GetStop(); got != "cancelled" {
+		t.Fatalf("terminal stop = %q, want cancelled", got)
+	}
+	persisted, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != session.StateCancelled {
+		t.Fatalf("persisted EOF permission continuation state = %q, want %q", persisted.State, session.StateCancelled)
+	}
+}
+
+func TestMCPAuthorizationGRPCControlEOFBeforeAskCancelsWhenContinuationLaterStrands(t *testing.T) {
+	followup := session.NewToolCall("followup-call", "protected", nil)
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
+		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue after a stranded ask"))
+	recvErred := make(chan struct{})
+	releaseWork := make(chan struct{})
+	f.attach.tool.hold = func(ctx context.Context) {
+		if f.attach.tool.calls.Load() < 2 {
+			return
+		}
+		select {
+		case <-releaseWork:
+		case <-ctx.Done():
+		}
+	}
+	stream := &recheckAuthorizationStream{
+		ctx:       t.Context(),
+		recvErr:   io.EOF,
+		recvErred: recvErred,
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+	done := make(chan error, 1)
+	go func() { done <- NewHarnessServer(f.svc).RecheckMcpAuthorization(stream) }()
+	<-recvErred
+	// The authorized tool is still held, so EOF is the relay's only ready input.
+	// Give that select turn a bounded scheduling window before the later ask exists.
+	time.Sleep(25 * time.Millisecond)
+	close(releaseWork)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		if run, live := f.svc.LookupRun("authorization-session"); live {
+			f.svc.cancelRegisteredRun("authorization-session", run)
+		}
+		<-done
+		t.Fatal("control EOF observed before the ask left the later permission continuation stranded")
+	}
+	if got := stream.responses[len(stream.responses)-1].GetEvent().GetResult().GetStop(); got != "cancelled" {
+		t.Fatalf("terminal stop = %q, want cancelled", got)
+	}
+}
+
+func TestMCPAuthorizationGRPCControlEOFDoesNotCancelPlanApprovalContinuation(t *testing.T) {
+	planCall := session.NewToolCall("plan-call", "PresentPlan", json.RawMessage(`{"plan":"inspect the change"}`))
+	f := newInteractiveLifecycleFixtureWithMode(t, session.AuthorizationGranted, nil, time.Now, nil,
+		session.ModePlan, mockllm.ToolCallTurn(planCall))
+	f.attach.refreshTools = []tool.Tool{agent.NewPresentPlanTool()}
+	stream := &recheckAuthorizationStream{
+		ctx:         t.Context(),
+		eofAfterAsk: make(chan struct{}),
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+	done := make(chan error, 1)
+	go func() { done <- NewHarnessServer(f.svc).RecheckMcpAuthorization(stream) }()
+	select {
+	case <-stream.eofAfterAsk:
+	case err := <-done:
+		t.Fatalf("continuation ended before plan approval ask: %v; responses=%+v", err, stream.responses)
+	case <-time.After(time.Second):
+		t.Fatal("continuation did not reach plan approval ask")
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("plan approval continuation ended on control EOF: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	run, live := f.svc.LookupRun("authorization-session")
+	if !live {
+		t.Fatal("plan approval continuation was not retained for the dedicated plan workflow")
+	}
+	f.svc.cancelRegisteredRun("authorization-session", run)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

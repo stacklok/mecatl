@@ -4,7 +4,7 @@
 **Work classification:** Architectural — this adds durable public TypeScript SDK resource, stream, status, result, and control contracts for a stateful session-bound authorization workflow.
 **Decision record:** [ADR 0348](../adr/0348-typescript-sdk-mcp-authorization-lifecycle.md)
 **Phase:** ergonomic TypeScript SDK MCP authorization lifecycle
-**Status:** proposed, 2026-09-18. The directing user approved the session-bound lifecycle, Run handoff, lazy dispatch, bounded recovery contract, and the attachment, termination, and correlation clarifications requested during Plan / Interface review.
+**Status:** landed, 2026-09-18. The stacked implementation candidate satisfies the reviewed attachment, termination, and correlation contract; this transition becomes authoritative when the Implementation PR merges.
 **Delivery:** Split. The public SDK object model, Run parking contract, single-consumption stream grammar, control routing, and disconnect semantics require Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1469](https://github.com/stacklok/mecatl/issues/1469)
@@ -162,13 +162,13 @@ stream; see [architecture](../architecture.md#typescript-sdk).
 
 **Acceptance:**
 - AC1.1: `Run.outcome()` drains one claimed Run and returns `RunCompletedOutcome` for exactly one terminal `result`, or `RunAuthorizationRequiredOutcome` when the final event is `authorization.required` with status `pending`, a non-empty authorization/call ID, and the Run's exact non-empty session/run correlation.
-  - verify: vitest:sdk/typescript/test/run.test.ts — `Run outcome discriminates completion from authorization parking`
+  - verify: vitest:sdk/typescript/test/run.test.ts#UnVuIG91dGNvbWUgZGlzY3JpbWluYXRlcyBjb21wbGV0aW9uIGZyb20gYXV0aG9yaXphdGlvbiBwYXJraW5n — `sdk/typescript/test/run.test.ts :: "Run outcome discriminates completion from authorization parking"`
 - AC1.2: Event iteration yields the valid final `authorization.required` and then closes normally; the completed-only `Run.result()` releases the stream and throws `RunAuthorizationRequiredError` carrying the same detached outcome, never `ProtocolError`.
-  - verify: vitest:sdk/typescript/test/run.test.ts — `authorization parked Run iteration and result use normal handoff semantics`
+  - verify: vitest:sdk/typescript/test/run.test.ts#YXV0aG9yaXphdGlvbiBwYXJrZWQgUnVuIGl0ZXJhdGlvbiBhbmQgcmVzdWx0IHVzZSBub3JtYWwgaGFuZG9mZiBzZW1hbnRpY3M — `sdk/typescript/test/run.test.ts :: "authorization parked Run iteration and result use normal handoff semantics"`
 - AC1.3: Authorization-park EOF, `outcome()`, `result()`, and iterator return after the parked event close the underlying response iterator, unregister the Run, clear `SessionImpl`'s busy state, and do not cancel or resolve the server's pending authorization; the same Session can immediately create its lifecycle handle.
-  - verify: vitest:sdk/typescript/test/run.test.ts — `authorization parked Run releases SDK ownership without cancelling authorization`
+  - verify: vitest:sdk/typescript/test/run.test.ts#YXV0aG9yaXphdGlvbiBwYXJrZWQgUnVuIHJlbGVhc2VzIFNESyBvd25lcnNoaXAgd2l0aG91dCBjYW5jZWxsaW5nIGF1dGhvcml6YXRpb24 — `sdk/typescript/test/run.test.ts :: "authorization parked Run releases SDK ownership without cancelling authorization"`
 - AC1.4: `outcome()`, `result()`, and iteration are mutually exclusive single-consumption modes; completed runs retain their existing `RunResult`, and EOF without either a terminal `result` or final valid authorization requirement remains `ProtocolError`.
-  - verify: vitest:sdk/typescript/test/run.test.ts — `Run outcome preserves completed and malformed stream behavior`
+  - verify: vitest:sdk/typescript/test/run.test.ts#UnVuIG91dGNvbWUgcHJlc2VydmVzIGNvbXBsZXRlZCBhbmQgbWFsZm9ybWVkIHN0cmVhbSBiZWhhdmlvcg — `sdk/typescript/test/run.test.ts :: "Run outcome preserves completed and malformed stream behavior"`
 
 ### Scenario 2 — a session-bound handle presents one live authorization
 
@@ -177,11 +177,11 @@ without importing mecatui state or widening the thin MCP inventory namespace.
 
 **Acceptance:**
 - AC2.1: `session.mcpAuthorization(authorizationId)` rejects an empty authorization ID locally; otherwise it synchronously returns an `McpAuthorization` with exact readonly session/authorization IDs and performs no compatibility probe, RPC, stream open, durable watch, or state assertion during construction.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization handle binds exact correlation without I/O`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gaGFuZGxlIGJpbmRzIGV4YWN0IGNvcnJlbGF0aW9uIHdpdGhvdXQgSS9P — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization handle binds exact correlation without I/O"`
 - AC2.2: `presentation(requestOptions?)` makes one existing presentation RPC with automatic exact session affinity, preserves caller headers, callbacks, signal, and deadline, and returns the server's absolute HTTP(S) URL string without caching, opening, copying, rendering, or persisting it.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization presentation is live validated and application owned`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gcHJlc2VudGF0aW9uIGlzIGxpdmUgdmFsaWRhdGVkIGFuZCBhcHBsaWNhdGlvbiBvd25lZA — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization presentation is live validated and application owned"`
 - AC2.3: An absent, relative, non-HTTP(S), or otherwise malformed presentation URL raises `ProtocolError`; server ownership, unknown/past authorization, expiry, lease, and availability refusals retain their normalized typed errors without exposing another session or credential.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization presentation preserves protocol and server failures`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gcHJlc2VudGF0aW9uIHByZXNlcnZlcyBwcm90b2NvbCBhbmQgc2VydmVyIGZhaWx1cmVz — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization presentation preserves protocol and server failures"`
 
 ### Scenario 3 — recheck and cancel are lazy correlated single-consumption flows
 
@@ -191,15 +191,15 @@ namespace response or TUI phase machine.
 
 **Acceptance:**
 - AC3.1: `recheck()` and `cancel()` synchronously return distinct flows with exact immutable session/authorization/operation values but perform no compatibility probe, registration, RPC, mutation, or timer start until the first iterator `next()` or `result()`; merely requesting an iterator claims it but remains transport-lazy.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization operations start only on first consumption`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gb3BlcmF0aW9ucyBzdGFydCBvbmx5IG9uIGZpcnN0IGNvbnN1bXB0aW9u — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization operations start only on first consumption"`
 - AC3.2: First consumption registers one client-owned stream, starts `timeoutMs`, observes an already-aborted caller signal before transport work, and issues exactly the named existing descriptor with one initial gRPC frame carrying only the handle's session/authorization IDs or the equivalent bodyless HTTP route. Establishment/server errors and header callbacks surface from that consuming `next()` or `result()`, not from flow construction.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization flow start preserves request timing and exact control`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gZmxvdyBzdGFydCBwcmVzZXJ2ZXMgcmVxdWVzdCB0aW1pbmcgYW5kIGV4YWN0IGNvbnRyb2w — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization flow start preserves request timing and exact control"`
 - AC3.3: The first authoritative frame is a known authorization event with empty `runId`, the exact authorization ID, non-empty call ID, a known status, and required-`pending` versus resolved-terminal pairing; every mismatch, missing payload, unknown status, or malformed frame raises `ProtocolError`.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization flow validates the authoritative control result`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gZmxvdyB2YWxpZGF0ZXMgdGhlIGF1dGhvcml0YXRpdmUgY29udHJvbCByZXN1bHQ — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization flow validates the authoritative control result"`
 - AC3.4: Clean EOF after only the authoritative event returns discriminated `pending` or `settled`; denial, cancellation, expiry, interruption, failure, and closure are typed values rather than exceptions, and impossible event/status/result combinations are not representable by `McpAuthorizationResult`.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization status-only results are discriminated values`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gc3RhdHVzLW9ubHkgcmVzdWx0cyBhcmUgZGlzY3JpbWluYXRlZCB2YWx1ZXM — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization status-only results are discriminated values"`
 - AC3.5: Iteration and `result()` are mutually exclusive and claim the flow once; a second iterator, a second `result()`, or cross-mode consumption raises `InvalidStateError` without opening or consuming another stream.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization flow is single consumption`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gZmxvdyBpcyBzaW5nbGUgY29uc3VtcHRpb24 — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization flow is single consumption"`
 
 ### Scenario 4 — a continuation completes or hands off one chained authorization
 
@@ -209,17 +209,17 @@ ergonomic behavior over gRPC and HTTP.
 
 **Acceptance:**
 - AC4.1: The first post-status event fixes one non-empty `continuationRunId`; every continuation event retains it, and the continuation contains exactly one repeated copy of the original resolved authorization payload before it closes. A changed run ID, missing/duplicate original resolution, second result, or event after a terminal result is `ProtocolError`.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization continuation validates run and repeated resolution grammar`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gY29udGludWF0aW9uIHZhbGlkYXRlcyBydW4gYW5kIHJlcGVhdGVkIHJlc29sdXRpb24gZ3JhbW1hcg — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization continuation validates run and repeated resolution grammar"`
 - AC4.2: Clean continuation EOF after exactly one terminal `result` returns `outcome: "completed"` with the ordinary `RunResult`; iteration yields every decoded event in wire order, and the lifecycle fabricates no `Run`, attachment, cursor, or successor.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization continuation returns one ordinary completed result`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gY29udGludWF0aW9uIHJldHVybnMgb25lIG9yZGluYXJ5IGNvbXBsZXRlZCByZXN1bHQ — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization continuation returns one ordinary completed result"`
 - AC4.3: A continuation may instead end with one later `authorization.required` carrying status `pending`, a non-empty call ID, the same continuation run ID, and an authorization ID different from the control's original ID. Clean EOF then returns `outcome: "authorization_required"` with that exact `nextAuthorization`; EOF with neither a result nor this chained park remains `ProtocolError`.
-  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts — `MCP authorization continuation hands off a chained authorization`
+  - verify: vitest:sdk/typescript/test/mcp-authorization.test.ts#TUNQIGF1dGhvcml6YXRpb24gY29udGludWF0aW9uIGhhbmRzIG9mZiBhIGNoYWluZWQgYXV0aG9yaXphdGlvbg — `sdk/typescript/test/mcp-authorization.test.ts :: "MCP authorization continuation hands off a chained authorization"`
 - AC4.4: `onPermissionAsk` receives only an observed ordinary ask plus a lifecycle-bound signal. Its explicit verdict uses only `permissionRequestOptions`; omission or abstention leaves the ask pending. Manual `resolveAsk()` uses only its own request options. Both address the exact observed ask/run through `RunControls`, while unknown, resolved, retracted, plan-originated, or mismatched asks are never guessed.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-controls.test.ts — `MCP authorization permission decisions and request options remain application owned`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-controls.test.ts#TUNQIGF1dGhvcml6YXRpb24gcGVybWlzc2lvbiBkZWNpc2lvbnMgYW5kIHJlcXVlc3Qgb3B0aW9ucyByZW1haW4gYXBwbGljYXRpb24gb3duZWQ — `sdk/typescript/test/mcp-authorization-controls.test.ts :: "MCP authorization permission decisions and request options remain application owned"`
 - AC4.5: `cancelContinuation()` addresses only the observed continuation run through `RunControls.cancel`; either manual control before its required run/ask is observed fails locally, and absent `prompt_free_controls` fails with the existing typed feature refusal without cancelling or resolving something else.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-controls.test.ts — `MCP authorization continuation controls are exact run and feature gated`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-controls.test.ts#TUNQIGF1dGhvcml6YXRpb24gY29udGludWF0aW9uIGNvbnRyb2xzIGFyZSBleGFjdCBydW4gYW5kIGZlYXR1cmUgZ2F0ZWQ — `sdk/typescript/test/mcp-authorization-controls.test.ts :: "MCP authorization continuation controls are exact run and feature gated"`
 - AC4.6: Stream, manual-control, and automatic-control request options independently preserve headers, callbacks, signals, per-request deadlines, session affinity, client-close state, normalized errors, and no-retry behavior on both transports; a plan-originated ask is yielded but requires an existing separate plan workflow or explicit continuation cancellation.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-controls.test.ts — `MCP authorization request options and unsupported plan asks stay separated`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-controls.test.ts#TUNQIGF1dGhvcml6YXRpb24gcmVxdWVzdCBvcHRpb25zIGFuZCB1bnN1cHBvcnRlZCBwbGFuIGFza3Mgc3RheSBzZXBhcmF0ZWQ — `sdk/typescript/test/mcp-authorization-controls.test.ts :: "MCP authorization request options and unsupported plan asks stay separated"`
 
 ### Scenario 5 — concurrency, cancellation, and recovery remain explicit
 
@@ -245,15 +245,15 @@ termination fails locally without starting an RPC.
 
 **Acceptance:**
 - AC5.1: Concurrent flows from one or more handles own independent iterators, request controls, pending-ask maps, registrations, and abort lifetimes. Session ownership is server-enforced through each session-affined request. The SDK rejects an authoritative event whose authorization ID differs from the handle, learns its non-empty original call ID from that frame, requires the repeated original resolution to retain both original IDs, pins one non-empty continuation run ID for every continuation frame, and accepts a chained pending authorization only when it has a different authorization ID and its own non-empty call ID. Controls address only observed continuation-run and ask IDs. No flow consumes another flow's iterator or pending ask.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts — `concurrent MCP authorization flows cannot cross consume or correlate`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts#Y29uY3VycmVudCBNQ1AgYXV0aG9yaXphdGlvbiBmbG93cyBjYW5ub3QgY3Jvc3MgY29uc3VtZSBvciBjb3JyZWxhdGU — `sdk/typescript/test/mcp-authorization-recovery.test.ts :: "concurrent MCP authorization flows cannot cross consume or correlate"`
 - AC5.2: Valid EOF, caller signal, deadline, iterator return while `next()` is pending, transport loss, and client close follow the termination matrix exactly. Every path aborts pending responders and flow-owned automatic controls, suppresses late verdicts, rejects post-terminal `resolveAsk()` and `cancelContinuation()` locally without another RPC, preserves the caller-owned lifetime of a manual control admitted before termination, releases registration and transport resources once, and performs no automatic recheck, mutation replay, browser action, credential persistence, or claim about committed server state.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts — `MCP authorization flow cancellation releases only SDK owned resources`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts#TUNQIGF1dGhvcml6YXRpb24gZmxvdyBjYW5jZWxsYXRpb24gcmVsZWFzZXMgb25seSBTREsgb3duZWQgcmVzb3VyY2Vz — `sdk/typescript/test/mcp-authorization-recovery.test.ts :: "MCP authorization flow cancellation releases only SDK owned resources"`
 - AC5.3: A fresh recheck after loss is a new one-shot mutation, not replay or guaranteed recovery: it can proceed only while the same authorization remains pending. If the lost control committed and cleared pending state before the caller observed its status or continuation ID, the server's not-found refusal is preserved and this lifecycle alone cannot reconstruct the lost outcome.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts — `MCP authorization recovery never overpromises replay`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts#TUNQIGF1dGhvcml6YXRpb24gcmVjb3ZlcnkgbmV2ZXIgb3ZlcnByb21pc2VzIHJlcGxheQ — `sdk/typescript/test/mcp-authorization-recovery.test.ts :: "MCP authorization recovery never overpromises replay"`
 - AC5.4: A caller that observed `continuationRunId`, or a deployment retaining suitable session activity, may explicitly inspect activity and attach to a still-observable run. After disconnect, exact-run attachment treats a replayed `authorization.required` as a valid park only when it carries the exact attached run ID, `pending` status, and non-empty authorization and call IDs. Attachment yields and checkpoints that event, marks `live` false, clears pending asks, and closes without waiting for a nonexistent `result`; session-wide activity remains open. The lifecycle itself never opens a durable watch, scans activity, reconnects, or guarantees event-log retention.
-  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts — `disconnect attach replays chained authorization park as terminal`
+  - verify: vitest:sdk/typescript/test/mcp-authorization-recovery.test.ts#ZGlzY29ubmVjdCBhdHRhY2ggcmVwbGF5cyBjaGFpbmVkIGF1dGhvcml6YXRpb24gcGFyayBhcyB0ZXJtaW5hbA — `sdk/typescript/test/mcp-authorization-recovery.test.ts :: "disconnect attach replays chained authorization park as terminal"`
 - AC5.5: Real-server tests pin phase-specific disconnect behavior: gRPC detaches and drains ordinary continuation work but cancels a run stranded on an ordinary permission ask; HTTP requests cancellation for a still-active continuation and drains it; neither path destroys a follow-up authorization after its `authorization.required` park has committed, and terminal races remain server-authoritative.
-  - verify: vitest:sdk/typescript/e2e/mcp-authorization.e2e.test.ts — `MCP authorization disconnect follows transport and park phase`
+  - verify: vitest:sdk/typescript/e2e/mcp-authorization.e2e.test.ts#TUNQIGF1dGhvcml6YXRpb24gZGlzY29ubmVjdCBmb2xsb3dzIHRyYW5zcG9ydCBhbmQgcGFyayBwaGFzZQ — `sdk/typescript/e2e/mcp-authorization.e2e.test.ts :: "MCP authorization disconnect follows transport and park phase"`
 
 ### Scenario 6 — public and real-wire coverage makes the workflow usable
 
@@ -262,11 +262,11 @@ and must work against the same-checkout daemon, not only injected transports.
 
 **Acceptance:**
 - AC6.1: The HTTP RPC catalog sends no body for recheck/cancel, declares response field `event`, and the generic HTTP SSE decoder wraps each bare server event for both descriptors. Injected plus real-wire gRPC TCP, gRPC UDS, and HTTP/SSE tests cover initial Run parking, presentation, pending recheck, granted/denied/cancelled resolution, completed and chained continuations, permission allow/deny, explicit continuation cancellation, request options, typed errors, and exact affinity with equivalent high-level results where server semantics coincide.
-  - verify: vitest:sdk/typescript/e2e/mcp-authorization.e2e.test.ts — `MCP authorization works over gRPC TCP UDS and HTTP SSE`
+  - verify: vitest:sdk/typescript/e2e/mcp-authorization.e2e.test.ts#TUNQIGF1dGhvcml6YXRpb24gd29ya3Mgb3ZlciBnUlBDIFRDUCBVRFMgYW5kIEhUVFAgU1NF — `sdk/typescript/e2e/mcp-authorization.e2e.test.ts :: "MCP authorization works over gRPC TCP UDS and HTTP SSE"`
 - AC6.2: Root, Node, and Deno declarations export the exact interface contract; API Extractor reports, package tests, the generated SDK reference, and the runtime import matrix prevent an entry point or type from drifting.
-  - verify: vitest:sdk/typescript/test/package.test.ts — `MCP authorization lifecycle is exported documented and API reviewed`
+  - verify: vitest:sdk/typescript/test/package.test.ts#TUNQIGF1dGhvcml6YXRpb24gbGlmZWN5Y2xlIGlzIGV4cG9ydGVkIGRvY3VtZW50ZWQgYW5kIEFQSSByZXZpZXdlZA — `sdk/typescript/test/package.test.ts :: "MCP authorization lifecycle is exported documented and API reviewed"`
 - AC6.3: A concise package-export-only example shows initial Run handoff, application-owned URL handling, explicit recheck cadence, permission response, all discriminated results, chained authorization, and bounded recovery without opening a browser or copying mecatui policy.
-  - verify: vitest:sdk/typescript/test/examples.test.ts — `MCP authorization example uses only the public lifecycle`
+  - verify: vitest:sdk/typescript/test/examples.test.ts#TUNQIGF1dGhvcml6YXRpb24gZXhhbXBsZSB1c2VzIG9ubHkgdGhlIHB1YmxpYyBsaWZlY3ljbGU — `sdk/typescript/test/examples.test.ts :: "MCP authorization example uses only the public lifecycle"`
 - AC6.4: TSDoc, TypeScript SDK permissions/sessions guidance, architecture, implementation notes, generated reference, and the automated SDK changelog describe ownership, Run parking, states, single consumption, lazy dispatch, affinity, request cancellation, no-retry polling, recovery limits, phase-specific HTTP/gRPC disconnect behavior, permission authority, and URL secrecy.
   - verify: inspection — public documentation and generated API/changelog artifacts are content/build outputs rather than runtime behavior
 

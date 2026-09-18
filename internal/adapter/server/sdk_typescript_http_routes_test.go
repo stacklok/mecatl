@@ -119,10 +119,7 @@ func TestSDKTypescriptRelease_Scenario2_HTTPCodecParity(t *testing.T) {
 		if review.response != wantResponse {
 			t.Errorf("catalog row %q response = %q, handler %s derives %q", row.key, review.response, route.handler, wantResponse)
 		}
-		wantResponseField := ""
-		if _, rawSession := facts.calls["writeSession"]; rawSession {
-			wantResponseField = "session"
-		}
+		wantResponseField := expectedSDKHTTPResponseField(facts, method.Output())
 		if review.responseField != wantResponseField {
 			t.Errorf("catalog row %q responseField = %q, handler %s derives %q", row.key, review.responseField, route.handler, wantResponseField)
 		}
@@ -277,6 +274,18 @@ func assertSDKHTTPBodyCodec(t *testing.T, key string, review sdkHTTPReview, fact
 			remaining[name] = struct{}{}
 		}
 	}
+	if facts.rejectsBody {
+		if !facts.body {
+			t.Errorf("catalog row %q rejects request bodies without inspecting the HTTP body", key)
+		}
+		if !sdkFieldsShareControlOneof(input, remaining) {
+			t.Errorf("catalog row %q rejects a body, but remaining request fields %v are not one control oneof", key, sortedSDKSet(remaining))
+		}
+		if review.requestBody != "none" {
+			t.Errorf("catalog row %q request body = %q, handler rejects all bodies", key, review.requestBody)
+		}
+		return
+	}
 	wantBody := "none"
 	if len(remaining) != 0 {
 		wantBody = "json"
@@ -290,6 +299,41 @@ func assertSDKHTTPBodyCodec(t *testing.T, key string, review sdkHTTPReview, fact
 	if review.requestBody != wantBody {
 		t.Errorf("catalog row %q request body = %q, handler/request derive %q (fields %v)", key, review.requestBody, wantBody, sortedSDKSet(remaining))
 	}
+}
+
+func expectedSDKHTTPResponseField(facts sdkHTTPHandlerFacts, output protoreflect.MessageDescriptor) string {
+	if _, rawSession := facts.calls["writeSession"]; rawSession {
+		return "session"
+	}
+	if _, rawEvent := facts.calls["toProto"]; !facts.sse || !rawEvent || output.Fields().Len() != 1 {
+		return ""
+	}
+	field := output.Fields().Get(0)
+	if field.Name() == "event" && field.Message() != nil && field.Message().FullName() == "mecatl.v1.Event" {
+		return "event"
+	}
+	return ""
+}
+
+func sdkFieldsShareControlOneof(input protoreflect.MessageDescriptor, fields map[string]struct{}) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	var oneof protoreflect.FullName
+	for name := range fields {
+		field := input.Fields().ByName(protoreflect.Name(name))
+		if field == nil || field.ContainingOneof() == nil || field.ContainingOneof().IsSynthetic() {
+			return false
+		}
+		if oneof == "" {
+			oneof = field.ContainingOneof().FullName()
+			continue
+		}
+		if field.ContainingOneof().FullName() != oneof {
+			return false
+		}
+	}
+	return true
 }
 
 func expectedSDKHTTPPathSource(t *testing.T, key, target string, facts sdkHTTPHandlerFacts, input protoreflect.MessageDescriptor) string {
@@ -474,6 +518,7 @@ type sdkHTTPHandlerFacts struct {
 	services        map[string]struct{}
 	calls           map[string]struct{}
 	body            bool
+	rejectsBody     bool
 	optionalBody    bool
 	sse             bool
 }
@@ -601,6 +646,9 @@ func (a *sdkHTTPSourceAnalysis) handlerFacts(handler string) sdkHTTPHandlerFacts
 					return true
 				}
 				facts.calls[called] = struct{}{}
+				if called == "controlRequestBodyEmpty" {
+					facts.rejectsBody = true
+				}
 				if called == "decodeOptionalStrictJSON" {
 					facts.optionalBody = true
 				}

@@ -424,7 +424,7 @@ class HttpTransport implements Transport {
     const effectiveSignal = timeoutSignal(signal, timeoutMs);
     let route: Route;
     let body: JsonRecord = {};
-    let wrapEvent = false;
+    let responseField: string | undefined;
     let startControls: (() => Promise<never>) | undefined;
     let controlFailure: Promise<never> = new Promise(() => undefined);
 
@@ -437,7 +437,7 @@ class HttpTransport implements Transport {
         });
       }
       const sessionId = start.value.sessionId;
-      wrapEvent = true;
+      responseField = "event";
       if (start.case === "prompt") {
         route = sessionControlRoute("prompt", sessionId);
         body = {
@@ -475,6 +475,7 @@ class HttpTransport implements Transport {
         path: resolved.path,
       };
       body = record(resolved.body ?? {});
+      responseField = resolved.classification.responseField;
     }
 
     const response = await this.#request(route, body, effectiveSignal, header);
@@ -514,7 +515,10 @@ class HttpTransport implements Transport {
         let normalized: JsonValue;
         let message: MessageShape<O>;
         try {
-          normalized = normalizeHttpWktJson(output, wrapEvent ? { event: raw } : raw);
+          normalized = normalizeHttpWktJson(
+            output,
+            responseField === undefined ? raw : { [responseField]: raw },
+          );
           message = fromJson(output, normalized, { ignoreUnknownFields: true });
         } catch (cause) {
           throw new ProtocolError("The mecatl SSE stream contained an invalid event", {
@@ -524,7 +528,7 @@ class HttpTransport implements Transport {
           });
         }
         registerRawJson(message, raw);
-        if (wrapEvent) {
+        if (responseField === "event") {
           const event = (message as { readonly event?: object | undefined }).event;
           if (event !== undefined) registerRawJson(event, raw);
         } else if (method.name === "WatchSessionEvents") {

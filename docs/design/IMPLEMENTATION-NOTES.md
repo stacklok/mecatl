@@ -8568,11 +8568,65 @@ the ergonomic client also probes status and maps transport/auth/incompatibility 
 making the probe a second protocol contract. `Session` handles are lightweight views over one
 client. A handle admits one live run at a time, while separately fetched handles let callers
 model real server-side races. `Run` is single-consumption: callers choose async event iteration
-or `result()`, never both. Server terminal stops — including `cancelled` — resolve as typed
-values; transport/protocol/server failures reject. Every approval, cancel, and steer frame
+`outcome()`, or `result()`, never more than one. `outcome()` admits either the ordinary terminal
+result or a valid final `authorization.required` park. Iteration closes normally after that park,
+while completed-only `result()` raises `RunAuthorizationRequiredError` carrying the same detached
+handoff. Every path closes the response iterator and releases `SessionImpl`'s live-run ownership
+without sending a cancellation or resolving the pending authorization. Server terminal stops,
+including `cancelled`, resolve as typed values; transport/protocol/server failures reject. Every
+approval, cancel, and steer frame
 carries `expected_run_id`, so a stale HTTP control becomes typed `stale_run_control` and cannot
 affect the session's next run. HTTP steer and cancel-steer use their unary routes only when the
 server advertises `http_steer`; older servers still produce the typed unsupported-feature error.
+
+The MCP authorization resource is `sdk/typescript/src/mcp-authorization.ts` (ADR 0348).
+`SessionImpl.mcpAuthorization()` validates the caller-supplied non-empty authorization ID and
+returns a lightweight handle over the Session's already-affined operations. Construction performs
+no compatibility probe, registration, RPC, or state assertion. `presentation()` performs one
+existing presentation RPC, validates an absolute HTTP(S) URL, and returns the original string.
+The SDK never opens, copies, caches, renders, or persists that URL, and it stores no authorization
+credential or lifecycle truth.
+
+Each `recheck()` and `cancel()` creates a new `McpAuthorizationFlowImpl`. Flow construction and
+iterator acquisition are lazy; first `next()` or `result()` starts the timeout, observes an
+already-aborted caller signal, registers one client-owned stream, and invokes the exact existing
+descriptor with session affinity. The flow is single-consumption and owns independent abort,
+pending-ask, control, and iterator state. Its first event must carry the handle's authorization ID,
+an empty run ID, a non-empty call ID, and the closed status vocabulary. Pending pairs only with
+`authorization.required`; every terminal status pairs only with `authorization.resolved`.
+
+Clean EOF after the authoritative event yields `pending` or `settled`. A continuation fixes its
+non-empty run ID from the first later event, requires exactly one repeated original resolution, and
+ends with either one `RunResult` or a different pending authorization. Those paths yield
+`completed` or `authorization_required`. Correlation drift, malformed status pairing, duplicate
+resolution or result, and an incomplete continuation fail as `ProtocolError`. The flow exposes
+the continuation ID as soon as it is known but creates no `Run`, attachment, activity scan, or
+successor handle.
+
+Continuation permissions route through `Session.controls(continuationRunId)`, giving HTTP and
+gRPC the same prompt-free exact-run mutations. `onPermissionAsk` sees only an ordinary observed ask
+and uses only `permissionRequestOptions`; manual `resolveAsk()` uses its own options. A
+plan-originated ask is yielded but never passed to that responder. `cancelContinuation()` and ask
+resolution fail with the existing unsupported-feature error when `prompt_free_controls` is absent.
+The flow-level `RequestOptions` stay scoped to the stream and are never reused as mutation
+authority.
+
+Closing a flow aborts only SDK-owned resources and never retries, polls, reconnects, opens a
+browser, or claims a server outcome. A fresh recheck after loss is a new one-shot mutation and can
+recover only while the same authorization remains pending. Once a prior control clears pending
+state, the server's not-found response is final for this lifecycle. An observed continuation ID
+can feed the ordinary attachment APIs when retained activity permits it. On disconnect, gRPC
+detaches and drains ordinary continuation work but cancels a continuation stranded on an ordinary
+permission ask; HTTP requests cancellation for an active continuation and drains it. Both preserve
+a chained authorization after its park commits. The server owns terminal races.
+
+The root barrel exports the handle, flow, statuses, results, Run outcomes, and
+`RunAuthorizationRequiredError`; `./node` and `./deno` inherit the same declarations. API
+Extractor reports, generated SDK reference, package and example tests, and Deno's declaration
+matrix gate entry-point parity. The package-only `sdk/typescript/examples/mcp-authorization.ts`
+keeps browser action, recheck cadence, permission policy, chained handoff, and bounded recovery in
+application code. Any commit changing `sdk/typescript/` enters the automated changelog generator's
+path selection unless it changes only the changelog itself.
 
 `sdk/typescript/src/events.ts` normalizes gRPC protobuf events and HTTP JSON/SSE records into
 one discriminated union, retaining an explicit unknown-event member for forward compatibility.
@@ -8890,14 +8944,16 @@ missing advertised `watch_session_events` feature is the existing local
 `no_event_log`, and delegation-child `invalid_argument` errors pass through the shared
 server-error normalization unchanged. Scheduled-fire session ids (`sched--*`) are not
 client-rejected. `AttachedRun.live` is backed by iterator state, not captured at
-construction: delivery of that run's decoded `result` flips the getter to false and
-ends the attached iterator.
+construction: delivery of that run's decoded `result` or a valid pending
+`authorization.required` park with exact run correlation and non-empty authorization and
+call IDs flips the getter to false and ends the attached iterator.
 
 The lifecycle remains one `WatchSessionEvents` request and one iterator in
 `sdk/typescript/src/watch.ts`: replay envelopes, the replay-to-live boundary, live appends,
-and the terminal `result` are consumed in wire order. Encountering that terminal in replay
-ends an already-finished attachment immediately; no follow read is requested. `AttachOptions`
-adds `from: "start" | "now" | SdkCursor` plus `includeLogOnly`, and
+and the terminal `result` or valid pending authorization park are consumed in wire order.
+Encountering either terminal in replay ends an already-finished attachment immediately; no
+follow read is requested. `AttachOptions` adds `from: "start" | "now" | SdkCursor` plus
+`includeLogOnly`, and
 `Session.activity(options)` accepts the same checkpoint input. The opt-in bypasses only the
 derived event-kind filter, so it adds records without changing existing order or cursor values.
 The `now` arm is deliberately a yield-time client filter, not a
@@ -8972,7 +9028,8 @@ cannot publish `offline` between a resumable failure and `WatchConnection` takin
 re-probes still update the request input, and precedence prevents their success from masking a
 retrying peer. A terminal compatibility floor also updates the request input so the deployment fact
 survives automatic iterator cleanup until a later successful exchange clears it. Removing the
-attachment entry on close cannot cancel a run.
+attachment entry on close cannot cancel a run. A valid pending `authorization.required` for
+the attachment's exact run ends the attachment without ending session activity.
 
 Attachment entries do not participate in `ConnectionStatusStore.subscribe` accounting. Only the
 first real status subscriber installs the browser visibility listener and schedules the 30-second

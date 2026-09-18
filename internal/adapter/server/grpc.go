@@ -1696,12 +1696,14 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 	// caller-visible, keep draining into the log, and let the run finish.
 	//
 	// The one exception is a run this dead stream has stranded: while parked on a
-	// permission ask, the run emits nothing and only an approval frame — which no
-	// longer has a channel to arrive on — can move it. Cancel that, and only that.
+	// non-plan permission ask, the run emits nothing and only an approval frame —
+	// which no longer has a channel to arrive on — can move it. Plan asks retain
+	// their separate durable approval workflow. Cancel only the ordinary ask.
 	sendErr := send(toProto(result.Event))
-	parkedOnAsk := false
+	controlEOF := false
+	parkedOnOrdinaryAsk := false
 	strand := func() {
-		if sendErr != nil && parkedOnAsk {
+		if (sendErr != nil || controlEOF) && parkedOnOrdinaryAsk {
 			h.svc.cancelRegisteredRun(id, result.Run)
 		}
 	}
@@ -1735,6 +1737,10 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 		select {
 		case err := <-controlDone:
 			controlDone = nil
+			if errors.Is(err, io.EOF) {
+				controlEOF = true
+				strand()
+			}
 			if err != nil && !errors.Is(err, io.EOF) {
 				if sendErr == nil {
 					sendErr = err
@@ -1750,7 +1756,7 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 			// continuation. The control result above is its durable record, so
 			// forward the repeat without appending it again while draining.
 			if sameMCPAuthorizationControlEvent(result.Event, ev) {
-				parkedOnAsk = false
+				parkedOnOrdinaryAsk = false
 				if sendErr == nil {
 					if err := send(toProto(ev)); err != nil {
 						sendErr = err
@@ -1759,9 +1765,12 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				}
 				continue
 			}
-			// A parked run emits nothing, so an ask being the most recent event is
-			// what "parked awaiting approval" looks like from here.
-			parkedOnAsk = ev.Type == session.EvPermissionAsk
+			// A parked run emits nothing, so an ordinary ask being the most recent
+			// event is what "stranded without its control stream" looks like here.
+			// A plan-originated ask has a separate durable approval workflow.
+			parkedOnOrdinaryAsk = ev.Type == session.EvPermissionAsk &&
+				ev.Ask != nil && ev.Ask.Origin() != session.AskOriginPlan
+			strand()
 			if sendErr != nil {
 				recorder.Observe(ev)
 				strand()
