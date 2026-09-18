@@ -1,6 +1,7 @@
+import { Code } from "@connectrpc/connect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { InvalidStateError, ProtocolError, ServerError } from "../src/index.js";
+import { InvalidStateError, ProtocolError, ServerError, TransportError } from "../src/index.js";
 import {
   ask,
   authorization,
@@ -154,18 +155,37 @@ describe("MCP authorization recovery boundaries", () => {
       await instance.client.close();
     }
 
-    await pausedFlowLifetime(async ({ controller }) => {
-      controller.abort(new Error("caller cancelled while consumption was paused"));
+    await pausedFlowLifetime(async ({ controller, iterator }) => {
+      const reason = new Error("caller cancelled while consumption was paused");
+      controller.abort(reason);
       await Promise.resolve();
-      expect(vi.getTimerCount()).toBe(0);
-    });
-    await pausedFlowLifetime(async ({ controller }) => {
-      await vi.advanceTimersByTimeAsync(500);
-      expect(controller.signal.aborted).toBe(false);
+      const failure = await iterator.next().catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(TransportError);
+      expect(failure).toMatchObject({
+        cause: reason,
+        code: "transport",
+        transport: "grpc",
+      });
+      await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
       expect(vi.getTimerCount()).toBe(0);
     });
     await pausedFlowLifetime(async ({ controller, iterator }) => {
-      await iterator.return?.();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(controller.signal.aborted).toBe(false);
+      const failure = await iterator.next().catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ServerError);
+      expect(failure).toMatchObject({
+        code: "unknown",
+        status: Code.DeadlineExceeded,
+        transport: "grpc",
+      });
+      await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    await pausedFlowLifetime(async ({ controller, iterator }) => {
+      await expect(iterator.return?.()).resolves.toEqual({ done: true, value: undefined });
+      await expect(iterator.return?.()).resolves.toEqual({ done: true, value: undefined });
+      await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
       expect(controller.signal.aborted).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     });

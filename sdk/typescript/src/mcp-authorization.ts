@@ -7,7 +7,13 @@ import type {
 } from "@bufbuild/protobuf";
 import { type CallOptions, Code, ConnectError } from "@connectrpc/connect";
 
-import { InvalidStateError, normalizeError, ProtocolError, type TransportKind } from "./errors.js";
+import {
+  InvalidStateError,
+  type MecatlError,
+  normalizeError,
+  ProtocolError,
+  type TransportKind,
+} from "./errors.js";
 import { decodeEvent, type Event, type EventOf } from "./events.js";
 import {
   HarnessService,
@@ -283,6 +289,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   #repeatSeen = false;
   #result: McpAuthorizationResult | undefined;
   #runControls: RunControls | undefined;
+  #terminalError: MecatlError | undefined;
 
   constructor(
     sessionId: string,
@@ -423,6 +430,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     const expire = (reason: unknown) => {
       if (abort.signal.aborted) return;
+      this.#terminalError = normalizeError(reason, this.#operations.transportKind);
       abort.abort(reason);
       void this.#close();
     };
@@ -442,6 +450,8 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
 
   async #next(): Promise<IteratorResult<Event>> {
     this.#operations.assertOpen();
+    const terminalError = this.#takeTerminalError();
+    if (terminalError !== undefined) throw terminalError;
     if (this.#ended) return { done: true, value: undefined };
     try {
       await this.#start();
@@ -454,9 +464,16 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
       this.#observe(event);
       return { done: false, value: event };
     } catch (error) {
+      const retainedError = this.#takeTerminalError();
       await this.#close();
-      throw error;
+      throw retainedError ?? error;
     }
+  }
+
+  #takeTerminalError(): MecatlError | undefined {
+    const error = this.#terminalError;
+    this.#terminalError = undefined;
+    return error;
   }
 
   #observe(event: Event): void {
