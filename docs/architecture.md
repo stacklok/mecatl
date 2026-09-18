@@ -522,8 +522,9 @@ the local `NoRunsError`, including the deliberately documented interval where a 
 already stamped on a running session but has emitted no durable event. Unknown or
 foreign sessions, unsupported watch deployments, missing logs, and delegation-child
 ids remain distinct typed server refusals. `AttachedRun.live` reflects events observed
-through that attachment and becomes false when its selected run's terminal `result` is
-delivered.
+through that attachment and becomes false when its selected run delivers either a
+terminal `result` or a valid pending `authorization.required` park with exact run
+correlation and non-empty authorization and call IDs.
 
 `Session.activity()` keeps both the server filter and cursor run binding empty, so one
 ordered stream spans every run and also includes run-less `schedule.*` records. A run's
@@ -536,10 +537,11 @@ its existing immediate typed-gap termination.
 
 The attachment is one replay-then-follow operation: it yields the selected run's durable
 replay in append order, announces the live boundary once, follows new appends, and completes
-at that run's terminal `result`. A run that already finished therefore completes from replay
-without parking. `attach(runId, { from: "now" })` still opens the ordinary watch with an
-empty wire cursor and receives the replay, but discards replay envelopes client-side before
-yielding the live boundary; the mode is rejected locally when no explicit run id is supplied.
+at either that run's terminal `result` or a valid pending `authorization.required` park. A
+run that already reached either terminal therefore completes from replay without following.
+`attach(runId, { from: "now" })` still opens the ordinary watch with an empty wire cursor and
+receives the replay, but discards replay envelopes client-side before yielding the live
+boundary; the mode is rejected locally when no explicit run id is supplied.
 
 Ergonomic checkpoints are opaque, serializable `sdkcur/1` strings that wrap the server token
 with the view's run binding and effective server filter. The SDK validates that envelope and
@@ -565,8 +567,9 @@ attachment checkpoint under the same filter. The client
 invalidates and re-probes cached compatibility before each reconnect, so a replacement daemon's
 feature set is authoritative on the first attempt. The closed permanent-code set ends the view;
 ordinary mutations, prompts, permission verdicts, and owned run streams remain one-shot. An
-`AttachedRun` stops after its own `result`, while session activity treats every clean EOF as a
-reconnect point. Reconnected watches do not re-announce the replay-to-live boundary. An optional
+`AttachedRun` stops after its own `result` or valid pending authorization park, while session
+activity treats every clean EOF as a reconnect point. Reconnected watches do not re-announce
+the replay-to-live boundary. An optional
 `AttachOptions.signal`, iterator release, explicit disposal, or `Client.close()` aborts backoff and
 releases the current watch without cancelling the run.
 

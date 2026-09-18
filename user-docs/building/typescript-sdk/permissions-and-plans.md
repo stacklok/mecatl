@@ -115,9 +115,10 @@ The result discriminant defines the next application action:
 |`authorization_required`|The continuation parked on a different authorization. Create a new handle from `nextAuthorization` and present its live URL.|
 
 Iteration yields the same decoded events in wire order. Choose iteration or
-`result()` once for each flow. An unknown status, mismatched session or
-authorization correlation, changed continuation run ID, or malformed terminal
-sequence throws `ProtocolError`.
+`result()` once for each flow. An unknown status, mismatched authorization ID,
+changed original call or continuation run ID, or malformed terminal sequence
+throws `ProtocolError`. The server enforces session ownership through the session
+affinity on the request.
 
 The application owns permission policy. `onPermissionAsk` receives only an
 ordinary permission ask observed on the continuation. Its verdict uses
