@@ -38,6 +38,23 @@ glob matching, YAML parsing, HTML parsing, shell parsing, and cron expressions.
 It does not pull in provider SDKs, gRPC, the terminal UI, Kubernetes clients, or
 Mecatl's root module.
 
+## Engine, session, and run
+
+An embedding application works with three core objects:
+
+|Object|Lifetime|Responsibility|
+|-|-|-|
+|`*agent.Engine`|Reuse across compatible sessions|Runs the loop with a provider, tool catalog, permission policy, and hooks.|
+|`*session.Session`|Persist across runs|Holds conversation history, state, limits, usage, and the execution-environment identity.|
+|`*agent.Run`|One active run|Streams ordered events, accepts permission verdicts, and supports cancellation.|
+
+`Engine.Run` starts the loop in the background. Consume `Run.Events()` until
+the channel closes, and answer `session.EvPermissionAsk` events with
+`Run.Approve`. A restored session can continue with any compatible engine.
+
+The engine and session remain independent. Subagents and team members use the
+same engine and session model with narrower tools, permissions, and limits.
+
 ## Adding the dependency
 
 ```sh
@@ -137,7 +154,7 @@ func main() {
 
 `eng.Run` returns immediately while the loop runs in the background. Consume
 `run.Events()` until the channel closes. See
-[The agent loop](/building/what-you-get/agent-loop.md) for the full event
+[The agent loop](/features/agent-loop.md) for the full event
 taxonomy and permission flow.
 
 ## Ports and configuration
@@ -214,7 +231,7 @@ engine:
 
 If you need several of these capabilities, use `mecated`, which assembles them
 for you. See
-[Run mecated standalone](mecated.md).
+[Run mecated standalone](/operating/mecated.md).
 
 ## go.work for monorepo development
 
@@ -249,8 +266,8 @@ tagged release or use a `replace` directive in `go.mod` during development.
 
 ## Next steps
 
-- [Understand the agent loop](/building/what-you-get/agent-loop.md) and its event
+- [Understand the agent loop](/features/agent-loop.md) and its event
   lifecycle.
-- [Configure permissions and guardrails](/building/what-you-get/permissions.md).
+- [Configure permissions and posture](/features/permissions-and-posture.md).
 - [Review API stability](/building/api-stability.md) before depending on the
   exported engine surface.

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 140
 title: Observability and resilience
 description:
   Monitor Mecatl runs with metrics, traces, diagnostics, audit records, and
@@ -195,9 +195,9 @@ passes it as `MECATL_PRODUCT_METRICS_INSTALL_ID`, so it survives pod restarts
 without a persistent volume. Delete the ConfigMap to reset the ID, or disable
 reporting with one of the controls above.
 
-## What's next
+## Next steps
 
-- [Run `mecated`](/building/deployment/mecated.md) to configure the admin
+- [Run `mecated`](/operating/mecated.md) to configure the admin
   listener, OTLP export, and durable storage.
 - [Session store extension point](/building/extension-points/session-store.md)
   to provide custom persistence and audit recording.

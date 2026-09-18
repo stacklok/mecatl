@@ -262,4 +262,4 @@ prompt; the server remains authoritative.
   `Session`, `Run`, event, and media surfaces.
 - [Start and resume sessions](/features/start-and-resume-sessions.md)
 - [Multimodal input](/features/multimodal-input.md)
-- [Agent loop](/building/what-you-get/agent-loop.md)
+- [Agent loop](/features/agent-loop.md)

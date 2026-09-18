@@ -10,7 +10,7 @@
 #| schema/resolver fallback documented at mecatl.dev/docs/reference/configuration; it
 #| is not a universal process-runtime default. Command roots and modes can
 #| supply their own defaults, disable a feature, or reject a setting. See the
-#| configuration-plane guide at https://mecatl.dev/docs/building/deployment/settings.
+#| configuration-plane guide at https://mecatl.dev/docs/operating/settings.
 #|
 #| This skeleton is GENERATED from the permconfig YAML schema (the single source of
 #| truth). Do not hand-edit the committed copy — run 'task docs:configref'. See

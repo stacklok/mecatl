@@ -49,7 +49,7 @@ there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`, `Write`,
 create a shell or fork a workspace.
 
 The profile is fixed at session creation. The model cannot switch it during a
-run. See [Core tools](/building/what-you-get/core-tools.md) for the complete
+run. See [Core tools](/features/tools.md) for the complete
 catalog.
 
 ## Child environments
@@ -90,6 +90,6 @@ using a local workspace.
 
 ## Next steps
 
-- [Background Shell](/building/what-you-get/core-tools.md#background-commands)
-- [Subagents, teams, and parallel](/building/what-you-get/subagents-teams-parallel.md)
+- [Background Shell](/features/tools.md#background-commands)
+- [Subagents, teams, and parallel](/features/subagents-and-teams.md)
 - [Workspace trust](/features/permissions-and-posture.md)

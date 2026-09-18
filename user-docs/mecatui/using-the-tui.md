@@ -120,10 +120,10 @@ commands supported by the connected server.
 
 |Task|Open in `mecatui`|More information|
 |-|-|-|
-|Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/building/what-you-get/mcp-client.md)|
+|Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/features/mcp-client.md)|
 |Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
 |Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
-|Inspect the user model|`/usermodel`|[Memory](/building/what-you-get/memory.md)|
+|Inspect the user model|`/usermodel`|[Memory](/features/memory.md)|
 |Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/scheduled-tasks.md)|
 |Review learning and maintain memory|`/learning`, `/reflections`, `/reflect`, and `/dream`|[Use learning and memory commands](./commands-and-memory.md)|
 
@@ -139,7 +139,7 @@ the overlay to inspect bounded activity previews; `/team` opens the same overlay
 on the Teams tab.
 
 See
-[Subagents, teams, and parallel](/building/what-you-get/subagents-teams-parallel.md#watch-a-delegation-in-mecatui)
+[Subagents, teams, and parallel](/features/subagents-and-teams.md#watch-a-delegation-in-mecatui)
 for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings

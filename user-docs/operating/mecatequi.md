@@ -19,7 +19,7 @@ workflow provides this integration for GitHub repositories.
 It reads the same global MCP profiles as `mecated`, but cannot launch an OAuth
 browser. Authorize credentials before the job, or inject a provisioned
 environment credential. See
-[MCP client](/building/what-you-get/mcp-client.md).
+[MCP client](/features/mcp-client.md).
 
 ## What mecatequi produces
 
@@ -325,9 +325,9 @@ exits 2.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md)
+- [Choose how to run Mecatl](/operating/choose-deployment.md)
   for other deployment options.
-- [Run mecated standalone](/building/deployment/mecated.md) for interactive
+- [Run mecated standalone](/operating/mecated.md) for interactive
   clients and durable sessions.
 - [Configure permissions and posture](/features/permissions-and-posture.md) for
   autonomous runs.

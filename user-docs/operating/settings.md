@@ -172,7 +172,7 @@ details.
   model, and endpoint selection.
 - [Permissions and posture](/features/permissions-and-posture.md) covers
   permission files, project trust, guardrails, and automation posture.
-- [MCP client](/building/what-you-get/mcp-client.md) covers streaming-HTTP MCP
+- [MCP client](/features/mcp-client.md) covers streaming-HTTP MCP
   servers and their authentication profiles.
 - [Connect to a server](/mecatui/remote-servers.md) covers remote transport,
   TLS, and client authentication.

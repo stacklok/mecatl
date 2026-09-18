@@ -128,9 +128,19 @@ const config: Config = {
           label: 'Get started',
         },
         {
-          to: '/docs/building/cloud-native-harness',
+          to: '/docs/cloud-native-harness',
           position: 'left',
           label: 'Cloud-native harness',
+        },
+        {
+          to: '/docs/mecatui',
+          position: 'left',
+          label: 'Use',
+        },
+        {
+          to: '/docs/operating',
+          position: 'left',
+          label: 'Operate',
         },
         {
           to: '/docs/building',
@@ -138,9 +148,9 @@ const config: Config = {
           label: 'Build',
         },
         {
-          to: '/docs/building/deployment',
+          to: '/docs/features',
           position: 'left',
-          label: 'Deploy',
+          label: 'Capabilities',
         },
         {
           href: 'https://github.com/stacklok/mecatl',
@@ -161,16 +171,18 @@ const config: Config = {
           title: 'Get started',
           items: [
             {label: 'Use it now', to: '/docs/mecatui/getting-started'},
-            {label: 'Run on Kubernetes', to: '/docs/building/deployment/mecak8s'},
-            {label: 'What is a cloud-native harness?', to: '/docs/building/cloud-native-harness'},
+            {label: 'Run on Kubernetes', to: '/docs/operating/mecak8s'},
+            {label: 'What is a cloud-native harness?', to: '/docs/cloud-native-harness'},
           ],
         },
         {
-          title: 'Build',
+          title: 'Documentation',
           items: [
-            {label: 'Build on Mecatl', to: '/docs/building'},
-            {label: 'Extension points', to: '/docs/building/extension-points'},
-            {label: 'Deployment', to: '/docs/building/deployment'},
+            {label: 'Use mecatui', to: '/docs/mecatui'},
+            {label: 'Deploy and operate', to: '/docs/operating'},
+            {label: 'Build with Mecatl', to: '/docs/building'},
+            {label: 'Capabilities', to: '/docs/features'},
+            {label: 'Reference', to: '/docs/reference'},
           ],
         },
         {

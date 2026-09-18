@@ -46,8 +46,8 @@ runtime.
 The loop can be versioned, rolled out, logged, and observed like any other
 application component. In a Kubernetes deployment, workers can be replaced
 during normal operations without making durable sessions disappear. See
-[Choose how to run Mecatl](/building/getting-started/deployment-decision.md) and
-[deploy `mecak8s`](/building/deployment/mecak8s.md).
+[Choose how to run Mecatl](/operating/choose-deployment.md) and
+[deploy `mecak8s`](/operating/mecak8s.md).
 
 ### Keep sessions beyond a worker
 
@@ -90,7 +90,7 @@ while `mecatui` and future web or desktop interfaces act as clients connected to
 the same runtime.
 
 You can build another client on top of Mecatl using the [gRPC or HTTP/SSE
-APIs](/building/deployment/grpc-http.md) or the [TypeScript
+APIs](/operating/grpc-http.md) or the [TypeScript
 SDK](/building/getting-started/typescript-sdk.md). An existing harness would
 need a dedicated integration to hand its agent loop over to Mecatl.
 
@@ -122,12 +122,12 @@ current architecture. We are working toward:
 
 These are directions, not guarantees of current availability. The linked agent
 identity and scoped-resource-grants documents are explicitly speculative; the
-deployment and feature guides describe what Mecatl supports today.
+operator and capability guides describe what Mecatl supports today.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md).
-- [Deploy `mecak8s`](/building/deployment/mecak8s.md) on Kubernetes.
+- [Choose how to run Mecatl](/operating/choose-deployment.md).
+- [Deploy `mecak8s`](/operating/mecak8s.md) on Kubernetes.
 - [Understand session continuity](/features/session-continuity.md).
 - [Explore extension points](/building/extension-points/index.md) for your own
   integrations.

@@ -145,12 +145,12 @@ charges.
 
 - [Build your first agent](./first-agent.md) to embed the engine in a Go
   application.
-- [Choose how to run Mecatl](./deployment-decision.md) to select a deployment
+- [Choose how to run Mecatl](/operating/choose-deployment.md) to select a deployment
   topology.
-- [Explore the agent loop](/building/what-you-get/agent-loop.md) to understand
+- [Explore the agent loop](/features/agent-loop.md) to understand
   the events and control flow shown by the demo.
 
 ## Related information
 
-- [Subagents, teams, and parallel work](/building/what-you-get/subagents-teams-parallel.md)
+- [Subagents, teams, and parallel work](/features/subagents-and-teams.md)
 - [`mecademo` source](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go)

@@ -230,10 +230,10 @@ These controls answer different questions:
 
 For the full Kubernetes overlay, JWKS cache behavior, and troubleshooting steps,
 see
-[Configure caller identity](/building/deployment/mecak8s.md#configure-caller-identity).
+[Configure caller identity](/operating/mecak8s.md#configure-caller-identity).
 
 ## Next steps
 
 - [MCP OAuth and credentials](./mcp-oauth-and-credentials.md)
 - [Session continuity](./session-continuity.md)
-- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
+- [Drive via gRPC / HTTP](/operating/grpc-http.md)

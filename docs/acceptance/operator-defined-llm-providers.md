@@ -56,7 +56,7 @@ A custom `api_key` provider reads exactly its same-ID API-key record from the
 operator-local strict `auth.yaml`; a no-auth provider needs no record. Environment
 fallbacks, OAuth, arbitrary headers, and n:n credential references remain absent. This
 extends the existing auth-file separation described in
-[provider credential documentation](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) without placing
+[provider credential documentation](https://mecatl.dev/docs/operating/settings#configure-provider-credentials) without placing
 secrets in settings, following the value-free credential boundary in
 [ADR 0238](../adr/0238-operator-defined-llm-providers.md).
 

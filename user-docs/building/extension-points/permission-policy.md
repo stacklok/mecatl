@@ -11,7 +11,7 @@ description:
 Mecatl's permission configuration cannot express your policy, such as when
 decisions come from an external authorization service.
 
-Use [Permissions and guardrails](/building/what-you-get/permissions.md) to
+Use [Permissions and guardrails](/features/permissions-and-posture.md) to
 configure the supplied policy.
 
 ## The interface
@@ -187,6 +187,6 @@ fixtures for the supplied evaluator's resolution rules.
 
 ## Next steps
 
-- [Configure permissions and posture](/building/what-you-get/permissions.md).
+- [Configure permissions and posture](/features/permissions-and-posture.md).
 - [Implement lifecycle hooks](hook-runner.md).
-- [Understand permission pauses in the agent loop](/building/what-you-get/agent-loop.md).
+- [Understand permission pauses in the agent loop](/features/agent-loop.md).

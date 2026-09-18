@@ -2534,7 +2534,7 @@ design promoted to `docs/adr/0015-background-subagents.md` (as-built, amendments
 hashes), architecture §8 gained the background/SubagentStatus/cancel paragraph (+ the stale
 forking-only-gate and blanket-auto-deny bullets corrected to the childGate/4-step reality),
 docs/tui.md gained the marker/notice/footer-count notes, and
-`user-docs/building/what-you-get/subagents-teams-parallel.md` gained
+`user-docs/features/subagents-and-teams.md` gained
 background + per-child cancel (and the child-concurrency default corrected 10→4). Guards:
 `client.TestEventToMsg` (background decode), `ui.TestSubagentRosterLineBackgroundMarker` /
 `TestSubagentRosterBackgroundMarkerEndToEnd` / `TestSubagentFocusBackgroundNote` /
@@ -5094,7 +5094,7 @@ daemon.
 `pkg/auth/oauth/oidc.go` <!-- lint:not-a-citation: path inside the toolhive dependency, not a repo file --> builds its own OIDC-discovery `http.Client` with no
 `InsecureSkipVerify` plumbing). A self-signed gateway must use
 `--toolhive-llm-mode proxy` (which DOES honor it). The limitation is documented in the
-ADR + `user-docs/building/deployment/mecated.md` with the one-line remediation; a future ToolHive
+ADR + `user-docs/operating/mecated.md` with the one-line remediation; a future ToolHive
 bump that closes the gap removes it with a one-line code change. The toolhive dep is
 bumped v0.31.0 → v0.40.0 — the EARLIEST release with `pkg/llm.NewTokenSource`,
 avoiding an `mcpsdk` v1.7.0 goroutine leak present at v0.42.0+ that would regress

@@ -141,7 +141,7 @@ provider, model, token counter, and context-window resolution remain unchanged.
   context window.
 
 For the loop's preservation guarantees and terminal behavior, see
-[The agent loop](/building/what-you-get/agent-loop.md). For provider capability
+[The agent loop](/features/agent-loop.md). For provider capability
 and adapter requirements, see
 [LLMProvider](/building/extension-points/llm-provider.md).
 
@@ -149,4 +149,4 @@ and adapter requirements, see
 
 - [Choose models and providers](./choose-models.md)
 - [Multimodal input](./multimodal-input.md)
-- [The agent loop](/building/what-you-get/agent-loop.md)
+- [The agent loop](/features/agent-loop.md)

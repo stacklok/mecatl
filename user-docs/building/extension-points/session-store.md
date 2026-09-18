@@ -227,4 +227,4 @@ both snapshots and events.
 
 - [Implement a session lease](session-lease.md).
 - [Record tool calls](tool-catalog.md#record-tool-calls).
-- [Understand the agent loop](/building/what-you-get/agent-loop.md).
+- [Understand the agent loop](/features/agent-loop.md).

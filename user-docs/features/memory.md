@@ -1,26 +1,22 @@
 ---
-sidebar_position: 5
-title: Memory and knowledge
+sidebar_position: 225
+title: Memory and user model
 description:
-  Choose how Mecatl retains project context, operator preferences, and agent
-  identity.
+  Retain project knowledge and operator preferences across Mecatl sessions.
 ---
 
-# Memory and knowledge
+# Memory and user model
 
-Mecatl separates project knowledge, agent identity, and operator preferences so
-you can configure each independently.
+Mecatl separates project knowledge from operator preferences so you can retain
+each at the right scope.
 
 |System|Scope|Purpose|Agent-writable?|
 |-|-|-|-|
 |Project memory|One workspace|Retain project facts across sessions|Yes|
-|Soul|All sessions that load the file|Set the agent's persona and working style|No|
 |User model|All workspaces for one operator|Retain operator facts and preferences|Yes|
 
-For configuration and workflows, see
-[Skills, commands, and soul](/features/skills-commands-and-soul.md),
-[Learning](/features/learning.md), and
-[Dreaming and memory consolidation](/features/dreaming.md).
+The read-only agent persona is configured separately. See
+[Skills, commands, and soul](./skills-commands-and-soul.md).
 
 ## Project memory
 
@@ -78,30 +74,6 @@ independent. Plans expire and do not survive a restart.
 For availability, review safeguards, and recovery behavior, see
 [Dreaming and memory consolidation](/features/dreaming.md).
 
-## Soul
-
-The soul is an operator-authored Markdown fragment that sets the agent's
-persona, tone, and working style. Mecatl reads it on every run and places it in
-the turn-zero instructions, so compaction does not degrade it.
-
-By default, Mecatl reads `~/.config/mecatl/soul.md` or
-`$XDG_CONFIG_HOME/mecatl/soul.md`. The agent has no tool that can modify this
-file.
-
-|Flag|Effect|
-|-|-|
-|`--soul-file <PATH>`|Load a different file.|
-|`--no-soul`|Disable the soul.|
-|`--approve-soul`|Record the current content as the approved baseline.|
-|`--soul-strict`|Reject content that differs from the approved baseline.|
-
-A missing, empty, oversized, or injection-flagged file contributes no soul but
-does not stop the run. Mecatl records a hash on first use and warns when the
-content changes. Strict mode refuses changed content.
-
-A trusted project can provide `<workspace>/.mecatl/soul.md`. A user-scoped soul
-takes precedence when both exist.
-
 ## User model
 
 The user model stores durable facts about the operator across workspaces. By
@@ -121,20 +93,9 @@ memory tools and their permission rules.
 
 Set `--no-user-model` to disable the user model.
 
-### Learning from completed work
-
-Completed-trajectory learning is independent of explicit memory tools and dream
-consolidation. It is off by default:
-
-- `review` stages evidence-backed proposals for approval.
-- `auto` can promote eligible operator facts and activate eligible learned
-  procedures under the configured assurance policy.
-- `off` runs no automatic reflection.
-
-Project settings can lower autonomy or increase assurance, but cannot loosen the
-operator's policy. Sensitive, ambiguous, unsupported, or unverifiable proposals
-remain staged or are rejected. See [Learning](/features/learning.md) for
-triggers, budgets, evidence rules, and procedure activation.
+Completed-trajectory learning is separate from explicit memory tools and dream
+consolidation. See [Learning](./learning.md) for its review and activation
+policy.
 
 ## Defaults
 
@@ -142,7 +103,6 @@ triggers, budgets, evidence rules, and procedure activation.
 |-|-|
 |Project memory and BM25 search|On|
 |User model and live operator profile|On|
-|Soul|On when the default file exists|
 |Automatic consolidation|Off|
 |Manual `/dream` review|Available when the server advertises support|
 |Completed-trajectory learning|Off|
@@ -150,7 +110,7 @@ triggers, budgets, evidence rules, and procedure activation.
 
 No external memory service, embedding provider, or vector database is required.
 
-## What's next
+## Next steps
 
 - [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
   provide memory tools, skills, or custom tools.

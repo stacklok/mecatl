@@ -214,6 +214,6 @@ it does not enforce trust by itself.
 
 ## Next steps
 
-- [Use subagents and teams](/building/what-you-get/subagents-teams-parallel.md).
+- [Use subagents and teams](/features/subagents-and-teams.md).
 - [Provide skills through SkillSource](tool-catalog.md#provide-skills).
 - [Configure project trust](/features/permissions-and-posture.md).

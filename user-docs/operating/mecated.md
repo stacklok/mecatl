@@ -82,7 +82,7 @@ ToolHive owns its LLM credentials. Use `thv llm` for setup and credential
 management; Mecatl only uses its configured or discovered gateway.
 
 If you are deploying to Kubernetes without persistent volumes, see
-[mecak8s](/building/deployment/mecak8s.md) instead. That binary is purpose-built
+[mecak8s](/operating/mecak8s.md) instead. That binary is purpose-built
 for no-PVC pod deployments, with Redis-backed state when you configure
 `--redis-url` and Kubernetes Lease coordination enabled by default.
 
@@ -106,7 +106,7 @@ no authentication.
 Authorize a global MCP OAuth profile before serving with
 `mecated mcp login SERVER [--no-browser]`. The daemon restores and refreshes the
 encrypted credential but never opens a browser. See
-[MCP client](/building/what-you-get/mcp-client.md).
+[MCP client](/features/mcp-client.md).
 
 Default addresses:
 
@@ -254,7 +254,7 @@ secrets nor file contents.
 |`--schedule-store-url`|`""`|gRPC driver for the schedule registry, independent of the session store. Not supported with OIDC ownership|
 |`--learning-store-url`|`""`|Trusted single-tenant gRPC driver for distributed learning. Not supported with OIDC ownership|
 
-See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat
+See [Scheduled tasks](/features/scheduled-tasks.md) for the in-chat
 `Schedule` tool and the gRPC/REST management APIs.
 
 ### LLM resilience
@@ -364,7 +364,7 @@ vouched. See
 [Permissions and posture](/features/permissions-and-posture.md#project-trust)
 for the trust sources and headless behavior.
 
-See [Permissions & guardrails](/building/what-you-get/permissions.md) for the
+See [Permissions & guardrails](/features/permissions-and-posture.md) for the
 full rule engine. Posture is read from the operator-global `settings.yaml`
 (`posture:` key) and out-ranked by the CLI flag when both are set.
 
@@ -391,7 +391,7 @@ WARN because a checked-in file cannot weaken an operator security check.
 
 `--mcp-server` uses streaming HTTP. ToolHive can proxy stdio backends. For OAuth
 profiles, resources, debugging, and transport constraints, see
-[MCP client](/building/what-you-get/mcp-client.md).
+[MCP client](/features/mcp-client.md).
 
 ### Skills
 
@@ -580,7 +580,7 @@ changing the base file.
 `skills promote` is a deprecated compatibility path for model-authored files in
 `--skills-draft-dir`; it does not activate skill-lifecycle repository records.
 Manage schedules through the `Schedule` tool or the gRPC/REST API. See
-[Scheduled tasks](/building/what-you-get/scheduled-tasks.md).
+[Scheduled tasks](/features/scheduled-tasks.md).
 
 ---
 
@@ -693,10 +693,10 @@ bearer token on the server and enforce Origin and CSRF policy there.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md)
+- [Choose how to run Mecatl](/operating/choose-deployment.md)
   for trade-offs between `mecated`, `mecak8s`, `mecatequi`, and engine
   embedding.
-- [Permissions and guardrails](/building/what-you-get/permissions.md) for the
+- [Permissions and guardrails](/features/permissions-and-posture.md) for the
   rule engine, posture ladder, and guardrail checker.
-- [Cloud-native Kubernetes with mecak8s](/building/deployment/mecak8s.md) for a
+- [Cloud-native Kubernetes with mecak8s](/operating/mecak8s.md) for a
   no-PVC deployment with Redis and Kubernetes Leases.

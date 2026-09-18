@@ -125,7 +125,7 @@ Provider definitions and credential custody are operator configuration. API keys
 come from the environment or an operator-managed file; keep secrets out of
 command arguments, settings, prompts, and logs. See [Choose models and
 providers](/features/choose-models.md#set-up-a-local-provider) and [Run mecated
-standalone](/building/deployment/mecated.md#configure-providers).
+standalone](/operating/mecated.md#configure-providers).
 
 ToolHive has a separate external lifecycle and owns its LLM credentials. Use
 `thv llm` tooling for ToolHive setup; ToolHive MCP discovery and manual OpenAI
@@ -133,9 +133,9 @@ Codex authentication are separate workflows.
 
 ## Next steps
 
-- [Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to connect
+- [Try Mecatl on Kubernetes](/operating/kubernetes.md) to connect
   the same client to a local `mecak8s` deployment.
-- [Run mecated standalone](/building/deployment/mecated.md) to configure
+- [Run mecated standalone](/operating/mecated.md) to configure
   persistence, providers, TLS, authentication, and observability.
 - [Troubleshoot mecatui](./troubleshooting.md) if startup, login, or connection
   fails.

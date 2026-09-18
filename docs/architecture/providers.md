@@ -203,7 +203,7 @@ floating semantics and follows the deployment default after restart. The manual
 credential is read once at startup; every request rechecks that snapshot's expiry,
 but there is no refresh, login, or auth-file writer. Replacing an expired/rejected
 token requires restarting the process. The plaintext and same-UID threat boundary
-is documented in the [operator setup](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
+is documented in the [operator setup](https://mecatl.dev/docs/operating/settings#configure-provider-credentials).
 
 **OpenCode Go (`provider/openaichat`)** is the Chat Completions wire adapter —
 the sibling of the openai Responses adapter, built on the same `openai-go` SDK via

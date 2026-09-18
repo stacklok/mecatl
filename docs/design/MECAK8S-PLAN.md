@@ -3,7 +3,7 @@
 > **Lifecycle: Execution plan — living.** This doc tracks the implementation of
 > [ADR 0048](../adr/0048-mecak8s.md) (the *why*, frozen). Current behaviour
 > folds into [`docs/architecture.md`](../architecture.md) and
-> [the public user documentation](https://mecatl.dev/docs/building/deployment/mecak8s) when the code ships; status lives in
+> [the public user documentation](https://mecatl.dev/docs/operating/mecak8s) when the code ships; status lives in
 > [`PRODUCTION-READINESS.md`](./PRODUCTION-READINESS.md). Per
 > [ADR 0002](../adr/0002-documentation-lifecycle.md), this is a living execution
 > doc, not a frozen decision record.
@@ -624,7 +624,7 @@ MODIFIED:
   cmd/mecated/main.go                               # fix flag help RBAC verbs (Step 3)
   .ko.yaml                                          # new build entry
   Taskfile.yml                                      # ko:build:k8s, e2e:k8s
-  user-docs/building/deployment/mecak8s.md          # mecak8s section (Step 8)
+  user-docs/operating/mecak8s.md          # mecak8s section (Step 8)
   docs/architecture.md                              # mecak8s in the binary list (Step 8)
   docs/design/PRODUCTION-READINESS.md               # mecak8s status row (Step 8)
 

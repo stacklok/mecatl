@@ -132,7 +132,7 @@ The token is not public API credit and the private backend is not a supported
 third-party contract. mecatui reads one immutable snapshot before hosting its
 embedded server: after replacing an expired/rejected token, quit and relaunch.
 There is no login or refresh. See the [exact schema and plaintext same-UID Shell
-boundary](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
+boundary](https://mecatl.dev/docs/operating/settings#configure-provider-credentials).
 `mecatui connect` never reads the local file; configure the external `mecated`
 instead.
 
@@ -164,7 +164,7 @@ Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level 
 
 The transport is exactly what the invocation says — there is no implicit probe
 or fallback. For the local-versus-remote configuration ownership and intentional
-default differences, see the [settings guide](https://mecatl.dev/docs/building/deployment/settings):
+default differences, see the [settings guide](https://mecatl.dev/docs/operating/settings):
 bare mode owns an embedded server, while connect mode is client-only and the remote
 server is authoritative.
 
@@ -337,7 +337,7 @@ and `--tls-ca` also select verified TLS. `--tls=false` is the explicit plaintext
 downgrade, and a bearer is refused on that remote plaintext transport. Use
 `connect --tls-ca` when the server uses a private CA. The remote server owns
 placement: mecatui sends no local cwd, and `--workspace` is rejected in every connect
-form rather than being treated as a path inside an agent pod. See [Run mecated standalone](https://mecatl.dev/docs/building/deployment/mecated) for the attribution model and its non-tenancy limits.
+form rather than being treated as a path inside an agent pod. See [Run mecated standalone](https://mecatl.dev/docs/operating/mecated) for the attribution model and its non-tenancy limits.
 
 On later `connect`, a saved target supplies a managed dynamic bearer source: each RPC
 asks for a currently validated access token. Application token demand, rather than RPC
@@ -542,7 +542,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
-| `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
+| `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/operating/settings#configure-provider-credentials) |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
 | `--no-shell` | off | **embedded** server: disable the Shell tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |

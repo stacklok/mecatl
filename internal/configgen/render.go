@@ -20,7 +20,7 @@ const (
 #| schema/resolver fallback documented at mecatl.dev/docs/reference/configuration; it
 #| is not a universal process-runtime default. Command roots and modes can
 #| supply their own defaults, disable a feature, or reject a setting. See the
-#| configuration-plane guide at https://mecatl.dev/docs/building/deployment/settings.
+#| configuration-plane guide at https://mecatl.dev/docs/operating/settings.
 #|
 #| This skeleton is GENERATED from the permconfig YAML schema (the single source of
 #| truth). Do not hand-edit the committed copy — run 'task docs:configref'. See
@@ -40,7 +40,7 @@ This page is the **exhaustive, auto-generated reference** for the operator
 (` + "`internal/adapter/permconfig/schema.go`" + `) — the same structs that strictly
 parse the file at startup — so it cannot drift from the code.
 
-For configuration workflows and examples, see [Configure Mecatl](/building/deployment/settings.md).
+For configuration workflows and examples, see [Configure Mecatl](/operating/settings.md).
 To scaffold a complete commented file, run
 ` + "`mecated config init`" + ` (or ` + "`mecated config init --print`" + ` to print it).
 Validate the conventional file with ` + "`mecated config validate`" + `, or select
@@ -61,7 +61,7 @@ map/list/sub-block). It is not a universal process-runtime default: command root
 and modes can supply their own defaults, disable a feature, or reject a setting.
 The example values in the ` + "`config init`" + ` skeleton are ILLUSTRATIVE, not defaults.
 For the configuration planes and intentional per-mode differences, see
-[Configure Mecatl](/building/deployment/settings.md).
+[Configure Mecatl](/operating/settings.md).
 `
 )
 
@@ -369,19 +369,19 @@ const flagDrivenSection = "## Flag- / file-configured features (NOT in `settings
 	"\n" +
 	"By design, `settings.yaml` covers the subtrees above. Several other\n" +
 	"operator features are configured through **CLI flags** (and, for some, their own\n" +
-	"files) rather than this YAML. See [Run mecated standalone](/building/deployment/mecated.md)\n" +
+	"files) rather than this YAML. See [Run mecated standalone](/operating/mecated.md)\n" +
 	"for the full flag tables. The pointers below are the starting points:\n" +
 	"\n" +
 	"| Feature | How it is configured | See |\n" +
 	"| --- | --- | --- |\n" +
 	"| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |\n" +
-	"| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and knowledge](/building/what-you-get/memory.md) |\n" +
-	"| Memory | `--memory-dir` / `--memory-store-url` | [Memory and knowledge](/building/what-you-get/memory.md) |\n" +
+	"| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/memory.md) |\n" +
+	"| Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/memory.md) |\n" +
 	"| Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |\n" +
-	"| Session leasing | `--session-lease-*` | [Run mecated standalone](/building/deployment/mecated.md#multi-replica) |\n" +
+	"| Session leasing | `--session-lease-*` | [Run mecated standalone](/operating/mecated.md#multi-replica) |\n" +
 	"\n" +
 	"The model slots / aliases above also have CLI twins (`--model-slot` /\n" +
 	"`--model-alias`); the guardrails checker model has `--guardrails-model`; the\n" +
 	"router kill-switch has `--subagent-model-router=false`. The CLI flag and the\n" +
-	"YAML key are two surfaces for the same setting. See [Configure Mecatl](/building/deployment/settings.md)\n" +
+	"YAML key are two surfaces for the same setting. See [Configure Mecatl](/operating/settings.md)\n" +
 	"for precedence.\n"

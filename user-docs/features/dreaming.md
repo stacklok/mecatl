@@ -123,12 +123,12 @@ project's memory. User-model operations use the configured user-model store.
 - Manual planning requires a model call.
 
 For the underlying memory tools, tiers, lifecycle versions, and learning
-boundary, see [Memory & knowledge](/building/what-you-get/memory.md). For the
+boundary, see [Memory and user model](/features/memory.md). For the
 broader `/dream` UI and receipt behavior, see
 [mecatui memory commands](/mecatui/commands-and-memory.md#review-and-maintain-memory).
 
 ## Next steps
 
 - [Learning](./learning.md)
-- [Memory and knowledge](/building/what-you-get/memory.md)
+- [Memory and user model](/features/memory.md)
 - [Session continuity](./session-continuity.md)

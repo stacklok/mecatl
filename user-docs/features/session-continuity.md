@@ -121,7 +121,7 @@ snapshot generations; filename matching does not.
 Optimization is non-destructive. Cleanup is destructive and protects unknown,
 active, awaiting, live, and leased sessions. A stale plan must be discarded and
 planned again. See
-[Operate local session storage](/building/deployment/session-storage-operations.md)
+[Operate local session storage](/operating/session-storage-operations.md)
 for the platform runbooks and authorization requirements.
 
 ## Single-writer protection
@@ -166,5 +166,5 @@ blocked until explicitly closed.
 ## Next steps
 
 - [Start and resume sessions](./start-and-resume-sessions.md)
-- [Operate local session storage](/building/deployment/session-storage-operations.md)
+- [Operate local session storage](/operating/session-storage-operations.md)
 - [Execution environments](./execution-environments.md)

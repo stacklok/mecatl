@@ -9,7 +9,7 @@ description: Configure MCP OAuth profiles and protect the credentials they use.
 Authenticate configured MCP servers without placing credentials in URLs or
 model-visible tool arguments. This page covers authentication profiles, OAuth
 login, credential storage, and rotation. For tool behavior, see the
-[MCP client guide](/building/what-you-get/mcp-client.md).
+[MCP client guide](/features/mcp-client.md).
 
 The available profile modes are `none`, `static_bearer`, and `oauth`.
 
@@ -317,7 +317,7 @@ Kubernetes Secret-backed credential. Broker OAuth instead uses an external
 browser to complete a session enrollment; its preregistered client secret, when
 needed, is still a Kubernetes Secret. Agent-facing shells receive a scrubbed
 environment so MCP/provider credentials are not exposed through Shell. See the
-[Kubernetes deployment guide](/building/deployment/mecak8s.md) for the Secret
+[Kubernetes deployment guide](/operating/mecak8s.md) for the Secret
 wiring.
 
 ## ToolHive broker OAuth
@@ -346,7 +346,7 @@ protected backends may need to be enrolled again.
 A protected upstream can use `client.mode: dcr` to let ToolHive register a
 client from an HTTPS RFC 8414 discovery document. DCR requires an explicit
 OAuth2 upstream, is operator-only, and rejects insecure HTTP and private-IP
-overrides. See the [mecak8s deployment guide](/building/deployment/mecak8s.md)
+overrides. See the [mecak8s deployment guide](/operating/mecak8s.md)
 for the Helm values.
 
 Mecatl controls reveal only the enrollment reference, aggregate state, service
@@ -354,7 +354,7 @@ count, and temporary presentation URL. They omit upstream names, OAuth codes,
 endpoints, and tokens. Providers return to ToolHive at
 `/v1/mcp/broker/oauth/callback`; ToolHive then completes at the configured
 Mecatl callback path. Route both paths to the same listener. See the
-[Kubernetes deployment guide](/building/deployment/mecak8s.md) for Helm
+[Kubernetes deployment guide](/operating/mecak8s.md) for Helm
 configuration.
 
 Pending broker enrollment is process-local. After a Mecatl restart, start a new
@@ -409,12 +409,12 @@ environment-variable name.
   roots owner-only and use your deployment's secret manager for rotation.
 
 For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
-and prompts, see [MCP client](/building/what-you-get/mcp-client.md). For the
+and prompts, see [MCP client](/features/mcp-client.md). For the
 complete operator profile rules, see the
 [configuration reference](/reference/configuration.md#mcp).
 
 ## Next steps
 
 - [Caller identity and OIDC](./caller-identity.md)
-- [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
-- [MCP client](/building/what-you-get/mcp-client.md)
+- [Mecatl deployment choices](/operating/choose-deployment.md)
+- [MCP client](/features/mcp-client.md)

@@ -88,4 +88,4 @@ used by `mecated serve --store-dir`, and copies files on disk.
 - [ADR 0002](./0002-documentation-lifecycle.md) — the documentation lifecycle
   convention this ADR follows.
 - `docs/usage/mecated.md` — the import command flags and usage.
-- `user-docs/building/deployment/mecated.md` — the operator-facing import guide.
+- `user-docs/operating/mecated.md` — the operator-facing import guide.

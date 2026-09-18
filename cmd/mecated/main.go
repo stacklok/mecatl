@@ -697,7 +697,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(out, "wrote daemon config skeleton to %s\n", path)
 	_, _ = fmt.Fprintf(out, "it is NOT auto-loaded; start the server with 'mecated serve --config %s' to use it.\n", path)
-	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See https://mecatl.dev/docs/building/deployment/mecated for the full reference.\n")
+	_, _ = fmt.Fprintf(out, "validate it with 'mecated config daemon validate'. See https://mecatl.dev/docs/operating/mecated for the full reference.\n")
 	return nil
 }
 
@@ -1746,7 +1746,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host and port of a remote gRPC learning store. The server must provide attempt, proposal, and skill repositories. Uses the same driver authentication and TLS settings as --session-store-url.")
 	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host and port of a remote session-lease driver for cross-process single-writer enforcement. Empty disables leasing. Mutually exclusive with --session-lease-dir and --session-lease-k8s-namespace.")
 	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for local flock-based session leases between processes on one host. flock releases leases after a crash. Use --session-lease-k8s-namespace or --session-lease-url across hosts. Empty disables leasing.")
-	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/building/deployment/mecated). Empty = no leasing")
+	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see https://mecatl.dev/docs/operating/mecated). Empty = no leasing")
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "session-lease lifetime: a crashed/killed holder's lease becomes claimable after this long. Only meaningful when a lease backend is selected")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "how often the per-session renewer refreshes a held lease; 0 = --session-lease-ttl / 3. Keep it well below the TTL so a slow store does not lose the lease and cancel the run. Only meaningful when a lease backend is selected")
 	// Scheduled tasks (issue #189, Phase 1f; ADR 0073). The scheduler is ON by
