@@ -103,13 +103,15 @@ The full plan above is the target shape; v1 ships only the baseline slice
 answer... streaming and steer-while-running are stretch goals, not
 requirements") — **revised to the `agent_view` model above**:
 
-- **DM.** Raw `app.event("app_home_opened", ...)`, filtered to
-  `tab === "messages"`: greets a channel once (dedup'd in-memory by
-  channel id). Raw `app.message(...)`, filtered to `channel_type === "im"`:
+- **DM.** Raw `app.message(...)`, filtered to `channel_type === "im"`:
   derives the canonical root as `message.thread_ts ?? message.ts`, runs the
   prompt, and streams the reply into that thread. A top-level message starts
   a fresh mecatl session; a reply continues the session for its existing
-  Slack thread.
+  Slack thread. (An earlier revision also sent a one-time greeting on
+  `app_home_opened` — dropped as unnecessary noise; the `app_home_opened`
+  bot-event subscription stays in `slack-app-manifest.json` regardless,
+  since Slack's own manifest validator requires it for an `agent_view` app
+  even with no handler.)
 - **Channel.** Raw `app.event("app_mention", ...)`: starts (or continues) a
   session keyed by `channel:thread_ts` (a top-level mention's own `ts`
   becomes the thread root — Slack only sets `thread_ts` on replies). Raw
@@ -151,8 +153,6 @@ fallback against a real channel before trusting this fully.
 
 Not yet implemented — additive later, not a rewrite:
 
-- `suspended` status + Block Kit approve/deny UI for manual permission
-  review.
 - Per-run token/spend budget — the TypeScript SDK (M1) doesn't yet expose a
   per-call token limit; see the `TODO` in `src/bridge.ts`. `SLACK_RATE_LIMIT_MAX`
   (below) is a request-count mitigation, not a spend budget.
@@ -215,6 +215,64 @@ an identity provider at all (guests never go through one). Replaced with:
   `mecated` + the bot together for a no-toolchain-needed demo. See
   README.md.
 
+## Manual permission approval (#1397)
+
+The manual-approval experiment this doc's earlier sections flagged as
+possibly-never-shipping did ship — `src/approvals.ts`, replacing
+`bridge.ts`'s hardcoded `onPermissionAsk: () => "allow_once"` entirely
+(not toggleable back; #1397 asked for the auto-approve to go away, not to
+become optional).
+
+**Delivered as a DM, not in-thread Block Kit buttons** — a deliberate
+deviation from the "The plan" section's original sketch above. That sketch
+assumed an in-thread ephemeral message (`chat.postEphemeral`) would work
+for both halves of the requirement: never actionable by the whole channel,
+and clearable when the run ends. It satisfies the first (ephemeral is
+already user-scoped) but not the second — Slack has no way to update an
+ephemeral message except via the `response_url` handed to an actual click,
+so there's no way to proactively clear it when a run ends/cancels with
+nobody having clicked anything. A regular DM message is equally
+user-scoped (only the bot and that one person are in it) but is a real
+message, so `chat.update` works on it from any code path, at any time —
+which is what "clear the pending Slack UI when the run terminates or is
+canceled" actually requires.
+
+**Resolution goes through the SDK's `onPermissionAsk` responder Promise,
+never `run.resolveAsk` called from Slack code directly.** The SDK already
+invokes one `onPermissionAsk(ask, signal)` per ask, in the background,
+independent of whatever the caller does with the run's own event stream
+(`RunImpl#startPermissionResponder` in the SDK). `PermissionApprovalGateway`
+returns a `Promise` from that call and resolves it from the Slack button
+click; the SDK does the rest, including safely ignoring a resolution that
+arrives after the ask's own `AbortSignal` already fired. This meant no code
+here ever needs to hold a `Run` reference, and multiple concurrent asks on
+one run are handled for free (each gets its own responder invocation and
+its own signal) — no manual `permission.ask`/`permission.retract` watching
+needed in `bridge.ts`'s `for await` loop, which would otherwise stall on a
+second ask while blocked awaiting Slack for the first.
+
+**Correlation is one flat `Map<askId, PendingApproval>`** — `askId` is a
+server-minted, session-scoped id, so it's already globally unique; no
+per-run or per-thread indexing needed on top. A stale click, a duplicate
+click, and a post-terminal click are all rejected the same way: the map
+entry is deleted synchronously, before any `await`, the first time
+anything consumes it (a click or the ask's own abort), so anything arriving
+after that finds nothing pending.
+
+**"Allow always" is included** — the SDK's `resolveAsk(askId, "allow_always")`
+threads straight through to the server's real `Policy.Learn` semantics, so
+the completion criteria's "include it only if the SDK can preserve
+existing authority semantics" bar is met without extra plumbing.
+
+**Fails closed.** If DMing the approver throws (missing `im:write` scope,
+transient Slack API error), the ask resolves as `deny` rather than hanging
+the run indefinitely or silently allowing.
+
+**Out of scope, deliberately:** a timeout on an unanswered ask (not in the
+issue's completion criteria — it just waits, same as any other blocked
+consumer), and plan-approval asks (`PresentPlan` goes through the SDK's
+separate `onPlanApproval` hook, which this bot has never configured).
+
 ## Costs, stated honestly
 
 - Building on Slack's Agent Sessions API is a bet on a genuinely
@@ -234,9 +292,10 @@ an identity provider at all (guests never go through one). Replaced with:
   section — the docs alone got the DM path wrong once already. Don't
   advertise channel support as working until it's actually been tested
   live.
-- The manual-approval experiment may simply not ship — unchanged from the
-  original plan. Native streaming and stop-button wiring did ship, but
-  streaming's channel behavior is unverified live — see the note above.
+- Native streaming and stop-button wiring shipped, but streaming's channel
+  behavior is unverified live — see the note above. The manual-approval
+  flow (#1397, see the section above) is likewise built and offline-tested
+  but not yet confirmed against a real workspace.
 
 ## See also
 

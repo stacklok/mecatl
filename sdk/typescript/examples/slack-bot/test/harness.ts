@@ -10,6 +10,12 @@ export const cannedMockReply =
   "Mock provider: no real model is configured. Set OPENAI_API_KEY for live use.";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
+const testDirectory = dirname(fileURLToPath(import.meta.url));
+
+/** Resolves a `--mock-script` fixture under this package's own `test/fixtures/`. */
+export function fixture(name: string): string {
+  return join(testDirectory, "fixtures", name);
+}
 
 interface ReadyDocument {
   grpc_address: string;
@@ -21,8 +27,18 @@ export interface Daemon {
   workspace: string;
 }
 
+export interface MockDaemonOptions {
+  /** Path to a `--mock-script` fixture (see `sdk/typescript/e2e/fixtures/*.json` for the
+   * format) — drives the mock provider through scripted tool calls instead of always
+   * returning `cannedMockReply`. Omit for the default canned-reply behavior. */
+  script?: string;
+}
+
 /** Spawns a real, offline `mecated --mock` daemon for the duration of `run`. */
-export async function withMockDaemon<T>(run: (daemon: Daemon) => Promise<T>): Promise<T> {
+export async function withMockDaemon<T>(
+  run: (daemon: Daemon) => Promise<T>,
+  options: MockDaemonOptions = {},
+): Promise<T> {
   const runtimeDirectory = await mkdtemp(join(tmpdir(), "mecatl-slack-bot-test-"));
   const readyFile = join(runtimeDirectory, "ready.json");
   const workspace = join(runtimeDirectory, "workspace");
@@ -45,6 +61,7 @@ export async function withMockDaemon<T>(run: (daemon: Daemon) => Promise<T>): Pr
     "--no-scheduler",
     "--flight-recorder=false",
   ];
+  if (options.script !== undefined) args.push("--mock-script", options.script);
 
   const environment = { ...process.env };
   delete environment.ANTHROPIC_API_KEY;
