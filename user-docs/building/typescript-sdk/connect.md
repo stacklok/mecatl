@@ -123,8 +123,13 @@ keep their original meaning.
 Decoded messages contain the standard protobuf-es values. `getRawJson()` still
 returns the original parsed HTTP value, including object-form timestamps and
 durations and unknown fields. A malformed or out-of-range value raises a
-`ProtocolError` with `transport` set to `"http"`. Use the decoded values directly
-and handle this error as a response-protocol failure.
+[`ProtocolError`](/reference/typescript-sdk-api/core.md#api-protocolerror-class)
+with `transport` set to `"http"`. Malformed successful unary responses and
+ordinary SSE data frames do not attach the JSON or protobuf decoder as the
+error's `cause`, because a runtime decoder message can contain response text.
+Use `code`, `status`, and `requestId` for logging and correlation. Server,
+authentication, network, and response-body read failures keep their documented
+cause behavior.
 
 ## Observe connection status
 

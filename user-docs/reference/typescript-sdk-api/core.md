@@ -553,7 +553,7 @@ readonly reason: PromptValidationReason;
 
 <Heading as="h3" id="api-protocolerror-class"><code>ProtocolError</code></Heading>
 
-A transport response violated the SDK's protocol contract.
+A transport response violated the SDK's protocol contract. Malformed successful HTTP responses and ordinary SSE data frames omit the underlying JSON or protobuf decoder cause. They retain safe correlation metadata such as HTTP status and a response request ID when available. Server errors, authentication failures, and transport or body-read failures keep their separately defined cause behavior.
 
 ```ts
 export declare class ProtocolError extends MecatlError

@@ -4,12 +4,12 @@
 **Work classification:** Architectural - this changes the durable public diagnostic and security policy for `ProtocolError` at the TypeScript SDK's HTTP successful-response boundary.
 **Decision record:** [ADR 0348](../adr/0348-typescript-sdk-malformed-success-decoding.md)
 **Phase:** TypeScript SDK HTTP transport hardening
-**Status:** proposed, 2026-09-18. Drafted from issue #1694 with no unresolved human decisions.
+**Status:** in-progress, 2026-09-18. The stacked implementation candidate satisfies AC1.1-AC2.4 and all applicable local gates; the host Xcode/macOS 27 linker blocks the full CGO race suite, so CI must supply that final proof. The contract becomes authoritative only after the Plan / Interface and Implementation PRs merge in order.
 **Delivery:** Split, with an explicit checkpoint waiver. The Plan / Interface PR records the security and compatibility boundary; in this session the directing human explicitly instructed the implementation to proceed as the next `gh stack` layer without waiting for the plan to merge. `/plan-orchestrate` is not used because its merged-baseline precondition is intentionally waived.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1694](https://github.com/stacklok/mecatl/issues/1694).
 **Plan PR:** [#1698](https://github.com/stacklok/mecatl/pull/1698)
-**Approved baseline:** absent by explicit human exception; the directing human requested two sequential `gh stack` PRs and explicitly said there is no need to wait for the Plan / Interface PR to merge.
+**Approved baseline:** `b6e05820685a85bf3cf027ed42da4e269060e6ed`, the exact Plan / Interface commit used under the explicit human stacking exception; it is not merged authority. The directing human requested two sequential `gh stack` PRs and explicitly said there is no need to wait for the plan to merge.
 
 The TypeScript SDK rejects malformed successful unary HTTP responses and
 ordinary SSE data frames without retaining runtime-dependent decoder exceptions.
