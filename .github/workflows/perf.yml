@@ -221,7 +221,7 @@ jobs:
       # Do NOT add skip-fetch here or reorder the steps, or the later steps lose their
       # baseline and silently pass (no data to compare → no alert).
       - name: github-action-benchmark — scenarios (smaller)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl scenarios (smaller-is-better)
           tool: customSmallerIsBetter
@@ -235,7 +235,7 @@ jobs:
       # The bigger-is-better suite is ONLY the whitelisted cache-hit-rate points
       # (single_session_long, team_fanout); a 5% drop fails the PR.
       - name: github-action-benchmark — scenarios (bigger)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl scenarios (bigger-is-better)
           tool: customBiggerIsBetter
@@ -255,7 +255,7 @@ jobs:
       # records the trend without ever failing a PR. Same skip-fetch-gh-pages reuse +
       # after-the-smaller-step ordering as the (bigger) step.
       - name: github-action-benchmark — scenarios (render allocs, advisory)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl scenarios (render allocs, advisory)
           tool: customSmallerIsBetter
@@ -422,7 +422,7 @@ jobs:
       # fail-on-alert:false). benchtrend emits one median per metric for this commit;
       # the full BENCHCOUNT=10 raw output remains the hard-gate/baseline input.
       - name: github-action-benchmark — go bench trend (advisory)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl go microbenchmarks
           tool: customSmallerIsBetter
@@ -434,7 +434,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: github-action-benchmark — scenarios (smaller)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl scenarios (smaller-is-better)
           tool: customSmallerIsBetter
@@ -447,7 +447,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: github-action-benchmark — scenarios (bigger)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl scenarios (bigger-is-better)
           tool: customBiggerIsBetter
@@ -465,7 +465,7 @@ jobs:
       # MemStats noise), so they record drift without ever failing the main run.
       # auto-push keeps local and remote in sync so its fetch stays a fast-forward.
       - name: github-action-benchmark — scenarios (render allocs, advisory)
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: mecatl scenarios (render allocs, advisory)
           tool: customSmallerIsBetter

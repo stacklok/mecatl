@@ -313,7 +313,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
-      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: ${{ matrix.deno-version }}
 
@@ -988,7 +988,7 @@ jobs:
       #
       # The pin must stay in lockstep with release.yml and Taskfile.yml's
       # GORELEASER_VERSION.
-      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "v2.16.0"
           install-only: true

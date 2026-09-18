@@ -590,7 +590,7 @@ jobs:
           fetch-depth: 1
           ref: ${{ env.VERSION }}
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Login to GHCR
@@ -605,7 +605,7 @@ jobs:
       # and latest, matching the ko-based jobs above.
       - name: Build and push image
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: sdk/typescript
           file: sdk/typescript/examples/slack-bot/docker/bot.Dockerfile
@@ -970,7 +970,7 @@ jobs:
       # `version:` pins the GoReleaser BINARY (a prebuilt download, not a source
       # build) and must stay in lockstep with Taskfile.yml's GORELEASER_VERSION
       # and the ci.yml validation step.
-      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "v2.16.0"
           # No --parallelism cap. A cap of 2 was tried and REGRESSED the job into
