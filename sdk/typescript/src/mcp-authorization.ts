@@ -209,6 +209,7 @@ export interface McpAuthorizationOperations {
 type ConsumptionMode = "events" | "result";
 type TerminalStatus = Exclude<McpAuthorizationStatus, "pending">;
 type PendingAsk = { readonly controller: AbortController; readonly plan: boolean };
+const flowClosed = Symbol("mcp-authorization-flow-closed");
 
 const authorizationStatuses = new Set<McpAuthorizationStatus>([
   "pending",
@@ -273,6 +274,8 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   readonly #requestOptions: RequestOptions | undefined;
   readonly #controlFailure: Promise<never>;
   readonly #rejectControlFailure: (error: unknown) => void;
+  readonly #closed: Promise<typeof flowClosed>;
+  readonly #resolveClosed: () => void;
   #abort: AbortController | undefined;
   #authorization: EventOf<"authorization.required"> | EventOf<"authorization.resolved"> | undefined;
   #consumption: ConsumptionMode | undefined;
@@ -311,6 +314,11 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     });
     void this.#controlFailure.catch(() => undefined);
     this.#rejectControlFailure = rejectControlFailure;
+    let resolveClosed: () => void = () => undefined;
+    this.#closed = new Promise<typeof flowClosed>((resolve) => {
+      resolveClosed = () => resolve(flowClosed);
+    });
+    this.#resolveClosed = resolveClosed;
   }
 
   get continuationRunId(): string | undefined {
@@ -344,7 +352,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     verdict: PermissionVerdict,
     requestOptions?: RequestOptions,
   ): Promise<void> {
-    this.#operations.assertOpen();
+    this.#assertManualControlOpen();
     const pending = this.#pendingAsks.get(askId);
     if (pending === undefined) {
       throw new InvalidStateError(
@@ -362,7 +370,7 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   }
 
   async cancelContinuation(requestOptions?: RequestOptions): Promise<void> {
-    this.#operations.assertOpen();
+    this.#assertManualControlOpen();
     const controls = this.#runControls;
     if (controls === undefined) {
       throw new InvalidStateError("The authorization continuation run has not been observed", {
@@ -419,7 +427,15 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
       released = true;
       unregister();
     };
-    unregister = this.#operations.registerRun(() => this.#close());
+    unregister = this.#operations.registerRun(() => {
+      let reason: unknown;
+      try {
+        this.#operations.assertOpen();
+      } catch (error) {
+        reason = error;
+      }
+      return this.#close(reason);
+    });
   }
 
   #bindRequestLifetime(
@@ -449,13 +465,18 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
   }
 
   async #next(): Promise<IteratorResult<Event>> {
-    this.#operations.assertOpen();
     const terminalError = this.#takeTerminalError();
     if (terminalError !== undefined) throw terminalError;
     if (this.#ended) return { done: true, value: undefined };
+    this.#operations.assertOpen();
     try {
       await this.#start();
-      const next = await Promise.race([this.#events?.next(), this.#controlFailure]);
+      const next = await Promise.race([this.#events?.next(), this.#controlFailure, this.#closed]);
+      if (next === flowClosed) {
+        const closeError = this.#takeTerminalError();
+        if (closeError !== undefined) throw closeError;
+        return { done: true, value: undefined };
+      }
       if (next === undefined || next.done) return await this.#finishEOF();
       const raw = next.value.event;
       if (raw === undefined)
@@ -474,6 +495,15 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     const error = this.#terminalError;
     this.#terminalError = undefined;
     return error;
+  }
+
+  #assertManualControlOpen(): void {
+    if (this.#ended) {
+      throw new InvalidStateError("The MCP authorization flow has ended", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    this.#operations.assertOpen();
   }
 
   #observe(event: Event): void {
@@ -711,9 +741,13 @@ class McpAuthorizationFlowImpl implements McpAuthorizationFlow {
     return { done: true, value: undefined };
   }
 
-  async #close(): Promise<void> {
+  async #close(reason?: unknown): Promise<void> {
     if (this.#ended) return;
+    if (reason !== undefined) {
+      this.#terminalError = normalizeError(reason, this.#operations.transportKind);
+    }
     this.#ended = true;
+    this.#resolveClosed();
     this.#releaseRequestLifetime?.();
     this.#retireAllAsks();
     this.#abort?.abort();

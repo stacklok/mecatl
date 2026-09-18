@@ -145,7 +145,11 @@ Bound any deliberate retry and let that refusal surface.
 
 After observing `continuationRunId`, you can use `session.attach(runId)` or
 `session.activity()` where the deployment retains the needed activity. The
-lifecycle does not search that activity or guarantee retention.
+lifecycle does not search that activity or guarantee retention. An exact-run
+attachment ends after it replays a pending `authorization.required` event with
+the attached run ID and non-empty authorization and call IDs. It yields and
+checkpoints that event, then sets `live` to `false`. A session-wide activity
+stream remains open.
 
 Disconnect effects depend on the continuation phase and transport. gRPC
 detaches and drains ordinary continuation work, but it cancels a continuation

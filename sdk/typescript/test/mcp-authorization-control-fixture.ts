@@ -32,6 +32,7 @@ export interface StreamPlan {
 export interface HarnessOptions {
   readonly features?: readonly string[];
   readonly streams?: readonly StreamPlan[];
+  readonly watchStreams?: readonly StreamPlan[];
   readonly unary?: (
     method: string,
     input: Record<string, unknown>,
@@ -43,14 +44,17 @@ export class LifecycleTransport implements Transport {
   readonly calls: RecordedCall[] = [];
   activeStreams = 0;
   closedStreams = 0;
+  maxActiveStreams = 0;
   readonly #features: readonly string[];
   readonly #streams: StreamPlan[];
   readonly #unary: HarnessOptions["unary"];
+  readonly #watchStreams: StreamPlan[];
 
   constructor(options: HarnessOptions = {}) {
     this.#features = options.features ?? ["prompt_free_controls", "watch_session_events"];
     this.#streams = [...(options.streams ?? [])];
     this.#unary = options.unary;
+    this.#watchStreams = [...(options.watchStreams ?? [])];
   }
 
   async unary<I extends DescMessage, O extends DescMessage>(
@@ -122,13 +126,18 @@ export class LifecycleTransport implements Transport {
       signal,
       timeoutMs,
     });
-    const plan = this.#streams.shift() ?? { events: [] };
+    const watch = method.name === "WatchSessionEvents";
+    const plan = (watch ? this.#watchStreams : this.#streams).shift() ?? { events: [] };
     const owner = this;
     const messages = (async function* () {
       owner.activeStreams += 1;
+      owner.maxActiveStreams = Math.max(owner.maxActiveStreams, owner.activeStreams);
       try {
         for (const event of plan.events ?? []) {
-          yield create(method.output, { event } as unknown as MessageInitShape<O>);
+          yield create(
+            method.output,
+            (watch ? event : { event }) as unknown as MessageInitShape<O>,
+          );
         }
         if (plan.error !== undefined) throw plan.error;
         if (plan.hold === true) {

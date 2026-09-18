@@ -202,6 +202,13 @@ describe("run choreography", () => {
     });
     await expect(iterator.return?.()).resolves.toMatchObject({ done: true });
 
+    const authorization = session.mcpAuthorization("authorization-4");
+    expect(authorization).toMatchObject({
+      authorizationId: "authorization-4",
+      sessionId: "session-release",
+    });
+    expect(sequence).toBe(4);
+
     const afterPark = await session.run("after park");
     await afterPark.outcome();
     expect(responseClosed.has("run-5")).toBe(true);
