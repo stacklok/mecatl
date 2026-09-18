@@ -83,7 +83,9 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 			unlock()
 		}
 	}()
-
+	if err := recoverPublishedMarkerTemp(canonical); err != nil {
+		return Selection{}, errors.New("MCP credential backend marker is invalid")
+	}
 	marker, err := readMarker(canonical)
 	if err == nil {
 		return resolveMarker(ctx, canonical, marker, opts, "", false)
@@ -103,6 +105,9 @@ func Resolve(ctx context.Context, root string, opts Options) (Selection, error) 
 	unlock, err = lockRoot(ctx, canonical)
 	if err != nil {
 		return Selection{}, err
+	}
+	if err := recoverPublishedMarkerTemp(canonical); err != nil {
+		return Selection{}, errors.New("MCP credential backend marker is invalid")
 	}
 	marker, err = readMarker(canonical)
 	if err == nil {
@@ -344,6 +349,87 @@ type backendMarker struct {
 	Backend        string `json:"backend"`
 	LocatorSHA256  string `json:"locator_sha256"`
 	InitSHA256     string `json:"init_sha256"`
+}
+
+func recoverPublishedMarkerTemp(root string) error {
+	dir, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(dir) }()
+
+	markerFD, err := unix.Openat(dir, markerName, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(markerFD) }()
+	var markerStat unix.Stat_t
+	if err := unix.Fstat(markerFD, &markerStat); err != nil {
+		return err
+	}
+	if markerStat.Nlink == 1 {
+		return nil
+	}
+	if !privateMarkerLinkStat(markerStat) {
+		return errors.New("marker has unsafe link state")
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	found := ""
+	for _, entry := range entries {
+		name := entry.Name()
+		if !isMarkerTempName(name) {
+			continue
+		}
+		fd, err := unix.Openat(dir, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return err
+		}
+		var tempStat unix.Stat_t
+		statErr := unix.Fstat(fd, &tempStat)
+		_ = unix.Close(fd)
+		if statErr != nil {
+			return statErr
+		}
+		if !privateMarkerLinkStat(tempStat) || tempStat.Dev != markerStat.Dev || tempStat.Ino != markerStat.Ino {
+			return errors.New("marker temporary file is not its published sibling")
+		}
+		if found != "" {
+			return errors.New("marker has multiple published temporary siblings")
+		}
+		found = name
+	}
+	if found == "" {
+		return nil
+	}
+	if err := unix.Unlinkat(dir, found, 0); err != nil {
+		return err
+	}
+	return unix.Fsync(dir)
+}
+
+func privateMarkerLinkStat(st unix.Stat_t) bool {
+	return st.Mode&unix.S_IFMT == unix.S_IFREG && st.Uid == uint32(os.Geteuid()) && st.Nlink == 2 && st.Mode&0o777 == 0o600 //nolint:gosec // euid is the OS-provided owner identity and is compared as a uid.
+}
+
+func isMarkerTempName(name string) bool {
+	prefix := "." + markerName + "."
+	suffix := ".tmp"
+	if len(name) != len(prefix)+24+len(suffix) || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	for _, b := range name[len(prefix) : len(name)-len(suffix)] {
+		if (b < '0' || b > '9') && (b < 'a' || b > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func readMarker(root string) (backendMarker, error) {

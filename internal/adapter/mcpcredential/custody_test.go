@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	keyringapi "github.com/zalando/go-keyring"
+	"golang.org/x/sys/unix"
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
@@ -457,6 +458,75 @@ func TestCrashLeftMarkerTempDoesNotWedgeNewKeyring(t *testing.T) {
 	clear(selection.Key)
 	if _, err := os.Stat(stale); err != nil {
 		t.Fatalf("stale marker temp was removed: %v", err)
+	}
+}
+
+func TestResolveRecoversLinkatPublishedMarkerTemp(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "credentials")
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if _, err := prepareRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	locator, err := fileLocator(root, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := backendMarker{
+		Version: 1, State: markerPending, StoreNamespace: NativeNamespace,
+		Backend: BackendFile, LocatorSHA256: locatorDigest(BackendFile, locator),
+		InitSHA256: keyDigest(bytes.Repeat([]byte{1}, 32)),
+	}
+	if err := publishMarker(root, pending, false); err != nil {
+		t.Fatal(err)
+	}
+	markerData, err := os.ReadFile(filepath.Join(root, markerName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, markerName)); err != nil {
+		t.Fatal(err)
+	}
+	tempName := "." + markerName + ".0123456789abcdef01234567.tmp"
+	tempPath := filepath.Join(root, tempName)
+	if err := os.WriteFile(tempPath, markerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Linkat(dir, tempName, dir, markerName, 0); err != nil {
+		_ = unix.Close(dir)
+		t.Fatal(err)
+	}
+	var st unix.Stat_t
+	fd, err := unix.Openat(dir, markerName, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		_ = unix.Close(dir)
+		t.Fatal(err)
+	}
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		_ = unix.Close(dir)
+		t.Fatal(err)
+	}
+	_ = unix.Close(fd)
+	_ = unix.Close(dir)
+	if st.Nlink != 2 {
+		t.Fatalf("simulated Linkat publication nlink = %d, want 2", st.Nlink)
+	}
+
+	selection, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(selection.Key)
+	if _, err := os.Lstat(tempPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("published marker temp was not safely removed: %v", err)
+	}
+	marker, err := readMarker(root)
+	if err != nil || marker.State != markerReady {
+		t.Fatalf("recovered marker = %#v, %v", marker, err)
 	}
 }
 
