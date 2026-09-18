@@ -8561,7 +8561,14 @@ numbers; and protobuf range and sign rules fail closed. An existing string or `n
 protobuf-es unchanged. The walk produces a detached JSON value and leaves unknown fields intact;
 `sdk/typescript/src/http.ts` registers the original parsed unary response, SSE envelope, and nested
 event with `getRawJson()` before yielding the decoded message. Any conversion or protobuf-es decode
-failure becomes the existing `ProtocolError` with HTTP transport identity.
+failure becomes the existing `ProtocolError` with HTTP transport identity. The shared
+`malformedSuccess` constructor retains only the generic message, status, request ID, and transport;
+the JSON/protobuf exception is deliberately absent. Unary handling acquires `response.text()` in a
+separate caused-error block before `JSON.parse`, so a post-header body-stream failure keeps its
+existing `ProtocolError.cause`. SSE `reader.read()` failures remain outside both decoder catches.
+Non-2xx and valid `event: error` frames still use `errorFromProblem`, and credential, fetch, abort,
+control, and stream lifecycle paths are unchanged. [ADR 0348](../adr/0348-typescript-sdk-malformed-success-decoding.md)
+records this cause boundary.
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
 the ergonomic client also probes status and maps transport/auth/incompatibility states without

@@ -342,7 +342,8 @@ PR after verification. There is no cleanup or status-only PR.
 - [TypeScript SDK malformed-success decoding](sdk-malformed-success-decoding.md) -
   cause-free protocol errors for malformed successful unary HTTP and ordinary SSE payloads,
   retaining safe status and request-ID metadata while preserving server, transport, and
-  cancellation causes. Status: proposed.
+  cancellation causes. Status: in-progress stacked implementation candidate; the local full
+  race suite is host-linker-blocked and remains for CI.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and

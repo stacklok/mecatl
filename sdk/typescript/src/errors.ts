@@ -208,7 +208,17 @@ export class AuthenticationError extends MecatlError {
   }
 }
 
-/** A transport response violated the SDK's protocol contract. @public */
+/**
+ * A transport response violated the SDK's protocol contract.
+ *
+ * Malformed successful HTTP responses and ordinary SSE data frames omit the
+ * underlying JSON or protobuf decoder cause. They retain safe correlation
+ * metadata such as HTTP status and a response request ID when available.
+ * Server errors, authentication failures, and transport or body-read failures
+ * keep their separately defined cause behavior.
+ *
+ * @public
+ */
 export class ProtocolError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "protocol" });
