@@ -47,6 +47,14 @@ function record(value: JsonValue): JsonRecord {
   return value as JsonRecord;
 }
 
+function malformedSuccess(message: string, response: Response): ProtocolError {
+  return new ProtocolError(message, {
+    requestId: response.headers.get("x-request-id") ?? undefined,
+    status: response.status,
+    transport: "http",
+  });
+}
+
 function permissionMode(value: JsonValue | undefined): string {
   switch (value) {
     case 2:
@@ -288,14 +296,20 @@ class HttpTransport implements Transport {
     if (!response.ok) await this.#problem(response);
     let raw: JsonValue = {};
     if (response.status !== 204) {
+      let body: string;
       try {
-        raw = (await response.json()) as JsonValue;
+        body = await response.text();
       } catch (cause) {
         throw new ProtocolError("The mecatl server returned invalid JSON", {
           cause,
           status: response.status,
           transport: "http",
         });
+      }
+      try {
+        raw = JSON.parse(body) as JsonValue;
+      } catch {
+        throw malformedSuccess("The mecatl server returned invalid JSON", response);
       }
     }
     let normalized: JsonValue;
@@ -306,12 +320,8 @@ class HttpTransport implements Transport {
         normalizeUnaryResponse(resolved.classification, normalizeMethodResponse(method.name, raw)),
       );
       message = fromJson(method.output, normalized, { ignoreUnknownFields: true });
-    } catch (cause) {
-      throw new ProtocolError("The mecatl server returned an invalid response", {
-        cause,
-        status: response.status,
-        transport: "http",
-      });
+    } catch {
+      throw malformedSuccess("The mecatl server returned an invalid response", response);
     }
     registerRawJson(message, raw);
     if (method.name === "GetCompatibilityInfo") {
@@ -498,12 +508,8 @@ class HttpTransport implements Transport {
         let raw: JsonValue;
         try {
           raw = JSON.parse(next.value.data) as JsonValue;
-        } catch (cause) {
-          throw new ProtocolError("The mecatl SSE stream contained invalid JSON", {
-            cause,
-            status: response.status,
-            transport: "http",
-          });
+        } catch {
+          throw malformedSuccess("The mecatl SSE stream contained invalid JSON", response);
         }
         if (next.value.event === "error") {
           throw errorFromProblem(
@@ -520,12 +526,8 @@ class HttpTransport implements Transport {
             responseField === undefined ? raw : { [responseField]: raw },
           );
           message = fromJson(output, normalized, { ignoreUnknownFields: true });
-        } catch (cause) {
-          throw new ProtocolError("The mecatl SSE stream contained an invalid event", {
-            cause,
-            status: response.status,
-            transport: "http",
-          });
+        } catch {
+          throw malformedSuccess("The mecatl SSE stream contained an invalid event", response);
         }
         registerRawJson(message, raw);
         if (responseField === "event") {

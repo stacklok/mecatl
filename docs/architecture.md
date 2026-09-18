@@ -338,7 +338,12 @@ protobuf-es decoding, the HTTP transport recursively follows the output descript
 stdlib-JSON `{seconds,nanos}` objects only at `google.protobuf.Timestamp` and
 `google.protobuf.Duration` fields. ProtoJSON strings and `null` pass through, malformed objects
 fail as typed HTTP protocol errors, and normalization uses a detached value so `getRawJson()`
-retains the original unary or SSE data. UDS dials by
+retains the original unary or SSE data. JSON, well-known-type, and protobuf decode failures for
+successful unary responses and ordinary SSE data frames expose only generic SDK messages, HTTP
+status, and an available request ID; they omit decoder causes so rejected response text cannot
+escape through runtime-specific exception messages. Body acquisition, server errors,
+authentication, network, cancellation, and SSE reader failures stay outside that cause-free
+boundary. UDS dials by
 supplying connect-node's HTTP/2 node connection option for the socket path, never a
 `unix://` base URL. Unit tests inject transports; `sdk/typescript/e2e/` separately
 builds and spawns the same checkout's `mecated` with the offline mock provider to
