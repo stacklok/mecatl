@@ -24,125 +24,188 @@ A server configured with `--mcp-server name=URL` can also use the legacy
 `MCP_<NAME>_TOKEN` bearer-token convention. Use operator `mcp.servers` profiles
 for OAuth, rotation, or deployment-managed credentials.
 
-## Configure a profile
+## Add a direct MCP profile
 
-Put the profile in the operator-tier `settings.yaml`. Secret-bearing fields are
-environment-variable names, not secret values. A minimal profile is:
+Use `mecated mcp add` for the standard direct streaming-HTTP setup. The
+command discovers the OAuth issuer, creates the profile, selects local
+credential custody, opens browser authorization, and verifies the MCP
+connection.
 
-```yaml
-mcp:
-  servers:
-    github:
-      url: https://mcp.example.com/github
-      auth:
-        mode: oauth
-        issuer: https://idp.example/realms/operators
-        client_id: mecatl
-        client_secret_env: MECATL_MCP_CLIENT_SECRET
-        scopes: [repo]
-        credentials:
-          local:
-            root: /home/operator/.local/state/mecatl/mcp-credentials
-            key_env: MECATL_MCP_CREDENTIAL_KEY
-```
-
-Keep the settings file owner-only and validate it before serving. See the
-[configuration reference](/reference/configuration.md) for the full schema.
-
-```sh
-umask 077
-mecated config validate --file "$HOME/.config/mecatl/settings.yaml"
-```
-
-The local OAuth store requires an absolute root and a base64-encoded 32-byte
-encryption key. Generate the key outside YAML and provide it through the named
-environment variable:
-
-```sh
-umask 077
-mkdir -p "$HOME/.local/state"
-chmod 700 "$HOME/.local/state"
-openssl rand -base64 32 > "$HOME/.local/state/mecatl-mcp.key"
-chmod 600 "$HOME/.local/state/mecatl-mcp.key"
-export MECATL_MCP_CREDENTIAL_KEY="$(cat "$HOME/.local/state/mecatl-mcp.key")"
-```
-
-Do not put the key, client secret, access token, or refresh token in source
-control, a command argument, `settings.yaml`, or a prompt.
-
-## Add, inspect, and remove a direct MCP profile
-
-For a direct streaming-HTTP MCP server, add a profile from its resource URL. The
-command discovers and pins one issuer, selects local credential custody, saves the
-profile, then completes browser authorization and verifies the MCP connection.
+Before you begin, run the command on an attended host that can open a browser.
+Supply the exact HTTPS MCP resource URL, including its path. The URL must not
+contain a query string or fragment.
 
 ```sh
 mecated mcp add connector https://mcp.example.com/mcp
 ```
 
-Use `--file <PATH>` to select the one operator settings document that the command
-may write. Add and remove refuse to proceed when another configured operator
-settings source contains an `mcp:` block, so a higher- or lower-precedence source
-cannot hide the change. On Linux without Secret Service, select file custody
-explicitly when prompted:
+The command writes these locations by default:
+
+- Settings: `$XDG_CONFIG_HOME/mecatl/settings.yaml`, or
+  `$HOME/.config/mecatl/settings.yaml` when `XDG_CONFIG_HOME` is unset.
+- Encrypted credentials and custody metadata:
+  `$XDG_STATE_HOME/mecatl/mcp-credentials`, or
+  `$HOME/.local/state/mecatl/mcp-credentials` when `XDG_STATE_HOME` is unset.
+- Wrapping key with file custody:
+  `$XDG_CONFIG_HOME/mecatl/mcp-credential-key`, or
+  `$HOME/.config/mecatl/mcp-credential-key` when `XDG_CONFIG_HOME` is unset.
+
+By default, `--credential-store=auto` prefers the OS keyring. On Linux, it checks
+for Secret Service. If Secret Service is unavailable and stdin is a TTY, the
+command asks before using the protected key file. Without a TTY, automatic
+selection stops and tells you to choose file custody explicitly:
 
 ```sh
 mecated mcp add connector https://mcp.example.com/mcp --credential-store=file
 ```
 
-Inspect configured profiles without contacting an MCP server or presenting a
-browser flow:
+Use `--file` to write a different operator settings document:
 
 ```sh
-mecated mcp list [--file <PATH>]
+mecated mcp add connector https://mcp.example.com/mcp \
+  --file /etc/mecatl/settings.yaml
 ```
 
-Each row identifies the configured source and a non-presenting credential status.
-Changes affect newly started daemons; activation in an already running daemon is
-unknown.
+When `--file` selects a path other than the default settings path, add and
+remove refuse the change if the default settings file also contains an `mcp:`
+section. This check prevents that default source from shadowing the selected
+write target.
 
-Remove a direct profile locally with:
+The profile and credential custody are saved before browser authorization. If
+a later authorization or connection check fails, recover with `mcp login`
+instead of rerunning `mcp add`:
 
 ```sh
-mecated mcp remove connector [--file <PATH>]
+mecated mcp login connector
 ```
 
-Removal deletes the current local grant and records a durable removal state before
-removing the settings profile. It does not revoke an upstream OAuth client or
-remove a shared wrapping key.
+If you added the profile to another settings file, select the same file during
+recovery:
 
+```sh
+mecated mcp login connector --file /etc/mecatl/settings.yaml
+```
 
-A mutable local profile is authorized explicitly by the operator:
+Restart a running daemon after onboarding. Verify that the
+`mcp__connector__*` tools appear.
+
+## Inspect and remove direct MCP profiles
+
+List configured profiles without contacting an MCP server or starting browser
+authorization:
+
+```sh
+mecated mcp list
+mecated mcp list --file /etc/mecatl/settings.yaml
+```
+
+Each row identifies the configured source and a non-presenting credential
+status. Changes apply to newly started daemons.
+
+Remove a profile from the default settings file with:
+
+```sh
+mecated mcp remove connector
+```
+
+To use another settings file, run:
+
+```sh
+mecated mcp remove connector --file /etc/mecatl/settings.yaml
+```
+
+Removal deletes the current local grant and records a durable removal state
+before removing the settings profile. It does not revoke an upstream OAuth
+client or remove a shared wrapping key.
+
+## Configure a profile manually
+
+Hand-authored profiles use the sequence-based `mcp.servers` schema, with OAuth
+fields nested under `auth.oauth`. The following preregistered-client example
+uses legacy `key_env` custody:
+
+```yaml
+mcp:
+  mode: global
+  servers:
+    - name: github
+      url: https://mcp.example.com/github
+      auth:
+        mode: oauth
+        oauth:
+          profile: github
+          principal: local-user
+          issuer: https://id.example.com
+          client:
+            mode: preregistered
+            preregistered:
+              id: mecatl
+              secret_env: MECATL_MCP_CLIENT_SECRET
+          scopes: [repo]
+          request_refresh_token: true
+          credentials:
+            mode: local
+            local:
+              root: /home/operator/.local/state/mecatl/github-oauth-credentials
+              key_env: MECATL_MCP_CREDENTIAL_KEY
+          network:
+            additional_origins: []
+            private_origins: []
+            max_redirects: 0
+```
+
+`key_env` is the legacy custody option for manually managed profiles. It names
+an environment variable containing a canonical base64-encoded 32-byte wrapping
+key. In contrast, `mecated mcp add` generates the key and records native
+keyring or protected-file custody in the profile. Do not add `key_env` to a
+profile created by `mcp add`.
+
+For a hand-authored `key_env` profile, generate and export the wrapping key
+outside YAML:
+
+```sh
+umask 077
+mkdir -p "$HOME/.local/state/mecatl"
+openssl rand -base64 32 > "$HOME/.local/state/mecatl/mcp-oauth.key"
+chmod 600 "$HOME/.local/state/mecatl/mcp-oauth.key"
+export MECATL_MCP_CREDENTIAL_KEY="$(cat "$HOME/.local/state/mecatl/mcp-oauth.key")"
+```
+
+Keep settings files owner-only. Do not put a wrapping key, client secret,
+access token, or refresh token in source control, a command argument,
+`settings.yaml`, or a prompt. Validate hand-authored settings before serving:
+
+```sh
+mecated config validate --file "$HOME/.config/mecatl/settings.yaml"
+```
+
+See the [configuration reference](/reference/configuration.md) for the full
+schema.
+
+## Log in to an existing profile
+
+Authorize a mutable local profile explicitly with:
 
 ```sh
 mecated mcp login github
 mecated mcp login github --no-browser
 ```
 
-A native local credential root is fail-closed when its wrapping key exists without
-its owner-only marker. During first initialization, the marker is published as
-`pending` before key creation and atomically becomes `ready` afterward. If the
-process is interrupted, a later operation may recover only a matching pending
-marker (namespace, backend, and canonical locator); arbitrary unmarked files or
-keyring entries are never adopted, overwritten, or deleted. Attended file-custody
-confirmation observes cancellation before it holds the custody lock.
-
 The normal command opens a browser. `--no-browser` prints the authorization URL
-for another browser or a headless operator. Use either `--file` for one settings
-document or the deprecated repeatable `--permission-config` selector for trusted
-operator settings files; the selectors are mutually exclusive:
+for use in another browser. Use either `--file` for one settings document or
+the deprecated repeatable `--permission-config` selector for trusted operator
+settings files. The selectors are mutually exclusive:
 
 ```sh
 mecated mcp login github --file /etc/mecatl/settings.yaml
-# Deprecated, repeatable selector:
 mecated mcp login github \
   --permission-config /etc/mecatl/settings.yaml
 ```
 
-After login, restart the server and verify that the namespaced `mcp__github__*`
-tools appear. Mecatl restores the encrypted credential and refreshes tokens when
-needed. Preregistered and CIMD profiles persist refresh-token rotation in the
-local store so the next restart remains warm.
+After login, restart the server and verify that the namespaced
+`mcp__github__*` tools appear. Mecatl restores the encrypted credential and
+refreshes tokens when needed. Preregistered and CIMD profiles persist
+refresh-token rotation in the local store so the next restart remains warm.
 
 ### Direct dynamic client registration
 
@@ -156,13 +219,13 @@ mcp:
   mode: global
   servers:
     - name: connector
-      url: https://connector-gateway.stacklok.dev/gw/mcp
+      url: https://mcp.example.com/gw/mcp
       auth:
         mode: oauth
         oauth:
           profile: connector
           principal: local-user
-          issuer: https://connector-gateway.stacklok.dev
+          issuer: https://id.example.com
           client: {mode: dcr, dcr: {}}
           scopes: [openid]
           request_refresh_token: false
@@ -228,8 +291,8 @@ relogin_result: success|failure:<safe-category>
 Exclude OAuth and registration secrets, authorization URLs, callback values, raw provider
 errors, headers, credential-store contents, and screenshots containing any of them.
 
-If a valid ready DCR profile's intentional registration binding changes — for example its
-issuer, principal, scopes, or resource — run `mecated mcp login SERVER
+If a valid ready DCR profile's intentional registration binding changes, for example its
+issuer, principal, scopes, or resource, run `mecated mcp login SERVER
 --reset-dcr-registration`; plain login cannot replace that registration. Pending identity drift
 is reported as pending-identity-mismatch and cannot reset or retry: restore the matching profile,
 principal, canonical resource, and exact issuer before running `--retry-dcr-registration`.
