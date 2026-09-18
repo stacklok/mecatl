@@ -1,0 +1,130 @@
+<!--
+  Mecatl: open and modular by design.
+
+  Source of truth: Figma "Diagram Kit" > page "Mecatl · README" > frame "mecatl-modular".
+  To change it, edit there and re-export as SVG with LIVE TEXT (not outlined), then
+  re-apply the font-family fallback stacks below - GitHub cannot load webfonts into an
+  SVG, so Space Grotesk/Inter degrade to the system sans stack for most viewers.
+
+  ACCENT CORD CLIPPING - fixed at source, do not "tidy" it away. Figma's SVG
+  exporter emits a clipPath only when a child overflows the parent's bounding BOX;
+  it ignores corner-radius overlap. The cords are 4px wide and flush with the
+  card's left edge, so without a clip their square corners poke out past the
+  rounded edge. Some cards got clipped anyway, but only incidentally - their text
+  was slightly taller than the height they were given, and the clip Figma emitted
+  for the text trimmed the cord for free. Cards whose content happened to fit
+  exactly (the engine bar, the state strip) got no clip and showed the artifact.
+  The fix, in the Figma component: the Cord is layoutPositioning=ABSOLUTE with
+  vertical STRETCH constraints, y=-1 and height=parent+2, so it always overflows
+  by 1px and the clip is always emitted with the correct rounded geometry. The
+  Content column carries paddingLeft=20 (instead of 16) to make up for the cord
+  no longer occupying 4px of the auto-layout flow, so text position is unchanged.
+  Exports are now self-correcting; the clipPaths in this file are equivalent.
+
+  Palette tokens are from website/src/pages/colophon.tsx (dark-only).
+-->
+<svg width="800" height="564" viewBox="0 0 800 564" fill="none" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Mecatl is modular: traditional harnesses couple the UI, loop, runtime, models, tools and state to one vendor, while Mecatl keeps the engine loop constant and lets you choose each of those layers.</title>
+<desc>Left: a sealed slab labelled Theirs, with six fused layers - their UI, agent loop, runtime, models, tools and state - sharing a single cord, captioned "One vendor, top to bottom. Swap nothing." Right: a panel labelled Yours, where four swappable cards (Client, Runtime, Models, Tools and gateways) and a State strip connect to a central bar reading "the constant: Mecatl engine loop", captioned "Swap any layer. The loop stays."</desc>
+<rect x="0.5" y="0.5" width="799" height="563" rx="11.5" fill="#141210"/>
+<rect x="0.5" y="0.5" width="799" height="563" rx="11.5" stroke="#332F2B"/>
+<rect x="525.25" y="294" width="1.5" height="126" fill="#D4A76A"/>
+<rect x="650.25" y="294" width="1.5" height="26" fill="#2A9D8F"/>
+<rect x="400.25" y="294" width="1.5" height="26" fill="#2A9D8F"/>
+<rect x="650.25" y="180" width="1.5" height="26" fill="#2A9D8F"/>
+<rect x="400.25" y="180" width="1.5" height="26" fill="#2A9D8F"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="32" y="39.114">TRADITIONAL HARNESS</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="23" font-weight="bold" letter-spacing="0em"><tspan x="32" y="65.958">Theirs</tspan></text>
+<text fill="#E08F52" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="284" y="39.114">MECATL</tspan></text>
+<text fill="#F0ECE8" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="23" font-weight="bold" letter-spacing="0em"><tspan x="284" y="65.958">Yours</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="32" y="492">One vendor, top to bottom.&#10;</tspan><tspan x="32" y="508">Swap nothing.</tspan></text>
+<text fill="#3DBDAD" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="284" y="492">Swap any layer. The loop stays.</tspan></text>
+<g clip-path="url(#clip0_2690_3)">
+<path d="M32 532H36V527H41V522H47V527H52V532H56H60V527H65V522H71V527H76V532H80H84V527H89V522H95V527H100V532H104H108V527H113V522H119V527H124V532H128H132V527H137V522H143V527H148V532H152H156V527H161V522H167V527H172V532H176H180V527H185V522H191V527H196V532H200H204V527H209V522H215V527H220V532H224H228V527H233V522H239V527H244V532H248H252V527H257V522H263V527H268V532H272H276V527H281V522H287V527H292V532H296H300V527H305V522H311V527H316V532H320H324V527H329V522H335V527H340V532H344H348V527H353V522H359V527H364V532H368H372V527H377V522H383V527H388V532H392H396V527H401V522H407V527H412V532H416H420V527H425V522H431V527H436V532H440H444V527H449V522H455V527H460V532H464H468V527H473V522H479V527H484V532H488H492V527H497V522H503V527H508V532H512H516V527H521V522H527V527H532V532H536H540V527H545V522H551V527H556V532H560H564V527H569V522H575V527H580V532H584H588V527H593V522H599V527H604V532H608H612V527H617V522H623V527H628V532H632H636V527H641V522H647V527H652V532H656H660V527H665V522H671V527H676V532H680H684V527H689V522H695V527H700V532H704H708V527H713V522H719V527H724V532H728H732V527H737V522H743V527H748V532H752H756V527H761V522H767V527H772V532H776H780V527H785V522H791V527H796V532H800H804V527H809V522H815V527H820V532H824H828V527H833V522H839V527H844V532H848H852V527H857V522H863V527H868V532H872H876V527H881V522H887V527H892V532H896H900V527H905V522H911V527H916V532H920H924V527H929V522H935V527H940V532H944H948V527H953V522H959V527H964V532H968H972V527H977V522H983V527H988V532H992" stroke="#2A9D8F" stroke-width="1.5"/>
+</g>
+<g clip-path="url(#clip1_2690_3)">
+<rect x="32" y="92" width="182" height="368" rx="8" fill="#1E1B18"/>
+<rect x="32" y="92" width="4" height="368" fill="#9E9690"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="500" letter-spacing="0px"><tspan x="50" y="126.819">Their UI</tspan></text>
+<rect x="36" y="153.333" width="178" height="1" fill="#332F2B"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="500" letter-spacing="0px"><tspan x="50" y="188.152">Their agent loop</tspan></text>
+<rect x="36" y="214.667" width="178" height="1" fill="#332F2B"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="500" letter-spacing="0px"><tspan x="50" y="249.485">Their runtime</tspan></text>
+<rect x="36" y="276" width="178" height="1" fill="#332F2B"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="500" letter-spacing="0px"><tspan x="50" y="310.819">Their models</tspan></text>
+<rect x="36" y="337.333" width="178" height="1" fill="#332F2B"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="500" letter-spacing="0px"><tspan x="50" y="372.152">Their tools</tspan></text>
+<rect x="36" y="398.667" width="178" height="1" fill="#332F2B"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="12" font-weight="500" letter-spacing="0px"><tspan x="50" y="433.485">Their state</tspan></text>
+</g>
+<rect x="32.5" y="92.5" width="181" height="367" rx="7.5" stroke="#332F2B"/>
+<g clip-path="url(#clip2_2690_3)">
+<path d="M284 100C284 95.5817 287.582 92 292 92H510C514.418 92 518 95.5817 518 100V172C518 176.418 514.418 180 510 180H292C287.582 180 284 176.418 284 172V100Z" fill="#1E1B18"/>
+<rect width="4" height="86" transform="translate(285 93)" fill="#2A9D8F"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="305" y="116.114">CLIENT</tspan></text>
+<text fill="#F0ECE8" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="14" font-weight="500" letter-spacing="0px"><tspan x="305" y="136.344">Bring your own UI</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="305" y="156">mecatui &#xb7; your app&#10;</tspan><tspan x="305" y="172">TypeScript SDK &#xb7; gRPC + HTTP</tspan></text>
+</g>
+<path d="M292 92.5H510C514.142 92.5 517.5 95.8579 517.5 100V172C517.5 176.142 514.142 179.5 510 179.5H292C287.858 179.5 284.5 176.142 284.5 172V100C284.5 95.8579 287.858 92.5 292 92.5Z" stroke="#332F2B"/>
+<g clip-path="url(#clip3_2690_3)">
+<path d="M534 100C534 95.5817 537.582 92 542 92H760C764.418 92 768 95.5817 768 100V172C768 176.418 764.418 180 760 180H542C537.582 180 534 176.418 534 172V100Z" fill="#1E1B18"/>
+<rect width="4" height="86" transform="translate(535 93)" fill="#2A9D8F"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="555" y="116.114">RUNTIME</tspan></text>
+<text fill="#F0ECE8" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="14" font-weight="500" letter-spacing="0px"><tspan x="555" y="136.344">Run it anywhere</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="555" y="156">local &#xb7; remote&#10;</tspan><tspan x="555" y="172">Kubernetes replicas</tspan></text>
+</g>
+<path d="M542 92.5H760C764.142 92.5 767.5 95.8579 767.5 100V172C767.5 176.142 764.142 179.5 760 179.5H542C537.858 179.5 534.5 176.142 534.5 172V100C534.5 95.8579 537.858 92.5 542 92.5Z" stroke="#332F2B"/>
+<path d="M292 206.75H760C764.004 206.75 767.25 209.996 767.25 214V286C767.25 290.004 764.004 293.25 760 293.25H292C287.996 293.25 284.75 290.004 284.75 286V214C284.75 209.996 287.996 206.75 292 206.75Z" fill="#272320"/>
+<path d="M292 206.75H760C764.004 206.75 767.25 209.996 767.25 214V286C767.25 290.004 764.004 293.25 760 293.25H292C287.996 293.25 284.75 290.004 284.75 286V214C284.75 209.996 287.996 206.75 292 206.75Z" stroke="#2A9D8F" stroke-width="1.5"/>
+<g clip-path="url(#cordclip0)"><rect width="4" height="85" transform="translate(285.5 207.5)" fill="#2A9D8F"/></g>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="305.5" y="230.614">THE CONSTANT</tspan></text>
+<text fill="#F0ECE8" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="14" font-weight="500" letter-spacing="0px"><tspan x="305.5" y="250.844">Mecatl engine loop</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="305.5" y="270.5">tool dispatch &#xb7; permissions &#xb7; hooks &#xb7; delegation &#xb7; compaction &#xb7; events</tspan></text>
+<g clip-path="url(#clip4_2690_3)">
+<path d="M284 328C284 323.582 287.582 320 292 320H510C514.418 320 518 323.582 518 328V400C518 404.418 514.418 408 510 408H292C287.582 408 284 404.418 284 400V328Z" fill="#1E1B18"/>
+<rect width="4" height="86" transform="translate(285 321)" fill="#C87941"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="305" y="344.114">MODELS</tspan></text>
+<text fill="#F0ECE8" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="14" font-weight="500" letter-spacing="0px"><tspan x="305" y="364.344">Any model family</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="305" y="384">Anthropic &#xb7; OpenAI &#xb7; OpenRouter&#10;</tspan><tspan x="305" y="400">or your own adapter</tspan></text>
+</g>
+<path d="M292 320.5H510C514.142 320.5 517.5 323.858 517.5 328V400C517.5 404.142 514.142 407.5 510 407.5H292C287.858 407.5 284.5 404.142 284.5 400V328C284.5 323.858 287.858 320.5 292 320.5Z" stroke="#332F2B"/>
+<g clip-path="url(#clip5_2690_3)">
+<path d="M534 328C534 323.582 537.582 320 542 320H760C764.418 320 768 323.582 768 328V400C768 404.418 764.418 408 760 408H542C537.582 408 534 404.418 534 400V328Z" fill="#1E1B18"/>
+<rect width="4" height="86" transform="translate(535 321)" fill="#C87941"/>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="555" y="344.114">TOOLS &#38; GATEWAYS</tspan></text>
+<text fill="#F0ECE8" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="14" font-weight="500" letter-spacing="0px"><tspan x="555" y="364.344">Any gateway</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="555" y="384">MCP servers &#xb7; LLM gateways&#10;</tspan><tspan x="555" y="400">or your own tools</tspan></text>
+</g>
+<path d="M542 320.5H760C764.142 320.5 767.5 323.858 767.5 328V400C767.5 404.142 764.142 407.5 760 407.5H542C537.858 407.5 534.5 404.142 534.5 400V328C534.5 323.858 537.858 320.5 542 320.5Z" stroke="#332F2B"/>
+<rect x="284.5" y="420.5" width="483" height="39" rx="7.5" fill="#1E1B18"/>
+<rect x="284.5" y="420.5" width="483" height="39" rx="7.5" stroke="#332F2B"/>
+<g clip-path="url(#cordclip1)"><rect width="4" height="38" transform="translate(285 421)" fill="#D4A76A"/></g>
+<text fill="#E08F52" style="white-space: pre" xml:space="preserve" font-family="'Space Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="9" font-weight="500" letter-spacing="1.2px"><tspan x="305" y="443.114">STATE</tspan></text>
+<text fill="#9E9690" style="white-space: pre" xml:space="preserve" font-family="Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" font-size="11" letter-spacing="0px"><tspan x="346" y="444">durable outside the process &#x2014; JSONL &#xb7; Redis &#xb7; your store</tspan></text>
+<defs>
+<clipPath id="cordclip0">
+<rect x="284.75" y="206.75" width="482.5" height="86.5" rx="7.25" fill="white"/>
+</clipPath>
+<clipPath id="cordclip1">
+<rect x="284.5" y="420.5" width="483" height="39" rx="7.5" fill="white"/>
+</clipPath>
+<clipPath id="clip0_2690_3">
+<rect width="736" height="16" fill="white" transform="translate(32 522)"/>
+</clipPath>
+<clipPath id="clip1_2690_3">
+<rect x="32" y="92" width="182" height="368" rx="8" fill="white"/>
+</clipPath>
+<clipPath id="clip2_2690_3">
+<path d="M284 100C284 95.5817 287.582 92 292 92H510C514.418 92 518 95.5817 518 100V172C518 176.418 514.418 180 510 180H292C287.582 180 284 176.418 284 172V100Z" fill="white"/>
+</clipPath>
+<clipPath id="clip3_2690_3">
+<path d="M534 100C534 95.5817 537.582 92 542 92H760C764.418 92 768 95.5817 768 100V172C768 176.418 764.418 180 760 180H542C537.582 180 534 176.418 534 172V100Z" fill="white"/>
+</clipPath>
+<clipPath id="clip4_2690_3">
+<path d="M284 328C284 323.582 287.582 320 292 320H510C514.418 320 518 323.582 518 328V400C518 404.418 514.418 408 510 408H292C287.582 408 284 404.418 284 400V328Z" fill="white"/>
+</clipPath>
+<clipPath id="clip5_2690_3">
+<path d="M534 328C534 323.582 537.582 320 542 320H760C764.418 320 768 323.582 768 328V400C768 404.418 764.418 408 760 408H542C537.582 408 534 404.418 534 400V328Z" fill="white"/>
+</clipPath>
+</defs>
+</svg>
