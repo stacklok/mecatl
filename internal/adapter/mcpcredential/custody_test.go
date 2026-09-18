@@ -90,7 +90,7 @@ func TestNativeCustodyRejectsUnmarkedArtifactsWithoutMutation(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(keyPath, []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"), 0600); err != nil {
+		if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(make([]byte, 32))), 0600); err != nil {
 			t.Fatal(err)
 		}
 		before, err := os.ReadFile(keyPath)
@@ -440,38 +440,50 @@ func TestSharedRootReusesPinnedCustody(t *testing.T) {
 	}
 }
 
-func TestMarkerPublicationFailureRollsBackNewKeyringEntry(t *testing.T) {
+func TestCrashLeftMarkerTempDoesNotWedgeNewKeyring(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "credentials")
 	kr := &fakeKeyring{values: map[string]string{}}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "."+markerName+".new"), []byte("occupied"), 0o600); err != nil {
+	stale := filepath.Join(root, "."+markerName+".crash-left.tmp")
+	if err := os.WriteFile(stale, []byte("occupied"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Resolve(context.Background(), root, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: kr}); err == nil {
-		t.Fatal("Resolve unexpectedly succeeded")
+	selection, err := Resolve(context.Background(), root, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: kr})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(kr.values) != 0 {
-		t.Fatalf("marker failure left keyring entries: %d", len(kr.values))
+	clear(selection.Key)
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("stale marker temp was removed: %v", err)
 	}
 }
 
-func TestMarkerPublicationFailureRestoresExistingKeyringEntry(t *testing.T) {
+func TestPendingMarkerRestartsWhenArtifactIsAbsent(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "credentials")
-	kr := &fakeKeyring{values: map[string]string{}}
-	account := keyringAccount(root)
-	kr.values[keyringService+"\x00"+account] = "existing-key"
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if _, err := prepareRoot(root); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "."+markerName+".new"), []byte("occupied"), 0o600); err != nil {
+	locator, err := fileLocator(root, keyPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Resolve(context.Background(), root, Options{Requested: BackendKeyring, Platform: "darwin", Keyring: kr}); err == nil {
-		t.Fatal("Resolve unexpectedly succeeded")
+	pending := backendMarker{Version: 1, State: markerPending, StoreNamespace: NativeNamespace, Backend: BackendFile, LocatorSHA256: locatorDigest(BackendFile, locator), InitSHA256: keyDigest(bytes.Repeat([]byte{1}, 32))}
+	if err := publishMarker(root, pending, false); err != nil {
+		t.Fatal(err)
 	}
-	if got := kr.values[keyringService+"\x00"+account]; got != "existing-key" {
-		t.Fatalf("existing key was not restored: %q", got)
+	selection, err := Resolve(context.Background(), root, Options{Requested: BackendFile, FilePath: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(selection.Key)
+	if len(selection.Key) != 32 {
+		t.Fatalf("restarted key length = %d", len(selection.Key))
+	}
+	marker, err := readMarker(root)
+	if err != nil || marker.State != markerReady || marker.InitSHA256 != keyDigest(selection.Key) {
+		t.Fatalf("restarted marker = %#v, %v", marker, err)
 	}
 }

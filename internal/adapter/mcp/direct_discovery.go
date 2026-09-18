@@ -99,7 +99,7 @@ func exactDirectResource(raw string) (string, error) {
 		return "", errors.New("not exact")
 	}
 	u, _ := url.Parse(canonical)
-	if u.Scheme != "https" || u.RawQuery != "" || u.Fragment != "" {
+	if u.Scheme != "https" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", errors.New("not HTTPS")
 	}
 	return canonical, nil
@@ -107,7 +107,7 @@ func exactDirectResource(raw string) (string, error) {
 
 func exactDirectURL(raw string) (*url.URL, error) {
 	u, err := validateHTTPURL("MCP discovery URL", raw, true)
-	if err != nil || u.RawQuery != "" || u.Fragment != "" || raw != u.String() {
+	if err != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || raw != u.String() {
 		return nil, errors.New("not exact")
 	}
 	return u, nil

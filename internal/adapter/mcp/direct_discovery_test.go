@@ -186,6 +186,11 @@ func TestDirectMCPOnboarding_Scenario1_ExactResourceAndRedirectBinding(t *testin
 	}
 }
 
+func TestExactDirectURLRejectsForceQuery(t *testing.T) {
+	if _, err := exactDirectURL("https://mcp.example/mcp?"); err == nil {
+		t.Fatal("exactDirectURL accepted ForceQuery")
+	}
+}
 func TestDirectIssuerMetadataDoesNotAdvanceAfterNon404(t *testing.T) {
 	var oidcHits atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +209,7 @@ func TestDirectIssuerMetadataDoesNotAdvanceAfterNon404(t *testing.T) {
 }
 
 func TestExactDirectResourceRejectsCanonicalizationAndQuery(t *testing.T) {
-	for _, raw := range []string{"https://MCP.example/mcp", "https://mcp.example/mcp?x=1", "http://mcp.example/mcp"} {
+	for _, raw := range []string{"https://MCP.example/mcp", "https://mcp.example/mcp?x=1", "https://mcp.example/mcp?", "http://mcp.example/mcp"} {
 		if _, err := exactDirectResource(raw); err == nil {
 			t.Fatalf("resource accepted: %q", raw)
 		}
