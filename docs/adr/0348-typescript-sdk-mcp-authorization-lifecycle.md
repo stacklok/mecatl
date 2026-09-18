@@ -188,9 +188,10 @@ listener once; aborts responders and flow-owned automatic controls; suppresses l
 verdicts; and makes later manual controls fail locally. An already-admitted manual control
 keeps only its caller-owned request lifetime.
 
-The existing server remains authoritative for what happened before a disconnect. In
-particular, gRPC detaches and continues ordinary work after losing its control stream,
-but cancels a run that the dead stream stranded on an ordinary permission ask. HTTP
+The existing server remains authoritative for what happened before a disconnect. The
+authorization-control relay makes the gRPC distinction explicit: it detaches and drains
+ordinary runnable work after losing its control stream, but cancels the exact continuation
+when control-stream EOF strands it on an ordinary permission ask. HTTP
 requests cancellation for a still-active continuation when its SSE request is lost and
 drains the result. Neither transport destroys a follow-up authorization after that Run
 has already committed its authorization park, because cancellation is then inert. The
@@ -213,8 +214,11 @@ automatically replayed.
 
 ### 8. Reuse the wire and correct both HTTP classifications
 
-No protobuf wire-shape, Go API, server transition, event, snapshot, persistence, feature,
-or error-code changes. The `Converse` source comment is corrected to document closure after
+No protobuf wire-shape, Go API, event, snapshot, persistence, feature, or error-code
+changes. The gRPC authorization-control relay implements the disconnect behavior in
+Decision 7 without adding a method or message: EOF while the continuation is parked on an
+ordinary permission ask cancels that exact run, while EOF during runnable work leaves it
+detached to drain. The `Converse` source comment is corrected to document closure after
 either a terminal `result` or a pending `authorization.required` park, and regenerated
 bindings carry that comment. The SDK continues to invoke the three existing HarnessService descriptors.
 The RPC catalog classifies the HTTP recheck and cancel routes as `requestBody: "none"`,
