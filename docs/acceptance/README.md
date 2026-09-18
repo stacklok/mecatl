@@ -151,6 +151,10 @@ PR after verification. There is no cleanup or status-only PR.
 - [Managed temporary command leases](managed-temporary-command-leases.md) — private,
   attributable Linux and macOS command/job temporary storage with a permission-visible
   system escape and deterministic crash-residue reaping. Status: landed.
+- [Managed delegation-fork lifecycle](managed-delegation-fork-lifecycle.md) — extends
+  managed temporary storage to local Subagent, Team, and Parallel environments while
+  retaining opaque artifacts, validated crash cleanup, and workspace-key-scoped winner
+  retention. Status: draft; material lifecycle decisions pending.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
 - [Mecatui-owned configurable terminal titles](mecatui-terminal-title-controller.md) — replaces Bubble Tea title emission with a renderer-serialized OSC 0 controller, user-global plain-text title templates over display-safe status facts, explicit disablement precedence, and live-run `/session` identity access. Status: proposed.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
