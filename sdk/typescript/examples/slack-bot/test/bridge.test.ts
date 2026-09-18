@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MecatlBridge } from "../src/bridge.js";
-import { cannedMockReply, withMockDaemon } from "./harness.js";
+import { cannedMockReply, fixture, withMockDaemon } from "./harness.js";
 
 describe("MecatlBridge", () => {
   it("answers a prompt with the mock provider's canned reply", async () => {
@@ -113,5 +113,50 @@ describe("MecatlBridge", () => {
         await bridge.close();
       }
     });
+  });
+
+  it("threads onPermissionAsk to session.run so a real ask resolves through it", async () => {
+    await withMockDaemon(
+      async ({ baseUrl }) => {
+        const bridge = new MecatlBridge({ baseUrl });
+        try {
+          const asks: string[] = [];
+          const outcome = await bridge.handlePrompt(
+            "channel:thread-1",
+            "approve the scripted write",
+            undefined,
+            (ask) => {
+              asks.push(ask.tool);
+              return "allow_once";
+            },
+          );
+          expect(asks).toEqual(["Write"]);
+          expect(outcome.text).toBe("approved write completed");
+          expect(outcome.stopReason).toBe("end_turn");
+        } finally {
+          await bridge.close();
+        }
+      },
+      { script: fixture("permission-ask.json") },
+    );
+  });
+
+  it("with no onPermissionAsk, a permission ask is left pending until the run is cancelled", async () => {
+    await withMockDaemon(
+      async ({ baseUrl }) => {
+        const bridge = new MecatlBridge({ baseUrl });
+        try {
+          const prompt = bridge.handlePrompt("channel:thread-1", "approve the scripted write");
+          // Give the run a moment to reach the ask and genuinely stall on it,
+          // then cancel — without a responder, nothing else will ever settle it.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          await bridge.cancel("channel:thread-1");
+          await expect(prompt).resolves.toMatchObject({ stopReason: "cancelled" });
+        } finally {
+          await bridge.close();
+        }
+      },
+      { script: fixture("permission-ask.json") },
+    );
   });
 });

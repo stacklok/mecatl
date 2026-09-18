@@ -1,6 +1,7 @@
 import type { App, SayFn } from "@slack/bolt";
 
 import type { AccessResolver } from "./access.js";
+import { type PermissionApprovalGateway, registerPermissionApprovals } from "./approvals.js";
 import { isStuckExternalAuthorization, type MecatlBridge } from "./bridge.js";
 import type { BotConfig } from "./env.js";
 import { SlidingWindowRateLimiter } from "./rateLimit.js";
@@ -9,7 +10,6 @@ const EXTERNAL_AUTH_MESSAGE =
   "This needs a connector to be authorized by an administrator before it can be used here.";
 const FAILURE_MESSAGE =
   "Something went wrong running that against mecatl. Check the bot's logs for details.";
-const GREETING = "Tag me with a prompt and I'll run it against mecatl.";
 const NOT_AUTHORIZED_MESSAGE =
   "You're not authorized to use this bot. Ask the operator to grant you access.";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded — try again in a bit.";
@@ -52,9 +52,10 @@ const MENTION_PREFIX = /^<@[^>]+>\s*/;
  * back to a single final `say()` with the run's full text, exactly as
  * DESIGN.md's original plan describes, rather than failing the whole prompt.
  *
- * TODO(#883 follow-up, tracked in DESIGN.md "Not yet implemented"):
- * - `suspended` status + Block Kit approve/deny UI for manual permission
- *   review.
+ * Permission asks (issue #1397, see approvals.ts) DM the requesting user a
+ * Block Kit approve/deny card instead of auto-approving; `runPrompt` reports
+ * the pending/resolved state via the same `agents.sessions.setStatus`
+ * (`suspended` while at least one ask is pending) used for `processing`.
  */
 export function registerAgentSessions(
   app: App,
@@ -62,16 +63,9 @@ export function registerAgentSessions(
   config: BotConfig,
   resolver: AccessResolver,
 ): void {
-  const greetedDm = new Set<string>();
+  const approvals = registerPermissionApprovals(app);
   const activeChannelThreads = new Set<string>();
   const rateLimiter = new SlidingWindowRateLimiter(config.rateLimit.max, config.rateLimit.windowMs);
-
-  app.event("app_home_opened", async ({ event, say }) => {
-    if (event.tab !== "messages") return;
-    if (greetedDm.has(event.channel)) return;
-    greetedDm.add(event.channel);
-    await say(GREETING);
-  });
 
   // Slack's native stop button on an Agent View session. @slack/types defines the
   // shape (AgentSessionStoppedEvent) but doesn't wire it into bolt's own event
@@ -122,6 +116,8 @@ export function registerAgentSessions(
       context.teamId,
       say,
       notify,
+      approvals,
+      "channel",
     );
   });
 
@@ -161,6 +157,8 @@ export function registerAgentSessions(
         context.teamId,
         say,
         notify,
+        approvals,
+        "dm",
       );
       return;
     }
@@ -190,6 +188,8 @@ export function registerAgentSessions(
       context.teamId,
       say,
       notify,
+      approvals,
+      "channel",
     );
   });
 }
@@ -237,6 +237,8 @@ async function runPrompt(
   recipientTeamId: string | undefined,
   say: SayFn,
   notifyError: Notifier,
+  approvals: PermissionApprovalGateway,
+  origin: "dm" | "channel",
 ): Promise<void> {
   await setSessionStatus(app, channelId, statusThreadTs, "processing");
   // Agent Session streaming is thread-scoped, so this uses the same canonical
@@ -248,8 +250,18 @@ async function runPrompt(
     recipientUserId,
     recipientTeamId,
   );
+  const onPermissionAsk = approvals.createResponder({
+    authorizedUserId: recipientUserId,
+    originLabel: origin === "dm" ? "a DM with the bot" : `<#${channelId}>`,
+    setStatus: (status) => setSessionStatus(app, channelId, statusThreadTs, status),
+  });
   try {
-    const outcome = await bridge.handlePrompt(threadKey, text, (delta) => stream.append(delta));
+    const outcome = await bridge.handlePrompt(
+      threadKey,
+      text,
+      (delta) => stream.append(delta),
+      onPermissionAsk,
+    );
     if (stream.started) await stream.stop();
     // `!stream.started` (never streamed at all) and `stream.failed` (streamed
     // partially, then an append broke mid-run — #1289 review, samuv: without

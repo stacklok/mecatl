@@ -26,10 +26,14 @@ interface FakeApp {
   startStream: ReturnType<typeof vi.fn>;
   appendStream: ReturnType<typeof vi.fn>;
   stopStream: ReturnType<typeof vi.fn>;
+  conversationsOpen: ReturnType<typeof vi.fn>;
+  postMessage: ReturnType<typeof vi.fn>;
+  chatUpdate: ReturnType<typeof vi.fn>;
   warn: ReturnType<typeof vi.fn>;
   appMention: AnyHandler;
   message: AnyHandler;
   agentSessionStopped: AnyHandler;
+  action: AnyHandler;
 }
 
 /** Builds a fake bolt `App` and registers `registerAgentSessions` against it, capturing the
@@ -45,17 +49,34 @@ function setUp(
   const startStream = vi.fn().mockResolvedValue({ ts: "stream-ts" });
   const appendStream = vi.fn().mockResolvedValue(undefined);
   const stopStream = vi.fn().mockResolvedValue(undefined);
+  // `registerPermissionApprovals` (issue #1397) wires itself onto `app.client` too — these are
+  // only exercised by a test that actually triggers a permission ask; none here do yet.
+  const conversationsOpen = vi.fn().mockResolvedValue({ channel: { id: "D1" } });
+  const postMessage = vi.fn().mockResolvedValue({ ts: "approval-ts" });
+  const chatUpdate = vi.fn().mockResolvedValue(undefined);
   const warn = vi.fn();
   const handlers: {
     appMention?: AnyHandler;
     message?: AnyHandler;
     agentSessionStopped?: AnyHandler;
+    action?: AnyHandler;
   } = {};
 
   const app = {
+    action: (_pattern: RegExp, handler: AnyHandler) => {
+      handlers.action = handler;
+    },
     client: {
       apiCall,
-      chat: { appendStream, postEphemeral, startStream, stopStream },
+      chat: {
+        appendStream,
+        postEphemeral,
+        postMessage,
+        startStream,
+        stopStream,
+        update: chatUpdate,
+      },
+      conversations: { open: conversationsOpen },
     },
     event: (eventName: string, handler: AnyHandler) => {
       if (eventName === "app_mention") handlers.appMention = handler;
@@ -72,18 +93,23 @@ function setUp(
   if (
     handlers.appMention === undefined ||
     handlers.message === undefined ||
-    handlers.agentSessionStopped === undefined
+    handlers.agentSessionStopped === undefined ||
+    handlers.action === undefined
   ) {
     throw new Error("registerAgentSessions did not register the expected handlers");
   }
   return {
+    action: handlers.action,
     agentSessionStopped: handlers.agentSessionStopped,
     apiCall,
     app,
     appendStream,
     appMention: handlers.appMention,
+    chatUpdate,
+    conversationsOpen,
     message: handlers.message,
     postEphemeral,
+    postMessage,
     say,
     startStream,
     stopStream,
@@ -198,6 +224,33 @@ describe("registerAgentSessions", () => {
     });
 
     expect(fake.say).toHaveBeenCalledWith({ text: "hi there", thread_ts: "100.001" });
+  });
+
+  it("passes a permission-approval responder to handlePrompt (issue #1397)", async () => {
+    const handlePrompt = vi
+      .fn()
+      .mockResolvedValue({ sessionId: "s1", stopReason: "end_turn", text: "hi there" });
+    const fake = setUp(fakeBridge(handlePrompt), fakeConfig());
+
+    await fake.appMention({
+      event: {
+        bot_id: undefined,
+        channel: "C1",
+        text: "<@BOT> hi",
+        ts: "100.001",
+        type: "app_mention",
+        user: "allowed-user",
+      },
+      context: { teamId: "T1" },
+      say: fake.say,
+    });
+
+    expect(handlePrompt).toHaveBeenCalledWith(
+      "C1:100.001",
+      "hi",
+      expect.any(Function),
+      expect.any(Function),
+    );
   });
 
   it("rate-limits an app_mention with an ephemeral reply", async () => {
@@ -387,8 +440,20 @@ describe("registerAgentSessions", () => {
       });
     }
 
-    expect(handlePrompt).toHaveBeenNthCalledWith(1, "D1:200.001", "first", expect.any(Function));
-    expect(handlePrompt).toHaveBeenNthCalledWith(2, "D1:200.002", "second", expect.any(Function));
+    expect(handlePrompt).toHaveBeenNthCalledWith(
+      1,
+      "D1:200.001",
+      "first",
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(handlePrompt).toHaveBeenNthCalledWith(
+      2,
+      "D1:200.002",
+      "second",
+      expect.any(Function),
+      expect.any(Function),
+    );
     expect(fake.startStream).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ channel: "D1", thread_ts: "200.001" }),
@@ -431,7 +496,12 @@ describe("registerAgentSessions", () => {
       say: fake.say,
     });
 
-    expect(handlePrompt).toHaveBeenCalledWith("D1:200.001", "follow up", expect.any(Function));
+    expect(handlePrompt).toHaveBeenCalledWith(
+      "D1:200.001",
+      "follow up",
+      expect.any(Function),
+      expect.any(Function),
+    );
     expect(fake.startStream).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "D1", thread_ts: "200.001" }),
     );

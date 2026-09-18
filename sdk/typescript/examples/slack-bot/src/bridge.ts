@@ -1,4 +1,10 @@
-import { type Client, type Run, ServerError, type Session } from "@stacklok-oss/mecatl-sdk";
+import {
+  type Client,
+  type PermissionAskResponder,
+  type Run,
+  ServerError,
+  type Session,
+} from "@stacklok-oss/mecatl-sdk";
 import { connect, type NodeConnectOptions } from "@stacklok-oss/mecatl-sdk/node";
 
 export interface PromptOutcome {
@@ -32,12 +38,13 @@ export function isStuckExternalAuthorization(error: unknown): boolean {
 
 /**
  * Bridges Slack threads to mecatl sessions: one session per thread key,
- * created lazily and reused for every later prompt in that thread. Every
- * permission ask is auto-approved (#882: "every demo run executes under an
- * auto-approved posture so it never blocks on a human"). Caller-level
- * authorization and a per-user rate limit live in agentSessions.ts, above
- * this bridge (panel-review, #883) — this class only knows about threads,
- * not who's behind them.
+ * created lazily and reused for every later prompt in that thread. Permission
+ * asks are answered by whatever `onPermissionAsk` responder the caller
+ * passes to `handlePrompt` (issue #1397) — this class no longer hardcodes
+ * `() => "allow_once"` (#882's original dev/demo baseline). Caller-level
+ * authorization, the per-user rate limit, and the manual-approval Slack UI
+ * all live in agentSessions.ts/approvals.ts, above this bridge (panel-review,
+ * #883) — this class only knows about threads, not who's behind them.
  *
  * Session placement is server-owned: this client never sends a workspace path.
  * Configure the daemon's default with `mecated --workspace`; every new Slack
@@ -72,15 +79,20 @@ export class MecatlBridge {
   /**
    * Runs one prompt for a thread, queued behind any prompt already in flight
    * for it. `onDelta`, if given, is invoked in order with each incremental
-   * text chunk the run streams before the final result.
+   * text chunk the run streams before the final result. `onPermissionAsk`,
+   * if given, answers the run's tool-permission asks; with none, an ask is
+   * left pending until the run ends or is cancelled (see the SDK's
+   * `RunImpl#startPermissionResponder`) — callers that need real approvals
+   * must always pass one.
    */
   async handlePrompt(
     threadKey: string,
     text: string,
     onDelta?: DeltaHandler,
+    onPermissionAsk?: PermissionAskResponder,
   ): Promise<PromptOutcome> {
     const previous = this.#queues.get(threadKey) ?? Promise.resolve();
-    const next = previous.then(() => this.#runPrompt(threadKey, text, onDelta));
+    const next = previous.then(() => this.#runPrompt(threadKey, text, onDelta, onPermissionAsk));
     // Swallow so an awaited failure doesn't become an unhandled rejection on the queue chain.
     this.#queues.set(
       threadKey,
@@ -109,6 +121,7 @@ export class MecatlBridge {
     threadKey: string,
     text: string,
     onDelta: DeltaHandler | undefined,
+    onPermissionAsk: PermissionAskResponder | undefined,
   ): Promise<PromptOutcome> {
     const session = await this.#sessionFor(threadKey);
     try {
@@ -118,7 +131,7 @@ export class MecatlBridge {
       // ever resolves (it waits for the first run-ID-bearing event), so that
       // rejection previously escaped this catch entirely and the stuck session
       // was never evicted.
-      const run = await session.run(text, { onPermissionAsk: () => "allow_once" });
+      const run = await session.run(text, onPermissionAsk === undefined ? {} : { onPermissionAsk });
       this.#runs.set(threadKey, run);
       for await (const event of run) {
         if (event.kind === "message.delta") {
