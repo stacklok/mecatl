@@ -133,11 +133,6 @@ const config: Config = {
           label: 'Cloud-native harness',
         },
         {
-          to: '/docs/mecatui',
-          position: 'left',
-          label: 'Use',
-        },
-        {
           to: '/docs/operating',
           position: 'left',
           label: 'Operate',
@@ -146,11 +141,6 @@ const config: Config = {
           to: '/docs/building',
           position: 'left',
           label: 'Build',
-        },
-        {
-          to: '/docs/features',
-          position: 'left',
-          label: 'Capabilities',
         },
         {
           href: 'https://github.com/stacklok/mecatl',

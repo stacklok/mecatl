@@ -1,5 +1,5 @@
 ---
-sidebar_position: 120
+sidebar_position: 4
 title: Connect with gRPC or HTTP
 description: Choose a Mecatl client transport and find its API contracts.
 ---
@@ -120,18 +120,18 @@ gRPC can send an in-flight steering instruction, or cancel one, through the live
 ## Connect securely
 
 A server bound beyond loopback needs an authentication and transport-security
-configuration before clients connect. See [Run mecated standalone](./mecated.md)
+configuration before clients connect. See [Run mecated standalone](/operating/mecated.md)
 for bearer authentication, TLS/mTLS, OIDC caller identity, rate limits, and
 health endpoints.
 
 Browser clients also require an allowed origin. See
-[Browsers and CORS](./mecated.md#browsers-and-cors). In production, put a
+[Browsers and CORS](/operating/mecated.md#browsers-and-cors). In production, put a
 same-origin backend-for-frontend in front of `mecated` so browser JavaScript
 does not receive the server bearer token.
 
 ## Next steps
 
-- [Run mecated standalone](./mecated.md) to operate a long-running server.
+- [Run mecated standalone](/operating/mecated.md) to operate a long-running server.
 - [Connect an application](/building/typescript-sdk/connect.md) with the
   TypeScript SDK.
 - [Start and resume sessions](/features/start-and-resume-sessions.md) through

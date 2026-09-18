@@ -91,4 +91,4 @@ Handle typed errors according to the action your application can take:
 
 - [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md)
 - [Feature availability](/features/capability-matrix.md)
-- [Drive Mecatl through gRPC or HTTP](/operating/grpc-http.md)
+- [Drive Mecatl through gRPC or HTTP](/building/grpc-http.md)

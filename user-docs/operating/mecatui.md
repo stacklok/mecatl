@@ -85,6 +85,6 @@ without a version uses embedded VCS metadata when available, or `dev` otherwise.
 
 - [Run mecated standalone](mecated.md) to connect `mecatui` to a separate
   server.
-- [Connect with gRPC or HTTP](grpc-http.md) to understand the client transport.
+- [Connect with gRPC or HTTP](/building/grpc-http.md) to understand the client transport.
 - [Permissions and guardrails](/features/permissions-and-posture.md) to
   configure posture and workspace trust.

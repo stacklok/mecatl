@@ -37,7 +37,7 @@ Embed the Go engine or connect your application with the TypeScript SDK.
   engine, TypeScript SDK, and extension points.
 - **Understand a capability:** [capability guides](/features/index.md) explain
   shared behavior and where each capability is available.
-- **Install or verify Mecatl:** [Install Mecatl](/install.md) covers release
-  archives, checksums, signatures, deployment artifacts, and source builds.
+- **Install or verify Mecatl:** [Install and verify Mecatl](/install.md) covers release
+  archives, checksums, signatures, and source builds.
 - **Look up exact details:** [reference](/reference/index.md) covers
   configuration and gRPC and HTTP/SSE contracts.

@@ -12,6 +12,11 @@
       "permanent": true
     },
     {
+      "source": "/docs/operating/grpc-http",
+      "destination": "/docs/building/grpc-http",
+      "permanent": true
+    },
+    {
       "source": "/docs/building/deployment/:path*",
       "destination": "/docs/operating/:path*",
       "permanent": true

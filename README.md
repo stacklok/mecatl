@@ -42,7 +42,7 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 | Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/operating/mecated) |
 | Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/operating/mecak8s) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
-| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/operating/grpc-http) |
+| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/grpc-http) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
 | Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/embed-engine) |
 
@@ -60,36 +60,8 @@ brew install stacklok/tap/mecatl
 
 </details>
 
-<details>
-<summary><b>Conda</b></summary>
-
-```sh
-conda install -c conda-forge mecatl
-```
-
-</details>
-<details>
-<summary><b>Mamba</b></summary>
-
-```sh
-mamba install -c conda-forge mecatl
-```
-
-</details>
-
-<details>
-<summary><b>Pixi</b></summary>
-
-```sh
-pixi add mecatl
-```
-
-</details>
-
-Every release also attaches macOS and Linux archives (amd64 and arm64) with
-checksums, cosign signature bundles, SBOMs, and build provenance. See
-[Install Mecatl](https://mecatl.dev/docs/install) for archive verification, the
-container images, and the from-source path. `mecademo`, `mecatequi`, and
+For Conda-forge, release archives, verification, and source builds, see
+[Install and verify Mecatl](https://mecatl.dev/docs/install). `mecademo`, `mecatequi`, and
 `mecak8s` are not in the formulae — build them from a checkout with
 `task build`.
 
@@ -166,7 +138,7 @@ For an embedded deployment, see the
 
 - [Mecatl documentation](https://mecatl.dev/docs/intro) for user guides and
   deployment information.
-- [Client integration guide](https://mecatl.dev/docs/operating/grpc-http)
+- [Client integration guide](https://mecatl.dev/docs/building/grpc-http)
   for gRPC and HTTP/SSE clients.
 - [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) for
   Node.js, Bun, and browser applications.

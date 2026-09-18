@@ -1,16 +1,17 @@
 ---
 sidebar_position: 3
-title: Install Mecatl
+title: Install and verify Mecatl
 description:
-  Install the mecatui client and the mecated server with Homebrew, a signed
-  release archive, or a source build.
+  Install Mecatl releases with Homebrew or a signed archive, then verify the
+  artifact or build from source.
 ---
 
-# Install Mecatl
+# Install and verify Mecatl
 
-Install and verify Mecatl release artifacts from this page. For the fastest path
-to a first local session, follow [Run your first local session](/mecatui/getting-started.md)
-after installing `mecatui`.
+Install released Mecatl executables and verify downloaded artifacts on this
+page. For the fastest path to a first local session, follow
+[Run your first local session](/mecatui/getting-started.md) after installing
+`mecatui`.
 
 ## Homebrew
 
@@ -38,6 +39,18 @@ brew uninstall mecatl
 Homebrew links the executables into `$(brew --prefix)/bin`. For an absolute
 path, use `$(brew --prefix mecatl)/bin/mecatui` or
 `$(brew --prefix mecatl)/bin/mecated`.
+
+## Conda-forge
+
+If you manage your environment with Conda, install the
+[Mecatl package on Conda-forge](https://anaconda.org/conda-forge/mecatl) with
+your preferred package manager:
+
+|Package manager|Command|
+|-|-|
+|Conda|`conda install -c conda-forge mecatl`|
+|Mamba|`mamba install -c conda-forge mecatl`|
+|Pixi|`pixi add mecatl`|
 
 ## Release archives
 
@@ -68,19 +81,6 @@ gh attestation verify mecatl_<VERSION>_darwin_arm64.tar.gz --repo stacklok/mecat
 
 The Cosign command verifies that a GitHub Actions workflow in the
 `stacklok/mecatl` repository signed the archive.
-
-## Deployment artifacts
-
-Deployment-specific guides own the images, charts, and operational instructions:
-
-- [Run mecated standalone](/operating/mecated.md) for the general
-  server image and server operation.
-- [Run the mecatui container image](/operating/mecatui.md) for the
-  importable terminal-client image.
-- [Deploy mecak8s](/operating/mecak8s.md) for the Kubernetes image
-  and Helm chart.
-- [Use mecatequi in CI](/operating/mecatequi.md) for the one-shot CI
-  runtime.
 
 ## Build from source
 
