@@ -99,6 +99,21 @@ offered, or deny it. Long arguments can be scrolled; `ctrl+t` opens a
 full-screen view when needed. Mouse buttons activate the same choices as their
 displayed keys.
 
+## Get editor notifications
+
+Run `mecatui` in a terminal provided by a supported editor and the editor tells
+you when the agent needs an approval and when a run ends. This needs no
+configuration.
+
+`mecatui` reports three lifecycle points to the editor's agent hook: the start of
+a turn, an approval request from the main session, and the run's terminal state.
+The editor decides how to present them. Approval requests raised by a subagent
+stay out of the report, so delegated work does not compete with the main session
+for your attention.
+
+Superset provides this integration. In any other terminal, `mecatui` skips the
+report and its behavior is unchanged.
+
 ## Complete browser authorization
 
 When workspace-service enrollment or an MCP tool opens a browser, complete the
