@@ -237,6 +237,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Draft-aware session inventory](draft-aware-session-inventory.md) — durable,
   content-free draft/active/unknown activity metadata, server-filtered Chats and
   Drafts pages, and active-only automatic latest resume. Status: proposed.
+- [Session configuration generations](session-configuration-generations.md) - activates explicit
+  model and effort replacements through one-time exact predecessor edges after target readiness,
+  backed by bounded fail-visible inventory and presence-aware driver compatibility. Status: proposed.
 - [Synthetic user-prompt replay](synthetic-user-prompt-replay.md) — emission-time
   origin metadata for durable user-prompt events, shared genuine-user classification,
   and mecatui notice rendering for harness-authored replay messages. Status: proposed.

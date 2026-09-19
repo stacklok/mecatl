@@ -4,6 +4,7 @@
 - Date: 2026-07-21
 - Scope: `ForkSession` wire/service gains an optional `reasoning_effort` override; mecatui `/effort` switches effort by fork-resume instead of a transcript-wiping restart
 - Supersedes: the confirm-overlay interim shipped under issue #246 (superseded in place — that path is removed, not layered)
+- Superseded by: [ADR 0343](./0343-session-configuration-generations.md) only for the replacement session's durable generation identity
 
 ## Context
 
