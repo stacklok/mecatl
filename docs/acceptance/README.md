@@ -358,6 +358,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio bootstrap](studio-bootstrap.md) — bring the Studio web UI into the repository as a self-contained `apps/` skeleton over the published SDK: BFF runtime modes, hardened OIDC browser sessions, a one-origin multi-stage image, CI, and the `publish-studio` release job. Status: landed in the implementation candidate; authoritative on merge.
 
+- [Mecatl Studio chat](studio-chat.md) — the first Studio feature layer: session inventory and lifecycle routes, the run SSE union that preserves unknown SDK kinds, run controls addressed to the exact durable run, and the chat workspace with its ported behaviour tests. Status: proposed.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.
