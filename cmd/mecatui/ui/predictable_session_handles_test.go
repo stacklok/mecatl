@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
 func TestPredictableSessionHandles_Scenario1_SharedNormalHandle(t *testing.T) {
@@ -140,7 +140,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		if input.Version != 3 || input.Session.Handle != want {
 			t.Fatalf("status protocol = v%d handle %q, want v3 %q", input.Version, input.Session.Handle, want)
 		}
-		if _, exists := reflect.TypeFor[statusline.Session]().FieldByName("Digest"); exists {
+		if _, exists := reflect.TypeFor[customization.Session]().FieldByName("Digest"); exists {
 			t.Fatal("status protocol retains removed Session.Digest alias")
 		}
 		wire, err := json.Marshal(input)
@@ -150,7 +150,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		if !strings.Contains(string(wire), `"Handle":`) || strings.Contains(string(wire), `"Digest"`) {
 			t.Fatalf("status command JSON does not expose only Session.Handle: %s", wire)
 		}
-		source := statusline.NewDefaultSource(0)
+		source := customization.NewDefaultSource(0)
 		t.Cleanup(func() { _ = source.Close(context.Background()) })
 		input.Terminal.HeaderAvailCols = 100
 		source.Submit(input)

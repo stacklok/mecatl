@@ -1,4 +1,4 @@
-package statusline
+package customization
 
 import (
 	"bytes"

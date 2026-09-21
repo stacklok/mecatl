@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
 type fakeServerInfo struct {
@@ -176,10 +176,10 @@ func TestDiagnosticsCommandSendsSafeRemoteReport(t *testing.T) {
 
 func TestDiagnosticsCommandIncludesSafeStatusCommandState(t *testing.T) {
 	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
-	m.deps.StatusSource = diagnosticStatusSourceFake{diagnostics: statusline.CommandDiagnostics{
-		Header: statusline.CommandSurfaceStale,
-		Footer: statusline.CommandSurfaceDefault,
-		Error:  statusline.CommandErrorInvalidStatusML,
+	m.deps.StatusSource = diagnosticStatusSourceFake{diagnostics: customization.CommandDiagnostics{
+		Header: customization.CommandSurfaceStale,
+		Footer: customization.CommandSurfaceDefault,
+		Error:  customization.CommandErrorInvalidStatusML,
 	}}
 
 	_, cmd, handled := m.dispatchBareBuiltin("/diagnostics")
@@ -198,7 +198,7 @@ func TestDiagnosticsCommandIncludesSafeStatusCommandState(t *testing.T) {
 		}
 	}
 
-	m.deps.StatusSource = diagnosticStatusSourceFake{diagnostics: statusline.CommandDiagnostics{Header: "raw failure: secret", Footer: "../../private", Error: "command args --token=secret"}}
+	m.deps.StatusSource = diagnosticStatusSourceFake{diagnostics: customization.CommandDiagnostics{Header: "raw failure: secret", Footer: "../../private", Error: "command args --token=secret"}}
 	report := m.diagnosticsReport("", "", "", "", "embedded")
 	if strings.Contains(report, "secret") || strings.Contains(report, "private") || !strings.Contains(report, "status command header: default") || !strings.Contains(report, "status command error: failed") {
 		t.Fatalf("unsafe status command diagnostics = %q", report)
@@ -206,14 +206,14 @@ func TestDiagnosticsCommandIncludesSafeStatusCommandState(t *testing.T) {
 }
 
 type diagnosticStatusSourceFake struct {
-	diagnostics statusline.CommandDiagnostics
+	diagnostics customization.CommandDiagnostics
 }
 
-func (diagnosticStatusSourceFake) Submit(statusline.Input)     {}
-func (diagnosticStatusSourceFake) Changed() <-chan struct{}    { return nil }
-func (diagnosticStatusSourceFake) Latest() statusline.Result   { return statusline.Result{} }
-func (diagnosticStatusSourceFake) Close(context.Context) error { return nil }
-func (f diagnosticStatusSourceFake) CommandDiagnostics() statusline.CommandDiagnostics {
+func (diagnosticStatusSourceFake) Submit(customization.Input)   {}
+func (diagnosticStatusSourceFake) Changed() <-chan struct{}     { return nil }
+func (diagnosticStatusSourceFake) Latest() customization.Result { return customization.Result{} }
+func (diagnosticStatusSourceFake) Close(context.Context) error  { return nil }
+func (f diagnosticStatusSourceFake) CommandDiagnostics() customization.CommandDiagnostics {
 	return f.diagnostics
 }
 

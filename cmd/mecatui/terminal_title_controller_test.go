@@ -8,14 +8,14 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
 func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 	var output lockedBuffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}}"))
 
-	controller.Set(statusline.Input{Session: statusline.Session{Title: "first"}, MainAgent: statusline.MainAgent{State: "idle"}})
+	controller.Set(customization.Input{Session: customization.Session{Title: "first"}, MainAgent: customization.MainAgent{State: "idle"}})
 	if got := output.String(); got != "" {
 		t.Fatalf("View callback wrote before a Bubble Tea frame: %q", got)
 	}
@@ -25,7 +25,7 @@ func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 	if got := output.String(); got != "\x1b]0;first · idle\aframe one" {
 		t.Fatalf("title was not flushed immediately before first frame: %q", got)
 	}
-	controller.Set(statusline.Input{Session: statusline.Session{Title: "second"}, MainAgent: statusline.MainAgent{State: "thinking"}})
+	controller.Set(customization.Input{Session: customization.Session{Title: "second"}, MainAgent: customization.MainAgent{State: "thinking"}})
 	if got := output.String(); got != "\x1b]0;first · idle\aframe one" {
 		t.Fatalf("changed title wrote before the next frame: %q", got)
 	}
@@ -41,7 +41,7 @@ func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			controller.Set(statusline.Input{Session: statusline.Session{Title: "concurrent"}, MainAgent: statusline.MainAgent{State: "thinking"}})
+			controller.Set(customization.Input{Session: customization.Session{Title: "concurrent"}, MainAgent: customization.MainAgent{State: "thinking"}})
 		}()
 		go func() {
 			defer wg.Done()
@@ -85,7 +85,7 @@ func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing
 	t.Run("deduplicates and clears after a title", func(t *testing.T) {
 		var output bytes.Buffer
 		controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
-		input := statusline.Input{Session: statusline.Session{Title: "same"}}
+		input := customization.Input{Session: customization.Session{Title: "same"}}
 		controller.Set(input)
 		_, _ = controller.Write([]byte("frame one"))
 		controller.Set(input)
@@ -105,7 +105,7 @@ func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing
 		for _, enabled := range []bool{true, false} {
 			var output bytes.Buffer
 			controller := newTerminalTitleController(&output, enabled, mustTitleRenderer(t, "{{.Session.Title}}"))
-			controller.Set(statusline.Input{Session: statusline.Session{Title: "must-not-emit-when-disabled"}})
+			controller.Set(customization.Input{Session: customization.Session{Title: "must-not-emit-when-disabled"}})
 			if _, err := controller.Write([]byte("frame")); err != nil {
 				t.Fatalf("write enabled=%t: %v", enabled, err)
 			}
@@ -126,7 +126,7 @@ func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing
 func TestTerminalTitleCleanupAfterGracefulCancellation(t *testing.T) {
 	var output bytes.Buffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
-	controller.Set(statusline.Input{Session: statusline.Session{Title: "running"}})
+	controller.Set(customization.Input{Session: customization.Session{Title: "running"}})
 	if _, err := controller.Write([]byte("frame")); err != nil {
 		t.Fatalf("write running frame: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestTerminalTitleCleanupAfterGracefulCancellation(t *testing.T) {
 
 func TestTerminalTitleWriteErrorIsReturnedWithFrameWrite(t *testing.T) {
 	controller := newTerminalTitleController(failingTitleWriter{}, true, mustTitleRenderer(t, "{{.Session.Title}}"))
-	controller.Set(statusline.Input{Session: statusline.Session{Title: "running"}})
+	controller.Set(customization.Input{Session: customization.Session{Title: "running"}})
 
 	if _, err := controller.Write([]byte("frame")); !errors.Is(err, errTitleWrite) {
 		t.Fatalf("Write() error = %v, want title output error", err)
@@ -164,7 +164,7 @@ func TestADR_0344_Scenario1_SanitizesRenderedTitle(t *testing.T) {
 
 	var output bytes.Buffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
-	controller.Set(statusline.Input{Session: statusline.Session{Title: " one\x1b]2;injected\a\u007f\u0085\u2000two\u200b\nthree\t " + strings.Repeat("x", 512)}})
+	controller.Set(customization.Input{Session: customization.Session{Title: " one\x1b]2;injected\a\u007f\u0085\u2000two\u200b\nthree\t " + strings.Repeat("x", 512)}})
 	_, _ = controller.Write([]byte("frame"))
 
 	got := output.String()
@@ -198,7 +198,7 @@ func TestADR_0344_Scenario2_ExplicitDisablementPrecedence(t *testing.T) {
 				t.Fatalf("build client presentation: %v", err)
 			}
 			t.Cleanup(func() { _ = status.Close(t.Context()) })
-			title.Set(statusline.Input{})
+			title.Set(customization.Input{})
 			if _, err := title.Write([]byte("frame")); err != nil {
 				t.Fatalf("write frame: %v", err)
 			}
@@ -218,7 +218,7 @@ func TestADR_0344_Scenario2_ExplicitDisablementPrecedence(t *testing.T) {
 }
 
 func TestADR_0344_Scenario3_TitleAndCustomHandle(t *testing.T) {
-	input := statusline.Input{Session: statusline.Session{Title: "Fix tests", Handle: "sess-123"}, MainAgent: statusline.MainAgent{State: "running_tool", Activity: "go test"}}
+	input := customization.Input{Session: customization.Session{Title: "Fix tests", Handle: "sess-123"}, MainAgent: customization.MainAgent{State: "running_tool", Activity: "go test"}}
 	if got := renderTitle(t, "{{.Session.Title}} · {{.MainAgent.Activity}} · mecatui", input); got != "Fix tests · go test · mecatui" {
 		t.Fatalf("default-style title = %q", got)
 	}
@@ -231,7 +231,7 @@ func TestADR_0344_Scenario3_DebugTitle(t *testing.T) {
 	var output bytes.Buffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}} · mecatui"))
 	controller.debug = true
-	controller.Set(statusline.Input{Session: statusline.Session{Title: "debug target", Handle: "sess-123"}, MainAgent: statusline.MainAgent{State: "connecting"}})
+	controller.Set(customization.Input{Session: customization.Session{Title: "debug target", Handle: "sess-123"}, MainAgent: customization.MainAgent{State: "connecting"}})
 	_, _ = controller.Write([]byte("frame"))
 	if got := output.String(); !strings.Contains(got, "\x1b]0;DEBUG debug target · connecting · mecatui\a") || strings.Contains(got, "sess-123") {
 		t.Fatalf("debug title = %q", got)
@@ -241,7 +241,7 @@ func TestADR_0344_Scenario3_DebugTitle(t *testing.T) {
 func TestADR_0344_Scenario3_LocalAndRemotePresentation(t *testing.T) {
 	settings := defaultClientSettings()
 	settings.TerminalTitle.Template = "{{.Session.Title}} · {{.MainAgent.State}}"
-	input := statusline.Input{Session: statusline.Session{Title: "shared", Handle: "sess-123"}, MainAgent: statusline.MainAgent{State: "idle"}, Workspace: statusline.Workspace{Path: "/private/workspace"}}
+	input := customization.Input{Session: customization.Session{Title: "shared", Handle: "sess-123"}, MainAgent: customization.MainAgent{State: "idle"}, Workspace: customization.Workspace{Path: "/private/workspace"}}
 
 	outputs := make([]string, 0, 2)
 	for _, mode := range []string{"embedded", "connect"} {
@@ -265,22 +265,22 @@ func TestADR_0344_Scenario3_LocalAndRemotePresentation(t *testing.T) {
 		t.Fatalf("explicit title workspace path = %q, want %q", got, want)
 	}
 	for _, source := range []string{"{{contextMeter .Context}}", "{{contextMeterCompact .Context}}", "{{contextMeterMinimal .Context}}"} {
-		if _, err := statusline.NewTitleRenderer(source); err == nil {
+		if _, err := customization.NewTitleRenderer(source); err == nil {
 			t.Fatalf("title template unexpectedly accepts status-only function in %q", source)
 		}
 	}
 }
 
-func mustTitleRenderer(t *testing.T, source string) *statusline.TitleRenderer {
+func mustTitleRenderer(t *testing.T, source string) *customization.TitleRenderer {
 	t.Helper()
-	renderer, err := statusline.NewTitleRenderer(source)
+	renderer, err := customization.NewTitleRenderer(source)
 	if err != nil {
 		t.Fatalf("new title renderer: %v", err)
 	}
 	return renderer
 }
 
-func renderTitle(t *testing.T, source string, input statusline.Input) string {
+func renderTitle(t *testing.T, source string, input customization.Input) string {
 	t.Helper()
 	got, err := mustTitleRenderer(t, source).Render(input)
 	if err != nil {

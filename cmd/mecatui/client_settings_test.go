@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -119,7 +119,7 @@ func TestStatusCustomizationCommandIntervalReachesCommandSource(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 
-	source.Submit(statusline.Input{Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	source.Submit(customization.Input{Terminal: customization.Terminal{FooterAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(2 * time.Second):
@@ -484,13 +484,13 @@ func TestStatusCustomizationCommandPassthroughEnvReachesExecution(t *testing.T) 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("TMUX", "configured-tmux")
 	writeSettings(t, "mecatui", "status_customization:\n  command:\n    executable: /bin/sh\n    args: [-c, 'read input; test \"$TMUX\" = \"$1\" && printf \"<footer><text>tmux available</text></footer>\"', --, configured-tmux]\n    passthrough_env: [TMUX]\n")
-	customization, err := readStatusCustomization()
+	statusConfig, err := readStatusCustomization()
 	if err != nil {
 		t.Fatalf("read status customization: %v", err)
 	}
-	source := newSource(customization)
+	source := newSource(statusConfig)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(statusline.Input{Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	source.Submit(customization.Input{Terminal: customization.Terminal{FooterAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(time.Second):
@@ -520,7 +520,7 @@ func TestADR_0344_Scenario2_DefaultPresentationOmitsHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build shipped title renderer: %v", err)
 	}
-	got, err := title.Render(statusline.Input{Session: statusline.Session{Handle: "session-123"}})
+	got, err := title.Render(customization.Input{Session: customization.Session{Handle: "session-123"}})
 	if err != nil {
 		t.Fatalf("render shipped title: %v", err)
 	}
@@ -528,9 +528,9 @@ func TestADR_0344_Scenario2_DefaultPresentationOmitsHandle(t *testing.T) {
 		t.Fatalf("shipped title = %q, want fallback without session handle", got)
 	}
 
-	source := statusline.NewDefaultSource(0)
+	source := customization.NewDefaultSource(0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(statusline.Input{Session: statusline.Session{Handle: "session-123"}, Terminal: statusline.Terminal{HeaderAvailCols: 80}})
+	source.Submit(customization.Input{Session: customization.Session{Handle: "session-123"}, Terminal: customization.Terminal{HeaderAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(time.Second):
@@ -553,7 +553,7 @@ func TestADR_0344_Scenario2_SharedTemplateProjectionAndElide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build title renderer: %v", err)
 	}
-	input := statusline.Input{Session: statusline.Session{Handle: "session-123", Title: "abcdef"}, Terminal: statusline.Terminal{HeaderAvailCols: 80}}
+	input := customization.Input{Session: customization.Session{Handle: "session-123", Title: "abcdef"}, Terminal: customization.Terminal{HeaderAvailCols: 80}}
 	if got, err := title.Render(input); err != nil || got != "session-123 abc…" {
 		t.Fatalf("custom title = %q, %v; want %q", got, err, "session-123 abc…")
 	}
@@ -574,16 +574,16 @@ func TestADR_0344_Scenario2_SharedTemplateProjectionAndElide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build wide-character renderer: %v", err)
 	}
-	if got, err := wideRenderer.Render(statusline.Input{Session: statusline.Session{Title: "界界界"}}); err != nil || got != "界界…" || ansi.StringWidth(got) > 5 {
+	if got, err := wideRenderer.Render(customization.Input{Session: customization.Session{Title: "界界界"}}); err != nil || got != "界界…" || ansi.StringWidth(got) > 5 {
 		t.Fatalf("wide elide = %q, %v (width %d), want %q within 5", got, err, ansi.StringWidth(got), "界界…")
 	}
 
-	unsafeInput := statusline.Input{Session: statusline.Session{Title: "a<b>&def"}, Terminal: statusline.Terminal{HeaderAvailCols: 80}}
+	unsafeInput := customization.Input{Session: customization.Session{Title: "a<b>&def"}, Terminal: customization.Terminal{HeaderAvailCols: 80}}
 	if got, err := mustTitleRenderer(t, "{{elide 10 .Session.Title}}").Render(unsafeInput); err != nil || got != "a<b>&def" {
 		t.Fatalf("title elide must measure visible text and preserve it as plain text: %q, %v", got, err)
 	}
 
-	if _, err := statusline.NewTitleRenderer("{{contextMeter .Context}}"); err == nil {
+	if _, err := customization.NewTitleRenderer("{{contextMeter .Context}}"); err == nil {
 		t.Fatal("title template must not expose StatusML-producing contextMeter")
 	}
 
@@ -599,7 +599,7 @@ func TestADR_0344_Scenario2_SharedTemplateProjectionAndElide(t *testing.T) {
 		t.Fatalf("status template elide must preserve escaped visible text = %q, want %q", got, "a<b…")
 	}
 
-	escapedSource := statusline.NewTemplateSource(statusline.TemplateSet{Header: statusline.SurfaceTemplates{
+	escapedSource := customization.NewTemplateSource(customization.TemplateSet{Header: customization.SurfaceTemplates{
 		Full:    "<header><text>{{elide 10 .Session.Title}}</text></header>",
 		Compact: "<header><text>{{elide 10 .Session.Title}}</text></header>",
 		Minimal: "<header><text>{{elide 10 .Session.Title}}</text></header>",
@@ -633,13 +633,13 @@ func TestADR_0344_Scenario2_InvalidConfigurationFailsActionably(t *testing.T) {
 	}
 
 	t.Run("data-dependent runtime failure is safe and actionable", func(t *testing.T) {
-		renderer, err := statusline.NewTitleRenderer("{{if .Session.Title}}{{index .Session.Title 99}}{{else}}mecatui{{end}}")
+		renderer, err := customization.NewTitleRenderer("{{if .Session.Title}}{{index .Session.Title 99}}{{else}}mecatui{{end}}")
 		if err != nil {
 			t.Fatalf("build conditionally valid title renderer: %v", err)
 		}
 		var output bytes.Buffer
 		controller := newTerminalTitleController(&output, true, renderer)
-		controller.Set(statusline.Input{Session: statusline.Session{Title: "short"}})
+		controller.Set(customization.Input{Session: customization.Session{Title: "short"}})
 		_, err = controller.Write([]byte("frame"))
 		if err == nil || !strings.Contains(err.Error(), "terminal_title.template") || !strings.Contains(err.Error(), "index out of range") {
 			t.Fatalf("runtime title write error = %v, want field and actionable cause", err)
@@ -665,7 +665,7 @@ func TestADR_0344_Scenario2_CommandStatusCannotControlTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build title renderer: %v", err)
 	}
-	got, err := title.Render(statusline.Input{Session: statusline.Session{Title: "trusted title"}})
+	got, err := title.Render(customization.Input{Session: customization.Session{Title: "trusted title"}})
 	if err != nil {
 		t.Fatalf("render title: %v", err)
 	}

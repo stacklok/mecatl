@@ -1,4 +1,4 @@
-package statusline
+package customization
 
 // defaultTemplateSet contains the status and terminal-title templates shipped
 // with mecatui. Keep these defaults together so every presentation surface has

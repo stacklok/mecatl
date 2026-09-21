@@ -38,8 +38,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
-	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
@@ -128,16 +128,16 @@ func validateRunConfig(cfg config) error {
 }
 
 // buildStatusSource constructs a source from already-validated customization.
-func buildStatusSource(customization statusCustomization) statusline.Source {
-	return newSource(customization)
+func buildStatusSource(statusConfig statusCustomization) customization.Source {
+	return newSource(statusConfig)
 }
 
 // buildClientPresentation constructs status and title rendering from one validated
 // client-settings snapshot. Both embedded and connect modes use this same path.
-func buildClientPresentation(cfg config, settings clientSettings, output io.Writer) (statusline.Source, *terminalTitleController, error) {
-	customization := shippedStatusCustomization()
+func buildClientPresentation(cfg config, settings clientSettings, output io.Writer) (customization.Source, *terminalTitleController, error) {
+	statusConfig := shippedStatusCustomization()
 	if settings.StatusCustomization != nil {
-		customization = *settings.StatusCustomization
+		statusConfig = *settings.StatusCustomization
 	}
 	renderer, err := newTitleRenderer(settings.TerminalTitle)
 	if err != nil {
@@ -145,7 +145,7 @@ func buildClientPresentation(cfg config, settings clientSettings, output io.Writ
 	}
 	controller := newTerminalTitleController(output, terminalTitleEnabled(cfg, settings.TerminalTitle), renderer)
 	controller.debug = cfg.debugTarget != ""
-	return buildStatusSource(customization), controller, nil
+	return buildStatusSource(statusConfig), controller, nil
 }
 
 func newMecatuiProgram(ctx context.Context, deps ui.Deps, title *terminalTitleController) *tea.Program {

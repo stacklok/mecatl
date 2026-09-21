@@ -12,8 +12,8 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/parser"
 
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
@@ -41,11 +41,11 @@ type terminalTitleSettingsYAML struct {
 }
 
 func shippedTerminalTitleSettings() terminalTitleSettings {
-	return terminalTitleSettings{Enabled: true, Template: statusline.DefaultTitleTemplate()}
+	return terminalTitleSettings{Enabled: true, Template: customization.DefaultTitleTemplate()}
 }
 
-func newTitleRenderer(settings terminalTitleSettings) (*statusline.TitleRenderer, error) {
-	return statusline.NewTitleRenderer(settings.Template)
+func newTitleRenderer(settings terminalTitleSettings) (*customization.TitleRenderer, error) {
+	return customization.NewTitleRenderer(settings.Template)
 }
 
 func defaultClientSettings() clientSettings {
@@ -173,7 +173,7 @@ func readClientSettings() (clientSettings, error) {
 	}
 	status, err := decodeStatusCustomization(raw.StatusCustomization)
 	if err != nil {
-		var passthroughErr *statusline.PassthroughEnvError
+		var passthroughErr *customization.PassthroughEnvError
 		if errors.As(err, &passthroughErr) {
 			return clientSettings{}, fmt.Errorf("parsing %s: %w", path, err)
 		}
@@ -241,27 +241,27 @@ func readClientKeymap() (map[string][]string, bool, error) {
 func shippedStatusCustomization() statusCustomization { return statusCustomization{} }
 
 // newSource adapts validated settings into the source.
-func newSource(customization statusCustomization) statusline.Source {
-	if customization.Command != nil {
+func newSource(statusConfig statusCustomization) customization.Source {
+	if statusConfig.Command != nil {
 		launchDir, _ := os.Getwd()
-		return statusline.NewCommandSource(statusline.Command{
-			Path: customization.Command.Path, Args: customization.Command.Args, PassthroughEnv: customization.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: customization.Interval,
+		return customization.NewCommandSource(customization.Command{
+			Path: statusConfig.Command.Path, Args: statusConfig.Command.Args, PassthroughEnv: statusConfig.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: statusConfig.Interval,
 		})
 	}
-	if customization.Templates == nil {
-		return statusline.NewDefaultSource(customization.Interval)
+	if statusConfig.Templates == nil {
+		return customization.NewDefaultSource(statusConfig.Interval)
 	}
-	return statusline.NewTemplateSource(statusline.TemplateSet{
-		Header: toSurfaceTemplates(customization.Templates.Header),
-		Footer: toSurfaceTemplates(customization.Templates.Footer),
-	}, customization.Interval)
+	return customization.NewTemplateSource(customization.TemplateSet{
+		Header: toSurfaceTemplates(statusConfig.Templates.Header),
+		Footer: toSurfaceTemplates(statusConfig.Templates.Footer),
+	}, statusConfig.Interval)
 }
 
-func toSurfaceTemplates(value *statusSurfaceTemplates) statusline.SurfaceTemplates {
+func toSurfaceTemplates(value *statusSurfaceTemplates) customization.SurfaceTemplates {
 	if value == nil {
-		return statusline.SurfaceTemplates{}
+		return customization.SurfaceTemplates{}
 	}
-	return statusline.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
+	return customization.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
 }
 
 // readStatusCustomization reads only the strict mecatui client settings file.
@@ -288,7 +288,7 @@ func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomizati
 		return nil, errors.New("template source has no surface")
 	}
 	if raw.Command != nil {
-		command := statusline.Command{
+		command := customization.Command{
 			Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
 		}
 		if err := command.ValidatePassthroughEnv(); err != nil {

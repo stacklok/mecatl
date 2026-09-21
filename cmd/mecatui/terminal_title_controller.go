@@ -7,7 +7,7 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
 const terminalTitleRunes = 160
@@ -19,7 +19,7 @@ type terminalTitleController struct {
 	mu        sync.Mutex
 	output    io.Writer
 	enabled   bool
-	renderer  *statusline.TitleRenderer
+	renderer  *customization.TitleRenderer
 	pending   string
 	last      string
 	wrote     bool
@@ -28,7 +28,7 @@ type terminalTitleController struct {
 	writeErr  error
 }
 
-func newTerminalTitleController(output io.Writer, enabled bool, renderer *statusline.TitleRenderer) *terminalTitleController {
+func newTerminalTitleController(output io.Writer, enabled bool, renderer *customization.TitleRenderer) *terminalTitleController {
 	return &terminalTitleController{output: output, enabled: enabled, renderer: renderer}
 }
 
@@ -39,7 +39,7 @@ func terminalTitleEnabled(cfg config, settings terminalTitleSettings) bool {
 	return settings.Enabled
 }
 
-func (c *terminalTitleController) Set(input statusline.Input) {
+func (c *terminalTitleController) Set(input customization.Input) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.enabled || c.renderErr != nil || c.writeErr != nil {

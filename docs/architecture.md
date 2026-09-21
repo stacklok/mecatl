@@ -928,7 +928,7 @@ unclaimed events reach the Bubbles textarea. The default action map therefore le
 previous line; Agents, Effort, and MCP Prompts use `f6`, `f7`, and `f8`.
 
 Its local status customization is a separate
-client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
+client-owned seam: `cmd/mecatui/customization.Source` receives display-safe `Input`
 snapshots from the UI and publishes latest semantic `Result` spans. It owns
 responsive template evaluation or a direct local executable, refresh and
 cancellation; the UI owns theme resolution, renderer chrome, clipping, and

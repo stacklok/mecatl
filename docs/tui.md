@@ -30,7 +30,7 @@ remote server: that server's operator owns its provider records.
 
 Mecatui reads `status_customization:` only from the client-owned
 `$XDG_CONFIG_HOME/mecatui/settings.yaml`. It composes a UI-agnostic
-`statusline.Source`: the UI submits display-safe `Input` snapshots and listens for
+`customization.Source`: the UI submits display-safe `Input` snapshots and listens for
 latest `Result` semantic spans, while the source owns template evaluation or the
 optional local direct executable, refresh, cancellation, and fallback. The source
 returns no terminal rendering; the UI applies the active theme, preserves its
