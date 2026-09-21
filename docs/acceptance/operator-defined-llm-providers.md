@@ -135,7 +135,7 @@ follows the live-catalog fallback and capability-truth discipline in
   - verify: `TestOperatorDefinedLLMProviders_Scenario4_ListingFallback`
 - AC4.4: unknown live model metadata never overclaims image, audio, reasoning, output, or
   context-window capabilities.
-  - verify: `TestInvariant_custom_provider_live_metadata_conservative`
+  - verify: `TestInvariant_custom_provider_omitted_live_modalities_use_adapter`
 
 ---
 
@@ -240,7 +240,7 @@ session rehydration.
 - `TestADR_0238_BuiltinOverrideAllowlist`
 - `TestInvariant_custom_provider_authfile_strict`
 - `TestInvariant_custom_provider_has_no_builtin_private_options`
-- `TestInvariant_custom_provider_live_metadata_conservative`
+- `TestInvariant_custom_provider_omitted_live_modalities_use_adapter`
 - `TestOperatorDefinedLLMProviders_Scenario1_ValidDefinition`
 - `TestOperatorDefinedLLMProviders_Scenario2_SeparateAuthFileKeys`
 - `TestOperatorDefinedLLMProviders_Scenario3_DeclaredFlavorSelectsAdapter`
