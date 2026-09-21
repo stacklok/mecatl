@@ -556,8 +556,29 @@ turn routing off, set `disabled: true` in the subtree or pass
 `--subagent-model-router` / `=true` is a harmless no-op (it still parses but neither
 enables nor disables — the router stays governed by the taxonomy). A project-tier
 `models.router:` is **stripped with a WARN**
-(operator-tier only). The classifier itself runs on the `router` model slot (default
-`cheap` tier; an operator `classifier-slot` overrides) — a tiny one-turn call.
+(operator-tier only). The default `backend: llm` classifier itself runs on the
+`router` model slot (default `cheap` tier; an operator `classifier-slot`
+overrides) as a tiny one-turn call.
+
+**Jev backend (ADR 0350).** An operator can instead set `backend: jev`. Composition
+constructs one `internal/adapter/jevrouter` Typesafe client and one eight-slot
+semaphore per Build, then shares them across the shared and per-session engine
+paths. Jev receives the delegated task as System One state and one fixed Choice
+question whose criteria are the operator's category names and descriptions. The
+adapter accepts only an exact offered category and maps that category through the
+same local alias-to-model resolver as the LLM classifier. It does not enter the
+provider registry or change the engine callback.
+
+Active Jev requires the environment-only `TYPESAFE_API_KEY`. Its defaults are
+model `jev-1.13.0` and no confidence filter. A configured confidence threshold
+makes lower-confidence choices ordinary misses. Requests queue for at most 10
+seconds, run with a 10-second request deadline and no SDK retries, carry at most
+64 KiB of measured text and 255 categories, and accept at most 1 MiB of response
+data. HTTPS is required except for loopback HTTP endpoints, and redirects are
+disabled. These transport bounds do not bound arbitrary CPU time in SDK JSON
+processing. Every failure remains fail-soft with a static miss reason; reported
+input and output usage survives hits, low-confidence misses, mapping misses, and
+protocol errors that contain validated usage.
 
 **How it fires.** For a default delegation with no per-call `model`, `fork`, or `resume`,
 the `Subagent` `run()` hook calls a composition-built classifier (`RunModelRouter`, role
@@ -617,7 +638,9 @@ deployments (it is orthogonal to the ask-review path).
 gauntlet-#7 safe) when routed; a per-classification INFO rides the existing child
 diagnostic chokepoint and a Build-once "router ACTIVE" fact narrates the config. Every
 MISS logs an INFO naming the reason (`degenerate-input`/`classifier-error`/`cancelled`/
-`bad-verdict`/`unknown-category`/`category-selector-empty`/`category-target-unresolvable`/
+`bad-verdict`/`unknown-category`/`jev-error`/`jev-invalid-response`/
+`jev-low-confidence`/`jev-over-limit`/`jev-queue-timeout`/
+`category-selector-empty`/`category-target-unresolvable`/
 `empty-model` — metadata only, issue #287); the breaker-open INFO is unchanged. The
 routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through

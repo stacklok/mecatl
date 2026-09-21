@@ -221,7 +221,9 @@ models:
     router: coder
     title: quick
   router:
-    default-category: medium
+    backend: jev
+    jev:
+      minimum-confidence: 0.5
     categories:
       - name: large
         description: Deep reasoning, architecture, and subtle concurrency bugs.
@@ -237,6 +239,19 @@ models:
         description: Work requiring visual input.
         model: image
 ```
+
+This example selects the Jev classifier backend. Set `TYPESAFE_API_KEY` in the
+server process environment. When Jev is active, Mecatl sends each eligible
+delegated task description and the configured category names and descriptions
+to Typesafe. Keep the default `backend: llm` if delegated task text must remain
+inside your configured LLM path.
+
+Jev uses model `jev-1.13.0` by default. `minimum-confidence: 0` accepts every
+valid choice; a higher value from `0` through `1` makes a lower-confidence
+choice fall back to the inherited model. The optional `base-url` must use HTTPS,
+except for loopback HTTP development endpoints. Jev routing accepts up to 255
+categories and 64 KiB of measured request text. It does not truncate an
+over-limit task or taxonomy.
 
 These mechanisms are independent:
 

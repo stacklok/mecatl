@@ -62,6 +62,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/k8slease"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -724,6 +725,20 @@ type Config struct {
 	// key (folded by foldOperatorModelRouter), documented like GuardrailsDisabled. Default
 	// false ⇒ the router is ON iff RouterCategories is non-empty.
 	RouterDisabled bool
+	// RouterBackend selects the classifier implementation: llm (default) or jev.
+	RouterBackend string
+	// RouterJevModel is the fixed System One model used by the Jev backend.
+	RouterJevModel string
+	// RouterJevBaseURL optionally overrides the Typesafe API endpoint.
+	RouterJevBaseURL string
+	// RouterJevMinimumConfidence makes lower-confidence choices abstain when non-zero.
+	RouterJevMinimumConfidence float64
+	// TypesafeAPIKey is the host-provided TYPESAFE_API_KEY credential.
+	TypesafeAPIKey                string
+	routerClassifierSlotAuthored  bool
+	routerDefaultCategoryAuthored bool
+	routerJevBlockAuthored        bool
+	jevRouter                     *jevrouter.Router
 	// RouterCategories is the operator-defined routing taxonomy (name + description +
 	// model selector per category), folded from the operator-tier `models.router:`
 	// subtree by foldOperatorModelRouter. Empty ⇒ no router. Each entry's Model selector
@@ -1844,6 +1859,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// is ON iff RouterCategories is non-empty AND !cfg.RouterDisabled. No-op
 	// (byte-identical) when no router block.
 	cfg = foldOperatorModelRouter(cfg)
+	if err := prepareJevRouter(&cfg); err != nil {
+		return nil, err
+	}
 	// Operator-YAML models.subagent (issue #288): the settings.yaml twin of
 	// --subagent-model. Fold it onto cfg.SubagentModel BEFORE normalizeSubagentModel so
 	// the YAML value goes through the SAME fail-fast validation path as the flag (a dead
@@ -7146,6 +7164,31 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 		selectorByName[c.Name] = c.Model
 	}
 	defaultCat := cfg.RouterDefaultCategory
+	if cfg.RouterBackend == "jev" {
+		router := cfg.jevRouter
+		return func(ctx context.Context, taskPrompt string) (string, string, session.Usage, string, bool) {
+			if router == nil {
+				return "", "", session.Usage{}, jevrouter.MissError, false
+			}
+			jevCategories := make([]jevrouter.Category, 0, len(cfg.RouterCategories))
+			for _, category := range cfg.RouterCategories {
+				jevCategories = append(jevCategories, jevrouter.Category{Name: category.Name, Description: category.Description})
+			}
+			category, reportedUsage, missReason, ok := router.Route(ctx, taskPrompt, jevCategories)
+			if !ok {
+				return "", "", reportedUsage, missReason, false
+			}
+			sel := strings.TrimSpace(selectorByName[category])
+			if sel == "" {
+				return "", "", reportedUsage, fmt.Sprintf("category-selector-empty (category=%s)", category), false
+			}
+			id, known := lookupModelAlias(cfg, sel)
+			if !known || id == "" {
+				return "", "", reportedUsage, fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
+			}
+			return category, id, reportedUsage, "", true
+		}
+	}
 	return func(ctx context.Context, taskPrompt string) (string, string, session.Usage, string, bool) {
 		// Build a fresh tool-less classifier engine (the askAdjudicatorDeps recipe): it
 		// compacts/counts/prompts on ITS model, fires no hooks, and carries no nested

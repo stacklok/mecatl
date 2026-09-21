@@ -1479,7 +1479,8 @@ so the start event names the fallback engine rather than a model that never ran.
 projects via `routingReasonPayload` (whitespace-collapse + 200-rune cap, mirroring
 `subagentCausePayload`) AND confines the wire value to an event-safe allowlist
 (`routingReasonEventSafe` — the `session.RoutingReason*` gates + the `RouterMiss*`
-constants + the reference composition's two static `category-*` codes): the missReason
+constants + the reference composition's two static `category-*` codes and five static
+`jev-*` codes): the missReason
 channel is OPEN to external engine compositions via the exported
 `Deps.SubagentModelRouter`, so known parenthesised composition detail is reduced to its
 static code and any other non-allowlisted reason (a provider error body, classifier
@@ -1533,9 +1534,31 @@ empty/kill-switch OFF) + `TestFoldOperatorModelRouterDropsMalformed` +
 `TestFoldOperatorModelRouterFoldsDisabled` + `TestLogModelRouterFacts` (silent/DISABLED/ACTIVE)
 + `TestRouterClassifierRunsOnSlotModel` + `TestRouterRoutesChildToClassifiedModelE2E` (asserts the
 parent→classifier→child→parent request POSITIONS) + `TestRouterOffIsByteIdenticalE2E`; `permconfig`
-`TestOperatorRouterParsed` + `TestOperatorRouterDisabledParsed` + `TestProjectRouterStrippedWithWarn`
+`TestOperatorRouterParsed` + `TestOperatorRouterDisabledParsed` + `TestADR_0350_Scenario1_OperatorAuthority`
 + `TestRouterStrictUnknownKeyRejected`; flag parse `TestParseFlagsSubagentModelRouter` (mecated,
 kill-switch) + the mecatequi router kill-switch subtest.
+
+**Jev router backend (ADR 0350).** `models.router.backend` is a strict operator-only
+`llm|jev` choice and defaults to `llm`. The nested `jev` block carries the fixed service
+model (default `jev-1.13.0`), optional base URL, and finite `[0,1]` confidence threshold.
+Schema validation always runs. Active-backend validation runs later in `prepareJevRouter`,
+after the taxonomy and kill-switch fold: inactive routing constructs no client and skips
+credentials, endpoint checks, and backend-selection conflicts. Active Jev requires
+`TYPESAFE_API_KEY` and rejects explicitly authored LLM-only classifier/default keys;
+active LLM rejects a Jev block. Presence bits distinguish authored keys from inherited
+slot defaults.
+
+`internal/adapter/jevrouter` owns one Typesafe v0.1.0 client and one eight-slot semaphore
+per Build. `buildModelRouterTask` selects that client only for Jev and keeps the existing
+callback, category-to-model alias mapping, routing eligibility, breaker, and usage fold.
+The adapter sends one fixed Choice question, validates the exact offered choice, and
+returns only static miss codes. It enforces a 10-second queue wait, a 10-second request
+deadline, no retries or redirects, a 1 MiB response limit, HTTPS except loopback HTTP,
+64 KiB of measured input text, and at most 255 categories. `TYPESAFE_API_KEY` is in both
+envscrub exact sets, so command-environment inheritance cannot restore it. The four
+command roots acquire it through `cliconfig.ResolvedCredentials`; it has no YAML or flag
+form. Guards are the twelve `TestADR_0350_*` tests across the adapter, composition, and
+configuration packages.
 
 **Extending the router to team members + Parallel branches (ADR 0034).** The router PRIMITIVE
 is family-agnostic: the ONE `parentCaps.routeTask` closure (above) is bound per run by the

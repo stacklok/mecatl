@@ -351,6 +351,20 @@
 #   # ADR 0042 — NOT a CLI enable-flag); `disabled: true` (or
 #   # --subagent-model-router=false) is the kill-switch. Operator-tier only.
 #   router:
+#     # Backend selects llm or jev. Empty input defaults to llm.
+#     backend: jev
+#     # Jev configures the explicitly selected Typesafe Jev backend. The block is rejected
+#     # with an active llm backend and ignored for active checks while routing is disabled
+#     # or has no categories.
+#     jev:
+#       # Model is the Typesafe service model. Empty input defaults to jev-1.13.0.
+#       model: jev-1.13.0
+#       # BaseURL optionally overrides the Typesafe endpoint. Active routing accepts HTTPS
+#       # or loopback HTTP; omission uses the pinned SDK endpoint.
+#       base-url: https://api.typesafe.ai
+#       # MinimumConfidence makes a valid lower-confidence answer an ordinary routing
+#       # miss. Zero disables filtering; values must be finite and in [0,1].
+#       minimum-confidence: 0.5
 #     # ClassifierSlot names the model slot the CLASSIFIER itself runs on (the tiny, cheap
 #     # one-turn classification call). Empty falls through to the `router` slot's default
 #     # tier (cheap) — the classifier is housekeeping, not the routed work.
