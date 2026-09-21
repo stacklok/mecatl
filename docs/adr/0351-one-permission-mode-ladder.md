@@ -210,6 +210,32 @@ assigns the value unchecked. So the clamp is specified as a property of ONE chok
 instead of each re-deriving it, with a structural guard that fails when a new ingress appears
 that does not reach it.
 
+**An agent definition may ATTENUATE the caller's tier. It may never raise it.** That rule is
+enforced by two independent bounds: the ingestion path parses into its own closed type
+(`agents.DefPermissionMode`) holding only the attenuating values, so a composition-bearing
+tier is UNREPRESENTABLE there rather than merely rejected, and `resolveDefMode` additionally
+takes a `min` against the caller. Unrepresentable beats validated precisely because the
+failure mode in play is someone applying a reasonable-sounding unification instruction to a
+closed set.
+
+The rule holds at every trust level, and the structural reason comes before the risk-appetite
+one. The increments defining `trusted`, `auto`, and `yolo` are ceiling-derived build-time
+knobs, so a def naming one lands in one of exactly two states: the ceiling already granted the
+build-time half, and the def has silently acquired the rest without the operator naming it for
+that agent; or the ceiling did not, and the def names a tier whose defining increment is
+withheld, which is word for word the incoherent state section 5's headless gate refuses to
+boot into. A value that is either a silent grant or a self-contradiction has no third reading.
+
+The principled line, for the honest counterargument that project permission ALLOWs are already
+a trust-gated authority grant: every other trust-gated grant here is LATTICE-BOUNDED. A project
+ALLOW is tool-and-pattern scoped, sits at `ScopeLocalProject`/`ScopeSharedProject` beneath
+`ScopeCLI` and `ScopeManaged`, stays deny-dominated, and cannot suppress a configured Ask. A
+tier name is blanket and carries no scope at all. A mode is not a rule, so it escapes the
+lattice that bounds everything else, and the precedent argues against extension rather than for
+it. Keeping the two decoupled also means a future widening of project trust, a
+`trustedWorkspaces:` glob or a remembered `trust.yaml` entry, cannot silently widen who picks
+the harness's authority tier.
+
 `session.ParsePermissionMode` is a TOKEN GRAMMAR and nothing more. A successful parse is never
 permission to use the tier. The one call site that deliberately does NOT share it is
 agent-definition frontmatter: `resolvePermissionMode` keeps its explicit allowlist of
