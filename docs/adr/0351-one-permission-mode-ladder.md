@@ -120,24 +120,29 @@ root/no-sandbox refusal are composition facts derived from the ceiling, exactly 
 per-call fold that `permpolicy.Policy.Evaluate` already performs: the plan-mode hard-deny, the
 accept-edits rules, and the allow-all rule contributed as `extra` rules.
 
-The allow-all grant is the ONE OPEN QUESTION in this decision, and it is deliberately left
-open rather than settled here. An earlier draft asserted it simply moves out of `applyPosture`
-into the per-call fold. That is wrong as written: `childRules` injects the grant at build time
-from `cfg.AllowAllTools`, all three child constructors build at `session.ModeDefault`, and
-`internal/app/allowall_test.go` pins the grant reaching BOTH the main and child rule sets as an
-explicit kill-switch, so a naive move silently drops allow-all for every subagent, parallel
-branch, and team member.
+The allow-all grant is NOT driven by the session tier, and an earlier revision of this ADR
+said it was. That was a factual error about the wiring, not a design choice. `acceptEditsRules`
+is a per-call `extra` keyed on the session's mode inside `permpolicy.Policy.Evaluate`;
+`yoloAllowAllRule` is a static rule baked into the evaluator at CONSTRUCTION via `mainRules`
+and `childRules`, keyed on `cfg.AllowAllTools`. ADR 0022 describes both as rules in the
+governance fold, which is accurate, and the earlier revision wrongly inferred that they share
+the `extra` channel. They do not, and the main policy is a process singleton:
+`mainRules` has one construction site, `buildEngine` runs once, and `sessionEngineFactory`
+receives that same policy as a parameter rather than rebuilding it.
 
-The fork is real and it decides how much of this ADR is justified. If the grant stays
-build-time from the ceiling, nothing regresses, but `trusted` and `yolo` have no effect at
-`permpolicy.Evaluate`, the only place the domain reads the value, so three of six tiers carry
-no domain meaning and holding them in a domain type is hard to defend. If it moves per-call
-and children inherit their parent's effective tier, the tiers become meaningful but child
-semantics change and allow-all becomes session-selectable, which is the shape ADR 0022
-decision 1 refused, now as a rule rather than a bypass. The acceptance plan carries the
-candidate resolutions and their costs as its one unresolved human decision; whichever is
-chosen, the binding constraint is that the grant must keep reaching child engines and must
-stay a rule inside the governance fold.
+So the per-session tier drives EXACTLY what it drives today: the plan-mode hard-deny and the
+accept-edits rules. The allow-all grant, like project ingestion and both substitution
+loosenings, is derived from the ceiling at construction. `TestAllowAllToolsBindsMainAndChildren`
+stays green untouched, and ADR 0022 decision 1's "server-wide operator posture set at process
+start" survives in the rule channel as well as the code-path channel.
+
+That correction has a consequence this ADR must state plainly rather than bury: `trusted`,
+`auto`, and `yolo` then have NO per-session behaviour whatsoever. `permpolicy.Evaluate`
+distinguishes exactly three cases, `ModePlan`, `ModeAccept`, and everything else, so a session
+at `auto` resolves identically to one at `default`. Three of the six rungs are ceiling-only
+tokens. Whether tokens with no per-session behaviour belong in a domain type and on the wire
+is the open question this ADR now carries, recorded as the acceptance plan's one unresolved
+human decision.
 
 ### 4. The guardrails admission gate
 
