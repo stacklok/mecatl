@@ -3016,11 +3016,6 @@ const routingReasonEmptyModel = "empty-model"
 const (
 	routingReasonCategorySelectorEmpty      = "category-selector-empty"
 	routingReasonCategoryTargetUnresolvable = "category-target-unresolvable"
-	routingReasonJevError                   = "jev-error"
-	routingReasonJevInvalidResponse         = "jev-invalid-response"
-	routingReasonJevLowConfidence           = "jev-low-confidence"
-	routingReasonJevOverLimit               = "jev-over-limit"
-	routingReasonJevQueueTimeout            = "jev-queue-timeout"
 )
 
 // routingReasonEventSafe is the CLOSED set of reason strings permitted to cross onto a
@@ -3044,11 +3039,6 @@ var routingReasonEventSafe = func() map[string]struct{} {
 		RouterMissCancelled,
 		RouterMissBadVerdict,
 		RouterMissUnknownCategory,
-		routingReasonJevError,
-		routingReasonJevInvalidResponse,
-		routingReasonJevLowConfidence,
-		routingReasonJevOverLimit,
-		routingReasonJevQueueTimeout,
 		routingReasonEmptyModel,
 		// The reference composition's category-mapping miss CODES. Its callback may append
 		// operator-authored detail for diagnostics; routingReasonPayload strips that detail

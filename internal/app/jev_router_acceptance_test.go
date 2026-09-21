@@ -2,21 +2,26 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	serveradapter "github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func jevTestServer(t *testing.T, choice string, confidence float64, input, output int) (*httptest.Server, *atomic.Int32) {
@@ -88,7 +93,9 @@ func TestADR_0350_Scenario1_ValidationAndDisabledPrecedence(t *testing.T) {
 	}{
 		{"missing credential", active(""), false},
 		{"explicit classifier slot", active("    classifier-slot: cheap\n"), true},
+		{"explicit empty classifier slot", active("    classifier-slot: \"\"\n"), true},
 		{"explicit default category", active("    default-category: small\n"), true},
+		{"explicit empty default category", active("    default-category: \"\"\n"), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := foldOperatorModelRouter(configWithRouterYAML(t, tc.yaml))
@@ -122,8 +129,10 @@ func TestADR_0350_Scenario1_ValidationAndDisabledPrecedence(t *testing.T) {
 	inherited := foldOperatorModelRouter(configWithRouterYAML(t, active("")))
 	inherited.TypesafeAPIKey = "secret"
 	inherited.ModelSlots = map[string]string{"router": "cheap"}
+	inherited.RouterClassifierSlot = "inherited-slot"
+	inherited.RouterDefaultCategory = "small"
 	if err := prepareJevRouter(&inherited); err != nil {
-		t.Fatalf("inherited router slot was treated as an explicit LLM-only conflict: %v", err)
+		t.Fatalf("inherited absent router defaults were treated as explicit LLM-only conflicts: %v", err)
 	}
 }
 
@@ -151,20 +160,308 @@ func TestJevBackendUsesExistingRouterCallback(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario3_CompositionParity(t *testing.T) {
-	srv, calls := jevTestServer(t, "small", 1, 4, 2)
-	cfg := jevRouterConfig(t, srv)
-	cfg.ModelAliases = map[string]string{"tiny": "resolved-model"}
-	cfg.RouterCategories[0].Model = "tiny"
-	for _, path := range []string{"shared", "per-session-no-fs"} {
-		fn := buildModelRouterTask(cfg, nil, nil, "", "")
-		category, model, usage, reason, ok := fn(context.Background(), path)
-		if !ok || category != "small" || model != "resolved-model" || reason != "" || usage != (session.Usage{InputTokens: 4, OutputTokens: 2}) {
-			t.Fatalf("%s route = %q/%q usage=%+v reason=%q ok=%v", path, category, model, usage, reason, ok)
+type jevBuildProvider struct {
+	mu              sync.Mutex
+	childModels     []string
+	classifierCalls atomic.Int32
+	callSerial      atomic.Int32
+	subagentArgs    []byte
+}
+
+func (*jevBuildProvider) Capabilities() port.ProviderCapabilities { return port.ProviderCapabilities{} }
+
+func (p *jevBuildProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	var chunks []port.Chunk
+	switch {
+	case isClassifierRequest(req):
+		p.classifierCalls.Add(1)
+		chunks = []port.Chunk{mockllm.TextChunk(`{"category":"large"}`), mockllm.DoneChunk(session.StopEndTurn)}
+	case requestHasTool(req, "Subagent") && !requestHasToolResult(req):
+		id := fmt.Sprintf("delegate-%d", p.callSerial.Add(1))
+		args := p.subagentArgs
+		if len(args) == 0 {
+			args = []byte(`{"prompt":"inspect the task"}`)
+		}
+		chunks = []port.Chunk{
+			mockllm.ToolCallChunk(session.NewToolCall(session.ToolCallID(id), "Subagent", args)),
+			mockllm.DoneChunk(session.StopEndTurn),
+		}
+	case requestHasTool(req, "Subagent"):
+		chunks = []port.Chunk{mockllm.TextChunk("parent done"), mockllm.DoneChunk(session.StopEndTurn)}
+	default:
+		p.mu.Lock()
+		p.childModels = append(p.childModels, req.Model)
+		p.mu.Unlock()
+		chunks = []port.Chunk{mockllm.TextChunk("child done"), mockllm.DoneChunk(session.StopEndTurn)}
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		for _, chunk := range chunks {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}, nil
+}
+
+func requestHasTool(req port.LLMRequest, name string) bool {
+	for _, spec := range req.Tools {
+		if spec.Name == name {
+			return true
 		}
 	}
-	if calls.Load() != 2 {
-		t.Fatalf("shared client calls = %d, want two paths through one client", calls.Load())
+	return false
+}
+
+func requestHasToolResult(req port.LLMRequest) bool {
+	for _, message := range req.Messages {
+		if message.Role == session.RoleTool {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *jevBuildProvider) models() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.childModels...)
+}
+
+func TestADR_0350_Scenario3_CompositionParity(t *testing.T) {
+	buildSource, err := os.ReadFile("build.go")
+	if err != nil {
+		t.Fatalf("read composition source: %v", err)
+	}
+	const routerWiring = "deps.SubagentModelRouter = buildModelRouterTask("
+	if got := strings.Count(string(buildSource), routerWiring); got != 2 {
+		t.Fatalf("shared and per-session router wiring sites = %d, want 2", got)
+	}
+
+	srv, calls := jevTestServer(t, "small", 1, 4, 2)
+	provider := &jevBuildProvider{}
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:        t.TempDir(),
+		UserModelDir:     t.TempDir(),
+		UseMock:          true,
+		MockProvider:     provider,
+		NoSoul:           true,
+		NoUserModel:      true,
+		NoShell:          true,
+		AllowAllTools:    true,
+		Model:            "parent-model",
+		RouterBackend:    "jev",
+		RouterJevBaseURL: srv.URL,
+		TypesafeAPIKey:   "secret",
+		ModelAliases:     map[string]string{"tiny": "resolved-model"},
+		RouterCategories: []permconfig.RouterCategory{
+			{Name: "small", Description: "small task", Model: "tiny"},
+			{Name: "large", Description: "large task", Model: "other-model"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	defaultSession, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession(default): %v", err)
+	}
+	selected, err := built.Service.CreateSessionWithProvider(t.Context(), session.ModeDefault, defaultLimits(),
+		serveradapter.ProviderSelector{ProviderID: providerMock, ModelID: "selected-parent"})
+	if err != nil {
+		t.Fatalf("CreateSessionWithProvider: %v", err)
+	}
+	noFS, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, defaultLimits(),
+		serveradapter.ProviderSelector{}, serveradapter.ProfileNoFS)
+	if err != nil {
+		t.Fatalf("CreateSessionWithProfile(no-fs): %v", err)
+	}
+
+	for name, created := range map[string]*session.Session{"default": defaultSession, "selected": selected, "no-fs": noFS} {
+		run, runErr := built.Service.StartRun(t.Context(), created.ID, "delegate")
+		if runErr != nil {
+			t.Fatalf("StartRun(%s): %v", name, runErr)
+		}
+		if got := drainRun(run); got != "parent done" {
+			t.Fatalf("%s terminal text = %q", name, got)
+		}
+	}
+
+	if provider.classifierCalls.Load() != 0 {
+		t.Fatalf("Jev backend invoked the LLM classifier %d times", provider.classifierCalls.Load())
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("Build-owned Jev client calls = %d, want one route from each engine path", calls.Load())
+	}
+	models := provider.models()
+	if len(models) != 3 {
+		t.Fatalf("child requests = %v, want three", models)
+	}
+	for i, model := range models {
+		if model != "resolved-model" {
+			t.Fatalf("child model[%d] = %q, want local alias target resolved-model", i, model)
+		}
+	}
+}
+
+func jevChoiceServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls.Add(1)
+		var body struct {
+			State string `json:"state"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Errorf("decode Jev request: %v", err)
+			return
+		}
+		choice := "small"
+		if strings.Contains(strings.ToLower(body.State), "alpha") {
+			choice = "large"
+		}
+		_, _ = fmt.Fprintf(w, `{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":%q,"probabilities":{"small":0.5,"large":0.5},"confidence":1}},"usage":{"input_tokens":1,"output_tokens":1}}`, choice)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func applyJevRouting(cfg *Config, srv *httptest.Server) {
+	cfg.RouterBackend = "jev"
+	cfg.RouterJevBaseURL = srv.URL
+	cfg.TypesafeAPIKey = "secret"
+	cfg.ModelAliases = map[string]string{"small-alias": routerSmall, "large-alias": routerLarge}
+	cfg.RouterCategories = []permconfig.RouterCategory{
+		{Name: "small", Description: "small task", Model: "small-alias"},
+		{Name: "large", Description: "large task", Model: "large-alias"},
+	}
+	cfg.RouterDefaultCategory = ""
+}
+
+func TestADR_0350_Scenario2_ExistingRoutingSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []byte
+		agentSetup bool
+	}{
+		{name: "unpinned named specialist", args: []byte(`{"prompt":"review","agent":"reviewer"}`), agentSetup: true},
+		{name: "writable explorer", args: []byte(`{"prompt":"edit","mode":"read-write"}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, calls := jevChoiceServer(t)
+			provider := &jevBuildProvider{subagentArgs: tc.args}
+			cfg := Config{
+				Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
+				NoSoul: true, NoShell: true, AllowAllTools: true, Model: "parent-model",
+			}
+			applyJevRouting(&cfg, srv)
+			if tc.agentSetup {
+				agentsDir := t.TempDir()
+				writeAgentDefFile(t, agentsDir, "reviewer", "", "JEV-ROUTED-REVIEWER")
+				cfg.AgentsDirs = []string{agentsDir}
+			}
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			created, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			run, err := built.Service.StartRun(t.Context(), created.ID, "delegate")
+			if err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+			if got := drainRun(run); got != "parent done" {
+				t.Fatalf("terminal text = %q", got)
+			}
+			if calls.Load() != 1 || provider.classifierCalls.Load() != 0 {
+				t.Fatalf("Jev calls=%d LLM classifier calls=%d, want 1/0", calls.Load(), provider.classifierCalls.Load())
+			}
+			models := provider.models()
+			if len(models) != 1 || models[0] != routerSmall {
+				t.Fatalf("delegated child models = %v, want [%s]", models, routerSmall)
+			}
+		})
+	}
+
+	t.Run("team members route once for their lifetime", func(t *testing.T) {
+		srv, calls := jevChoiceServer(t)
+		teamCall := session.NewToolCall("c1", "Team", []byte(`{"goal":"do work","members":[{"name":"lead","role":"alpha architecture"},{"name":"worker","role":"rename a variable"}]}`))
+		provider := &routingProvider{parentTool: "Team", parentCall: teamCall}
+		cfg := routerE2ECfg(t.TempDir(), func() port.LLMProvider { return provider }, func(cfg *Config) {
+			cfg.EnableTeams = true
+			applyJevRouting(cfg, srv)
+		})
+		built, err := buildIsolated(t, t.Context(), cfg)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+		created, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := built.Service.StartRun(t.Context(), created.ID, "form team")
+		if err != nil {
+			t.Fatal(err)
+		}
+		drainRun(run)
+		if calls.Load() != 2 {
+			t.Fatalf("Jev team routes = %d, want once for each of two members", calls.Load())
+		}
+		assertModelsContain(t, provider.recordedModels(), routerSmall, routerLarge)
+	})
+
+	t.Run("parallel branches route independently", func(t *testing.T) {
+		srv, calls := jevChoiceServer(t)
+		parallelCall := session.NewToolCall("c1", "Parallel", []byte(`{"tasks":["alpha deep design","fix typo"]}`))
+		provider := &routingProvider{parentTool: "Parallel", parentCall: parallelCall}
+		cfg := routerE2ECfg(t.TempDir(), func() port.LLMProvider { return provider }, func(cfg *Config) {
+			cfg.EnableParallel = true
+			applyJevRouting(cfg, srv)
+		})
+		built, err := buildIsolated(t, t.Context(), cfg)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+		created, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := built.Service.StartRun(t.Context(), created.ID, "fan out")
+		if err != nil {
+			t.Fatal(err)
+		}
+		drainRun(run)
+		if calls.Load() != 2 {
+			t.Fatalf("Jev parallel routes = %d, want once for each of two branches", calls.Load())
+		}
+		assertModelsContain(t, provider.recordedModels(), routerSmall, routerLarge)
+	})
+}
+
+func assertModelsContain(t *testing.T, models []string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		found := false
+		for _, model := range models {
+			if model == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("models %v do not contain routed model %q", models, want)
+		}
 	}
 }
 

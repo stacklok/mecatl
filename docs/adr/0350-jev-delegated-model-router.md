@@ -1,6 +1,6 @@
 # ADR 0350 — Jev as an explicit delegated-model router backend
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-21
 - Scope: the operator-tier `models.router` configuration, root composition, and a new internal Typesafe/Jev adapter; no engine, provider-registry, wire, tool, or persistence boundary changes
 - Supersedes: [ADR 0031](./0031-subagent-model-router.md) only for its requirement that the router classifier is a composition-built one-turn LLM engine when the operator explicitly selects the Jev backend; its callback, taxonomy mapping, routing precedence, fallback, breaker, and observability decisions remain in force
@@ -22,7 +22,7 @@ Keep the engine contract unchanged. Both backends produce the existing `agent.De
 
 Implement Jev as a root internal adapter, not an engine adapter or provider module. The adapter issues one `SystemOne` request whose `State` is the delegated task and whose single, fixed-identifier `Choice` question maps category names to operator descriptions. Fixed classifier instructions and model/question defaults keep its shape predictable. It accepts only an exact offered choice and fully valid response. It returns no partial category on validation or protocol error. No new generic classifier framework is introduced.
 
-Extend the strict router configuration with this proposed shape:
+Extend the strict router configuration with this shape:
 
 ```yaml
 models:
@@ -41,7 +41,7 @@ The importable engine's exported API remains unchanged. Host wiring does grow co
 
 Pin the client dependency `github.com/stacklok/typesafe-go` to SDK version v0.1.0, separately from pinning the service request's Jev model default to `jev-1.13.0`; neither pin follows a moving alias. Configure its client explicitly with `WithAPIKey`, `WithHTTPClient`, `WithDefaultModel`, the optional `WithBaseURL`, a 10-second `WithAttemptTimeout`, a zero-retry `WithRetryPolicy`, and a 1 MiB `WithResponseLimit`. Disable HTTP redirects. Allow HTTPS endpoints and loopback HTTP only. Use one client and one eight-slot semaphore per `app.Build`, with a 10-second queue wait and a 10-second request deadline. Caller cancellation while queued must release/no-leak capacity and must not send a request; cancellation in flight cancels the sole request and releases capacity. Queue timeout, request timeout, and cancellation are fail-soft misses, with no duplicate call.
 
-Before SDK marshalling, compute one exact local text-input measure: sum the UTF-8 byte lengths of the task, fixed classifier instructions, selected model, fixed question identifier, and every category name and description. Reject a sum above 64 KiB or a taxonomy above 255 categories as static `jev-over-limit`, without I/O; never truncate the task or taxonomy. The request payload is limited to those adapter-controlled strings and maps and uses no user-defined `MarshalJSON`. This proposed 64 KiB guard is not Jev tokenization and does not claim to detect every service token/context overflow. A server-side size/context rejection is an SDK/API miss and ordinary fallback. The 255-category bound follows current reviewed service guidance; neither proposed bound is claimed to be a calibrated service default. The 1 MiB response cap bounds returned data, while request deadlines bound transport waiting; they do not create a hard end-to-end wall-clock guarantee over arbitrary CPU work in SDK JSON processing.
+Before SDK marshalling, compute one exact local text-input measure: sum the UTF-8 byte lengths of the task, fixed classifier instructions, selected model, fixed question identifier, and every category name and description. Reject a sum above 64 KiB or a taxonomy above 255 categories as static `jev-over-limit`, without I/O; never truncate the task or taxonomy. The request payload is limited to those adapter-controlled strings and maps and uses no user-defined `MarshalJSON`. The 64 KiB guard is not Jev tokenization and does not claim to detect every service token/context overflow. A server-side size/context rejection is an SDK/API miss and ordinary fallback. The 255-category bound follows current reviewed service guidance; neither bound is claimed to be a calibrated service default. The 1 MiB response cap bounds returned data, while request deadlines bound transport waiting; they do not create a hard end-to-end wall-clock guarantee over arbitrary CPU work in SDK JSON processing.
 
 Preserve all independently validated reported usage exactly once through the existing callback fold. Map Jev input/output tokens to the existing `session.Usage` on hits and misses, including an otherwise valid response rejected for low confidence or failure of local category-to-model mapping. If a `ProtocolError` carries non-nil valid usage, return it with the miss, including reported zero. Nil or absent usage maps to the callback's existing zero value as "not reported," not as proof of zero spend. Never estimate missing usage or add an unknown-usage wire field. This reuses the existing unconditional usage fold in `engine/agent/dispatch.go` (`routeTaskBody`) and introduces no new accounting mechanism or token-accounting hardening.
 
@@ -49,7 +49,7 @@ Treat task state and the entire service response as sensitive, producer-influenc
 
 Inventory the shared client and semaphore as Build-owned process resources when implementation lands. They carry no durable session state and need no rehydration. Do not introduce a cache.
 
-These exact configuration, abstention, transport, and egress choices remain proposed until the unchecked decisions in the linked acceptance plan are resolved.
+The operator directly approved these configuration, abstention, transport, and egress choices on 2026-09-21 and explicitly waived the merged-plan prerequisite for a stacked implementation targeting plan PR #1735; the plan PR remains subject to its human merge gate.
 
 ## Consequences
 
@@ -57,7 +57,7 @@ Operators can use a purpose-built decision model without presenting it as a chat
 
 Jev adds one external dependency, credential, egress path, and bounded shared resource. Classification remains fail-soft, so an outage preserves delegation availability but loses routing quality. A low-confidence threshold can reduce forced choices, but no default above zero is claimed to be calibrated.
 
-No result cache means repeated eligible tasks make repeated calls. Fixed concurrency, local input/response bounds, and transport deadlines bound the controlled request path without claiming a hard wall-clock bound over arbitrary SDK CPU work. Changing those proposed constants later requires review against deployment behavior. Jev's reported usage can be retained without making unrelated token-accounting hardening a condition of adoption.
+No result cache means repeated eligible tasks make repeated calls. Fixed concurrency, local input/response bounds, and transport deadlines bound the controlled request path without claiming a hard wall-clock bound over arbitrary SDK CPU work. Changing those constants later requires review against deployment behavior. Jev's reported usage can be retained without making unrelated token-accounting hardening a condition of adoption.
 
 ## See also
 

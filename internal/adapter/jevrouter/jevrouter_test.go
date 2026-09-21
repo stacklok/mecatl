@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,8 +136,24 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 		t.Fatalf("request = %#v", body)
 	}
 	questions, ok := body["questions"].(map[string]any)
-	if !ok || len(questions) != 1 || questions[testQuestionID] == nil {
+	if !ok || len(questions) != 1 {
 		t.Fatalf("questions = %#v", body["questions"])
+	}
+	question, ok := questions[testQuestionID].(map[string]any)
+	if !ok {
+		t.Fatalf("question %q = %#v", testQuestionID, questions[testQuestionID])
+	}
+	if question["type"] != "choice" || question["instructions"] != classifierInstructions {
+		t.Fatalf("question shape = %#v", question)
+	}
+	criteria, ok := question["criteria"].(map[string]any)
+	if !ok || len(criteria) != 2 || criteria["fast"] != "small task" || criteria["deep"] != "complex task" {
+		t.Fatalf("criteria = %#v", question["criteria"])
+	}
+	for name, description := range criteria {
+		if name == "task" || description == "task" {
+			t.Fatalf("raw task leaked into trusted criteria: %#v", criteria)
+		}
 	}
 
 	tooMany := make([]Category, maxCategories+1)
@@ -164,11 +180,23 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
-	if maxConcurrent != 8 || queueTimeout != 10*time.Second || requestTimeout != 10*time.Second || responseLimit != 1<<20 {
-		t.Fatalf("transport bounds drifted: concurrency=%d queue=%s request=%s response=%d", maxConcurrent, queueTimeout, requestTimeout, responseLimit)
+	bounds := defaultBounds()
+	if bounds.maxConcurrent != 8 || bounds.queueTimeout != 10*time.Second || bounds.requestTimeout != 10*time.Second || responseLimit != 1<<20 {
+		t.Fatalf("transport bounds drifted: %+v response=%d", bounds, responseLimit)
 	}
-	if _, err := New(Options{APIKey: "x", BaseURL: "http://example.com"}); err == nil {
-		t.Fatal("non-loopback cleartext endpoint accepted")
+	for _, baseURL := range []string{
+		"http://example.com",
+		"https://user@example.com",
+		"https://example.com/v1?tenant=x",
+		"https://example.com/v1#fragment",
+		"https://example.com/v1/../admin",
+	} {
+		if _, err := New(Options{APIKey: "x", BaseURL: baseURL}); err == nil {
+			t.Fatalf("SDK accepted invalid base URL %q", baseURL)
+		}
+	}
+	if _, err := New(Options{APIKey: "x", BaseURL: "https://example.com/prefix"}); err != nil {
+		t.Fatalf("SDK rejected HTTPS path prefix: %v", err)
 	}
 
 	var retryCalls atomic.Int32
@@ -203,78 +231,92 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		t.Fatal("redirect target received the classified task")
 	}
 
-	var active, maximum atomic.Int32
-	entered := make(chan struct{}, maxConcurrent)
-	release := make(chan struct{})
-	r, calls := newTestRouter(t, func(w http.ResponseWriter, req *http.Request) {
-		n := active.Add(1)
-		defer active.Add(-1)
-		for {
-			m := maximum.Load()
-			if n <= m || maximum.CompareAndSwap(m, n) {
-				break
-			}
+	t.Run("queue timeout is distinct and sends no request", func(t *testing.T) {
+		var calls atomic.Int32
+		r, err := newRouter(Options{
+			APIKey: "test", BaseURL: "https://example.com",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return nil, fmt.Errorf("unexpected request")
+			})},
+		}, transportBounds{maxConcurrent: 1, queueTimeout: 5 * time.Millisecond, requestTimeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
 		}
-		entered <- struct{}{}
-		select {
-		case <-release:
-			_, _ = w.Write([]byte(validResponse("fast", 1, 1, 1)))
-		case <-req.Context().Done():
+		r.semaphore <- struct{}{}
+		category, _, reason, ok := r.Route(t.Context(), "queued", testCategories())
+		if ok || category != "" || reason != MissQueueTimeout || calls.Load() != 0 {
+			t.Fatalf("saturated Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
-	}, 0)
-	var wg sync.WaitGroup
-	for range maxConcurrent {
-		wg.Add(1)
-		go func() { defer wg.Done(); r.Route(context.Background(), "task", testCategories()) }()
-	}
-	for range maxConcurrent {
-		<-entered
-	}
-	queuedCtx, cancelQueued := context.WithCancel(context.Background())
-	queuedDone := make(chan struct{})
-	go func() { defer close(queuedDone); r.Route(queuedCtx, "queued", testCategories()) }()
-	cancelQueued()
-	select {
-	case <-queuedDone:
-	case <-time.After(time.Second):
-		t.Fatal("queued cancellation did not return")
-	}
-	if calls.Load() != maxConcurrent {
-		t.Fatalf("queued cancellation sent request: calls=%d", calls.Load())
-	}
-	close(release)
-	wg.Wait()
-	if maximum.Load() > maxConcurrent {
-		t.Fatalf("maximum concurrency = %d, want <= %d", maximum.Load(), maxConcurrent)
-	}
+		<-r.semaphore
+	})
 
-	inflightStarted := make(chan struct{})
-	inflightDone := make(chan struct{})
-	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		close(inflightStarted)
-		<-req.Context().Done()
-		close(inflightDone)
-		return nil, req.Context().Err()
-	})}
-	r2, err := New(Options{APIKey: "test", Model: defaultModel, BaseURL: "https://example.com", HTTPClient: client})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); r2.Route(ctx, "task", testCategories()) }()
-	<-inflightStarted
-	cancel()
-	select {
-	case <-inflightDone:
-	case <-time.After(time.Second):
-		t.Fatal("in-flight request was not cancelled")
-	}
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("cancelled Route did not return")
-	}
+	t.Run("queued cancellation sends no request", func(t *testing.T) {
+		var calls atomic.Int32
+		r, err := newRouter(Options{
+			APIKey: "test", BaseURL: "https://example.com",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(validResponse("fast", 1, 1, 1))),
+					Request:    req,
+				}, nil
+			})},
+		}, transportBounds{maxConcurrent: 1, queueTimeout: time.Second, requestTimeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.semaphore <- struct{}{}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		category, _, reason, ok := r.Route(ctx, "cancelled", testCategories())
+		if ok || category != "" || reason != MissError || calls.Load() != 0 {
+			t.Fatalf("cancelled Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
+		}
+		<-r.semaphore
+		category, _, reason, ok = r.Route(t.Context(), "after cancellation", testCategories())
+		if !ok || category != "fast" || reason != "" || calls.Load() != 1 {
+			t.Fatalf("post-cancellation Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
+		}
+	})
+
+	t.Run("request timeout cancels in flight and releases capacity", func(t *testing.T) {
+		var calls atomic.Int32
+		cancelled := make(chan struct{})
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				<-req.Context().Done()
+				close(cancelled)
+				return nil, req.Context().Err()
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(validResponse("fast", 1, 1, 1))),
+				Request:    req,
+			}, nil
+		})}
+		r, err := newRouter(Options{APIKey: "test", BaseURL: "https://example.com", HTTPClient: client},
+			transportBounds{maxConcurrent: 1, queueTimeout: time.Second, requestTimeout: 5 * time.Millisecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		category, _, reason, ok := r.Route(t.Context(), "first", testCategories())
+		if ok || category != "" || reason != MissError {
+			t.Fatalf("timed-out Route = (%q, reason=%q, ok=%v)", category, reason, ok)
+		}
+		select {
+		case <-cancelled:
+		default:
+			t.Fatal("request deadline did not cancel the in-flight transport")
+		}
+		category, _, reason, ok = r.Route(t.Context(), "second", testCategories())
+		if !ok || category != "fast" || reason != "" || calls.Load() != 2 {
+			t.Fatalf("post-timeout Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
+		}
+	})
 
 	large, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", int(responseLimit)+1)))
@@ -286,15 +328,14 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 
 func TestJevReasonAndCredentialRedaction(t *testing.T) {
 	secret, task, hostile := "credential-value", "private delegated task", "raw hostile response"
-	r, _ := newTestRouter(t, func(w http.ResponseWriter, req *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if got := req.Header.Get("Authorization"); got != "Bearer "+secret {
 			t.Fatalf("authorization = %q", got)
 		}
 		_, _ = w.Write([]byte(hostile))
-	}, 0)
-	// Rebuild with the secret under test; failure output must remain a closed static reason.
-	var err error
-	r, err = New(Options{APIKey: secret, Model: defaultModel, BaseURL: r.baseURL, HTTPClient: r.httpClient})
+	}))
+	t.Cleanup(srv.Close)
+	r, err := New(Options{APIKey: secret, Model: defaultModel, BaseURL: srv.URL, HTTPClient: srv.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}

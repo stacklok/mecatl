@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -23,10 +21,10 @@ const (
 	classifierInstructions       = "Choose exactly one category for the delegated task."
 	maxTextBytes                 = 64 * 1024
 	maxCategories                = 255
-	maxConcurrent                = 8
+	defaultMaxConcurrent         = 8
+	defaultQueueTimeout          = 10 * time.Second
+	defaultRequestTimeout        = 10 * time.Second
 	responseLimit          int64 = 1 << 20
-	queueTimeout                 = 10 * time.Second
-	requestTimeout               = 10 * time.Second
 
 	// MissError is the static miss reason for transport, SDK, timeout, or cancellation failures.
 	MissError = "jev-error"
@@ -55,18 +53,36 @@ type Options struct {
 	HTTPClient        *http.Client
 }
 
+type transportBounds struct {
+	maxConcurrent  int
+	queueTimeout   time.Duration
+	requestTimeout time.Duration
+}
+
+func defaultBounds() transportBounds {
+	return transportBounds{
+		maxConcurrent:  defaultMaxConcurrent,
+		queueTimeout:   defaultQueueTimeout,
+		requestTimeout: defaultRequestTimeout,
+	}
+}
+
 // Router owns one concurrent-safe SDK client and one bounded request semaphore.
 type Router struct {
 	client            *typesafe.Client
 	semaphore         chan struct{}
 	minimumConfidence float64
 	model             string
-	baseURL           string
-	httpClient        *http.Client
+	queueTimeout      time.Duration
+	requestTimeout    time.Duration
 }
 
 // New constructs a router without performing network I/O.
 func New(opts Options) (*Router, error) {
+	return newRouter(opts, defaultBounds())
+}
+
+func newRouter(opts Options, bounds transportBounds) (*Router, error) {
 	if math.IsNaN(opts.MinimumConfidence) || math.IsInf(opts.MinimumConfidence, 0) || opts.MinimumConfidence < 0 || opts.MinimumConfidence > 1 {
 		return nil, fmt.Errorf("jev minimum confidence must be finite and between 0 and 1")
 	}
@@ -78,54 +94,28 @@ func New(opts Options) (*Router, error) {
 	if baseURL == "" {
 		baseURL = typesafe.DefaultBaseURL
 	}
-	if err := validateBaseURL(baseURL); err != nil {
-		return nil, err
-	}
-	baseClient := opts.HTTPClient
-	if baseClient == nil {
-		baseClient = http.DefaultClient
-	}
-	clientCopy := *baseClient
-	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	retries := typesafe.DefaultRetryPolicy()
 	retries.MaxRetries = 0
-	sdk, err := typesafe.NewClient(
+	clientOpts := []typesafe.Option{
 		typesafe.WithAPIKey(opts.APIKey),
-		typesafe.WithHTTPClient(&clientCopy),
 		typesafe.WithDefaultModel(model),
 		typesafe.WithBaseURL(baseURL),
-		typesafe.WithAttemptTimeout(requestTimeout),
+		typesafe.WithAttemptTimeout(bounds.requestTimeout),
 		typesafe.WithRetryPolicy(retries),
 		typesafe.WithResponseLimit(responseLimit),
-	)
+	}
+	if opts.HTTPClient != nil {
+		clientOpts = append(clientOpts, typesafe.WithHTTPClient(opts.HTTPClient))
+	}
+	sdk, err := typesafe.NewClient(clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("construct Jev client: %w", err)
 	}
 	return &Router{
-		client: sdk, semaphore: make(chan struct{}, maxConcurrent),
+		client: sdk, semaphore: make(chan struct{}, bounds.maxConcurrent),
 		minimumConfidence: opts.MinimumConfidence, model: model,
-		baseURL: baseURL, httpClient: &clientCopy,
+		queueTimeout: bounds.queueTimeout, requestTimeout: bounds.requestTimeout,
 	}, nil
-}
-
-func validateBaseURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("jev base URL is invalid")
-	}
-	switch u.Scheme {
-	case "https":
-		return nil
-	case "http":
-		host := u.Hostname()
-		if strings.EqualFold(host, "localhost") {
-			return nil
-		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			return nil
-		}
-	}
-	return fmt.Errorf("jev base URL must use HTTPS or loopback HTTP")
 }
 
 // Route makes exactly one bounded classification attempt and returns only static miss reasons.
@@ -137,7 +127,7 @@ func (r *Router) Route(ctx context.Context, task string, categories []Category) 
 	for _, category := range categories {
 		criteria[category.Name] = category.Description
 	}
-	queueCtx, cancelQueue := context.WithTimeout(ctx, queueTimeout)
+	queueCtx, cancelQueue := context.WithTimeout(ctx, r.queueTimeout)
 	defer cancelQueue()
 	select {
 	case r.semaphore <- struct{}{}:
@@ -148,7 +138,7 @@ func (r *Router) Route(ctx context.Context, task string, categories []Category) 
 		}
 		return "", session.Usage{}, MissQueueTimeout, false
 	}
-	requestCtx, cancelRequest := context.WithTimeout(ctx, requestTimeout)
+	requestCtx, cancelRequest := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancelRequest()
 	response, err := r.client.SystemOne(requestCtx, typesafe.SystemOneRequest{
 		State: task,
