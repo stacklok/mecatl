@@ -18,6 +18,8 @@ gates so a deployment whose ceiling promises supervision or project trust that i
 configured refuses to start with an error naming the fix, instead of starting silently
 under-configured.
 
+Discoverability and the vocabulary collapse are INDEPENDENT, and this plan keeps them separable. Scenario 7 closes the originating complaint through the help overlay and header, and it does so identically whichever way the open vocabulary decision goes. Scenario 4 and Scenario 5, the two admission gates, are likewise vocabulary-independent. A reviewer who wants the reported problem fixed without the vocabulary change can take scenarios 4, 5 and 7 and decline the rest; the decision should be judged on its own merits, not on a discoverability claim it does not carry.
+
 The smallest demonstrable behavior: `mecated serve --permission-mode auto` with no guardrails
 checker refuses to start and names all three fixes; with a checker it starts, sessions default
 to `auto`, and a client asking for `yolo` is refused while a client asking for `plan` succeeds.
@@ -163,20 +165,30 @@ described in [ADR 0351](../adr/0351-one-permission-mode-ladder.md).
 
 ### Scenario 7 - the tier is discoverable where operators actually look
 
-The originating complaint was discoverability, not mechanism: the TUI offered only `default`
-and `accept-edits` and `posture` was invisible until `--help`. One vocabulary is only a fix if
-the client surfaces it. See [ADR 0351](../adr/0351-one-permission-mode-ladder.md).
+The originating complaint was discoverability, and it is INDEPENDENT of the vocabulary
+question: it is unaffected by whichever shape the open decision picks, and an earlier revision
+of this plan got it wrong by bundling them. That revision asserted the shift+tab cycle would
+offer every tier at or below the ceiling. Since the default ceiling is `accept-edits`, an
+unconfigured deployment would cycle `plan`, `default`, `accept-edits`, exactly what it cycles
+today, and an operator would see `auto` only if they had already configured it, meaning they
+already knew it existed. The fix fired only for operators who did not need it. There is also
+no mode picker to grey entries out in: `ModeSwitch` is a blind keybinding cycle, and the only
+mode surfaces are the cycle, the header, and the help overlay. This scenario therefore targets
+the two surfaces that can show an operator a value they did NOT set. See
+[ADR 0351](../adr/0351-one-permission-mode-ladder.md).
 
 **Acceptance:**
-- AC7.1: The mecatui `ModeSwitch` action cycles the session through every tier at or below the ceiling and skips tiers above it, so the reachable set is visible rather than documented.
-  - verify: `TestADR_0351_ModeSwitchCyclesWithinCeiling`
-- AC7.2: The mecatui header shows the active tier, and shows the ceiling whenever the ceiling is higher than the active tier.
-  - verify: `TestADR_0351_HeaderShowsTierAndCeiling`
-- AC7.3: The build-once startup diagnostic reports the resolved ceiling, the initial tier, the derived knobs, and the guardrails checker state on one correlated set of fields.
-  - verify: `TestADR_0351_StartupDiagnosticReportsCeilingAndChecker`
-- AC7.4: The ACP `sessionModeState` picker advertises exactly the tiers at or below the ceiling, and `modeFromACP` accepts the three new tokens and rejects an above-ceiling one.
-  - verify: `TestADR_0351_ACPModePickerRespectsCeiling`
-- AC7.5: `user-docs/features/permissions-and-posture.md` documents one ladder, the ceiling and session split, both refusals, and the runtime de-escalation caveat from AC3.3, and `task docs` passes.
+- AC7.1: The shift+tab cycle is UNCHANGED and this plan makes no discoverability claim for it, because a cycle can only offer what the operator already configured.
+  - verify: `TestADR_0351_ModeSwitchCycleUnchanged`
+- AC7.2: The help overlay lists the whole vocabulary with its scope split, naming which tokens apply to this session and which to the whole process, and giving the exact invocation for the process-scoped ones.
+  - verify: `TestADR_0351_HelpOverlayShowsVocabularyAndScopeSplit`
+- AC7.3: The header shows the active session mode, and additionally shows the process tier whenever that tier is above the session's, so a session running under an allow-all process does not present as merely `default`.
+  - verify: `TestADR_0351_HeaderShowsProcessTierWhenAboveSession`
+- AC7.4: The build-once startup diagnostic reports the resolved tier, the initial session mode, the derived knobs, and the guardrails checker state on one correlated set of fields.
+  - verify: `TestADR_0351_StartupDiagnosticReportsTierAndChecker`
+- AC7.5: The ACP `sessionModeState` picker advertises exactly the session-selectable modes and rejects anything outside them.
+  - verify: `TestADR_0351_ACPModePickerAdvertisesSessionSelectableOnly`
+- AC7.6: `user-docs/features/permissions-and-posture.md` documents one vocabulary, the scope split, both refusals, and the runtime de-escalation caveat, and `task docs` passes.
   - verify: inspection - prose completeness is a human review judgment under the AGENTS.md rule against pinning documentation prose in tests; `task docs` mechanically proves links and generated reference freshness.
 
 ### Scenario 8 - every mode ingress clamps at one chokepoint, and ingested content cannot name authority
