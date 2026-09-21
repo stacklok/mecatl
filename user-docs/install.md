@@ -39,6 +39,18 @@ Homebrew links the executables into `$(brew --prefix)/bin`. For an absolute
 path, use `$(brew --prefix mecatl)/bin/mecatui` or
 `$(brew --prefix mecatl)/bin/mecated`.
 
+## Conda-forge
+
+If you manage your environment with Conda, install the
+[Mecatl package on Conda-forge](https://anaconda.org/conda-forge/mecatl) with
+your preferred package manager:
+
+|Package manager|Command|
+|-|-|
+|Conda|`conda install -c conda-forge mecatl`|
+|Mamba|`mamba install -c conda-forge mecatl`|
+|Pixi|`pixi add mecatl`|
+
 ## Release archives
 
 [GitHub releases](https://github.com/stacklok/mecatl/releases) provide `darwin`
