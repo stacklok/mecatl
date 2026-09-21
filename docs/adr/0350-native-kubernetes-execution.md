@@ -60,7 +60,9 @@ or Kubernetes names. Creator `clientHash`, owner identity, allocation fingerprin
 immutable. The [schema and transaction contract](../acceptance/native-kubernetes-execution.md#reference-transaction-schema-v2-and-fencing)
 records exact fields, receipts, conditions, and migration behavior. Completed migration receipts retain
 the source schema with explicit presence (including legacy schema zero); replay requires the exact
-request identity, and receipts missing that information fail closed.
+request identity, and receipts missing that information fail closed. Replacement atomically expires
+completed migration receipts when it publishes the new Pod identity; replay with either the original or
+replacement UIDs cannot revive an expired receipt.
 
 Transient PVC/Pod create errors and quota saturation must recover through continuing rate-limited
 reconciliation while the CR exists. Quota restoration alone must be sufficient; no unrelated reference
