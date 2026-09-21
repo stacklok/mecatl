@@ -3,7 +3,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActOnScheduleData, ActOnScheduleErrors, ActOnScheduleResponses, CancelRunData, CancelRunErrors, CancelRunResponses, ClearSessionData, ClearSessionErrors, ClearSessionResponses, CompactSessionData, CompactSessionErrors, CompactSessionResponses, CompleteAuthLoginData, CompleteAuthLoginErrors, CreateScheduleData, CreateScheduleErrors, CreateScheduleResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteScheduleData, DeleteScheduleErrors, DeleteScheduleResponses, DeleteSessionData, DeleteSessionErrors, DeleteSessionResponses, ForkSessionData, ForkSessionErrors, ForkSessionResponses, GetAuthSessionData, GetAuthSessionResponses, GetHealthData, GetHealthResponses, GetRuntimeData, GetRuntimeErrors, GetRuntimeResponses, GetSessionDetailData, GetSessionDetailErrors, GetSessionDetailResponses, GetSessionTranscriptData, GetSessionTranscriptErrors, GetSessionTranscriptResponses, ListScheduleFiresData, ListScheduleFiresErrors, ListScheduleFiresResponses, ListSchedulesData, ListSchedulesErrors, ListSchedulesResponses, ListSessionsData, ListSessionsErrors, ListSessionsResponses, LogoutAuthSessionData, LogoutAuthSessionErrors, LogoutAuthSessionResponses, RenameSessionData, RenameSessionErrors, RenameSessionResponses, ResolveRunPermissionData, ResolveRunPermissionErrors, ResolveRunPermissionResponses, RetrySessionData, RetrySessionErrors, RetrySessionResponse, RetrySessionResponses, SetSessionModeData, SetSessionModeErrors, SetSessionModeResponses, StartAuthLoginData, StartAuthLoginErrors, StartRunData, StartRunErrors, StartRunResponse, StartRunResponses, SteerRunData, SteerRunErrors, SteerRunResponses, UpdateScheduleData, UpdateScheduleErrors, UpdateScheduleResponses, WatchSessionActivityData, WatchSessionActivityErrors, WatchSessionActivityResponse, WatchSessionActivityResponses } from './types.gen';
+import type { ActOnLearnedSkillData, ActOnLearnedSkillErrors, ActOnLearnedSkillResponses, ActOnScheduleData, ActOnScheduleErrors, ActOnScheduleResponses, CancelRunData, CancelRunErrors, CancelRunResponses, ClearSessionData, ClearSessionErrors, ClearSessionResponses, CompactSessionData, CompactSessionErrors, CompactSessionResponses, CompleteAuthLoginData, CompleteAuthLoginErrors, CreateScheduleData, CreateScheduleErrors, CreateScheduleResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DecideLearningProposalData, DecideLearningProposalErrors, DecideLearningProposalResponses, DecideMemoryConsolidationPlanData, DecideMemoryConsolidationPlanErrors, DecideMemoryConsolidationPlanResponses, DeleteScheduleData, DeleteScheduleErrors, DeleteScheduleResponses, DeleteSessionData, DeleteSessionErrors, DeleteSessionResponses, DiffLearnedSkillVersionsData, DiffLearnedSkillVersionsErrors, DiffLearnedSkillVersionsResponses, ForkSessionData, ForkSessionErrors, ForkSessionResponses, GenerateMemoryConsolidationPlanData, GenerateMemoryConsolidationPlanErrors, GenerateMemoryConsolidationPlanResponses, GetAuthSessionData, GetAuthSessionResponses, GetHealthData, GetHealthResponses, GetLearnedSkillData, GetLearnedSkillErrors, GetLearnedSkillResponses, GetRuntimeData, GetRuntimeErrors, GetRuntimeResponses, GetSessionDetailData, GetSessionDetailErrors, GetSessionDetailResponses, GetSessionTranscriptData, GetSessionTranscriptErrors, GetSessionTranscriptResponses, GetUserMemoryData, GetUserMemoryErrors, GetUserMemoryResponses, ListConfiguredSkillsData, ListConfiguredSkillsErrors, ListConfiguredSkillsResponses, ListLearnedSkillChangesData, ListLearnedSkillChangesErrors, ListLearnedSkillChangesResponses, ListLearnedSkillsData, ListLearnedSkillsErrors, ListLearnedSkillsResponses, ListLearningProposalsData, ListLearningProposalsErrors, ListLearningProposalsResponses, ListScheduleFiresData, ListScheduleFiresErrors, ListScheduleFiresResponses, ListSchedulesData, ListSchedulesErrors, ListSchedulesResponses, ListSessionsData, ListSessionsErrors, ListSessionsResponses, ListUserMemoryData, ListUserMemoryErrors, ListUserMemoryResponses, LogoutAuthSessionData, LogoutAuthSessionErrors, LogoutAuthSessionResponses, ReflectSessionData, ReflectSessionErrors, ReflectSessionResponses, RenameSessionData, RenameSessionErrors, RenameSessionResponses, ResolveRunPermissionData, ResolveRunPermissionErrors, ResolveRunPermissionResponses, RetrySessionData, RetrySessionErrors, RetrySessionResponse, RetrySessionResponses, SetSessionModeData, SetSessionModeErrors, SetSessionModeResponses, StartAuthLoginData, StartAuthLoginErrors, StartRunData, StartRunErrors, StartRunResponse, StartRunResponses, SteerRunData, SteerRunErrors, SteerRunResponses, UndoLearningPromotionData, UndoLearningPromotionErrors, UndoLearningPromotionResponses, UpdateScheduleData, UpdateScheduleErrors, UpdateScheduleResponses, WatchSessionActivityData, WatchSessionActivityErrors, WatchSessionActivityResponse, WatchSessionActivityResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -144,3 +144,59 @@ export const actOnSchedule = <ThrowOnError extends boolean = false>(options: Opt
 });
 
 export const listScheduleFires = <ThrowOnError extends boolean = false>(options: Options<ListScheduleFiresData, ThrowOnError>): RequestResult<ListScheduleFiresResponses, ListScheduleFiresErrors, ThrowOnError> => (options.client ?? client).get<ListScheduleFiresResponses, ListScheduleFiresErrors, ThrowOnError>({ url: '/api/v1/schedules/{scheduleName}/fires', ...options });
+
+export const listConfiguredSkills = <ThrowOnError extends boolean = false>(options?: Options<ListConfiguredSkillsData, ThrowOnError>): RequestResult<ListConfiguredSkillsResponses, ListConfiguredSkillsErrors, ThrowOnError> => (options?.client ?? client).get<ListConfiguredSkillsResponses, ListConfiguredSkillsErrors, ThrowOnError>({ url: '/api/v1/skills', ...options });
+
+export const listLearnedSkills = <ThrowOnError extends boolean = false>(options?: Options<ListLearnedSkillsData, ThrowOnError>): RequestResult<ListLearnedSkillsResponses, ListLearnedSkillsErrors, ThrowOnError> => (options?.client ?? client).get<ListLearnedSkillsResponses, ListLearnedSkillsErrors, ThrowOnError>({ url: '/api/v1/learned-skills', ...options });
+
+export const listLearnedSkillChanges = <ThrowOnError extends boolean = false>(options?: Options<ListLearnedSkillChangesData, ThrowOnError>): RequestResult<ListLearnedSkillChangesResponses, ListLearnedSkillChangesErrors, ThrowOnError> => (options?.client ?? client).get<ListLearnedSkillChangesResponses, ListLearnedSkillChangesErrors, ThrowOnError>({ url: '/api/v1/learned-skills/changes', ...options });
+
+export const getLearnedSkill = <ThrowOnError extends boolean = false>(options: Options<GetLearnedSkillData, ThrowOnError>): RequestResult<GetLearnedSkillResponses, GetLearnedSkillErrors, ThrowOnError> => (options.client ?? client).get<GetLearnedSkillResponses, GetLearnedSkillErrors, ThrowOnError>({ url: '/api/v1/learned-skills/{skillId}', ...options });
+
+export const diffLearnedSkillVersions = <ThrowOnError extends boolean = false>(options: Options<DiffLearnedSkillVersionsData, ThrowOnError>): RequestResult<DiffLearnedSkillVersionsResponses, DiffLearnedSkillVersionsErrors, ThrowOnError> => (options.client ?? client).get<DiffLearnedSkillVersionsResponses, DiffLearnedSkillVersionsErrors, ThrowOnError>({ url: '/api/v1/learned-skills/{skillId}/diff', ...options });
+
+export const actOnLearnedSkill = <ThrowOnError extends boolean = false>(options: Options<ActOnLearnedSkillData, ThrowOnError>): RequestResult<ActOnLearnedSkillResponses, ActOnLearnedSkillErrors, ThrowOnError> => (options.client ?? client).post<ActOnLearnedSkillResponses, ActOnLearnedSkillErrors, ThrowOnError>({
+    url: '/api/v1/learned-skills/{skillId}/actions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const listLearningProposals = <ThrowOnError extends boolean = false>(options?: Options<ListLearningProposalsData, ThrowOnError>): RequestResult<ListLearningProposalsResponses, ListLearningProposalsErrors, ThrowOnError> => (options?.client ?? client).get<ListLearningProposalsResponses, ListLearningProposalsErrors, ThrowOnError>({ url: '/api/v1/learning-proposals', ...options });
+
+export const decideLearningProposal = <ThrowOnError extends boolean = false>(options: Options<DecideLearningProposalData, ThrowOnError>): RequestResult<DecideLearningProposalResponses, DecideLearningProposalErrors, ThrowOnError> => (options.client ?? client).post<DecideLearningProposalResponses, DecideLearningProposalErrors, ThrowOnError>({
+    url: '/api/v1/learning-proposals/{proposalId}/decisions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const undoLearningPromotion = <ThrowOnError extends boolean = false>(options: Options<UndoLearningPromotionData, ThrowOnError>): RequestResult<UndoLearningPromotionResponses, UndoLearningPromotionErrors, ThrowOnError> => (options.client ?? client).post<UndoLearningPromotionResponses, UndoLearningPromotionErrors, ThrowOnError>({
+    url: '/api/v1/learning-proposals/{proposalId}/undo',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const reflectSession = <ThrowOnError extends boolean = false>(options: Options<ReflectSessionData, ThrowOnError>): RequestResult<ReflectSessionResponses, ReflectSessionErrors, ThrowOnError> => (options.client ?? client).post<ReflectSessionResponses, ReflectSessionErrors, ThrowOnError>({ url: '/api/v1/sessions/{sessionId}/reflection', ...options });
+
+export const generateMemoryConsolidationPlan = <ThrowOnError extends boolean = false>(options?: Options<GenerateMemoryConsolidationPlanData, ThrowOnError>): RequestResult<GenerateMemoryConsolidationPlanResponses, GenerateMemoryConsolidationPlanErrors, ThrowOnError> => (options?.client ?? client).post<GenerateMemoryConsolidationPlanResponses, GenerateMemoryConsolidationPlanErrors, ThrowOnError>({ url: '/api/v1/user-memory/consolidation/plans', ...options });
+
+export const decideMemoryConsolidationPlan = <ThrowOnError extends boolean = false>(options: Options<DecideMemoryConsolidationPlanData, ThrowOnError>): RequestResult<DecideMemoryConsolidationPlanResponses, DecideMemoryConsolidationPlanErrors, ThrowOnError> => (options.client ?? client).post<DecideMemoryConsolidationPlanResponses, DecideMemoryConsolidationPlanErrors, ThrowOnError>({
+    url: '/api/v1/user-memory/consolidation/plans/{planId}/decisions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const listUserMemory = <ThrowOnError extends boolean = false>(options?: Options<ListUserMemoryData, ThrowOnError>): RequestResult<ListUserMemoryResponses, ListUserMemoryErrors, ThrowOnError> => (options?.client ?? client).get<ListUserMemoryResponses, ListUserMemoryErrors, ThrowOnError>({ url: '/api/v1/user-memory', ...options });
+
+export const getUserMemory = <ThrowOnError extends boolean = false>(options: Options<GetUserMemoryData, ThrowOnError>): RequestResult<GetUserMemoryResponses, GetUserMemoryErrors, ThrowOnError> => (options.client ?? client).get<GetUserMemoryResponses, GetUserMemoryErrors, ThrowOnError>({ url: '/api/v1/user-memory/{memoryKey}', ...options });

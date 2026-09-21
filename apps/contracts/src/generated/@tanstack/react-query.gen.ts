@@ -4,8 +4,8 @@
 import { type DefaultError, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { actOnSchedule, cancelRun, clearSession, compactSession, completeAuthLogin, createSchedule, createSession, deleteSchedule, deleteSession, forkSession, getAuthSession, getHealth, getRuntime, getSessionDetail, getSessionTranscript, listScheduleFires, listSchedules, listSessions, logoutAuthSession, type Options, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun, updateSchedule } from '../sdk.gen';
-import type { ActOnScheduleData, ActOnScheduleError, ActOnScheduleResponse, CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CreateScheduleData, CreateScheduleError, CreateScheduleResponse, CreateSessionData, CreateSessionError, CreateSessionResponse, DeleteScheduleData, DeleteScheduleError, DeleteScheduleResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, ListScheduleFiresData, ListScheduleFiresError, ListScheduleFiresResponse, ListSchedulesData, ListSchedulesError, ListSchedulesResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse, UpdateScheduleData, UpdateScheduleError, UpdateScheduleResponse } from '../types.gen';
+import { actOnLearnedSkill, actOnSchedule, cancelRun, clearSession, compactSession, completeAuthLogin, createSchedule, createSession, decideLearningProposal, decideMemoryConsolidationPlan, deleteSchedule, deleteSession, diffLearnedSkillVersions, forkSession, generateMemoryConsolidationPlan, getAuthSession, getHealth, getLearnedSkill, getRuntime, getSessionDetail, getSessionTranscript, getUserMemory, listConfiguredSkills, listLearnedSkillChanges, listLearnedSkills, listLearningProposals, listScheduleFires, listSchedules, listSessions, listUserMemory, logoutAuthSession, type Options, reflectSession, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun, undoLearningPromotion, updateSchedule } from '../sdk.gen';
+import type { ActOnLearnedSkillData, ActOnLearnedSkillError, ActOnLearnedSkillResponse, ActOnScheduleData, ActOnScheduleError, ActOnScheduleResponse, CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CreateScheduleData, CreateScheduleError, CreateScheduleResponse, CreateSessionData, CreateSessionError, CreateSessionResponse, DecideLearningProposalData, DecideLearningProposalError, DecideLearningProposalResponse, DecideMemoryConsolidationPlanData, DecideMemoryConsolidationPlanError, DecideMemoryConsolidationPlanResponse, DeleteScheduleData, DeleteScheduleError, DeleteScheduleResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, DiffLearnedSkillVersionsData, DiffLearnedSkillVersionsError, DiffLearnedSkillVersionsResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GenerateMemoryConsolidationPlanData, GenerateMemoryConsolidationPlanError, GenerateMemoryConsolidationPlanResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetLearnedSkillData, GetLearnedSkillError, GetLearnedSkillResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, GetUserMemoryData, GetUserMemoryError, GetUserMemoryResponse, ListConfiguredSkillsData, ListConfiguredSkillsError, ListConfiguredSkillsResponse, ListLearnedSkillChangesData, ListLearnedSkillChangesError, ListLearnedSkillChangesResponse, ListLearnedSkillsData, ListLearnedSkillsError, ListLearnedSkillsResponse, ListLearningProposalsData, ListLearningProposalsError, ListLearningProposalsResponse, ListScheduleFiresData, ListScheduleFiresError, ListScheduleFiresResponse, ListSchedulesData, ListSchedulesError, ListSchedulesResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, ListUserMemoryData, ListUserMemoryError, ListUserMemoryResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, ReflectSessionData, ReflectSessionError, ReflectSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse, UndoLearningPromotionData, UndoLearningPromotionError, UndoLearningPromotionResponse, UpdateScheduleData, UpdateScheduleError, UpdateScheduleResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -398,4 +398,208 @@ export const listScheduleFiresOptions = (options: Options<ListScheduleFiresData>
         return data;
     },
     queryKey: listScheduleFiresQueryKey(options)
+});
+
+export const listConfiguredSkillsQueryKey = (options?: Options<ListConfiguredSkillsData>) => createQueryKey('listConfiguredSkills', options);
+
+export const listConfiguredSkillsOptions = (options?: Options<ListConfiguredSkillsData>) => queryOptions<ListConfiguredSkillsResponse, ListConfiguredSkillsError, ListConfiguredSkillsResponse, ReturnType<typeof listConfiguredSkillsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listConfiguredSkills({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listConfiguredSkillsQueryKey(options)
+});
+
+export const listLearnedSkillsQueryKey = (options?: Options<ListLearnedSkillsData>) => createQueryKey('listLearnedSkills', options);
+
+export const listLearnedSkillsOptions = (options?: Options<ListLearnedSkillsData>) => queryOptions<ListLearnedSkillsResponse, ListLearnedSkillsError, ListLearnedSkillsResponse, ReturnType<typeof listLearnedSkillsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listLearnedSkills({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listLearnedSkillsQueryKey(options)
+});
+
+export const listLearnedSkillChangesQueryKey = (options?: Options<ListLearnedSkillChangesData>) => createQueryKey('listLearnedSkillChanges', options);
+
+export const listLearnedSkillChangesOptions = (options?: Options<ListLearnedSkillChangesData>) => queryOptions<ListLearnedSkillChangesResponse, ListLearnedSkillChangesError, ListLearnedSkillChangesResponse, ReturnType<typeof listLearnedSkillChangesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listLearnedSkillChanges({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listLearnedSkillChangesQueryKey(options)
+});
+
+export const getLearnedSkillQueryKey = (options: Options<GetLearnedSkillData>) => createQueryKey('getLearnedSkill', options);
+
+export const getLearnedSkillOptions = (options: Options<GetLearnedSkillData>) => queryOptions<GetLearnedSkillResponse, GetLearnedSkillError, GetLearnedSkillResponse, ReturnType<typeof getLearnedSkillQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getLearnedSkill({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getLearnedSkillQueryKey(options)
+});
+
+export const diffLearnedSkillVersionsQueryKey = (options: Options<DiffLearnedSkillVersionsData>) => createQueryKey('diffLearnedSkillVersions', options);
+
+export const diffLearnedSkillVersionsOptions = (options: Options<DiffLearnedSkillVersionsData>) => queryOptions<DiffLearnedSkillVersionsResponse, DiffLearnedSkillVersionsError, DiffLearnedSkillVersionsResponse, ReturnType<typeof diffLearnedSkillVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await diffLearnedSkillVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: diffLearnedSkillVersionsQueryKey(options)
+});
+
+export const actOnLearnedSkillMutation = (options?: Partial<Options<ActOnLearnedSkillData>>): UseMutationOptions<ActOnLearnedSkillResponse, ActOnLearnedSkillError, Options<ActOnLearnedSkillData>> => {
+    const mutationOptions: UseMutationOptions<ActOnLearnedSkillResponse, ActOnLearnedSkillError, Options<ActOnLearnedSkillData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await actOnLearnedSkill({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listLearningProposalsQueryKey = (options?: Options<ListLearningProposalsData>) => createQueryKey('listLearningProposals', options);
+
+export const listLearningProposalsOptions = (options?: Options<ListLearningProposalsData>) => queryOptions<ListLearningProposalsResponse, ListLearningProposalsError, ListLearningProposalsResponse, ReturnType<typeof listLearningProposalsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listLearningProposals({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listLearningProposalsQueryKey(options)
+});
+
+export const decideLearningProposalMutation = (options?: Partial<Options<DecideLearningProposalData>>): UseMutationOptions<DecideLearningProposalResponse, DecideLearningProposalError, Options<DecideLearningProposalData>> => {
+    const mutationOptions: UseMutationOptions<DecideLearningProposalResponse, DecideLearningProposalError, Options<DecideLearningProposalData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await decideLearningProposal({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const undoLearningPromotionMutation = (options?: Partial<Options<UndoLearningPromotionData>>): UseMutationOptions<UndoLearningPromotionResponse, UndoLearningPromotionError, Options<UndoLearningPromotionData>> => {
+    const mutationOptions: UseMutationOptions<UndoLearningPromotionResponse, UndoLearningPromotionError, Options<UndoLearningPromotionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await undoLearningPromotion({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const reflectSessionMutation = (options?: Partial<Options<ReflectSessionData>>): UseMutationOptions<ReflectSessionResponse, ReflectSessionError, Options<ReflectSessionData>> => {
+    const mutationOptions: UseMutationOptions<ReflectSessionResponse, ReflectSessionError, Options<ReflectSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await reflectSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const generateMemoryConsolidationPlanMutation = (options?: Partial<Options<GenerateMemoryConsolidationPlanData>>): UseMutationOptions<GenerateMemoryConsolidationPlanResponse, GenerateMemoryConsolidationPlanError, Options<GenerateMemoryConsolidationPlanData>> => {
+    const mutationOptions: UseMutationOptions<GenerateMemoryConsolidationPlanResponse, GenerateMemoryConsolidationPlanError, Options<GenerateMemoryConsolidationPlanData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await generateMemoryConsolidationPlan({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const decideMemoryConsolidationPlanMutation = (options?: Partial<Options<DecideMemoryConsolidationPlanData>>): UseMutationOptions<DecideMemoryConsolidationPlanResponse, DecideMemoryConsolidationPlanError, Options<DecideMemoryConsolidationPlanData>> => {
+    const mutationOptions: UseMutationOptions<DecideMemoryConsolidationPlanResponse, DecideMemoryConsolidationPlanError, Options<DecideMemoryConsolidationPlanData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await decideMemoryConsolidationPlan({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listUserMemoryQueryKey = (options?: Options<ListUserMemoryData>) => createQueryKey('listUserMemory', options);
+
+export const listUserMemoryOptions = (options?: Options<ListUserMemoryData>) => queryOptions<ListUserMemoryResponse, ListUserMemoryError, ListUserMemoryResponse, ReturnType<typeof listUserMemoryQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listUserMemory({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listUserMemoryQueryKey(options)
+});
+
+export const getUserMemoryQueryKey = (options: Options<GetUserMemoryData>) => createQueryKey('getUserMemory', options);
+
+export const getUserMemoryOptions = (options: Options<GetUserMemoryData>) => queryOptions<GetUserMemoryResponse, GetUserMemoryError, GetUserMemoryResponse, ReturnType<typeof getUserMemoryQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getUserMemory({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getUserMemoryQueryKey(options)
 });

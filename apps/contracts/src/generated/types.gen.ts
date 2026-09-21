@@ -1794,3 +1794,1061 @@ export type ListScheduleFiresResponses = {
 };
 
 export type ListScheduleFiresResponse = ListScheduleFiresResponses[keyof ListScheduleFiresResponses];
+
+export type ListConfiguredSkillsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/skills';
+};
+
+export type ListConfiguredSkillsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListConfiguredSkillsError = ListConfiguredSkillsErrors[keyof ListConfiguredSkillsErrors];
+
+export type ListConfiguredSkillsResponses = {
+    /**
+     * The configured skill inventory.
+     */
+    200: {
+        items: Array<{
+            activeVersion: string;
+            agentOwned: boolean;
+            description: string;
+            name: string;
+            ownerAgent: string;
+        }>;
+        reason: string;
+        supported: boolean;
+    };
+};
+
+export type ListConfiguredSkillsResponse = ListConfiguredSkillsResponses[keyof ListConfiguredSkillsResponses];
+
+export type ListLearnedSkillsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/learned-skills';
+};
+
+export type ListLearnedSkillsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListLearnedSkillsError = ListLearnedSkillsErrors[keyof ListLearnedSkillsErrors];
+
+export type ListLearnedSkillsResponses = {
+    /**
+     * The learned skill lifecycle inventory.
+     */
+    200: {
+        complete: boolean;
+        items: Array<{
+            actions: {
+                activate: boolean;
+                archive: boolean;
+                reject: boolean;
+                rollback: boolean;
+            };
+            body: string;
+            description: string;
+            evidenceCount: number;
+            id: string;
+            name: string;
+            ownerAgent: string;
+            revision: string;
+            state: string;
+            supersedes: string;
+            updatedAt: string;
+            version: string;
+        }>;
+        reason: string;
+        supported: boolean;
+    };
+};
+
+export type ListLearnedSkillsResponse = ListLearnedSkillsResponses[keyof ListLearnedSkillsResponses];
+
+export type ListLearnedSkillChangesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/learned-skills/changes';
+};
+
+export type ListLearnedSkillChangesErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListLearnedSkillChangesError = ListLearnedSkillChangesErrors[keyof ListLearnedSkillChangesErrors];
+
+export type ListLearnedSkillChangesResponses = {
+    /**
+     * Recent learned-skill lifecycle changes.
+     */
+    200: {
+        complete: boolean;
+        items: Array<{
+            at: string;
+            evidenceCount: number;
+            fromState: string;
+            id: string;
+            name: string;
+            operation: string;
+            skillId: string;
+            toState: string;
+            verdict: string;
+            version: string;
+        }>;
+    };
+};
+
+export type ListLearnedSkillChangesResponse = ListLearnedSkillChangesResponses[keyof ListLearnedSkillChangesResponses];
+
+export type GetLearnedSkillData = {
+    body?: never;
+    path: {
+        skillId: string;
+    };
+    query: {
+        ownerAgent: string;
+        version: string;
+    };
+    url: '/api/v1/learned-skills/{skillId}';
+};
+
+export type GetLearnedSkillErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetLearnedSkillError = GetLearnedSkillErrors[keyof GetLearnedSkillErrors];
+
+export type GetLearnedSkillResponses = {
+    /**
+     * One complete learned-skill version.
+     */
+    200: {
+        actions: {
+            activate: boolean;
+            archive: boolean;
+            reject: boolean;
+            rollback: boolean;
+        };
+        body: string;
+        description: string;
+        evidenceCount: number;
+        id: string;
+        name: string;
+        ownerAgent: string;
+        revision: string;
+        state: string;
+        supersedes: string;
+        updatedAt: string;
+        version: string;
+    };
+};
+
+export type GetLearnedSkillResponse = GetLearnedSkillResponses[keyof GetLearnedSkillResponses];
+
+export type DiffLearnedSkillVersionsData = {
+    body?: never;
+    path: {
+        skillId: string;
+    };
+    query: {
+        fromVersion: string;
+        ownerAgent: string;
+        toVersion: string;
+    };
+    url: '/api/v1/learned-skills/{skillId}/diff';
+};
+
+export type DiffLearnedSkillVersionsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type DiffLearnedSkillVersionsError = DiffLearnedSkillVersionsErrors[keyof DiffLearnedSkillVersionsErrors];
+
+export type DiffLearnedSkillVersionsResponses = {
+    /**
+     * A unified diff between two learned-skill versions.
+     */
+    200: {
+        diff: string;
+        fromVersion: string;
+        toVersion: string;
+    };
+};
+
+export type DiffLearnedSkillVersionsResponse = DiffLearnedSkillVersionsResponses[keyof DiffLearnedSkillVersionsResponses];
+
+export type ActOnLearnedSkillData = {
+    body: {
+        action: 'activate' | 'archive' | 'reject' | 'rollback';
+        expectedRevision: string;
+        ownerAgent: string;
+        targetVersion?: string;
+        version: string;
+    };
+    path: {
+        skillId: string;
+    };
+    query?: never;
+    url: '/api/v1/learned-skills/{skillId}/actions';
+};
+
+export type ActOnLearnedSkillErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ActOnLearnedSkillError = ActOnLearnedSkillErrors[keyof ActOnLearnedSkillErrors];
+
+export type ActOnLearnedSkillResponses = {
+    /**
+     * The updated learned skill.
+     */
+    200: {
+        actions: {
+            activate: boolean;
+            archive: boolean;
+            reject: boolean;
+            rollback: boolean;
+        };
+        body: string;
+        description: string;
+        evidenceCount: number;
+        id: string;
+        name: string;
+        ownerAgent: string;
+        revision: string;
+        state: string;
+        supersedes: string;
+        updatedAt: string;
+        version: string;
+    };
+};
+
+export type ActOnLearnedSkillResponse = ActOnLearnedSkillResponses[keyof ActOnLearnedSkillResponses];
+
+export type ListLearningProposalsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        status?: string;
+    };
+    url: '/api/v1/learning-proposals';
+};
+
+export type ListLearningProposalsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListLearningProposalsError = ListLearningProposalsErrors[keyof ListLearningProposalsErrors];
+
+export type ListLearningProposalsResponses = {
+    /**
+     * The daemon-curated learning proposal review queue.
+     */
+    200: {
+        complete: boolean;
+        items: Array<{
+            body: string;
+            createdAt: string;
+            decisions: Array<{
+                actor: string;
+                at: string;
+                kind: string;
+                reason: string;
+            }>;
+            description: string;
+            evidenceCount: number;
+            id: string;
+            key: string;
+            kind: string;
+            learnedSkillId: string;
+            projectScoped: boolean;
+            promotionAvailable: boolean;
+            promotionUnavailableReason: string;
+            status: string;
+            title: string;
+            triggers: Array<string>;
+            updatedAt: string;
+            value: string;
+            version: string;
+        }>;
+        reason: string;
+        supported: boolean;
+    };
+};
+
+export type ListLearningProposalsResponse = ListLearningProposalsResponses[keyof ListLearningProposalsResponses];
+
+export type DecideLearningProposalData = {
+    body: {
+        decision: 'approve' | 'reject';
+        expectedVersion: string;
+        reason?: string;
+    };
+    path: {
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/learning-proposals/{proposalId}/decisions';
+};
+
+export type DecideLearningProposalErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type DecideLearningProposalError = DecideLearningProposalErrors[keyof DecideLearningProposalErrors];
+
+export type DecideLearningProposalResponses = {
+    /**
+     * The proposal after the recorded review decision.
+     */
+    200: {
+        body: string;
+        createdAt: string;
+        decisions: Array<{
+            actor: string;
+            at: string;
+            kind: string;
+            reason: string;
+        }>;
+        description: string;
+        evidenceCount: number;
+        id: string;
+        key: string;
+        kind: string;
+        learnedSkillId: string;
+        projectScoped: boolean;
+        promotionAvailable: boolean;
+        promotionUnavailableReason: string;
+        status: string;
+        title: string;
+        triggers: Array<string>;
+        updatedAt: string;
+        value: string;
+        version: string;
+    };
+};
+
+export type DecideLearningProposalResponse = DecideLearningProposalResponses[keyof DecideLearningProposalResponses];
+
+export type UndoLearningPromotionData = {
+    body: {
+        expectedVersion: string;
+    };
+    path: {
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/learning-proposals/{proposalId}/undo';
+};
+
+export type UndoLearningPromotionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type UndoLearningPromotionError = UndoLearningPromotionErrors[keyof UndoLearningPromotionErrors];
+
+export type UndoLearningPromotionResponses = {
+    /**
+     * The proposal after its promotion was reverted.
+     */
+    200: {
+        body: string;
+        createdAt: string;
+        decisions: Array<{
+            actor: string;
+            at: string;
+            kind: string;
+            reason: string;
+        }>;
+        description: string;
+        evidenceCount: number;
+        id: string;
+        key: string;
+        kind: string;
+        learnedSkillId: string;
+        projectScoped: boolean;
+        promotionAvailable: boolean;
+        promotionUnavailableReason: string;
+        status: string;
+        title: string;
+        triggers: Array<string>;
+        updatedAt: string;
+        value: string;
+        version: string;
+    };
+};
+
+export type UndoLearningPromotionResponse = UndoLearningPromotionResponses[keyof UndoLearningPromotionResponses];
+
+export type ReflectSessionData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/reflection';
+};
+
+export type ReflectSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ReflectSessionError = ReflectSessionErrors[keyof ReflectSessionErrors];
+
+export type ReflectSessionResponses = {
+    /**
+     * The completed session reflection receipt.
+     */
+    200: {
+        abstained: boolean;
+        conflicted: number;
+        disposition: string;
+        message: string;
+        promoted: number;
+        queued: number;
+        reason: string;
+        reflectionId: string;
+        staged: number;
+    };
+};
+
+export type ReflectSessionResponse = ReflectSessionResponses[keyof ReflectSessionResponses];
+
+export type GenerateMemoryConsolidationPlanData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/user-memory/consolidation/plans';
+};
+
+export type GenerateMemoryConsolidationPlanErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GenerateMemoryConsolidationPlanError = GenerateMemoryConsolidationPlanErrors[keyof GenerateMemoryConsolidationPlanErrors];
+
+export type GenerateMemoryConsolidationPlanResponses = {
+    /**
+     * A bounded daemon-curated user-memory consolidation plan.
+     */
+    201: {
+        expiresAt: string;
+        id: string;
+        operations: Array<{
+            exactDuplicateEligible: boolean;
+            kind: string;
+            reason: string;
+            replacement: {
+                description: string;
+                value: string;
+            };
+            sources: Array<{
+                description: string;
+                key: string;
+                value: string;
+            }>;
+            survivor: {
+                description: string;
+                key: string;
+                value: string;
+            };
+        }>;
+        plannedOperationCount: number;
+        plannedSourceCount: number;
+        target: 'user_model';
+    };
+};
+
+export type GenerateMemoryConsolidationPlanResponse = GenerateMemoryConsolidationPlanResponses[keyof GenerateMemoryConsolidationPlanResponses];
+
+export type DecideMemoryConsolidationPlanData = {
+    body: {
+        decision: 'apply' | 'dismiss';
+    };
+    path: {
+        planId: string;
+    };
+    query?: never;
+    url: '/api/v1/user-memory/consolidation/plans/{planId}/decisions';
+};
+
+export type DecideMemoryConsolidationPlanErrors = {
+    /**
+     * The request could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    410: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type DecideMemoryConsolidationPlanError = DecideMemoryConsolidationPlanErrors[keyof DecideMemoryConsolidationPlanErrors];
+
+export type DecideMemoryConsolidationPlanResponses = {
+    /**
+     * The receipt for applying or dismissing the whole consolidation plan.
+     */
+    200: {
+        applied: number;
+        conflicted: number;
+        disposition: string;
+        failed: number;
+        id: string;
+        planned: number;
+        skipped: number;
+        target: 'user_model';
+    };
+};
+
+export type DecideMemoryConsolidationPlanResponse = DecideMemoryConsolidationPlanResponses[keyof DecideMemoryConsolidationPlanResponses];
+
+export type ListUserMemoryData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/user-memory';
+};
+
+export type ListUserMemoryErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListUserMemoryError = ListUserMemoryErrors[keyof ListUserMemoryErrors];
+
+export type ListUserMemoryResponses = {
+    /**
+     * The user-model memory index.
+     */
+    200: {
+        items: Array<{
+            description: string;
+            key: string;
+        }>;
+        reason: string;
+        sha256: string;
+        sizeBytes: string;
+        supported: boolean;
+    };
+};
+
+export type ListUserMemoryResponse = ListUserMemoryResponses[keyof ListUserMemoryResponses];
+
+export type GetUserMemoryData = {
+    body?: never;
+    path: {
+        memoryKey: string;
+    };
+    query?: never;
+    url: '/api/v1/user-memory/{memoryKey}';
+};
+
+export type GetUserMemoryErrors = {
+    /**
+     * The request could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetUserMemoryError = GetUserMemoryErrors[keyof GetUserMemoryErrors];
+
+export type GetUserMemoryResponses = {
+    /**
+     * One user-model memory entry and its revisions.
+     */
+    200: {
+        current: {
+            description: string;
+            key: string;
+            origin: string;
+            sourceSessionId: string;
+            status: string;
+            updatedAt: string;
+            value: string;
+            version: string;
+            writer: string;
+        };
+        history: Array<{
+            description: string;
+            key: string;
+            origin: string;
+            sourceSessionId: string;
+            status: string;
+            updatedAt: string;
+            value: string;
+            version: string;
+            writer: string;
+        }>;
+        historyAvailable: boolean;
+    };
+};
+
+export type GetUserMemoryResponse = GetUserMemoryResponses[keyof GetUserMemoryResponses];

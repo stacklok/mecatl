@@ -698,7 +698,17 @@ live on the negotiated snapshot's `scheduling` flag — the list answers `suppor
 with a reason instead of failing, every mutation answers `501 schedule_unsupported` — and
 whose updates re-send only the exposed fields while carrying the daemon's unexposed spec
 fields (`limits`, `selector`, `parts`, …) over untouched; the browser adds a cron builder
-and a natural-language phrase parser as pure functions. See
+and a natural-language phrase parser as pure functions. **Knowledge** is the third:
+`/api/v1/skills`, `/learned-skills…`, `/learning-proposals…`, `/sessions/{id}/reflection`,
+and `/user-memory…` project configured skills, versioned learned skills (detail, unified
+diff, lifecycle history, and `activate`/`archive`/`reject`/`rollback` carrying the daemon's
+`expectedRevision`), the evidence-backed learning queue (decide, undo promotion), session
+reflection receipts, and the user model with its daemon-curated consolidation plans
+(generate, then apply or dismiss by plan id); each surface is gated live on its own snapshot
+capability (`skills`, `learnedSkills`, `learningProposals`, `reflection`, `userModel`,
+`manualDream.userModel`) with a surface-specific `501` code, the two inventory lists degrade
+to `supported: false` instead, and the daemon's conflict on a stale token is relayed, never
+retried. See
 [ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
 [Studio bootstrap](acceptance/studio-bootstrap.md) and
 [Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own

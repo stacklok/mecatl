@@ -25,10 +25,16 @@ import {
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
 import { type ChatService, createMecatlChatService } from "./mecatl/chat.js";
+import {
+  createMecatlKnowledgeService,
+  type KnowledgeCapabilities,
+  type KnowledgeService,
+} from "./mecatl/knowledge.js";
 import { type MecatlRuntime, RuntimeNotReadyError } from "./mecatl/runtime.js";
 import { createMecatlScheduleService, type ScheduleService } from "./mecatl/schedules.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 
 export const openApiInfo = {
@@ -74,6 +80,7 @@ export interface AppDependencies {
   readonly authentication?: AuthenticationService;
   readonly chat?: ChatService;
   readonly schedules?: ScheduleService;
+  readonly knowledge?: KnowledgeService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
   /** How long a feature request waits for compatibility negotiation before `503`. */
@@ -194,6 +201,12 @@ export function createApp(dependencies: AppDependencies = {}) {
       ? undefined
       : createMecatlScheduleService(runtime.client, schedulingSupported));
   registerScheduleRoutes(app, schedules);
+  const knowledge =
+    dependencies.knowledge ??
+    (runtime === undefined
+      ? undefined
+      : createMecatlKnowledgeService(runtime.client, () => knowledgeCapabilities(runtime)));
+  registerKnowledgeRoutes(app, knowledge);
 
   if (dependencies.webDist !== undefined) app.use("*", spaHandler(dependencies.webDist));
 
@@ -249,6 +262,33 @@ export function createApp(dependencies: AppDependencies = {}) {
   });
 
   return app;
+}
+
+/**
+ * Per-surface knowledge capabilities read LIVE from the negotiated snapshot; a
+ * missing snapshot reads as every capability off (AC1.4 of studio-knowledge).
+ */
+export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabilities {
+  let capabilities: ReturnType<MecatlRuntime["snapshot"]>["capabilities"] | undefined;
+  try {
+    capabilities = runtime.snapshot().capabilities;
+  } catch {
+    capabilities = undefined;
+  }
+  const dream = capabilities?.manualDream?.userModel;
+  return {
+    learnedSkills: capabilities?.learnedSkills ?? false,
+    learningProposals: capabilities?.learningProposals ?? false,
+    memoryConsolidation: {
+      decide: dream?.decide ?? false,
+      generate: dream?.generate ?? false,
+      unavailableReason:
+        dream?.unavailableReason ?? "Memory consolidation is not enabled on this deployment.",
+    },
+    reflection: capabilities?.reflection ?? false,
+    skills: capabilities?.skills ?? false,
+    userModel: capabilities?.userModel ?? false,
+  };
 }
 
 function runtimeUnavailable(context: Parameters<typeof problem>[0], detail: string) {

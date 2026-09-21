@@ -362,7 +362,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio schedules](studio-schedules.md) — the second Studio feature layer: capability-gated schedule inventory, create/update mapping onto the SDK spec with unexposed fields preserved, lifecycle actions and fire history, and the browser cron builder and phrase parser. Status: landed in the implementation candidate; authoritative on merge.
 
-- [Mecatl Studio knowledge](studio-knowledge.md) — the third Studio feature layer: per-capability-gated configured and learned skills, revision-checked learned-skill actions, learning proposals and session reflection, and user-memory consolidation plans, with the knowledge workspace. Status: proposed.
+- [Mecatl Studio knowledge](studio-knowledge.md) — the third Studio feature layer: per-capability-gated configured and learned skills, revision-checked learned-skill actions, learning proposals and session reflection, and user-memory consolidation plans, with the knowledge workspace. Status: landed in the implementation candidate; authoritative on merge.
 
 ## See also
 
