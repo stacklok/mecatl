@@ -10,7 +10,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/anthropics/anthropic-sdk-go v1.72.0
+	github.com/anthropics/anthropic-sdk-go v1.73.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/charmbracelet/colorprofile v0.4.3
