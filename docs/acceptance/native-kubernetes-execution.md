@@ -88,7 +88,7 @@ reattachment never substitutes a current default or Pod UID.
 
 Sanitized errors carry `ErrorDetail{code, retryable}`. Stable mappings are `invalid_argument`→InvalidArgument,
 `unauthenticated`→Unauthenticated, `permission_denied`→PermissionDenied, `not_found`→NotFound,
-`already_exists`→AlreadyExists, `conflict`/`version_mismatch`→Aborted, `not_ready`→Unavailable,
+`already_exists`→AlreadyExists, `conflict`/`version_mismatch`/`directory_not_empty`→Aborted, `not_ready`→Unavailable,
 `fence_unknown`→FailedPrecondition, `resource_exhausted`→ResourceExhausted, and `internal`→Internal.
 Only `not_ready` and `unauthenticated` can carry `retryable:true`; this is not permission to retry a
 mutation automatically. Grant-expiry refresh is read-only. Backend details never cross the boundary;
@@ -262,18 +262,18 @@ ledgers and retained isolation/configuration in the resource and rehydration led
 ### Scenario 1 — Disabled means absent, including startup validation
 
 The optional deployment boundary follows [draft ADR 0350](../adr/0350-native-kubernetes-execution.md).
-Current startup provider validation reaches `Bind` (`docs/design/IMPLEMENTATION-NOTES.md:6549-6560`),
-so execution configuration needs a side-effect-free validation path rather than a fake allocation.
+Startup preflight uses side-effect-free `ValidatePlacement`/`ValidateProfile`, not `Bind`
+or a throwaway allocation. CLI and real composition tests below exercise that boundary.
 
 **Acceptance:**
 - AC1.1: With execution disabled, mecak8s creates no Kubernetes execution client, informer, goroutine, CRD, RBAC, controller, executor, PVC, or Pod, and performs no execution API call.
-  - verify: `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`; inspection — full disabled-startup side-effect proof is MISSING (the no-fs test is partial, not disabled integration).
+  - verify: `TestDisabledExecutionStartupDoesNotContactExecutionOrKubernetes`, `TestDisabledCompositionPreservesAllocationsAndIndependentReconciliation`; offline CLI `run()` reaches listener setup with poison execution TLS paths and a test-only kubeconfig/API endpoint untouched. Real composition runs and closes without provider-store actions; constructor/informer absence also follows from the disabled CLI branch and independent provider packaging (not goroutine counts).
 - AC1.2: The provider service deploys, restarts, and reconciles independently of mecak8s. The default mecak8s chart has no dependency on the provider chart and installs no provider resource; enabling the client adapter requires explicit endpoint/profile configuration. The adapter needs no Pod/PVC/controller management RBAC.
   - verify: `TestChartRetainsCRDAndDoesNotGrantSecretAPI`, `TestKindExecutionProductionReplicaLifecycle`; inspection — default chart dependency/RBAC review and final Kind execution PENDING.
 - AC1.3: Preflight validates configured profiles and endpoint/provider compatibility without allocating an environment. Allocation occurs only at an authorized session-binding operation; enabled configuration that is incomplete fails startup before allocation, and a configured but unavailable endpoint fails validation clearly with no local fallback.
-  - verify: `TestHandlerValidateIsReadOnlyAndEnsureIdempotent`, `TestGRPCReadinessAndMTLSAreMandatory`, `TestKindExecutionQualification`; inspection — incomplete enabled-config startup-before-allocation coverage remains MISSING; final Kind run PENDING.
+  - verify: `TestExecutionPreflightRejectsIncompleteAndIncompatibleCLI`, `TestRemoteExecutionPreflightNeverAllocates`, `TestHandlerValidateIsReadOnlyAndEnsureIdempotent`, `TestGRPCReadinessAndMTLSAreMandatory`, `TestKindExecutionQualification`; offline CLI/composition and signed-handler validation cover rejection without allocation; final Kind run PENDING.
 - AC1.4: Disabling the mecak8s client integration neither adopts nor deletes existing `ExecutionEnvironment` CRs, PVCs, or Pods and does not stop the separate provider's reconciliation for its existing allocations or other authorized clients.
-  - verify: `TestStartupDoesNotFenceLivePeerOperation`; inspection — peer restart is partial coverage; disabled-client retained-resource lifecycle proof remains MISSING.
+  - verify: `TestDisabledCompositionPreservesAllocationsAndIndependentReconciliation`, `TestStartupDoesNotFenceLivePeerOperation`; real disabled Build/run/Close leaves test-owned CR/Pod/PVC state unchanged, then the separate reconciler advances the existing allocation to Ready. This is offline lifecycle evidence, not a cluster restart run.
 
 ### Scenario 2 — One idempotent logical environment is allocated per binding
 
@@ -298,11 +298,11 @@ The adapter preserves the immutable environment and independent read ledger
 
 **Acceptance:**
 - AC3.1: A fresh environment can create, read, conditionally edit, replace, copy, move, remove, list, grep, and glob a small Go fixture with unchanged tool schemas and the existing read-before-edit/version behavior where that contract applies.
-  - verify: `TestFileOperationsAreConfinedAndVersioned`, `TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly`, `TestKindExecutionQualification`; inspection — full native per-tool positive conformance matrix remains MISSING; final Kind execution PENDING.
+  - verify: `TestRemoteWorkspaceConformanceThroughSignedGRPC`, `TestRemoteFileToolsPreserveLedgerAndNamespaceContracts`, `TestKindExecutionQualification`; both shared Workspace conformance suites and all nine actual file tools run over loopback mTLS/signed gRPC with the real executor in a test-owned directory. Kind invokes the added remote-tool matrix, but final Kind execution remains PENDING.
 - AC3.2: Read/Edit/Write preserve their applicable recorded-read and CreateFile/ReplaceFile CAS contracts; Copy/Move/Remove preserve their own positive conformance contracts and do not require an unrelated content read ledger/CAS precondition.
-  - verify: `TestFileOperationsAreConfinedAndVersioned`, `TestRenameAndCopyNeverClobber`; inspection — native recorded-read and positive Copy/Move/Remove conformance remain MISSING (negative clobber tests are not positive conformance).
+  - verify: `TestRemoteWorkspaceConformanceThroughSignedGRPC`, `TestRemoteFileToolsPreserveLedgerAndNamespaceContracts`; shared tests cover create/replace races, stale/zero versions, namespace positives and non-clobbering failures; actual tools cover unread/stale Edit/Write refusal and successful replacement. Namespace operations have no unrelated content-read precondition.
 - AC3.3: File access is physically confined through symlink traversal rather than lexical checks alone, and every supported read/mutate/list/search/command request is authorized for the exact environment; stale, expired, revoked, or wrong-environment grants are denied. Detached status/cancel requests authorize before returning Unimplemented; this slice exposes no command-stream RPC.
-  - verify: `TestFileOperationsAreConfinedAndVersioned`, `TestSecurityManagerGuardsEveryRPCOnExistingConnection`, `TestGrantRoundTripAndExactBindings`, `TestGrantRejectsExpiryRevocationAndUnknownFields`, `TestCommandStatusIsUnimplementedOnlyAfterAuthorization`; inspection — per-file-operation confinement/authorization matrix remains partial.
+  - verify: `TestEveryFileOperationRequiresExactCurrentGrant`, `TestFileOperationsNeverTraverseExternalSymlink`, `TestRemoteWorkspaceConformanceThroughSignedGRPC`, `TestSecurityManagerGuardsEveryRPCOnExistingConnection`, `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`, `TestCommandStatusIsUnimplementedOnlyAfterAuthorization`; every supported file operation has a valid positive control before wrong-client/owner/environment/revision/epoch/operation, expired, and revoked-nonce rejection at the shared handler gate. Executor tests cover symlink source/destination traversal and search leakage; durable generation revocation remains covered at the store boundary.
 - AC3.4: Shell is bound to the same environment namespace as Workspace. Cancellation distinguishes requested cancellation, acknowledged complete process termination, and externally proven compute/storage fencing; namespace teardown includes detached descendants or fails closed. Output is capped and valid UTF-8 repaired, and Shell-created file changes are not falsely claimed to participate in Workspace CAS.
   - verify: `TestForegroundCommandReturnsReceiptAndTimeoutTerminatesDescendants`, `TestSuccessfulDetachedChildIsKilledBeforeTerminalReceipt`, `TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences`, `TestKindExecutionProductionHolderLossFencesActiveOperation`; inspection — native output-cap/UTF-8 and Shell-CAS disclosure proof remains partial; final Kind execution PENDING.
 
@@ -320,7 +320,7 @@ therefore requires independent environment execution fencing.
 - AC4.3: Timeout, Pod deletion, controller restart, Lease timeout, or network partition alone never authorizes a replacement executor while an old writer may run; unknown fencing state fails closed and requires the reviewed manual/external fencing path.
   - verify: `TestExpiredOperationLeaseFencesWithoutClearingIdentity`, `TestRecoverMissingPodRemainsFenceUnknown`, `TestRecoveredTerminalProofCanStartExactReplacement`, `TestKindExecutionProductionHolderLossFencesActiveOperation` (final Kind execution PENDING); inspection — external fencing runbook review PENDING.
 - AC4.4: A distinct `administrator:true` client with `administratorFor:[creatorURI]` can administer that creator's environment through all six administrative RPCs, including migration, revocation, and retained deletion, while preserving immutable creator identity and exact owner/revision/epoch/UID/operation checks. A second creator, wrong owner, stale identity, or replay with changed inputs is denied without existence disclosure. Self-admin compatibility remains explicit; no Files/Shell/attach/run/reference or MayAttestOwner authority is gained.
-  - verify: `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminCASRetryRechecksSubject`, `TestScopedAdminMigrationReceiptRetainsUIDPreconditions`, `TestMigrationCompletedCASReplayRequiresExactSourceSchema`, `TestMigrationReceiptExpiresAfterReconciledReplacement`, `TestScopedAdminDoesNotGrantAttestationOrDataPlane`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`, `TestKindExecutionProductionScopedAdministrator`; inspection — replacement-expiry regression is in the targeted repair, not the pinned baseline; final Kind execution PENDING (Kind covers replacement/non-escalation, not all six routes).
+  - verify: `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminCASRetryRechecksSubject`, `TestScopedAdminMigrationReceiptRetainsUIDPreconditions`, `TestMigrationCompletedCASReplayRequiresExactSourceSchema`, `TestMigrationReceiptExpiresAfterReconciledReplacement`, `TestScopedAdminDoesNotGrantAttestationOrDataPlane`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`, `TestKindExecutionProductionScopedAdministrator`; inspection — replacement-expiry regression is present in the implementation candidate; final Kind execution PENDING (Kind covers replacement/non-escalation, not all six routes).
 - AC4.5: Strict `administratorFor` validation and canonical digest inclusion prevent ambiguous scope. Removal at a higher security generation takes effect on existing connections and receipt replay; an equal-generation scope edit fails closed. Old binaries reject the field and the documented quiesced upgrade preserves authority history.
   - verify: `TestAdministratorScopeManifestValidation`, `TestAdministratorScopeDigestIsNormalizedAndAuthorityBound`, `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminEqualGenerationDriftFailsClosed`; inspection — old-binary rejection/quiesced-upgrade compatibility review PENDING.
 
@@ -353,9 +353,9 @@ in local composition (`internal/app/project_ingestion.go:20`) and AGENTS discove
 
 **Acceptance:**
 - AC6.1: A remote execution session receives operator-global instructions and only its explicitly supported catalog; project AGENTS/rules/skills and Git source ingestion are off unless a later reviewed source/trust contract enables them.
-  - verify: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`; inspection — the test pins host AGENTS exclusion/catalog posture; complete operator-global and remote rules/skills/Git source matrix remains partial.
+  - verify: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`; real factory invocation plants host and remote AGENTS, host rules/skills/commands, invokes the forbidden project skill, and proves operator-global rules/skills survive. Removing remote admission makes the test fail on leaked rules and skill body. Git snapshot exclusion uses the same admission seam; a dedicated native Git fixture is still partial evidence.
 - AC6.2: Schedules remain excluded. Background commands, isolated Subagent/Parallel/Team delegation, SkillDraft, Git/source operations, and unsupported successor modes are rejected with named capability/precondition errors rather than running locally or silently omitting work; `no-fs` remains unchanged.
-  - verify: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`, `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`, `TestCommandStatusIsUnimplementedOnlyAfterAuthorization`; inspection — full unsupported-path invocation/error matrix remains partial.
+  - verify: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`, `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`, `TestExecutionPreflightRejectsIncompleteAndIncompatibleCLI`, `TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain`, `TestCommandStatusIsUnimplementedOnlyAfterAuthorization`; real factory tests invoke Subagent/Parallel/Team/SkillDraft/Schedule and require model-visible errors, reject worktree discovery, and withhold command listing/expansion instead of opening host paths. The native mTLS/store integration rejects background Shell with its named runner-capability error and no executor dispatch, while foreground Shell succeeds. Unsupported-successor invocation coverage remains partial; do not infer it from catalog absence.
 - AC6.3: Clear/Fork use environment exclusion and reference reservation/publication while preserving same-remote-`EnvironmentRef` successor semantics and the source on publication failure. Clear/Fork are not workspace cloning; no public Harness field is added and no model chooses an environment/profile.
   - verify: `TestReferenceTransactionsRetainUnknownAndNeverChangeSource`, `TestKindExecutionProductionClearForkLifecycle` (final Kind execution PENDING); inspection — public API/profile authority review PENDING.
 
@@ -368,7 +368,7 @@ live suite is not native-provider proof. The focused mock task must not inherit 
 
 **Acceptance:**
 - AC7.1: `task e2e:k8s:execution` and the enforcing-CNI `task e2e:k8s:execution:production` run on the supported generic toolchain, including CI, with a unique owned kind cluster, a scratch kubeconfig, and explicit `--kubeconfig`/context on every command. They deploy the separate chart plus explicitly connected mecak8s and use only the deterministic mock provider. The final production-profile run uses Calico and exercises negative network isolation, rotation/revocation, replica/lifecycle recovery, holder loss, quota recovery, pending delete, Clear/Fork, migration, sanitized artifacts, and the amendment regressions.
-  - verify: `TestKindExecutionQualification`, `TestKindExecutionProductionNetworkPolicyEnforced`, `TestKindExecutionProductionSecurityRotation`, `TestKindExecutionProductionReplicaLifecycle`, `TestKindExecutionProductionHolderLossFencesActiveOperation`, `TestKindExecutionProductionQuotaSaturation`, `TestKindExecutionProductionPendingDeleteOutageRecovery`, `TestKindExecutionProductionClearForkLifecycle`, `TestKindExecutionProductionCompatiblePrototypeMigration`, `TestKindExecutionProductionScopedAdministrator`, `TestKindExecutionProductionHelmLifetime` (names exist; final production Kind+Calico run PENDING).
+  - verify: `TestLegacyFixtureWaitsForQuotaAccountingBeforeCreate`, `TestKindExecutionQualification`, `TestKindExecutionProductionNetworkPolicyEnforced`, `TestKindExecutionProductionSecurityRotation`, `TestKindExecutionProductionReplicaLifecycle`, `TestKindExecutionProductionHolderLossFencesActiveOperation`, `TestKindExecutionProductionQuotaSaturation`, `TestKindExecutionProductionPendingDeleteOutageRecovery`, `TestKindExecutionProductionClearForkLifecycle`, `TestKindExecutionProductionCompatiblePrototypeMigration`, `TestKindExecutionProductionScopedAdministrator`, `TestKindExecutionProductionHelmLifetime` (names exist; final production Kind+Calico run PENDING).
 - AC7.2: The mock flow seeds a small Go fixture through file tools, asks the harness to implement a function/tests, runs `go test` through bound Shell, and verifies the persisted artifact and restart/reattach behavior.
   - verify: `TestKindExecutionQualification` (coding/artifact/restart assertions exist; final Kind execution PENDING).
 - AC7.3: Failure artifacts are bounded and sanitized; cleanup targets only the recorded owned cluster. Destructive live cleanup requires confirmation and never mutates ambient kubeconfig/context.
@@ -381,17 +381,25 @@ live suite is not native-provider proof. The focused mock task must not inherit 
 ## Implementation proof map
 
 Source/test locations in this table and the `verify:` lines refer to implementation commit
-`9bb4d89b8aa497c9d2cd6aa4a94ab9262a913364`, not files supplied by this plan branch.
-The labels name existing tests, not successful executions or complete behavioral coverage.
-MISSING/partial annotations preserve broader proof gaps outside the targeted receipt repair;
-PENDING runtime evidence means the test exists but still needs final-candidate execution.
+`0df361480b2b9c1b9a02ca5c7f55362d0e257966`, not files supplied by this plan branch.
+This is the intended candidate for the normal merge of this proof-map update into implementation.
+The labels name actual tests; source resolution alone is not successful execution or complete
+behavioral coverage. Offline boundaries and remaining partial proof are stated per AC;
+PENDING runtime evidence still requires final-candidate execution.
 The migration-receipt replacement-expiry regression `TestMigrationReceiptExpiresAfterReconciledReplacement`
-is in the targeted repair's `internal/adapter/executioncontroller/production_lifecycle_test.go`, not this
-source baseline; verify it against the implementation candidate containing this plan merge.
+is already present in that candidate's `internal/adapter/executioncontroller/production_lifecycle_test.go`.
 Run `actrace --strict --plan <absolute-path-to-this-plan>` from the implementation worktree
 for source resolution, then rerun after its normal plan merge. Draft status is intentional:
 strict mode gates landed plans only, so inspect the native report for missing proofs as well.
 A row naming a unit/fake-client test establishes only that boundary; it does not prove the entire AC.
+
+**Offline candidate verification:** the implementation content pinned above passed targeted race
+packages (execution client/controller/executor/protocol, mecak8s, and remote composition), the
+build-tagged quota test, compilation of the Kind qualification and fixture packages without running
+Kind, full `task lint`, full `task test` (including race and standalone module checks), `task build`,
+`task docs`, `task site:build`, and the offline demo. Local logs are under the implementation's ignored
+`.scratch/orchestrate/native-kubernetes-execution/coverage-*.log`. Source conformance does not qualify
+Kubernetes admission, CNI enforcement, or live-model behavior; those remain the runtime gates below.
 
 **Observed qualification:** the [production Kind+Calico job](https://github.com/stacklok/mecatl/actions/runs/35589357385/job/106299991747)
 completed **SUCCESS** at historical implementation `deaf1c3d1dfe7ea92afc8fe826f1bc613080f219`. This includes network isolation,
@@ -400,31 +408,42 @@ Clear/Fork, compatible prototype migration, and artifact isolation. Historical l
 failures are not active blockers for that run. This is baseline evidence, not final-candidate evidence
 for the new scoped-admin, continuing-retry, or Helm uninstall/reinstall requirements.
 
-Draft CI skipped race lanes; non-race success is not a race result. The generic live compaction lane
-failure is addressed by [merged PR #1728](https://github.com/stacklok/mecatl/pull/1728) on main, not a
-native-provider defect or proof that its fix is present in this draft. Generic mecak8s live success is
-also not AC7.4 evidence. Final-candidate native-provider live and amended production Kind qualification
-remain **PENDING**. Source resolution below does not assert new-head CI, final live execution, or human
-contract/panel approval.
+Draft CI skipped race lanes; non-race success is not a race result. The newer
+[production Kind+Calico job](https://github.com/stacklok/mecatl/actions/runs/35642635684/job/106475375010)
+at `9bb4d89b8aa497c9d2cd6aa4a94ab9262a913364` failed **before qualification tests** while
+seeding `legacy-migration`: ResourceQuota accounting for
+`count/executionenvironments.execution.mecatl.dev` was still unknown. Provider Deployment
+readiness was not quota readiness. This supersedes a test-race diagnosis for that job.
+The implementation adds a two-minute, context-aware quota-accounting wait with delayed-status,
+timeout, cancellation, and forbidden-response controls in
+`TestLegacyFixtureWaitsForQuotaAccountingBeforeCreate`. It does not disable quota or retry
+arbitrary forbidden creates. Those offline controls and tagged compilation are not a rerun
+of the production job.
+
+[PR #1728](https://github.com/stacklok/mecatl/pull/1728), commit
+`6501b5924`, is already integrated in the implementation ancestry. Its generic live-compaction
+repair is not native-provider qualification. Final-candidate native-provider live and amended
+production Kind qualification remain **PENDING**. Source resolution below does not assert
+new-head CI, final live execution, or human contract/panel approval.
 
 | AC | Existing implementation proof at the reference commit; remaining evidence |
 |---|---|
-| AC1.1 | `internal/app/remote_execution_test.go`: `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`; full disabled-effects obligation remains. |
+| AC1.1 | `cmd/mecak8s/execution_startup_test.go`: `TestDisabledExecutionStartupDoesNotContactExecutionOrKubernetes` exercises CLI `run()` through composition to listener setup with poison TLS paths and no test-endpoint calls. `internal/adapter/executioncontroller/disabled_composition_test.go` exercises disabled Build/run/Close beside retained provider resources. Constructor/informer absence is also inspected at the CLI enablement branch; no flaky goroutine census. |
 | AC1.2 | `deploy/helm/mecatl-execution/chart_test.go`: `TestChartRetainsCRDAndDoesNotGrantSecretAPI`; production job separately deploys provider and client. |
-| AC1.3 | `internal/adapter/executioncontroller/handler_test.go`: `TestHandlerValidateIsReadOnlyAndEnsureIdempotent`; `controller_test.go`: `TestInitializeRefusesMissingRuntimeClassBeforeCreatingPods`. |
-| AC1.4 | `internal/adapter/executioncontroller/controller_test.go`: `TestStartupDoesNotFenceLivePeerOperation`; this is peer-restart evidence, not a complete disabled-client lifecycle proof. |
+| AC1.3 | `cmd/mecak8s/execution_startup_test.go`: `TestExecutionPreflightRejectsIncompleteAndIncompatibleCLI`; `internal/app/remote_execution_test.go`: `TestRemoteExecutionPreflightNeverAllocates`; handler read-only validation and mTLS/readiness tests cover the transport. |
+| AC1.4 | `internal/adapter/executioncontroller/disabled_composition_test.go`: `TestDisabledCompositionPreservesAllocationsAndIndependentReconciliation` compares retained objects across disabled Build/run/Close, then observes independent reconciliation. `controller_test.go`: peer-restart test remains complementary. |
 | AC2.1 | `internal/adapter/executioncontroller/handler_test.go`: `TestHandlerValidateIsReadOnlyAndEnsureIdempotent`; `e2e/k8s_execution/qualification_test.go`: `TestKindExecutionQualification`. |
 | AC2.2 | `internal/adapter/executioncontroller/store_test.go`: `TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift`; `controller_test.go`: `TestReconcileRefusesForeignExistingPVCWithoutPersistingUID`. |
 | AC2.3 | `internal/adapter/executioncontroller/profiles_test.go`: `TestLoadProfilesStrictAndDigestPinned`; production `TestKindExecutionProductionQuotaSaturation`. |
 | AC2.4 | `internal/adapter/executioncontroller/provisioning_retry_test.go`: `TestProvisioningWorkerConvergesWithoutAnotherEvent`, `TestProvisioningPreservesCreateAndConditionErrors`, `TestProvisioningRetriesNeverReplaceAuthoritativeResources` exercise PVC and Pod retry/confinement paths. Production `TestKindExecutionProductionQuotaSaturation` restores quota without a new reference event; final runtime evidence PENDING. |
-| AC3.1 | `internal/adapter/executionclient/client_test.go`: `TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly`; Kind coding flow succeeds, but full per-tool conformance matrix remains to be traced/qualified. |
-| AC3.2 | `internal/executionexecutor/executor_test.go`: `TestFileOperationsAreConfinedAndVersioned`, `TestRenameAndCopyNeverClobber`; native recorded-read and positive Copy/Move/Remove conformance remain MISSING. |
-| AC3.3 | `internal/executionexecutor/executor_test.go`: confinement/version tests; `internal/executionenv/protocol_test.go`: exact binding/expiry/revocation tests; `internal/adapter/executionclient/client_test.go`: authorized detached-control rejection; `internal/adapter/executioncontroller/security_test.go`: `TestSecurityManagerGuardsEveryRPCOnExistingConnection`. Per-file-operation matrix remains partial. |
+| AC3.1 | `internal/adapter/executionclient/files_conformance_test.go`: `TestRemoteWorkspaceConformanceThroughSignedGRPC` runs both existing shared suites; `TestRemoteFileToolsPreserveLedgerAndNamespaceContracts` invokes all nine tool bodies against the signed handler and real executor. `e2e/k8s_execution/file_tools_test.go` adds the tool matrix called by Kind qualification; runtime execution PENDING. |
+| AC3.2 | Same gRPC suites cover concurrent create/CAS, missing/stale/zero versions, non-clobbering namespace operations, and actual Read-ledger behavior. The suite exposed and now guards missing-file replacement precedence and typed non-empty-directory removal errors. |
+| AC3.3 | `internal/adapter/executioncontroller/file_authorization_test.go`: every supported file operation has positive and negative signed-grant controls; `internal/executionexecutor/confinement_test.go`: physical symlink traversal/search checks. Existing security manager, protocol, durable revocation, and detached-control tests remain complementary. |
 | AC3.4 | `internal/adapter/executioncontroller/store_test.go`: `TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences`; production `TestKindExecutionProductionHolderLossFencesActiveOperation`. |
 | AC4.1 | `internal/adapter/executioncontroller/store_lifecycle_test.go`: `TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient`; Kind isolation and pending-delete tests; scoped-admin non-escalation is exercised by the AC4.4 tests. |
 | AC4.2 | `internal/adapter/executioncontroller/store_revoke_test.go`: `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`; `store_concurrency_test.go`: `TestAcquireRunAndRevokeUseResourceVersionCAS`; production security rotation. |
 | AC4.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestExpiredOperationLeaseFencesWithoutClearingIdentity`, `TestRecoverMissingPodRemainsFenceUnknown`, `TestRecoveredTerminalProofCanStartExactReplacement`; production holder loss. |
-| AC4.4 | `internal/adapter/executioncontroller/admin_scope_test.go`: `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminCASRetryRechecksSubject`, `TestScopedAdminMigrationReceiptRetainsUIDPreconditions`, `TestMigrationCompletedCASReplayRequiresExactSourceSchema`, `TestMigrationReceiptExpiresAfterReconciledReplacement`, `TestScopedAdminDoesNotGrantAttestationOrDataPlane`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`. Replacement-expiry test is in `internal/adapter/executioncontroller/production_lifecycle_test.go` in the targeted repair, not the pinned baseline. `e2e/k8s_execution/ab_production_admin_test.go`: `TestKindExecutionProductionScopedAdministrator` exists (replacement/non-escalation, not all six routes); final Kind evidence PENDING. |
+| AC4.4 | `internal/adapter/executioncontroller/admin_scope_test.go`: `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminCASRetryRechecksSubject`, `TestScopedAdminMigrationReceiptRetainsUIDPreconditions`, `TestMigrationCompletedCASReplayRequiresExactSourceSchema`, `TestMigrationReceiptExpiresAfterReconciledReplacement`, `TestScopedAdminDoesNotGrantAttestationOrDataPlane`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`. Replacement-expiry test is in `internal/adapter/executioncontroller/production_lifecycle_test.go` in the pinned implementation candidate. `e2e/k8s_execution/ab_production_admin_test.go`: `TestKindExecutionProductionScopedAdministrator` exists (replacement/non-escalation, not all six routes); final Kind evidence PENDING. |
 | AC4.5 | `internal/adapter/executioncontroller/admin_scope_security_test.go`: `TestAdministratorScopeManifestValidation`, `TestAdministratorScopeDigestIsNormalizedAndAuthorityBound`; `internal/adapter/executioncontroller/admin_scope_test.go`: all-routes scope removal plus `TestScopedAdminEqualGenerationDriftFailsClosed`. Compatibility/upgrade human review PENDING. |
 | AC5.1 | `internal/adapter/executionclient/client_test.go`: exact reattachment test above; production `TestKindExecutionProductionReplicaLifecycle` and security rotation. |
 | AC5.2 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestReplacementPersistsTerminalProofBeforeRemovingPodFinalizer`; production replica lifecycle. |
@@ -432,9 +451,9 @@ contract/panel approval.
 | AC5.4 | `internal/adapter/executionclient/reference_ambiguity_test.go`: `TestAmbiguousCommitIsRetainedAndNeverAbortedByCleanup`; production `TestKindExecutionProductionPendingDeleteOutageRecovery`. |
 | AC5.5, AC5.7 | `deploy/helm/mecatl-execution/chart_test.go`: `TestChartHasNoDeletionHook`; `deploy/helm/mecatl-execution/lifetime_test.go`: `TestChartRetainedLifetime` exercises lookup/adoption, missing history, foreign ownership, profile drift, and retained policies/ledgers offline. `e2e/k8s_execution/zz_production_helm_lifetime_test.go`: `TestKindExecutionProductionHelmLifetime` exercises actual upgrade/uninstall/reinstall and enforcement; final runtime evidence PENDING. |
 | AC5.6 | Deployment-documentation inspection and docs gates required on the final implementation; Kind is restart proof only. |
-| AC6.1–AC6.2 | `internal/app/remote_execution_test.go`: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog`, `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall`. |
+| AC6.1–AC6.2 | `internal/app/remote_execution_test.go`: real factory poison-source and operator-global positive controls, forbidden-tool invocation errors, command/worktree discovery, and unchanged no-FS catalog/no-allocation checks. Native background Shell rejection is exercised in `internal/adapter/executionclient/service_integration_test.go` alongside a successful foreground command. Native Git snapshot and unsupported-successor invocation evidence remains partial; the shared admission gate and catalog inspection alone do not close that matrix. |
 | AC6.3 | `internal/adapter/executioncontroller/store_lifecycle_test.go`: `TestReferenceTransactionsRetainUnknownAndNeverChangeSource`; production `TestKindExecutionProductionClearForkLifecycle`. |
-| AC7.1 | `.github/workflows/k8s-e2e.yml` runs `task e2e:k8s:execution:production`; the reference job succeeded. `e2e/k8s_execution/aa_production_migration_test.go`: `TestKindExecutionProductionCompatiblePrototypeMigration`. Final amended-candidate run **PENDING**. |
+| AC7.1 | `.github/workflows/k8s-e2e.yml` runs `task e2e:k8s:execution:production`; the historical reference job succeeded, but the newer job failed during quota-dependent fixture setup before tests. `internal/adapter/executioncontroller/legacy_fixture_kind_test.go` covers the bounded accounting wait offline. `e2e/k8s_execution/aa_production_migration_test.go`: `TestKindExecutionProductionCompatiblePrototypeMigration`. Final amended-candidate run **PENDING**. |
 | AC7.2 | `e2e/k8s_execution/qualification_test.go`: `TestKindExecutionQualification`, run by the successful production profile. |
 | AC7.3 | Production `TestKindExecutionProductionFailureArtifactBoundary`; workflow bounded uploads and ownership-scoped cleanup. |
 | AC7.4 | `e2e/k8s_execution/live_qualification_test.go`: `TestKindExecutionLiveQualification` exists; successful final native-provider OpenRouter evidence **PENDING**. |
@@ -473,4 +492,4 @@ plan worktree to make citations or trace appear complete.
 - A PVC can preserve files while a stale command still mutates them. Session leasing does not fence command execution; missing old-executor evidence remains a fail-closed manual recovery boundary.
 - Only an enforcing CNI supplies negative NetworkPolicy proof. Retaining storage while uninstall removes isolation or authority history is unsafe; the Helm lifecycle amendment is a completion requirement, not deferred polish.
 - Every outlives-a-call resource, including retained security/capacity ledgers, reload state, informer/cache, connection pools, claims, and lifecycle/reference reconciliation, needs an accurate resource/rehydration inventory in `docs/adr/0027-cloud-native.md` on the implementation branch.
-- Scope, retry, and Helm behavioral tests exist in the pinned implementation source; final production Kind/native live evidence remains pending. Broader missing/partial coverage in the verify lines remains an acceptance obligation, not part of the targeted receipt repair. Source/proof locations absent on the plan branch stay explicitly implementation-scoped; do not add implementation code to satisfy plan-branch gates.
+- Scope, retry, Helm lifecycle, disabled startup, remote filesystem conformance, and source-admission behavioral tests exist in the pinned implementation source. Final production Kind/native live evidence and human reviews remain pending. The remaining partial evidence in AC3.4 and AC6.1–AC6.2 is still an acceptance obligation. Source/proof locations absent on the plan branch stay explicitly implementation-scoped; do not add implementation code to satisfy plan-branch gates.
