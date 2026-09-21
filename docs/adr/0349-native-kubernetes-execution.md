@@ -1,7 +1,7 @@
 # ADR 0349 — Optional native Kubernetes execution environments
 
 - Status: Draft
-- Date: 2026-09-15
+- Date: 2026-09-15; draft amended 2026-09-21
 - Scope: independently deployed execution environment provider service; mecak8s is an optional client; controller/executor, logical environment, PVC, Pod, authorization, fencing, and kind qualification boundaries
 - Supersedes: none
 
@@ -21,12 +21,19 @@ Likewise, startup placement validation currently reaches `Bind`
 (`docs/design/IMPLEMENTATION-NOTES.md:6549-6560`), but using an allocating operation as preflight
 would leak PVCs and Pods.
 
-The human has approved the direction and defaults: a purpose-built execution environment provider service in this monorepo, separate from mecak8s, with its own binaries, images, chart lifecycle, optional client integration, and mock/kind-first qualification. The companion
-[acceptance plan](../acceptance/native-kubernetes-execution.md) and this ADR remain draft because the
-exact private protocol, lifecycle, CRD/configuration schema, and grant/fencing specifications still
-need authoring and review.
+The human authorized the direction and defaults: a purpose-built execution environment provider in this
+monorepo, separate from mecak8s, with its own binaries, images, chart lifecycle, optional client integration,
+and deterministic kind qualification followed by native-provider OpenRouter coding evidence. The target
+is an operator-controlled first production slice with explicit limits; release maturity remains undecided.
 
-## Approved direction and defaults; technical specifications remain draft
+The existing plan PR #1579 and implementation PR #1614 form a human-authorized **draft** stack. The
+[acceptance plan](../acceptance/native-kubernetes-execution.md) now authors the exact proposed contract,
+reconciled against implementation `deaf1c3d1dfe7ea92afc8fe826f1bc613080f219`. API, schema, and security
+review approvals remain unchecked; neither authored specs nor draft code is a merged approved baseline.
+This amendment also authorizes development of scoped administration, continuing provisioning retries,
+and retained-resource Helm lifecycle safeguards on those existing PRs. Human alone merges.
+
+## Proposed decision within the authorized draft stack
 
 This ADR records the approved direction: a separate execution environment provider in this monorepo;
 it does **not supersede ADR 0048**. ADR 0048 governs storage-free mecak8s. Mecak8s remains a client of
@@ -34,23 +41,30 @@ the provider, keeps session state in its existing stores, and neither mounts pro
 owns executor/controller lifecycle. The provider owns its CRDs, Pods, PVCs, authorization,
 reconciliation, binaries, images, and chart lifecycle. Its API is not tied to a mecak8s process or
 release; other authorized Mecatl compositions can use an adapter without embedding the controller.
-Provider allocation handles remain separate from harness session IDs. Exact API/version compatibility
-still requires specification and review.
+Provider allocation handles remain separate from harness session IDs. The
+[exact interface contract](../acceptance/native-kubernetes-execution.md#interface-contract) is authored
+for review in the acceptance plan; this ADR records the durable boundaries rather than duplicating the spec.
 
 ### 1. Own a narrow controller/executor boundary
 
 Ship a dedicated controller and executor integration rather than Agent Sandbox. The controller
-reconciles a logical execution environment consisting of a future `ExecutionEnvironment` custom
-resource, persistent workspace PVC, and replaceable executor Pod. Durable identity is the logical
-environment plus immutable `EnvironmentRef.Revision`, which persists unchanged across run ownership
-turnover; it is not a fence epoch or restart counter. Pod and PVC names and UIDs are observed references
-used to detect replacement/adoption errors.
+reconciles a namespaced `execution.mecatl.dev/v1alpha1` `ExecutionEnvironment`, a persistent workspace
+PVC, and a replaceable executor Pod. Spec and status use explicit schema version 2. The Kubernetes
+API name does not settle the release maturity label. Durable identity is the logical environment plus
+immutable `EnvironmentRef.Revision`; run epoch, grant generation, Pod UID, and PVC UID have distinct roles.
+`observedGeneration` records processed spec generation, not executor identity.
 
-The future CRD must express operator-selected, digest-pinned profile/image/storage policy and distinguish
-processed spec generation from the current executor Pod UID. Only operator-configured profiles may choose
-image, storage, or source policy. Public clients and models cannot submit arbitrary Pod specs, images,
-paths, URLs, credentials, or Kubernetes names. Its exact group/version/kind, schema, conditions,
-mutability rules, and source metadata remain to be authored and reviewed.
+Only operator-configured, digest-pinned profiles select image, storage, resource/operation bounds, and
+RuntimeClass. Public clients/models cannot submit arbitrary Pod specs, images, paths, URLs, credentials,
+or Kubernetes names. Creator `clientHash`, owner identity, allocation fingerprint, and revision remain
+immutable. The [schema and transaction contract](../acceptance/native-kubernetes-execution.md#reference-transaction-schema-v2-and-fencing)
+records exact fields, receipts, conditions, and migration behavior.
+
+Transient PVC/Pod create errors and quota saturation must recover through continuing rate-limited
+reconciliation while the CR exists. Quota restoration alone must be sufficient; no unrelated reference
+change, restart, or manual reconcile is required. A finite retry count or successful condition write
+must not strand provisioning. Wrong ownership or missing/mismatched authoritative UIDs still fail
+closed without replacement, regardless of retry scheduling.
 
 ### 2. Preserve the core environment and tool contracts
 
@@ -61,10 +75,14 @@ Shell writes retain their documented ability to bypass Workspace CAS
 (`engine/tool/tool.go:353-424`); the product must disclose that honestly rather than promising a
 stronger remote filesystem transaction.
 
-Introduce a side-effect-free configuration/profile validation operation distinct from idempotent
-allocation. Candidate private operations include profile validation, ensure, exact attach, command
-start/stream/status/cancel, and retirement. Their precise Go signatures and private wire protocol
-are deliberately undecided and block promotion of this ADR.
+The private typed `mecatl.execution.v1.ExecutionProviderService` uses mTLS, with no REST fallback.
+`ValidateProfile` is side-effect-free; Ensure reserves a reference, exact Attach reattaches, and an
+independent Acquire/Renew/ReleaseRun claim gates operations. Reference and administrative lifecycle
+RPCs carry exact identities and replay preconditions. `Files` transports bounded bytes and opaque
+versions. `StartCommand` is foreground unary; authorized detached CommandStatus/CancelCommand calls
+return Unimplemented. Do not advertise a command stream or background service absent from this slice.
+The [RPC and host contract](../acceptance/native-kubernetes-execution.md#private-rpc-and-host-contract)
+records exact messages, error classifications, and host-only placement/reference/run interfaces.
 
 ### 3. Make installation and connection explicitly optional
 
@@ -77,8 +95,13 @@ An explicitly selected remote environment fails clearly at validation if its con
 unavailable, and fails closed at runtime if the provider is lost or its exact immutable revision cannot
 reattach. It never falls back to the local project root. Existing local and `no-fs` behavior is unchanged.
 
-Exact packaging names, values/flag precedence, mTLS Secret layout, storage class/size/quota configuration,
-and compatibility rules remain to be authored and reviewed.
+The separate chart is `deploy/helm/mecatl-execution`. Mecak8s enables the client through
+`--execution-enabled`, endpoint/profile flags, and three mounted TLS-file flags; OIDC ownership is
+required. Profiles and the versioned security manifest are strict operator configuration, not model
+inputs. The [configuration contract](../acceptance/native-kubernetes-execution.md#provider-configuration-rotation-and-scoped-administration)
+records exact names and bounds. Old binaries reject the scoped-admin field: quiesce and upgrade provider
+replicas before introducing it. CRD upgrade remains manual; there is no arbitrary downgrade or
+mixed-version compatibility claim for this amendment.
 
 ### 4. Separate execution fencing from session leasing
 
@@ -94,9 +117,28 @@ detached descendants or fail closed. Pod deletion, Lease timeout, a timeout, con
 partition is not evidence that an old command stopped and cannot alone authorize takeover. If the old
 executor cannot be positively terminated or externally fenced, replacement fails closed.
 
-The exact grant trust, issuer/verifier, claims, audience, rotation/revocation, replay protection, command
-cancellation acknowledgement, process-group termination, and takeover/fencing proof remain to be authored
-and security-reviewed. No existing SPIFFE issuer is assumed.
+Ed25519 grants bind issuer/audience, creator, owner, environment revision, binding/run/claim, operation,
+epoch, grant generation, and validity window. ResourceVersion CAS gates run claims and the separate
+replica-owned operation lease. Expiry retains uncertain operation identity; it does not authorize a
+second writer. Exact terminal Pod/PVC proof is persisted before finalizer removal and replacement;
+RecoverEnvironment has no caller-supplied force-fencing assertion. The external-fencing runbook remains
+necessary for unobservable nodes.
+
+Rotation publishes a validated security snapshot backed by a durable generation/digest/key-fingerprint
+high-water ledger. Every RPC rechecks current authority, including requests over established connections.
+CA/key/client removal, scope removal, rollback, or equal-generation policy drift fail closed. Neither
+security generation nor per-environment grant revocation is proof of termination. No existing SPIFFE
+issuer is assumed, and no credential crosses the provider-to-workload stdin boundary.
+
+Scoped administration uses one narrow extension to the existing client policy:
+`administrator:true` plus optional `administratorFor:[canonicalCreatorURI]`. Absent/empty scope preserves
+self-admin compatibility, not namespace-wide privilege. A distinct operations URI may administer only
+the listed creators' allocations. The shared decision derives creator identity from the loaded
+immutable `clientHash` and keeps exact owner, revision, epoch, UID, schema/generation, and operation replay
+checks. It applies to all six administrative RPCs, including migration, revocation, and retained deletion.
+A scope never grants attach, Files, Shell, run/reference access, or MayAttestOwner. No public Harness,
+engine, or private protobuf widening is needed. The acceptance contract specifies validation and digest
+inclusion; authoring this proposal is not the outstanding human security approval.
 
 ### 5. Start with a persistent blank workspace and an attenuated catalogue
 
@@ -107,10 +149,11 @@ are deferred. Project AGENTS/rules/skills remain disabled until a separate root/
 project admission is local-root based (`internal/app/project_ingestion.go:20`).
 
 Schedules remain excluded. SkillDraft and unsupported remote Subagent/Parallel/Team paths return explicit
-unsupported/precondition results and never execute locally. Existing Clear/Fork is not environment-
-serialized today; the future lifecycle contract must preserve same-`EnvironmentRef` successor semantics
-while adding appropriate environment exclusion. Exact capability/error and lifecycle mechanics remain
-technical specifications, not new Human direction decisions.
+unsupported/precondition results and never execute locally. Clear/Fork reserve and publish references
+under environment exclusion while preserving the same remote `EnvironmentRef`; neither clones the
+workspace. Clear creates empty history and Fork copies valid history. Publication failure preserves the
+source; ambiguous reference outcomes stay durable for reconciliation. No public placement selector or
+model-chosen profile is added.
 
 ### 6. Retain committed workspaces by default
 
@@ -123,33 +166,49 @@ have committed cannot be collected merely after TTL: publication absence must fi
 reconciled. Explicit retirement of a live/shared environment is refused while any live reference exists
 unless a later reviewed retire/quiesce policy specifies otherwise.
 
-Default chart uninstall never deletes runtime CRs/PVCs. Deleting CRDs while live resources exist is
-destructive and unsupported; no automatic hook deletes CRDs. Owner references alone do not prove safe
-lifecycle ownership. PVC persistence does not claim node-disaster recovery; kind host-local storage
-proves only process/Pod restart survival, not recovery from a dead or unobservable node.
+Default chart uninstall retains runtime CRs/PVCs. While executors survive, workload isolation,
+security high-water/key history, and the profile-capacity ledger must survive too. Their lifetime follows
+retained allocations, not the provider Deployment. A keep annotation or no-deletion-hook assertion is not
+behavioral proof. Uninstall must not silently remove NetworkPolicies or reset authority on reinstall.
 
-Storage class, size, and quotas are operator-configured. Their exact configuration schema, sharing,
-committed-state marker, retention mechanics, and retirement authorization remain to be authored and
-reviewed.
+The supported reinstall is the same release and namespace, with explicit validation/reuse of that
+release's retained resources and unchanged allocation/profile identity. Preserve ledger contents and
+resource ownership; reject foreign/ambiguous resources and missing authority history while allocations
+survive. Compatible upgrades also preserve state. Fresh install may initialize empty ledgers only in
+the absence of retained allocations. No destructive hook, forced adoption/cleanup, authority-generation
+reset, or arbitrary rollback is supported. Manual CRD upgrade precedes explicit compatible schema-v2
+migration; CRD/namespace deletion with live resources is destructive and unsupported.
 
-### 7. Qualify offline before optional live inference
+The [Helm lifecycle contract](../acceptance/native-kubernetes-execution.md#helm-lifecycle-amendment)
+requires actual install/upgrade/uninstall/reinstall qualification: persistent data, exact reattachment,
+negative enforcing-CNI probes during provider absence, rejection of stale authority after restart, and
+capacity accounting. Add retained ledgers/isolation/configuration to the resource and rehydration
+inventories in `docs/adr/0027-cloud-native.md` during implementation. PVC persistence does not claim
+node-disaster recovery; kind host-local storage proves restart survival only.
 
-Add a focused mock-only kind task separate from the broad e2e suite. The task must run on the
-supported generic toolchain, including CI.
-It uses a unique owned cluster, a scratch kubeconfig, explicit kubeconfig/context on every command,
-sanitized bounded artifacts, and confirmation before destructive live cleanup. Default kind is not
-accepted as negative NetworkPolicy evidence; isolation testing needs a network-policy-capable CNI.
+### 7. Qualify deterministically, then prove native-provider live coding
 
-A later real-model smoke is separate and bounded, after mock/kind qualification, for authenticated and
-authorized use in an operator-controlled cluster. Endpoint, protocol, and model selection require verified
-nonsecret configuration; credential usability does not authorize arbitrary endpoint forwarding. The approved
-credential is not accessed by planning or mock tests. A trusted runtime-only loader may consume its protected
-file directly through a protected channel to create a narrowly scoped HARNESS-only Secret before child
-processes or tools can inherit it; the agent never accesses the file or Secret. Failures are redacted, and
-the credential never enters model/tool output,
-argv, Helm values, disk manifests, git, logs, artifacts, or the execution workload. Token/run limits do not
-claim a hard dollar cap. One bounded coding prompt is qualitative; deterministic mock behavior remains the
-correctness gate.
+The focused mock-only kind tasks run on the supported generic toolchain, including CI, with a unique
+owned cluster, scratch kubeconfig, explicit context on every command, bounded sanitized artifacts, and
+ownership-scoped cleanup. Default kind does not prove NetworkPolicy enforcement; the production profile
+uses Calico. The acceptance plan records a successful production job at `deaf1c3d1`, distinct from the
+pending final candidate and new scope/retry/Helm regression qualification. Historical local keyring
+failures no longer block that baseline. Skipped draft race lanes remain unproven.
+
+The checked human live decision requires the separate `task e2e:k8s:execution:live` OpenRouter coding
+qualification **for this stack**, after deterministic qualification. It is not an always-on live CI
+dependency. Prove model-driven tools, independently verified persistent artifacts, and a successful
+bound test command; generic mecak8s live CI is not native-provider evidence. No final native live run is
+claimed. The generic compaction live-lane correction in merged #1728 is separate from this capability.
+
+Use verified nonsecret endpoint/protocol/model configuration in an authenticated operator-controlled
+cluster. A trusted runtime-only loader consumes the approved protected file channel into a narrowly
+scoped HARNESS-only Secret before tools/child processes can inherit it. Planning and mock tests never
+access it. Neither agent nor tool reads the credential file or Secret; failures are redacted, and no
+credential enters model/tool output, argv, Helm values, disk manifests, git, logs, artifacts, or the
+execution workload. Restore mock configuration and delete only the run-owned Secret by recorded UID.
+Token/run limits do not establish a hard dollar cap. Live coding evidence supplements, never replaces,
+the deterministic correctness gate.
 
 ## Consequences
 
@@ -159,15 +218,17 @@ RBAC, informers, clients, and resources. Logical identity survives Pod replaceme
 the complete coding path offline.
 
 **Costs and risks.** Mecatl would own a controller, CRD, private protocol, PVC lifecycle, command
-streaming/cancellation, and a security-critical fencing system. A persistent volume does not stop a
+execution/cancellation, and a security-critical fencing system. A persistent volume does not stop a
 partitioned writer. Arbitrary Shell makes the executor a hostile-workload boundary. Network policy,
 resource quotas, output caps, non-root execution, service-account-token suppression, and credential
 separation are required but not sufficient.
 
-**Draft boundary.** The direction and defaults above are approved, but this ADR is not implementation-ready.
-The next planning work authors and reviews the exact private wire fields/errors, allocation transaction and
-ownership/reference lifecycle, CRD/configuration schema and compatibility, and grant trust/revocation/
-termination/fencing proof. No implementation may invent those contracts.
+**Draft boundary.** The exact proposed interfaces are authored in the acceptance plan; human API/schema/
+security approval and release maturity remain unresolved. Authorized pre-merge development may proceed
+on the existing draft stack, but no review, approval, landed status, or merge is inferred. Completion
+requires strict AC trace, full offline/race/build/API/docs/site/demo gates, independent panel review,
+final deterministic qualification, and stack-specific native live evidence. New scope, retry, and Helm
+behavioral proofs remain pending. Human alone merges.
 
 ## See also
 
