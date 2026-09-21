@@ -387,6 +387,29 @@ The stack additionally requires the explicitly invoked native-provider OpenRoute
 recorded in Human decisions; it is completion evidence, not an always-on CI dependency. The broad mecak8s
 live suite is not native-provider proof. The focused mock task must not inherit ambient provider credentials.
 
+The existing `e2e-live.yml` workflow may run this qualification only through explicit
+`workflow_dispatch` with `native_execution: true` (default false) in `stacklok/mecatl`.
+An optional `expected_sha` must match the checked-out event SHA exactly before credential
+staging; record that public SHA in the summary. Maintainer dispatch, repository restriction,
+and repository-secret access are the trust gates; there is no environment-review gate.
+Run production qualification without automatic cluster deletion, then the live target in the
+same job only after production succeeds. The ownership record alone is not a success receipt.
+Only then stage `OPENROUTER_API_KEY` in a uniquely created private CI directory/file
+(0700/0600); absence fails qualification. Remove the key environment before executing the
+live script. Its trusted loader, UID-pinned Secret cleanup, and mock restoration remain
+mandatory; cleanup failures fail the job. Always attempt deletion of only the recorded,
+validated CI-owned cluster and credential file. Upload only the bounded `live-summary.json`
+and sanitized qualification status, never credentials, receipts, kubeconfigs, PKI, Helm
+values, or transcripts. A 100-minute job bound covers production, mock rerun, live smoke,
+builds, and cleanup; it is not a dollar cap. Final-candidate runtime evidence and independent
+security review remain PENDING.
+
+The rotation restart proof must compare the observed grant generation and replayed revoke
+receipt exactly with the original revoke result. A current, successful post-restart claim
+must bracket a probe signed by the current trusted key with only its grant generation
+changed to the revoked value. Require the structured claim-generation rejection, not an
+arbitrary error from a released/expired claim, retired key, or unavailable provider.
+
 **Acceptance:**
 - AC7.1: `task e2e:k8s:execution` and the enforcing-CNI `task e2e:k8s:execution:production` run on the supported generic toolchain, including CI, with a unique owned kind cluster, a scratch kubeconfig, and explicit `--kubeconfig`/context on every command. They deploy the separate chart plus explicitly connected mecak8s and use only the deterministic mock provider. The final production-profile run uses Calico and exercises negative network isolation, rotation/revocation, replica/lifecycle recovery, holder loss, quota recovery, pending delete, Clear/Fork, migration, sanitized artifacts, and the amendment regressions.
   - verify: `TestLegacyFixtureWaitsForQuotaAccountingBeforeCreate`, `TestKindExecutionQualification`, `TestKindExecutionProductionNetworkPolicyEnforced`, `TestKindExecutionProductionSecurityRotation`, `TestKindExecutionProductionReplicaLifecycle`, `TestKindExecutionProductionHolderLossFencesActiveOperation`, `TestKindExecutionProductionQuotaSaturation`, `TestKindExecutionProductionPendingDeleteOutageRecovery`, `TestKindExecutionProductionClearForkLifecycle`, `TestKindExecutionProductionCompatiblePrototypeMigration`, `TestKindExecutionProductionScopedAdministrator`, `TestKindExecutionProductionHelmLifetime` (names exist; final production Kind+Calico run PENDING).
