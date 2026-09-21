@@ -6,7 +6,7 @@ description: >-
   TDD workers, aggregate gates, strict AC tracing, panel review, and an Implementation
   PR. Split work requires a merged approved plan and recorded baseline. Combined work
   requires an explicit no-interface rationale. Never drafts contracts, merges, or runs
-  beyond the PR.
+  beyond the PR. NOT for direct Routine or Cleanup work.
 ---
 
 # plan-orchestrate
@@ -20,6 +20,9 @@ explicit user request before creating a worktree or branch, committing, pushing,
 a PR. Without that request, stop before the first such side effect.
 
 ## Entry gate
+
+Route Routine and approved compatibility Cleanup directly under `docs/development-process.md`;
+this skill's plan gate does not apply to them.
 
 Read `docs/acceptance/<slug>.md` and the documents it cites. Run its bundled acceptance-plan
 checker before delivery-specific validation; any failure blocks entry. Accept supported
@@ -208,7 +211,7 @@ Stop after opening/updating the PR. Do not merge, tag, deploy, or run beyond it.
 
 ## Cleanup and terminal states
 
-There is no cleanup PR. Tracked feature-scoped cleanup belongs in the implementation PR.
+Tracked feature-scoped cleanup belongs in the implementation PR, not a follow-up cleanup PR.
 Ignored scratch/worktrees are removed only by their owning workflow and only when safe.
 Remove a successful fallback worktree only if this orchestrator created it; never remove a
 harness-owned or primary checkout. Retain failed attempts.

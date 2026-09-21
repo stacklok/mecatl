@@ -3,8 +3,8 @@
 Each document here is an acceptance plan or completed acceptance record: the smallest set of
 work that makes one **Bounded** or **Architectural** issue/capability demonstrable on the
 running harness. The classifier and routing rules are canonical in
-[`docs/development-process.md`](../development-process.md). Spike and Routine work do not
-create plans. Classification follows the decision and blast radius, not diff size, and
+[`docs/development-process.md`](../development-process.md). Spike, Routine, and Cleanup work do
+not create plans. Classification follows the decision and blast radius, not diff size, and
 workers escalate uncertainty rather than silently downgrading. Plans are organized scenario-first — acceptance is about what the
 harness can show, not which packages exist on disk. A focused issue may use one
 scenario and one orchestration task; plans must not manufacture complexity. Each

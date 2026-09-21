@@ -15,7 +15,7 @@
       `**Combined rationale:**`, and no runtime/public/operator/persistence/trust-boundary
       interface change (`None — rationale`; workflow-only meta-changes may review process
       docs/skills here)
-- [ ] **Spike / Routine** — acceptance-plan spine exempt; Spike evidence does not ship as-is
+- [ ] **Spike / Routine / Cleanup** — acceptance-plan spine exempt; Spike evidence does not ship as-is
 
 ### Contract linkage
 
@@ -25,11 +25,12 @@ marking it proposed, and write the non-closing issue reference.
 Implementation: link the Plan / Interface PR and full approved commit.
 Combined: link the in-PR plan, confirm there was no separate plan PR, quote its narrow
 one-task eligibility rationale, and confirm Human decisions contain no unchecked item.
-Spike/Routine: state the class and observable rationale; a Spike PR may contain evidence only,
-not the spike implementation as shipping code.
+Spike/Routine/Cleanup: state the class and observable rationale; a Spike PR may contain evidence
+only, not the spike implementation as shipping code. Cleanup also records the current contract,
+scope, and operator-approved breaking-state treatment.
 -->
 
-- Work classification: Spike / Routine / Bounded / Architectural
+- Work classification: Spike / Routine / Cleanup / Bounded / Architectural
 - Classification rationale:
 - Decision record: ADR link / None with rationale
 - Human waiver of spine: No / Yes — <directing-human authorization and named work>

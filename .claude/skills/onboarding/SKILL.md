@@ -1,9 +1,8 @@
 ---
 name: onboarding
 description: >-
-  Route contributors through mecatl's human-reviewed development spine: contract PR,
-  approved baseline, autonomous TDD implementation, final code-review PR. A router, not
-  an executor. Use for onboarding or workflow questions.
+  Route contributors by work class to direct implementation or mecatl's human-reviewed
+  development spine. A router, not an executor. Use for onboarding or workflow questions.
 ---
 
 # onboarding
@@ -19,6 +18,12 @@ Classify by decision and blast radius, never diff size:
   spine only with explicit human authorization and must be reclassified before shipping.
 - **Routine:** an established or mechanical, reversible change with no new durable decision or
   durable-contract change; it bypasses acceptance planning regardless of file count.
+- **Cleanup:** removal of obsolete aliases, shims, duplicate representations, or legacy readers
+  in favor of established canonical behavior after the operator has chosen the breaking-state
+  treatment. Implement it directly and record the scope, current contract, and approved treatment
+  in the implementation PR. Interface count and diff size do not require a separate plan PR or
+  formulaic waiver. New product behavior, new design choices, and unresolved data destruction
+  require a real decision and classification outside Cleanup.
 - **Bounded:** substantive contract work with no durable architecture decision; use the spine.
 - **Architectural:** a durable public/API, persistence/data ownership, security/trust,
   deployment/operator, module/system-boundary, or cross-subsystem-invariant decision; use the
@@ -56,7 +61,7 @@ value. A workflow-only meta-change may review its process-document/skill interfa
 same PR. `/to-acceptance-plan` prepares
 the plan on the eventual combined branch and stops without opening a plan PR; only an
 explicit `/plan-orchestrate` invocation adds implementation and opens the sole Combined PR.
-Routine work remains exempt. Every path preserves human merge authority.
+Routine and Cleanup work remain exempt. Every path preserves human merge authority.
 
 Two carve-outs put discretion with the human, never the agent: explicitly
 requested **exploratory/spike work** skips the plan and orchestration entirely — build it

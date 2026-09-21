@@ -172,7 +172,7 @@ print a full offline session (turn → tool.call → permission.ask + approval �
 
 ## Workflow
 
-- Route workflow through `docs/development-process.md`: Spike/Routine bypass the spine; Bounded/Architectural use it. Escalate uncertainty; only a human may authorize a Spike or waive the spine, and Spike work never ships as-is. Plan-PR merge is approval; contract drift stops; humans alone merge PRs. Keep run state under ignored `.scratch/orchestrate/<slug>/`; end commits with `Co-Authored-By`.
+- Route workflow through `docs/development-process.md`: Spike/Routine/Cleanup bypass the spine; Bounded/Architectural use it. Cleanup directly removes obsolete compatibility in favor of established canonical behavior after the operator has chosen the breaking-state treatment; it is not a generic exemption for new design or unresolved data destruction. Escalate uncertainty; only a human may authorize a Spike or waive the spine, and Spike work never ships as-is. Plan-PR merge is approval; contract drift stops; humans alone merge PRs. Keep run state under ignored `.scratch/orchestrate/<slug>/`; end commits with `Co-Authored-By`.
 - Never `git add -A` — stage explicit paths.
 - For smoke tests / scratch files, use the repo-local `.scratch/` dir (gitignored) — **not** `/tmp` or `mktemp`.
 - **Changed a core `engine/` exported API?** The `api-compat` gate will fail until you run `task api:update`, commit the changed `engine/api/*.txt`, and note the change in `engine/CHANGELOG.md` classified per `engine/COMPATIBILITY.md` (Added = minor, Changed/Removed = breaking). See ADR 0037.

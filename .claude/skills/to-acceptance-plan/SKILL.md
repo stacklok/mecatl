@@ -5,7 +5,7 @@ description: >-
   Turn Bounded or Architectural work into a concise scenario-first acceptance plan with
   exact interfaces and a decision-record outcome, then hand off at the selected Split or
   Combined checkpoint. Stops before implementation or orchestration. NOT for Spike,
-  Routine, or task decomposition.
+  Routine, Cleanup, or task decomposition.
 ---
 
 # to-acceptance-plan
@@ -22,8 +22,8 @@ explicit user request before creating a worktree or branch, committing, pushing,
 a PR. Without that request, draft and report only; do not perform those side effects.
 
 - Before classification or drafting, load
-  [`references/WORK-CLASSIFICATION.md`](references/WORK-CLASSIFICATION.md). Spike and Routine
-  bypass this skill. Continue only for Bounded or Architectural work; if evidence is
+  [`references/WORK-CLASSIFICATION.md`](references/WORK-CLASSIFICATION.md). Spike, Routine, and
+  Cleanup bypass this skill. Continue only for Bounded or Architectural work; if evidence is
   insufficient, escalate or stop for human-authorized Spike work rather than silently
   downgrading.
 - Use the eventual delivery branch in exactly one validated writable worktree. Split uses a

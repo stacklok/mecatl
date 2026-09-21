@@ -7,12 +7,17 @@ blast radius, not diff size:
 |---|---|---|
 | **Spike** | Evidence gathering with explicit questions and stop conditions; its output is not shipped as-is. | Bypass acceptance planning only when a human explicitly requests or authorizes the spike. Shipping the result requires reclassification. |
 | **Routine** | Introduces no new durable decision and applies an established or mechanical, reversible transformation without changing a durable contract. | Implement directly with applicable tests and review. |
+| **Cleanup** | Removes obsolete aliases, shims, duplicate representations, or legacy readers in favor of established canonical behavior after the operator has chosen the breaking-state treatment; it introduces no new product behavior or design decision. | Implement directly. Record the scope, current contract, and approved breaking-state treatment in the implementation PR. |
 | **Bounded** | Substantive work that needs an acceptance contract but introduces no durable architecture decision. | Use the acceptance-plan spine; record local rationale in the issue, PR, or plan, not a new ADR. |
 | **Architectural** | Changes a durable public/API compatibility, persistence/data-ownership, security/trust, deployment/operator, module/system-boundary, or cross-subsystem-invariant decision. | Use the acceptance-plan spine and create a new or superseding ADR for the genuinely durable decision. |
 
 Routine is not bounded by locality or file count: a repository-wide mechanical rename remains
-Routine when it is reversible and changes no durable contract. Classification stays anchored to
-the decision and blast radius, not the size of the diff.
+Routine when it is reversible and changes no durable contract. Cleanup is likewise not promoted
+solely because it removes interfaces or spans many files. The operator's explicit choice to remove
+compatibility for the named cleanup is sufficient; it does not require a formulaic spine waiver,
+acceptance plan, ADR, or separate approval PR. Safety invariants, applicable tests and review, and
+human merge authority still apply. New product behavior, a new design choice, or unresolved data
+destruction is not Cleanup and must be classified on the decision still required.
 
 When evidence does not support the lower class, escalate or ask the human to authorize a
 Spike; workers never silently downgrade. Split versus Combined delivery is a separate choice
@@ -62,8 +67,8 @@ Every new plan and every materially amended legacy plan uses
 `**Decision record:**` outcome. A Bounded plan says exactly `None — <substantive rationale>`;
 an Architectural plan uses exactly `[ADR NNNN](../adr/NNNN-*.md)` for an existing ADR file.
 The checker validates only that form and target: contract review judges whether the ADR is new,
-superseding, and relevant to the durable decision. Spike and Routine work do not create acceptance
-plans. Existing `human-reviewed/v1` plans remain valid and are not bulk-migrated.
+superseding, and relevant to the durable decision. Spike, Routine, and Cleanup work do not create
+acceptance plans. Existing `human-reviewed/v1` plans remain valid and are not bulk-migrated.
 
 Both versions contain numbered behavioral acceptance criteria with non-empty `verify:` lines,
 a mandatory `## Human decisions` section, and a mandatory `## Interface contract`. Human
@@ -133,8 +138,8 @@ applicable), branch, creation baseline, and cleanup eligibility; resume verifies
 `git worktree list`. Do not create new committed `.claude/plans/<slug>/tasks/*.md` state and
 do not delete historical tracked plans.
 
-The implementation owns tracked feature-scoped cleanup. There is no cleanup or status-only
-PR. Only explicitly orchestrator-created successful worktrees are eligible for removal;
+The implementation owns tracked feature-scoped cleanup; do not defer it to a follow-up cleanup
+or status-only PR. Only explicitly orchestrator-created successful worktrees are eligible for removal;
 failed, harness-owned, primary, and ambiguous worktrees are retained.
 
 ## Verification gates
