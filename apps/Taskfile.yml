@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Taskfile for Mecatl Studio (apps/), included in the root Taskfile as `studio:`.
+# The workspace is self-contained (ADR 0351): its own pnpm lockfile, pnpm pin
+# (`packageManager` in package.json), Biome config, and Dockerfile. Nothing here
+# reaches into sdk/typescript — Studio consumes only the published
+# @stacklok-oss/mecatl-sdk.
+version: '3'
+
+tasks:
+  install:
+    desc: Install the Studio workspace's dependencies from the frozen pnpm lockfile
+    sources:
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - contracts/package.json
+      - server/package.json
+      - web/package.json
+    generates:
+      - node_modules/.modules.yaml
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  lint:
+    desc: Lint and format-check the Studio workspace with Biome (all three packages)
+    deps: [install]
+    cmds:
+      - pnpm exec biome check .
+
+  format:
+    desc: Format and apply safe import organization to the Studio workspace
+    deps: [install]
+    cmds:
+      - pnpm run format
+
+  typecheck:
+    desc: Type-check contracts, server, and web without emitting files
+    deps: [install]
+    cmds:
+      - pnpm run typecheck
+
+  test:
+    desc: Run the Studio Vitest suites (offline; no mecated needed)
+    deps: [install]
+    cmds:
+      - pnpm run test
+
+  generate:
+    desc: Regenerate contracts/openapi.json and contracts/src/generated from the Hono routes
+    deps: [install]
+    cmds:
+      - pnpm run generate
+
+  generated-check:
+    desc: Regenerate the contracts artifacts and fail when the committed copies differ
+    deps: [install]
+    cmds:
+      - pnpm run generated:check
+
+  check:
+    desc: The Studio gate — lint, typecheck, test, and the generated-artifact drift check
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+      - task: generated-check
+
+  build:
+    desc: Build all three packages (server → server/dist, web → web/dist) after regenerating contracts
+    deps: [install]
+    cmds:
+      - pnpm run build
+
+  dev:
+    desc: |
+      Run Studio in spawn mode against the repository's own bin/mecated: the BFF on
+      :3100 and Vite on 127.0.0.1:18473 proxying /api and /oauth/callback. Needs
+      `task build` from the repository root first (for bin/mecated).
+    deps: [install]
+    env:
+      MECATED_BIN: '{{.TASKFILE_DIR}}/../bin/mecated'
+    cmds:
+      - cmd: |
+          test -x "$MECATED_BIN" || {
+            echo "studio:dev: $MECATED_BIN is missing — run 'task build' from the repository root first" >&2
+            exit 1
+          }
+        silent: true
+      - pnpm run dev
+
+  image:
+    desc: Build the Studio container image locally as mecatl-studio:dev (context = apps/)
+    cmds:
+      - docker build -f Dockerfile -t mecatl-studio:dev .

@@ -619,6 +619,63 @@ steer, retraction, strict stale/error results, request cancellation and deadline
 acknowledgement-only rehydration across gRPC TCP, UDS, and HTTP. The attachment suites retain their
 stale-guarded cancellation, terminal SSE cursor errors, and default log-only filtering proofs.
 
+### Mecatl Studio
+
+Mecatl Studio is the browser UI, kept in the repository as the self-contained pnpm
+workspace `apps/` (`apps/web`, `apps/server`, `apps/contracts`; its own lockfile, pnpm
+12 pin, Biome config, and `apps/Taskfile.yml`, included in the root Taskfile as
+`studio:*`). It is a **client** of mecatl in the same sense the TypeScript SDK is, one
+layer further out: `apps/server` is a Hono backend for frontend (BFF) that depends on the
+**published** `@stacklok-oss/mecatl-sdk` from npm by a semver range — never on
+`sdk/typescript` by path or `workspace:` link — so Studio builds without a Go toolchain
+or the SDK's build, its Docker build context is `apps/` alone, and the UI lags the daemon
+by one SDK release on purpose. The boundary has three sides: the **browser** runs the
+Vite + React SPA in `apps/web` and calls only the BFF's `/api/v1` product API, importing
+`@mecatl-studio/contracts` and its generated query client but neither the SDK nor any
+daemon protocol type; the **BFF** holds the user's credential and forwards it per request
+through the SDK credential provider bound to the request's `AsyncLocalStorage` context,
+serving the SPA and `/api` from one origin; **mecatl** is reached only by the BFF. The
+BFF's `/api/v1` routes describe product capabilities rather than mirroring daemon
+endpoints, and `apps/contracts` (Zod schemas, the generated `openapi.json`, the generated
+Hey API client) is committed and drift-gated like `contracts/gen` and `engine/api/*.txt`.
+
+At startup the BFF resolves exactly one **runtime mode** from the environment:
+`external` (`MECATL_BASE_URL`, an existing gRPC listener), `spawn` (a local `mecated`
+from `MECATED_BIN` or `PATH`), or `mock` (`MECATL_DEV_MOCK=1`, `mecated --mock`); a
+conflicting combination exits non-zero before listening. Configuration is split by
+ownership — `MECATL_*` describes the target, `STUDIO_*` is Studio's own. Interactive
+login is Authorization Code + PKCE against the single issuer named by the target's
+RFC 9728 protected-resource document (fetched for `MECATL_RESOURCE_URL`, or derived
+from `MECATL_BASE_URL`); a `404` from discovery disables interactive login, any other
+discovery failure is a startup error, and a static token (`MECATL_AUTH_TOKEN`) or an
+issuer-less target yields the `static` / `none` auth modes, which WARN because every
+browser then acts as one principal. The **session model** is stateless: no server-side
+store, four `SameSite=Lax` cookies (`studio_access` and `studio_refresh` HttpOnly and
+sealed with AES-256-GCM under a key derived from `STUDIO_SESSION_SECRET`, `studio_login`
+for the in-flight PKCE transaction, and `studio_csrf` as the double-submit token), so
+every replica shares one secret and scales horizontally behind mecak8s with no new
+infrastructure. `Secure` flags and the callback origin derive from `STUDIO_PUBLIC_URL`,
+never from the request scheme, because production TLS terminates at an Ingress.
+
+The **image** is one origin: a multi-stage `Dockerfile` compiles `apps/web` and
+`apps/server` to `dist`, prunes the server to production dependencies with
+`pnpm deploy --prod`, and copies them onto `cgr.dev/chainguard/node` pinned by digest
+(the `.ko.yaml` posture), running `node dist/index.js` as the base's non-root user with
+`STUDIO_IMAGE=1` set — which refuses the spawn and mock modes and requires
+`STUDIO_ALLOW_UNAUTHENTICATED=1` for static/none auth. It is published as
+`ghcr.io/stacklok/mecatl/studio` by the `publish-studio` release job with the same sign,
+SBOM, and provenance steps as the Slack bot image, labelled
+`org.stacklok.mecatl.studio.stability=early-access` because Studio can change without
+notice between versions; `apps/docker-compose.yml` runs it against a locally built `mecated` for
+development. CI gates it with its own `studio` job and path-relevance category
+(`apps/*|.github/*|Taskfile.yml`), separate from the Go and SDK families because
+neither can change it. The bootstrap ships health, runtime status, auth, and an empty
+shell only; each feature port is a Bounded follow-up with its own acceptance plan, since
+new `/api/v1` routes and contract schemas are a public BFF interface. See
+[ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
+[Studio bootstrap acceptance plan](acceptance/studio-bootstrap.md), and the workspace's
+own [README](../apps/README.md) for running and configuring it.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

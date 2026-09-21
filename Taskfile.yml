@@ -28,6 +28,9 @@ includes:
   slack-bot:
     taskfile: sdk/typescript/examples/slack-bot/Taskfile.yml
     dir: sdk/typescript/examples/slack-bot
+  studio:
+    taskfile: apps/Taskfile.yml
+    dir: apps
   mecak8s:
     taskfile: deploy/mecak8s-kind/Taskfile.yml
     dir: .
@@ -1010,8 +1013,11 @@ tasks:
     # ("TypeScript is unavailable"), which is merely noisy here but FATAL under
     # --strict once its plan lands. The install task is fingerprinted on
     # package.json + pnpm-lock.yaml, so this is a no-op on an already-installed
-    # tree.
-    deps: [sdk:install]
+    # tree. studio:install is the SAME kind of dependency for the Studio plans:
+    # a `vitest:` proof under apps/ is parsed with the compiler hoisted to
+    # apps/node_modules (typescript is a devDependency of the apps/ root), so
+    # without it every apps/ proof is rejected the same way.
+    deps: [sdk:install, studio:install]
     cmds:
       # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL
       # module, and a tool directive would force EVERY build of the root module
@@ -1021,13 +1027,13 @@ tasks:
 
   ac-trace-strict:
     desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
-    deps: [sdk:install]
+    deps: [sdk:install, studio:install]
     cmds:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --strict
 
   ac-trace-matrix:
     desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
-    deps: [sdk:install]
+    deps: [sdk:install, studio:install]
     cmds:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --matrix
 

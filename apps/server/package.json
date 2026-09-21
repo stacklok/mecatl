@@ -1,0 +1,31 @@
+{
+  "name": "@mecatl-studio/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "dev": "node --watch --env-file-if-exists=../.env --import tsx src/index.ts",
+    "generate:openapi": "tsx scripts/generate-openapi.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@hono/zod-openapi": "1.6.3",
+    "@stacklok-oss/mecatl-sdk": "^0.3.0",
+    "hono": "4.13.8",
+    "openid-client": "6.8.8",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@mecatl-studio/contracts": "workspace:*",
+    "@types/node": "24.13.5",
+    "esbuild": "0.27.4",
+    "tsx": "4.23.13",
+    "typescript": "6.0.3",
+    "vitest": "4.0.18"
+  }
+}

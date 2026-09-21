@@ -356,7 +356,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Protocol-native prompt-cache breakpoints](unified-prompt-cache-dialect.md) — ask an upstream to cache through the Responses protocol's own `prompt_cache_breakpoint` on every request, so an explicit-ask model caches on any endpoint without mecatl consulting the vendor, plus Messages routing where model ids are shared. Status: proposed.
 
-- [Mecatl Studio bootstrap](studio-bootstrap.md) — bring the Studio web UI into the repository as a self-contained `apps/` skeleton over the published SDK: BFF runtime modes, hardened OIDC browser sessions, a one-origin multi-stage image, CI, and the `publish-studio` release job. Status: proposed.
+- [Mecatl Studio bootstrap](studio-bootstrap.md) — bring the Studio web UI into the repository as a self-contained `apps/` skeleton over the published SDK: BFF runtime modes, hardened OIDC browser sessions, a one-origin multi-stage image, CI, and the `publish-studio` release job. Status: landed in the implementation candidate; authoritative on merge.
 
 ## See also
 

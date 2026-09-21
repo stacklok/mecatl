@@ -4,7 +4,7 @@
 **Work classification:** Architectural — adds a new system boundary (a browser-facing BFF holding user credentials in front of a mecatl deployment), a new released deployment artifact, and a durable dependency decision (Studio consumes only the published SDK).
 **Decision record:** [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md)
 **Phase:** capability — bring the Studio web UI into the repository as a skeleton and release its image
-**Status:** proposed, 2026-09-21. Decisions recorded from the 2026-09-21 design interview on [#1736](https://github.com/stacklok/mecatl/issues/1736); one advisory devils-advocate pass folded in.
+**Status:** landed, 2026-09-24. Candidate transition after `task studio:check`, `task docs`, `task ac-trace`, and `task lint:actions` passed on the implementation layer; authoritative only when that PR merges. Decisions recorded from the 2026-09-21 design interview on [#1736](https://github.com/stacklok/mecatl/issues/1736); one advisory devils-advocate pass folded in.
 **Delivery:** Split, with an explicit stacking exception. The Plan / Interface PR is the root of a `gh stack` series (plan → bootstrap implementation → feature ports → `user-docs/` page); the directing human instructed that nothing in the stack merges until the whole series is reviewed, so the root's merge remains the approval event but is deferred to the end. `/plan-orchestrate`'s merged-baseline precondition is intentionally waived for the implementation layer, which records the exact plan commit instead.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1736](https://github.com/stacklok/mecatl/issues/1736).
