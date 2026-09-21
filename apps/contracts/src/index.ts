@@ -5,3 +5,4 @@ export * from "./schemas/chat.ts";
 export * from "./schemas/health.ts";
 export * from "./schemas/problem-details.ts";
 export * from "./schemas/runtime.ts";
+export * from "./schemas/schedules.ts";

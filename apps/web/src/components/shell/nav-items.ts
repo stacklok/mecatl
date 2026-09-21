@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { MessageCircle } from "lucide-react";
+import { Clock3, MessageCircle } from "lucide-react";
 
 /**
  * Primary navigation. Each feature plan appends its own entry (schedules,
@@ -12,5 +12,11 @@ export const navItems = [
     label: "Chats",
     to: "/workspace/chat",
     icon: MessageCircle,
+  },
+  {
+    key: "schedules",
+    label: "Scheduled",
+    to: "/workspace/schedules",
+    icon: Clock3,
   },
 ] as const;

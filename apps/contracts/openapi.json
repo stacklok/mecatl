@@ -3845,6 +3845,1629 @@
           }
         }
       }
+    },
+    "/api/v1/schedules": {
+      "get": {
+        "operationId": "listSchedules",
+        "responses": {
+          "200": {
+            "description": "The visible scheduled work.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "fireCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "lastFireAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "lastFireSessionId": {
+                            "type": "string"
+                          },
+                          "maxFires": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "plan",
+                              "acceptEdits"
+                            ]
+                          },
+                          "modelId": {
+                            "type": "string"
+                          },
+                          "mutating": {
+                            "type": "boolean"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "nextFireAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "oneShotMaxRetries": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "oneShotRetry": {
+                            "type": "boolean"
+                          },
+                          "owner": {
+                            "type": "string"
+                          },
+                          "profile": {
+                            "type": "string",
+                            "enum": [
+                              "all",
+                              "noFilesystem"
+                            ]
+                          },
+                          "prompt": {
+                            "type": "string"
+                          },
+                          "providerId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "claimed",
+                              "completed",
+                              "paused",
+                              "running",
+                              "scheduled"
+                            ]
+                          },
+                          "trigger": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "expression": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "cron"
+                                    ]
+                                  },
+                                  "timezone": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "expression",
+                                  "kind",
+                                  "timezone"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "once"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "at",
+                                  "kind"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "enabled",
+                          "fireCount",
+                          "lastFireAt",
+                          "lastFireSessionId",
+                          "maxFires",
+                          "mode",
+                          "modelId",
+                          "mutating",
+                          "name",
+                          "nextFireAt",
+                          "oneShotMaxRetries",
+                          "oneShotRetry",
+                          "owner",
+                          "profile",
+                          "prompt",
+                          "providerId",
+                          "status",
+                          "trigger"
+                        ]
+                      }
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "supported": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "reason",
+                    "supported"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSchedule",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "maxFires": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647,
+                    "default": 0
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "default",
+                      "plan",
+                      "acceptEdits"
+                    ],
+                    "default": "plan"
+                  },
+                  "mutating": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "oneShotMaxRetries": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647,
+                    "default": 0
+                  },
+                  "oneShotRetry": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "profile": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "noFilesystem"
+                    ],
+                    "default": "all"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000000
+                  },
+                  "trigger": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "expression": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "cron"
+                            ]
+                          },
+                          "timezone": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "expression",
+                          "kind",
+                          "timezone"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "once"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "at",
+                          "kind"
+                        ]
+                      }
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "required": [
+                  "prompt",
+                  "trigger",
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created schedule.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "fireCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "lastFireAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastFireSessionId": {
+                      "type": "string"
+                    },
+                    "maxFires": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "plan",
+                        "acceptEdits"
+                      ]
+                    },
+                    "modelId": {
+                      "type": "string"
+                    },
+                    "mutating": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "nextFireAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "oneShotMaxRetries": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "oneShotRetry": {
+                      "type": "boolean"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "profile": {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "noFilesystem"
+                      ]
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "providerId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "claimed",
+                        "completed",
+                        "paused",
+                        "running",
+                        "scheduled"
+                      ]
+                    },
+                    "trigger": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "expression": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "cron"
+                              ]
+                            },
+                            "timezone": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "expression",
+                            "kind",
+                            "timezone"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "once"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "at",
+                            "kind"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "fireCount",
+                    "lastFireAt",
+                    "lastFireSessionId",
+                    "maxFires",
+                    "mode",
+                    "modelId",
+                    "mutating",
+                    "name",
+                    "nextFireAt",
+                    "oneShotMaxRetries",
+                    "oneShotRetry",
+                    "owner",
+                    "profile",
+                    "prompt",
+                    "providerId",
+                    "status",
+                    "trigger"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The schedule is invalid, for example an unknown time zone.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleName}": {
+      "put": {
+        "operationId": "updateSchedule",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "scheduleName"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "maxFires": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647,
+                    "default": 0
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "default",
+                      "plan",
+                      "acceptEdits"
+                    ],
+                    "default": "plan"
+                  },
+                  "mutating": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "oneShotMaxRetries": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647,
+                    "default": 0
+                  },
+                  "oneShotRetry": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "profile": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "noFilesystem"
+                    ],
+                    "default": "all"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000000
+                  },
+                  "trigger": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "expression": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "cron"
+                            ]
+                          },
+                          "timezone": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "expression",
+                          "kind",
+                          "timezone"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "once"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "at",
+                          "kind"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "prompt",
+                  "trigger"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated schedule.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "fireCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "lastFireAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastFireSessionId": {
+                      "type": "string"
+                    },
+                    "maxFires": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "plan",
+                        "acceptEdits"
+                      ]
+                    },
+                    "modelId": {
+                      "type": "string"
+                    },
+                    "mutating": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "nextFireAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "oneShotMaxRetries": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "oneShotRetry": {
+                      "type": "boolean"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "profile": {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "noFilesystem"
+                      ]
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "providerId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "claimed",
+                        "completed",
+                        "paused",
+                        "running",
+                        "scheduled"
+                      ]
+                    },
+                    "trigger": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "expression": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "cron"
+                              ]
+                            },
+                            "timezone": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "expression",
+                            "kind",
+                            "timezone"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "once"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "at",
+                            "kind"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "fireCount",
+                    "lastFireAt",
+                    "lastFireSessionId",
+                    "maxFires",
+                    "mode",
+                    "modelId",
+                    "mutating",
+                    "name",
+                    "nextFireAt",
+                    "oneShotMaxRetries",
+                    "oneShotRetry",
+                    "owner",
+                    "profile",
+                    "prompt",
+                    "providerId",
+                    "status",
+                    "trigger"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The schedule is invalid, for example an unknown time zone.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The update changes the schedule's trigger, which cannot be edited; create a new schedule instead.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSchedule",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "scheduleName"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The schedule was deleted."
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleName}/actions": {
+      "post": {
+        "operationId": "actOnSchedule",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "scheduleName"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "fire",
+                      "pause",
+                      "resume"
+                    ]
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "The schedule action was accepted."
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleName}/fires": {
+      "get": {
+        "operationId": "listScheduleFires",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "scheduleName"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The schedule run history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "deadline": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "firedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inFlight": {
+                            "type": "boolean"
+                          },
+                          "progressAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "scheduleName": {
+                            "type": "string"
+                          },
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "stop": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "deadline",
+                          "error",
+                          "firedAt",
+                          "id",
+                          "inFlight",
+                          "progressAt",
+                          "scheduleName",
+                          "sessionId",
+                          "startedAt",
+                          "stop"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime or scheduler is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -4,8 +4,8 @@
 import { type DefaultError, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { cancelRun, clearSession, compactSession, completeAuthLogin, createSession, deleteSession, forkSession, getAuthSession, getHealth, getRuntime, getSessionDetail, getSessionTranscript, listSessions, logoutAuthSession, type Options, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun } from '../sdk.gen';
-import type { CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CreateSessionData, CreateSessionError, CreateSessionResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse } from '../types.gen';
+import { actOnSchedule, cancelRun, clearSession, compactSession, completeAuthLogin, createSchedule, createSession, deleteSchedule, deleteSession, forkSession, getAuthSession, getHealth, getRuntime, getSessionDetail, getSessionTranscript, listScheduleFires, listSchedules, listSessions, logoutAuthSession, type Options, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun, updateSchedule } from '../sdk.gen';
+import type { ActOnScheduleData, ActOnScheduleError, ActOnScheduleResponse, CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CreateScheduleData, CreateScheduleError, CreateScheduleResponse, CreateSessionData, CreateSessionError, CreateSessionResponse, DeleteScheduleData, DeleteScheduleError, DeleteScheduleResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, ListScheduleFiresData, ListScheduleFiresError, ListScheduleFiresResponse, ListSchedulesData, ListSchedulesError, ListSchedulesResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse, UpdateScheduleData, UpdateScheduleError, UpdateScheduleResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -313,3 +313,89 @@ export const resolveRunPermissionMutation = (options?: Partial<Options<ResolveRu
     };
     return mutationOptions;
 };
+
+export const listSchedulesQueryKey = (options?: Options<ListSchedulesData>) => createQueryKey('listSchedules', options);
+
+export const listSchedulesOptions = (options?: Options<ListSchedulesData>) => queryOptions<ListSchedulesResponse, ListSchedulesError, ListSchedulesResponse, ReturnType<typeof listSchedulesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listSchedules({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listSchedulesQueryKey(options)
+});
+
+export const createScheduleMutation = (options?: Partial<Options<CreateScheduleData>>): UseMutationOptions<CreateScheduleResponse, CreateScheduleError, Options<CreateScheduleData>> => {
+    const mutationOptions: UseMutationOptions<CreateScheduleResponse, CreateScheduleError, Options<CreateScheduleData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await createSchedule({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const deleteScheduleMutation = (options?: Partial<Options<DeleteScheduleData>>): UseMutationOptions<DeleteScheduleResponse, DeleteScheduleError, Options<DeleteScheduleData>> => {
+    const mutationOptions: UseMutationOptions<DeleteScheduleResponse, DeleteScheduleError, Options<DeleteScheduleData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await deleteSchedule({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const updateScheduleMutation = (options?: Partial<Options<UpdateScheduleData>>): UseMutationOptions<UpdateScheduleResponse, UpdateScheduleError, Options<UpdateScheduleData>> => {
+    const mutationOptions: UseMutationOptions<UpdateScheduleResponse, UpdateScheduleError, Options<UpdateScheduleData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await updateSchedule({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const actOnScheduleMutation = (options?: Partial<Options<ActOnScheduleData>>): UseMutationOptions<ActOnScheduleResponse, ActOnScheduleError, Options<ActOnScheduleData>> => {
+    const mutationOptions: UseMutationOptions<ActOnScheduleResponse, ActOnScheduleError, Options<ActOnScheduleData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await actOnSchedule({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listScheduleFiresQueryKey = (options: Options<ListScheduleFiresData>) => createQueryKey('listScheduleFires', options);
+
+export const listScheduleFiresOptions = (options: Options<ListScheduleFiresData>) => queryOptions<ListScheduleFiresResponse, ListScheduleFiresError, ListScheduleFiresResponse, ReturnType<typeof listScheduleFiresQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listScheduleFires({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listScheduleFiresQueryKey(options)
+});

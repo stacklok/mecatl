@@ -26,8 +26,10 @@ import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
 import { type ChatService, createMecatlChatService } from "./mecatl/chat.js";
 import { type MecatlRuntime, RuntimeNotReadyError } from "./mecatl/runtime.js";
+import { createMecatlScheduleService, type ScheduleService } from "./mecatl/schedules.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerScheduleRoutes } from "./routes/schedules.js";
 
 export const openApiInfo = {
   info: { title: "Mecatl Studio API", version: "1.0.0" },
@@ -71,6 +73,7 @@ export interface AppDependencies {
   readonly activity?: ActivityLimits;
   readonly authentication?: AuthenticationService;
   readonly chat?: ChatService;
+  readonly schedules?: ScheduleService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
   /** How long a feature request waits for compatibility negotiation before `503`. */
@@ -175,6 +178,22 @@ export function createApp(dependencies: AppDependencies = {}) {
     dependencies.chat ??
     (runtime === undefined ? undefined : createMecatlChatService(runtime.client));
   registerChatRoutes(app, chat, dependencies.activity);
+  // Capability read LIVE from the negotiated snapshot: false until negotiation
+  // completes or when the deployment has scheduling off.
+  const schedulingSupported = () => {
+    if (runtime === undefined) return false;
+    try {
+      return runtime.snapshot().capabilities.scheduling;
+    } catch {
+      return false;
+    }
+  };
+  const schedules =
+    dependencies.schedules ??
+    (runtime === undefined
+      ? undefined
+      : createMecatlScheduleService(runtime.client, schedulingSupported));
+  registerScheduleRoutes(app, schedules);
 
   if (dependencies.webDist !== undefined) app.use("*", spaHandler(dependencies.webDist));
 

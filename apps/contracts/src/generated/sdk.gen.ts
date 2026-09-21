@@ -3,7 +3,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelRunData, CancelRunErrors, CancelRunResponses, ClearSessionData, ClearSessionErrors, ClearSessionResponses, CompactSessionData, CompactSessionErrors, CompactSessionResponses, CompleteAuthLoginData, CompleteAuthLoginErrors, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteSessionData, DeleteSessionErrors, DeleteSessionResponses, ForkSessionData, ForkSessionErrors, ForkSessionResponses, GetAuthSessionData, GetAuthSessionResponses, GetHealthData, GetHealthResponses, GetRuntimeData, GetRuntimeErrors, GetRuntimeResponses, GetSessionDetailData, GetSessionDetailErrors, GetSessionDetailResponses, GetSessionTranscriptData, GetSessionTranscriptErrors, GetSessionTranscriptResponses, ListSessionsData, ListSessionsErrors, ListSessionsResponses, LogoutAuthSessionData, LogoutAuthSessionErrors, LogoutAuthSessionResponses, RenameSessionData, RenameSessionErrors, RenameSessionResponses, ResolveRunPermissionData, ResolveRunPermissionErrors, ResolveRunPermissionResponses, RetrySessionData, RetrySessionErrors, RetrySessionResponse, RetrySessionResponses, SetSessionModeData, SetSessionModeErrors, SetSessionModeResponses, StartAuthLoginData, StartAuthLoginErrors, StartRunData, StartRunErrors, StartRunResponse, StartRunResponses, SteerRunData, SteerRunErrors, SteerRunResponses, WatchSessionActivityData, WatchSessionActivityErrors, WatchSessionActivityResponse, WatchSessionActivityResponses } from './types.gen';
+import type { ActOnScheduleData, ActOnScheduleErrors, ActOnScheduleResponses, CancelRunData, CancelRunErrors, CancelRunResponses, ClearSessionData, ClearSessionErrors, ClearSessionResponses, CompactSessionData, CompactSessionErrors, CompactSessionResponses, CompleteAuthLoginData, CompleteAuthLoginErrors, CreateScheduleData, CreateScheduleErrors, CreateScheduleResponses, CreateSessionData, CreateSessionErrors, CreateSessionResponses, DeleteScheduleData, DeleteScheduleErrors, DeleteScheduleResponses, DeleteSessionData, DeleteSessionErrors, DeleteSessionResponses, ForkSessionData, ForkSessionErrors, ForkSessionResponses, GetAuthSessionData, GetAuthSessionResponses, GetHealthData, GetHealthResponses, GetRuntimeData, GetRuntimeErrors, GetRuntimeResponses, GetSessionDetailData, GetSessionDetailErrors, GetSessionDetailResponses, GetSessionTranscriptData, GetSessionTranscriptErrors, GetSessionTranscriptResponses, ListScheduleFiresData, ListScheduleFiresErrors, ListScheduleFiresResponses, ListSchedulesData, ListSchedulesErrors, ListSchedulesResponses, ListSessionsData, ListSessionsErrors, ListSessionsResponses, LogoutAuthSessionData, LogoutAuthSessionErrors, LogoutAuthSessionResponses, RenameSessionData, RenameSessionErrors, RenameSessionResponses, ResolveRunPermissionData, ResolveRunPermissionErrors, ResolveRunPermissionResponses, RetrySessionData, RetrySessionErrors, RetrySessionResponse, RetrySessionResponses, SetSessionModeData, SetSessionModeErrors, SetSessionModeResponses, StartAuthLoginData, StartAuthLoginErrors, StartRunData, StartRunErrors, StartRunResponse, StartRunResponses, SteerRunData, SteerRunErrors, SteerRunResponses, UpdateScheduleData, UpdateScheduleErrors, UpdateScheduleResponses, WatchSessionActivityData, WatchSessionActivityErrors, WatchSessionActivityResponse, WatchSessionActivityResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -111,3 +111,36 @@ export const resolveRunPermission = <ThrowOnError extends boolean = false>(optio
         ...options.headers
     }
 });
+
+export const listSchedules = <ThrowOnError extends boolean = false>(options?: Options<ListSchedulesData, ThrowOnError>): RequestResult<ListSchedulesResponses, ListSchedulesErrors, ThrowOnError> => (options?.client ?? client).get<ListSchedulesResponses, ListSchedulesErrors, ThrowOnError>({ url: '/api/v1/schedules', ...options });
+
+export const createSchedule = <ThrowOnError extends boolean = false>(options: Options<CreateScheduleData, ThrowOnError>): RequestResult<CreateScheduleResponses, CreateScheduleErrors, ThrowOnError> => (options.client ?? client).post<CreateScheduleResponses, CreateScheduleErrors, ThrowOnError>({
+    url: '/api/v1/schedules',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const deleteSchedule = <ThrowOnError extends boolean = false>(options: Options<DeleteScheduleData, ThrowOnError>): RequestResult<DeleteScheduleResponses, DeleteScheduleErrors, ThrowOnError> => (options.client ?? client).delete<DeleteScheduleResponses, DeleteScheduleErrors, ThrowOnError>({ url: '/api/v1/schedules/{scheduleName}', ...options });
+
+export const updateSchedule = <ThrowOnError extends boolean = false>(options: Options<UpdateScheduleData, ThrowOnError>): RequestResult<UpdateScheduleResponses, UpdateScheduleErrors, ThrowOnError> => (options.client ?? client).put<UpdateScheduleResponses, UpdateScheduleErrors, ThrowOnError>({
+    url: '/api/v1/schedules/{scheduleName}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const actOnSchedule = <ThrowOnError extends boolean = false>(options: Options<ActOnScheduleData, ThrowOnError>): RequestResult<ActOnScheduleResponses, ActOnScheduleErrors, ThrowOnError> => (options.client ?? client).post<ActOnScheduleResponses, ActOnScheduleErrors, ThrowOnError>({
+    url: '/api/v1/schedules/{scheduleName}/actions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const listScheduleFires = <ThrowOnError extends boolean = false>(options: Options<ListScheduleFiresData, ThrowOnError>): RequestResult<ListScheduleFiresResponses, ListScheduleFiresErrors, ThrowOnError> => (options.client ?? client).get<ListScheduleFiresResponses, ListScheduleFiresErrors, ThrowOnError>({ url: '/api/v1/schedules/{scheduleName}/fires', ...options });

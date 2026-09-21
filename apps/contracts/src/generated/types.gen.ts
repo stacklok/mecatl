@@ -1310,3 +1310,487 @@ export type ResolveRunPermissionResponses = {
 };
 
 export type ResolveRunPermissionResponse = ResolveRunPermissionResponses[keyof ResolveRunPermissionResponses];
+
+export type ListSchedulesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/schedules';
+};
+
+export type ListSchedulesErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListSchedulesError = ListSchedulesErrors[keyof ListSchedulesErrors];
+
+export type ListSchedulesResponses = {
+    /**
+     * The visible scheduled work.
+     */
+    200: {
+        items: Array<{
+            enabled: boolean;
+            fireCount: number;
+            lastFireAt: string;
+            lastFireSessionId: string;
+            maxFires: number;
+            mode: 'default' | 'plan' | 'acceptEdits';
+            modelId: string;
+            mutating: boolean;
+            name: string;
+            nextFireAt: string;
+            oneShotMaxRetries: number;
+            oneShotRetry: boolean;
+            owner: string;
+            profile: 'all' | 'noFilesystem';
+            prompt: string;
+            providerId: string;
+            status: 'claimed' | 'completed' | 'paused' | 'running' | 'scheduled';
+            trigger: {
+                expression: string;
+                kind: 'cron';
+                timezone: string;
+            } | {
+                at: string;
+                kind: 'once';
+            };
+        }>;
+        reason: string;
+        supported: boolean;
+    };
+};
+
+export type ListSchedulesResponse = ListSchedulesResponses[keyof ListSchedulesResponses];
+
+export type CreateScheduleData = {
+    body: {
+        maxFires?: number;
+        mode?: 'default' | 'plan' | 'acceptEdits';
+        mutating?: boolean;
+        oneShotMaxRetries?: number;
+        oneShotRetry?: boolean;
+        profile?: 'all' | 'noFilesystem';
+        prompt: string;
+        trigger: {
+            expression: string;
+            kind: 'cron';
+            timezone: string;
+        } | {
+            at: string;
+            kind: 'once';
+        };
+        name: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/schedules';
+};
+
+export type CreateScheduleErrors = {
+    /**
+     * The schedule is invalid, for example an unknown time zone.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type CreateScheduleError = CreateScheduleErrors[keyof CreateScheduleErrors];
+
+export type CreateScheduleResponses = {
+    /**
+     * The created schedule.
+     */
+    201: {
+        enabled: boolean;
+        fireCount: number;
+        lastFireAt: string;
+        lastFireSessionId: string;
+        maxFires: number;
+        mode: 'default' | 'plan' | 'acceptEdits';
+        modelId: string;
+        mutating: boolean;
+        name: string;
+        nextFireAt: string;
+        oneShotMaxRetries: number;
+        oneShotRetry: boolean;
+        owner: string;
+        profile: 'all' | 'noFilesystem';
+        prompt: string;
+        providerId: string;
+        status: 'claimed' | 'completed' | 'paused' | 'running' | 'scheduled';
+        trigger: {
+            expression: string;
+            kind: 'cron';
+            timezone: string;
+        } | {
+            at: string;
+            kind: 'once';
+        };
+    };
+};
+
+export type CreateScheduleResponse = CreateScheduleResponses[keyof CreateScheduleResponses];
+
+export type DeleteScheduleData = {
+    body?: never;
+    path: {
+        scheduleName: string;
+    };
+    query?: never;
+    url: '/api/v1/schedules/{scheduleName}';
+};
+
+export type DeleteScheduleErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type DeleteScheduleError = DeleteScheduleErrors[keyof DeleteScheduleErrors];
+
+export type DeleteScheduleResponses = {
+    /**
+     * The schedule was deleted.
+     */
+    204: void;
+};
+
+export type DeleteScheduleResponse = DeleteScheduleResponses[keyof DeleteScheduleResponses];
+
+export type UpdateScheduleData = {
+    body: {
+        maxFires?: number;
+        mode?: 'default' | 'plan' | 'acceptEdits';
+        mutating?: boolean;
+        oneShotMaxRetries?: number;
+        oneShotRetry?: boolean;
+        profile?: 'all' | 'noFilesystem';
+        prompt: string;
+        trigger: {
+            expression: string;
+            kind: 'cron';
+            timezone: string;
+        } | {
+            at: string;
+            kind: 'once';
+        };
+    };
+    path: {
+        scheduleName: string;
+    };
+    query?: never;
+    url: '/api/v1/schedules/{scheduleName}';
+};
+
+export type UpdateScheduleErrors = {
+    /**
+     * The schedule is invalid, for example an unknown time zone.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The update changes the schedule's trigger, which cannot be edited; create a new schedule instead.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type UpdateScheduleError = UpdateScheduleErrors[keyof UpdateScheduleErrors];
+
+export type UpdateScheduleResponses = {
+    /**
+     * The updated schedule.
+     */
+    200: {
+        enabled: boolean;
+        fireCount: number;
+        lastFireAt: string;
+        lastFireSessionId: string;
+        maxFires: number;
+        mode: 'default' | 'plan' | 'acceptEdits';
+        modelId: string;
+        mutating: boolean;
+        name: string;
+        nextFireAt: string;
+        oneShotMaxRetries: number;
+        oneShotRetry: boolean;
+        owner: string;
+        profile: 'all' | 'noFilesystem';
+        prompt: string;
+        providerId: string;
+        status: 'claimed' | 'completed' | 'paused' | 'running' | 'scheduled';
+        trigger: {
+            expression: string;
+            kind: 'cron';
+            timezone: string;
+        } | {
+            at: string;
+            kind: 'once';
+        };
+    };
+};
+
+export type UpdateScheduleResponse = UpdateScheduleResponses[keyof UpdateScheduleResponses];
+
+export type ActOnScheduleData = {
+    body: {
+        action: 'fire' | 'pause' | 'resume';
+    };
+    path: {
+        scheduleName: string;
+    };
+    query?: never;
+    url: '/api/v1/schedules/{scheduleName}/actions';
+};
+
+export type ActOnScheduleErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ActOnScheduleError = ActOnScheduleErrors[keyof ActOnScheduleErrors];
+
+export type ActOnScheduleResponses = {
+    /**
+     * The schedule action was accepted.
+     */
+    204: void;
+};
+
+export type ActOnScheduleResponse = ActOnScheduleResponses[keyof ActOnScheduleResponses];
+
+export type ListScheduleFiresData = {
+    body?: never;
+    path: {
+        scheduleName: string;
+    };
+    query?: never;
+    url: '/api/v1/schedules/{scheduleName}/fires';
+};
+
+export type ListScheduleFiresErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime or scheduler is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListScheduleFiresError = ListScheduleFiresErrors[keyof ListScheduleFiresErrors];
+
+export type ListScheduleFiresResponses = {
+    /**
+     * The schedule run history.
+     */
+    200: {
+        items: Array<{
+            deadline: string;
+            error: string;
+            firedAt: string;
+            id: string;
+            inFlight: boolean;
+            progressAt: string;
+            scheduleName: string;
+            sessionId: string;
+            startedAt: string;
+            stop: string;
+        }>;
+    };
+};
+
+export type ListScheduleFiresResponse = ListScheduleFiresResponses[keyof ListScheduleFiresResponses];

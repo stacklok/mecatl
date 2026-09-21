@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace.index'
 import { Route as WorkspaceChatRouteImport } from './routes/workspace.chat'
+import { Route as WorkspaceSchedulesRouteImport } from './routes/workspace.schedules'
+import { Route as WorkspaceSchedulesScheduleNameRouteImport } from './routes/workspace.schedules_.$scheduleName'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -34,31 +36,66 @@ const WorkspaceChatRoute = WorkspaceChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceSchedulesRoute = WorkspaceSchedulesRouteImport.update({
+  id: '/schedules',
+  path: '/schedules',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceSchedulesScheduleNameRoute =
+  WorkspaceSchedulesScheduleNameRouteImport.update({
+    id: '/schedules_/$scheduleName',
+    path: '/schedules/$scheduleName',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRouteWithChildren
   '/workspace/chat': typeof WorkspaceChatRoute
+  '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/': typeof WorkspaceIndexRoute
+  '/workspace/schedules/$scheduleName': typeof WorkspaceSchedulesScheduleNameRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/workspace/chat': typeof WorkspaceChatRoute
+  '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace': typeof WorkspaceIndexRoute
+  '/workspace/schedules/$scheduleName': typeof WorkspaceSchedulesScheduleNameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRouteWithChildren
   '/workspace/chat': typeof WorkspaceChatRoute
+  '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/': typeof WorkspaceIndexRoute
+  '/workspace/schedules_/$scheduleName': typeof WorkspaceSchedulesScheduleNameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/workspace' | '/workspace/chat' | '/workspace/'
+  fullPaths:
+    | '/'
+    | '/workspace'
+    | '/workspace/chat'
+    | '/workspace/schedules'
+    | '/workspace/'
+    | '/workspace/schedules/$scheduleName'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/workspace/chat' | '/workspace'
-  id: '__root__' | '/' | '/workspace' | '/workspace/chat' | '/workspace/'
+  to:
+    | '/'
+    | '/workspace/chat'
+    | '/workspace/schedules'
+    | '/workspace'
+    | '/workspace/schedules/$scheduleName'
+  id:
+    | '__root__'
+    | '/'
+    | '/workspace'
+    | '/workspace/chat'
+    | '/workspace/schedules'
+    | '/workspace/'
+    | '/workspace/schedules_/$scheduleName'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -96,17 +133,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceChatRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/workspace/schedules': {
+      id: '/workspace/schedules'
+      path: '/schedules'
+      fullPath: '/workspace/schedules'
+      preLoaderRoute: typeof WorkspaceSchedulesRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/workspace/schedules_/$scheduleName': {
+      id: '/workspace/schedules_/$scheduleName'
+      path: '/schedules/$scheduleName'
+      fullPath: '/workspace/schedules/$scheduleName'
+      preLoaderRoute: typeof WorkspaceSchedulesScheduleNameRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
   }
 }
 
 interface WorkspaceRouteChildren {
   WorkspaceChatRoute: typeof WorkspaceChatRoute
+  WorkspaceSchedulesRoute: typeof WorkspaceSchedulesRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
+  WorkspaceSchedulesScheduleNameRoute: typeof WorkspaceSchedulesScheduleNameRoute
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceChatRoute: WorkspaceChatRoute,
+  WorkspaceSchedulesRoute: WorkspaceSchedulesRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
+  WorkspaceSchedulesScheduleNameRoute: WorkspaceSchedulesScheduleNameRoute,
 }
 
 const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(

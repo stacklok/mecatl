@@ -691,7 +691,14 @@ and a session admits `STUDIO_ACTIVITY_MAX_STREAMS` concurrent streams per replic
 browser cannot impose unbounded historical reads. Live events stay unbounded; cancel, steer, and permission verdicts address the exact durable run through the
 SDK's control handle and answer `409 stale_run_control` for an ended one. Every mutation
 sits behind the bootstrap's same-origin + double-submit CSRF check and, with interactive
-login active, the `401` session gate. See
+login active, the `401` session gate. **Schedules** is the second feature:
+`/api/v1/schedules…` projects the daemon's ScheduleService (cron or one-shot trigger,
+permission mode, tool profile, fire history) through a contract that is capability-gated
+live on the negotiated snapshot's `scheduling` flag — the list answers `supported: false`
+with a reason instead of failing, every mutation answers `501 schedule_unsupported` — and
+whose updates re-send only the exposed fields while carrying the daemon's unexposed spec
+fields (`limits`, `selector`, `parts`, …) over untouched; the browser adds a cron builder
+and a natural-language phrase parser as pure functions. See
 [ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
 [Studio bootstrap](acceptance/studio-bootstrap.md) and
 [Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own
