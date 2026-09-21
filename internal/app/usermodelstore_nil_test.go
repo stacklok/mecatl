@@ -58,9 +58,7 @@ func TestBuildUserModelStoreOwnershipEnforcedPartitionsCallers(t *testing.T) {
 	}
 	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "alice"})
 	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://issuer.example", Subject: "bob"})
-	if err := store.RememberEntry(alice, tool.MemoryEntry{Key: "user/preference", Value: "alice"}); err != nil {
-		t.Fatalf("Alice RememberEntry: %v", err)
-	}
+	rememberProfile(t, alice, store, tool.MemoryEntry{Key: "user/preference", Value: "alice"})
 	if _, ok, err := store.Recall(bob, "user/preference"); err != nil || ok {
 		t.Fatalf("Bob Recall = (%t, %v), want absent", ok, err)
 	}

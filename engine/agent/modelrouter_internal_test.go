@@ -1196,13 +1196,13 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 
 	// First call: fold perCall into the parent session.
 	caps.routeTask(context.Background(), "task 1")
-	if got := parentSess.Usage.TotalTokens(); got != perCall {
+	if got := parentSess.UsageFor(session.UsageKindMain).TotalTokens(); got != perCall {
 		t.Fatalf("after first routeTask call: sess.Usage.TotalTokens() = %d, want %d (first fold)", got, perCall)
 	}
 
 	// Second call: fold another perCall — must ACCUMULATE, not overwrite.
 	caps.routeTask(context.Background(), "task 2")
-	if got := parentSess.Usage.TotalTokens(); got != 2*perCall {
+	if got := parentSess.UsageFor(session.UsageKindMain).TotalTokens(); got != 2*perCall {
 		t.Fatalf("after second routeTask call: sess.Usage.TotalTokens() = %d, want %d (cumulative fold)", got, 2*perCall)
 	}
 }
@@ -1240,7 +1240,7 @@ func TestRouteTaskFoldsClassifierUsageOnMissPath(t *testing.T) {
 	if routeOK {
 		t.Fatal("the underlying router misses (ok=false), routeTask must pass through as miss")
 	}
-	if got := parentSess.Usage.TotalTokens(); got != perCall {
+	if got := parentSess.UsageFor(session.UsageKindMain).TotalTokens(); got != perCall {
 		t.Fatalf("miss path: sess.Usage.TotalTokens() = %d, want %d (miss must fold spend)", got, perCall)
 	}
 }
@@ -1287,7 +1287,7 @@ func TestClassifierSpendTripsMaxRunTokens(t *testing.T) {
 	tripped := false
 	for i := 0; i < 10; i++ {
 		caps.routeTask(context.Background(), "classify")
-		if mainEngine.budgetExhausted(run, parentSess.Usage) {
+		if mainEngine.budgetExhausted(run, parentSess.UsageFor(session.UsageKindMain)) {
 			tripped = true
 			// Assert it tripped at exactly the expected call (wantTrip-th call crosses budget).
 			if i+1 < wantTrip {

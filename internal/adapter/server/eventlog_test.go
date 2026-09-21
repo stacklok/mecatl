@@ -441,7 +441,6 @@ func TestEventLogRecordsApprovalVerdict(t *testing.T) {
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},
@@ -979,7 +978,6 @@ func driveAskingSessionToCompletion(t *testing.T, client mecatlv1.HarnessService
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},
@@ -1142,7 +1140,6 @@ func TestLiveConverseRelaySkipsLogOnlyKinds(t *testing.T) {
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},

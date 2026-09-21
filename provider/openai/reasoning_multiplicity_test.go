@@ -139,70 +139,52 @@ func TestReasoningInterleavingPlacement(t *testing.T) {
 	}
 }
 
-// TestLegacyReasoningBlobReplaysUnchanged pins the migration contract: a session
-// recorded BEFORE the adapter packed anything stores a bare encrypted_content
-// string on Message.Reasoning plus its id on Message.ReasoningItemID. Those
-// sessions are on disk today and must keep replaying exactly as they did — one
-// reasoning item, same id, same blob, byte for byte.
-//
-// The id-less case is the D1a degrade: replaying it would serialise `"id":""`,
-// which strict gateways reject outright, so the item is dropped instead (lose
-// that turn's reasoning continuity, never 400).
-func TestLegacyReasoningBlobReplaysUnchanged(t *testing.T) {
+// TestOnlyCurrentCompleteReasoningEnvelopeReplays pins the alpha cleanup boundary:
+// replay accepts only a complete current envelope. Historical bare ciphertext,
+// malformed or unsupported envelopes, and partial envelopes are omitted rather
+// than treated as ciphertext or partially replayed.
+func TestOnlyCurrentCompleteReasoningEnvelopeReplays(t *testing.T) {
+	valid := packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "A"}, {ID: "rs_2", Blob: "B", After: 1}})
 	tests := []struct {
 		name      string
 		reasoning string
-		itemID    string
 		want      []reasoningItem
 	}{
-		{
-			name:      "legacy blob with id replays as one item",
-			reasoning: "LEGACY_ENCRYPTED",
-			itemID:    "rs_legacy",
-			want:      []reasoningItem{{ID: "rs_legacy", Blob: "LEGACY_ENCRYPTED"}},
-		},
-		{
-			name:      "legacy blob without id is dropped (D1a)",
-			reasoning: "LEGACY_ENCRYPTED",
-			itemID:    "",
-			want:      nil,
-		},
-		{
-			name:      "no reasoning at all is a replay no-op",
-			reasoning: "",
-			itemID:    "rs_orphan",
-			want:      nil,
-		},
-		{
-			name:      "packed envelope ignores the vestigial legacy id",
-			reasoning: packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "A"}, {ID: "rs_2", Blob: "B"}}),
-			itemID:    "rs_stale",
-			want:      []reasoningItem{{ID: "rs_1", Blob: "A"}, {ID: "rs_2", Blob: "B"}},
-		},
+		{name: "current envelope", reasoning: valid, want: []reasoningItem{{ID: "rs_1", Blob: "A"}, {ID: "rs_2", Blob: "B", After: 1}}},
+		{name: "bare historical ciphertext", reasoning: "LEGACY_ENCRYPTED"},
+		{name: "malformed JSON", reasoning: `{not json`},
+		{name: "unsupported version", reasoning: `{"v":2,"items":[{"i":"rs_1","e":"A"}]}`},
+		{name: "missing version", reasoning: `{"items":[{"i":"rs_1","e":"A"}]}`},
+		{name: "empty items", reasoning: `{"v":1,"items":[]}`},
+		{name: "null items", reasoning: `{"v":1,"items":null}`},
+		{name: "missing id rejects complete envelope", reasoning: `{"v":1,"items":[{"i":"rs_1","e":"A"},{"e":"B"}]}`},
+		{name: "missing ciphertext rejects complete envelope", reasoning: `{"v":1,"items":[{"i":"rs_1","e":"A"},{"i":"rs_2"}]}`},
+		{name: "negative placement rejects complete envelope", reasoning: `{"v":1,"items":[{"i":"rs_1","e":"A","n":-1}]}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if got := unpackReasoningItems(tc.reasoning); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("unpacked = %+v, want %+v", got, tc.want)
+			}
+			// A stale pre-envelope id must never reactivate rejected bytes.
 			msg := session.NewAssistantMessage("", tc.reasoning, nil)
-			msg.ReasoningItemID = tc.itemID
-
+			msg.ReasoningItemID = "rs_stale"
 			var replayed []reasoningItem
 			for _, it := range assistantItems(msg) {
 				if it.OfReasoning != nil {
 					replayed = append(replayed, reasoningItem{ID: it.OfReasoning.ID, Blob: it.OfReasoning.EncryptedContent.Value})
 				}
 			}
-			if !reflect.DeepEqual(replayed, tc.want) {
-				t.Errorf("replayed = %+v, want %+v", replayed, tc.want)
+			if tc.want == nil && len(replayed) != 0 {
+				t.Errorf("replayed rejected envelope bytes as ciphertext: %+v", replayed)
 			}
 		})
 	}
 }
 
-// TestPackedReasoningNeverEmitsAnIDLessItem is the invariant that keeps the
-// D1a degrade honest through the packing layer: whatever an envelope contains,
-// nothing missing an id or a blob may reach the wire, because the SDK
-// serialises an unset id as `"id":""` and strict gateways 400 on it.
-func TestPackedReasoningNeverEmitsAnIDLessItem(t *testing.T) {
+// TestPartialReasoningEnvelopeIsRejected pins all-or-nothing validation: replaying
+// the valid subset would silently rewrite the provider's prior output sequence.
+func TestPartialReasoningEnvelopeIsRejected(t *testing.T) {
 	packed := packReasoningItems([]reasoningItem{
 		{ID: "rs_ok", Blob: "GOOD"},
 		{ID: "", Blob: "ORPHAN_BLOB"},
@@ -211,14 +193,8 @@ func TestPackedReasoningNeverEmitsAnIDLessItem(t *testing.T) {
 	msg := session.NewAssistantMessage("", packed, nil)
 
 	for _, it := range assistantItems(msg) {
-		if it.OfReasoning == nil {
-			continue
-		}
-		if it.OfReasoning.ID == "" {
-			t.Error(`replayed a reasoning item with id "" — strict gateways reject it; drop the item instead`)
-		}
-		if it.OfReasoning.EncryptedContent.Value == "" {
-			t.Error("replayed a reasoning item with no encrypted content — it carries nothing to verify")
+		if it.OfReasoning != nil {
+			t.Errorf("partial envelope replayed reasoning item %+v; want complete envelope rejected", it.OfReasoning)
 		}
 	}
 }
@@ -233,7 +209,7 @@ func TestReasoningItemsSurviveAPackRoundTrip(t *testing.T) {
 		{ID: "rs_2", Blob: "BBB"},
 		{ID: "rs_3", Blob: `{"looks":"like json"}`},
 	}
-	if got := unpackReasoningItems(packReasoningItems(want), ""); !reflect.DeepEqual(got, want) {
+	if got := unpackReasoningItems(packReasoningItems(want)); !reflect.DeepEqual(got, want) {
 		t.Errorf("round trip = %+v, want %+v", got, want)
 	}
 	if got := packReasoningItems(nil); got != "" {
@@ -247,37 +223,37 @@ func TestReasoningItemsSurviveAPackRoundTrip(t *testing.T) {
 // item it returns carries both halves, because the caller replays whatever it
 // hands back.
 func FuzzUnpackReasoningItems(f *testing.F) {
-	f.Add("", "")
-	f.Add("LEGACY_OPAQUE_BLOB", "rs_legacy")
-	f.Add(packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "A"}}), "")
-	f.Add(packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "A"}, {ID: "rs_2", Blob: "B"}}), "rs_stale")
-	f.Add(`{"v":1,"items":[]}`, "rs_x")
-	f.Add(`{"v":2,"items":[{"i":"rs_1","e":"A"}]}`, "rs_x")
-	f.Add(`{"v":1,"items":[{"i":"","e":"A"}]}`, "rs_x")
-	f.Add(`{"v":1,"items":null}`, "")
-	f.Add("{not json", "rs_x")
-	f.Add("\x00\x00", "\x00")
+	f.Add("")
+	f.Add("LEGACY_OPAQUE_BLOB")
+	f.Add(packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "A"}}))
+	f.Add(packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "A"}, {ID: "rs_2", Blob: "B"}}))
+	f.Add(`{"v":1,"items":[]}`)
+	f.Add(`{"v":2,"items":[{"i":"rs_1","e":"A"}]}`)
+	f.Add(`{"v":1,"items":[{"i":"","e":"A"}]}`)
+	f.Add(`{"v":1,"items":[{"i":"rs_1","e":"A"},{"i":"rs_2"}]}`)
+	f.Add(`{"v":1,"items":null}`)
+	f.Add("{not json")
+	f.Add("\x00\x00")
 
-	f.Fuzz(func(t *testing.T, blob, legacyID string) {
-		for _, it := range unpackReasoningItems(blob, legacyID) {
-			if it.ID == "" || it.Blob == "" {
-				t.Fatalf("unpacked an unreplayable item %+v from blob %q, legacyID %q", it, blob, legacyID)
+	f.Fuzz(func(t *testing.T, blob string) {
+		items := unpackReasoningItems(blob)
+		for _, it := range items {
+			if it.ID == "" || it.Blob == "" || it.After < 0 {
+				t.Fatalf("unpacked an invalid item %+v from blob %q", it, blob)
 			}
+		}
+		if blob != "" && !json.Valid([]byte(blob)) && len(items) != 0 {
+			t.Fatalf("malformed input produced replay items %+v from %q", items, blob)
 		}
 	})
 }
 
 // TestRecoveryRemovesEveryPackedReasoningItem is the seam between this fix's two
 // halves: the encrypted-content repair (Stream's one-shot fallback) must
-// understand the PACKED envelope, not just the legacy single (blob, id) pair.
+// understand the current packed envelope.
 //
-// It matters because the two halves disagree by default. The repair decides
-// "this message carried a reasoning envelope" and strips it; a check written
-// against the legacy fields (`Reasoning != "" && ReasoningItemID != ""`) sees a
-// packed message as carrying nothing — `ReasoningItemID` is empty once the ids
-// move inside the envelope — so the repair would never fire for a
-// freshly-produced session, exactly the ones this fix creates. Deciding through
-// unpackReasoningItems, the same call the wire projection makes, keeps them in
+// The repair decides "this message carried a reasoning envelope" through
+// unpackReasoningItems, the same call the wire projection makes, keeping them in
 // step: N items in, N items gone, nothing else touched.
 func TestRecoveryRemovesEveryPackedReasoningItem(t *testing.T) {
 	var bodies [][]byte

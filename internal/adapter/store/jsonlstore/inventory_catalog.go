@@ -108,20 +108,17 @@ func (st *Store) withInventoryCatalogLock(ctx context.Context, fn func() error) 
 	return fn()
 }
 
-// inventoryFingerprint observes O(1) directory metadata for the two
-// authoritative snapshot namespaces plus the durable generation marker advanced
-// by current writers. Historical v1 sources need the bounded per-file metadata
-// reconciliation recorded in the manifest because an append does not change its
-// parent directory.
+// inventoryFingerprint observes O(1) directory metadata for the current
+// snapshot namespace plus the durable generation marker advanced by current
+// writers. Older namespaces are not observed.
 func (st *Store) inventoryFingerprint() (string, error) {
 	h := sha256.New()
-	for _, dir := range []string{st.resolver.dir, st.resolver.canonicalDir()} {
-		info, err := os.Stat(dir)
-		if err != nil {
-			return "", fmt.Errorf("jsonlstore: fingerprint inventory directory: %w", err)
-		}
-		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\n", dir, info.ModTime().UnixNano(), info.Size(), info.Mode())
+	dir := st.resolver.canonicalDir()
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("jsonlstore: fingerprint inventory directory: %w", err)
 	}
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\n", dir, info.ModTime().UnixNano(), info.Size(), info.Mode())
 	marker, err := os.ReadFile(st.inventoryGenerationMarkerPath()) //nolint:gosec // adapter-private owner-only path
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("jsonlstore: read inventory generation marker: %w", err)
@@ -130,68 +127,8 @@ func (st *Store) inventoryFingerprint() (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func inventorySourceKey(canonical bool, name string) string {
-	if canonical {
-		return "canonical/" + name
-	}
-	return "legacy/" + name
-}
-
-func (st *Store) inventorySourcePath(key string) (string, bool) {
-	prefix, name, ok := strings.Cut(key, "/")
-	if !ok || name == "" || filepath.Base(name) != name || !strings.HasSuffix(name, sessionFileSuffix) {
-		return "", false
-	}
-	switch prefix {
-	case "canonical":
-		return filepath.Join(st.resolver.canonicalDir(), name), true
-	case "legacy":
-		return filepath.Join(st.resolver.dir, name), true
-	default:
-		return "", false
-	}
-}
-
-func inventorySourceMetadata(info os.FileInfo) inventoryCatalogSource {
-	return inventoryCatalogSource{Size: info.Size(), ModifiedAt: info.ModTime().UnixNano(), Mode: uint32(info.Mode())}
-}
-
-func (st *Store) inventoryV1Sources() (map[string]inventoryCatalogSource, error) {
-	sources := make(map[string]inventoryCatalogSource)
-	for _, sourceDir := range []struct {
-		path      string
-		canonical bool
-	}{{st.resolver.dir, false}, {st.resolver.canonicalDir(), true}} {
-		entries, err := os.ReadDir(sourceDir.path)
-		if err != nil {
-			return nil, fmt.Errorf("jsonlstore: scan inventory v1 sources: %w", err)
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), sessionFileSuffix) {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return nil, fmt.Errorf("jsonlstore: stat inventory v1 source: %w", err)
-			}
-			sources[inventorySourceKey(sourceDir.canonical, entry.Name())] = inventorySourceMetadata(info)
-		}
-	}
-	return sources, nil
-}
-
-func (st *Store) inventorySourcesCurrent(sources map[string]inventoryCatalogSource) bool {
-	for key, expected := range sources {
-		path, ok := st.inventorySourcePath(key)
-		if !ok {
-			return false
-		}
-		info, err := os.Stat(path)
-		if err != nil || inventorySourceMetadata(info) != expected {
-			return false
-		}
-	}
-	return true
+func (st *Store) inventorySources() (map[string]inventoryCatalogSource, error) {
+	return map[string]inventoryCatalogSource{}, nil
 }
 
 func inventoryGeneration(fingerprint string, sources map[string]inventoryCatalogSource) string {
@@ -232,9 +169,8 @@ func (st *Store) readInventoryManifest(fingerprint string) (inventoryCatalog, bo
 	}
 	var catalog inventoryCatalog
 	if json.Unmarshal(data, &catalog) != nil || catalog.Format != inventoryCatalogFormat ||
-		catalog.Fingerprint != fingerprint || catalog.Sources == nil || catalog.Scopes == nil ||
-		catalog.Generation != inventoryGeneration(fingerprint, catalog.Sources) ||
-		!st.inventorySourcesCurrent(catalog.Sources) {
+		catalog.Fingerprint != fingerprint || catalog.Sources == nil || len(catalog.Sources) != 0 || catalog.Scopes == nil ||
+		catalog.Generation != inventoryGeneration(fingerprint, catalog.Sources) {
 		return inventoryCatalog{}, false
 	}
 	for scope, entry := range catalog.Scopes {
@@ -392,12 +328,6 @@ func (st *Store) writeInventoryFileWithPattern(path string, data []byte, pattern
 	}
 	defer func() { _ = root.Close() }()
 	// defaultSnapshotOps, NOT st.snapshot: st.snapshot is the store's
-	// fault-injectable ops used by crash-safety tests to simulate a failure
-	// during the SNAPSHOT write. advanceInventoryGeneration runs first in
-	// Save/MigrateSessionFamily, so an injected fault here would fire on the
-	// inventory-catalog write before the snapshot write it's meant to test
-	// ever happens — masking the durability property under test and
-	// misclassifying disk-full errors (e.g. ENOSPC) that migration.go only
-	// maps to a sanitized reason code at the snapshot call site.
+	// fault-injectable ops used by crash-safety tests for snapshot writes.
 	return replaceCurrentSnapshot(path, data, time.Time{}, pattern, defaultSnapshotOps(), st.durability, root)
 }

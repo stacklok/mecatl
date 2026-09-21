@@ -167,9 +167,6 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Hook != nil {
 		out.Hook = toProtoHook(*ev.Hook)
 	}
-	if ev.Usage != nil {
-		out.Usage = toProtoUsage(*ev.Usage)
-	}
 	if ev.Subagent != nil {
 		out.Subagent = toProtoSubagent(*ev.Subagent)
 	}
@@ -269,16 +266,28 @@ func toProtoSchedule(p session.SchedulePayload) *mecatlv1.SchedulePayload {
 
 // toProtoApproval maps a session.ApprovalPayload (EvApproval) to its proto Approval
 // form: the verdict half of a permission ask. It copies the metadata-only scalars
-// (tool NAME + verdict string + askID + the opaque gated-call id + the allow-always
-// flag) — gauntlet #7: NEVER raw args. The live Converse relay SKIPS this event
-// (log-only); this mapper exists so the StreamSessionEvents replay surfaces it.
+// (tool name + typed verdict + ask ID + opaque gated-call ID) — gauntlet #7:
+// NEVER raw args. The live Converse relay skips this event (log-only); this mapper
+// exists so the WatchSessionEvents replay surfaces it.
 func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 	return &mecatlv1.Approval{
-		AskId:       p.AskID,
-		Verdict:     p.Verdict,
-		Tool:        valid(p.Tool),
-		CallId:      string(p.Call),
-		AllowAlways: p.AllowAlways,
+		AskId:   p.AskID,
+		Verdict: approvalVerdictToProto(p.Verdict),
+		Tool:    valid(p.Tool),
+		CallId:  string(p.Call),
+	}
+}
+
+func approvalVerdictToProto(verdict string) mecatlv1.ApprovalVerdict {
+	switch verdict {
+	case session.VerdictStringAllowAlways:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS
+	case session.VerdictStringAllowOnce:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE
+	case session.VerdictStringDeny:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY
+	default:
+		return mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED
 	}
 }
 
@@ -721,18 +730,13 @@ func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
 
 // toProtoResult maps a session.ResultPayload to its proto Result form.
 func toProtoResult(p session.ResultPayload) *mecatlv1.Result {
-	disposition := p.Disposition
-	if disposition == session.RetryDispositionUnknown && p.Permanent {
-		disposition = session.RetryDispositionPermanent
-	}
-	protoDisposition := retryDispositionToProto(disposition)
+	protoDisposition := retryDispositionToProto(p.Disposition)
 	progress := streamProgressToProto(p.Progress)
 	return &mecatlv1.Result{
 		Stop:             string(p.Stop),
 		Text:             valid(p.Text),
 		Usage:            toProtoUsage(p.Usage),
 		Error:            valid(p.Error),
-		Permanent:        disposition == session.RetryDispositionPermanent,
 		RetryDisposition: &protoDisposition,
 		StreamProgress:   &progress,
 	}
@@ -824,22 +828,18 @@ func toProtoTokenUsage(in map[session.UsageKind]session.TokenUsage) map[string]*
 }
 
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
-func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities, sessionCaps port.ProviderCapabilities) *mecatlv1.Session {
-	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
+func toProtoSession(s *session.Session, rm ResolvedModel, _ *mecatlv1.ServerCapabilities, sessionCaps port.ProviderCapabilities) *mecatlv1.Session {
 	return &mecatlv1.Session{
-		SessionId:       string(s.ID),
-		State:           string(s.State),
-		Mode:            modeToProto(s.Mode),
-		Limits:          limitsToProto(s.Limits),
-		Turns:           ClampInt32(s.Counters.Turns),
-		ToolCalls:       ClampInt32(s.Counters.ToolCalls),
-		CreatedAtUnix:   s.CreatedAt.Unix(),
-		ResolvedModel:   resolvedModelToProto(rm),
-		Title:           valid(s.Title),
-		TitleProvenance: valid(string(s.TitleProvenance)),
-		TitleMetadata:   toProtoSessionTitle(titlePayload(s)),
-		TokenUsage:      toProtoTokenUsage(s.TokenUsageSnapshot()),
-		Capabilities:    caps,
+		SessionId:     string(s.ID),
+		State:         string(s.State),
+		Mode:          modeToProto(s.Mode),
+		Limits:        limitsToProto(s.Limits),
+		Turns:         ClampInt32(s.Counters.Turns),
+		ToolCalls:     ClampInt32(s.Counters.ToolCalls),
+		CreatedAtUnix: s.CreatedAt.Unix(),
+		ResolvedModel: resolvedModelToProto(rm),
+		TitleMetadata: toProtoSessionTitle(titlePayload(s)),
+		TokenUsage:    toProtoTokenUsage(s.TokenUsageSnapshot()),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: sessionCaps.Image,
 			Audio: sessionCaps.Audio,
@@ -1076,23 +1076,20 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		metadata.Title = s.Title
 		metadata.Provenance = s.TitleProvenance
 	}
-	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.SessionSummary{
-		SessionId:       s.SessionID,
-		ModifiedAtUnix:  s.ModifiedAtUnix,
-		State:           s.State,
-		Turns:           ClampInt32(s.Turns),
-		ModelId:         s.ModelID,
-		CreatedAtUnix:   s.CreatedAtUnix,
-		Title:           valid(s.Title),
-		TitleProvenance: valid(string(s.TitleProvenance)),
-		TitleMetadata:   toProtoSessionTitle(metadata),
-		TokenUsage:      toProtoTokenUsage(s.TokenUsage),
-		Placement:       placementMetadataToProto(s.Placement),
-		Owner:           toProtoPrincipal(s.Owner),
-		Kind:            string(s.Kind),
-		Relationship:    toProtoSessionRelationship(s.Relationship),
-		ActivityState:   valid(string(s.Activity)),
+		SessionId:      s.SessionID,
+		ModifiedAtUnix: s.ModifiedAtUnix,
+		State:          s.State,
+		Turns:          ClampInt32(s.Turns),
+		ModelId:        s.ModelID,
+		CreatedAtUnix:  s.CreatedAtUnix,
+		TitleMetadata:  toProtoSessionTitle(metadata),
+		TokenUsage:     toProtoTokenUsage(s.TokenUsage),
+		Placement:      placementMetadataToProto(s.Placement),
+		Owner:          toProtoPrincipal(s.Owner),
+		Kind:           string(s.Kind),
+		Relationship:   toProtoSessionRelationship(s.Relationship),
+		ActivityState:  valid(string(s.Activity)),
 		Capabilities: &mecatlv1.SessionInventoryCapabilities{
 			PublicChat:              s.Capabilities.PublicChat,
 			Inspect:                 s.Capabilities.Inspect,
@@ -1213,24 +1210,15 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	}
 }
 
-// verdictFromResumeApproval derives the session.ApprovalVerdict from a
-// ResumeApproval frame, preferring the explicit `verdict` enum and falling back
-// to the legacy `allow` bool for clients that predate it (BACK-COMPAT). The
-// mapping is fail-safe: an UNSPECIFIED verdict with allow=false, and any
-// unrecognized value, resolve to VerdictDeny.
-func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict, allow bool) session.ApprovalVerdict {
+// verdictFromResumeApproval maps the required wire verdict to its domain value.
+// Unknown values fail safe to deny.
+func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict) session.ApprovalVerdict {
 	switch verdict {
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
 		return session.VerdictAllowAlways
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE:
 		return session.VerdictAllowOnce
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY:
-		return session.VerdictDeny
-	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED:
-		// Legacy clients send only the bool. true -> allow once; false -> deny.
-		if allow {
-			return session.VerdictAllowOnce
-		}
 		return session.VerdictDeny
 	default:
 		return session.VerdictDeny

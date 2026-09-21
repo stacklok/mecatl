@@ -203,9 +203,13 @@ func TestSDKTypescriptRelease_Scenario2_HTTPRoutePartition(t *testing.T) {
 	for _, control := range controls {
 		controlRoutes[control.method+" "+control.pathTemplate] = struct{}{}
 	}
-	if overlap := sdkStringSetDifference(rpcRoutes, sdkStringSetSubtract(rpcRoutes, controlRoutes)); len(overlap) != 0 {
-		t.Fatalf("routes appear in both RPC and HTTP-only inventories: %v", overlap)
-	}
+	overlap := sdkStringSetDifference(rpcRoutes, sdkStringSetSubtract(rpcRoutes, controlRoutes))
+	assertSDKStringSetsEqual(t, "same-stream exact-run control overlaps", stringSet(
+		"POST /v1/sessions/{id}/controls/cancel",
+		"POST /v1/sessions/{id}/controls/cancel-steer",
+		"POST /v1/sessions/{id}/controls/resolve-ask",
+		"POST /v1/sessions/{id}/controls/steer",
+	), stringSet(overlap...))
 	registered := make(map[string]struct{}, len(routes))
 	for _, route := range routes {
 		registered[route.key()] = struct{}{}

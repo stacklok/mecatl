@@ -2405,9 +2405,6 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 			m.prompt.Blur()
 		}
 		return m, nil, true, false
-	case sessionsMigrationJobIntent:
-		m.maintenanceMigrationJobID = intent.jobID
-		return m, nil, true, false
 	case sessionsCleanupJobIntent:
 		m.maintenanceCleanupJobID = intent.jobID
 		return m, nil, true, false

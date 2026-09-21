@@ -337,7 +337,6 @@ func runWithOptions(argv []string, options runOptions) error {
 		Sched:                   cl,
 		Sessions:                cl,
 		StorageHealth:           cl,
-		Migration:               cl,
 		Cleanup:                 cl,
 		SessionManagement:       cl,
 		Transcript:              cl,
@@ -1311,12 +1310,10 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		ApproveSoul: cfg.approveSoul,
 		SoulStrict:  cfg.soulStrict,
 		// User model ON by default (issue #14, Phase 2): cross-project operator FACTS.
-		// The background reviewer (UserModelReview) and consolidation stay OFF by
-		// default — both spend tokens on the real provider, so an idle TUI never does.
-		UserModelDir:            cfg.userModelDir,
-		NoUserModel:             cfg.noUserModel,
-		UserModelReview:         cfg.userModelReview,
-		UserModelReviewInterval: cfg.userModelReviewInterval,
+		UserModelDir:                 cfg.userModelDir,
+		NoUserModel:                  cfg.noUserModel,
+		LearningAdmissionInterval:    cfg.learningAdmissionInterval,
+		LearningAdmissionIntervalSet: cfg.learningAdmissionIntervalSet,
 		// Slash commands ON by default (the .mecatl/commands + .claude/commands
 		// convention); --no-commands disables, --commands-dir overrides. File-backed
 		// commands are local, user-authored prompt templates — no network/trust cost,

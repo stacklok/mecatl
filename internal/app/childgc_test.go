@@ -1136,7 +1136,7 @@ func TestChildGCCleanupCancelsBlockedDelete(t *testing.T) {
 
 func jsonlSnapshotPath(t *testing.T, dir string, id session.SessionID) string {
 	t.Helper()
-	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v1")} {
+	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v2")} {
 		entries, err := os.ReadDir(scanDir)
 		if err != nil {
 			t.Fatalf("ReadDir: %v", err)

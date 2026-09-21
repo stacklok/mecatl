@@ -1136,18 +1136,18 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 			return
 		}
 		e.emit(r, session.Event{Type: session.EvSessionInit})
-		disposition, progress, pending := sess.FailedStepRetryPending()
+		metadata, pending := sess.FailedStepRetryPending()
 		if !pending {
 			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.New("agent: failed-step retry intent is not prepared"), false)
 			return
 		}
 		retryText := "The failed model step is being retried without adding another user prompt."
-		if progress == session.StreamProgressVisible {
+		if metadata.Progress == session.StreamProgressVisible {
 			retryText = "The prior partial model output failed and is superseded; the failed model step is being retried."
 		}
 		e.emit(r, session.Event{Type: session.EvModelRetry, Text: retryText, ModelRetry: &session.ModelRetryPayload{
-			Disposition: disposition,
-			Progress:    progress,
+			Disposition: metadata.Disposition,
+			Progress:    metadata.Progress,
 		}})
 		e.runLoop(ctx, r, sess, env, session.Usage{}, "", true)
 	})
@@ -2251,7 +2251,7 @@ func (e *Engine) lookupTool(r *Run, name string) (tool.Tool, bool) {
 //     completes (no mid-stream abort → no-replay-after-first-chunk holds).
 func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Session, lastText string, total session.Usage) bool {
 	if reason, stopped := sess.StopReason(); stopped {
-		if _, _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
+		if _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
 			e.deferFailedStepRetry(ctx, r, sess, reason, lastText, total)
 		} else {
 			e.terminate(ctx, r, sess, reason, lastText, total, nil, false)
@@ -2263,8 +2263,8 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
-	if e.budgetExhausted(r, sess.Usage) {
-		if _, _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
+	if e.budgetExhausted(r, sess.UsageFor(session.UsageKindMain)) {
+		if _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
 			e.deferFailedStepRetry(ctx, r, sess, session.StopBudget, lastText, total)
 		} else {
 			e.terminateComplete(ctx, r, sess, session.StopBudget, lastText, total, "")
@@ -3098,7 +3098,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 		_ = sess.Cancel()
 	case session.StopError:
 		_ = sess.Fail()
-		_ = sess.RecordFailureMetadata(disposition, progress)
+		_ = sess.RecordFailureMetadata(session.RetryMetadata{Disposition: disposition, Progress: progress})
 	default:
 		if !sess.State.IsTerminal() {
 			_ = sess.Stop(reason)
@@ -3232,11 +3232,6 @@ func failureFacts(err error) (session.RetryDisposition, session.StreamProgress) 
 		if !disposition.Valid() {
 			disposition = session.RetryDispositionUnknown
 		}
-	} else {
-		var pe port.PermanentError
-		if errors.As(err, &pe) && pe.Permanent() {
-			disposition = session.RetryDispositionPermanent
-		}
 	}
 	var progress session.StreamProgress
 	var progressed port.StreamProgressError
@@ -3268,9 +3263,7 @@ func stopTerminalCause(stop session.StopReason, text string) string {
 
 // emitResult publishes the single terminal result Event. errMsg carries the
 // failure detail on an error termination (empty for success/limit/cancel).
-// permanent records whether a StopError failure is permanent (unrecoverable).
 func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string, disposition session.RetryDisposition, progress session.StreamProgress) {
-	u := usage
 	e.emit(r, session.Event{
 		Type: session.EvResult,
 		Result: &session.ResultPayload{
@@ -3278,11 +3271,9 @@ func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReaso
 			Text:        text,
 			Usage:       usage,
 			Error:       errMsg,
-			Permanent:   disposition == session.RetryDispositionPermanent,
 			Disposition: disposition,
 			Progress:    progress,
 		},
-		Usage: &u,
 	})
 }
 

@@ -18,8 +18,8 @@ func TestResultTypedDispositionPrecedenceAndPresence(t *testing.T) {
 		present   bool
 	}{
 		{
-			name: "typed retryable overrides legacy permanent and permanent-looking text",
-			result: &mecatlv1.Result{Stop: "error", Error: "invalid request", Permanent: true,
+			name: "typed retryable is authoritative",
+			result: &mecatlv1.Result{Stop: "error", Error: "invalid request",
 				RetryDisposition: retryDisposition(mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE)},
 			transient: true, present: true,
 		},
@@ -31,14 +31,13 @@ func TestResultTypedDispositionPrecedenceAndPresence(t *testing.T) {
 		},
 		{
 			name: "typed unknown is conservative",
-			result: &mecatlv1.Result{Stop: "error", Error: "deadline exceeded", Permanent: true,
+			result: &mecatlv1.Result{Stop: "error", Error: "deadline exceeded",
 				RetryDisposition: retryDisposition(mecatlv1.RetryDisposition_RETRY_DISPOSITION_UNKNOWN)},
 			present: true,
 		},
 		{
-			name:      "absent disposition keeps legacy display fallback",
-			result:    &mecatlv1.Result{Stop: "error", Error: "deadline exceeded"},
-			transient: true,
+			name:   "absent disposition is conservative",
+			result: &mecatlv1.Result{Stop: "error", Error: "deadline exceeded"},
 		},
 	}
 	for _, tc := range tests {

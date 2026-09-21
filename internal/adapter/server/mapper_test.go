@@ -95,11 +95,7 @@ func TestToProtoTable(t *testing.T) {
 				if got.GetType() != "turn.end" || got.GetTurn() != 2 {
 					t.Fatalf("got %+v", got)
 				}
-				// turn.end carries its per-turn data in the typed turn_end submessage,
-				// NOT in the shared Event.usage field (which is cumulative-on-result).
-				if got.GetUsage() != nil {
-					t.Fatalf("turn.end must not set the shared Event.usage field: %+v", got)
-				}
+				// turn.end carries its per-turn data only in the typed turn_end submessage.
 				te := got.GetTurnEnd()
 				if te == nil {
 					t.Fatalf("turn.end missing turn_end payload: %+v", got)
@@ -751,23 +747,16 @@ func TestToProtoTable(t *testing.T) {
 			name: "result",
 			in: session.Event{Type: session.EvResult, Seq: 9, Turn: 2,
 				Result: &session.ResultPayload{Stop: session.StopEndTurn, Text: "all done",
-					Usage: session.Usage{InputTokens: 15, OutputTokens: 5, CacheReadTokens: 3, CacheWriteTokens: 1}},
-				Usage: &session.Usage{InputTokens: 15, OutputTokens: 5}},
+					Usage: session.Usage{InputTokens: 15, OutputTokens: 5, CacheReadTokens: 3, CacheWriteTokens: 1}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				res := got.GetResult()
 				if res == nil || res.GetStop() != "end_turn" || res.GetText() != "all done" {
 					t.Fatalf("result mismatch: %+v", got)
 				}
-				if res.GetPermanent() {
-					t.Fatalf("Permanent should be false for a non-error stop: %+v", got)
-				}
 				u := res.GetUsage()
 				if u.GetInputTokens() != 15 || u.GetOutputTokens() != 5 ||
 					u.GetCacheReadTokens() != 3 || u.GetCacheWriteTokens() != 1 {
 					t.Fatalf("usage mismatch: %+v", u)
-				}
-				if got.GetUsage().GetInputTokens() != 15 {
-					t.Fatalf("event usage mismatch: %+v", got.GetUsage())
 				}
 			},
 		},
@@ -775,17 +764,17 @@ func TestToProtoTable(t *testing.T) {
 			name: "result permanent error",
 			in: session.Event{Type: session.EvResult, Seq: 10, Turn: 2,
 				Result: &session.ResultPayload{
-					Stop:      session.StopError,
-					Error:     "invalid_encrypted_content",
-					Permanent: true,
+					Stop:        session.StopError,
+					Error:       "invalid_encrypted_content",
+					Disposition: session.RetryDispositionPermanent,
 				}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				res := got.GetResult()
 				if res == nil || res.GetStop() != "error" || res.GetError() != "invalid_encrypted_content" {
 					t.Fatalf("result mismatch: %+v", got)
 				}
-				if !res.GetPermanent() {
-					t.Fatalf("Permanent should be true for a permanent provider rejection: %+v", got)
+				if res.GetRetryDisposition() != mecatlv1.RetryDisposition_RETRY_DISPOSITION_PERMANENT {
+					t.Fatalf("retry disposition = %v, want permanent", res.GetRetryDisposition())
 				}
 			},
 		},
@@ -809,7 +798,7 @@ func TestToProtoTable(t *testing.T) {
 func TestToProtoNoSubmessages(t *testing.T) {
 	got := toProto(session.Event{Type: session.EvTurnStart})
 	if got.GetToolCall() != nil || got.GetToolResult() != nil || got.GetAsk() != nil ||
-		got.GetResult() != nil || got.GetTurnEnd() != nil || got.GetUsage() != nil ||
+		got.GetResult() != nil || got.GetTurnEnd() != nil ||
 		got.GetSubagent() != nil || got.GetTeam() != nil || got.GetParallel() != nil ||
 		got.GetApproval() != nil || got.GetUserPrompt() != nil || got.GetCompactionArchive() != nil {
 		t.Fatalf("unexpected submessage on bare event: %+v", got)
@@ -840,8 +829,8 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	if apr == nil {
 		t.Fatal("approval submessage not projected")
 	}
-	if apr.GetAskId() != "s1:1:c1:r0" || apr.GetVerdict() != session.VerdictStringAllowAlways ||
-		apr.GetTool() != "Shell" || apr.GetCallId() != "c1" || !apr.GetAllowAlways() {
+	if apr.GetAskId() != "s1:1:c1:r0" || apr.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS ||
+		apr.GetTool() != "Shell" || apr.GetCallId() != "c1" {
 		t.Fatalf("approval projected wrong: %+v", apr)
 	}
 
@@ -1166,34 +1155,23 @@ func TestContentFromProtoRejectsMimeKindMismatch(t *testing.T) {
 	}
 }
 
-// TestVerdictFromResumeApproval is the unit table for the verdict-derivation seam
-// every ResumeApproval frame rides: the explicit enum wins each of its arms, an
-// UNSPECIFIED verdict falls back to the legacy allow bool (BACK-COMPAT for clients
-// that predate the enum), and any unrecognized value fails safe to deny.
+// TestVerdictFromResumeApproval pins the explicit enum mapping and fail-safe default.
 func TestVerdictFromResumeApproval(t *testing.T) {
 	cases := []struct {
 		name    string
 		verdict mecatlv1.ApprovalVerdict
-		allow   bool
 		want    session.ApprovalVerdict
 	}{
-		{"allow always", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS, true, session.VerdictAllowAlways},
-		{"allow once", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, true, session.VerdictAllowOnce},
-		{"deny", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY, false, session.VerdictDeny},
-		// The enum DOMINATES the bool: a deny verdict with a (contradictory) allow=true
-		// still denies, and an allow verdict with allow=false still allows.
-		{"deny enum beats allow bool", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY, true, session.VerdictDeny},
-		{"allow-once enum beats deny bool", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, false, session.VerdictAllowOnce},
-		// Legacy clients send only the bool (verdict UNSPECIFIED).
-		{"unspecified + allow=true is legacy allow once", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, true, session.VerdictAllowOnce},
-		{"unspecified + allow=false is legacy deny", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, false, session.VerdictDeny},
-		// An unknown future enum value fails safe to deny, regardless of the bool.
-		{"unknown enum value fails safe to deny", mecatlv1.ApprovalVerdict(99), true, session.VerdictDeny},
+		{"allow always", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS, session.VerdictAllowAlways},
+		{"allow once", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, session.VerdictAllowOnce},
+		{"deny", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY, session.VerdictDeny},
+		{"unspecified fails safe", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, session.VerdictDeny},
+		{"unknown fails safe", mecatlv1.ApprovalVerdict(99), session.VerdictDeny},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := verdictFromResumeApproval(tc.verdict, tc.allow); got != tc.want {
-				t.Fatalf("verdictFromResumeApproval(%v, %v) = %v, want %v", tc.verdict, tc.allow, got, tc.want)
+			if got := verdictFromResumeApproval(tc.verdict); got != tc.want {
+				t.Fatalf("verdictFromResumeApproval(%v) = %v, want %v", tc.verdict, got, tc.want)
 			}
 		})
 	}

@@ -548,12 +548,14 @@ type MemoryEntry struct {
 // every implementation must pass (the flock-file reference adapter runs it
 // today; remote drivers run it over their client).
 type MemoryStore interface {
-	// RememberEntry stores e, overwriting any existing entry under e.Key and
-	// bumping its UpdatedAt. e.Description is the optional one-line tier-0 hook;
-	// an empty description means "derive from the value's first non-empty line
-	// on Index". An empty (or whitespace-only) key is rejected with an error.
-	RememberEntry(ctx context.Context, e MemoryEntry) error
-	// Recall returns the entry for the exact key. The boolean reports whether an
+	// Remember atomically creates or replaces a record only when expected matches
+	// its complete current state. Exists=false is create-only; Exists=true requires
+	// the exact opaque version. Empty versions never request an unconditional write.
+	Remember(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
+	// Inspect returns current state and revision history, including tombstones. A
+	// miss is (zero, false, nil).
+	Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
+	// Recall returns the active entry for the exact key. The boolean reports whether an
 	// entry was found; a miss is (zero, false, nil), not an error.
 	Recall(ctx context.Context, key string) (MemoryEntry, bool, error)
 	// List returns all entries whose key has the given prefix, sorted by key for
@@ -561,8 +563,12 @@ type MemoryStore interface {
 	// Search, List returns FULL entries — Value included — so consumers (e.g. a
 	// consolidation planner, a prefix-fallback read) can load payloads from it.
 	List(ctx context.Context, prefix string) ([]MemoryEntry, error)
-	// Forget deletes the entry for key. Deleting a missing key is not an error.
-	Forget(ctx context.Context, key string) error
+	// Forget atomically appends a tombstone when expected is the exact current
+	// opaque version.
+	Forget(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
+	// Undo atomically appends a compensating revision when expected is the exact
+	// current opaque version.
+	Undo(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
 	// Index returns the tier-0 routing table: every entry as (key, description,
 	// updated-at) with the VALUE OMITTED, sorted by key for deterministic output.
 	// The implementation fills Description (explicit, else derived from the

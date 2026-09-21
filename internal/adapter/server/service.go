@@ -32,7 +32,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -2571,8 +2570,8 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 // Engine.HasTool, which is nil-safe (a nil engine/catalog yields the tool caps as
 // false). The names are referenced from each owning package's exported constant
 // — memory.RememberToolName (internal/adapter/memory.NewRememberTool),
-// skills.ToolName (internal/adapter/skills.NewTool), tools.ShellToolName
-// (internal/adapter/tools.NewShellTool) — so the cap links to the registered name
+// skills.ToolName (internal/adapter/skills.NewTool), tool.ShellToolName
+// (fstools.NewShellTool) — so the cap links to the registered name
 // at COMPILE time and cannot drift on a rename.
 func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 	has := func(name string) bool {
@@ -2583,7 +2582,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 	// engine.Capabilities() (which is adapter-only and would re-introduce the catalog
 	// gap). The zero value (text-only) is the safe default for a child/member service
 	// with no provider. This is the SAME DefaultCapabilities ProviderCapabilities()
-	// returns, so the server-wide caps echo and the ACP gate share ONE source.
+	// returns, so compatibility discovery and the ACP gate share ONE source.
 	pcaps := s.cfg.DefaultCapabilities
 	return &mecatlv1.ServerCapabilities{
 		Mcp:           s.cfg.MCPProvider != nil,
@@ -2607,7 +2606,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		ModelSelection:    len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
 		Memory:            has(memory.RememberToolName),
 		Skills:            has(skills.ToolName),
-		Bash:              has(tools.ShellToolName),
+		Shell:             has(tool.ShellToolName),
 		Image:             pcaps.Image,
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
@@ -2617,7 +2616,6 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		LearnedSkills:     s.cfg.LearnedSkills != nil,
 		Scheduling:        s.scheduleStore() != nil,
 		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
-		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
 		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
 		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 		// Steer reads the SAME wired engine knob the runs consult (Deps.EnableSteer
@@ -2640,18 +2638,17 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 // identifiers, and the optional build/deployment labels.
 //
 // It exists so a client can answer "what is this server?" WITHOUT creating a
-// probe session — ServerCapabilities otherwise rides CreateSessionResponse only,
-// so discovery cost a session that then had to be cleaned up.
+// probe session. ServerCapabilities is exposed only by this compatibility
+// descriptor; session responses retain only session-specific media capabilities.
 //
 // The capabilities half REUSES s.capabilities() rather than recomputing a
-// parallel projection. That is the load-bearing part: a second projection would
-// drift from the CreateSession echo, and a client comparing the two would see a
-// server contradicting itself about its own configuration.
+// parallel projection. That is the load-bearing part: every compatibility
+// transport reads the same service value.
 //
 // The two vocabularies stay SEPARATE by design. capabilities answers "what has
 // this operator enabled?" and changes with operator config; features answers
 // "what does this build implement?" and changes on upgrade. Folding one into the
-// other makes a --no-bash deployment indistinguishable from version skew.
+// other makes a --no-shell deployment indistinguishable from version skew.
 func (s *Service) CompatibilityInfo(ctx context.Context) *mecatlv1.GetCompatibilityInfoResponse {
 	return &mecatlv1.GetCompatibilityInfoResponse{
 		ApiMajor:     APIMajor,
@@ -4168,9 +4165,8 @@ func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session
 	// re-derives idempotent rules). It reads the LOADED conversation to correlate the
 	// verdicts, so it must run after GetSession and before the engine runs.
 	s.maybeReplayApprovals(ctx, sess)
-	if sess.State == session.StateFailed && sess.FailurePermanence() {
-		// Capture permanence BEFORE Recover() clears it (resetToIdle sets
-		// permanent=false). Store the pre-flight advisory so the relay can emit
+	if sess.State == session.StateFailed && sess.FailureMetadata().Disposition == session.RetryDispositionPermanent {
+		// Capture the typed disposition BEFORE Recover() clears it. Store the pre-flight advisory so the relay can emit
 		// an EvRecoverNotice before the next turn burns a provider call on the
 		// same unrecoverable error. Use LoadOrStore so two concurrent loads of
 		// the same session (under different surface adapters) still emit exactly
@@ -4457,17 +4453,17 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 }
 
 func failedStepRetryEligibility(sess *session.Session) (bool, error) {
-	disposition, progress := sess.FailureMetadata()
-	pendingDisposition, pendingProgress, pending := sess.FailedStepRetryPending()
-	failed := sess.State == session.StateFailed && disposition == session.RetryDispositionRetryable &&
-		(progress == session.StreamProgressPrecommit || progress == session.StreamProgressVisible)
+	metadata := sess.FailureMetadata()
+	pendingMetadata, pending := sess.FailedStepRetryPending()
+	failed := sess.State == session.StateFailed && metadata.Disposition == session.RetryDispositionRetryable &&
+		(metadata.Progress == session.StreamProgressPrecommit || metadata.Progress == session.StreamProgressVisible)
 	prepared := pending && (sess.State == session.StateIdle || sess.State == session.StateRunning) &&
-		pendingDisposition == session.RetryDispositionRetryable &&
-		(pendingProgress == session.StreamProgressPrecommit || pendingProgress == session.StreamProgressVisible)
+		pendingMetadata.Disposition == session.RetryDispositionRetryable &&
+		(pendingMetadata.Progress == session.StreamProgressPrecommit || pendingMetadata.Progress == session.StreamProgressVisible)
 	if failed || prepared {
 		return failed, nil
 	}
-	return false, fmt.Errorf("state=%q disposition=%q progress=%q retry_pending=%t", sess.State, disposition, progress, pending)
+	return false, fmt.Errorf("state=%q disposition=%q progress=%q retry_pending=%t", sess.State, metadata.Disposition, metadata.Progress, pending)
 }
 
 func (s *Service) prepareFailedStepRetry(ctx context.Context, sess *session.Session, failed bool) error {
@@ -4561,7 +4557,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if err := admitRunPurpose(sess, purpose); err != nil {
 		return nil, err
 	}
-	if _, _, pending := sess.FailedStepRetryPending(); pending {
+	if _, pending := sess.FailedStepRetryPending(); pending {
 		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
 	}
 	// The run registry is the authoritative same-process single-run gate while the
@@ -6391,10 +6387,8 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 			// synthetic terminal result so the relay's client sees a terminal
 			// (never a silent close). This mirrors how the engine surfaces a run-
 			// entry failure: an EvResult with StopError.
-			// Permanent is left false (zero value) — cerr is a service-layer error
-			// (session load, engine build, etc.), not a provider rejection, so it
-			// cannot implement port.PermanentError. The loop's EvResult is the
-			// authoritative carrier of the permanent bit.
+			// Service-layer failures have conservative unknown retry metadata; only
+			// provider failures classified by the loop carry a disposition.
 			res := &session.ResultPayload{
 				Stop:  session.StopError,
 				Error: "continuation run failed to start: " + cerr.Error(),

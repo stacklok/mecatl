@@ -63,7 +63,7 @@ func listSessionsService(t *testing.T, store port.SessionStore) *server.Service 
 // filename codec is private to jsonlstore.
 func setSessionMtime(t *testing.T, dir string, id session.SessionID, mtime time.Time) {
 	t.Helper()
-	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v1")} {
+	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v2")} {
 		entries, err := os.ReadDir(scanDir)
 		if err != nil {
 			t.Fatalf("ReadDir: %v", err)
@@ -162,31 +162,17 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 	setSessionMtime(t, dir, sessB.ID, time.Unix(1900000000, 0).UTC())
 	setSessionMtime(t, dir, sessC.ID, time.Unix(1850000000, 0).UTC())
 
-	// Add a CORRUPT snapshot file: its last line decodes a valid id for List, but
-	// its full snapshot Load fails (an invalid state that RestoreState rejects).
-	// ListSessions must still surface it with zeroed snapshot fields + a valid
-	// id/modified_at.
-	corruptPath := filepath.Join(dir, "corrupt.session.jsonl")
-	// Last line carries a decodable id but a bogus state Restore() rejects.
-	if err := os.WriteFile(corruptPath, []byte(`{"id":"corrupt","state":"bogus-state"}`+"\n"), 0o644); err != nil {
-		t.Fatalf("write corrupt: %v", err)
-	}
-	if err := os.Chtimes(corruptPath, time.Unix(1750000000, 0).UTC(), time.Unix(1750000000, 0).UTC()); err != nil {
-		t.Fatalf("Chtimes corrupt: %v", err)
-	}
-
 	svc := listSessionsService(t, st)
 	rows, err := svc.ListSessions(ctx)
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	if len(rows) != 4 {
-		t.Fatalf("ListSessions returned %d rows, want 4: %+v", len(rows), rows)
+	if len(rows) != 3 {
+		t.Fatalf("ListSessions returned %d rows, want 3: %+v", len(rows), rows)
 	}
 
-	// Sorted most-recent-first by mtime: B (1900...), C (1850...), A (1800...),
-	// corrupt (1750...).
-	wantOrder := []string{string(sessB.ID), string(sessC.ID), string(sessA.ID), "corrupt"}
+	// Sorted most-recent-first by mtime: B, C, A.
+	wantOrder := []string{string(sessB.ID), string(sessC.ID), string(sessA.ID)}
 	for i, w := range wantOrder {
 		if rows[i].SessionID != w {
 			t.Fatalf("row[%d].SessionID = %q, want %q (full order: %+v)", i, rows[i].SessionID, w, rows)
@@ -233,15 +219,6 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 			t.Errorf("row %s: ModifiedAtUnix = %d, want %d", c.id, row.ModifiedAtUnix, c.modified)
 		}
 	}
-
-	// The corrupt row: valid id + modified_at, zeroed snapshot fields.
-	corrupt := byID["corrupt"]
-	if corrupt.ModifiedAtUnix != 1750000000 {
-		t.Errorf("corrupt row ModifiedAtUnix = %d, want 1750000000", corrupt.ModifiedAtUnix)
-	}
-	if corrupt.State != "" || corrupt.Turns != 0 || corrupt.CreatedAtUnix != 0 || corrupt.ModelID != "" {
-		t.Errorf("corrupt row must have zeroed snapshot fields, got %+v", corrupt)
-	}
 }
 
 // TestListSessionsPruneUnsupportedEmpty asserts a store that does NOT implement
@@ -282,7 +259,8 @@ func TestStreamSessionEventsGRPC(t *testing.T) {
 	}
 	var replayed []string
 	sawApproval, sawUserPrompt := false, false
-	var approvalVerdict, approvalTool, approvalAskID string
+	var approvalTool, approvalAskID string
+	var approvalVerdict mecatlv1.ApprovalVerdict
 	var firstPrompt string
 	for {
 		ev, rerr := stream.Recv()
@@ -316,7 +294,7 @@ func TestStreamSessionEventsGRPC(t *testing.T) {
 	}
 	// Strengthened (QA flag): assert the replayed approval carries the PAYLOAD, not
 	// just type=="approval" — toProto MUST have projected Verdict/Tool/AskID.
-	if approvalVerdict != session.VerdictStringAllowAlways {
+	if approvalVerdict != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS {
 		t.Errorf("gRPC replay approval.Verdict = %q, want %q", approvalVerdict, session.VerdictStringAllowAlways)
 	}
 	if approvalTool != "Write" {
@@ -370,7 +348,8 @@ func TestStreamSessionEventsHTTP_SSE(t *testing.T) {
 		t.Fatal("no SSE data frames decoded")
 	}
 	sawApproval, sawUserPrompt := false, false
-	var approvalVerdict, approvalTool, approvalAskID string
+	var approvalTool, approvalAskID string
+	var approvalVerdict mecatlv1.ApprovalVerdict
 	var firstPrompt string
 	for _, f := range frames {
 		var ev mecatlv1.Event
@@ -403,7 +382,7 @@ func TestStreamSessionEventsHTTP_SSE(t *testing.T) {
 	}
 	// Strengthened (QA flag): assert the replayed payloads survive toProto, not just
 	// the type field — the wire event MUST carry Verdict/Tool/AskID and Text.
-	if approvalVerdict != session.VerdictStringAllowAlways {
+	if approvalVerdict != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS {
 		t.Errorf("HTTP SSE replay approval.Verdict = %q, want %q", approvalVerdict, session.VerdictStringAllowAlways)
 	}
 	if approvalTool != "Write" {

@@ -357,7 +357,7 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 			t.Fatalf("GetSession before cold run: %v", err)
 		}
 		beforeAsk, beforePending := before.PendingAsk()
-		beforeRetryDisposition, beforeRetryProgress, beforeRetry := before.FailedStepRetryPending()
+		beforeRetryMetadata, beforeRetry := before.FailedStepRetryPending()
 		coldEcho := built.Service.ResolvedModel(id).ContextWindow
 
 		resultCh := startColdGatewayPrompt(ctx, built, id, "cold-admitted prompt must wait for metadata")
@@ -381,13 +381,13 @@ func TestColdGatewayRestartDoesNotCompactBeforeLiveContextWindow(t *testing.T) {
 			t.Fatalf("GetSession while cold admission is waiting: %v", err)
 		}
 		afterAsk, afterPending := afterAdmission.PendingAsk()
-		afterRetryDisposition, afterRetryProgress, afterRetry := afterAdmission.FailedStepRetryPending()
+		afterRetryMetadata, afterRetry := afterAdmission.FailedStepRetryPending()
 		if len(afterAdmission.Conversation.Messages) != len(before.Conversation.Messages) ||
 			afterPending != beforePending || !reflect.DeepEqual(afterAsk, beforeAsk) ||
-			afterRetry != beforeRetry || afterRetryDisposition != beforeRetryDisposition || afterRetryProgress != beforeRetryProgress {
-			t.Fatalf("cold admission mutated durable work before metadata release: messages=%d->%d pending=%v->%v retry=(%v,%v,%v)->(%v,%v,%v)",
+			afterRetry != beforeRetry || afterRetryMetadata != beforeRetryMetadata {
+			t.Fatalf("cold admission mutated durable work before metadata release: messages=%d->%d pending=%v->%v retry=(%v,%v)->(%v,%v)",
 				len(before.Conversation.Messages), len(afterAdmission.Conversation.Messages), beforeAsk, afterAsk,
-				beforeRetryDisposition, beforeRetryProgress, beforeRetry, afterRetryDisposition, afterRetryProgress, afterRetry)
+				beforeRetryMetadata, beforeRetry, afterRetryMetadata, afterRetry)
 		}
 
 		release()

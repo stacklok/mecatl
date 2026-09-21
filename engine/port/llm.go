@@ -194,27 +194,3 @@ type StreamProgressError interface {
 	error
 	StreamProgress() session.StreamProgress
 }
-
-// PermanentError reports whether a provider error is a PERMANENT client-side
-// rejection — replaying the identical request cannot succeed (e.g. a 4xx other
-// than 408/429: invalid_encrypted_content, a policy-blocked model, a malformed
-// request shape baked into the persisted history). It is the neutral counterpart
-// to the retry classifier: the classification rides the error (as an
-// errors.As-reachable interface), NOT a port.LLMRequest field, so the loop,
-// EvResult, and clients can distinguish "transient — retry may work" from
-// "permanent — this request shape is rejected" without any provider-specific
-// type crossing into engine/agent.
-//
-// Fail-open contract: an error that does NOT implement PermanentError (or a nil
-// target) is treated as NOT permanent — today's behaviour is preserved for
-// unclassifiable errors. Adapters implement it on their terminal provider
-// errors; llmresilience wraps the surfaced non-retryable error.
-//
-// The request remains provider-neutral. Optional status/code/correlation detail
-// may ride the primitive structural ProviderErrorMetadataError and is consumed
-// only after root-side validation.
-type PermanentError interface {
-	error
-	// Permanent returns true when the error is a permanent client-side rejection.
-	Permanent() bool
-}

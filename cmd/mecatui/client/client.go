@@ -460,13 +460,38 @@ func (c *Client) CreateSessionWithCarryover(ctx context.Context, sel ModelSelect
 	return resp.GetSessionId(), snapshot.Capabilities, snapshot.ResolvedModel, nil
 }
 
+func withoutSessionAffinity(ctx context.Context) context.Context {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	md.Delete(sessionaffinity.HeaderName)
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+// compatibilityCapabilities reads the sole server-wide capability source.
+func (c *Client) compatibilityCapabilities(ctx context.Context) (Capabilities, error) {
+	resp, err := c.svc.GetCompatibilityInfo(withoutSessionAffinity(ctx), &mecatlv1.GetCompatibilityInfoRequest{})
+	if err != nil {
+		return Capabilities{}, fmt.Errorf("get compatibility info: %w", err)
+	}
+	return capabilitiesFrom(resp.GetCapabilities()), nil
+}
+
 // createSession is the shared CreateSession proto call and response unwrap body.
 func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (string, Capabilities, ResolvedModel, error) {
+	caps, err := c.compatibilityCapabilities(ctx)
+	if err != nil {
+		return "", Capabilities{}, ResolvedModel{}, err
+	}
 	resp, err := c.svc.CreateSession(ctx, req)
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("create session: %w", err)
 	}
-	return resp.GetSessionId(), capabilitiesWithSessionMedia(resp.GetCapabilities(), resp.GetSessionCapabilities()), resolvedModelFrom(resp.GetResolvedModel()), nil
+	if media := resp.GetSessionCapabilities(); media != nil {
+		caps.Image = media.GetImage()
+		caps.Audio = media.GetAudio()
+		caps.SessionMediaPresent = true
+	}
+	return resp.GetSessionId(), caps, resolvedModelFrom(resp.GetResolvedModel()), nil
 }
 
 // ClearSession creates an empty-history successor. A nil selector inherits the

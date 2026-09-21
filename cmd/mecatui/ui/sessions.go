@@ -72,7 +72,6 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 		pager:                         m.deps.Sessions,
 		transcripter:                  m.deps.Transcript,
 		healthFetcher:                 m.deps.StorageHealth,
-		migration:                     m.deps.Migration,
 		cleanup:                       m.deps.Cleanup,
 		forker:                        m.deps.Session,
 		manager:                       m.deps.SessionManagement,
@@ -258,9 +257,6 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{pageCmd, textinput.Blink}
 	if m.caps.StorageHealth && m.deps.StorageHealth != nil {
 		cmds = append(cmds, loadStorageHealthCmd(m.deps.Ctx, m.deps.StorageHealth))
-	}
-	if m.maintenanceMigrationJobID != "" && m.caps.StorageMigration && m.deps.Migration != nil {
-		cmds = append(cmds, migrationStatusCmd(m.deps.Ctx, m.deps.Migration, m.maintenanceMigrationJobID))
 	}
 	if m.maintenanceCleanupJobID != "" && m.caps.StorageCleanup && m.deps.Cleanup != nil {
 		cmds = append(cmds, cleanupStatusCmd(m.deps.Ctx, m.deps.Cleanup, m.maintenanceCleanupJobID))

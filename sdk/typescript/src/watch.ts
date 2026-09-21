@@ -38,8 +38,7 @@ export const MECATL_ATTACH_FILTERED_KINDS = [
 ] as const;
 // END MECATL_ATTACH_FILTERED_KINDS
 
-/** The compatibility feature required by every durable watch. */
-export const WATCH_SESSION_EVENTS_FEATURE = "watch_session_events";
+const watchSessionEventsFeature = "watch_session_events";
 
 /** A serializable cursor issued by a durable SDK attachment. @public */
 export type SdkCursor = string;
@@ -108,15 +107,6 @@ export interface AttachedRun extends SessionActivity {
    * @returns A promise that resolves after the cancellation request is accepted.
    */
   cancel(): Promise<void>;
-  /**
-   * Reports that approval controls are unavailable on durable attachments.
-   *
-   * @param askId - Permission-ask ID, retained for parity with a live run.
-   * @param allow - Boolean verdict, retained for parity with a live run.
-   * @returns A rejected promise.
-   * @throws `UnsupportedFeatureError` for every call.
-   */
-  approve(askId: string, allow: boolean): Promise<never>;
   /**
    * Reports that ask resolution is unavailable on durable attachments.
    *
@@ -363,8 +353,8 @@ function isAttachedRunTerminal(event: Event | undefined, runId: string): boolean
 
 async function requireWatchFeature(operations: AttachmentOperations): Promise<void> {
   const features = await operations.features();
-  if (!features.has(WATCH_SESSION_EVENTS_FEATURE)) {
-    throw new UnsupportedFeatureError(WATCH_SESSION_EVENTS_FEATURE, {
+  if (!features.has(watchSessionEventsFeature)) {
+    throw new UnsupportedFeatureError(watchSessionEventsFeature, {
       transport: operations.transportKind,
     });
   }
@@ -703,10 +693,6 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
 
   async cancel(): Promise<void> {
     await this.#operations.cancelRun(this.#sessionId, this.runId);
-  }
-
-  async approve(_askId: string, _allow: boolean): Promise<never> {
-    throw this.#controlsUnsupported();
   }
 
   async resolveAsk(_askId: string, _verdict: PermissionVerdict): Promise<never> {

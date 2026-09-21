@@ -49,8 +49,6 @@ const (
 	MemoryOriginLearning MemoryOrigin = "learning"
 	// MemoryOriginConsolidation identifies background dream/consolidation writes.
 	MemoryOriginConsolidation MemoryOrigin = "consolidation"
-	// MemoryOriginImported identifies a legacy or imported revision.
-	MemoryOriginImported MemoryOrigin = "imported"
 	// MemoryOriginUndo identifies a compensating undo revision.
 	MemoryOriginUndo MemoryOrigin = "undo"
 )
@@ -117,32 +115,12 @@ type MemoryRecord struct {
 	Revisions []MemoryRevision
 }
 
-// MemoryLifecycleStore is the optional additive capability for stores that
-// retain versioned memory history. MemoryStore remains unchanged. Mutations are
-// atomic. RememberVersioned with an empty expected version is an unconditional
-// last-write-wins update, matching MemoryStore.RememberEntry; a non-empty expected
-// version enables compare-and-swap. ForgetVersioned and UndoLatest always require
-// a non-empty expected version.
-type MemoryLifecycleStore interface {
-	RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error)
-	Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
-	ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
-	UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
-}
-
 // MemoryCurrent identifies the complete expected current state for an atomic
 // mutation. Exists=false means the key must be absent; Exists=true requires the
 // exact opaque Version.
 type MemoryCurrent struct {
 	Exists  bool
 	Version MemoryVersion
-}
-
-// MemoryConvergenceStore is the additive create-or-update CAS capability used by
-// convergence workflows. Implementations compare and append atomically.
-type MemoryConvergenceStore interface {
-	MemoryLifecycleStore
-	RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
 }
 
 // MemoryVersionConflictError reports a failed lifecycle compare-version

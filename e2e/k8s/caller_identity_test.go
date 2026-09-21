@@ -146,7 +146,7 @@ func sessionOwner(ctx context.Context, addr, bearer, sessionID string) (subject,
 func eventActors(sessionID string) []string {
 	ginkgo.GinkgoHelper()
 	raw := runCmdQuiet("kubectl", "exec", "-n", k8sNamespace, "redis-0", "--",
-		"redis-cli", "XRANGE", "mecatl:events:"+sessionID, "-", "+")
+		"redis-cli", "XRANGE", "mecatl:store:v2:events:"+sessionID, "-", "+")
 	// A missing key (nothing appended yet) is an empty result, so the caller's
 	// Eventually keeps polling rather than failing — absence is data here too.
 	lines := splitNonEmptyLines(raw)

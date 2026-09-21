@@ -1,21 +1,14 @@
-// Package jsonlstore implements a versioned current-snapshot port.SessionStore,
+// Package jsonlstore implements the current versioned snapshot port.SessionStore,
 // plus append-only port.ToolCallRecorder and port.EventLog sidecars. Save atomically
-// replaces one bounded v2 current snapshot; Load also accepts historical v1 JSONL
-// snapshots and a successful save lazily promotes that session. ToolCall and Append
-// retain their cumulative JSONL audit semantics.
+// replaces one bounded current snapshot; older namespaces are ignored and left
+// untouched. ToolCall and Append retain their cumulative JSONL audit semantics.
 //
-// SESSION-FAMILY NAMING. Each session's files share a family stem under
-// the owner-only `sid-v1` subdirectory. The reversible token is `sid-v1-` plus
-// Raw URL-base64 of the complete opaque valid-UTF-8 session id:
+// SESSION-FAMILY NAMING. Each session's files share a bounded, injective family
+// stem under the owner-only `sid-v2` subdirectory:
 //
-//	<dir>/sid-v1/sid-v1-<token>.session.json       (v2 current)
-//	<dir>/sid-v1/sid-v1-<token>.session.jsonl      (readable v1 history)
-//	<dir>/sid-v1/sid-v1-<token>.tools.jsonl
-//	<dir>/sid-v1/sid-v1-<token>.events.jsonl
-//
-// A pre-rewrite family may still use the lossy legacySafeName stem. The
-// sessionResolver in resolve.go is the single authority for canonical/legacy
-// paths, ownership checks, and write-time migration. Reads never migrate.
+//	<dir>/sid-v2/sid-v2-<token>.session.json
+//	<dir>/sid-v2/sid-v2-<token>.tools.jsonl
+//	<dir>/sid-v2/sid-v2-<token>.events.jsonl
 //
 // The .events.jsonl log is PARALLEL to (not a superset of) .tools.jsonl: the
 // tool log is the structured per-tool AUDIT seam (args, queue/exec timing), the
@@ -331,13 +324,6 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	if err := validateAdapterDirectory(inventoryDir); err != nil {
 		return nil, fmt.Errorf("jsonlstore: validate inventory catalog dir: %w", err)
 	}
-	migrationDir := filepath.Join(resolver.canonicalDir(), migrationJobsDir)
-	if err := createDurableDirectoryHierarchy(migrationDir, ops); err != nil {
-		return nil, fmt.Errorf("jsonlstore: create migration registry: %w", err)
-	}
-	if err := validateAdapterDirectory(migrationDir); err != nil {
-		return nil, fmt.Errorf("jsonlstore: validate migration registry: %w", err)
-	}
 	ownerBytes := make([]byte, 16)
 	if _, err := rand.Read(ownerBytes); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create snapshot temp owner: %w", err)
@@ -543,9 +529,8 @@ func (st *Store) reapSnapshotTempsAtStartup() error {
 	return nil
 }
 
-// Save atomically replaces the adapter-private v2 current snapshot. Existing
-// v1 JSONL snapshots remain readable and are promoted lazily on the next save;
-// their file modification time becomes the v2 logical modification time.
+// Save atomically replaces the adapter-private current snapshot. Old snapshot
+// families are rejected and left untouched.
 func (st *Store) Save(ctx context.Context, s *session.Session) error {
 	if s == nil {
 		return sessnap.ErrNilSession
@@ -586,10 +571,8 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 	})
 }
 
-// Create atomically publishes the adapter-private v2 snapshot only when no
-// authoritative current, canonical-v1, or matching legacy snapshot exists.
-// Every supported writer takes the same stable family lock, so the presence
-// check and final rename form one cross-process create-once operation.
+// Create atomically publishes the adapter-private current snapshot only when no
+// current snapshot exists.
 func (st *Store) Create(ctx context.Context, s *session.Session) error {
 	if s == nil {
 		return sessnap.ErrNilSession
@@ -603,15 +586,9 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 	}
 	path := st.resolver.currentSnapshotPath(s.ID)
 	return st.withSnapshotFamilyLock(ctx, path, func() error {
-		present, err := st.resolver.canonicalOwnership(s.ID)
+		present, err := st.resolver.currentSnapshotExists(s.ID)
 		if err != nil {
 			return err
-		}
-		if !present {
-			_, present, err = st.resolver.legacySnapshot(s.ID)
-			if err != nil {
-				return err
-			}
 		}
 		if present {
 			return fmt.Errorf("jsonlstore: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
@@ -709,9 +686,8 @@ func replaceCurrentSnapshot(
 	return nil
 }
 
-// Load reads the authoritative snapshot without modifying storage. Canonical
-// presence prevents fallback; legacy is accepted only when its latest embedded
-// id exactly matches the requested id.
+// Load reads only the authoritative current snapshot without modifying storage.
+// Old snapshot families are rejected with a data-preserving error.
 func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	if err := validateSessionID(id); err != nil {
 		return nil, err
@@ -797,21 +773,7 @@ type eventLogRecord struct {
 	R  string          `json:"r,omitempty"`
 }
 
-// List returns one row per logical session id. IDs come from latest snapshots,
-// never filenames; canonical files win when canonical and legacy coexist.
-//
-// COST: ids are decoded from each session file's latest snapshot line rather
-// than from filenames (a filename is not invertible back to the id, and now
-// there are two directories — canonical and legacy — to reconcile), so List
-// costs one directory read per dir plus one reverse TAIL read per snapshot
-// file. The reader grows its EOF window only to the latest record, never scanning
-// older snapshot history. Fine for a retention sweep on a startup/hourly cadence;
-// indexed inventory is a separate concern.
-//
-// List enumerates v2 current snapshots and historical *.session.jsonl files;
-// sidecars are never inventory authority. That keeps sidecars-before-snapshot
-// removal load-bearing (see familyOrder in resolve.go): a sidecar without any
-// session snapshot is invisible here and can never be swept.
+// List enumerates current snapshots; sidecars are never inventory authority.
 func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	files, err := st.resolver.snapshotFiles()
 	if err != nil {
@@ -824,26 +786,8 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	return out, nil
 }
 
-// Delete removes canonical sidecars before the canonical snapshot, and a
-// legacy family in the same order — REMOVAL ORDER is load-bearing, see
-// familyOrder's doc comment (resolve.go): the snapshot file is what List
-// enumerates, so removing it last means a partial failure leaves the family
-// still VISIBLE (the next retention sweep retries it), where the reverse
-// order would leave an invisible orphaned sidecar no sweep could ever find.
-// With two families (canonical + legacy) this now has to hold TWICE per
-// call: canonical sidecars before the canonical snapshot, AND — only when
-// the legacy snapshot's embedded id proves it belongs to this session —
-// legacy sidecars before the legacy snapshot. A legacy family that fails
-// ownership (mismatch or absent) is left untouched; that mismatch and
-// absence are both idempotent success.
-//
-// The canonical family is removed on PRESENCE alone, never on the snapshot
-// parsing: the token is injective, so the file is ours whatever it contains,
-// and gating removal on validity made a torn snapshot line permanently
-// unprunable — every retention sweep re-failed on it while List, which skips
-// undecodable files, never surfaced it. port.PrunableStore requires that a
-// Delete either remove or be idempotent success, so an unreadable snapshot
-// must not be a third outcome.
+// Delete removes current sidecars before the current snapshot. Old snapshot
+// families are unsupported and are left untouched.
 func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 	if err := validateSessionID(id); err != nil {
 		return err
@@ -884,20 +828,12 @@ func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.Ses
 }
 
 func (st *Store) deleteSessionFamilyLocked(id session.SessionID) error {
-	dirs, err := st.openDurableDirectories(st.resolver.dir, st.resolver.canonicalDir())
+	dirs, err := st.openDurableDirectories(st.resolver.canonicalDir())
 	if err != nil {
 		return err
 	}
 	defer dirs.close()
 	if err := st.advanceInventoryGeneration(); err != nil {
-		return err
-	}
-	canonicalOwned, err := st.resolver.canonicalOwnership(id)
-	if err != nil {
-		return err
-	}
-	legacyOwned, err := st.resolver.legacyOwned(id)
-	if err != nil {
 		return err
 	}
 
@@ -917,29 +853,13 @@ func (st *Store) deleteSessionFamilyLocked(id session.SessionID) error {
 		if err := remove(st.resolver.canonicalPath(id, kind), kind.suffix()); err != nil {
 			return err
 		}
-		if legacyOwned {
-			if err := remove(st.resolver.legacyPath(id, kind), "legacy "+kind.suffix()); err != nil {
-				return err
-			}
-		}
 	}
 	if err := dirs.sync(); err != nil {
 		return err
 	}
-
 	mutated = false
-	if canonicalOwned {
-		if err := remove(st.resolver.canonicalPath(id, kindSnapshot), "v1"); err != nil {
-			return err
-		}
-		if err := remove(st.resolver.currentSnapshotPath(id), "current"); err != nil {
-			return err
-		}
-	}
-	if legacyOwned {
-		if err := remove(st.resolver.legacyPath(id, kindSnapshot), "legacy"); err != nil {
-			return err
-		}
+	if err := remove(st.resolver.currentSnapshotPath(id), "current"); err != nil {
+		return err
 	}
 	return dirs.sync()
 }
@@ -1003,39 +923,10 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	})
 }
 
-// toolCallAppendPath keeps the no-error ToolCall audit available on filesystems
-// without directory sync. It appends to the readable sidecar when one exists;
-// otherwise it follows the authoritative snapshot family. Capable filesystems
-// retain the strict lazy-promotion path shared by snapshots and EventLog.
+// toolCallAppendPath resolves the current family's canonical audit sidecar.
 func (st *Store) toolCallAppendPath(id session.SessionID) (string, error) {
-	if st.durability.DirectorySync {
-		if err := st.prepareWrite(id); err != nil {
-			return "", err
-		}
-		return st.resolver.canonicalPath(id, kindTools), nil
-	}
-	if err := validateSessionID(id); err != nil {
+	if err := st.prepareWrite(id); err != nil {
 		return "", err
-	}
-	if path, present, err := st.resolver.readablePath(id, kindTools); err != nil || present {
-		return path, err
-	}
-	canonical, err := st.resolver.canonicalOwnership(id)
-	if err != nil {
-		return "", err
-	}
-	if canonical {
-		return st.resolver.canonicalPath(id, kindTools), nil
-	}
-	line, legacy, err := st.resolver.legacySnapshot(id)
-	if err != nil {
-		return "", err
-	}
-	if legacy {
-		if _, err := sessnap.Unmarshal(line); err != nil {
-			return "", err
-		}
-		return st.resolver.legacyPath(id, kindTools), nil
 	}
 	return st.resolver.canonicalPath(id, kindTools), nil
 }
@@ -1074,6 +965,9 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			completeSize int64
 		)
 		err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+			if _, _, err := st.eventLogGenerationLocked(id); err != nil {
+				return err
+			}
 			var err error
 			f, completeSize, err = st.openEventFileLocked(id)
 			return err
@@ -1160,17 +1054,11 @@ func completeRecordSize(f *os.File) (int64, error) {
 }
 
 func (st *Store) openSidecarForAppend(path string) (*os.Root, *os.File, string, error) {
-	var dir, name string
-	switch filepath.Clean(filepath.Dir(path)) {
-	case filepath.Clean(st.resolver.canonicalDir()):
-		dir = st.resolver.canonicalDir()
-		name = filepath.Base(path)
-	case filepath.Clean(st.resolver.dir):
-		dir = st.resolver.dir
-		name = filepath.Base(path)
-	default:
-		return nil, nil, "", fmt.Errorf("jsonlstore: append path is outside store directories")
+	dir := st.resolver.canonicalDir()
+	if filepath.Clean(filepath.Dir(path)) != filepath.Clean(dir) {
+		return nil, nil, "", fmt.Errorf("jsonlstore: append path is outside current store directory")
 	}
+	name := filepath.Base(path)
 	if err := validResolverName(name); err != nil {
 		return nil, nil, "", err
 	}

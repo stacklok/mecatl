@@ -13,10 +13,13 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-type legacyStore struct{ entries map[string]tool.MemoryEntry }
+type fakeStore struct {
+	entries map[string]tool.MemoryEntry
+	records map[string]tool.MemoryRecord
+}
 
 type failingRecallStore struct {
-	*legacyStore
+	*fakeStore
 	err error
 }
 
@@ -34,18 +37,44 @@ func (s *inspectCountingStore) Inspect(ctx context.Context, key string) (tool.Me
 	return s.Store.Inspect(ctx, key)
 }
 
-func (s *legacyStore) RememberEntry(_ context.Context, e tool.MemoryEntry) error {
+func (s *fakeStore) Remember(_ context.Context, e tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	if s.entries == nil {
 		s.entries = map[string]tool.MemoryEntry{}
 	}
+	if s.records == nil {
+		s.records = map[string]tool.MemoryRecord{}
+	}
+	current, exists := s.records[e.Key]
+	if exists != expected.Exists || exists && current.Current.Version != expected.Version {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: e.Key, Expected: expected.Version, Actual: current.Current.Version}
+	}
+	version := tool.MemoryVersion("fake-v1")
+	if exists {
+		version = "fake-v2"
+	}
+	revision := tool.MemoryRevision{Key: e.Key, Value: e.Value, Description: e.Description, Version: version, Status: tool.MemoryStatusActive}
+	record := tool.MemoryRecord{Current: revision, Revisions: append(append([]tool.MemoryRevision(nil), current.Revisions...), revision)}
 	s.entries[e.Key] = e
-	return nil
+	s.records[e.Key] = record
+	return record, nil
 }
-func (s *legacyStore) Recall(_ context.Context, key string) (tool.MemoryEntry, bool, error) {
+func (s *fakeStore) Inspect(_ context.Context, key string) (tool.MemoryRecord, bool, error) {
+	record, ok := s.records[key]
+	if !ok {
+		entry, found := s.entries[key]
+		if !found {
+			return tool.MemoryRecord{}, false, nil
+		}
+		revision := tool.MemoryRevision{Key: entry.Key, Value: entry.Value, Description: entry.Description, Version: "fake-imported", Status: tool.MemoryStatusActive}
+		return tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}, true, nil
+	}
+	return record, true, nil
+}
+func (s *fakeStore) Recall(_ context.Context, key string) (tool.MemoryEntry, bool, error) {
 	e, ok := s.entries[key]
 	return e, ok, nil
 }
-func (s *legacyStore) List(_ context.Context, prefix string) ([]tool.MemoryEntry, error) {
+func (s *fakeStore) List(_ context.Context, prefix string) ([]tool.MemoryEntry, error) {
 	var out []tool.MemoryEntry
 	for k, e := range s.entries {
 		if strings.HasPrefix(k, prefix) {
@@ -54,9 +83,23 @@ func (s *legacyStore) List(_ context.Context, prefix string) ([]tool.MemoryEntry
 	}
 	return out, nil
 }
-func (s *legacyStore) Forget(_ context.Context, key string) error      { delete(s.entries, key); return nil }
-func (*legacyStore) Index(context.Context) ([]tool.MemoryEntry, error) { return nil, nil }
-func (*legacyStore) Search(context.Context, string, int) ([]tool.MemoryEntry, error) {
+func (s *fakeStore) Forget(_ context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, ok := s.records[key]
+	if !ok || record.Current.Version != expected {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: key, Expected: expected, Actual: record.Current.Version}
+	}
+	delete(s.entries, key)
+	revision := tool.MemoryRevision{Key: key, Version: "fake-deleted", Status: tool.MemoryStatusDeleted}
+	record.Current = revision
+	record.Revisions = append(record.Revisions, revision)
+	s.records[key] = record
+	return record, nil
+}
+func (s *fakeStore) Undo(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return tool.MemoryRecord{}, errors.New("not implemented")
+}
+func (*fakeStore) Index(context.Context) ([]tool.MemoryEntry, error) { return nil, nil }
+func (*fakeStore) Search(context.Context, string, int) ([]tool.MemoryEntry, error) {
 	return nil, nil
 }
 
@@ -87,39 +130,33 @@ func named(t *testing.T, tools []tool.Tool, name string) tool.Tool {
 	return nil
 }
 
-func TestLifecycleToolsAbsentOnLegacyStore(t *testing.T) {
-	project := memorytools.ProjectTools(&legacyStore{})
-	user := memorytools.UserTools(&legacyStore{})
-	if len(project) != 3 || len(user) != 3 {
-		t.Fatalf("legacy families = %d/%d, want 3/3", len(project), len(user))
+func TestLifecycleToolsAreBaseline(t *testing.T) {
+	project := memorytools.ProjectTools(memmemory.New())
+	user := memorytools.UserTools(memmemory.New())
+	if len(project) != 6 || len(user) != 6 {
+		t.Fatalf("memory families = %d/%d, want 6/6", len(project), len(user))
 	}
-	for _, forbidden := range []string{"InspectMemory", "ForgetMemory", "UndoMemory", "InspectUserMemory", "ForgetUserMemory", "UndoUserMemory"} {
+	for _, required := range []string{"InspectMemory", "ForgetMemory", "UndoMemory", "InspectUserMemory", "ForgetUserMemory", "UndoUserMemory"} {
+		found := false
 		for _, family := range [][]tool.Tool{project, user} {
 			for _, candidate := range family {
-				if candidate.Spec().Name == forbidden {
-					t.Fatalf("legacy store registered %s", forbidden)
-				}
+				found = found || candidate.Spec().Name == required
 			}
+		}
+		if !found {
+			t.Fatalf("baseline store omitted %s", required)
 		}
 	}
 }
 
-func TestLegacyRememberRetainsOpaqueKeyGrammar(t *testing.T) {
-	store := &legacyStore{}
+func TestRememberRejectsLegacyOpaqueKeyGrammar(t *testing.T) {
+	store := memmemory.New()
 	result := execute(t, named(t, memorytools.ProjectTools(store), "Remember"), map[string]any{"key": "Legacy Key/É", "value": "imported"})
-	if result.IsError {
-		t.Fatalf("legacy remember rejected opaque key: %s", result.Content)
+	if !result.IsError {
+		t.Fatalf("invalid key accepted: %s", result.Content)
 	}
-	if _, found, _ := store.Recall(context.Background(), "Legacy Key/É"); !found {
-		t.Fatal("legacy remember did not store opaque key")
-	}
-	stale := execute(t, named(t, memorytools.ProjectTools(store), "Remember"), map[string]any{"key": "Legacy Key/É", "value": "must-not-apply", "expected_version": "remote-v1"})
-	if !stale.IsError || !strings.Contains(stale.Content, "requires lifecycle-capable") {
-		t.Fatalf("legacy CAS request = %#v", stale)
-	}
-	got, _, _ := store.Recall(context.Background(), "Legacy Key/É")
-	if got.Value != "imported" {
-		t.Fatalf("unsupported CAS partially applied: %+v", got)
+	if _, found, _ := store.Recall(context.Background(), "Legacy Key/É"); found {
+		t.Fatal("invalid key was stored")
 	}
 }
 
@@ -200,7 +237,7 @@ func TestPrefixRecallInspectsEveryBoundedLifecycleMatch(t *testing.T) {
 	ctx := context.Background()
 	for i, key := range []string{"profile/editor", "profile/shell"} {
 		attributed := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterModel, Origin: tool.MemoryOriginLearning, Source: tool.MemorySource{SessionID: "s" + string(rune('1'+i))}})
-		if _, err := store.RememberVersioned(attributed, tool.MemoryEntry{Key: key, Value: "value"}, ""); err != nil {
+		if _, err := store.Remember(attributed, tool.MemoryEntry{Key: key, Value: "value"}, tool.MemoryCurrent{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,7 +253,7 @@ func TestPrefixRecallInspectsEveryBoundedLifecycleMatch(t *testing.T) {
 }
 
 func TestRecallWithholdsCanonicalizedLegacySecrets(t *testing.T) {
-	store := &legacyStore{entries: map[string]tool.MemoryEntry{
+	store := &fakeStore{entries: map[string]tool.MemoryEntry{
 		"user/token": {Key: "user/token", Value: "g\u200bhp_0123456789abcdefghijklmnop", Description: "to\u2060ken: 0123456789abcdefghijklmnop"},
 	}}
 	result := execute(t, named(t, memorytools.UserTools(store), "RecallUser"), map[string]any{"key": "token"})
@@ -231,7 +268,7 @@ func TestRecallWithholdsCanonicalizedLegacySecrets(t *testing.T) {
 func TestRecallInspectStripFormatControlsAndRepairUTF8(t *testing.T) {
 	store := memmemory.New()
 	value := "café 日本語\u202e\u2066\u200b\ufeff" + string([]byte{0xff})
-	if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "profile/control", Value: value, Description: "safe\u202e"}); err != nil {
+	if _, err := store.Remember(context.Background(), tool.MemoryEntry{Key: "profile/control", Value: value, Description: "safe\u202e"}, tool.MemoryCurrent{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"Recall", "InspectMemory"} {
@@ -338,7 +375,7 @@ func TestMutationScopeDescriptionsAndExpectedVersionSchemas(t *testing.T) {
 }
 
 func TestStoreFailurePreservesUnderlyingError(t *testing.T) {
-	store := failingRecallStore{legacyStore: &legacyStore{}, err: errors.New("remote memory RPC unavailable")}
+	store := failingRecallStore{fakeStore: &fakeStore{}, err: errors.New("remote memory RPC unavailable")}
 	result := execute(t, named(t, memorytools.ProjectTools(store), "Recall"), map[string]any{"key": "profile/editor"})
 	if !result.IsError || !strings.Contains(result.Content, "remote memory RPC unavailable") {
 		t.Fatalf("store failure = %#v", result)

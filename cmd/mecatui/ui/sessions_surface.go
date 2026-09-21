@@ -72,22 +72,12 @@ type maintenanceView int
 
 const (
 	maintenanceNone maintenanceView = iota
-	maintenanceOptimizePlan
-	maintenanceOptimizeJob
 	maintenanceCleanupPlan
 	maintenanceCleanupJob
 )
 
 const maintenanceBatchSize int32 = 25
 
-type migrationPlanMsg struct {
-	plan client.SessionMigrationPlan
-	err  error
-}
-type migrationJobMsg struct {
-	job client.SessionMigrationJob
-	err error
-}
 type cleanupPlanMsg struct {
 	plan client.CleanupPlan
 	err  error
@@ -97,36 +87,6 @@ type cleanupJobMsg struct {
 	err error
 }
 
-func migrationPlanCmd(ctx context.Context, svc client.SessionMigrator) tea.Cmd {
-	return func() tea.Msg {
-		plan, err := svc.PlanSessionMigration(ctx)
-		return migrationPlanMsg{plan: plan, err: err}
-	}
-}
-func migrationApplyCmd(ctx context.Context, svc client.SessionMigrator, planID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.ApplySessionMigration(ctx, planID, maintenanceBatchSize)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
-func migrationResumeCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.ResumeSessionMigration(ctx, jobID, maintenanceBatchSize)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
-func migrationCancelCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.CancelSessionMigration(ctx, jobID)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
-func migrationStatusCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.GetSessionMigrationJob(ctx, jobID)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
 func cleanupPlanCmd(ctx context.Context, svc client.SessionCleaner) tea.Cmd {
 	scope := client.CleanupScope{Kinds: []string{"main", "subagent", "parallel_branch", "team_member", "scheduled"}}
 	return func() tea.Msg {
@@ -175,13 +135,6 @@ type sessionsPhaseIntent struct {
 }
 
 func (sessionsPhaseIntent) isSurfaceIntent() {}
-
-// Maintenance intents retain durable job IDs in the Model for later surface instances.
-type sessionsMigrationJobIntent struct {
-	jobID string
-}
-
-func (sessionsMigrationJobIntent) isSurfaceIntent() {}
 
 type sessionsCleanupJobIntent struct {
 	jobID string
@@ -361,8 +314,6 @@ type sessionsState struct {
 
 	maintenance    maintenanceView
 	maintenanceErr bool
-	migrationPlan  client.SessionMigrationPlan
-	migrationJob   client.SessionMigrationJob
 	cleanupPlan    client.CleanupPlan
 	cleanupJob     client.CleanupJob
 	cleanupConfirm textinput.Model
@@ -390,7 +341,6 @@ type sessionsState struct {
 	pager                         client.SessionPager
 	transcripter                  client.SessionTranscripter
 	healthFetcher                 client.StorageHealthFetcher
-	migration                     client.SessionMigrator
 	cleanup                       client.SessionCleaner
 	forker                        sessionForker
 	manager                       client.SessionManager
@@ -704,7 +654,6 @@ func (s *sessionsState) nextTab() {
 	}
 	tabs = append(tabs, tabScheduledRuns, tabChildRuns, tabOtherRuns)
 	if (s.deps.caps.StorageHealth && s.healthFetcher != nil) ||
-		(s.deps.caps.StorageMigration && s.migration != nil) ||
 		(s.deps.caps.StorageCleanup && s.cleanup != nil) {
 		tabs = append(tabs, tabStorageHealth)
 	}
@@ -798,10 +747,6 @@ func (s *sessionsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		s.handleSessionsListed(msg)
 	case storageHealthLoadedMsg:
 		s.handleStorageHealthLoaded(msg)
-	case migrationPlanMsg:
-		s.handleMigrationPlan(msg)
-	case migrationJobMsg:
-		s.handleMigrationJob(msg)
 	case cleanupPlanMsg:
 		s.handleCleanupPlan(msg)
 	case cleanupJobMsg:
@@ -857,21 +802,6 @@ func (s *sessionsState) handleStorageHealthLoaded(msg storageHealthLoadedMsg) {
 	s.healthErr = msg.err
 	if msg.err == nil {
 		s.health = &msg.health
-	}
-}
-
-func (s *sessionsState) handleMigrationPlan(msg migrationPlanMsg) {
-	s.actionLoading, s.maintenanceErr = false, msg.err != nil
-	if msg.err == nil {
-		s.migrationPlan, s.maintenance = msg.plan, maintenanceOptimizePlan
-	}
-}
-
-func (s *sessionsState) handleMigrationJob(msg migrationJobMsg) {
-	s.actionLoading, s.maintenanceErr = false, msg.err != nil
-	if msg.err == nil {
-		s.migrationJob, s.maintenance = msg.job, maintenanceOptimizeJob
-		s.intent = sessionsMigrationJobIntent{jobID: msg.job.ID}
 	}
 }
 
@@ -1023,8 +953,6 @@ func (s *sessionsState) handleMaintenanceKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch s.maintenance {
 	case maintenanceNone:
 		return s.handleMaintenanceMenuKey(msg)
-	case maintenanceOptimizePlan, maintenanceOptimizeJob:
-		return s.handleMigrationKey(msg)
 	case maintenanceCleanupPlan:
 		return s.handleCleanupPlanKey(msg)
 	case maintenanceCleanupJob:
@@ -1034,42 +962,12 @@ func (s *sessionsState) handleMaintenanceKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (s *sessionsState) handleMaintenanceMenuKey(msg tea.KeyPressMsg) tea.Cmd {
-	if msg.String() == "o" && s.deps.caps.StorageMigration && s.migration != nil {
-		s.actionLoading = true
-		s.maintenanceErr = false
-		return migrationPlanCmd(s.deps.ctx, s.migration)
-	}
 	if msg.String() == "x" && s.deps.caps.StorageCleanup && s.cleanup != nil {
 		s.actionLoading = true
 		s.maintenanceErr = false
 		return cleanupPlanCmd(s.deps.ctx, s.cleanup)
 	}
 	return nil
-}
-
-func (s *sessionsState) handleMigrationKey(msg tea.KeyPressMsg) tea.Cmd {
-	if s.maintenance == maintenanceOptimizePlan {
-		if key.Matches(msg, s.deps.keys.Choose) && s.migrationPlan.Available && s.migration != nil {
-			s.actionLoading = true
-			return migrationApplyCmd(s.deps.ctx, s.migration, s.migrationPlan.ID)
-		}
-		return nil
-	}
-	if s.migration == nil {
-		return nil
-	}
-	s.actionLoading = true
-	switch msg.String() {
-	case "r":
-		return migrationResumeCmd(s.deps.ctx, s.migration, s.migrationJob.ID)
-	case "c":
-		return migrationCancelCmd(s.deps.ctx, s.migration, s.migrationJob.ID)
-	case "s":
-		return migrationStatusCmd(s.deps.ctx, s.migration, s.migrationJob.ID)
-	default:
-		s.actionLoading = false
-		return nil
-	}
 }
 
 func (s *sessionsState) handleCleanupPlanKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -1313,7 +1211,7 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilit
 		current = currentID[0]
 	}
 	var b strings.Builder
-	maintenance := caps.StorageHealth || caps.StorageMigration || caps.StorageCleanup
+	maintenance := caps.StorageHealth || caps.StorageCleanup
 	b.WriteString(sessionsTabBar(th, st.tab, st.activityInventory, maintenance) + "\n\n")
 	if st.tab == tabStorageHealth {
 		b.WriteString(renderStorageHealth(th, st, caps, hk))
@@ -1341,10 +1239,6 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 		return th.Style("muted").Render("loading maintenance status…")
 	}
 	switch st.maintenance {
-	case maintenanceOptimizePlan:
-		return renderMigrationPlan(th, st.migrationPlan, hk)
-	case maintenanceOptimizeJob:
-		return renderMigrationJob(th, st.migrationJob, hk)
 	case maintenanceCleanupPlan:
 		return renderCleanupPlan(th, st, hk)
 	case maintenanceCleanupJob:
@@ -1394,9 +1288,6 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 		}
 	}
 	var actions []string
-	if caps.StorageMigration {
-		actions = append(actions, "o: Optimize storage (sessions preserved)")
-	}
 	if caps.StorageCleanup {
 		actions = append(actions, "x: Clean up sessions (destructive)")
 	}
@@ -1405,47 +1296,6 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 	}
 	lines = append(lines, "", th.Style("muted").Render(strings.Join(actions, "  ")+"  "+hk.nextTab+": switch  "+hk.closeOnly+": close"))
 	return strings.Join(lines, "\n")
-}
-
-func renderMigrationPlan(th theme.Theme, plan client.SessionMigrationPlan, hk helpKeys) string {
-	if !plan.Available {
-		return th.Style("askTitle").Render("Optimize storage") + "\n\n" + th.Style("muted").Render("Optimization is unavailable on this backend.  "+hk.closeOnly+": back")
-	}
-	return strings.Join([]string{
-		th.Style("askTitle").Render("Preview storage optimization"), "",
-		"Sessions are preserved; this only updates how they are stored.",
-		fmt.Sprintf("Legacy format: %d  Current format: %d  Invalid: %d  Skipped: %d", plan.V1Families, plan.V2Families, plan.InvalidFamilies, plan.SkippedFamilies),
-		"Stored: " + humanizeBytes(plan.CurrentBytes) + "  Recoverable: " + humanizeBytes(plan.ReclaimableBytes),
-		"Temporary space needed: " + humanizeBytes(plan.TemporaryBytes), "",
-		th.Style("muted").Render(hk.choose + ": start optimization  " + hk.closeOnly + ": back"),
-	}, "\n")
-}
-
-func renderMigrationJob(th theme.Theme, job client.SessionMigrationJob, hk helpKeys) string {
-	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + terminaltext.Sanitize(job.ID) + "  Status: " + terminaltext.Sanitize(job.State),
-		fmt.Sprintf("Processed: %d/%d  Updated: %d  Skipped: %d  Failed: %d", job.Processed, job.V1Families, job.Migrated, job.SkippedFamilies, job.Failed),
-		"Sessions are preserved; completed updates are kept."}
-	lines = append(lines, renderMigrationErrors(job.Errors)...)
-	if job.State == teamStopReasonCancelled {
-		lines = append(lines, "Cancellation stops remaining items; completed updates are kept.")
-	}
-	lines = append(lines, "", th.Style("muted").Render("r: resume  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
-	return strings.Join(lines, "\n")
-}
-
-func renderMigrationErrors(items []client.SessionMigrationItemError) []string {
-	if len(items) == 0 {
-		return nil
-	}
-	lines := []string{"Item failures:"}
-	for i, item := range items {
-		if i == 5 {
-			lines = append(lines, fmt.Sprintf("… and %d more", len(items)-i))
-			break
-		}
-		lines = append(lines, "- "+terminaltext.Sanitize(item.ItemHandle)+" ["+terminaltext.Sanitize(item.ReasonCode)+"] "+terminaltext.Sanitize(item.Message))
-	}
-	return lines
 }
 
 func cleanupKindCount(counts client.CleanupCounts, keys ...string) int {

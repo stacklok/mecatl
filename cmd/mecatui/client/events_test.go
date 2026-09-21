@@ -75,7 +75,7 @@ func logOnlyScript() []*mecatlv1.Event {
 			},
 		}},
 		{Type: "approval", Approval: &mecatlv1.Approval{
-			AskId: "ask-write-1", Verdict: "allow_always", Tool: "Write", CallId: "call-write-1", AllowAlways: true,
+			AskId: "ask-write-1", Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS, Tool: "Write", CallId: "call-write-1",
 		}},
 		{Type: "compaction.archive", CompactionArchive: &mecatlv1.CompactionArchive{
 			Replaced: []*mecatlv1.ConversationMessage{
@@ -194,7 +194,7 @@ func TestReplayReadLoopLogOnlyKinds(t *testing.T) {
 	if !ok {
 		t.Fatalf("msg 1 = %T, want ApprovalMsg", msgs[1])
 	}
-	if ap.AskID != "ask-write-1" || ap.Verdict != "allow_always" || ap.Tool != "Write" || ap.CallID != "call-write-1" || !ap.AllowAlways {
+	if ap.AskID != "ask-write-1" || ap.Verdict != "allow_always" || ap.Tool != "Write" || ap.CallID != "call-write-1" {
 		t.Errorf("approval = %#v", ap)
 	}
 

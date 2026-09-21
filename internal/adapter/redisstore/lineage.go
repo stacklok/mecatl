@@ -15,12 +15,10 @@ import (
 )
 
 const (
-	lineageHashKey         = "mecatl:session-lineage:v1" // legacy global index; never read by normal lineage queries
-	lineageIndexStateKey   = "mecatl:session-lineage:state"
+	lineageIndexStateKey   = storeKeyPrefix + "session-lineage:state"
 	lineageIndexReady      = "redis-lineage-index/2"
-	lineageIndexStale      = "redis-lineage-index/stale"
-	lineageRecordKeyPrefix = "mecatl:session-lineage:v2:records:"
-	lineageEdgeKeyPrefix   = "mecatl:session-lineage:v2:edges:"
+	lineageRecordKeyPrefix = storeKeyPrefix + "session-lineage:records:"
+	lineageEdgeKeyPrefix   = storeKeyPrefix + "session-lineage:edges:"
 )
 
 func redisLineageRecord(s *session.Session) port.SessionLineageRecord {
@@ -84,18 +82,26 @@ func redisLineageOrderField(member string) (string, error) {
 }
 
 func initializeLineageIndex(ctx context.Context, client redis.UniversalClient) error {
-	if _, err := client.Get(ctx, lineageIndexStateKey).Result(); err == nil {
+	state, err := client.Get(ctx, lineageIndexStateKey).Result()
+	if err == nil {
+		if state != lineageIndexReady {
+			return fmt.Errorf("redisstore: unsupported current lineage index state %q", state)
+		}
 		return nil
-	} else if err != redis.Nil {
+	}
+	if err != redis.Nil {
 		return fmt.Errorf("redisstore: read lineage index state: %w", err)
 	}
-	state := lineageIndexReady
-	if exists, err := client.Exists(ctx, lineageHashKey).Result(); err != nil {
-		return fmt.Errorf("redisstore: inspect legacy lineage index: %w", err)
-	} else if exists != 0 {
-		state = lineageIndexStale
+	for _, prefix := range []string{lineageRecordKeyPrefix, lineageEdgeKeyPrefix} {
+		exists, scanErr := keyPrefixExists(ctx, client, prefix)
+		if scanErr != nil {
+			return fmt.Errorf("redisstore: inspect current lineage index: %w", scanErr)
+		}
+		if exists {
+			return fmt.Errorf("redisstore: current lineage index is missing")
+		}
 	}
-	return client.SetNX(ctx, lineageIndexStateKey, state, 0).Err()
+	return client.SetNX(ctx, lineageIndexStateKey, lineageIndexReady, 0).Err()
 }
 
 func requireLineageIndex(ctx context.Context, client redis.UniversalClient) error {
@@ -107,60 +113,6 @@ func requireLineageIndex(ctx context.Context, client redis.UniversalClient) erro
 		return fmt.Errorf("redisstore: read lineage index state: %w", err)
 	}
 	return fmt.Errorf("redisstore: lineage partitions are incomplete")
-}
-
-// MigrateLegacyLineage explicitly cuts a quiesced legacy global index over to
-// v2 partitions. maxWork bounds records examined; normal reads never call it.
-func (st *Store) MigrateLegacyLineage(ctx context.Context, maxWork int) error {
-	if maxWork <= 0 {
-		return fmt.Errorf("redisstore: lineage migration max work must be positive")
-	}
-	client, release, err := st.clients.acquire()
-	if err != nil {
-		return err
-	}
-	defer release()
-	rows := make([]port.SessionLineageRecord, 0, maxWork)
-	var cursor uint64
-	for {
-		values, next, scanErr := client.HScan(ctx, lineageHashKey, cursor, "*", int64(maxWork+1-len(rows))).Result()
-		if scanErr != nil {
-			return fmt.Errorf("redisstore: scan legacy lineage index: %w", scanErr)
-		}
-		for i := 0; i+1 < len(values); i += 2 {
-			row, decodeErr := decodeRedisLineage(values[i], values[i+1])
-			if decodeErr != nil {
-				return decodeErr
-			}
-			rows = append(rows, row)
-			if len(rows) > maxWork {
-				return fmt.Errorf("redisstore: legacy lineage migration exceeds max work %d", maxWork)
-			}
-		}
-		if next == 0 {
-			break
-		}
-		cursor = next
-	}
-	_, err = client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		for _, row := range rows {
-			body, marshalErr := json.Marshal(row)
-			if marshalErr != nil {
-				return marshalErr
-			}
-			field := redisLineageKey(row.ID, row.Incarnation)
-			pipe.HSet(ctx, redisLineageRecordPartition(row.ID), field, body)
-			pipe.ZAdd(ctx, redisLineageOrderPartition(redisLineageRecordPartition(row.ID)), redis.Z{Member: redisLineageOrderMember(row, false)})
-			if edge := redisLineageParentPartition(row); edge != "" {
-				pipe.HSet(ctx, edge, field, body)
-				pipe.ZAdd(ctx, redisLineageOrderPartition(edge), redis.Z{Member: redisLineageOrderMember(row, true)})
-			}
-		}
-		pipe.Del(ctx, lineageHashKey)
-		pipe.Set(ctx, lineageIndexStateKey, lineageIndexReady, 0)
-		return nil
-	})
-	return err
 }
 
 func decodeRedisLineage(key, body string) (port.SessionLineageRecord, error) {

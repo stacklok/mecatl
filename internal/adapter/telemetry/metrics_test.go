@@ -227,7 +227,7 @@ func TestFailedStepRetryRunBalancesActiveRunMetric(t *testing.T) {
 	if err := sess.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressPrecommit); err != nil {
+	if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {

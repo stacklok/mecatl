@@ -17,39 +17,6 @@ import { projectSessionSnapshot, projectSessionTranscript } from "../src/session
 
 function session() {
   return create(SessionSchema, {
-    capabilities: {
-      agents: true,
-      audio: true,
-      bash: true,
-      debugMcp: true,
-      image: true,
-      learnedSkills: true,
-      learningProposals: true,
-      manualCompaction: true,
-      manualDream: {
-        projectMemory: { decide: true, generate: true },
-        userModel: { unavailableReason: "not_configured" },
-      },
-      mcp: true,
-      mcpConnectorStatus: true,
-      memory: true,
-      modelSelection: true,
-      posture: "trusted-future",
-      reflection: true,
-      scheduling: true,
-      sessionDebug: true,
-      skills: true,
-      slashCommands: true,
-      soul: true,
-      steer: true,
-      storageCleanup: true,
-      storageHealth: true,
-      storageMigration: true,
-      teams: true,
-      userModel: true,
-      workspaceEnrollment: true,
-      worktrees: true,
-    },
     createdAtUnix: 123n,
     debugMcpServers: ["server"],
     debugMcpTools: ["server.tool"],
@@ -76,7 +43,6 @@ function session() {
     sessionCapabilities: { audio: true, image: false },
     sessionId: "session",
     state: "future-state",
-    title: "deprecated title",
     titleMetadata: {
       generationState: "generated",
       latestAttempt: { id: "attempt", outcome: "succeeded" },
@@ -84,7 +50,6 @@ function session() {
       revision: 4n,
       title: "Canonical title",
     },
-    titleProvenance: "deprecated",
     tokenUsage: {
       main: {
         models: {
@@ -109,13 +74,6 @@ describe("session projections", () => {
     const proto = session();
     const snapshot = projectSessionSnapshot(proto, "session");
     expect(snapshot).toEqual({
-      capabilities: expect.objectContaining({
-        manualDream: {
-          projectMemory: { decide: true, generate: true },
-          userModel: { decide: false, generate: false, unavailableReason: "not_configured" },
-        },
-        posture: "trusted-future",
-      }),
       createdAtUnix: 123n,
       debugMcpServers: ["server"],
       debugMcpTools: ["server.tool"],
@@ -182,16 +140,11 @@ describe("session projections", () => {
     expect(snapshot?.debugMcpServers).toEqual(["server"]);
     expect(snapshot?.tokenUsage.main?.models["provider/model"]?.inputTokens).toBe(1n);
 
-    const legacy = create(SessionSchema, {
+    const untitled = create(SessionSchema, {
       mode: SessionMode.Default,
-      sessionId: "legacy",
-      title: "Legacy title",
-      titleProvenance: "first-prompt",
+      sessionId: "untitled",
     });
-    expect(projectSessionSnapshot(legacy, "legacy")?.title).toEqual({
-      provenance: "first-prompt",
-      value: "Legacy title",
-    });
+    expect(projectSessionSnapshot(untitled, "untitled")?.title).toBeUndefined();
   });
 
   it("transcript omits provider-private replay state and detaches public data", () => {
@@ -315,7 +268,6 @@ describe("session projections", () => {
 
     expect(fields(SessionSchema)).toEqual(
       [
-        "capabilities",
         "createdAtUnix",
         "debugMcpServers",
         "debugMcpTools",
@@ -328,9 +280,7 @@ describe("session projections", () => {
         "sessionCapabilities",
         "sessionId",
         "state",
-        "title",
         "titleMetadata",
-        "titleProvenance",
         "tokenUsage",
         "toolCalls",
         "turns",
@@ -340,7 +290,7 @@ describe("session projections", () => {
       [
         "agents",
         "audio",
-        "bash",
+        "shell",
         "debugMcp",
         "image",
         "learnedSkills",
@@ -361,7 +311,6 @@ describe("session projections", () => {
         "steer",
         "storageCleanup",
         "storageHealth",
-        "storageMigration",
         "teams",
         "userModel",
         "workspaceEnrollment",

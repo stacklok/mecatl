@@ -504,7 +504,7 @@ func parseFlags(argv []string) (config, error) {
 		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecak8s --version prints the build version and exits.")
 	}
 
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}
 

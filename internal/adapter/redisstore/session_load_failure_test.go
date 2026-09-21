@@ -22,7 +22,7 @@ func TestLoadClassifiesRetrievalAndSnapshotFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mr.HSet("mecatl:session:classified", "blob", "not-a-snapshot")
+	mr.HSet("mecatl:store:v2:session:classified", "blob", "not-a-snapshot")
 	_, err = st.Load(t.Context(), sess.ID)
 	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
 		t.Fatalf("decode class = %s, want snapshot: %v", got, err)
@@ -33,7 +33,7 @@ func TestLoadClassifiesRetrievalAndSnapshotFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mr.HSet("mecatl:session:classified", "blob", string(blob))
+	mr.HSet("mecatl:store:v2:session:classified", "blob", string(blob))
 	_, err = st.Load(t.Context(), sess.ID)
 	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
 		t.Fatalf("identity mismatch class = %s, want snapshot: %v", got, err)

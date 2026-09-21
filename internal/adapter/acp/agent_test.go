@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -30,7 +31,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	toolsadapter "github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // scriptTool is a minimal mutating Tool: it returns a fixed body and records
@@ -644,7 +644,7 @@ func TestEndToEndFSDelegation(t *testing.T) {
 		svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
 			cfg.SharedEngineRoot = root
 			cfg.PlacementProvider = acpPlacementProvider{root: root, ref: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "fs-test-placement", Revision: "v1"}}
-		}, toolsadapter.ReadTool{}, toolsadapter.EditTool{})
+		}, fstools.ReadTool{}, fstools.EditTool{})
 		// Seed the file on DISK so that, in the caps-absent (osfs) scenario, Read+Edit
 		// have a real file to operate on. In the caps-present scenario the editor
 		// buffer (fsDefault) supplies the content and disk must stay as-is.

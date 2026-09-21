@@ -547,8 +547,6 @@ type ResultPayload struct {
 	// It surfaces the error the loop would otherwise drop so callers (the demo,
 	// API clients) can see why a run failed instead of an opaque "error".
 	Error string
-	// Permanent is the compatibility projection of Disposition==Permanent.
-	Permanent bool
 	// Disposition classifies whether replaying the failed model request is safe.
 	Disposition RetryDisposition
 	// Progress records how far the terminal model stream advanced semantically.
@@ -1495,9 +1493,6 @@ type Event struct {
 	// event-sourced fold; it is log-only (skipped on the live client wire). See
 	// UserPromptPayload.
 	UserPrompt *UserPromptPayload
-	// Usage is set on usage-bearing events. On EvResult it is the cumulative run
-	// total; turn.end carries its per-turn usage in TurnEnd, NOT here.
-	Usage *Usage
 	// Subagent is set on the three subagent.* events: the REDACTED observability
 	// projection of a Subagent child run (metadata only, never child content).
 	Subagent *SubagentPayload

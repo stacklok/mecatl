@@ -26,6 +26,10 @@ const (
 	cleanupStateRunning   = "running"
 	cleanupKind           = "cleanup"
 	cleanupBackendFailure = "backend_failure"
+
+	maintenanceReasonChanged = "changed"
+	maintenanceReasonActive  = "active"
+	maintenanceReasonLeased  = "leased"
 )
 
 // CleanupScope is the exact durable-kind subset a store-wide management plan covers.

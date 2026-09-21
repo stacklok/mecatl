@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -86,15 +85,13 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities(t *tes
 		t.Fatalf("GetCompatibilityInfo created %d session(s); it must answer without a probe session", n)
 	}
 
-	// The capabilities half must be the SAME projection CreateSession echoes. A
-	// second projection would drift and let a server contradict itself about its
-	// own configuration.
+	// Session creation no longer echoes deployment-wide capabilities.
 	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if !proto.Equal(info.GetCapabilities(), cs.GetCapabilities()) {
-		t.Fatalf("capabilities differ between GetCompatibilityInfo and CreateSession:\n info = %v\n echo = %v", info.GetCapabilities(), cs.GetCapabilities())
+	if cs.GetSessionId() == "" {
+		t.Fatal("CreateSession returned no session id")
 	}
 }
 

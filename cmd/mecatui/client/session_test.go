@@ -7,18 +7,15 @@ import (
 )
 
 func TestSnapshotFromUsesSessionMediaCapabilities(t *testing.T) {
-	global := &mecatlv1.ServerCapabilities{Image: true, Teams: true}
-
 	textOnly := snapshotFrom(&mecatlv1.Session{
-		Capabilities:        global,
 		SessionCapabilities: &mecatlv1.SessionCapabilities{},
 	})
-	if textOnly.Capabilities.Image || !textOnly.Capabilities.Teams {
+	if textOnly.Capabilities.Image || !textOnly.Capabilities.SessionMediaPresent {
 		t.Fatalf("text-only snapshot capabilities = %+v", textOnly.Capabilities)
 	}
-	legacy := snapshotFrom(&mecatlv1.Session{Capabilities: global})
-	if !legacy.Capabilities.Image || !legacy.Capabilities.Teams {
-		t.Fatalf("legacy snapshot capabilities = %+v", legacy.Capabilities)
+	withoutMedia := snapshotFrom(&mecatlv1.Session{})
+	if withoutMedia.Capabilities.SessionMediaPresent {
+		t.Fatalf("absent session media unexpectedly marked present: %+v", withoutMedia.Capabilities)
 	}
 }
 

@@ -3,7 +3,6 @@ package grpcdriver
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -374,26 +373,13 @@ func NewMemoryStoreServer(st tool.MemoryStore) driverv1.MemoryStoreServiceServer
 }
 
 func (s *memoryStoreServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
-	_, lifecycle := s.store.(tool.MemoryLifecycleStore)
-	_, convergence := s.store.(tool.MemoryConvergenceStore)
-	return &driverv1.MemoryStoreCapabilitiesResponse{Lifecycle: lifecycle, Convergence: convergence}, nil
+	return &driverv1.MemoryStoreCapabilitiesResponse{Lifecycle: true, Convergence: true}, nil
 }
 
-// RememberEntry stores the entry; a blank/whitespace-only key is rejected
-// with INVALID_ARGUMENT before the store is consulted (the wrapped store's
-// own rejection remains conformance-tested in-process).
-func (s *memoryStoreServer) RememberEntry(ctx context.Context, req *driverv1.RememberEntryRequest) (*driverv1.RememberEntryResponse, error) {
-	e := req.GetEntry()
-	if e == nil {
-		return nil, status.Error(codes.InvalidArgument, "entry is required")
-	}
-	if strings.TrimSpace(e.GetKey()) == "" {
-		return nil, status.Error(codes.InvalidArgument, "entry key must not be blank")
-	}
-	if err := s.store.RememberEntry(ctx, fromProtoEntry(e)); err != nil {
-		return nil, storeStatus(err)
-	}
-	return &driverv1.RememberEntryResponse{}, nil
+// RememberEntry is retained only by the batch-06-pending generated service and
+// fails closed because the request cannot carry a complete expected state.
+func (s *memoryStoreServer) RememberEntry(context.Context, *driverv1.RememberEntryRequest) (*driverv1.RememberEntryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "unconditional memory writes are unsupported")
 }
 
 // Recall looks up the exact key; a miss is found=false, never NOT_FOUND.
@@ -418,12 +404,10 @@ func (s *memoryStoreServer) List(ctx context.Context, req *driverv1.ListRequest)
 	return &driverv1.ListResponse{Entries: toProtoServerEntries(entries)}, nil
 }
 
-// Forget deletes the key; missing keys succeed (idempotent).
-func (s *memoryStoreServer) Forget(ctx context.Context, req *driverv1.ForgetRequest) (*driverv1.ForgetResponse, error) {
-	if err := s.store.Forget(ctx, req.GetKey()); err != nil {
-		return nil, storeStatus(err)
-	}
-	return &driverv1.ForgetResponse{}, nil
+// Forget is retained only by the batch-06-pending generated service and fails
+// closed because the request carries no expected version.
+func (s *memoryStoreServer) Forget(context.Context, *driverv1.ForgetRequest) (*driverv1.ForgetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "unconditional memory deletes are unsupported")
 }
 
 // Index returns the tier-0 routing table (values omitted by the store).
@@ -444,37 +428,14 @@ func (s *memoryStoreServer) Search(ctx context.Context, req *driverv1.SearchRequ
 	return &driverv1.SearchResponse{Entries: toProtoServerEntries(entries)}, nil
 }
 
-func (s *memoryStoreServer) lifecycle() (tool.MemoryLifecycleStore, error) {
-	lifecycle, ok := s.store.(tool.MemoryLifecycleStore)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "memory store does not support lifecycle operations")
-	}
-	return lifecycle, nil
-}
-
-// RememberVersioned delegates only when the wrapped store advertises lifecycle.
-func (s *memoryStoreServer) RememberVersioned(ctx context.Context, req *driverv1.RememberVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
-	if req.GetEntry() == nil {
-		return nil, status.Error(codes.InvalidArgument, "entry is required")
-	}
-	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, callErr := lifecycle.RememberVersioned(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryVersion(req.GetExpectedVersion()))
-	if callErr != nil {
-		return nil, storeStatus(callErr)
-	}
-	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
+// RememberVersioned is retained only because batch 06 owns generated wire
+// replacement; it cannot represent create-only semantics and therefore fails closed.
+func (s *memoryStoreServer) RememberVersioned(context.Context, *driverv1.RememberVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "use atomic current-state memory write")
 }
 
 func (s *memoryStoreServer) InspectMemory(ctx context.Context, req *driverv1.InspectMemoryRequest) (*driverv1.InspectMemoryResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
-	record, found, callErr := lifecycle.Inspect(ctx, req.GetKey())
+	record, found, callErr := s.store.Inspect(ctx, req.GetKey())
 	if callErr != nil {
 		return nil, storeStatus(callErr)
 	}
@@ -486,12 +447,8 @@ func (s *memoryStoreServer) InspectMemory(ctx context.Context, req *driverv1.Ins
 }
 
 func (s *memoryStoreServer) ForgetVersioned(ctx context.Context, req *driverv1.ForgetVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
 	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, callErr := lifecycle.ForgetVersioned(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
+	record, callErr := s.store.Forget(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
 	if callErr != nil {
 		return nil, storeStatus(callErr)
 	}
@@ -499,12 +456,8 @@ func (s *memoryStoreServer) ForgetVersioned(ctx context.Context, req *driverv1.F
 }
 
 func (s *memoryStoreServer) UndoLatest(ctx context.Context, req *driverv1.UndoLatestRequest) (*driverv1.MemoryRecordResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
 	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, callErr := lifecycle.UndoLatest(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
+	record, callErr := s.store.Undo(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
 	if callErr != nil {
 		return nil, storeStatus(callErr)
 	}
@@ -512,15 +465,11 @@ func (s *memoryStoreServer) UndoLatest(ctx context.Context, req *driverv1.UndoLa
 }
 
 func (s *memoryStoreServer) RememberIfCurrent(ctx context.Context, req *driverv1.RememberIfCurrentRequest) (*driverv1.MemoryRecordResponse, error) {
-	store, ok := s.store.(tool.MemoryConvergenceStore)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "memory convergence unsupported")
-	}
 	if req.GetEntry() == nil {
 		return nil, status.Error(codes.InvalidArgument, "entry is required")
 	}
 	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, err := store.RememberIfCurrent(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryCurrent{Exists: req.GetExpectedExists(), Version: tool.MemoryVersion(req.GetExpectedVersion())})
+	record, err := s.store.Remember(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryCurrent{Exists: req.GetExpectedExists(), Version: tool.MemoryVersion(req.GetExpectedVersion())})
 	if err != nil {
 		return nil, storeStatus(err)
 	}

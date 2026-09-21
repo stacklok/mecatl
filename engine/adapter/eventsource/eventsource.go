@@ -228,17 +228,19 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
 	// through the SAME state-driving logic sessnap.Restore uses (sessnap.RestoreState),
 	// so the terminal-transition vocabulary lives in exactly one place.
-	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
+	usage := foldedTokenUsage(meta.TokenUsage, f.usage)
+	data := sessnap.RestoreData{
+		State: f.restoreState(), Stop: f.stop, Counters: f.finalCounters(),
+		TokenUsage: usage,
+		Failure:    session.RetryMetadata{Disposition: f.disposition, Progress: f.progress},
+		LastError:  f.lastError,
+	}
+	if f.retryPending {
+		data.RetryPending = true
+		data.Retry = session.RetryMetadata{Disposition: f.retryDisposition, Progress: f.retryProgress}
+	}
+	if err := sessnap.RestoreState(s, data); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	restoreTokenUsage(s, meta.TokenUsage, f.usage)
-	if s.State == session.StateFailed {
-		if err := s.RecordFailureMetadata(f.disposition, f.progress); err != nil {
-			return nil, fmt.Errorf("%w: restore failure metadata: %w", ErrReconstruct, err)
-		}
-	}
-	if err := f.restoreRetryPending(s); err != nil {
-		return nil, err
 	}
 	// Seed the session Title from the first genuine user prompt captured during the
 	// fold (set-once + clamped via SetTitle). This reuses the domain predicate + the
@@ -250,18 +252,15 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	return s, nil
 }
 
-// restoreTokenUsage makes canonical persisted usage authoritative and derives it
-// from the legacy compatibility projection only when the ledger is absent.
-func restoreTokenUsage(s *session.Session, persisted map[session.UsageKind]session.TokenUsage, legacy session.Usage) {
+func foldedTokenUsage(persisted map[session.UsageKind]session.TokenUsage, main session.Usage) map[session.UsageKind]session.TokenUsage {
 	if persisted != nil {
-		s.RestoreTokenUsage(persisted)
-		return
+		return persisted
 	}
-	if legacy != (session.Usage{}) {
-		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
-			session.UsageKindMain: {Total: legacy, Models: map[string]session.Usage{"unknown": legacy}},
-		})
+	usage := make(map[session.UsageKind]session.TokenUsage)
+	if main != (session.Usage{}) {
+		usage[session.UsageKindMain] = session.TokenUsage{Total: main, Models: map[string]session.Usage{"unknown": main}}
 	}
+	return usage
 }
 
 func (f *folder) finalizeOpenTurn() {
@@ -277,16 +276,6 @@ func (f *folder) finalizeOpenTurn() {
 		f.curText = ""
 		f.curCalls = nil
 	}
-}
-
-func (f *folder) restoreRetryPending(s *session.Session) error {
-	if !f.retryPending {
-		return nil
-	}
-	if err := s.RestoreFailedStepRetryPending(f.retryDisposition, f.retryProgress); err != nil {
-		return fmt.Errorf("%w: restore failed-step retry intent: %w", ErrReconstruct, err)
-	}
-	return nil
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
@@ -320,7 +309,7 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
-	restoreTokenUsage(s, meta.TokenUsage, f.usage)
+	s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
 	}
@@ -369,11 +358,10 @@ type folder struct {
 	firstGenuineText string
 
 	// derived lifecycle.
-	usage       session.Usage // cumulative = SUM of every EvResult.Usage
+	usage       session.Usage // cumulative = SUM of every EvResult.Result.Usage
 	stop        session.StopReason
 	pending     *session.PendingAsk
 	ended       bool // a terminal EvResult was seen
-	permanent   bool // compatibility projection of disposition==permanent
 	disposition session.RetryDisposition
 	progress    session.StreamProgress
 	lastError   string // last EvResult.Error (meaningful only when stop==StopError) — issue #332
@@ -587,13 +575,11 @@ func (f *folder) consumeHistoryEvent(ev session.Event) {
 	}
 }
 
-// applyResult folds a terminal EvResult. EvResult.Usage is the PER-RUN figure; the
+// applyResult folds a terminal EvResult. ResultPayload.Usage is the PER-RUN figure; the
 // cumulative session usage is the SUM across every run's EvResult (a multi-run log
-// carries several), so using a single EvResult.Usage (not the sum) would undercount
-// a reopened session's spend. Permanence is recorded ONLY when this run ended in a
-// StopError (transient failures and clean terminals carry Permanent==false); the
-// fold's last terminal result wins, mirroring how a snapshot captures the final
-// state. The terminal counters are snapshotted, then the live segment is reset: a
+// carries several), so using a single result's usage would undercount a reopened
+// session's spend. Retry metadata is recorded only when this run ended in an
+// incomplete StopError; the fold's last terminal result wins, mirroring snapshots.
 // subsequent EvTurnStart (a Reopen) begins a fresh run whose Counters are per-run
 // (resetToIdle zeroes them on Reopen); the FINAL counters reflect the latest run.
 func (f *folder) applyResult(ev session.Event) {
@@ -616,15 +602,10 @@ func (f *folder) applyResult(ev session.Event) {
 		f.stop = ev.Result.Stop
 		f.disposition = session.RetryDispositionUnknown
 		f.progress = ev.Result.Progress
-		f.permanent = false
 		f.lastError = ""
 		if failedStream {
 			f.disposition = ev.Result.Disposition
-			if f.disposition == session.RetryDispositionUnknown && ev.Result.Permanent {
-				f.disposition = session.RetryDispositionPermanent
-			}
 			f.progress = ev.Result.Progress
-			f.permanent = f.disposition == session.RetryDispositionPermanent
 			f.lastError = ev.Result.Error
 		}
 	}

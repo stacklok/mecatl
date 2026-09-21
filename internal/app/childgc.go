@@ -360,7 +360,7 @@ func (g *childGC) remove(ctx context.Context, candidate port.SessionDiscoveryMet
 }
 
 // startChildGC wires the child-session retention sweeper: a no-op cleanup (with
-// one build-once INFO, the startMemoryConsolidation idiom) when the policy is
+// one build-once INFO, the startMemoryConsolidator idiom) when the policy is
 // fully disabled or the store is not prunable; otherwise one startup sweep plus
 // a ticker every cfg.ChildGCInterval (0 = startup-only), all on one owned
 // background goroutine. The returned idempotent cleanup cancels the worker and

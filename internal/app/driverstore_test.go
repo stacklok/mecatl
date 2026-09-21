@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -21,7 +22,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -424,7 +424,7 @@ func TestBuildCatalogMemoryCapabilityTimeoutLeavesNoCatalogOrConnection(t *testi
 	}
 }
 
-func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
+func TestBuildCatalogMemoryDriverIncludesMandatoryLifecycleTools(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -441,18 +441,13 @@ func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeFn()
-	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName} {
+	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName, memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName} {
 		if _, ok := cat.Lookup(name); !ok {
-			t.Errorf("base catalog missing %q", name)
+			t.Errorf("catalog missing %q", name)
 		}
 	}
-	for _, name := range []string{memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName} {
-		if _, ok := cat.Lookup(name); ok {
-			t.Errorf("base-only catalog unexpectedly registered %q", name)
-		}
-	}
-	if _, ok := assets.memStore.(tool.MemoryLifecycleStore); ok {
-		t.Fatalf("base-only assets advertise lifecycle: %T", assets.memStore)
+	if assets.memStore == nil {
+		t.Fatal("memory store missing from catalog assets")
 	}
 }
 

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/prompt"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hashutil"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 )

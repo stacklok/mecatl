@@ -1,16 +1,13 @@
 package jsonlstore_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -142,47 +139,6 @@ func TestMetaListSkipsConversation(t *testing.T) {
 	}
 }
 
-// TestMetaListCorruptRowSurfacesZeroed asserts a snapshot whose last line
-// decodes an id but an UNKNOWN state (RestoreState would reject) surfaces with
-// id/mtime + zeroed snapshot fields — matching the Load-per-row behaviour.
-func TestMetaListCorruptRowSurfacesZeroed(t *testing.T) {
-	ctx := context.Background()
-	st, dir := newStore(t)
-
-	// A valid session for sanity.
-	good := session.New("good", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
-	good.SetTitle("good")
-	if err := st.Save(ctx, good); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	// A corrupt file: decodable id, bogus state.
-	corruptPath := filepath.Join(dir, "corrupt.session.jsonl")
-	if err := os.WriteFile(corruptPath, []byte(`{"id":"corrupt","state":"bogus-state"}`+"\n"), 0o644); err != nil {
-		t.Fatalf("write corrupt: %v", err)
-	}
-
-	var ss port.SessionStore = st
-	ml := ss.(port.MetaLister)
-	rows, err := ml.MetaList(ctx)
-	if err != nil {
-		t.Fatalf("MetaList: %v", err)
-	}
-	byID := make(map[string]port.SessionMeta, len(rows))
-	for _, r := range rows {
-		byID[string(r.ID)] = r
-	}
-	corrupt, ok := byID["corrupt"]
-	if !ok {
-		t.Fatalf("corrupt row missing from MetaList (must surface with id/mtime even when snapshot is corrupt): %+v", rows)
-	}
-	if corrupt.State != "" {
-		t.Errorf("corrupt State = %q, want empty (unknown state → zeroed)", corrupt.State)
-	}
-	if corrupt.Turns != 0 || corrupt.ModelID != "" || corrupt.Title != "" || !corrupt.CreatedAt.IsZero() {
-		t.Errorf("corrupt row must have zeroed snapshot fields, got %+v", corrupt)
-	}
-}
-
 // TestMetaListMultiSnapshotLatestWins asserts MetaList reads the LAST snapshot
 // line (append-only, latest-line-wins): a session saved twice surfaces the
 // LATEST state/turns, not the first.
@@ -227,64 +183,6 @@ func TestMetaListMultiSnapshotLatestWins(t *testing.T) {
 	}
 	if r.Title != "first" {
 		t.Errorf("Title = %q, want first (set-once)", r.Title)
-	}
-}
-
-// TestReadLastLineLargeFileTailRead asserts readLastLine (via MetaList) reads
-// only the TAIL of a large session file — the metadata decodes correctly even
-// when the file is much larger than the seek window. This is the O(1)-per-file
-// guarantee (no full-file scan).
-func TestReadLastLineLargeFileTailRead(t *testing.T) {
-	ctx := context.Background()
-	st, dir := newStore(t)
-
-	s := session.New("large", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
-	s.SetTitle("tail-read")
-	// Seed a historical v1 file with MANY snapshots so the bounded tail reader
-	// is exercised independently of the v2 current-snapshot writer.
-	var history bytes.Buffer
-	for i := 0; i < 50; i++ {
-		_ = s.BeginTurn()
-		_ = s.RecordAssistant(session.NewAssistantMessage(strings.Repeat("y", 5000), "", nil))
-		line, err := sessnap.Marshal(s)
-		if err != nil {
-			t.Fatalf("Marshal %d: %v", i, err)
-		}
-		history.Write(line)
-		history.WriteByte('\n')
-	}
-	path := canonicalFamilyPath(dir, s.ID, ".session.jsonl")
-	if err := os.WriteFile(path, history.Bytes(), 0o600); err != nil {
-		t.Fatalf("write v1 history: %v", err)
-	}
-	// Verify the file is larger than the seek window (so the tail-read path is
-	// exercised, not the small-file full-read path).
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	if info.Size() < 64*1024 {
-		t.Logf("note: file size %d < seek window 64KiB; tail-read path not fully exercised", info.Size())
-	}
-
-	var ss port.SessionStore = st
-	ml := ss.(port.MetaLister)
-	rows, err := ml.MetaList(ctx)
-	if err != nil {
-		t.Fatalf("MetaList: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1", len(rows))
-	}
-	r := rows[0]
-	if r.Turns != 50 {
-		t.Errorf("Turns = %d, want 50 (latest snapshot)", r.Turns)
-	}
-	if r.Title != "tail-read" {
-		t.Errorf("Title = %q, want tail-read", r.Title)
-	}
-	if r.State != session.StateRunning {
-		t.Errorf("State = %q, want %q", r.State, session.StateRunning)
 	}
 }
 

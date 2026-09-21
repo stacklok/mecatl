@@ -35,7 +35,7 @@ func reconcilePromotingProposals(ctx context.Context, cfg Config, repository lea
 			}
 			store = projectMemory
 		}
-		if _, ok := store.(tool.MemoryConvergenceStore); !ok {
+		if store == nil {
 			continue
 		}
 		promotionCtx := memoryadapter.WithWorkspace(ctx, record.Partition.Project)

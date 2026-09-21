@@ -42,10 +42,8 @@ var (
 //     Conversation (the user/assistant/tool message sequence, tool-pairing-valid —
 //     user-role turns INCLUDED, since the loop emits the log-only EvUserPrompt at every
 //     user-message record site), State, the recorded stop reason, the pending ask (when
-//     awaiting), the failure permanence flag (ResultPayload.Permanent — so a
-//     permanently-failed session reconstructs with FailurePermanence()==true and the
-//     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
-//     — the budget brake reads it), and the metadata the events do not carry (id, mode,
+//     awaiting), typed retry metadata (ResultPayload.Disposition and Progress),
+//     cumulative main token usage (the SUM of every per-run ResultPayload.Usage —
 //     limits, exact EnvironmentRef, display-only placement metadata, profile,
 //     provider/model selector, reasoning effort, authoritative title/provenance,
 //     session kind/relationship, and createdAt — supplied out-of-band, e.g.

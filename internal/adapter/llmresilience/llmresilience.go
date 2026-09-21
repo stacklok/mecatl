@@ -209,8 +209,7 @@ func (*StreamIdleError) Unwrap() error { return context.DeadlineExceeded }
 // instead of a phantom empty-success completion. See establish's empty branch.
 var errFirstChunkTimeout = errors.New("llmresilience: per-attempt timeout before first chunk")
 
-// dispositionError projects a known causal classification through errors.As.
-// Permanent classifications retain the older port.PermanentError projection.
+// dispositionError projects known causal and progress classifications through errors.As.
 type dispositionError struct {
 	err         error
 	disposition port.RetryDisposition
@@ -221,10 +220,6 @@ func (e *dispositionError) Error() string                           { return e.e
 func (e *dispositionError) Unwrap() error                           { return e.err }
 func (e *dispositionError) RetryDisposition() port.RetryDisposition { return e.disposition }
 func (e *dispositionError) StreamProgress() port.StreamProgress     { return e.progress }
-
-type permanentDispositionError struct{ *dispositionError }
-
-func (*permanentDispositionError) Permanent() bool { return true }
 
 func explicitRetryDecision(err error) (retryable, explicit bool) {
 	var decision interface{ Retryable() bool }
@@ -246,10 +241,6 @@ func dispositionOf(err error) port.RetryDisposition {
 		}
 		return port.RetryDispositionUnknown
 	}
-	var permanent port.PermanentError
-	if errors.As(err, &permanent) && permanent.Permanent() {
-		return port.RetryDispositionPermanent
-	}
 	return defaultDisposition(err)
 }
 
@@ -261,19 +252,9 @@ func classifiedProgressError(err error, progress port.StreamProgress) error {
 	var classified port.RetryDispositionError
 	var progressed port.StreamProgressError
 	if errors.As(err, &classified) && errors.As(err, &progressed) && progressed.StreamProgress() == progress {
-		if d != port.RetryDispositionPermanent {
-			return err
-		}
-		var permanent port.PermanentError
-		if errors.As(err, &permanent) && permanent.Permanent() {
-			return err
-		}
+		return err
 	}
-	base := &dispositionError{err: err, disposition: d, progress: progress}
-	if d == port.RetryDispositionPermanent {
-		return &permanentDispositionError{dispositionError: base}
-	}
-	return base
+	return &dispositionError{err: err, disposition: d, progress: progress}
 }
 
 // classifyVisibleError preserves the causal classification of a terminal

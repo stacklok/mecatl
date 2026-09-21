@@ -13,7 +13,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	miniredisserver "github.com/alicebob/miniredis/v2/server"
 
-	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -321,70 +320,55 @@ func TestDeleteRemovesMetadataAndInvalidatesCursor(t *testing.T) {
 	}
 }
 
-func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
+func TestCurrentMetadataMarkerCorruptionFailsConstructor(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.Set(metadataIndexStateKey, "corrupt-current-marker")
+	if _, err := New(mr.Addr()); err == nil || !strings.Contains(err.Error(), "unsupported current metadata index state") {
+		t.Fatalf("New error = %v, want current marker failure", err)
 	}
-	t.Cleanup(mr.Close)
-	legacy := session.New("legacy", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
-	blob, err := sessnap.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mr.HSet(sessionKey(legacy.ID), fieldBlob, string(blob), fieldMtime, "1")
-	st, err := New(mr.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	ctx := context.Background()
-	ctx, release, err := st.AcquireSessionMigrationJob(ctx, strings.Repeat("d", 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = release() })
-	inspection, err := st.InspectSessionMigration(ctx)
-	if err != nil || len(inspection.Families) != 1 {
-		t.Fatalf("inspection = %+v, %v", inspection, err)
-	}
-	if reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0]); err != nil || reason != "" {
-		t.Fatalf("adopt row = %q, %v", reason, err)
-	}
-	if err := st.Save(ctx, session.New("concurrent", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())); err != nil {
-		t.Fatal(err)
-	}
-	published, err := st.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, inspection.V1Families+inspection.V2Families+inspection.InvalidFamilies)
-	if err != nil || published {
-		t.Fatalf("stale generation publication = %v, %v", published, err)
-	}
-	if _, err := st.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
-		t.Fatalf("stale generation exposed index: %v", err)
-	}
-	current, err := st.InspectSessionMigration(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	published, err = st.FinalizeSessionMigrationCoverage(ctx, current.Generation, current.V1Families+current.V2Families+current.InvalidFamilies)
-	if err != nil || !published {
-		t.Fatalf("current generation publication = %v, %v", published, err)
+	if got, err := mr.Get(metadataIndexStateKey); err != nil || got != "corrupt-current-marker" {
+		t.Fatalf("current marker was overwritten: %q, %v", got, err)
 	}
 }
 
-func TestLegacyStoreReportsMetadataPagingUnsupported(t *testing.T) {
+func TestCurrentSessionWithoutMetadataMarkerFailsConstructor(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.HSet(sessionKey("orphan"), fieldBlob, `{}`, fieldMtime, "1")
+	if _, err := New(mr.Addr()); err == nil || !strings.Contains(err.Error(), "current session metadata index is missing") {
+		t.Fatalf("New error = %v, want missing current index failure", err)
+	}
+	if mr.Exists(metadataIndexStateKey) {
+		t.Fatal("constructor created a marker over corrupt current state")
+	}
+}
+
+func TestOldStoreWithoutMetadataIndexIsIgnoredUntouched(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	mr.HSet(sessionKey("legacy"), fieldBlob, `{}`, fieldMtime, "1")
+	const key = "mecatl:session:legacy"
+	mr.HSet(key, fieldBlob, `{}`, fieldMtime, "1")
+	before := mr.HGet(key, fieldBlob)
 	st, err := New(mr.Addr())
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("New with old namespace: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if _, err := st.PageSessionMetadata(context.Background(), port.SessionMetadataPageRequest{Limit: 10}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
-		t.Fatalf("legacy PageSessionMetadata error = %v, want unsupported", err)
+	page, err := st.PageSessionMetadata(t.Context(), port.SessionMetadataPageRequest{Limit: 10})
+	if err != nil || len(page.Sessions) != 0 {
+		t.Fatalf("current metadata page = (%+v, %v), want empty", page, err)
+	}
+	current := session.New("legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/current", Revision: "current"}, session.Limits{}, time.Now().UTC())
+	if err := st.Create(t.Context(), current); err != nil {
+		t.Fatalf("Create same id in current namespace: %v", err)
+	}
+	if after := mr.HGet(key, fieldBlob); after != before {
+		t.Fatalf("old metadata changed: before=%q after=%q", before, after)
+	}
+	if !mr.Exists(metadataIndexStateKey) || !mr.Exists(sessionKey(current.ID)) {
+		t.Fatal("current namespace was not initialized")
 	}
 }
 
@@ -447,11 +431,11 @@ func assertPageRedisWork(t *testing.T, commands []redisCommand, limit int) {
 				t.Fatalf("metadata page performed snapshot hash read: %#v", command)
 			}
 		case "ZCARD":
-			if len(command.args) != 1 || !strings.HasPrefix(command.args[0], "mecatl:session-metadata:index:") {
+			if len(command.args) != 1 || !strings.HasPrefix(command.args[0], storeKeyPrefix+"session-metadata:index:") {
 				t.Fatalf("unexpected metadata count operation: %#v", command)
 			}
 		case "ZRANGEBYLEX":
-			if len(command.args) != 6 || !strings.HasPrefix(command.args[0], "mecatl:session-metadata:index:") ||
+			if len(command.args) != 6 || !strings.HasPrefix(command.args[0], storeKeyPrefix+"session-metadata:index:") ||
 				command.args[2] != "+" || strings.ToUpper(command.args[3]) != "LIMIT" ||
 				command.args[4] != "0" || command.args[5] != strconv.Itoa(limit+1) {
 				t.Fatalf("unbounded or unexpected metadata range: %#v", command)

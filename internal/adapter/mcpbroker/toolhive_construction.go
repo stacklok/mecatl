@@ -19,8 +19,8 @@ const (
 	authOAuth = "oauth"
 
 	// toolHiveAuthStoragePrefix namespaces the embedded auth server's Redis
-	// keys away from mecatl's own session-store scheme (redisstore's
-	// "mecatl:session:" family) on the SAME managed Redis instance.
+	// keys away from mecatl's own versioned session-store scheme on the SAME
+	// managed Redis instance.
 	toolHiveAuthStoragePrefix = "mecatl:authserver:"
 )
 

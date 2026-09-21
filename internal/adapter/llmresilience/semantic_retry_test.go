@@ -225,39 +225,6 @@ func TestSemanticAttemptCleanCompletionFlushesTentativeTurn(t *testing.T) {
 	}
 }
 
-type legacyPermanentOnlyError struct{}
-
-func (*legacyPermanentOnlyError) Error() string   { return "legacy permanent" }
-func (*legacyPermanentOnlyError) Permanent() bool { return true }
-
-func TestLegacyPermanentErrorGetsTypedCompatibilityMetadata(t *testing.T) {
-	legacy := &legacyPermanentOnlyError{}
-	f := &fakeProvider{steps: []step{
-		{outerErr: legacy},
-		{chunks: textTurn("must not retry")},
-	}}
-	_, err := Wrap(f, Config{MaxAttempts: 2, Classifier: func(error) bool { return true }}).
-		Stream(context.Background(), port.LLMRequest{})
-	if f.Calls() != 1 {
-		t.Fatalf("attempts = %d, want one", f.Calls())
-	}
-	var disposition port.RetryDispositionError
-	if !errors.As(err, &disposition) || disposition.RetryDisposition() != port.RetryDispositionPermanent {
-		t.Fatalf("typed disposition = %v, want permanent", disposition)
-	}
-	var progress port.StreamProgressError
-	if !errors.As(err, &progress) || progress.StreamProgress() != port.StreamProgressPrecommit {
-		t.Fatalf("typed progress = %v, want precommit", progress)
-	}
-	var permanent port.PermanentError
-	if !errors.As(err, &permanent) || !permanent.Permanent() {
-		t.Fatal("legacy PermanentError interface was not retained")
-	}
-	if !errors.Is(err, legacy) {
-		t.Fatal("legacy error was not retained in unwrap chain")
-	}
-}
-
 func TestRetryDispositionUnknownIsConservative(t *testing.T) {
 	unknown := errors.New("unclassified")
 	f := &fakeProvider{steps: []step{{outerErr: unknown}, {chunks: textTurn("must not run")}}}
@@ -273,10 +240,6 @@ func TestRetryDispositionUnknownIsConservative(t *testing.T) {
 	var progress port.StreamProgressError
 	if !errors.As(err, &progress) || progress.StreamProgress() != port.StreamProgressPrecommit {
 		t.Fatalf("unknown error progress = %v; want precommit", progress)
-	}
-	var permanent port.PermanentError
-	if errors.As(err, &permanent) {
-		t.Fatal("unknown error projected as permanent")
 	}
 }
 
@@ -302,20 +265,14 @@ func TestInvalidProviderDispositionNormalizesToUnknown(t *testing.T) {
 	}
 }
 
-type permanentAndDispositionError struct{ dispositionOnlyError }
-
-func (*permanentAndDispositionError) Permanent() bool { return true }
-
 func TestClassifiedErrorProjectsDirectInterfaces(t *testing.T) {
 	tests := []struct {
-		name           string
-		disposition    port.RetryDisposition
-		wantClassified bool
-		wantPermanent  bool
+		name        string
+		disposition port.RetryDisposition
 	}{
-		{name: "unknown", disposition: port.RetryDispositionUnknown, wantClassified: true},
-		{name: "retryable", disposition: port.RetryDispositionRetryable, wantClassified: true},
-		{name: "permanent", disposition: port.RetryDispositionPermanent, wantClassified: true, wantPermanent: true},
+		{name: "unknown", disposition: port.RetryDispositionUnknown},
+		{name: "retryable", disposition: port.RetryDispositionRetryable},
+		{name: "permanent", disposition: port.RetryDispositionPermanent},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -323,22 +280,16 @@ func TestClassifiedErrorProjectsDirectInterfaces(t *testing.T) {
 			_, err := Wrap(&fakeProvider{steps: []step{{outerErr: original}}}, Config{MaxAttempts: 1}).
 				Stream(context.Background(), port.LLMRequest{})
 			var classified port.RetryDispositionError
-			if got := errors.As(err, &classified); got != tc.wantClassified {
-				t.Fatalf("RetryDispositionError present = %v, want %v (err %v)", got, tc.wantClassified, err)
+			if !errors.As(err, &classified) {
+				t.Fatalf("RetryDispositionError missing (err %v)", err)
 			}
-			if tc.wantClassified && classified.RetryDisposition() != tc.disposition {
+			if classified.RetryDisposition() != tc.disposition {
 				t.Fatalf("disposition = %v, want %v", classified.RetryDisposition(), tc.disposition)
-			}
-			var permanent port.PermanentError
-			if got := errors.As(err, &permanent) && permanent.Permanent(); got != tc.wantPermanent {
-				t.Fatalf("true PermanentError present = %v, want %v (err %v)", got, tc.wantPermanent, err)
 			}
 		})
 	}
 
-	alreadyPermanent := &permanentAndDispositionError{
-		dispositionOnlyError{disposition: port.RetryDispositionPermanent},
-	}
+	alreadyPermanent := &dispositionOnlyError{disposition: port.RetryDispositionPermanent}
 	_, err := Wrap(&fakeProvider{steps: []step{{outerErr: alreadyPermanent}}}, Config{MaxAttempts: 1}).
 		Stream(context.Background(), port.LLMRequest{})
 	if !errors.Is(err, alreadyPermanent) {

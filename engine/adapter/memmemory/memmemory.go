@@ -1,5 +1,5 @@
 // Package memmemory provides a concurrent in-memory reference implementation of
-// tool.MemoryStore and its optional tool.MemoryLifecycleStore capability.
+// tool.MemoryStore.
 package memmemory
 
 import (
@@ -37,30 +37,7 @@ func New() *Store {
 	return &Store{records: make(map[string]*record), now: time.Now}
 }
 
-var (
-	_ tool.MemoryStore            = (*Store)(nil)
-	_ tool.MemoryLifecycleStore   = (*Store)(nil)
-	_ tool.MemoryConvergenceStore = (*Store)(nil)
-)
-
-// RememberEntry preserves the legacy MemoryStore behavior: only blank keys are
-// rejected and writes overwrite unconditionally.
-func (s *Store) RememberEntry(ctx context.Context, entry tool.MemoryEntry) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if strings.TrimSpace(entry.Key) == "" {
-		return fmt.Errorf("memmemory: empty key")
-	}
-	attribution, _ := tool.MemoryAttributionFromContext(ctx)
-	if err := tool.ValidateMemoryContentWrite(entry.Key, entry.Value, entry.Description, attribution); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.appendActive(ctx, entry, tool.MemoryOriginImported)
-	return nil
-}
+var _ tool.MemoryStore = (*Store)(nil)
 
 // Recall returns the active value for key. Deleted records are legacy misses.
 func (s *Store) Recall(ctx context.Context, key string) (tool.MemoryEntry, bool, error) {
@@ -94,20 +71,6 @@ func (s *Store) List(ctx context.Context, prefix string) ([]tool.MemoryEntry, er
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
-}
-
-// Forget unconditionally deletes an active legacy entry. The tombstone remains
-// available through Inspect; deleting a missing key is a no-op.
-func (s *Store) Forget(ctx context.Context, key string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.active(key); ok {
-		s.appendDeleted(ctx, key, tool.MemoryOriginImported)
-	}
-	return nil
 }
 
 // Index returns active routing entries with values omitted.
@@ -160,29 +123,8 @@ func (s *Store) Search(ctx context.Context, query string, k int) ([]tool.MemoryE
 	return out, nil
 }
 
-// RememberVersioned atomically creates or replaces an active record when its
-// current version equals expected.
-func (s *Store) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
-	if err := ctx.Err(); err != nil {
-		return tool.MemoryRecord{}, err
-	}
-	attribution, _ := tool.MemoryAttributionFromContext(ctx)
-	if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
-		return tool.MemoryRecord{}, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if expected != "" {
-		if err := s.compare(entry.Key, expected); err != nil {
-			return tool.MemoryRecord{}, err
-		}
-	}
-	s.appendActive(ctx, entry, tool.MemoryOriginExplicit)
-	return s.snapshot(entry.Key), nil
-}
-
-// RememberIfCurrent atomically compares presence and version before appending.
-func (s *Store) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+// Remember atomically compares the complete current state before appending.
+func (s *Store) Remember(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.MemoryRecord{}, err
 	}
@@ -213,8 +155,8 @@ func (s *Store) Inspect(ctx context.Context, key string) (tool.MemoryRecord, boo
 	return s.snapshot(key), true, nil
 }
 
-// ForgetVersioned atomically appends a deletion when expected is current.
-func (s *Store) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+// Forget atomically appends a deletion when expected is current.
+func (s *Store) Forget(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.MemoryRecord{}, err
 	}
@@ -231,9 +173,9 @@ func (s *Store) ForgetVersioned(ctx context.Context, key string, expected tool.M
 	return s.snapshot(key), nil
 }
 
-// UndoLatest atomically appends a compensating revision restoring the state
+// Undo atomically appends a compensating revision restoring the state
 // immediately before the current revision.
-func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+func (s *Store) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.MemoryRecord{}, err
 	}

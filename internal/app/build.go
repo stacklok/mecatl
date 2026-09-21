@@ -37,12 +37,15 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memorypromotion"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
+	rules "github.com/stacklok/mecatl/engine/adapter/rulesfs"
 	refsearch "github.com/stacklok/mecatl/engine/adapter/search"
 	coreskillfs "github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -54,7 +57,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
@@ -76,7 +78,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/reflectionstore"
-	"github.com/stacklok/mecatl/internal/adapter/rules"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
@@ -595,22 +596,20 @@ type Config struct {
 	// SECOND memory.Store under UserModelDir (or the conventional
 	// <xdg>/mecatl/usermodel). NoUserModel disables it entirely (--no-user-model).
 	//
-	// UserModelReview is the temporary compatibility alias for LearningMode Auto.
-	// Automatic completions are signal-gated and admitted to the Build-owned staged
-	// reflection coordinator; they no longer run a direct-writing child reviewer.
-	// UserModelReviewInterval is the process-wide eligible-completion debounce
-	// (0/1 = admit every signalled completion).
+	// LearningAdmissionInterval is the process-wide eligible-completion debounce
+	// for automatic learning (0/1 = admit every signalled completion).
+	// LearningAdmissionIntervalSet distinguishes an explicit CLI zero from the
+	// default so operator settings retain the documented precedence.
 	// UserModelConsolidateInterval independently authorizes a process-wide
 	// dream.Consolidator scoped to the "user/" namespace (0 = off); learning.mode
 	// controls completed-trajectory observation and does not gate this schedule.
 	UserModelDir                 string
 	NoUserModel                  bool
-	UserModelReview              bool
-	UserModelReviewInterval      int
+	LearningAdmissionInterval    int
+	LearningAdmissionIntervalSet bool
 	UserModelConsolidateInterval time.Duration
 	// LearningMode is the effective optional completion-observation policy. Off is
-	// the zero/default. The legacy UserModelReview flag projects to Auto for one
-	// compatibility window; it now follows the same staged/convergent path.
+	// the zero/default.
 	LearningMode learning.Mode
 	// SkillActivationPolicy controls automatic learned-skill assurance. Standard
 	// app Auto defaults an omitted value to validated; engine Pipeline zero remains evaluated.
@@ -2422,9 +2421,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if store == nil {
 				return false, "convergence-capable memory target is unavailable"
 			}
-			if _, ok := store.(tool.MemoryConvergenceStore); !ok {
-				return false, "memory target does not support atomic convergence"
-			}
 			return true, ""
 		},
 		ReflectSession: func(ctx context.Context, sess *session.Session) (server.ReflectionReceipt, error) {
@@ -2466,7 +2462,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				return server.ReflectionReceipt{}, errors.New("reflection is not configured")
 			}
 			stop, _ := sess.StopReason()
-			trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
+			trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.UsageFor(session.UsageKindMain), sess.Conversation.Messages)
 			trajectory.RunID = sess.RunID()
 			trajectory.Principal = sess.Owner.Clone()
 			trajectory.Kind = sess.Kind
@@ -3245,7 +3241,7 @@ func sessionEngineFactoryWithTools(
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, assets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
-		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmission, buildProcedureProcessor(learningCfg, assets)), assets.reflectionLifecycle)
+		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmissionGate, buildProcedureProcessor(learningCfg, assets)), assets.reflectionLifecycle)
 		deps.Catalog = cat
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
@@ -4154,18 +4150,18 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// no-op at any non-auto posture or with no checker, so yolo/strict/trusted
 	// and the un-knobbed auto stay byte-identical.
 	sharedPolicy := escapePolicyForConfig(cfg, reg, provider, policy)
-	var learningAdmission *learningAdmission
+	var learningAdmissionGate *learningAdmissionGate
 	if cfg.operatorLearningMode != learning.Off {
-		learningAdmission = newLearningAdmission(cfg.UserModelReviewInterval)
+		learningAdmissionGate = newLearningAdmissionGate(cfg.LearningAdmissionInterval)
 	}
-	assets.learningAdmission = learningAdmission
+	assets.learningAdmissionGate = learningAdmissionGate
 	cfg.attemptRepository = assets.attemptRepository
 	cfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 	cfg.learningSourceStore = store
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
-	deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(cfg, provider, reg.ResolvedDefaultModel(), userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmission, buildProcedureProcessor(cfg, assets)), assets.reflectionLifecycle)
+	deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(cfg, provider, reg.ResolvedDefaultModel(), userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmissionGate, buildProcedureProcessor(cfg, assets)), assets.reflectionLifecycle)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
 	// SHARED engine too — the SAME wiring the per-session factory applies
@@ -4194,7 +4190,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
 	// engine/agent.buildRequest (issue #462 review). The shared engine's
 	// catalog/prompt are built once from server config and may advertise Shell a
-	// per-run Environment override (ACP/editor, --no-bash) cannot serve; buildRequest
+	// per-run Environment override (ACP/editor, --no-shell) cannot serve; buildRequest
 	// drops the Shell spec and appends the shell-less clause to the volatile suffix
 	// when env.CommandRunner() == nil, so a no-Shell deployment AND an ACP override
 	// converge at the single capability-truth point. Baking it into the cache-stable
@@ -4802,7 +4798,7 @@ func logBuildConfigFacts(cfg Config) {
 		// here (the gated builder
 		// buildSandboxedCommandRunner runs per session AND per catalog assembly, so
 		// it must not log). Emitted only when the missing trust is the OPERATIVE
-		// cause — --no-bash / an empty shell already get their own narration via
+		// cause — --no-shell / an empty shell already get their own narration via
 		// registerCoreTools.
 		facts = append(facts, diagFact{
 			level: port.LevelInfo,
@@ -5373,13 +5369,13 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 		for _, t := range tools.NoFS() {
 			cat.MustRegister(t)
 		}
-		cat.MustRegister(tools.NewWebSearchTool(searchProvider))
+		cat.MustRegister(refsearch.NewWebSearchTool(searchProvider))
 		return
 	}
 	for _, t := range tools.All() {
 		cat.MustRegister(t)
 	}
-	cat.MustRegister(tools.NewWebSearchTool(searchProvider))
+	cat.MustRegister(refsearch.NewWebSearchTool(searchProvider))
 	if runner := buildCommandRunner(cfg); runner != nil {
 		// The AGENT-loop Shell tool (not the fstools one): foreground byte-identical,
 		// plus the `background: true` detach over the run's child registry. Its
@@ -6083,19 +6079,6 @@ func registerSkillDraft(ctx context.Context, cfg Config, cat *tool.Catalog, exis
 	}
 }
 
-// startMemoryConsolidation launches the dream consolidator on a background
-// goroutine when MemoryConsolidateInterval is positive. It shares ctx (so the loop
-// exits on shutdown) and the same LLM provider as the agent.
-// startMemoryConsolidation preserves the direct helper used by focused tests.
-// Production Build uses startMemoryConsolidator to share the instance with manual review.
-func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) {
-	if store == nil {
-		startMemoryConsolidator(ctx, cfg, nil)
-		return
-	}
-	startMemoryConsolidator(ctx, cfg, dream.New(store, provider, dream.Config{Model: cfg.Model}))
-}
-
 func startMemoryConsolidator(ctx context.Context, cfg Config, cons *dream.Consolidator) {
 	// No caller: the consolidator runs as the explicit system principal
 	// (ADR 0204 decision 7).
@@ -6135,7 +6118,7 @@ func logConsolidationReport(ctx context.Context, diag port.Diagnostics, name str
 // explicitly sets UserModelConsolidateInterval positive (default 0 = off). This
 // maintenance authorization is independent of learning.mode, which controls only
 // completed-trajectory observation; a project learning ceiling therefore cannot
-// suppress the cross-project service. It mirrors startMemoryConsolidation but with
+// suppress the cross-project service. It uses the dream consolidator with
 // dream.Config{Prefix: "user/"} so it only ever touches user-model entries, never
 // project memory. It shares ctx and the agent's provider. It returns true when all
 // interval/store/provider prerequisites are present and a consolidator was started.
@@ -6173,7 +6156,7 @@ func startUserModelConsolidator(ctx context.Context, cfg Config, cons *dream.Con
 // buildLearningObserver retains the pre-Chunk-C composition helper for compatibility
 // tests around the exported direct-writing UserModelReviewer. Standard Build never calls
 // it; buildReflectionObserver is the only production completed-trajectory wiring.
-func buildLearningObserver(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider, userModelStore tool.MemoryStore, admission *learningAdmission) learning.Observer {
+func buildLearningObserver(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider, userModelStore tool.MemoryStore, admission *learningAdmissionGate) learning.Observer {
 	switch cfg.LearningMode {
 	case learning.Off:
 		return nil
@@ -6393,7 +6376,7 @@ func newCommandRunnerForRoot(cfg Config, root string, env []string, failure stri
 // here — this builder runs per session/per assembly; the build-once INFO is emitted
 // in logBuildConfigFacts.
 // sandboxedShellAvailable is the ONE gate for the SANDBOXED (read-only worktree)
-// child shell: Shell is enabled (not --no-bash, a non-empty shell) AND the workspace
+// child shell: Shell is enabled (not --no-shell, a non-empty shell) AND the workspace
 // is trusted (the operator vouches for the repo's `.git` — issue #40). It is the
 // boolean form of buildSandboxedCommandRunner's gate and the single expression every
 // child runner builder + matching Shell catalog registration gate consults, so the
@@ -6407,7 +6390,7 @@ func sandboxedShellAvailable(cfg Config) bool {
 }
 
 // forceCopyShellAvailable is the ONE gate for the FORCE-COPY (mutating fork) child
-// shell: Shell is enabled (not --no-bash, a non-empty shell), with NO trust gate —
+// shell: Shell is enabled (not --no-shell, a non-empty shell), with NO trust gate —
 // the deliberate asymmetry (issue #40). A force-copy fork is created by a pure FS
 // copy with NO fork-time git invocation (the worktree-checkout RCE the sandboxed
 // gate closes cannot fire), so the trust gate does not apply; the run-time git over
@@ -6488,13 +6471,13 @@ func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 
 // subagentShellUntrustedReason returns the model/operator-facing reason the
 // subagent/member shell is withheld when the SUBAGENT-SHELL grant is the OPERATIVE
-// cause, and "" otherwise: --no-bash / an empty shell disable the shell regardless
+// cause, and "" otherwise: --no-shell / an empty shell disable the shell regardless
 // of trust (and must NOT read as an untrust problem), and a trusted workspace has no
 // note. It is the single wording source for the Subagent Spec
 // note (WithSubagentShellDisabledNote) so the model-facing text and the gate
 // cannot drift.
 func subagentShellUntrustedReason(cfg Config) string {
-	// --no-bash / an empty shell disable the shell regardless of trust (and must
+	// --no-shell / an empty shell disable the shell regardless of trust (and must
 	// NOT read as an untrust problem), and a trusted workspace has no note.
 	if !forceCopyShellAvailable(cfg) || cfg.TrustProject {
 		return ""
@@ -6795,10 +6778,10 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 	cat := classified.catalog
 	workspace := classification(server.KindExempt,
 		"bound to the authorized child workspace and constrained by its isolation and tool permissions")
-	classified.mustRegister(tools.ReadTool{}, workspace)
-	classified.mustRegister(tools.ListDirTool{}, workspace)
-	classified.mustRegister(tools.GrepTool{}, workspace)
-	classified.mustRegister(tools.GlobTool{}, workspace)
+	classified.mustRegister(fstools.ReadTool{}, workspace)
+	classified.mustRegister(fstools.ListDirTool{}, workspace)
+	classified.mustRegister(fstools.GrepTool{}, workspace)
+	classified.mustRegister(fstools.GlobTool{}, workspace)
 	if runner != nil {
 		// agent.NewShellTool, NOT the fstools one: the child's Shell reaches its
 		// OWN run's child registry through the dispatch seam, so `background:
@@ -6815,18 +6798,18 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Ca
 	classified := newClassifiedCatalog()
 	workspace := classification(server.KindExempt,
 		"bound to the authorized child workspace and constrained by its isolation and tool permissions")
-	for _, t := range []tool.Tool{tools.ReadTool{}, tools.ListDirTool{}, tools.GrepTool{}, tools.GlobTool{}} {
+	for _, t := range []tool.Tool{fstools.ReadTool{}, fstools.ListDirTool{}, fstools.GrepTool{}, fstools.GlobTool{}} {
 		classified.mustRegister(t, workspace)
 	}
 	if runner != nil {
 		classified.mustRegister(agent.NewShellTool(), workspace)
 		classified.mustRegister(agent.NewShellStatusTool(), workspace)
 	}
-	classified.mustRegister(tools.EditTool{}, workspace)
-	classified.mustRegister(tools.WriteTool{}, workspace)
-	classified.mustRegister(tools.CopyTool{}, workspace)
-	classified.mustRegister(tools.MoveTool{}, workspace)
-	classified.mustRegister(tools.RemoveTool{}, workspace)
+	classified.mustRegister(fstools.EditTool{}, workspace)
+	classified.mustRegister(fstools.WriteTool{}, workspace)
+	classified.mustRegister(fstools.CopyTool{}, workspace)
+	classified.mustRegister(fstools.MoveTool{}, workspace)
+	classified.mustRegister(fstools.RemoveTool{}, workspace)
 	mustValidateClassifiedCatalog(classified, surface)
 	return classified.catalog
 }
@@ -7266,7 +7249,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		agent.WithSubagentStore(store),
 		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
 	}
-	// Issue #40: when the WORKSPACE-TRUST gate (not --no-bash / an empty shell) is what
+	// Issue #40: when the WORKSPACE-TRUST gate (not --no-shell / an empty shell) is what
 	// nil'd the runner, tell the model honestly via the Spec — otherwise the description
 	// keeps promising the isolated-worktree shell and the model delegates build/test/git
 	// work the child cannot perform. The other disable causes keep the historical
@@ -7960,7 +7943,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// A read-only def-member that ended up with Shell is worktree-isolated.
 			if allowShell {
 				for _, name := range names {
-					if name == tools.ShellToolName {
+					if name == tool.ShellToolName {
 						isolateReadOnly = true
 						break
 					}
@@ -8050,7 +8033,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 
 func registerScopedMemberTool(classified *classifiedCatalog, name string, base map[string]tool.Tool, spec agent.MemberSpec, runner, mutatingRunner tool.CommandRunner) {
 	registered := base[name]
-	if name == tools.ShellToolName {
+	if name == tool.ShellToolName {
 		if memberShellRunner(spec.Mutating, runner, mutatingRunner) == nil {
 			return
 		}
@@ -8083,16 +8066,16 @@ func registerScopedMemberTool(classified *classifiedCatalog, name string, base m
 func registerDefaultMemberTools(classified *classifiedCatalog, spec agent.MemberSpec, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool) (isolateReadOnly bool) {
 	workspace := classification(server.KindExempt,
 		"bound to the authorized member workspace and constrained by member isolation and tool permissions")
-	classified.mustRegister(tools.ReadTool{}, workspace)
-	classified.mustRegister(tools.ListDirTool{}, workspace)
-	classified.mustRegister(tools.GrepTool{}, workspace)
-	classified.mustRegister(tools.GlobTool{}, workspace)
+	classified.mustRegister(fstools.ReadTool{}, workspace)
+	classified.mustRegister(fstools.ListDirTool{}, workspace)
+	classified.mustRegister(fstools.GrepTool{}, workspace)
+	classified.mustRegister(fstools.GlobTool{}, workspace)
 	if spec.Mutating {
-		classified.mustRegister(tools.EditTool{}, workspace)
-		classified.mustRegister(tools.WriteTool{}, workspace)
-		classified.mustRegister(tools.CopyTool{}, workspace)
-		classified.mustRegister(tools.MoveTool{}, workspace)
-		classified.mustRegister(tools.RemoveTool{}, workspace)
+		classified.mustRegister(fstools.EditTool{}, workspace)
+		classified.mustRegister(fstools.WriteTool{}, workspace)
+		classified.mustRegister(fstools.CopyTool{}, workspace)
+		classified.mustRegister(fstools.MoveTool{}, workspace)
+		classified.mustRegister(fstools.RemoveTool{}, workspace)
 	}
 	if memberShell := memberShellRunner(spec.Mutating, runner, mutatingRunner); memberShell != nil && (spec.Mutating || roIsolationAvailable) {
 		classified.mustRegister(agent.NewShellTool(), workspace)
@@ -8364,8 +8347,7 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 // exemption rather than leaving the two notes to be reconciled by the reader.
 //
 // The tool names are NOT enumerated here: the catalog advertises exactly the
-// operations it registered, and a prose list goes stale against a base-only store
-// (the lifecycle trio is conditional on tool.MemoryLifecycleStore) or a
+// operations it registered, and a prose list goes stale against a
 // single-family deployment. The "durable memory store" substring is a stable test key.
 const memoryPostureLead = "You have a durable memory store holding facts saved earlier. When asked " +
 	"what you remember, CALL the memory retrieval tools rather than guessing — read what was actually " +

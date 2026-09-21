@@ -298,19 +298,21 @@ func learningSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("LearningSection", permconfig.LearningSection{}, docs)
 	fields[0].ExampleValue = "off"
 	fields[0].Default = "off"
-	fields[1].ExampleValue = "balanced"
-	fields[1].Default = "balanced"
+	fields[1].ExampleValue = "10"
+	fields[1].Default = "1"
+	fields[2].ExampleValue = "balanced"
+	fields[2].Default = "balanced"
 	skills := fieldsOf("LearningSkillsSection", permconfig.LearningSkillsSection{}, docs)
 	skills[0].ExampleValue = "validated"
 	skills[0].Default = "validated when mode is explicitly auto; evaluated otherwise"
-	fields[2].Nested = skills
+	fields[3].Nested = skills
 	automatic := fieldsOf("LearningAutomaticSection", permconfig.LearningAutomaticSection{}, docs)
 	automatic[0].Type, automatic[1].Type = configDurationType, configDurationType
 	defaults := []string{"10m", "1h", "8", "100000", "4", "50000"}
 	for i := range automatic {
 		automatic[i].ExampleValue, automatic[i].Default = defaults[i], defaults[i]
 	}
-	fields[3].Nested = automatic
+	fields[4].Nested = automatic
 	return &Subtree{
 		Key: "learning", Tier: TierProject,
 		Doc:          "Optional completed-trajectory observation policy. Off means no automatic completed-trajectory reflection or review; project settings may only tighten the operator ceiling off < review < auto. Separately configured consolidation schedules are independent.",

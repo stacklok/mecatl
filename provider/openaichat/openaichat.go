@@ -255,7 +255,7 @@ func (*Provider) Capabilities() port.ProviderCapabilities {
 // Compile-time assertion that Provider satisfies the port.
 var _ port.LLMProvider = (*Provider)(nil)
 
-// openaichatStreamError wraps a terminal stream error as port.PermanentError so
+// openaichatStreamError carries typed retry disposition for terminal stream errors so
 // the llmresilience layer can distinguish permanent client-side rejections (4xx
 // other than 408/429) from transient failures. It carries the SDK error for
 // Unwrap and a human-readable message for Error().
@@ -285,18 +285,15 @@ func (e *openaichatStreamError) ProviderErrorCorrelationKind() string {
 }
 func (e *openaichatStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
-// Permanent implements port.PermanentError. The error is permanent when the
-// message signals a context-window overflow, or when the status is a known
-// non-retryable 4xx. Status 0 and retryable codes (408, 429, 5xx) are NOT
-// permanent — fail-open.
-func (e *openaichatStreamError) Permanent() bool {
-	if isContextOverflowMessage(e.msg) {
-		return true
+// RetryDisposition implements port.RetryDispositionError.
+func (e *openaichatStreamError) RetryDisposition() port.RetryDisposition {
+	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+		return port.RetryDispositionPermanent
 	}
-	if e.status != 0 && !retryableStatus(e.status) {
-		return true
+	if retryableStatus(e.status) {
+		return port.RetryDispositionRetryable
 	}
-	return false
+	return port.RetryDispositionUnknown
 }
 
 // isContextOverflowMessage is duplicated from provider/openai/stream.go (separate

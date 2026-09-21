@@ -154,11 +154,12 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   > survey](../perf-measurement-survey.md) (the technique reference behind that
   > decision).
 - **SessionStore** — `memstore` (default, in-memory), `jsonlstore`
-  (one atomically replaced v2 current snapshot at
-  `<dir>/sid-v1/<versioned-token>.session.json`, with readable historical v1
-  `.session.jsonl` snapshots plus unchanged append-only `.tools.jsonl` and
-  `.events.jsonl` sidecars), and `grpcdriver.SessionStore` (a **remote store
-  driver** — see below). The v2 envelope contains bounded inventory metadata ahead
+  (one atomically replaced current snapshot at
+  `<dir>/sid-v2/<versioned-token>.session.json`, with append-only `.tools.jsonl`
+  and `.events.jsonl` sidecars in that same namespace), and
+  `grpcdriver.SessionStore` (a **remote store driver** — see below). Older
+  root-level and `sid-v1` artifacts are invisible and left untouched. The current
+  envelope contains bounded inventory metadata ahead
   of the complete `sessnap` payload plus logical modification time. Jsonlstore also
   maintains an adapter-private, atomically replaced metadata catalog containing only
   the session-discovery projection—never messages, tool arguments, or event content.
@@ -277,22 +278,16 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   Snapshot Save retains the weaker-capability behavior for an existing canonical family;
   EventLog append is unavailable without both file and directory sync, and Delete,
   retention, and destructive/move operations fail closed without directory sync.
-  ToolCall avoids forcing legacy migration on such a filesystem: it appends to the
-  readable sidecar or the side matching the authoritative snapshot, attempts every
-  available sync, and may leave an unsynced or partially synced best-effort record.
-  Sidecars opened for append and legacy files selected for migration are tightened
-  through validated no-follow descriptors to `0600`. Failures before rename preserve
-  the prior snapshot; a failure after rename
-  is loud while the new snapshot remains authoritative.
-  The logical session id is an opaque valid-UTF-8 string
-  stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename token is not
-  an operator API. The owner-only `sid-v1/` directory keeps canonical names
-  disjoint from legacy root-level names. Reads prefer verified v2, then canonical
-  v1, then an ownership-verified legacy family. A legacy lossy-name family is
-  used only when its latest snapshot embeds the
-  exact requested id, and a subsequent write migrates that verified family
-  sidecars-first/snapshot-last without rewriting its bytes. Mismatched legacy
-  files are never read or deleted.
+  ToolCall appends within the current namespace, attempts every available sync,
+  and may leave an unsynced or partially synced best-effort record. Sidecars are
+  opened through validated no-follow descriptors at `0600`. Failures before rename
+  preserve the prior snapshot; a failure after rename is loud while the new
+  snapshot remains authoritative. The logical session id is an opaque valid-UTF-8
+  string stored inside each snapshot; the bounded hash-suffixed `sid-v2-` filename
+  token is not an operator API. The owner-only `sid-v2/` directory keeps current
+  names disjoint from older namespaces. Reads and discovery inspect only `sid-v2`;
+  malformed current artifacts fail closed, while older artifacts remain untouched
+  and cannot block creating the same logical ID in the current namespace.
   All serialize via **`sessnap`** (`engine/adapter/sessnap`): a `Snapshot` DTO
   that round-trips a `Session` by driving the public state machine on restore
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It

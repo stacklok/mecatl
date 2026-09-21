@@ -19,14 +19,11 @@ import (
 )
 
 const (
-	metadataIndexStateKey  = "mecatl:session-metadata:state"
+	metadataIndexStateKey  = storeKeyPrefix + "session-metadata:state"
 	metadataIndexReady     = "redis-metadata-index/1"
-	metadataIndexStale     = "redis-metadata-index/stale"
-	metadataGlobalIndexKey = "mecatl:session-metadata:index:all"
-	// metadataOwnerIndexBase is concatenated with an owner scope INSIDE each
-	// mutating Lua script below (saveMetadataScript/deleteMetadataScript/
-	// conditionalDeleteMetadataScript here, adoptMetadataScript in
-	// migration.go) rather than being declared in the script's KEYS[] array.
+	metadataGlobalIndexKey = storeKeyPrefix + "session-metadata:index:all"
+	// metadataOwnerIndexBase is concatenated with an owner scope inside each
+	// mutating Lua script below.
 	// That is fine for a single-node/Sentinel redis.Client (the only client
 	// this package constructs today) but is a Redis CLUSTER landmine: a
 	// cluster mandates every key a script touches be named in KEYS[] for
@@ -35,21 +32,10 @@ const (
 	// cluster. Adding Cluster support later is NOT a client-swap — each of
 	// these four scripts needs hash-tagged keys or KEYS-array key building
 	// first.
-	metadataOwnerIndexBase = "mecatl:session-metadata:index:owner:"
-	metadataGenerationKey  = "mecatl:session-metadata:generations"
-	// metadataRebuildGenerationKey's INCR is the load-bearing half of the
-	// exact-coverage proof in migration.go's verify*Coverage functions:
-	// "generation unchanged across the verification window ⇒ no membership
-	// drift" holds ONLY because every mutator of metadataGlobalIndexKey/an
-	// owner index either INCRs this key in the same script (saveMetadataScript,
-	// deleteMetadataScript, conditionalDeleteMetadataScript) or is a
-	// deliberate, reviewed exemption (migration.go's adoptMetadataScript,
-	// whose writes happen under the exclusive fenced migration lock before
-	// the verification window starts). If a FIFTH mutator of those sorted
-	// sets is ever added, it must either INCR this key too or be added to
-	// this exemption list — otherwise the coverage proof silently degrades
-	// to "probably fine."
-	metadataRebuildGenerationKey = "mecatl:session-metadata:rebuild-generation"
+	metadataOwnerIndexBase = storeKeyPrefix + "session-metadata:index:owner:"
+	metadataGenerationKey  = storeKeyPrefix + "session-metadata:generations"
+	// metadataRebuildGenerationKey is advanced by every metadata index mutator.
+	metadataRebuildGenerationKey = storeKeyPrefix + "session-metadata:rebuild-generation"
 	metadataGlobalScope          = "redis-v1:all"
 	metadataOwnerScopeBase       = "redis-v1:owner:"
 	metadataNilOwnerScope        = "redis-v1:owner:none"
@@ -69,39 +55,25 @@ func (st *Store) observeMetadataWork(kind metadataWorkKind) {
 	}
 }
 
-// initializeMetadataIndex distinguishes a new indexable store from a legacy
-// store without reading any snapshot payload. Legacy records remain loadable,
-// but bounded inventory is honestly unavailable until an explicit migration
-// has saved every record through the current format.
+// initializeMetadataIndex validates or creates the marker for the current
+// namespace. Keys outside that namespace are deliberately invisible.
 func initializeMetadataIndex(ctx context.Context, client redis.UniversalClient) error {
 	state, err := client.Get(ctx, metadataIndexStateKey).Result()
 	if err == nil {
-		if state != metadataIndexReady && state != metadataIndexStale {
-			return fmt.Errorf("redisstore: unknown metadata index state %q", state)
+		if state != metadataIndexReady {
+			return fmt.Errorf("redisstore: unsupported current metadata index state %q", state)
 		}
 		return nil
 	}
 	if !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("redisstore: read metadata index state: %w", err)
 	}
-
-	state = metadataIndexReady
-	var cursor uint64
-	for {
-		keys, next, scanErr := client.Scan(ctx, cursor, sessionKeyPrefix+"*", 1).Result()
-		if scanErr != nil {
-			return fmt.Errorf("redisstore: inspect legacy metadata index: %w", scanErr)
-		}
-		if len(keys) > 0 {
-			state = metadataIndexStale
-			break
-		}
-		if next == 0 {
-			break
-		}
-		cursor = next
+	if exists, scanErr := keyPrefixExists(ctx, client, sessionKeyPrefix); scanErr != nil {
+		return fmt.Errorf("redisstore: inspect current session metadata index: %w", scanErr)
+	} else if exists {
+		return fmt.Errorf("redisstore: current session metadata index is missing")
 	}
-	if err := client.SetNX(ctx, metadataIndexStateKey, state, 0).Err(); err != nil {
+	if err := client.SetNX(ctx, metadataIndexStateKey, metadataIndexReady, 0).Err(); err != nil {
 		return fmt.Errorf("redisstore: initialize metadata index state: %w", err)
 	}
 	return nil

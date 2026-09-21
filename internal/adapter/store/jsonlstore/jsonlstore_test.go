@@ -40,7 +40,7 @@ func newStore(t *testing.T) (*jsonlstore.Store, string) {
 // wrong both were). Keep it hand-written, and if it ever disagrees with the
 // package, decide which one is right rather than deleting this.
 //
-// The scheme: "sid-v1-" + up to 40 sanitized chars of the id (anything outside
+// The scheme: "sid-v2-" + up to 40 sanitized chars of the id (anything outside
 // [A-Za-z0-9-_] becomes '_', "id" when nothing survives) + "-" + 32 hex chars
 // of SHA-256 over the whole id.
 func canonicalFamilyPath(dir string, id session.SessionID, suffix string) string {
@@ -62,8 +62,8 @@ func canonicalFamilyPath(dir string, id session.SessionID, suffix string) string
 		prefix = "id"
 	}
 	sum := sha256.Sum256([]byte(id))
-	token := "sid-v1-" + prefix + "-" + hex.EncodeToString(sum[:16])
-	return filepath.Join(dir, "sid-v1", token+suffix)
+	token := "sid-v2-" + prefix + "-" + hex.EncodeToString(sum[:16])
+	return filepath.Join(dir, "sid-v2", token+suffix)
 }
 
 func canonicalSnapshotPath(dir string, id session.SessionID) string {
@@ -138,7 +138,7 @@ func TestNewCreatesDirAt0700(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o700 {
 		t.Errorf("store dir mode = %o, want 0700 (owner-only; the store holds plaintext transcripts)", perm)
 	}
-	canonicalInfo, err := os.Stat(filepath.Join(dir, "sid-v1"))
+	canonicalInfo, err := os.Stat(filepath.Join(dir, "sid-v2"))
 	if err != nil {
 		t.Fatalf("Stat canonical dir: %v", err)
 	}
@@ -373,27 +373,26 @@ func TestListDecodesRealIDAndMtime(t *testing.T) {
 	}
 }
 
-// TestListSkipsUndecodableFiles pins the best-effort posture: a corrupt or
-// empty .session.jsonl (whose Load would fail identically) is skipped, not a
-// List error.
-func TestListSkipsUndecodableFiles(t *testing.T) {
+// TestListIgnoresOldSnapshotArtifacts pins current-only discovery: old files
+// are invisible and remain untouched.
+func TestListIgnoresOldSnapshotArtifacts(t *testing.T) {
 	ctx := context.Background()
 	st, dir := newStore(t)
 	if err := st.Save(ctx, driven(t)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "junk.session.jsonl"), []byte("{not json\n"), 0o644); err != nil {
-		t.Fatalf("write junk: %v", err)
+	path := filepath.Join(dir, "old.session.jsonl")
+	original := []byte("{not json\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("write old artifact: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "empty.session.jsonl"), nil, 0o644); err != nil {
-		t.Fatalf("write empty: %v", err)
+	rows, err := st.List(ctx)
+	if err != nil || len(rows) != 1 || rows[0].ID != "sess-1" {
+		t.Fatalf("List = (%+v, %v), want current session only", rows, err)
 	}
-	entries, err := st.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(entries) != 1 || entries[0].ID != "sess-1" {
-		t.Errorf("List = %+v, want exactly the one decodable session", entries)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("old artifact changed: bytes=%q err=%v", got, err)
 	}
 }
 

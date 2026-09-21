@@ -4,6 +4,10 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## Unreleased
+
+- **Breaking (alpha):** use canonical title metadata, typed approval verdicts, typed event usage and retry disposition, exact-run controls, and compatibility-info capabilities; remove storage migration and deprecated watch aliases.
+
 ## [0.3.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.3.0)
 
 - fix(mcp): authorize client-registered MCP tools in session capability set (#1627) ([`2f33adf`](https://github.com/stacklok/mecatl/commit/2f33adfc9cc2a8aa3a3502eff9a7216ab71fc6cf))

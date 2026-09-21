@@ -450,9 +450,11 @@ Enable JSONL persistence by pointing `--store-dir` at a directory:
 mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
-The store writes snapshots, tool-call audit, and events beneath `sid-v1`.
-In-flight sessions recover from their snapshot. Older histories migrate on the
-next write. Files are plaintext and owner-only; do not edit or share them. See
+The store writes current snapshots, tool-call audit, events, inventory, and
+lineage beneath `sid-v2`. Older root-level and `sid-v1` artifacts are left
+untouched and are not listed or loaded; a session ID may be created afresh in
+the current namespace. Files are plaintext and owner-only; do not edit or share
+them. See
 [Session store](/building/extension-points/session-store.md) for the layout and
 durability guarantees.
 

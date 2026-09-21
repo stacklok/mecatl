@@ -240,7 +240,11 @@ describe("run control transports", () => {
               controlCalls += 1;
               return { messageId: "", outcome: SteerOutcome.NONE_PENDING, runId };
             },
-            getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: [] }),
+            getCompatibilityInfo: () => ({
+              apiMajor: 1,
+              capabilities: { shell: true },
+              features: ["unrelated_feature"],
+            }),
             getSession: () => ({ session: { sessionId } }),
             resolveRunAsk: () => {
               controlCalls += 1;

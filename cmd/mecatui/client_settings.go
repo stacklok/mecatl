@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
-	"github.com/goccy/go-yaml/parser"
 
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
@@ -96,15 +95,6 @@ type statusCommand struct {
 	PassthroughEnv []string `yaml:"passthrough_env"`
 }
 
-// legacySettings mirrors the keymap: key out of the SERVER-owned operator-tier
-// settings file (~/.config/mecatl/settings.yaml). That file is shared with
-// mecated and carries permissions:/guardrails:/models:/… sibling keys, so it
-// is decoded LENIENTLY (plain Unmarshal) — the legacy reader must tolerate
-// every server key, not reject them.
-type legacySettings struct {
-	Keymap map[string]string `yaml:"keymap"`
-}
-
 // clientSettingsPath is the single source of the client settings file
 // location: <XDG config base>/mecatui/settings.yaml. It returns "" when the
 // base is unresolvable (the caller then treats the file as absent).
@@ -117,9 +107,7 @@ func clientSettingsPath(env xdgconfig.ResolveEnv) string {
 }
 
 // splitChords splits a comma-separated chord value into trimmed chords,
-// skipping empties. Shared by the legacy and client keymap readers so both
-// parse the byte-compatible `keymap: {Action: "ctrl+a, ctrl+f12"}` format
-// identically.
+// skipping empties.
 func splitChords(val string) []string {
 	parts := make([]string, 0, 1)
 	for _, p := range strings.Split(val, ",") {
@@ -319,43 +307,6 @@ func validStatusSurfaceTemplates(value *statusSurfaceTemplates) bool {
 	return strings.TrimSpace(value.Full) != "" && strings.TrimSpace(value.Compact) != "" && strings.TrimSpace(value.Minimal) != ""
 }
 
-// readLegacyKeymap reads the keymap: key out of the SERVER-owned operator-tier
-// settings file (~/.config/mecatl/settings.yaml) — the DEPRECATED location.
-// The file is shared with mecated, so the decode is LENIENT (plain Unmarshal):
-// permissions:/guardrails:/models:/… sibling keys are tolerated and ignored.
-// An absent file (or unresolvable config base, or no keymap: key) returns
-// (nil, false, nil). The bool reports "the legacy file contributed a keymap"
-// and drives the deprecation WARN in applyKeyOverridesToDeps.
-func readLegacyKeymap() (map[string][]string, bool, error) {
-	cfgBase := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
-	if cfgBase == "" {
-		return nil, false, nil
-	}
-	path := filepath.Join(cfgBase, "mecatl", "settings.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
-	}
-	var s legacySettings
-	if err := yaml.Unmarshal(b, &s); err != nil {
-		// Parser failures and decode failures remain opaque: parser-rendered
-		// messages can contain YAML-derived content. A successful parse proves
-		// this is the historical wrong-keymap-shape path; otherwise it is syntax.
-		if _, parseErr := parser.ParseBytes(b, 0); parseErr != nil {
-			return nil, false, fmt.Errorf("parse %s: invalid YAML syntax (check the file's line structure)", path)
-		}
-		return nil, false, fmt.Errorf("parse %s: the keymap: key must be a mapping of action -> chord(s) (wrong type under keymap)", path)
-	}
-	out := splitKeymap(s.Keymap)
-	if out == nil {
-		return nil, false, nil
-	}
-	return out, true, nil
-}
-
 // mergeKeymaps returns a new map with b overlaying a (b wins on conflicts).
 func mergeKeymaps(a, b map[string][]string) map[string][]string {
 	if a == nil && b == nil {
@@ -374,34 +325,22 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 // applyKeyOverridesToDeps parses and validates CLI/YAML keymap overrides and applies them to deps.
 // Lives in package main to avoid adding imports to main.go; this file imports keymap.
 //
-// THREE layers merge PER ACTION (a higher layer rebinds only the actions it
+// TWO layers merge PER ACTION (a higher layer rebinds only the actions it
 // names), lowest to highest precedence:
 //
-//	legacy server file (~/.config/mecatl/settings.yaml, DEPRECATED — still
-//	    honoured, but a keymap: there fires a stderr deprecation WARN each
-//	    startup until the operator moves it)
-//	  < client file (~/.config/mecatui/settings.yaml, the client-owned home)
+//	client file (~/.config/mecatui/settings.yaml)
 //	  < CLI --keymap flags (highest).
 //
 // The merged map then goes through keymap.Parse + keymap.Validate unchanged:
 // an invalid override still fails startup.
-func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
-	legacyMap, legacySet, err := readLegacyKeymap()
+func applyKeyOverridesToDeps(cfg config, deps *ui.Deps) error {
+	clientMap, _, err := readClientKeymap()
 	if err != nil {
 		return err
 	}
-	clientMap := splitKeymap(settings.Keymap)
 	cliMap := keyOverridesFromConfig(cfg)
-	merged := mergeKeymaps(mergeKeymaps(legacyMap, clientMap), cliMap)
-	if legacySet {
-		// Deprecation WARN: a direct stderr line, NOT slog — the baseline-slog
-		// redirect (main.go installBaselineSlog) discards slog, and this runs
-		// BEFORE tea.NewProgram so the line lands in scrollback ahead of the
-		// alt-screen. XDG-relative paths, not a possibly-wrong absolute path.
-		fmt.Fprintln(os.Stderr, "mecatui: WARNING: the keymap: key in ~/.config/mecatl/settings.yaml is deprecated; move it to ~/.config/mecatui/settings.yaml (the client settings file). The legacy key still works but will be removed in a future release.")
-	}
+	merged := mergeKeymaps(clientMap, cliMap)
 	if cfg.debugKeymap {
-		fmt.Fprintf(os.Stderr, "mecatui keymap (legacy YAML): %v\n", legacyMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (client YAML): %v\n", clientMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (CLI): %v\n", cliMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (merged): %v\n", merged)

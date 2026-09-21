@@ -213,7 +213,6 @@ func TestGRPCConverseApproveSurfacedChildAsk(t *testing.T) {
 			if serr := stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{
 					AskId:   askID,
-					Allow:   true,
 					Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
 				}},
 			}); serr != nil {

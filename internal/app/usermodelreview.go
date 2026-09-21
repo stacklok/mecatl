@@ -7,20 +7,20 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
-// learningAdmission owns the process-wide legacy completion interval. Every
+// learningAdmissionGate owns the process-wide automatic-learning interval. Every
 // provider-specific reviewer shares one instance, so per-session engine creation
 // cannot reset throttling.
-type learningAdmission struct {
+type learningAdmissionGate struct {
 	interval int
 	mu       sync.Mutex
 	count    int
 }
 
-func newLearningAdmission(interval int) *learningAdmission {
-	return &learningAdmission{interval: interval}
+func newLearningAdmissionGate(interval int) *learningAdmissionGate {
+	return &learningAdmissionGate{interval: interval}
 }
 
-func (a *learningAdmission) admit() bool {
+func (a *learningAdmissionGate) admit() bool {
 	if a == nil {
 		return true
 	}
@@ -32,10 +32,10 @@ func (a *learningAdmission) admit() bool {
 
 type admittedObserver struct {
 	inner     learning.Observer
-	admission *learningAdmission
+	admission *learningAdmissionGate
 }
 
-func newAdmittedObserver(inner learning.Observer, admission *learningAdmission) learning.Observer {
+func newAdmittedObserver(inner learning.Observer, admission *learningAdmissionGate) learning.Observer {
 	return &admittedObserver{inner: inner, admission: admission}
 }
 

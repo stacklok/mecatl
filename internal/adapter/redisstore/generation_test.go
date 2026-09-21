@@ -13,7 +13,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	tcredis "github.com/stacklok/toolhive-core/redisconn"
 
-	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/filewatch"
@@ -395,58 +394,6 @@ func TestEventIteratorPinsGenerationThroughYield(t *testing.T) {
 	awaitClientClosed(t, old)
 }
 
-func TestMigrationFamilyAndFinalizeStayOnAcquiredGenerationAfterSwap(t *testing.T) {
-	oldServer := miniredis.RunT(t)
-	legacy := session.New("legacy-swap", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
-	blob, err := sessnap.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldServer.HSet(sessionKey(legacy.ID), fieldBlob, string(blob), fieldMtime, "1")
-	store, err := New(oldServer.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	bound, release, err := store.AcquireSessionMigrationJob(context.Background(), strings.Repeat("a", 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	newServer := miniredis.RunT(t)
-	if err := store.clients.swap(candidateClient(t, newServer)); err != nil {
-		t.Fatal(err)
-	}
-	inspection, err := store.InspectSessionMigration(bound)
-	if err != nil || len(inspection.Families) != 1 {
-		t.Fatalf("inspection = %+v, %v", inspection, err)
-	}
-	if reason, err := store.MigrateSessionFamily(bound, inspection.Families[0]); err != nil || reason != "" {
-		t.Fatalf("migration = %q, %v", reason, err)
-	}
-	job := port.SessionMigrationJob{ID: strings.Repeat("a", 32), Generation: inspection.Generation}
-	if err := store.SaveSessionMigrationJob(bound, job); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := store.LoadSessionMigrationJob(bound, job.ID)
-	if err != nil || loaded.ID != job.ID || loaded.Generation != job.Generation {
-		t.Fatalf("loaded migration job = %+v, %v", loaded, err)
-	}
-	if newServer.Exists(migrationJobKeyBase + job.ID) {
-		t.Fatal("migration job load/save escaped to replacement generation")
-	}
-	published, err := store.FinalizeSessionMigrationCoverage(bound, inspection.Generation, 1)
-	if err != nil || !published {
-		t.Fatalf("finalize = %v, %v", published, err)
-	}
-	if got, _ := oldServer.Get(metadataIndexStateKey); got != metadataIndexReady {
-		t.Fatalf("old generation state = %q", got)
-	}
-	if newServer.Exists(metadataIndexStateKey) || newServer.Exists(metadataGlobalIndexKey) {
-		t.Fatal("migration work escaped to replacement generation")
-	}
-}
-
 func TestSwappedBackendCoversStoreAndSchedulerOperationFamilies(t *testing.T) {
 	store, oldServer := newGenerationTestStore(t)
 	newServer := miniredis.RunT(t)
@@ -511,34 +458,4 @@ func TestSwappedBackendCoversStoreAndSchedulerOperationFamilies(t *testing.T) {
 	if newServer.Exists(sessionKey(sess.ID)) || newServer.Exists(eventsKey(sess.ID)) {
 		t.Fatal("store delete did not remove replacement-backend family")
 	}
-}
-
-func TestMigrationLockLifecyclePinsGeneration(t *testing.T) {
-	store, oldServer := newGenerationTestStore(t)
-	bound, release, err := store.AcquireSessionMigrationJob(context.Background(), "0123456789abcdef0123456789abcdef")
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := store.testClient()
-	newServer := miniredis.RunT(t)
-	if err := store.clients.swap(candidateClient(t, newServer)); err != nil {
-		t.Fatal(err)
-	}
-	if err := old.Ping(context.Background()).Err(); err != nil {
-		t.Fatalf("migration lock did not retain its generation: %v", err)
-	}
-	if err := store.CheckSessionMigrationJobOwnership(bound); err != nil {
-		t.Fatalf("ownership check did not use acquired generation: %v", err)
-	}
-	job := port.SessionMigrationJob{ID: "0123456789abcdef0123456789abcdef"}
-	if err := store.SaveSessionMigrationJob(bound, job); err != nil {
-		t.Fatalf("migration mutation did not use acquired generation: %v", err)
-	}
-	if !oldServer.Exists(migrationJobKeyBase+job.ID) || newServer.Exists(migrationJobKeyBase+job.ID) {
-		t.Fatal("migration checkpoint did not stay on acquired generation")
-	}
-	if err := release(); err != nil {
-		t.Fatal(err)
-	}
-	awaitClientClosed(t, old)
 }

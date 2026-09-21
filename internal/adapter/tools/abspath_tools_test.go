@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
@@ -38,7 +39,7 @@ func TestAbsoluteInRootThroughRealTools(t *testing.T) {
 	root := ws.Root()
 
 	// 1. Write a file by RELATIVE path.
-	res := exec(t, WriteTool{}, call(t, "Write", map[string]any{
+	res := exec(t, fstools.WriteTool{}, call(t, "Write", map[string]any{
 		"path": "src/main.go", "content": "package main\nvar A = 1\n",
 	}), ws)
 	if res.IsError {
@@ -47,7 +48,7 @@ func TestAbsoluteInRootThroughRealTools(t *testing.T) {
 
 	// 2. Read it back by its ABSOLUTE in-root path — line-numbered content returns.
 	abs := filepath.Join(root, "src", "main.go")
-	res = exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": abs}), ws)
+	res = exec(t, fstools.ReadTool{}, call(t, "Read", map[string]any{"path": abs}), ws)
 	if res.IsError {
 		t.Fatalf("Read(absolute): %s", res.Content)
 	}
@@ -56,7 +57,7 @@ func TestAbsoluteInRootThroughRealTools(t *testing.T) {
 	}
 
 	// 3. Read by absolute then Edit by absolute (old_string → new_string) — lands.
-	res = exec(t, EditTool{}, call(t, "Edit", map[string]any{
+	res = exec(t, fstools.EditTool{}, call(t, "Edit", map[string]any{
 		"path": abs, "old_string": "var A = 1", "new_string": "var A = 2",
 	}), ws)
 	if res.IsError {
@@ -73,8 +74,8 @@ func TestAbsoluteInRootThroughRealTools(t *testing.T) {
 	// 4. Cross-form: Read by RELATIVE, Edit by ABSOLUTE — the read-before-edit
 	//    invariant MUST hold (the real-loop analog of the ledger unit test, and
 	//    the one most likely to silently break).
-	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "src/main.go"}), ws)
-	res = exec(t, EditTool{}, call(t, "Edit", map[string]any{
+	exec(t, fstools.ReadTool{}, call(t, "Read", map[string]any{"path": "src/main.go"}), ws)
+	res = exec(t, fstools.EditTool{}, call(t, "Edit", map[string]any{
 		"path": abs, "old_string": "var A = 2", "new_string": "var A = 3",
 	}), ws)
 	if res.IsError {
@@ -84,14 +85,14 @@ func TestAbsoluteInRootThroughRealTools(t *testing.T) {
 	// 5. Write a brand-NEW file by its absolute in-root path (no prior relative
 	//    write) — exercises resolveInRoot's not-yet-existing-leaf ancestor walk.
 	newAbs := filepath.Join(root, "newdir", "created.go")
-	res = exec(t, WriteTool{}, call(t, "Write", map[string]any{
+	res = exec(t, fstools.WriteTool{}, call(t, "Write", map[string]any{
 		"path": newAbs, "content": "package newdir\n",
 	}), ws)
 	if res.IsError {
 		t.Fatalf("Write(absolute new leaf): %s", res.Content)
 	}
 	// Read it back by relative.
-	res = exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "newdir/created.go"}), ws)
+	res = exec(t, fstools.ReadTool{}, call(t, "Read", map[string]any{"path": "newdir/created.go"}), ws)
 	if res.IsError {
 		t.Fatalf("Read(relative after absolute Write of new leaf): %s", res.Content)
 	}
@@ -102,7 +103,7 @@ func TestAbsoluteInRootThroughRealTools(t *testing.T) {
 	// 6. After writing by absolute, Glob by a relative pattern must surface the
 	//    file under its RELATIVE name — pins that absolute-path writes land at the
 	//    relative-form location Glob/Grep enumerate.
-	res = exec(t, GlobTool{}, call(t, "Glob", map[string]any{"pattern": "**/*.go"}), ws)
+	res = exec(t, fstools.GlobTool{}, call(t, "Glob", map[string]any{"pattern": "**/*.go"}), ws)
 	if res.IsError {
 		t.Fatalf("Glob: %s", res.Content)
 	}
@@ -131,7 +132,7 @@ func TestAbsoluteOutOfRootThroughRealTools(t *testing.T) {
 	}
 
 	// Read of an out-of-root absolute is a tool error.
-	res := exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": other}), ws)
+	res := exec(t, fstools.ReadTool{}, call(t, "Read", map[string]any{"path": other}), ws)
 	if !res.IsError {
 		t.Fatalf("Read(out-of-root absolute) must error")
 	}
@@ -141,7 +142,7 @@ func TestAbsoluteOutOfRootThroughRealTools(t *testing.T) {
 	// Execute directly to capture it rather than the exec harness which fails
 	// the test on a harness-level error.
 	writeCall := call(t, "Write", map[string]any{"path": other, "content": "x"})
-	writeTool := WriteTool{}
+	writeTool := fstools.WriteTool{}
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, testLedger(ws), nil)
 	if _, err := writeTool.Execute(context.Background(), writeCall, env); err == nil || !strings.Contains(err.Error(), "escapes workspace root") {
 		t.Fatalf("Write(out-of-root absolute) must surface the escape error, got %v", err)

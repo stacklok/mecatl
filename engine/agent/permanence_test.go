@@ -9,11 +9,10 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// permanentTestError is a test error implementing port.PermanentError.
+// permanentTestError is a typed permanent provider error.
 type permanentTestError struct {
 	msg string
 }
@@ -28,14 +27,16 @@ func (e *typedFailureError) RetryDisposition() session.RetryDisposition { return
 func (e *typedFailureError) StreamProgress() session.StreamProgress     { return e.progress }
 
 func (e *permanentTestError) Error() string { return e.msg }
-func (*permanentTestError) Permanent() bool { return true }
+func (*permanentTestError) RetryDisposition() session.RetryDisposition {
+	return session.RetryDispositionPermanent
+}
 
-var _ port.PermanentError = (*permanentTestError)(nil)
+var _ interface {
+	RetryDisposition() session.RetryDisposition
+} = (*permanentTestError)(nil)
 
-// TestRunPermanentProviderErrorMarkedOnResult asserts that a stream error
-// implementing port.PermanentError with Permanent()==true marks EvResult.Permanent
-// and the session's FailurePermanence() as true, while the Error string still
-// carries the message.
+// TestRunPermanentProviderErrorMarkedOnResult asserts that typed permanent
+// provider classification is projected into canonical retry metadata.
 func TestRunPermanentProviderErrorMarkedOnResult(t *testing.T) {
 	permErr := &permanentTestError{msg: "invalid_encrypted_content: replay rejected"}
 	llm := mockllm.New(mockllm.ErrorTurn(permErr))
@@ -50,20 +51,20 @@ func TestRunPermanentProviderErrorMarkedOnResult(t *testing.T) {
 	if res.Stop != session.StopError {
 		t.Fatalf("stop = %q, want StopError", res.Stop)
 	}
-	if !res.Permanent {
-		t.Fatal("ResultPayload.Permanent = false, want true for permanent error")
+	want := session.RetryMetadata{Disposition: session.RetryDispositionPermanent}
+	if got := (session.RetryMetadata{Disposition: res.Disposition, Progress: res.Progress}); got != want {
+		t.Fatalf("result retry metadata = %+v, want %+v", got, want)
 	}
 	if !strings.Contains(res.Error, permErr.Error()) {
 		t.Fatalf("ResultPayload.Error = %q, want it to contain %q", res.Error, permErr.Error())
 	}
-	if !sess.FailurePermanence() {
-		t.Fatal("session.FailurePermanence() = false, want true")
+	if got := sess.FailureMetadata(); got != want {
+		t.Fatalf("session failure metadata = %+v, want %+v", got, want)
 	}
 }
 
-// TestRunTransientErrorNotPermanent asserts that a stream error that does NOT
-// implement port.PermanentError leaves EvResult.Permanent and the session's
-// FailurePermanence() as false.
+// TestRunTransientErrorNotPermanent asserts an unclassified stream error leaves
+// canonical retry metadata conservative and unknown.
 func TestRunTransientErrorNotPermanent(t *testing.T) {
 	transientErr := fmt.Errorf("upstream 503: service unavailable")
 	llm := mockllm.New(mockllm.ErrorTurn(transientErr))
@@ -78,11 +79,11 @@ func TestRunTransientErrorNotPermanent(t *testing.T) {
 	if res.Stop != session.StopError {
 		t.Fatalf("stop = %q, want StopError", res.Stop)
 	}
-	if res.Permanent {
-		t.Fatal("ResultPayload.Permanent = true, want false for transient error")
+	if res.Disposition != session.RetryDispositionUnknown || res.Progress != session.StreamProgressUnknown {
+		t.Fatalf("result retry metadata = (%v,%v), want unknown", res.Disposition, res.Progress)
 	}
-	if sess.FailurePermanence() {
-		t.Fatal("session.FailurePermanence() = true, want false")
+	if got := sess.FailureMetadata(); got != (session.RetryMetadata{}) {
+		t.Fatalf("session failure metadata = %+v, want zero", got)
 	}
 }
 
@@ -105,17 +106,15 @@ func TestRunTypedFailureMetadata(t *testing.T) {
 			if res.Disposition != tc.d || res.Progress != tc.p {
 				t.Fatalf("result metadata = (%v,%v), want (%v,%v)", res.Disposition, res.Progress, tc.d, tc.p)
 			}
-			if res.Permanent != (tc.d == session.RetryDispositionPermanent) {
-				t.Fatalf("Permanent = %v for disposition %v", res.Permanent, tc.d)
-			}
-			if d, p := sess.FailureMetadata(); d != tc.d || p != tc.p {
-				t.Fatalf("session metadata = (%v,%v), want (%v,%v)", d, p, tc.d, tc.p)
+			want := session.RetryMetadata{Disposition: tc.d, Progress: tc.p}
+			if got := sess.FailureMetadata(); got != want {
+				t.Fatalf("session metadata = %+v, want %+v", got, want)
 			}
 		})
 	}
 }
 
-// Permanent==false on the result payload.
+// Clean stops carry complete progress without a failure disposition.
 func TestRunCleanStopNotPermanent(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.TextTurn("all done."),
@@ -131,8 +130,8 @@ func TestRunCleanStopNotPermanent(t *testing.T) {
 	if res.Stop == session.StopError {
 		t.Fatal("stop = StopError, want clean terminal")
 	}
-	if res.Permanent {
-		t.Fatal("ResultPayload.Permanent = true, want false for clean terminal")
+	if res.Disposition != session.RetryDispositionUnknown {
+		t.Fatalf("ResultPayload.Disposition = %v, want unknown for clean terminal", res.Disposition)
 	}
 	if res.Progress != session.StreamProgressComplete {
 		t.Fatalf("ResultPayload.Progress = %v, want complete", res.Progress)
@@ -140,8 +139,7 @@ func TestRunCleanStopNotPermanent(t *testing.T) {
 }
 
 // TestRunChunkDoneStopErrorNotPermanent asserts that a provider-reported terminal
-// condition on ChunkDone (StopError via EmptyTurnWithStop, NOT a Go error) has
-// Permanent==false — honest fail-open because no Go error exists to classify.
+// condition on ChunkDone has unknown disposition because no Go error exists to classify.
 func TestRunChunkDoneStopErrorNotPermanent(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.EmptyTurnWithStop(session.StopError),
@@ -157,7 +155,7 @@ func TestRunChunkDoneStopErrorNotPermanent(t *testing.T) {
 	if res.Stop != session.StopError {
 		t.Fatalf("stop = %q, want StopError", res.Stop)
 	}
-	if res.Permanent {
-		t.Fatal("ResultPayload.Permanent = true, want false (ChunkDone StopError has no Go error to classify)")
+	if res.Disposition != session.RetryDispositionUnknown {
+		t.Fatalf("ResultPayload.Disposition = %v, want unknown (ChunkDone StopError has no Go error to classify)", res.Disposition)
 	}
 }

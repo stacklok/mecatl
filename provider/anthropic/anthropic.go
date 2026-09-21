@@ -379,7 +379,7 @@ func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	return p.Capabilities()
 }
 
-// anthropicStreamError wraps a terminal stream error as port.PermanentError so
+// anthropicStreamError carries typed retry disposition for terminal stream errors so
 // the llmresilience layer can distinguish permanent client-side rejections (4xx
 // other than 408/429) from transient failures (5xx, rate limits, unknown). It
 // carries the SDK error for Unwrap and a human-readable message for Error().
@@ -409,18 +409,15 @@ func (e *anthropicStreamError) ProviderErrorCorrelationKind() string {
 }
 func (e *anthropicStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
-// Permanent implements port.PermanentError. The error is permanent when the
-// message signals a context-window overflow, or when the status is a known
-// non-retryable 4xx. Status 0 and retryable codes (408, 429, 5xx) are NOT
-// permanent — fail-open, because an unclassifiable error may succeed on retry.
-func (e *anthropicStreamError) Permanent() bool {
-	if isContextOverflowMessage(e.msg) {
-		return true
+// RetryDisposition implements port.RetryDispositionError.
+func (e *anthropicStreamError) RetryDisposition() port.RetryDisposition {
+	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+		return port.RetryDispositionPermanent
 	}
-	if e.status != 0 && !retryableStatus(e.status) {
-		return true
+	if retryableStatus(e.status) {
+		return port.RetryDispositionRetryable
 	}
-	return false
+	return port.RetryDispositionUnknown
 }
 
 // isContextOverflowMessage is duplicated from provider/openai/stream.go (separate

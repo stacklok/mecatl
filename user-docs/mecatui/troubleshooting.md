@@ -198,11 +198,8 @@ omitted. Debug mode enables the mouse-coordinate footer, steer correlation,
 keymap-resolution diagnostics at startup, and debug-only local commands such as
 `/debug-ask`. These surfaces are off by default.
 
-An explicit `--debug=false` overrides the environment. The compatibility
-variables `MECATUI_DEBUG_MOUSE`, `MECATUI_DEBUG_STEER`, `MECATUI_DEBUG_ASK`, and
-`MECATUI_DEBUG_KEYMAP` enable only their named surface. Debug mode is
-client-only and does not change server configuration or the operational log
-level.
+An explicit `--debug=false` overrides the environment. Debug mode is client-only
+and does not change server configuration or the operational log level.
 
 ## Find diagnostics
 

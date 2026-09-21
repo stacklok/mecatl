@@ -196,11 +196,7 @@ export type {
   ServerInfo,
   ServerInfoOptions,
 } from "./server.js";
-export {
-  ServerFeature,
-  ServerPosture,
-  WATCH_SESSION_EVENTS_FEATURE,
-} from "./server.js";
+export { ServerFeature, ServerPosture } from "./server.js";
 export type {
   DreamTargetCapability,
   ManualDreamCapabilities,

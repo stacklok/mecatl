@@ -357,37 +357,37 @@ data: [DONE]
 	}
 }
 
-// TestOpenAIChatStreamErrorPermanent exercises Permanent() on openaichatStreamError.
+// TestOpenAIChatStreamErrorRetryDisposition exercises typed retry classification.
 // Non-retryable 4xx (≠408/429) and context-overflow messages are permanent;
 // transient codes (408, 429, 5xx) and unknown (0) are NOT permanent (fail-open).
-func TestOpenAIChatStreamErrorPermanent(t *testing.T) {
+func TestOpenAIChatStreamErrorRetryDisposition(t *testing.T) {
 	tests := []struct {
 		msg    string
 		status int
-		want   bool
+		want   port.RetryDisposition
 	}{
 		// Non-retryable 4xx — permanent client-side rejections.
-		{"request failed: 400 bad request", 400, true},
-		{"request failed: 403 forbidden", 403, true},
-		{"request failed: 404 not found", 404, true},
-		// Retryable codes — transient, NOT permanent.
-		{"request failed: 429 too many requests", 429, false},
-		{"request failed: 503 service unavailable", 503, false},
-		{"request failed: 500 internal server error", 500, false},
-		// Status 0 (unknown) — NOT permanent, fail-open.
-		{"request failed: unknown error", 0, false},
-		{"", 0, false},
-		// Context overflow — permanent even with transient-looking status.
-		{"request failed: 500 Your input exceeds the context window of this model.", 500, true},
-		{"request failed: 500 input exceeds the context length", 500, true},
-		{"request failed: 500 maximum context length exceeded", 500, true},
-		{"request failed: 500 prompt exceeds the token limit", 500, true},
-		{"request failed: 500 request exceeded the token limit for this model", 500, true},
+		{"request failed: 400 bad request", 400, port.RetryDispositionPermanent},
+		{"request failed: 403 forbidden", 403, port.RetryDispositionPermanent},
+		{"request failed: 404 not found", 404, port.RetryDispositionPermanent},
+		// Retryable codes.
+		{"request failed: 429 too many requests", 429, port.RetryDispositionRetryable},
+		{"request failed: 503 service unavailable", 503, port.RetryDispositionRetryable},
+		{"request failed: 500 internal server error", 500, port.RetryDispositionRetryable},
+		// Status 0 is conservatively unknown.
+		{"request failed: unknown error", 0, port.RetryDispositionUnknown},
+		{"", 0, port.RetryDispositionUnknown},
+		// Context overflow is permanent even with a transient-looking status.
+		{"request failed: 500 Your input exceeds the context window of this model.", 500, port.RetryDispositionPermanent},
+		{"request failed: 500 input exceeds the context length", 500, port.RetryDispositionPermanent},
+		{"request failed: 500 maximum context length exceeded", 500, port.RetryDispositionPermanent},
+		{"request failed: 500 prompt exceeds the token limit", 500, port.RetryDispositionPermanent},
+		{"request failed: 500 request exceeded the token limit for this model", 500, port.RetryDispositionPermanent},
 	}
 	for _, tt := range tests {
 		e := &openaichatStreamError{msg: tt.msg, status: tt.status}
-		if got := e.Permanent(); got != tt.want {
-			t.Errorf("Permanent() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
+		if got := e.RetryDisposition(); got != tt.want {
+			t.Errorf("RetryDisposition() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
 		}
 	}
 }

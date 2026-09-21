@@ -809,8 +809,8 @@ func TestPlanApprovedResultMsgFiresProceedPrompt(t *testing.T) {
 	if len(apps) != 1 {
 		t.Fatalf("after resolveAsk: expected exactly 1 ResumeApproval frame, got %d", len(apps))
 	}
-	if apps[0].GetAllow() != true || apps[0].GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
-		t.Fatalf("approval verdict = allow=%v verdict=%v, want allow-once", apps[0].GetAllow(), apps[0].GetVerdict())
+	if apps[0].GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
+		t.Fatalf("approval verdict = %v, want allow-once", apps[0].GetVerdict())
 	}
 	if pp := proceedPromptTexts(send); len(pp) != 0 {
 		t.Fatalf("no proceed Prompt must be sent before the plan_approved ResultMsg; got %v", pp)
@@ -891,7 +891,7 @@ func TestPlanIterateResultMsgDoesNotFireProceed(t *testing.T) {
 	runBatchLeaves(cmd)
 
 	apps := approvalFrames(send)
-	if len(apps) != 1 || apps[0].GetAllow() != false {
+	if len(apps) != 1 || apps[0].GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY {
 		t.Fatalf("deny must send exactly one deny ResumeApproval frame; got %+v", apps)
 	}
 	// No proceed before the terminal.

@@ -147,8 +147,8 @@ func TestSubagentBudgetStopSalvages(t *testing.T) {
 		t.Fatalf("load persisted child: %v", err)
 	}
 	const wantLifetime = 210
-	if got := child.Usage.TotalTokens(); got != wantLifetime {
-		t.Fatalf("lifetime Session.Usage = %d, want initial 200 + cleanup 10 = %d", got, wantLifetime)
+	if got := child.UsageFor(session.UsageKindMain).TotalTokens(); got != wantLifetime {
+		t.Fatalf("lifetime main usage = %d, want initial 200 + cleanup 10 = %d", got, wantLifetime)
 	}
 	if got := child.TokenUsageSnapshot()[session.UsageKindMain].Total.TotalTokens(); got != wantLifetime {
 		t.Fatalf("lifetime token_usage[main] = %d, want %d", got, wantLifetime)

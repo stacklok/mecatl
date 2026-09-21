@@ -16,7 +16,8 @@ import (
 func TestBuildWiresSessionLoadFailureObservability(t *testing.T) {
 	redis := miniredis.RunT(t)
 	const id = session.SessionID("private-session")
-	redis.HSet("mecatl:session:"+string(id), "blob", "malformed snapshot containing TOPSECRET")
+	redis.Set("mecatl:store:v2:session-metadata:state", "redis-metadata-index/1")
+	redis.HSet("mecatl:store:v2:session:"+string(id), "blob", "malformed snapshot containing TOPSECRET")
 
 	diag := newSessionLoadBuildDiagnostics()
 	var metrics []port.SessionLoadFailureClass

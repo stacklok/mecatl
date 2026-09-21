@@ -113,12 +113,8 @@ func TestUserModelListerMapsIndex(t *testing.T) {
 	}
 	// Insert OUT OF ORDER so the key-sort is actually exercised (a pre-sorted fixture
 	// would pass even if the lister did no sorting).
-	if rerr := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "zeta", Value: secretUserModelValue, Description: "the last fact"}); rerr != nil {
-		t.Fatalf("remember zeta: %v", rerr)
-	}
-	if rerr := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "alpha", Value: secretUserModelValue, Description: "the operator's name"}); rerr != nil {
-		t.Fatalf("remember alpha: %v", rerr)
-	}
+	rememberProfile(t, context.Background(), store, tool.MemoryEntry{Key: "zeta", Value: secretUserModelValue, Description: "the last fact"})
+	rememberProfile(t, context.Background(), store, tool.MemoryEntry{Key: "alpha", Value: secretUserModelValue, Description: "the operator's name"})
 
 	l := userModelLister(store)
 	if l == nil {
@@ -167,9 +163,7 @@ func TestUserModelListerIsLive(t *testing.T) {
 	}
 	l := userModelLister(store)
 
-	if rerr := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "a", Value: "1", Description: "fact a"}); rerr != nil {
-		t.Fatalf("remember a: %v", rerr)
-	}
+	rememberProfile(t, context.Background(), store, tool.MemoryEntry{Key: "a", Value: "1", Description: "fact a"})
 	got, lerr := l.List(context.Background())
 	if lerr != nil {
 		t.Fatalf("list after A: %v", lerr)
@@ -178,9 +172,7 @@ func TestUserModelListerIsLive(t *testing.T) {
 		t.Fatalf("after writing A, List = %d entries, want 1", len(got))
 	}
 
-	if rerr := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "b", Value: "2", Description: "fact b"}); rerr != nil {
-		t.Fatalf("remember b: %v", rerr)
-	}
+	rememberProfile(t, context.Background(), store, tool.MemoryEntry{Key: "b", Value: "2", Description: "fact b"})
 	got, lerr = l.List(context.Background())
 	if lerr != nil {
 		t.Fatalf("list after B: %v", lerr)

@@ -153,7 +153,7 @@ func (st *Store) discoveryMetaListLocked(ctx context.Context) ([]port.SessionDis
 		if rows, ok := st.readInventoryCatalog(fingerprint); ok {
 			return rows, nil
 		}
-		sources, err := st.inventoryV1Sources()
+		sources, err := st.inventorySources()
 		if err != nil {
 			return nil, err
 		}
@@ -167,7 +167,7 @@ func (st *Store) discoveryMetaListLocked(ctx context.Context) ([]port.SessionDis
 		if err != nil {
 			return nil, err
 		}
-		afterSources, err := st.inventoryV1Sources()
+		afterSources, err := st.inventorySources()
 		if err != nil {
 			return nil, err
 		}
