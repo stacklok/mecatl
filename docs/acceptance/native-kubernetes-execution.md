@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — introduces a controller/executor trust boundary, durable environment ownership, Kubernetes resources, and an optional mecak8s deployment integration.
-**Decision record:** [ADR 0349](../adr/0349-native-kubernetes-execution.md)
+**Decision record:** [ADR 0350](../adr/0350-native-kubernetes-execution.md)
 **Phase:** native Kubernetes execution first slice
 **Status:** draft, amended 2026-09-21. Exact proposed contracts are authored below; API, schema, and security review approvals remain outstanding.
 **Delivery:** Split. Human-authorized draft stack: the Plan / Interface PR targets `main`; the draft Implementation PR targets `plan/native-kubernetes-execution`. Authorization includes developing this amendment before plan merge, not approval or merge readiness. Human alone merges.
@@ -262,7 +262,7 @@ ledgers and retained isolation/configuration in the resource and rehydration led
 
 ### Scenario 1 — Disabled means absent, including startup validation
 
-The optional deployment boundary follows [draft ADR 0349](../adr/0349-native-kubernetes-execution.md).
+The optional deployment boundary follows [draft ADR 0350](../adr/0350-native-kubernetes-execution.md).
 Current startup provider validation reaches `Bind` (`docs/design/IMPLEMENTATION-NOTES.md:6549-6560`),
 so execution configuration needs a side-effect-free validation path rather than a fake allocation.
 
@@ -272,20 +272,20 @@ so execution configuration needs a side-effect-free validation path rather than 
 - AC1.2: The provider service deploys, restarts, and reconciles independently of mecak8s. The default mecak8s chart has no dependency on the provider chart and installs no provider resource; enabling the client adapter requires explicit endpoint/profile configuration. The adapter needs no Pod/PVC/controller management RBAC.
   - verify: `TestNativeKubernetesExecution_Scenario1_DefaultChartIndependent`
 - AC1.3: Preflight validates configured profiles and endpoint/provider compatibility without allocating an environment. Allocation occurs only at an authorized session-binding operation; enabled configuration that is incomplete fails startup before allocation, and a configured but unavailable endpoint fails validation clearly with no local fallback.
-  - verify: `TestADR_0349_PreflightNeverAllocates`
+  - verify: `TestADR_0350_PreflightNeverAllocates`
 - AC1.4: Disabling the mecak8s client integration neither adopts nor deletes existing `ExecutionEnvironment` CRs, PVCs, or Pods and does not stop the separate provider's reconciliation for its existing allocations or other authorized clients.
   - verify: `TestNativeKubernetesExecution_Scenario1_DisabledDoesNotAdoptOrDeleteExistingResources`
 
 ### Scenario 2 — One idempotent logical environment is allocated per binding
 
 The controller owns a logical environment, PVC, and executor lifecycle rather than equating identity
-with an ephemeral Pod, as decided in [draft ADR 0349](../adr/0349-native-kubernetes-execution.md).
+with an ephemeral Pod, as decided in [draft ADR 0350](../adr/0350-native-kubernetes-execution.md).
 
 **Acceptance:**
 - AC2.1: Repeating the same authorized ensure request with the same final idempotency identity returns the same environment generation and does not create a second PVC or Pod.
   - verify: `TestNativeKubernetesExecution_Scenario2_IdempotentEnsure`
 - AC2.2: A stale/different profile, digest, storage request, generation, or owner fails with the final reviewed conflict/precondition error and never adopts or mutates an unrelated allocation.
-  - verify: `TestADR_0349_AllocationIdentityFailsClosed`
+  - verify: `TestADR_0350_AllocationIdentityFailsClosed`
 - AC2.3: Only operator-configured profile references select digest-pinned images and storage; public clients/models cannot submit arbitrary images, Pod specs, paths, URLs, source credentials, or Kubernetes object names.
   - verify: `TestNativeKubernetesExecution_Scenario2_ProfileIsOperatorSelected`
 - AC2.4: After transient PVC or Pod creation failure, including prolonged quota saturation, an existing allocation converges when the failure clears without unrelated CR/reference changes, restart, or manual reconcile. Retries remain rate-limited and continue while the object exists; wrong ownership and missing/mismatched authoritative UIDs never trigger adoption or replacement.
@@ -295,7 +295,7 @@ with an ephemeral Pod, as decided in [draft ADR 0349](../adr/0349-native-kuberne
 
 The adapter preserves the immutable environment and independent read ledger
 (`engine/tool/environment.go:9`; `engine/tool/ledger.go:1`) and the existing WorkspaceReader seam
-(`engine/tool/tool.go:314`), under [draft ADR 0349](../adr/0349-native-kubernetes-execution.md).
+(`engine/tool/tool.go:314`), under [draft ADR 0350](../adr/0350-native-kubernetes-execution.md).
 
 **Acceptance:**
 - AC3.1: A fresh environment can create, read, conditionally edit, replace, copy, move, remove, list, grep, and glob a small Go fixture with unchanged tool schemas and the existing read-before-edit/version behavior where that contract applies.
@@ -303,23 +303,23 @@ The adapter preserves the immutable environment and independent read ledger
 - AC3.2: Read/Edit/Write preserve their applicable recorded-read and CreateFile/ReplaceFile CAS contracts; Copy/Move/Remove preserve their own positive conformance contracts and do not require an unrelated content read ledger/CAS precondition.
   - verify: `TestInvariant_remote_execution_preserves_file_version_protocol`
 - AC3.3: File access is physically confined through symlink traversal rather than lexical checks alone, and every supported read/mutate/list/search/command request is authorized for the exact environment; stale, expired, revoked, or wrong-environment grants are denied. Detached status/cancel requests authorize before returning Unimplemented; this slice exposes no command-stream RPC.
-  - verify: `TestADR_0349_RemoteFilesystemAndOperationAuthorizationFailClosed`
+  - verify: `TestADR_0350_RemoteFilesystemAndOperationAuthorizationFailClosed`
 - AC3.4: Shell is bound to the same environment namespace as Workspace. Cancellation distinguishes requested cancellation, acknowledged complete process termination, and externally proven compute/storage fencing; namespace teardown includes detached descendants or fails closed. Output is capped and valid UTF-8 repaired, and Shell-created file changes are not falsely claimed to participate in Workspace CAS.
   - verify: `TestNativeKubernetesExecution_Scenario3_ShellNamespaceCancelAndCASDisclosure`
 
 ### Scenario 4 — Caller isolation and execution ownership survive failures
 
 A session lease is session-only and its token is not consulted for writes
-(`engine/port/lease.go:37-48`); [draft ADR 0349](../adr/0349-native-kubernetes-execution.md)
+(`engine/port/lease.go:37-48`); [draft ADR 0350](../adr/0350-native-kubernetes-execution.md)
 therefore requires independent environment execution fencing.
 
 **Acceptance:**
 - AC4.1: Ordinary creator client A cannot discover, attach, execute in, stream from, cancel, or retire creator client B's environment; hidden and absent allocations are indistinguishable at the public boundary. The explicit scoped administrative exception in AC4.4 permits only its named administrative RPCs.
   - verify: `TestNativeKubernetesExecution_Scenario4_CallerEnvironmentIsolation`
 - AC4.2: Every command is authorized for one immutable environment revision and a distinct transient execution-fence epoch; lease loss or grant revocation prevents new commands and cancels/fences active work without exposing capability credentials to the workload or another caller's output. Same-Pod placement alone is not a security boundary.
-  - verify: `TestADR_0349_ExecutionGrantIsEnvironmentAndFenceScoped`
+  - verify: `TestADR_0350_ExecutionGrantIsEnvironmentAndFenceScoped`
 - AC4.3: Timeout, Pod deletion, controller restart, Lease timeout, or network partition alone never authorizes a replacement executor while an old writer may run; unknown fencing state fails closed and requires the reviewed manual/external fencing path.
-  - verify: `TestADR_0349_PartitionCannotAuthorizeTakeoverByTimeout`
+  - verify: `TestADR_0350_PartitionCannotAuthorizeTakeoverByTimeout`
 - AC4.4: A distinct `administrator:true` client with `administratorFor:[creatorURI]` can administer that creator's environment through all six administrative RPCs, including migration, revocation, and retained deletion, while preserving immutable creator identity and exact owner/revision/epoch/UID/operation checks. A second creator, wrong owner, stale identity, or replay with changed inputs is denied without existence disclosure. Self-admin compatibility remains explicit; no Files/Shell/attach/run/reference or MayAttestOwner authority is gained.
   - verify: `TestNativeKubernetesExecution_Scenario4_ScopedAdministratorAllPaths`; `TestKindExecutionProductionScopedAdministrator` (new amendment proofs, PENDING)
 - AC4.5: Strict `administratorFor` validation and canonical digest inclusion prevent ambiguous scope. Removal at a higher security generation takes effect on existing connections and receipt replay; an equal-generation scope edit fails closed. Old binaries reject the field and the documented quiesced upgrade preserves authority history.
@@ -327,18 +327,18 @@ therefore requires independent environment execution fencing.
 
 ### Scenario 5 — Restart preserves workspace while retirement is deliberate
 
-Exact reattachment and safe lifecycle behavior follow [draft ADR 0349](../adr/0349-native-kubernetes-execution.md)
+Exact reattachment and safe lifecycle behavior follow [draft ADR 0350](../adr/0350-native-kubernetes-execution.md)
 and remain separate from the session-only lease contract (`engine/port/lease.go:37-48`).
 
 **Acceptance:**
 - AC5.1: After mecak8s and controller restart, exact reattachment to the persisted environment revision restores the same PVC data and a correctly bound runner; an unavailable/mismatched generation fails with no default/local fallback.
   - verify: `TestNativeKubernetesExecution_Scenario5_RestartReattachesPVC`
 - AC5.2: Executor Pod replacement preserves the logical environment and PVC while current Pod UID may change without a spec `metadata.generation` change; `observedGeneration` records processed spec generation, and status records current Pod/PVC UID references without using them as durable session identity.
-  - verify: `TestADR_0349_LogicalIdentityOutlivesPodUID`
+  - verify: `TestADR_0350_LogicalIdentityOutlivesPodUID`
 - AC5.3: The lifecycle matrix is explicit: removal of one reference retains the environment; removal of the last reference retains it by default; committed data retires only through explicit authorized retirement; a retiring environment rejects new bindings and successors. An unreadable store/reference is not an orphan and is retained.
   - verify: `TestNativeKubernetesExecution_Scenario5_RetentionAndSafeRetirement`
 - AC5.4: A pending allocation whose session association might have committed is not garbage-collected merely after TTL; collection waits for conclusive reconciliation that publication is absent. Explicit retirement of a live/shared environment is refused while any live reference exists unless a separately reviewed retire/quiesce policy authorizes it.
-  - verify: `TestADR_0349_PendingAllocationAndLiveReferenceRetirementFailClosed`
+  - verify: `TestADR_0350_PendingAllocationAndLiveReferenceRetirementFailClosed`
 - AC5.5: Default chart uninstall retains runtime CRs/PVCs and preserves workload network isolation and security authority history while executors survive. Retained security/capacity ledgers and required configuration outlive the provider Deployment. Deletion of CRDs with live resources is destructive and unsupported; no destructive hook or force cleanup is provided. Owner references or retention annotation strings alone are not lifecycle proof.
   - verify: `TestChartHasNoDeletionHook`; `TestKindExecutionProductionHelmRetentionAndReinstall` (behavioral amendment proof, PENDING)
 - AC5.6: PVC persistence is not documented as node-disaster recovery; kind host-local storage proves restart survival only, and a dead or unobservable node is outside that positive guarantee.
@@ -350,7 +350,7 @@ and remain separate from the session-only lease contract (`engine/port/lease.go:
 
 The first slice avoids claiming that local project trust applies remotely: current admission is rooted
 in local composition (`internal/app/project_ingestion.go:20`) and AGENTS discovery reads Workspace
-(`engine/prompt/builder.go:337`). The boundary is recorded in [draft ADR 0349](../adr/0349-native-kubernetes-execution.md).
+(`engine/prompt/builder.go:337`). The boundary is recorded in [draft ADR 0350](../adr/0350-native-kubernetes-execution.md).
 
 **Acceptance:**
 - AC6.1: A remote execution session receives operator-global instructions and only its explicitly supported catalog; project AGENTS/rules/skills and Git source ingestion are off unless a later reviewed source/trust contract enables them.
@@ -362,7 +362,7 @@ in local composition (`internal/app/project_ingestion.go:20`) and AGENTS discove
 
 ### Scenario 7 — kind proves an offline coding flow; live qualification is separate
 
-The deterministic correctness gate is a focused mock-only task, following [draft ADR 0349](../adr/0349-native-kubernetes-execution.md).
+The deterministic correctness gate is a focused mock-only task, following [draft ADR 0350](../adr/0350-native-kubernetes-execution.md).
 The stack additionally requires the explicitly invoked native-provider OpenRouter coding qualification
 recorded in Human decisions; it is completion evidence, not an always-on CI dependency. The broad mecak8s
 live suite is not native-provider proof. The focused mock task must not inherit ambient provider credentials.
@@ -383,7 +383,7 @@ live suite is not native-provider proof. The focused mock task must not inherit 
 
 Source/test locations in this table refer to implementation commit
 `deaf1c3d1dfe7ea92afc8fe826f1bc613080f219`, not files supplied by this plan branch.
-Existing `TestNativeKubernetesExecution_*`/`TestADR_0349_*` verify labels that do not yet resolve are
+Existing `TestNativeKubernetesExecution_*`/`TestADR_0350_*` verify labels that do not yet resolve are
 future acceptance obligations, not invented test results. Before completion, replace those labels with
 exact executable proofs that cover the full AC, or implement the missing proof, and pass strict trace.
 A row naming a unit/fake-client test establishes only that boundary; it does not prove the entire AC.

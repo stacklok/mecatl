@@ -1,4 +1,4 @@
-# ADR 0349 — Optional native Kubernetes execution environments
+# ADR 0350 — Optional native Kubernetes execution environments
 
 - Status: Draft
 - Date: 2026-09-15; draft amended 2026-09-21
