@@ -4,7 +4,7 @@
 - Date: 2026-09-01
 - Scope: mecatui client-side session-handle presentation and debug-target resolution
 - Supersedes: ADR 0217 decision 8 (display handles) and ADR 0254 decision paragraph 3's `DEBUG target #<digest>` presentation clause only
-- Superseded by: —
+- Superseded by: ADR 0350
 
 ## Context
 

@@ -152,9 +152,11 @@ mecatui debug 01JOPAQUESESSIONID \
 mecatui debug 01JOPAQUESESSIONID --debug-mcp github
 ```
 
-`TARGET` can be the full ID or the short displayed ID. If the displayed ID is
-ambiguous, open `/session`, copy the full ID, and try again. Use the embedded
-command for an embedded store and `connect ADDRESS` for the server that owns the
+`TARGET` can be the full ID or the short displayed handle. The handle is a readable prefix of a
+non-empty valid-UTF-8 ID: it removes Unicode control (`Cc`) and format (`Cf`) runes, preserves the
+other characters, and truncates at a grapheme boundary to 12 display columns. Pass the displayed
+handle directly as `TARGET`. If it is ambiguous, open `/session`, copy the full ID, and try again.
+Use the embedded command for an embedded store and `connect ADDRESS` for the server that owns the
 target. The optional `--prompt` value replaces the default diagnosis objective.
 
 When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI stating that the selected model will receive bounded target evidence. That evidence can contain prompts, model output, tool arguments and results, paths, and secrets. Invoking the command is the consent gesture; the default diagnostic prompt is then submitted automatically.

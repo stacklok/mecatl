@@ -205,6 +205,6 @@ func TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering
 	testPredictableSessionHandle(t, checkHandlePresentation|checkHandleStatus|checkHandleDebuggerEvidence|checkHandleAuthoritativeID)
 }
 
-func TestADR_0285_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
+func TestADR_0350_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
 	testPredictableSessionHandle(t, checkHandleDebuggerEvidence)
 }

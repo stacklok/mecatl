@@ -1,254 +1,136 @@
 # Predictable mecatui session handles — acceptance plan
 
 **Phase:** capability — mecatui session discovery and debugger UX
-**Status:** landed, 2026-09-02.
+**Status:** landed, 2026-09-02; traceability corrected 2026-09-21.
 **Issue:** [stacklok/mecatl#922](https://github.com/stacklok/mecatl/issues/922).
-**ADR:** [ADR-0285](../adr/0285-predictable-mecatui-session-handles.md) — one fixed client-side actionable short-handle contract, superseding ADR-0217's display-only digest decision.
-**Related debugger boundaries:** [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and [ADR-0258](../adr/0258-cryptographic-session-incarnations.md).
-**Accumulator branch:** `acc/predictable-session-handles` (off `main`).
-
-The smallest set of work that makes the session handle shown by mecatui predictable,
-terminal-safe, and usable to select that same stored session for debugging, while preserving
-opaque exact IDs at every server boundary. It replaces the SHA-256 display identity with a
-fixed escaped prefix; it does not add an alternate server identifier or a hash namespace.
-
-The document is scenario-first: each scenario proves behavior a running embedded or connected
-mecatui client can demonstrate, not a package-level implementation detail.
-
-## Why these scope cuts
-
-- **Ordinary presentation only.** This changes only mecatui's ordinary human-facing
-  session-display projections: the normal header, `/sessions` rows, the debugger's target
-  chrome and terminal title, and status-line input/templates. It does not change
-  `InspectSession`, its related/history scope handles, its evidence/manifest digests, or the
-  target- and incarnation-bound cryptographic handles defined by
-  [ADR-0254](../adr/0254-session-debugger-admin-transport.md),
-  [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and
-  [ADR-0258](../adr/0258-cryptographic-session-incarnations.md). Those remain distinct
-  debugger evidence and authority contracts.
-- **Client-only resolution.** The server continues to receive and authorize only exact opaque
-  IDs. The complete caller-visible inventory is used only when the user invokes debug with a
-  syntactically valid short handle, through the existing all-pages `ListSessions` helper in
-  [`cmd/mecatui/client/sessions_list.go`](../../cmd/mecatui/client/sessions_list.go); no proto,
-  server API, streaming scan, alternate-ID authorization surface, or paging abstraction is
-  introduced.
-- **Fixed escaped raw-ID prefixes, not digests.** [ADR-0285](../adr/0285-predictable-mecatui-session-handles.md)
-  replaces only ADR-0217 decision 8's ordinary display-digest choice. The fixed projection keeps
-  generated IDs recognizable and makes arbitrary valid-UTF-8 IDs safe without claiming that an
-  escaped display token is a server ID. Invalid UTF-8 remains corrupt input: it emits no handle,
-  is never repaired into a new identity, and cannot create a debugger session.
-- **Status-line schema migration.** The external status-line `Input.Session.Digest` field becomes
-  `Input.Session.Handle`; shipped StatusML templates and the documented template examples use
-  `.Session.Handle`, with no duplicate digest alias. This is a protocol-schema change, so the
-  existing `statusline.ProtocolVersion` advances from 1 to 2 and the status-line input reference
-  documents the v2 contract.
-- **Exact IDs remain authoritative.** `/session` retains its safely quoted, byte-exact copy
-  path, as required by [ADR-0217](../adr/0217-session-discovery-continuation.md). Both exact IDs and
-  displayed handles use the single positional `TARGET` grammar. Exact inventory equality wins;
-  ambiguous projections ask for the copied full ID through the same command; inventory failure or
-  no projected match passes `TARGET` unchanged to the server's exact-ID authority. Existing long
-  or syntactically non-handle exact IDs continue to bypass resolution automatically.
-
-## In scope — 3 scenarios, in implementation order
-
-### Scenario 1 — One terminal-safe fixed handle renders without inventory
-
-The client has one reusable handle projection available to ordinary presentation and debug
-selection. For a non-empty valid-UTF-8 exact ID, percent-encode each UTF-8 byte outside
-`[A-Za-z0-9._-]` as uppercase `%HH`, also encoding a leading `-` as `%2D`, then take the longest
-prefix of complete literal or `%HH` atoms whose rendered width is at most twelve ASCII columns.
-Hyphens after the first atom remain literal. The token is compared as a projection and is never
-decoded. It has no hash, `id-` namespace, `#` marker, collision expansion, or rendering-time
-inventory dependency. It can be rendered immediately without
-loading inventory. This client concern leaves the full opaque ID as the server-owned identity
-under [ADR-0217](../adr/0217-session-discovery-continuation.md), and leaves debugger
-scope/evidence and cryptographic handle contracts unchanged under
-[ADR-0254](../adr/0254-session-debugger-admin-transport.md),
+**ADR:** [ADR-0350](../adr/0350-raw-readable-mecatui-session-handles.md) — raw readable
+ordinary handles and non-syntax-gated debug resolution, superseding ADR-0285.
+**Related debugger boundaries:** [ADR-0254](../adr/0254-session-debugger-admin-transport.md),
 [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and
 [ADR-0258](../adr/0258-cryptographic-session-incarnations.md).
+**Accumulator branch:** `acc/predictable-session-handles` (off `main`).
+
+The landed client gives ordinary session presentation and debug selection one readable
+projection while preserving opaque exact IDs at every server boundary. It does not add an
+alternate server identifier, hash namespace, or server-side handle parser.
+
+## Scope cuts
+
+- **Ordinary presentation only.** The normal header, `/sessions` rows, debugger target
+  chrome, and status input use the same handle. `InspectSession` scope/history handles,
+  evidence and manifest digests, and target-and-incarnation cryptographic handles remain
+  separate contracts under ADRs 0254, 0256, and 0258.
+- **Client-only resolution.** The server receives and authorizes exact opaque IDs. The
+  client consults the complete caller-visible inventory through
+  [`cmd/mecatui/client/sessions_list.go`](../../cmd/mecatui/client/sessions_list.go) only to
+  resolve a displayed handle.
+- **Exact IDs remain authoritative.** `/session` retains its full-ID copy path. An exact
+  inventory match wins. Ambiguity directs the operator to copy the full ID; an inventory
+  error or no displayed-handle match passes `TARGET` unchanged to server authority.
+
+## Landed behavior
+
+### Scenario 1 — One raw readable handle renders without inventory
+
+For a non-empty valid-UTF-8 ID, the client removes Unicode control (`Cc`) and format
+(`Cf`) runes, preserves every other rune verbatim, then truncates the result at a grapheme
+boundary to at most 12 display columns. Empty and invalid-UTF-8 IDs have no handle. The
+projection does not encode or decode characters, require a safe-character alphabet, use a
+marker, or depend on inventory.
 
 **Acceptance:**
-- AC1.1: A normal generated session ID has a handle containing its first twelve characters;
-  header, `/sessions`, debugger target chrome, terminal title, and status input use that same
-  literal rather than an ordinary display digest.
+
+- AC1.1: Ordinary header, `/sessions`, debugger chrome, and status input use the same
+  12-display-column handle.
   - verify: `TestPredictableSessionHandles_Scenario1_SharedNormalHandle`
-- AC1.2: Two IDs with the same fixed handle retain that same twelve-column projection; rendering
-  neither expands either token nor loads the complete inventory, and pagination or ordering
-  cannot change the displayed literal.
-  - verify: `TestPredictableSessionHandles_Scenario1_FixedCollisionBehavior`
-- AC1.3: An arbitrary non-empty valid-UTF-8 ID, including a long, shell-significant,
-  leading-hyphen, or control-bearing legacy/custom value, produces the documented complete-atom,
-  at-most-twelve ASCII-column literal. The literal contains only `[A-Za-z0-9._%-]`, never begins
-  with `-`, and preserves non-leading hyphens literally; empty IDs remain corrupt/invalid for
-  actionable handling and receive no fabricated handle.
-  - verify: `TestPredictableSessionHandles_Scenario1_EscapedUTF8ControlsAndLeadingHyphen`
-- AC1.4: Invalid UTF-8 is not repaired or percent-encoded into a new identity: ordinary
-  projections emit no handle, and debug creation is not attempted. Existing corrupt-snapshot
-  handling and protobuf-boundary UTF-8 behavior remain unchanged.
-  - verify: `TestPredictableSessionHandles_Scenario1_InvalidUTF8HasNoHandleOrDebugCreate`
-- AC1.5: Header and other normal chrome render the fixed handle without inventory. If debug cannot
-  obtain the complete caller-visible inventory, it passes `TARGET` unchanged to the existing
-  server exact-ID path, preserving pasted final IDs and ordinary server authorization/not-found
-  errors without a second grammar.
-  - verify: `TestCreateDebugSessionResolution`
-- AC1.6: `SessionHandleWidth` is the sole exported ordinary-handle width constant; the obsolete
-  `SessionIDDisplayWidth` compatibility alias is absent, with no change to debugger evidence or
-  incarnation digest APIs.
+- AC1.2: A handle preserves readable punctuation, leading hyphens, percent signs, and
+  non-ASCII text; removes `Cc` and `Cf` runes; and does not split graphemes or exceed its
+  display-column bound.
+  - verify: `TestPredictableSessionHandles_Scenario1_RawUTF8AndDisplayColumns`
   - verify: `TestPredictableSessionHandles_Scenario1_OnlyHandleWidthAPI`
+- AC1.3: Fixed handles do not expand for collisions or depend on inventory order.
+  - verify: `TestPredictableSessionHandles_Scenario1_FixedCollisionBehavior`
+- AC1.4: Invalid UTF-8 has no handle and cannot create a debug session.
+  - verify: `TestPredictableSessionHandles_Scenario1_InvalidUTF8HasNoHandleOrDebugCreate`
 
----
+### Scenario 2 — Debug resolution uses exact IDs or identical displayed handles
 
-### Scenario 2 — Debug resolves the displayed literal locally and sends only an exact ID
-
-`CreateDebugSession` owns the one client-side resolver before it builds its existing create
-request. A handle candidate is a non-empty ASCII token of at most twelve columns whose first atom
-is `[A-Za-z0-9._]` or complete uppercase `%[0-9A-F]{2}` and whose later atoms may also be `-`.
-Lowercase, malformed, truncated, leading-hyphen, longer, and other operands remain exact-ID inputs
-and bypass inventory automatically. For a syntactically valid short candidate, the client uses the
-existing all-pages `ListSessions` helper to obtain the complete caller-visible inventory and
-deduplicates exact IDs. Exact full-ID equality wins automatically. Otherwise one unique projected
-match resolves; multiple projections fail with guidance to copy the full exact ID from `/session`
-and pass it through the same `TARGET` grammar. Inventory failure or zero projected matches pass
-`TARGET` unchanged to the existing server exact-ID authorization/not-found path. Both
-`mecatui debug TARGET` and `mecatui connect ADDRESS debug TARGET` use this one path. This preserves
-the debugger's ownership and target binding in
-target binding in [ADR-0254](../adr/0254-session-debugger-admin-transport.md), its
-`InspectSession` related/history evidence boundary in
-[ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and its target+incarnation
-cryptographic binding in [ADR-0258](../adr/0258-cryptographic-session-incarnations.md).
+For every non-empty valid-UTF-8 `TARGET`, `CreateDebugSession` lists the complete
+caller-visible inventory and deduplicates exact IDs. Exact equality takes priority.
+Otherwise, one identical displayed handle resolves to that exact ID; multiple matches stop
+before create with `/session` full-ID copy guidance. Inventory errors and zero matches pass
+`TARGET` unchanged to the server's existing exact-ID path. Both embedded and connected
+commands share the positional `TARGET` grammar; resolution has no syntax gate.
 
 **Acceptance:**
-- AC2.1: Only a syntactically valid short token invokes local resolution: it is non-empty ASCII,
-  at most twelve columns, begins with `[A-Za-z0-9._]` or a complete uppercase `%[0-9A-F]{2}` atom,
-  and thereafter consists of `[A-Za-z0-9._-]` literals or complete uppercase escapes. Lowercase,
-  malformed, truncated, leading-hyphen, longer, and other operands remain exact IDs and bypass
-  inventory. Embedded and connected forms expose only one positional `TARGET` grammar.
-  - verify: `TestPredictableSessionHandles_Scenario2_HandleGrammarAndUnifiedTarget`
-- AC2.2: For a syntactically valid short token, the complete caller-visible inventory is consulted.
-  Repeated rows for one exact ID count once. Exact full-ID equality wins before projection; without
-  exact equality, one projected match resolves and multiple projected matches fail ambiguous.
+
+- AC2.1: Embedded and connected debug commands pass one positional `TARGET`, including
+  readable targets such as leading hyphens.
+  - verify: `TestPredictableSessionHandles_Scenario2_UnifiedTargetGrammar`
+- AC2.2: Exact equality wins; one displayed-handle match resolves; duplicate inventory
+  rows do not create ambiguity; and ambiguous, zero-match, and inventory-error outcomes
+  follow the documented paths.
   - verify: `TestCreateDebugSessionResolution`
-- AC2.3: A literal short handle resolves uniquely before debug-session creation and the request
-  carries the matched full ID. The exact final ID printed on exit passes through the same public
-  `CreateDebugSession` path unchanged. Inventory failure or zero projection matches also pass the
-  target unchanged so the existing server exact-ID path decides.
-  - verify: `TestCreateDebugSessionResolution`
-- AC2.4: Distinct projected-ID ambiguity stops before `CreateSession` and gives concrete `/session`
-  full-ID copy guidance without disclosing rows the caller cannot see. Inventory failure and zero
-  matches do not invent a local syntax error; the ordinary server error is reported.
-  - verify: `TestCreateDebugSessionResolution`
-- AC2.5: The literal emitted by the real rendered normal-session header and the exact exit ID both
-  pass through the real `Client.CreateDebugSession` path and bind the resulting request to the same
-  exact target, including an escaped control-bearing ID. This proof lives in composition-level
-  `cmd/mecatui`, drives public UI update/View paths, and keeps `cmd/mecatui/ui` tests proto/gRPC-free
-  without widening production APIs for test access.
+- AC2.3: Raw readable handles for control-stripped, leading-hyphen, percent, slash, and
+  multibyte IDs resolve to the full exact ID before debug-session creation.
+  - verify: `TestCreateDebugSessionResolvesRenderedControlSafeHandle`
+  - verify: `TestCreateDebugSessionResolvesAnyDisplayedUTF8Handle`
+- AC2.4: A handle taken from the rendered header and a full final ID both reach the create
+  request as the same exact target.
   - verify: `TestPredictableSessionHandles_Scenario2_RenderedHeaderCreatesBoundDebugger`
 
----
+### Scenario 3 — Documentation and debugger evidence retain their boundaries
 
-### Scenario 3 — Help and operator documentation make the contract usable
-
-The command index, command-specific help, TUI guide, operator usage guide, public mecatui
-documentation, and status-line input reference describe one shared name: a short handle is the
-displayed, client-resolved literal. The status-line schema renames `Session.Digest` to
-`Session.Handle`; its built-in StatusML templates use `.Session.Handle` without `#`, and its
-protocol version advances from 1 to 2 rather than retaining an alias. Examples may quote a handle
-for shell safety, but no chrome punctuation must be removed before use. They retain the full ID
-and `/session` copy flow. This is a user-visible client behavior, so the documentation lifecycle
-in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` coverage.
+Help and current documentation describe the same `TARGET` flow and `/session` fallback.
+Ordinary handles do not replace debugger evidence or exact server IDs.
 
 **Acceptance:**
-- AC3.1: `mecatui debug TARGET` and `mecatui connect ADDRESS debug TARGET` help lead with the
-  single flow, explain exact-ID authority and unique handle resolution, direct ambiguity to the
-  copied full exact ID through the same command, describe zero-match/inventory fallthrough, and
-  show no alternate mode or leading `#` marker.
+
+- AC3.1: Command help presents the one-`TARGET` flow and full-ID fallback.
   - verify: `TestPredictableSessionHandles_Scenario3_CommandHelpUsesOneTargetFlow`
-- AC3.2: `docs/tui.md`, the relevant `user-docs/` session/debug guides, and the
-  status-line input reference use the handle term, explain leading-hyphen encoding and the fixed
-  escaped-prefix projection, preserve `/session` exact-copy guidance, and document both embedded
-  and connected one-`TARGET` examples. They document the `Session.Digest` → `Session.Handle` schema
-  rename and protocol v2, with no digest alias.
-  - verify: inspection — `task docs` and `task site:build` validate the reviewed documentation paths
-- AC3.3: Header, `/sessions`, debugger-target presentation, terminal title, status input, and
-  shipped StatusML templates use the same handle grammar. The cross-boundary table proves its edge
-  cases and that only ordinary presentation changes; `InspectSession` scope/history handles,
-  evidence digests, and target+incarnation cryptographic handles remain unchanged. The relocated
-  transport-spanning proof is composition-level and introduces no new proto/gRPC dependency into
-  `cmd/mecatui/ui`.
-  - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
-- AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0285
-  scenario tests. Stale `TestADR_0108_DisplayDigestIsNotAnID`, digest-named compatibility aliases,
-  and pre-ADR-0285 session-handle test names are absent; ordinary presentation is never described as a
-  debugger evidence digest.
-  - verify: `TestADR_0285_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
-- AC3.5: ADR-0285 explicitly supersedes only ADR-0217's ordinary display-handle decision and
-  ADR-0254's `DEBUG target #<digest>` presentation clause; both older ADRs carry scoped backlinks,
-  while every debugger authority, evidence, and incarnation decision remains in force.
-  - verify: inspection — `task docs` validates ADR metadata and links
+- AC3.2: Ordinary-handle presentation does not alter debugger evidence handles or exact
+  authoritative IDs.
+  - verify: `TestADR_0350_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
+- AC3.3: Living and public documentation name ADR-0350 and describe raw readable,
+  control-stripped, 12-display-column handles with the `/session` exact-ID fallback.
+  - verify: inspection — `task docs` and `task site:build`
 
 **Cross-boundary oracle and boundary table**
 
 | Boundary/input | Required result | Proof owner |
 |---|---|---|
-| exactly 12 safe literal columns | valid short-handle candidate; exact full-ID equality wins, otherwise gather projected matches | client resolver |
-| `%HH` at the 12-column boundary | test both: a complete three-column atom exactly fitting is emitted/accepted; one that cannot completely fit is omitted/rejected, never sliced | projection + grammar table tests |
-| leading `-` in exact ID | projected as leading `%2D`; later hyphens remain literal; the literal exact ID passes unchanged as `TARGET` | projection + CLI grammar tests |
-| multibyte valid UTF-8 | byte-wise uppercase `%HH` atoms; no partial atom or terminal control reaches presentation | projection + presentation parity tests |
-| invalid UTF-8 | no handle, no identity repair, no debug create; existing snapshot/protobuf behavior unchanged | invalid-UTF-8 regression |
-| short exact ID colliding with another projection | exact full-ID equality wins automatically | resolver table tests |
-| unique, multiple, or zero projected-ID matches | unique sends the exact ID; multiple stops with full-ID guidance; zero passes `TARGET` unchanged to server exact lookup | resolver table tests |
-| inventory lookup failure | pass `TARGET` unchanged; report the ordinary server exact-ID error | resolver table tests |
-| rendered handle and final exact ID | both use `CreateDebugSession` and bind the same exact server target | composition integration test |
-| normal header, `/sessions` row, debugger chrome, terminal title, status input/templates | same ordinary handle literal; no rendering inventory dependency | presentation parity + composition integration tests |
-| relocated header-to-debug proof | introduces no proto or gRPC dependency into `cmd/mecatui/ui`; transport-spanning proof lives in `cmd/mecatui` | layering + integration tests |
-| `InspectSession` related/history, evidence/manifest digest, target+incarnation handles | unchanged debugger-specific contracts | ADR-0254/0256/0258 regression test |
+| empty or invalid UTF-8 ID | no displayed handle; invalid target is rejected | handle and debug validation tests |
+| control or format runes | remove `Cc` and `Cf`; retain the other readable runes | raw UTF-8/display-column test |
+| punctuation, leading hyphen, percent, slash, or non-ASCII text | retain verbatim, subject only to the display-column bound | raw UTF-8 and displayed-UTF-8 resolution tests |
+| grapheme or wide-rune boundary | truncate at a grapheme boundary to at most 12 display columns | raw UTF-8/display-column test |
+| exact full ID in inventory | exact equality wins before displayed-handle matching | resolver table test |
+| one, multiple, or zero identical displayed handles | resolve one; direct multiple matches to `/session`; pass zero unchanged to server | resolver table test |
+| inventory lookup failure | pass `TARGET` unchanged to server exact lookup | resolver table test |
+| header literal and final full ID | both bind the same exact debug target | composition integration test |
+| debugger evidence, scope/history, and incarnation handles | retain their dedicated contracts | ADR-0254/0256/0258 and evidence-boundary test |
 
 ## Out of scope
 
-| Item | Defer-to | ADR / decision |
-|---|---|---|
-| Server/proto alternate session-ID or short-handle API | never for this capability | [ADR-0285](../adr/0285-predictable-mecatui-session-handles.md) |
-| Changing session ID generation, physical store naming, or ownership authorization | separate storage/identity work | [ADR-0104](../adr/0104-session-family-physical-naming.md), [ADR-0217](../adr/0217-session-discovery-continuation.md) |
-| Changing `/session` full-ID display/copy semantics | not needed | [ADR-0217](../adr/0217-session-discovery-continuation.md) |
-| `InspectSession` related/history handles, evidence/manifest digests, or target+incarnation cryptographic handles | explicitly preserved | [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), [ADR-0258](../adr/0258-cryptographic-session-incarnations.md) |
-| Collision-free short handles or inventory-dependent presentation | never for this capability | [ADR-0285](../adr/0285-predictable-mecatui-session-handles.md) |
+| Item | Decision |
+|---|---|
+| Server/proto alternate session-ID or short-handle API | No alternate identity for this capability. |
+| Session ID generation, storage naming, and ownership authorization | Remain governed by [ADR-0104](../adr/0104-session-family-physical-naming.md) and [ADR-0217](../adr/0217-session-discovery-continuation.md). |
+| `/session` full-ID copy semantics | Remain governed by [ADR-0217](../adr/0217-session-discovery-continuation.md). |
+| Debugger evidence, scope/history, or cryptographic handles | Remain governed by [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and [ADR-0258](../adr/0258-cryptographic-session-incarnations.md). |
+| Collision-free or inventory-dependent presentation | Not part of the fixed raw readable projection. |
 
-## Sequencing recommendation
+## Sequencing record
 
-Land the resolver/CLI repair first: leading-hyphen projection, exact-ID precedence, unified
-`TARGET` fallthrough semantics, and width-API cleanup. Then restore package layering by relocating
-the transport-spanning proof, update traceability and ADR/docs identities, and reconcile living and
-public documentation. No repair task should add a second resolver, collision expansion, a
-server-side handle parser, or alter debugger evidence handles.
-
-## Named tests landing in this plan
-
-- `TestPredictableSessionHandles_Scenario1_*`
-- `TestPredictableSessionHandles_Scenario2_*`
-- `TestPredictableSessionHandles_Scenario3_*`
-- `TestADR_0285_*`
+The landed work established the shared projection, then client-side resolution, then
+presentation and documentation. The traceability correction retains that implementation and
+records its approved variance in ADR-0350; it does not add a second resolver, collision
+expansion, server-side handle parser, or change to debugger evidence handles.
 
 ## Definition of done
 
-1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` regenerates the configuration reference and the matlatl strict link gate is green.
-3. `task site:build` passes after the user-facing documentation changes.
-4. `task ac-trace-strict` resolves every named proof when this plan is `landed`.
-5. The composition-level real-header-to-real-`CreateDebugSession` test proves that an unchanged
-   displayed literal produces an exact target ID on the create request for normal and escaped
-   valid-UTF-8 IDs while `cmd/mecatui/ui` remains proto/gRPC-free.
-6. `go run ./cmd/mecademo` still prints a full offline session.
-
-## Deferred decisions and known risks
-
-- **Debug-time inventory cost.** Rendering is immediate and inventory-free, but resolving a
-  syntactically possible short handle requires a complete caller-visible inventory. An ambiguous
-  projection asks for the copied full ID; failed inventory or zero projection matches pass the
-  target unchanged to the server exact-ID path.
-- **Visible collisions.** Fixed handles intentionally do not expand. Exact full-ID equality is
-  authoritative; otherwise all projected matches are considered and multiple matches require the
-  full exact ID through the same command.
-
-## Exit criteria
-
-When every point under *Definition of done* holds on the accumulator, this plan is satisfied.
+1. `task lint` and `task test` pass.
+2. `task docs` and `task site:build` pass after documentation changes.
+3. `task ac-trace-strict` resolves every named proof for this landed plan.
+4. The composition-level header-to-debug test proves that both a displayed handle and a
+   full ID bind the exact target at the create request.
+5. `go run ./cmd/mecademo` prints a full offline session.
