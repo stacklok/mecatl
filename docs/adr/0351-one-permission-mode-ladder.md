@@ -103,10 +103,13 @@ A session tier ABOVE the ceiling is REFUSED loudly (`InvalidArgument`), never si
 clamped and never granted. This is the ADR 0022 invariant restated in the new vocabulary: the
 session selects within the blast radius the operator set, and cannot enlarge it.
 
-The initial session tier is `min(ceiling, default)`, EXCEPT that an operator who explicitly
-set a ceiling at or above `trusted` gets that ceiling as the initial tier. Rationale: a tier
-at or above `trusted` is an unattended deployment intent with no client to select it, while
-below that the client needs headroom to cycle. This reproduces every current default exactly
+The initial session tier is DECLARED per root, never inferred from whether the ceiling flag was
+explicitly passed: `mecated` and `mecatui` declare `default`, leaving the client headroom to
+cycle; `mecak8s` and `mecatequi` declare their ceiling, because an unattended root has no
+client to select a tier. Provenance is not usable as the test: `mecak8s` reaches its `auto`
+ceiling through a flag DEFAULT whose `postureFlagSet` bit is false and pinned false by
+`cmd/mecak8s/main_test.go`, so an "explicitly set" rule would silently hand the shipped k8s
+root an initial tier below its own ceiling. This reproduces every current default exactly
 (see 6).
 
 ### 3. Build-time knobs derive from the CEILING, never from the live session tier
@@ -117,26 +120,24 @@ root/no-sandbox refusal are composition facts derived from the ceiling, exactly 
 per-call fold that `permpolicy.Policy.Evaluate` already performs: the plan-mode hard-deny, the
 accept-edits rules, and the allow-all rule contributed as `extra` rules.
 
-The allow-all rule is the ONE knob that moves out of `applyPosture`. Today it is injected at
-build time via `mainRules`/`childRules`, so it applies to every session regardless of that
-session's mode. Leaving it there would make a session tier above `accept-edits` a no-op, since
-the ceiling would already have granted it. Moving it into the per-call fold, as the sibling
-`acceptEditsRules` already is, is what gives the session tier teeth, and it stays the single
-`ScopeCLI` Allow rule in the governance fold that ADR 0022 decision 2 requires. The cost is
-that every session-creation site must derive its initial tier from the existing
-`server.Config.DefaultMode` instead of hardcoding `session.ModeDefault`, or an unattended root
-silently stops being allow-all.
+The allow-all grant is the ONE OPEN QUESTION in this decision, and it is deliberately left
+open rather than settled here. An earlier draft asserted it simply moves out of `applyPosture`
+into the per-call fold. That is wrong as written: `childRules` injects the grant at build time
+from `cfg.AllowAllTools`, all three child constructors build at `session.ModeDefault`, and
+`internal/app/allowall_test.go` pins the grant reaching BOTH the main and child rule sets as an
+explicit kill-switch, so a naive move silently drops allow-all for every subagent, parallel
+branch, and team member.
 
-This is the clause that keeps ADR 0022 decision 2 intact. There is no new code path that
-returns `Allow` ahead of the evaluator; every tier still resolves through
-`governance.Evaluate`, so a `ScopeManaged` deny and a deliberately configured Ask survive at
-`yolo`.
-
-The honest consequence, which the user documentation states: lowering a session's tier at
-runtime lowers what needs approval, but does not retract project ingestion or re-tighten the
-substitution floor, because those were granted process-wide by the operator's ceiling. This is
-not a weakening. It is byte-identical to today, where an `--posture auto` deployment loosens
-substitution for every session regardless of that session's mode.
+The fork is real and it decides how much of this ADR is justified. If the grant stays
+build-time from the ceiling, nothing regresses, but `trusted` and `yolo` have no effect at
+`permpolicy.Evaluate`, the only place the domain reads the value, so three of six tiers carry
+no domain meaning and holding them in a domain type is hard to defend. If it moves per-call
+and children inherit their parent's effective tier, the tiers become meaningful but child
+semantics change and allow-all becomes session-selectable, which is the shape ADR 0022
+decision 1 refused, now as a rule rather than a bypass. The acceptance plan carries the
+candidate resolutions and their costs as its one unresolved human decision; whichever is
+chosen, the binding constraint is that the grant must keep reaching child engines and must
+stay a rule inside the governance fold.
 
 ### 4. The guardrails admission gate
 
