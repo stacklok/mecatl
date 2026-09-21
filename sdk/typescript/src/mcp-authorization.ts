@@ -147,7 +147,8 @@ export interface McpAuthorizationFlow extends AsyncIterable<Event> {
  *
  * Construction stores exact correlation only. It performs no I/O and makes no state or authority
  * claim. The handle does not persist credentials or lifecycle truth. Every presentation lookup and
- * control request receives automatic session affinity.
+ * control request receives automatic session affinity. It consumes session-scoped ToolHive broker
+ * authorization handoffs; it does not administer direct or global MCP profiles or credentials.
  * @public
  */
 export interface McpAuthorization {

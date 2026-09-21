@@ -2545,7 +2545,7 @@ readonly userModel?: DreamTargetCapability;
 
 <Heading as="h3" id="api-mcpauthorization-interface"><code>McpAuthorization</code></Heading>
 
-A reusable session-bound correlation handle for one server-owned authorization. Construction stores exact correlation only. It performs no I/O and makes no state or authority claim. The handle does not persist credentials or lifecycle truth. Every presentation lookup and control request receives automatic session affinity.
+A reusable session-bound correlation handle for one server-owned authorization. Construction stores exact correlation only. It performs no I/O and makes no state or authority claim. The handle does not persist credentials or lifecycle truth. Every presentation lookup and control request receives automatic session affinity. It consumes session-scoped ToolHive broker authorization handoffs; it does not administer direct or global MCP profiles or credentials.
 
 ```ts
 export interface McpAuthorization
@@ -4506,7 +4506,7 @@ Returns: `Promise<McpConnectorInventory>`: A detached SDK-owned connector invent
 
 <Heading as="h4" id="api-session-mcpauthorization-methodsignature"><code>Session.mcpAuthorization</code></Heading>
 
-Binds one external authorization ID to this session without performing I/O.
+Binds one external authorization ID to this session without performing I/O. This handle consumes session-scoped ToolHive broker authorization handoffs. It does not administer direct or global MCP profiles or their credentials.
 
 ```ts
 mcpAuthorization(authorizationId: string): McpAuthorization;

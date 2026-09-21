@@ -201,6 +201,9 @@ export interface Session {
   /**
    * Binds one external authorization ID to this session without performing I/O.
    *
+   * This handle consumes session-scoped ToolHive broker authorization handoffs.
+   * It does not administer direct or global MCP profiles or their credentials.
+   *
    * @param authorizationId - Exact non-empty ID from an authorization event.
    * @returns A reusable correlation handle that makes no authorization-state assertion.
    */

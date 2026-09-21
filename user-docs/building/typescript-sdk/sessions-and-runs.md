@@ -168,6 +168,10 @@ failures throw typed SDK errors.
 Use `outcome()` when an MCP server can require external authorization. It
 returns either the completed result or a detached authorization handoff:
 
+This lifecycle applies to session-scoped ToolHive broker handoffs. Direct and
+global MCP profiles use the host-local
+[`mecated mcp` commands](/features/mcp-oauth-and-credentials.md) instead.
+
 ```ts
 const run = await session.run('Use the configured MCP server');
 const outcome = await run.outcome();

@@ -365,7 +365,8 @@ exact-affinity control request. The flow validates the authoritative status and 
 continuation into pending, settled, completed, or chained-authorization results. The SDK
 does not poll, retry a mutation, reconnect, or choose a permission verdict. Automatic
 permission responses use their separately declared request options and the existing
-prompt-free exact-run controls.
+prompt-free exact-run controls. This lifecycle is limited to session-scoped ToolHive broker
+handoffs; direct and global profiles remain host-local administration through `mecated mcp`.
 
 Request cancellation releases only SDK-owned resources. The server decides what committed
 before disconnect. gRPC detaches and drains ordinary continuation work but cancels a run

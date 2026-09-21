@@ -67,6 +67,11 @@ Create a session-bound authorization handle from the handoff returned by
 `Run.outcome()`. The handle stores correlation only and performs no request or
 state check during construction:
 
+Use this workflow only for `authorization.required` handoffs from
+session-scoped ToolHive broker tools. It does not configure direct or global
+MCP profiles or manage their credentials. For those host-local profiles, use
+[`mecated mcp add` or `mecated mcp login`](/features/mcp-oauth-and-credentials.md).
+
 ```ts
 const outcome = await run.outcome();
 if (outcome.outcome !== 'authorization_required') {
