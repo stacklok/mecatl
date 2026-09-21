@@ -1,41 +1,57 @@
 ---
 sidebar_position: 1
 slug: /
-title: Mecatl documentation
+title: Mecatl
+sidebar_label: Introduction
 description:
   Find the right guide for using, deploying, or building with Mecatl.
 ---
 
-# Mecatl documentation
+# Mecatl
 
-Mecatl is a cloud-native harness for running AI agents on infrastructure you
-control. Start with the path that matches what you want to do.
+Mecatl is an open source, cloud-native agent harness for running AI agents on
+infrastructure you operate. It separates the agent loop from the client,
+execution environment, model provider, and durable state, so you can run the
+same core locally, as a shared service, or inside an application.
 
-## Start with one of these paths
+## How Mecatl fits together
 
-### [Use Mecatl locally](/mecatui/getting-started.md)
+Use `mecatui` when you want to work with an agent from your terminal. It can
+start a private server for your local workspace or connect to a remote Mecatl
+service. Operators run that service with `mecated`, or with `mecak8s` when they
+need Kubernetes-native storage and coordination. Application builders can
+embed the Go engine, or connect through the TypeScript SDK and the gRPC or
+HTTP/SSE APIs.
 
-Install `mecatui`, configure a provider with an API key, and start a local
-session in your project.
+```mermaid
+flowchart LR
+  T[Terminal user] --> U[mecatui]
+  A[Your application] --> I[Go engine or SDK/API]
+  O[Operator] --> D[mecated or mecak8s]
+  U --> R[Mecatl runtime]
+  I --> R
+  D --> R
+```
+
+The runtime can be disposable while its session state and execution concerns
+live in services that you manage. That design lets Mecatl fit the deployment
+and governance patterns you already use for applications. Read [What is a
+cloud-native harness?](/cloud-native-harness.md) for the architecture and its
+implications.
+
+## Start with the journey that fits your work
+
+### [Use `mecatui`](/mecatui/index.md)
+
+Run local sessions in your workspace or connect the terminal client to your
+organization's Mecatl service.
 
 ### [Deploy and operate Mecatl](/operating/index.md)
 
-Run `mecated` as a service, deploy `mecak8s` on Kubernetes, or run one task in
-CI with `mecatequi`.
+Run a shared `mecated` service, deploy `mecak8s` on Kubernetes, or use
+`mecatequi` for one task in CI.
 
 ### [Build with Mecatl](/building/index.md)
 
-Embed the Go engine or connect your application with the TypeScript SDK.
-
-## Find the right guide
-
-- **Use `mecatui`:** [`mecatui` guides](/mecatui/index.md) cover local and
-  remote sessions, approvals, terminal controls, and customization.
-- **Deploy and operate:** [operator guides](/operating/index.md) cover
-  `mecated`, `mecak8s`, CI, configuration, storage, and remote transport.
-- **Build with Mecatl:** [builder guides](/building/index.md) cover the Go
-  engine, TypeScript SDK, and extension points.
-- **Understand a capability:** [capability guides](/features/index.md) explain
-  shared behavior and where each capability is available.
-- **Look up exact details:** [reference](/reference/index.md) covers
-  configuration and gRPC and HTTP/SSE contracts.
+Embed the Go engine, connect an application through the TypeScript SDK, or use
+the public APIs and extension points.
