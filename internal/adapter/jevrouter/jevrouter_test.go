@@ -52,6 +52,8 @@ func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 		{"unknown choice", validResponse("other", 0.9, 1, 2), MissInvalidResponse},
 		{"malformed response", `{`, MissInvalidResponse},
 		{"non-finite probability", `{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":"fast","probabilities":{"fast":1e999,"deep":0},"confidence":1}},"usage":{"input_tokens":1,"output_tokens":2}}`, MissInvalidResponse},
+		{"confidence below zero", validResponse("fast", -0.1, 1, 2), MissInvalidResponse},
+		{"confidence above one", validResponse("fast", 1.1, 1, 2), MissInvalidResponse},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -315,6 +317,67 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		category, _, reason, ok = r.Route(t.Context(), "second", testCategories())
 		if !ok || category != "fast" || reason != "" || calls.Load() != 2 {
 			t.Fatalf("post-timeout Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
+		}
+	})
+
+	t.Run("caller cancellation cancels in flight and releases capacity", func(t *testing.T) {
+		var calls atomic.Int32
+		entered := make(chan struct{})
+		cancelled := make(chan struct{})
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				close(entered)
+				<-req.Context().Done()
+				close(cancelled)
+				return nil, req.Context().Err()
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(validResponse("fast", 1, 1, 1))),
+				Request:    req,
+			}, nil
+		})}
+		r, err := newRouter(Options{APIKey: "test", BaseURL: "https://example.com", HTTPClient: client},
+			transportBounds{maxConcurrent: 1, queueTimeout: time.Second, requestTimeout: time.Minute})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		result := make(chan struct {
+			category, reason string
+			ok               bool
+		}, 1)
+		go func() {
+			category, _, reason, ok := r.Route(ctx, "first", testCategories())
+			result <- struct {
+				category, reason string
+				ok               bool
+			}{category, reason, ok}
+		}()
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("request did not enter the transport")
+		}
+		cancel()
+		select {
+		case <-cancelled:
+		case <-time.After(time.Second):
+			t.Fatal("caller cancellation did not cancel the in-flight transport")
+		}
+		select {
+		case got := <-result:
+			if got.ok || got.category != "" || got.reason != MissError {
+				t.Fatalf("cancelled Route = (%q, reason=%q, ok=%v)", got.category, got.reason, got.ok)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("cancelled Route did not return promptly")
+		}
+		category, _, reason, ok := r.Route(t.Context(), "second", testCategories())
+		if !ok || category != "fast" || reason != "" || calls.Load() != 2 {
+			t.Fatalf("post-cancellation Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
 	})
 

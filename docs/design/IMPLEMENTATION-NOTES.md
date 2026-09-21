@@ -1479,8 +1479,7 @@ so the start event names the fallback engine rather than a model that never ran.
 projects via `routingReasonPayload` (whitespace-collapse + 200-rune cap, mirroring
 `subagentCausePayload`) AND confines the wire value to an event-safe allowlist
 (`routingReasonEventSafe` — the `session.RoutingReason*` gates + the `RouterMiss*`
-constants + the reference composition's two static `category-*` codes and five static
-`jev-*` codes): the missReason
+constants + the reference composition's two static `category-*` codes): the missReason
 channel is OPEN to external engine compositions via the exported
 `Deps.SubagentModelRouter`, so known parenthesised composition detail is reduced to its
 static code and any other non-allowlisted reason (a provider error body, classifier
