@@ -191,7 +191,39 @@ automatically trust a freshly cloned repository"). Refusing there would undo ADR
 the shipped `mecak8s` default. Those tiers instead emit a WARN naming the withheld trust, which
 is the legibility fix the review asked for.
 
-### 6. Compatibility
+### 6. One clamp chokepoint, and ingested content cannot name authority
+
+Widening the grammar widens every parser that reads it, and a mode enters the system at ten
+independent points: the gRPC create/setmode/approveplan mapper, two HTTP decoders, the ACP
+`session/set_mode` bridge, agent-definition frontmatter, persisted schedule specs, snapshot
+restore, fork and clear successors, delegation children, and the SDK and TUI clients. Only the
+first three were in the original statement of the clamp.
+
+The domain is not a backstop. `session.Session.SetMode` validates the state transition and
+assigns the value unchecked. So the clamp is specified as a property of ONE chokepoint,
+`Service.clampMode`, called by every Service entry point, which is why HTTP and ACP inherit it
+instead of each re-deriving it, with a structural guard that fails when a new ingress appears
+that does not reach it.
+
+`session.ParsePermissionMode` is a TOKEN GRAMMAR and nothing more. A successful parse is never
+permission to use the tier. The one call site that deliberately does NOT share it is
+agent-definition frontmatter: `resolvePermissionMode` keeps its explicit allowlist of
+`default`, `plan`, and `acceptEdits`, warning and falling back otherwise, so a
+composition-bearing tier is structurally unnameable from repository content at ANY trust level.
+This preserves today's behaviour exactly rather than adding a restriction, and it is deliberate
+that project trust does not unlock it: trust admits a repository's instructions, not its
+authority over the ladder that governs them. The "one shared grammar" discipline this ADR takes
+from `ParsePosture` applies to operator and client surfaces; applied naively to the agent-def
+allowlist it would convert a safe closed set into the full widened grammar, which is exactly
+the class of change this section exists to prevent.
+
+Persisted ingress is asymmetric with live ingress, deliberately. A live client request above the
+ceiling is REFUSED, because the client can retry with a valid value. A persisted mode above the
+ceiling, arriving from snapshot restore, a successor, or a schedule fire, CLAMPS DOWN with a
+WARN, because a stored session cannot retry and refusing would brick it. Both fail safe; only
+one can fail loud.
+
+### 7. Compatibility
 
 Purely additive on the wire, deprecating on the CLI, for one release.
 
