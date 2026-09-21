@@ -32,6 +32,7 @@ Environment knobs (all optional):
 | `MECATL_E2E_TARGET` | (unset → spawn local) | `host:port` of an existing mecated; skips the local spawn |
 | `MECATL_E2E_MODEL` | `anthropic/claude-haiku-4.5` | default-lane model for all tool scenarios (see "Prompt phrasing vs the upstream prompt filter" for why the OpenAI-family lane was demoted) |
 | `MECATL_E2E_MODEL_SECONDARY` | `openai/gpt-4.1-mini` | second lane (single-turn smoke only); `skip` disables it |
+| `MECATL_E2E_SLOT_CHEAP_MODEL` | `google/gemini-2.5-flash` | compaction model-slot spec only: inexpensive distinct model that supports the native cache-breakpoint lane |
 | `MECATL_E2E_MAX_RUN_TOKENS` | `50000` | `--max-run-tokens` for the spawned server (a single full-catalog turn is ~5-6k input tokens; a runaway brake, not a cost control — raised 20k→50k for multi-turn + cross-restart headroom against live-model verbosity drift) |
 | `MECATL_E2E_MAX_TEAM_TOKENS` | `60000` | `--max-team-tokens` for the spawned server |
 | `MECATL_E2E_COMPACTION_WINDOW` | `2000` | compaction spec only: the `--context-window-override` for its own spawn (trigger = 0.8 × the estimated complete request) |
