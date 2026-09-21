@@ -4,7 +4,7 @@
 **Work classification:** Architectural — selecting an external decision service changes the operator configuration, credential, data-egress, and adapter boundaries of delegated-model routing.
 **Decision record:** [ADR 0350](../adr/0350-jev-delegated-model-router.md)
 **Phase:** delegated-model router backend
-**Status:** approved, 2026-09-21. The operator approved the plan and explicitly waived the merged-plan prerequisite for a stacked implementation; the plan PR is not yet merged.
+**Status:** landed, 2026-09-21. Implementation candidate: this transition becomes authoritative only after human merge. The operator explicitly waived the merged-plan prerequisite for the stacked implementation; the plan PR is not yet merged.
 **Delivery:** Split. The implementation PR targets the plan branch under that explicit waiver; both PRs retain human merge gates.
 **Expected tasks:** deferred to orchestration
 **Plan PR:** [#1735](https://github.com/stacklok/mecatl/pull/1735).
