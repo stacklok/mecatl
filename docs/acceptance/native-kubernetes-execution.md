@@ -471,19 +471,20 @@ at `9bb4d89b8aa497c9d2cd6aa4a94ab9262a913364` failed **before qualification test
 seeding `legacy-migration`: ResourceQuota accounting for
 `count/executionenvironments.execution.mecatl.dev` was still unknown. Provider Deployment
 readiness was not quota readiness. This supersedes a test-race diagnosis for that job.
-The implementation adds a two-minute, context-aware quota-accounting wait with delayed-status,
+The implementation adds a six-minute, context-aware quota-accounting wait (the
+five-minute Kubernetes default usage resync plus margin) with delayed-status,
 timeout, cancellation, and forbidden-response controls in
 `TestLegacyFixtureWaitsForQuotaAccountingBeforeCreate`. It does not disable quota or retry
 arbitrary forbidden creates. Those offline controls and tagged compilation are not a rerun
 of the production job.
 
-**Latest reported production context:** the operator supplied run
+**Earlier reported production context:** the operator supplied run
 [35650128625, job 106500190798](https://github.com/stacklok/mecatl/actions/runs/35650128625/job/106500190798)
 at `f7919f6c`: 10/11 production tests passed, including scoped administration, Helm lifecycle/quota,
 and general file tools. Security rotation failed after about 250 seconds on the final-authority Files
 READ immediately after successful AcquireRun (`production_qualification_test.go`, former line 279).
 This report was not independently re-fetched during the offline repair. It supersedes the earlier
-setup failure as the current reported runtime blocker, not as a final-candidate success.
+setup failure for that reported run, not as a final-candidate success.
 
 **Deterministic repair evidence:** implementation `96e16e926` adds
 `internal/adapter/executioncontroller/security_rotation_test.go`:
@@ -513,6 +514,54 @@ offline demo pass. Tagged whole-fixture lint exposes unrelated pre-existing find
 gate against baseline `2d32864cee8378939cb55137e1ab369e70a18349` passes with zero issues.
 These results do not replace final runtime qualification; no live inference or cluster run is claimed.
 
+**Current repair evidence (offline, after `0e8c8a5ca`):** the operator reports all
+11 native production tests passing at `7e498bd73`, followed by production failures
+at `2e1aa6bbf` before live qualification. Manual run
+[35659529618](https://github.com/stacklok/mecatl/actions/runs/35659529618) failed before
+provider credential staging; no provider credentials were used. These reports
+were not independently re-fetched during this repair. The production timeouts
+remain unresolved incidents, not evidence that either source defect below caused them.
+
+- `TestRetainedDeletePeerBetweenFinalizerUpdateAndDelete` deterministically failed
+  when a second reconciler re-added the environment finalizer between Update and
+  Delete, stranding the authorized operation behind the generic deletion branch.
+  It also failed for an already-terminating authorized CR. Both pass after routing
+  only admitted retained deletion ahead of generic finalization. The test checks
+  one successful CR/PVC deletion and released capacity. Foreign-CR identity and
+  unapproved direct deletion have separate fail-closed controls; Delete also pins
+  resourceVersion and UID. No CRD, protobuf, or authorization contract changed.
+- The holder-loss fixture's `nohup` timer was a descendant of the executor command.
+  Disconnect cancellation kills the process group and reaps descendants, so that
+  timer could legitimately disappear without terminating the Pod. The fixture now
+  proves FenceUnknown and overlap denial first, then uses exact-owned-Pod UID-guarded
+  Kubernetes deletion with normal grace. It waits for Succeeded/Failed and every
+  declared container's terminated state; absence is never proof. Offline tests
+  reject foreign UID/owner and incomplete terminal evidence. This causal mechanism
+  is source-proven; the historical timeout's cause is not.
+- The legacy quota fixture waits up to six minutes, respects cancellation, fails
+  immediately on forbidden responses, and reports only allowlisted missing/mismatched
+  quota keys and elapsed time on deadline. Tiny-context offline tests cover readiness,
+  deadline, and cancellation without a six-minute test or blanket create retries.
+- The manual workflow collects bounded, closed-vocabulary diagnostics before owned
+  cleanup when production fails. Offline fixture tests verify redaction, UID-match
+  booleans, known finalizers, quota key names, and collection even when deletion fails.
+  The CI-owned path uses the same collector. No raw manifests, commands, grants,
+  credentials, private URLs, or PKI enter its artifact allowlist.
+
+The retained-deletion, terminal-proof, quota-diagnostic, and pre-cleanup evidence
+regressions were observed red then green offline. Final amended-candidate production
+and native live runs remain **PENDING**; no cluster, live model, dispatch, or push
+was performed for this repair. `0e8c8a5ca` removed SC2016, but earlier local
+actionlint ran without ShellCheck and is not a ShellCheck pass. The plan baseline
+remains `7d9e37a128b17107e2d83467c7767146e9c5efb8` in the normal-merge ancestry.
+Reported offline gates at `53ab45453` passed: targeted controller/chart/contract and tagged fixture
+race tests, `task lint`, tagged changed-line lint, one full `task test` attempt
+(including standalone modules), `task docs` plus final docs/checker checks,
+`task site:build`, draft/report-only native-plan trace (32 ACs, zero missing),
+and the offline demo. Local actionlint passed with ShellCheck explicitly disabled;
+ShellCheck was unavailable on the host and in the existing dev toolbox. CI remains
+the authority for ShellCheck and final runtime qualification.
+
 [PR #1728](https://github.com/stacklok/mecatl/pull/1728), commit
 `6501b5924`, is already integrated in the implementation ancestry. Its generic live-compaction
 repair is not native-provider qualification. Final-candidate native-provider live and amended
@@ -534,21 +583,21 @@ new-head CI, final live execution, or human contract/panel approval.
 | AC3.3 | `internal/adapter/executioncontroller/file_authorization_test.go`: every supported file operation has positive and negative signed-grant controls; `internal/executionexecutor/confinement_test.go`: physical symlink traversal/search checks. Existing security manager, protocol, durable revocation, and detached-control tests remain complementary. |
 | AC3.4 | `internal/executionexecutor/executor_test.go`: `TestNativeShellCapsCombinedOutputAndRepairsUTF8`, `TestNativeShellWriteInvalidatesRecordedRead` execute the native helper for combined output bounds, malformed bytes, and actual Shell-write→Edit version refusal. `internal/adapter/executionclient/client_test.go`: `TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly` checks runner text repair after private protobuf bytes; `internal/adapter/executionclient/service_integration_test.go`: `TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain` checks identical valid UTF-8 in client events and model history. `internal/adapter/executioncontroller/store_test.go`: `TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences`; production `TestKindExecutionProductionHolderLossFencesActiveOperation` remains runtime qualification. |
 | AC4.1 | `internal/adapter/executioncontroller/store_lifecycle_test.go`: `TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient`; Kind isolation and pending-delete tests; scoped-admin non-escalation is exercised by the AC4.4 tests. |
-| AC4.2 | `internal/adapter/executioncontroller/store_revoke_test.go`: `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`; `store_concurrency_test.go`: `TestAcquireRunAndRevokeUseResourceVersionCAS`; the three deterministic rotation tests listed above at repair commit `96e16e926`. Latest reported production rotation failed; final runtime success PENDING. |
+| AC4.2 | `internal/adapter/executioncontroller/store_revoke_test.go`: `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`; `store_concurrency_test.go`: `TestAcquireRunAndRevokeUseResourceVersionCAS`; the three deterministic rotation tests listed above at repair commit `96e16e926`. The reported production rotation at `f7919f6c` failed; final runtime success PENDING. |
 | AC4.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestExpiredOperationLeaseFencesWithoutClearingIdentity`, `TestRecoverMissingPodRemainsFenceUnknown`, `TestRecoveredTerminalProofCanStartExactReplacement`; production holder loss. |
 | AC4.4 | `internal/adapter/executioncontroller/admin_scope_test.go`: `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminCASRetryRechecksSubject`, `TestScopedAdminMigrationReceiptRetainsUIDPreconditions`, `TestMigrationCompletedCASReplayRequiresExactSourceSchema`, `TestMigrationReceiptExpiresAfterReconciledReplacement`, `TestScopedAdminDoesNotGrantAttestationOrDataPlane`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`. Replacement-expiry test is in `internal/adapter/executioncontroller/production_lifecycle_test.go` in the pinned implementation candidate. `e2e/k8s_execution/ab_production_admin_test.go`: `TestKindExecutionProductionScopedAdministrator` exists (replacement/non-escalation, not all six routes); final Kind evidence PENDING. |
 | AC4.5 | `internal/adapter/executioncontroller/admin_scope_security_test.go`: `TestAdministratorScopeManifestValidation`, `TestAdministratorScopeDigestIsNormalizedAndAuthorityBound`; `internal/adapter/executioncontroller/admin_scope_test.go`: all-routes scope removal plus `TestScopedAdminEqualGenerationDriftFailsClosed`. Compatibility/upgrade human review PENDING. |
 | AC5.1 | `internal/adapter/executionclient/client_test.go`: exact reattachment test above; production `TestKindExecutionProductionReplicaLifecycle` and security rotation. |
 | AC5.2 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestReplacementPersistsTerminalProofBeforeRemovingPodFinalizer`; production replica lifecycle. |
-| AC5.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestReplacementQuiescesAndPendingReferenceBlocksRetirement`. |
+| AC5.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestReplacementQuiescesAndPendingReferenceBlocksRetirement`; `internal/adapter/executioncontroller/retained_delete_race_test.go`: `TestRetainedDeletePeerBetweenFinalizerUpdateAndDelete`, `TestRetainedDeleteDoesNotRemoveForeignCR`, `TestDirectCRDeleteStillBlocked` (offline race controls; final runtime evidence PENDING). |
 | AC5.4 | `internal/adapter/executionclient/reference_ambiguity_test.go`: `TestAmbiguousCommitIsRetainedAndNeverAbortedByCleanup`; production `TestKindExecutionProductionPendingDeleteOutageRecovery`. |
 | AC5.5, AC5.7 | `deploy/helm/mecatl-execution/chart_test.go`: `TestChartHasNoDeletionHook`; `deploy/helm/mecatl-execution/lifetime_test.go`: `TestChartRetainedLifetime` exercises lookup/adoption, missing history, foreign ownership, profile drift, and retained policies/ledgers offline. `e2e/k8s_execution/zz_production_helm_lifetime_test.go`: `TestKindExecutionProductionHelmLifetime` exercises actual upgrade/uninstall/reinstall and enforcement; final runtime evidence PENDING. |
 | AC5.6 | Deployment-documentation inspection and docs gates required on the final implementation; Kind is restart proof only. |
 | AC6.1–AC6.2 | `internal/app/remote_execution_test.go`: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog` includes a nonempty LOCAL Git snapshot control and REMOTE exclusion, poison-source and operator-global prompt controls, forbidden-tool errors and command/worktree discovery. `TestRemoteExecutionPreservesOperatorPermissionsUnderAuto` exercises global/explicit-file Deny and configured Ask, excluding project permissions, with allowed in-memory Shell controls. `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall` retains the no-FS check. `internal/adapter/executionclient/service_integration_test.go`: `TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain` rejects background Shell and actual Clear/Fork unsupported-selector calls with named errors, no destination publication, and unchanged source ref/history and provider references. |
 | AC6.3 | `internal/adapter/executioncontroller/store_lifecycle_test.go`: `TestReferenceTransactionsRetainUnknownAndNeverChangeSource`; production `TestKindExecutionProductionClearForkLifecycle`. |
-| AC7.1 | `.github/workflows/k8s-e2e.yml` runs `task e2e:k8s:execution:production`; the historical reference job succeeded. The latest operator-reported job at `f7919f6c` passed 10/11 production tests and failed rotation's final read; it progressed past the earlier quota setup failure. Offline rotation evidence and read-only barrier controls are listed above. `internal/adapter/executioncontroller/legacy_fixture_kind_test.go` covers the bounded quota-accounting wait. Final amended-candidate run **PENDING**. |
+| AC7.1 | `.github/workflows/k8s-e2e.yml` runs `task e2e:k8s:execution:production`; historical and operator-reported runs are distinguished above. The reported 11/11 pass at `7e498bd73` does not supersede later failures at `2e1aa6bbf`. `internal/adapter/executioncontroller/legacy_fixture_kind_test.go` covers the six-minute quota-accounting bound with tiny-context tests. `e2e/k8s_execution/holder_loss_test.go` covers the exact-owned terminal stimulus and complete kubelet evidence offline. Final amended-candidate run **PENDING**. |
 | AC7.2 | `e2e/k8s_execution/qualification_test.go`: `TestKindExecutionQualification`, run by the successful production profile. |
-| AC7.3 | Production `TestKindExecutionProductionFailureArtifactBoundary`; workflow bounded uploads and ownership-scoped cleanup. |
+| AC7.3 | Production `TestKindExecutionProductionFailureArtifactBoundary`; `deploy/mecatl-execution-kind/failure_evidence_test.go` tests closed-vocabulary projection and API-error redaction; `TestNativeWorkflowCleanupOwnership` proves evidence collection before failed cleanup. Workflow bounded uploads and ownership-scoped cleanup; final runtime evidence PENDING. |
 | AC7.4 | `e2e/k8s_execution/live_qualification_test.go`: `TestKindExecutionLiveQualification` exists; successful final native-provider OpenRouter evidence **PENDING**. |
 | AC7.5 | `e2e/k8s_execution/fixture/credentialloader/main_test.go`: `TestLoadCredentialAndRedaction`, `TestDeletePinsReceiptUIDAndLeavesReplacement`; these offline tests do not substitute for live execution. |
 
