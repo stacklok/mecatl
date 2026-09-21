@@ -158,6 +158,15 @@ Configure = enable is PRESERVED: configuring a checker still enables it, and thi
 only a tier-conditional REQUIREMENT on top. `--guardrails=off` stays the kill-switch and is the
 deliberate opt-out for an unsupervised allow-all deployment.
 
+The gate keys on the EFFECTIVE ceiling, with no exemption for a ceiling that arrived from a
+flag default rather than an operator typing it. An exemption would leave exactly the
+silently-unsupervised deployment this ADR exists to abolish, and would abolish it only for
+operators who had already thought about it. The consequence is that the shipped allow-all
+defaults must declare their choice out loud, and this change updates them: the `mecak8s` flag
+default, `.github/actions/mecatequi/action.yml` (which defaults `posture: auto` with an empty
+`guardrails-model`), and `.github/workflows/mecatequi.yml`. A deployment that wants to run
+unsupervised still can; it just has to say so where the next reader can see it.
+
 ### 5. The headless trust gate
 
 Under [ADR 0095](./0095-root-aware-project-trust.md) a headless root never gains project trust
@@ -186,8 +195,13 @@ is the legibility fix the review asked for.
 Purely additive on the wire, deprecating on the CLI, for one release.
 
 - `PERMISSION_MODE_TRUSTED = 4`, `PERMISSION_MODE_AUTO = 5`, `PERMISSION_MODE_YOLO = 6` are
-  ADDED. Values 1 to 3 are unchanged and unrenumbered, so existing SDK and gRPC clients stay
-  wire-compatible.
+  ADDED. Values 1 to 3 are unchanged and unrenumbered, so existing gRPC/Connect clients stay
+  wire-compatible by protobuf's own unknown-enum tolerance. That tolerance does NOT extend to
+  the TypeScript SDK's HTTP transport, which bridges the enum through two hand-written CLOSED
+  maps in `sdk/typescript/src/http.ts` that coerce an unrecognised value to `"default"`
+  outbound and to `0`/UNSPECIFIED inbound. Left alone they would report a fully allow-all
+  session as having no mode at all, so this change extends both. Additive numbering is a
+  necessary condition for compatibility here, not a sufficient one.
 - `session.PermissionMode` gains `ModeTrusted`, `ModeAuto`, `ModeYolo`. The three existing
   string values, including the persisted `"acceptEdits"`, are unchanged, so no snapshot
   migration is required. Added = minor under `engine/COMPATIBILITY.md`.
