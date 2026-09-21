@@ -6,11 +6,13 @@ import type {
 } from "@mecatl-studio/contracts/generated";
 import { getRuntimeOptions, getRuntimeSettingsOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
   BrainCircuit,
   Cloud,
   ExternalLink,
   Image,
+  Keyboard,
   Laptop,
   LifeBuoy,
   Search,
@@ -341,7 +343,12 @@ function AboutAgent({
             <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
           </a>
         </Button>
-        {/* The keyboard-shortcuts reference page arrives with its own plan layer. */}
+        <Button asChild className="rounded-full" size="sm" variant="outline">
+          <Link to="/workspace/shortcuts">
+            <Keyboard aria-hidden="true" />
+            Keyboard shortcuts
+          </Link>
+        </Button>
       </div>
       <div className="mt-2 divide-y border-t">
         <AuthControl />

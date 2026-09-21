@@ -1,22 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createContext, type ReactNode, useContext, useEffect, useRef } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import {
   matchesShortcut,
   type ShortcutId,
+  shortcutAllowedByScopes,
   shortcutRegistry,
   shortcutWorksWhileTyping,
 } from "./shortcut-registry";
 
 interface ShortcutHandlers {
   register: (id: ShortcutId, handler: () => void) => void;
+  /** Opens a modal scope that permits only `allowed`; returns its release. */
+  suppress: (allowed: ReadonlySet<ShortcutId>) => () => void;
   unregister: (id: ShortcutId) => void;
 }
 
 const ShortcutContext = createContext<ShortcutHandlers | null>(null);
 
+const NO_SHORTCUTS: readonly ShortcutId[] = [];
+
 export function ShortcutProvider({ children }: { children: ReactNode }) {
   const handlers = useRef(new Map<ShortcutId, () => void>());
+  const scopes = useRef(new Set<ReadonlySet<ShortcutId>>());
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -25,6 +38,7 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
       for (const shortcut of shortcutRegistry) {
         const handler = handlers.current.get(shortcut.id);
         if (!handler || (typing && !shortcutWorksWhileTyping(shortcut.combo))) continue;
+        if (!shortcutAllowedByScopes(shortcut.id, scopes.current)) continue;
         if (!matchesShortcut(shortcut.combo, event)) continue;
         event.preventDefault();
         handler();
@@ -38,6 +52,14 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
 
   const context = useRef<ShortcutHandlers>({
     register: (id, handler) => handlers.current.set(id, handler),
+    suppress: (allowed) => {
+      // A fresh Set per call, so two scopes with equal allow-lists stay distinct.
+      const scope = new Set(allowed);
+      scopes.current.add(scope);
+      return () => {
+        scopes.current.delete(scope);
+      };
+    },
     unregister: (id) => handlers.current.delete(id),
   }).current;
 
@@ -55,6 +77,25 @@ export function useShortcut(id: ShortcutId, handler: () => void) {
     context.register(id, stableHandler);
     return () => context.unregister(id);
   }, [context, id]);
+}
+
+/**
+ * While `active`, blocks every registered shortcut except `allowed`. A modal
+ * surface (dialog, palette) uses this so app-wide bindings such as Escape or
+ * the arrow keys cannot act on the page behind it. Pass a stable (module-level)
+ * `allowed` array. The scope is installed in a layout effect so it is in place
+ * before the next keystroke can be dispatched.
+ */
+export function useShortcutSuppression(
+  active: boolean,
+  allowed: readonly ShortcutId[] = NO_SHORTCUTS,
+) {
+  const context = useContext(ShortcutContext);
+
+  useLayoutEffect(() => {
+    if (!context || !active) return;
+    return context.suppress(new Set(allowed));
+  }, [active, allowed, context]);
 }
 
 function isTyping(element: Element | null): boolean {

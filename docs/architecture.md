@@ -715,7 +715,14 @@ reports no status), and fixed `management` flags saying provider and routing con
 deployment-managed — calling `server.info` only when the snapshot advertises `server_info` and
 `models.list` only under `modelSelection`; `GET /api/v1/storage/health` maps the daemon's
 storage health with counts as decimal strings and byte figures `null` unless marked available,
-gated on `storageHealth`. Never a credential, key, or raw base URL. See
+gated on `storageHealth`. Never a credential, key, or raw base URL. Two **browser-only**
+surfaces complete the set with no BFF change: a global search palette whose index is a pure
+function over the inventories the BFF already served this user (titles, names, descriptions,
+and ids only, matched client-side with accent folding, never sent upstream), and a
+keyboard-shortcuts reference page over a closed static registry (bindings pinned to
+preventable primary-modifier combos) that lists only the deployment capabilities with a
+reachable spot in Studio's UI, each read off the same snapshot gate the owning component uses.
+See
 [ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
 [Studio bootstrap](acceptance/studio-bootstrap.md) and
 [Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own

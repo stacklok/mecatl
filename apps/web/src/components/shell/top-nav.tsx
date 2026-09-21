@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Link, useRouterState } from "@tanstack/react-router";
+import { GlobalSearch } from "../../features/search/global-search";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { navItems } from "./nav-items";
 
 /**
- * The workspace top navigation bar. Carries only the logo and the primary
- * nav pills — no connection/theme/auth status chips (those live in Settings
- * or a conditional banner instead), matching Studio's "the top nav carries
- * no status chips" rule.
+ * The workspace top navigation bar. Carries only the logo, the primary nav
+ * pills, and global search — no connection/theme/auth status chips (those
+ * live in Settings or a conditional banner instead), matching Studio's
+ * "the top nav carries no status chips" rule.
  */
 export function TopNav() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -63,6 +64,10 @@ export function TopNav() {
             );
           })}
         </nav>
+
+        <div className="shrink-0 [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-nav-icon [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-white/60 [&>button]:min-[500px]:w-[214px]">
+          <GlobalSearch />
+        </div>
       </div>
     </header>
   );

@@ -4,7 +4,7 @@
 **Work classification:** Bounded — adds two browser-only surfaces (the global search palette and the keyboard-shortcuts reference page) to the Studio web app over inventories the BFF already serves; no BFF route, schema, or daemon change, and no new durable architecture decision.
 **Decision record:** None — the boundary is ADR 0351's; these surfaces add no new ingress, they read what earlier layers already authorised.
 **Phase:** capability — fifth and last feature layer of the Studio stack
-**Status:** proposed, 2026-09-21. Eleventh layer of the Studio `gh stack`; scope decisions were taken by the assistant under the directing human's go-ahead and are recorded below for review.
+**Status:** landed, 2026-09-24. Candidate transition after `task studio:check`, `task docs`, and `task ac-trace` passed on the implementation layer; authoritative only when that PR merges. Proposed 2026-09-21. Eleventh layer of the Studio `gh stack`; scope decisions were taken by the assistant under the directing human's go-ahead and are recorded below for review.
 **Delivery:** Split, under the same stacking exception as [the bootstrap plan](studio-bootstrap.md): this plan is a stack layer, the implementation is the next layer, and nothing merges until the whole series is reviewed.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1736](https://github.com/stacklok/mecatl/issues/1736).

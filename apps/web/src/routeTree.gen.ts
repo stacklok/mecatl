@@ -15,6 +15,7 @@ import { Route as WorkspaceIndexRouteImport } from './routes/workspace.index'
 import { Route as WorkspaceChatRouteImport } from './routes/workspace.chat'
 import { Route as WorkspaceSchedulesRouteImport } from './routes/workspace.schedules'
 import { Route as WorkspaceSettingsRouteImport } from './routes/workspace.settings'
+import { Route as WorkspaceShortcutsRouteImport } from './routes/workspace.shortcuts'
 import { Route as WorkspaceSkillsRouteImport } from './routes/workspace.skills'
 import { Route as WorkspaceSchedulesScheduleNameRouteImport } from './routes/workspace.schedules_.$scheduleName'
 import { Route as WorkspaceSettingsSectionRouteImport } from './routes/workspace.settings_.$section'
@@ -50,6 +51,11 @@ const WorkspaceSettingsRoute = WorkspaceSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceShortcutsRoute = WorkspaceShortcutsRouteImport.update({
+  id: '/shortcuts',
+  path: '/shortcuts',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
 const WorkspaceSkillsRoute = WorkspaceSkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/workspace/chat': typeof WorkspaceChatRoute
   '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/settings': typeof WorkspaceSettingsRoute
+  '/workspace/shortcuts': typeof WorkspaceShortcutsRoute
   '/workspace/skills': typeof WorkspaceSkillsRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/workspace/schedules/$scheduleName': typeof WorkspaceSchedulesScheduleNameRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/workspace/chat': typeof WorkspaceChatRoute
   '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/settings': typeof WorkspaceSettingsRoute
+  '/workspace/shortcuts': typeof WorkspaceShortcutsRoute
   '/workspace/skills': typeof WorkspaceSkillsRoute
   '/workspace': typeof WorkspaceIndexRoute
   '/workspace/schedules/$scheduleName': typeof WorkspaceSchedulesScheduleNameRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/workspace/chat': typeof WorkspaceChatRoute
   '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/settings': typeof WorkspaceSettingsRoute
+  '/workspace/shortcuts': typeof WorkspaceShortcutsRoute
   '/workspace/skills': typeof WorkspaceSkillsRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/workspace/schedules_/$scheduleName': typeof WorkspaceSchedulesScheduleNameRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/workspace/chat'
     | '/workspace/schedules'
     | '/workspace/settings'
+    | '/workspace/shortcuts'
     | '/workspace/skills'
     | '/workspace/'
     | '/workspace/schedules/$scheduleName'
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/workspace/chat'
     | '/workspace/schedules'
     | '/workspace/settings'
+    | '/workspace/shortcuts'
     | '/workspace/skills'
     | '/workspace'
     | '/workspace/schedules/$scheduleName'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/workspace/chat'
     | '/workspace/schedules'
     | '/workspace/settings'
+    | '/workspace/shortcuts'
     | '/workspace/skills'
     | '/workspace/'
     | '/workspace/schedules_/$scheduleName'
@@ -196,6 +208,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSettingsRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/workspace/shortcuts': {
+      id: '/workspace/shortcuts'
+      path: '/shortcuts'
+      fullPath: '/workspace/shortcuts'
+      preLoaderRoute: typeof WorkspaceShortcutsRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/workspace/skills': {
       id: '/workspace/skills'
       path: '/skills'
@@ -231,6 +250,7 @@ interface WorkspaceRouteChildren {
   WorkspaceChatRoute: typeof WorkspaceChatRoute
   WorkspaceSchedulesRoute: typeof WorkspaceSchedulesRoute
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRoute
+  WorkspaceShortcutsRoute: typeof WorkspaceShortcutsRoute
   WorkspaceSkillsRoute: typeof WorkspaceSkillsRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   WorkspaceSchedulesScheduleNameRoute: typeof WorkspaceSchedulesScheduleNameRoute
@@ -242,6 +262,7 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceChatRoute: WorkspaceChatRoute,
   WorkspaceSchedulesRoute: WorkspaceSchedulesRoute,
   WorkspaceSettingsRoute: WorkspaceSettingsRoute,
+  WorkspaceShortcutsRoute: WorkspaceShortcutsRoute,
   WorkspaceSkillsRoute: WorkspaceSkillsRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   WorkspaceSchedulesScheduleNameRoute: WorkspaceSchedulesScheduleNameRoute,

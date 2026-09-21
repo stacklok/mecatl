@@ -152,6 +152,24 @@ export function keycaps(combo: string, mac = true): string[] {
     );
 }
 
+/**
+ * A single printable punctuation or symbol character, such as `?`, `/`, `,`,
+ * or `[`. Which of these a key produces already depends on Shift (and on the
+ * keyboard layout), so `KeyboardEvent.key` is the whole truth for them.
+ */
+const punctuationKey = /^[\p{P}\p{S}]$/u;
+
+/**
+ * Whether a keyboard event is exactly the combination a binding documents.
+ *
+ * - `mod` is the primary modifier: exactly one of Ctrl or Meta must be held
+ *   when the binding asks for it, and neither when it does not, so Ctrl and
+ *   Meta pressed together never match.
+ * - Alt must match exactly.
+ * - Shift must match exactly for letters, digits, and named keys. For
+ *   punctuation the produced `key` already encodes Shift, so the binding
+ *   matches by that character alone: `?` matches the key `?` and `/` does not.
+ */
 export function matchesShortcut(
   combo: string,
   event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
@@ -161,10 +179,27 @@ export function matchesShortcut(
   const wantsModifier = parts.includes("mod");
   const wantsShift = parts.includes("shift");
   const wantsAlt = parts.includes("alt");
+  if (event.metaKey && event.ctrlKey) return false;
   if (wantsModifier !== (event.metaKey || event.ctrlKey)) return false;
   if (wantsAlt !== event.altKey) return false;
-  if (wantsShift && !event.shiftKey) return false;
+  if (!punctuationKey.test(key) && wantsShift !== event.shiftKey) return false;
   return event.key.toLocaleLowerCase() === (keyAliases[key] ?? key);
+}
+
+/**
+ * Whether a shortcut may fire while modal scopes (dialogs, palettes) are
+ * open. Each open scope lists the shortcuts it still permits; a shortcut
+ * fires only when every open scope permits it, so with no scope open every
+ * shortcut is allowed.
+ */
+export function shortcutAllowedByScopes(
+  id: ShortcutId,
+  scopes: Iterable<ReadonlySet<ShortcutId>>,
+): boolean {
+  for (const allowed of scopes) {
+    if (!allowed.has(id)) return false;
+  }
+  return true;
 }
 
 export function shortcutWorksWhileTyping(combo: string): boolean {
