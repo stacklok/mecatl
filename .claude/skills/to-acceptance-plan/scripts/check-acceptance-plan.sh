@@ -264,7 +264,7 @@ for label in "${category_labels[@]}"; do
     continue
   fi
 
-  category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; exit }')
+  category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" '!found && index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; found = 1 }')
   category_content=${category_line#"$label"}
   category_content=${category_content#" "}
   if [[ -z "$category_content" ]]; then
@@ -292,7 +292,7 @@ if [[ "$combined" -eq 1 ]]; then
     '- **Security / authority:**'
   )
   for label in "${combined_labels[@]}"; do
-    category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; exit }')
+    category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" '!found && index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; found = 1 }')
     category_content=${category_line#"$label"}
     category_content=${category_content#" "}
     if ! [[ "$category_content" =~ ^None[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].* ]]; then

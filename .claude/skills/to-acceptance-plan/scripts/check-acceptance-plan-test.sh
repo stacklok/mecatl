@@ -68,6 +68,19 @@ valid="$root/acceptance/valid-v1.md"
 write_plan "$valid"
 bash "$checker" "$valid" >/dev/null
 
+# A large interface block must not trip pipefail when a first-match consumer
+# finishes before the producer has drained its command-substitution buffer.
+large_interface="$root/acceptance/valid-large-interface.md"
+awk '
+  { print }
+  /^- \*\*Compatibility \/ migration:\*\*/ {
+    for (i = 0; i < 20000; i++) {
+      print "  Continuation line " i ": deterministic interface detail used to exceed the pipe buffer."
+    }
+  }
+' "$valid" >"$large_interface"
+bash "$checker" "$large_interface" >/dev/null
+
 bounded_valid="$root/acceptance/valid-bounded-v2.md"
 cp "$valid" "$bounded_valid"
 sed_in_place 's/human-reviewed\/v1/human-reviewed\/v2/' "$bounded_valid"
