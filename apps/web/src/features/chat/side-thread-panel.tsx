@@ -9,6 +9,7 @@ import {
 } from "@mecatl-studio/contracts/generated";
 import {
   forkSessionMutation,
+  getRuntimeSettingsOptions,
   getSessionDetailOptions,
   getSessionTranscriptOptions,
   listSessionsOptions,
@@ -45,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Textarea } from "../../components/ui/textarea";
+import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import {
   defaultAgentName,
@@ -107,6 +109,8 @@ export function SideThreadPanel({
   const [prompt, setPrompt] = useState("");
   const forkSession = useMutation(forkSessionMutation());
   const sessionDetail = useQuery(getSessionDetailOptions({ path: { sessionId: activeSessionId } }));
+  const runtimeSettings = useQuery(getRuntimeSettingsOptions());
+  const disabledModels = useDisabledModels().disabled;
   const agentName = useAgentDisplayName().value.trim() || defaultAgentName;
   const agentAvatar = useAgentAvatar().value;
   const userName = useUserDisplayName().value.trim() || "You";
@@ -116,9 +120,15 @@ export function SideThreadPanel({
   const textarea = useRef<HTMLTextAreaElement>(null);
 
   const model = sessionDetail.data?.model;
-  // The model catalogue is served by the settings layer, which is not part of this plan;
-  // until it lands the composer has no models to offer and keeps its picker disabled.
-  const models: ComposerModelOption[] = [];
+  const models: ComposerModelOption[] =
+    runtimeSettings.data?.models
+      .filter((candidate) => !disabledModels.has(modelPreferenceId(candidate)))
+      .map((candidate) => ({
+        id: candidate.id,
+        image: candidate.image,
+        label: candidate.displayName,
+        providerId: candidate.providerId,
+      })) ?? [];
   const busy = run.isRunning || forkSession.isPending;
 
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {

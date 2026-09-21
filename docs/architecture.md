@@ -708,7 +708,14 @@ reflection receipts, and the user model with its daemon-curated consolidation pl
 capability (`skills`, `learnedSkills`, `learningProposals`, `reflection`, `userModel`,
 `manualDream.userModel`) with a surface-specific `501` code, the two inventory lists degrade
 to `supported: false` instead, and the daemon's conflict on a stale token is relayed, never
-retried. See
+retried. **Settings** is the fourth: `GET /api/v1/settings/runtime` is a read-only,
+allowlisted projection — build id, server implementation, the provider's *display* endpoint,
+the model and provider inventory (with provider rows synthesised for models whose provider
+reports no status), and fixed `management` flags saying provider and routing configuration are
+deployment-managed — calling `server.info` only when the snapshot advertises `server_info` and
+`models.list` only under `modelSelection`; `GET /api/v1/storage/health` maps the daemon's
+storage health with counts as decimal strings and byte figures `null` unless marked available,
+gated on `storageHealth`. Never a credential, key, or raw base URL. See
 [ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
 [Studio bootstrap](acceptance/studio-bootstrap.md) and
 [Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own

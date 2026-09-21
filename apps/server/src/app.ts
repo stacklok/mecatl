@@ -32,10 +32,14 @@ import {
 } from "./mecatl/knowledge.js";
 import { type MecatlRuntime, RuntimeNotReadyError } from "./mecatl/runtime.js";
 import { createMecatlScheduleService, type ScheduleService } from "./mecatl/schedules.js";
+import { createMecatlSettingsService, type SettingsService } from "./mecatl/settings.js";
+import { createMecatlStorageService, type StorageService } from "./mecatl/storage.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
+import { registerSettingsRoutes } from "./routes/settings.js";
+import { registerStorageRoutes } from "./routes/storage.js";
 
 export const openApiInfo = {
   info: { title: "Mecatl Studio API", version: "1.0.0" },
@@ -81,6 +85,8 @@ export interface AppDependencies {
   readonly chat?: ChatService;
   readonly schedules?: ScheduleService;
   readonly knowledge?: KnowledgeService;
+  readonly settings?: SettingsService;
+  readonly storage?: StorageService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
   /** How long a feature request waits for compatibility negotiation before `503`. */
@@ -207,6 +213,32 @@ export function createApp(dependencies: AppDependencies = {}) {
       ? undefined
       : createMecatlKnowledgeService(runtime.client, () => knowledgeCapabilities(runtime)));
   registerKnowledgeRoutes(app, knowledge);
+  const snapshotOrUndefined = () => {
+    if (runtime === undefined) return undefined;
+    try {
+      return runtime.snapshot();
+    } catch {
+      return undefined;
+    }
+  };
+  const settings =
+    dependencies.settings ??
+    (runtime === undefined
+      ? undefined
+      : createMecatlSettingsService(runtime.client, () => ({
+          modelSelection: snapshotOrUndefined()?.capabilities.modelSelection ?? false,
+          serverInfo: snapshotOrUndefined()?.features.includes("server_info") ?? false,
+        })));
+  registerSettingsRoutes(app, settings);
+  const storage =
+    dependencies.storage ??
+    (runtime === undefined
+      ? undefined
+      : createMecatlStorageService(
+          runtime.client,
+          () => snapshotOrUndefined()?.capabilities.storageHealth ?? false,
+        ));
+  registerStorageRoutes(app, storage);
 
   if (dependencies.webDist !== undefined) app.use("*", spaHandler(dependencies.webDist));
 

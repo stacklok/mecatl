@@ -8681,6 +8681,365 @@
           }
         }
       }
+    },
+    "/api/v1/settings/runtime": {
+      "get": {
+        "operationId": "getRuntimeSettings",
+        "responses": {
+          "200": {
+            "description": "Safe runtime, provider, and model inventory for settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "buildId": {
+                      "type": "string"
+                    },
+                    "management": {
+                      "type": "object",
+                      "properties": {
+                        "providerConfiguration": {
+                          "type": "boolean"
+                        },
+                        "providerConfigurationReason": {
+                          "type": "string"
+                        },
+                        "routingConfiguration": {
+                          "type": "boolean"
+                        },
+                        "routingConfigurationReason": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "providerConfiguration",
+                        "providerConfigurationReason",
+                        "routingConfiguration",
+                        "routingConfigurationReason"
+                      ]
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "contextLimit": {
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "image": {
+                            "type": "boolean"
+                          },
+                          "providerId": {
+                            "type": "string"
+                          },
+                          "reasoning": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "contextLimit",
+                          "displayName",
+                          "id",
+                          "image",
+                          "providerId",
+                          "reasoning"
+                        ]
+                      }
+                    },
+                    "modelsReason": {
+                      "type": "string"
+                    },
+                    "modelsSupported": {
+                      "type": "boolean"
+                    },
+                    "providerEndpoint": {
+                      "type": "string"
+                    },
+                    "providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "availableNotDefault": {
+                            "type": "boolean"
+                          },
+                          "defaultModelAutoSelected": {
+                            "type": "boolean"
+                          },
+                          "hint": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "modelCount": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "availableNotDefault",
+                          "defaultModelAutoSelected",
+                          "hint",
+                          "id",
+                          "modelCount",
+                          "state"
+                        ]
+                      }
+                    },
+                    "serverImplementation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "buildId",
+                    "management",
+                    "models",
+                    "modelsReason",
+                    "modelsSupported",
+                    "providerEndpoint",
+                    "providers",
+                    "serverImplementation"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The settings inventory could not be read.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/health": {
+      "get": {
+        "operationId": "getStorageHealth",
+        "responses": {
+          "200": {
+            "description": "A plain-words summary of the connected agent's saved chats and runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "activeJob": {
+                      "type": "boolean"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "childCount": {
+                      "type": "string"
+                    },
+                    "corruptCount": {
+                      "type": "string"
+                    },
+                    "currentBytes": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastFailure": {
+                      "type": "boolean"
+                    },
+                    "mainCount": {
+                      "type": "string"
+                    },
+                    "reclaimableBytes": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "scheduledCount": {
+                      "type": "string"
+                    },
+                    "sessionCount": {
+                      "type": "string"
+                    },
+                    "supported": {
+                      "type": "boolean"
+                    },
+                    "unknownCount": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "activeJob",
+                    "available",
+                    "childCount",
+                    "corruptCount",
+                    "currentBytes",
+                    "lastFailure",
+                    "mainCount",
+                    "reclaimableBytes",
+                    "scheduledCount",
+                    "sessionCount",
+                    "supported",
+                    "unknownCount"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The storage health could not be read.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

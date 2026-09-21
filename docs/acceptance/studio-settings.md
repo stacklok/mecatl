@@ -4,7 +4,7 @@
 **Work classification:** Bounded — adds the read-only runtime-settings and storage-health surface to the Studio BFF and the settings workspace to the web app, inside the boundary ADR 0351 fixed; no new durable architecture decision.
 **Decision record:** None — the boundary and the published-SDK rule are ADR 0351's; provider and routing configuration stay deployment-managed (the operator-tier posture of [architecture](../architecture.md), "Build identity" and providers), so Studio only displays them.
 **Phase:** capability — fourth feature layer of the Studio stack
-**Status:** proposed, 2026-09-21. Ninth layer of the Studio `gh stack`; scope decisions were taken by the assistant under the directing human's go-ahead and are recorded below for review.
+**Status:** landed, 2026-09-24. Candidate transition after `task studio:check`, `task docs`, and `task ac-trace` passed on the implementation layer; authoritative only when that PR merges. Proposed 2026-09-21. Ninth layer of the Studio `gh stack`; scope decisions were taken by the assistant under the directing human's go-ahead and are recorded below for review.
 **Delivery:** Split, under the same stacking exception as [the bootstrap plan](studio-bootstrap.md): this plan is a stack layer, the implementation is the next layer, and nothing merges until the whole series is reviewed.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1736](https://github.com/stacklok/mecatl/issues/1736).

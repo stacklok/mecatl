@@ -16,6 +16,7 @@ import {
   deleteSessionMutation,
   forkSessionMutation,
   getRuntimeOptions,
+  getRuntimeSettingsOptions,
   getSessionDetailOptions,
   getSessionTranscriptOptions,
   listSessionsOptions,
@@ -80,6 +81,7 @@ import {
 } from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
 import { notifyRunCompletion } from "../../lib/browser-notifications";
+import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
   defaultAgentName,
   useAgentAvatar,
@@ -205,6 +207,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const queryClient = useQueryClient();
   const sessions = useQuery(listSessionsOptions());
   const runtime = useQuery(getRuntimeOptions());
+  const runtimeSettings = useQuery(getRuntimeSettingsOptions());
   const transcript = useQuery({
     ...getSessionTranscriptOptions({ path: { sessionId: sessionId ?? "" } }),
     enabled: Boolean(sessionId),
@@ -251,6 +254,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const sessionListSide = useSessionListSide().value;
   const { setValue: setShowToolCalls, value: showToolCalls } = useShowToolCalls();
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
+  const disabledModels = useDisabledModels().disabled;
   const enterSendBehavior = useEnterSendBehavior().value;
   const queuedMessages = useQueuedMessages(sessionId ?? "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
@@ -327,13 +331,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   const selectedSession = sessions.data?.items.find((session) => session.id === sessionId);
   const approval = approvals[0];
-  // The model catalogue is served by the settings layer, which is not part of this plan;
-  // until it lands the composer has no models to offer and keeps its picker disabled.
-  const models: ComposerModelOption[] = [];
+  const models: ComposerModelOption[] =
+    runtimeSettings.data?.models
+      .filter((model) => !disabledModels.has(modelPreferenceId(model)))
+      .map((model) => ({
+        id: model.id,
+        image: model.image,
+        label: model.displayName,
+        providerId: model.providerId,
+      })) ?? [];
   const watchable = selectedSession?.state === "running" || selectedSession?.state === "awaiting";
   const imageAttachmentsSupported = sessionId
     ? sessionDetail.data?.capabilities.image === true
-    : runtime.data?.capabilities.image === true;
+    : draftConfiguration.model
+      ? runtimeSettings.data?.models.some(
+          (model) =>
+            model.id === draftConfiguration.model?.id &&
+            model.providerId === draftConfiguration.model.providerId &&
+            model.image,
+        ) === true
+      : runtime.data?.capabilities.image === true;
   const displayedDetail = sessionDetail.data
     ? {
         ...sessionDetail.data,

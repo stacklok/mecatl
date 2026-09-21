@@ -2852,3 +2852,130 @@ export type GetUserMemoryResponses = {
 };
 
 export type GetUserMemoryResponse = GetUserMemoryResponses[keyof GetUserMemoryResponses];
+
+export type GetRuntimeSettingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/settings/runtime';
+};
+
+export type GetRuntimeSettingsErrors = {
+    /**
+     * The settings inventory could not be read.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetRuntimeSettingsError = GetRuntimeSettingsErrors[keyof GetRuntimeSettingsErrors];
+
+export type GetRuntimeSettingsResponses = {
+    /**
+     * Safe runtime, provider, and model inventory for settings.
+     */
+    200: {
+        buildId: string;
+        management: {
+            providerConfiguration: boolean;
+            providerConfigurationReason: string;
+            routingConfiguration: boolean;
+            routingConfigurationReason: string;
+        };
+        models: Array<{
+            contextLimit: string;
+            displayName: string;
+            id: string;
+            image: boolean;
+            providerId: string;
+            reasoning: boolean;
+        }>;
+        modelsReason: string;
+        modelsSupported: boolean;
+        providerEndpoint: string;
+        providers: Array<{
+            availableNotDefault: boolean;
+            defaultModelAutoSelected: boolean;
+            hint: string;
+            id: string;
+            modelCount: number;
+            state: string;
+        }>;
+        serverImplementation: string;
+    };
+};
+
+export type GetRuntimeSettingsResponse = GetRuntimeSettingsResponses[keyof GetRuntimeSettingsResponses];
+
+export type GetStorageHealthData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/storage/health';
+};
+
+export type GetStorageHealthErrors = {
+    /**
+     * The storage health could not be read.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetStorageHealthError = GetStorageHealthErrors[keyof GetStorageHealthErrors];
+
+export type GetStorageHealthResponses = {
+    /**
+     * A plain-words summary of the connected agent's saved chats and runs.
+     */
+    200: {
+        activeJob: boolean;
+        available: boolean;
+        childCount: string;
+        corruptCount: string;
+        currentBytes: string;
+        lastFailure: boolean;
+        mainCount: string;
+        reclaimableBytes: string;
+        scheduledCount: string;
+        sessionCount: string;
+        supported: boolean;
+        unknownCount: string;
+    };
+};
+
+export type GetStorageHealthResponse = GetStorageHealthResponses[keyof GetStorageHealthResponses];

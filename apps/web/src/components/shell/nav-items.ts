@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Clock3, GraduationCap, MessageCircle } from "lucide-react";
+import { Clock3, GraduationCap, MessageCircle, Settings } from "lucide-react";
 
 /**
  * Primary navigation. Each feature plan appends its own entry (schedules,
@@ -24,5 +24,11 @@ export const navItems = [
     label: "Skills",
     to: "/workspace/skills",
     icon: GraduationCap,
+  },
+  {
+    key: "settings",
+    label: "Settings",
+    to: "/workspace/settings",
+    icon: Settings,
   },
 ] as const;
