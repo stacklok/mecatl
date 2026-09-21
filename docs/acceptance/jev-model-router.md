@@ -4,9 +4,11 @@
 **Work classification:** Architectural — selecting an external decision service changes the operator configuration, credential, data-egress, and adapter boundaries of delegated-model routing.
 **Decision record:** [ADR 0350](../adr/0350-jev-delegated-model-router.md)
 **Phase:** delegated-model router backend
-**Status:** draft, 2026-09-21. Material operator and egress decisions remain open.
-**Delivery:** Split. The external decision boundary and exact operator contract require review before implementation.
+**Status:** approved, 2026-09-21. The operator approved the plan and explicitly waived the merged-plan prerequisite for a stacked implementation; the plan PR is not yet merged.
+**Delivery:** Split. The implementation PR targets the plan branch under that explicit waiver; both PRs retain human merge gates.
 **Expected tasks:** deferred to orchestration
+**Plan PR:** [#1735](https://github.com/stacklok/mecatl/pull/1735).
+**Approved baseline:** `14923277ec157b299913a66e2be6304671b0be2c`, approved directly by the operator for stacked implementation.
 
 This plan adds Jev as an explicitly selected classifier backend for the existing semantic model router. It preserves the current taxonomy, category-to-model mapping, same-provider child construction, precedence, fallback, observability, and per-run breaker described in [ADR 0031](../adr/0031-subagent-model-router.md) and [ADR 0042](../adr/0042-taxonomy-gated-model-router.md).
 
@@ -15,9 +17,9 @@ The proposal uses `typesafe-go` v0.1.0 with Jev model `jev-1.13.0`. Jev is a bou
 ## Human decisions
 
 - [x] Keep this contract router-only — Decision: guardrails, escape checking, approval reviewers, cross-provider or main-session routing, per-turn routing, caches, and token-accounting hardening are outside this plan. Existing reported router usage continues through the current accounting seam without making independent accounting work a prerequisite.
-- [ ] Approve or revise the proposed operator surface: `backend: llm|jev` defaults to `llm`; Jev has `model`, `base-url`, and `minimum-confidence`; `TYPESAFE_API_KEY` is its only credential source; explicit LLM-only keys conflict with an active `backend: jev`; and disabled or taxonomy-free routing skips inactive-backend credential, connectivity, and selection-conflict checks while strict YAML/schema validation still applies.
-- [ ] Approve or revise abstention behavior: an absent or zero `minimum-confidence` disables confidence filtering; a valid answer below an explicitly configured threshold is a router miss that inherits the normal child model and counts toward the existing breaker, rather than selecting `default-category`.
-- [ ] Approve or revise the external-call policy: one shared client and eight-slot semaphore per `app.Build`, a 10-second queue wait, a 10-second request deadline, a 1 MiB response limit, a proposed 64 KiB locally measured UTF-8 text-input cap, at most 255 categories, no SDK retries, no redirects, HTTPS except loopback test/development endpoints, and explicit documentation that delegated task text leaves the deployment when Jev is selected.
+- [x] Operator surface — Decision: retain the reviewed proposal: `backend: llm|jev` defaults to `llm`; Jev has `model`, `base-url`, and `minimum-confidence`; `TYPESAFE_API_KEY` is its only credential source; explicit LLM-only keys conflict with an active `backend: jev`; and disabled or taxonomy-free routing skips inactive-backend credential, connectivity, and selection-conflict checks while strict YAML/schema validation still applies.
+- [x] Abstention behavior — Decision: an absent or zero `minimum-confidence` disables confidence filtering; a valid answer below an explicitly configured threshold is a router miss that inherits the normal child model and counts toward the existing breaker, rather than selecting `default-category`.
+- [x] External-call policy — Decision: one shared client and eight-slot semaphore per `app.Build`, a 10-second queue wait, a 10-second request deadline, a 1 MiB response limit, a 64 KiB locally measured UTF-8 text-input cap, at most 255 categories, no SDK retries, no redirects, HTTPS except loopback test/development endpoints, and explicit documentation that delegated task text leaves the deployment when Jev is selected.
 
 ## Interface contract
 
