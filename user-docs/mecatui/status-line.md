@@ -73,6 +73,18 @@ width produces an empty value, a fitting value is unchanged, width `1` produces
 `…`, and a wider value is shortened to the widest fitting prefix followed by
 `…`.
 
+They also support `lookup KEY match value ...`. It returns the value from the
+first pair whose match exactly equals `KEY`; with no match, it returns an empty
+string. For example, a title or status template can map an agent state to a
+short label:
+
+```gotemplate
+{{lookup .MainAgent.State "idle" "ready" "thinking" "working" "failed" "error"}}
+```
+
+The helper is text-only and is available in both status and terminal-title
+templates.
+
 ### Status-only context meter functions
 
 Status templates provide three functions that render the current context use as
@@ -337,15 +349,18 @@ Configure the title in the client-owned
 ```yaml
 terminal_title:
   enabled: true
-  template: '{{if .Session.Title}}{{.Session.Title}} · {{.MainAgent.State}} · mecatui{{else}}mecatui{{end}}'
 ```
 
-The setting applies to embedded and connected clients. The shipped template
-uses the session title and agent state, and falls back to `mecatui` before a
-session title exists. It does not include the session handle; add
-`.Session.Handle` when you want one. Title templates use the shared template
-input described in [Status input reference](#status-input-reference), including
-`Workspace.Path`, and support the common `elide` function.
+Set `template` to replace the shipped title template.
+
+The setting applies to embedded and connected clients. The shipped title is
+state-aware: it prefixes a titled session with a state label and elides the
+title to 40 display columns. Without a title, it shows the state label with
+`mecatui` when a session handle is available, otherwise just `mecatui`. It does
+not include the session handle itself; add `.Session.Handle` when you want one.
+Title templates use the shared template input described in [Status input
+reference](#status-input-reference), including `Workspace.Path`, and support
+the common `elide` and `lookup` functions.
 
 Title writes follow this precedence:
 

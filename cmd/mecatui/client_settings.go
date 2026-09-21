@@ -40,10 +40,8 @@ type terminalTitleSettingsYAML struct {
 	Template string `yaml:"template"`
 }
 
-const shippedTerminalTitleTemplate = "{{if .Session.Title}}{{.Session.Title}} · {{.MainAgent.State}} · mecatui{{else}}mecatui{{end}}"
-
 func shippedTerminalTitleSettings() terminalTitleSettings {
-	return terminalTitleSettings{Enabled: true, Template: shippedTerminalTitleTemplate}
+	return terminalTitleSettings{Enabled: true, Template: statusline.DefaultTitleTemplate()}
 }
 
 func newTitleRenderer(settings terminalTitleSettings) (*statusline.TitleRenderer, error) {

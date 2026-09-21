@@ -31,8 +31,9 @@ func newTemplateSource(templates TemplateSet, interval time.Duration) *statusLin
 		ticker = time.NewTicker(interval)
 		ticks = ticker.C
 	}
-	header := compileVariants(templates.Header, defaultHeaderTemplates())
-	footer := compileVariants(templates.Footer, defaultFooterTemplates())
+	defaults := defaultTemplateSet()
+	header := compileVariants(templates.Header, defaults.Header)
+	footer := compileVariants(templates.Footer, defaults.Footer)
 	s := newSource(ticks, func(ctx context.Context, input Input) Result {
 		return renderTemplates(ctx, header, footer, input)
 	})
@@ -74,10 +75,6 @@ func parseStatusTemplate(name, source, fallback string) statusTemplate {
 	return statusTemplate{template: parsed, fallback: fallbackTemplate}
 }
 
-func commonTemplateFuncs() template.FuncMap {
-	return template.FuncMap{"elide": elide}
-}
-
 func statusTemplateFuncs() template.FuncMap {
 	funcs := commonTemplateFuncs()
 	funcs["contextMeter"] = contextMeter
@@ -86,30 +83,6 @@ func statusTemplateFuncs() template.FuncMap {
 	return funcs
 }
 
-func elide(width int, value any) string {
-	if width <= 0 {
-		return ""
-	}
-	text := html.UnescapeString(stringifyTemplateValue(value))
-	if ansi.StringWidth(text) <= width {
-		return html.EscapeString(text)
-	}
-	if width == 1 {
-		return "…"
-	}
-	return html.EscapeString(ansi.Truncate(text, width, "…"))
-}
-
-func stringifyTemplateValue(value any) string {
-	switch value := value.(type) {
-	case templateText:
-		return string(value)
-	case string:
-		return value
-	default:
-		return ""
-	}
-}
 func (t statusTemplate) render(ctx context.Context, input templateInput) Document {
 	if ctx.Err() != nil || t.fallback == nil {
 		return Document{}
@@ -150,20 +123,6 @@ func statusSurfaceText(surface Surface) string {
 		b.WriteString(span.Text)
 	}
 	return b.String()
-}
-func defaultHeaderTemplates() SurfaceTemplates {
-	return SurfaceTemplates{
-		Full:    `<header><primary>mecatui · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
-		Compact: `<header><primary>mecatui · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}</header>`,
-		Minimal: `<header><primary>mecatui</primary></header>`,
-	}
-}
-func defaultFooterTemplates() SurfaceTemplates {
-	return SurfaceTemplates{
-		Full:    `<footer>{{if or .Delegation.Parallel.Running .Delegation.Parallel.Finished}}<accent>⑂ parallel {{.Delegation.Parallel.Running}}◐ {{.Delegation.Parallel.Finished}}✓</accent>  {{end}}{{if or .Delegation.Subagents.Running .Delegation.Subagents.Finished}}<accent>⛭ subagents {{.Delegation.Subagents.Running}}◐ {{.Delegation.Subagents.Finished}}✓</accent>  {{end}}{{if .Delegation.Team.Total}}<accent>⟳ team-{{.Delegation.Team.ID}} · {{.Delegation.Team.Working}}/{{.Delegation.Team.Total}} working</accent>  {{end}}{{contextMeter .Context}}<text> · ↑{{.Usage.Input.Human}} ↓{{.Usage.Output.Human}}{{if .Usage.CacheWrite.Raw}} ⊕{{.Usage.CacheWrite.Human}}{{end}} cache {{.Usage.CacheReadPercent}}%</text></footer>`,
-		Compact: `<footer>{{if or .Delegation.Parallel.Running .Delegation.Parallel.Finished}}<accent>⑂ {{.Delegation.Parallel.Running}}◐ {{.Delegation.Parallel.Finished}}✓</accent>  {{end}}{{if or .Delegation.Subagents.Running .Delegation.Subagents.Finished}}<accent>⛭ {{.Delegation.Subagents.Running}}◐ {{.Delegation.Subagents.Finished}}✓</accent>  {{end}}{{if .Delegation.Team.Total}}<accent>⟳ {{.Delegation.Team.Working}}/{{.Delegation.Team.Total}}</accent>  {{end}}{{contextMeterCompact .Context}}</footer>`,
-		Minimal: `<footer>{{contextMeterMinimal .Context}}</footer>`,
-	}
 }
 
 type templateText string
