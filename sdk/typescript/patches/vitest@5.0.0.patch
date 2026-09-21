@@ -1,0 +1,41 @@
+diff --git a/config.d.ts b/config.d.ts
+--- a/config.d.ts
++++ b/config.d.ts
+@@ -1,2 +0,0 @@
+-// ensure `@vitest/expect` provides `chai` types
+-import type {} from '@vitest/expect'
+diff --git a/browser/context.d.ts b/browser/context.d.ts
+--- a/browser/context.d.ts
++++ b/browser/context.d.ts
+@@ -7 +7 @@
+-export { BrowserCommands, CDPSession, FsOptions } from 'vitest/internal/browser'
++export { BrowserCommands, BrowserTraceEntryKind, CDPSession, FsOptions, MarkOptions } from 'vitest/internal/browser'
+diff --git a/dist/browser.d.ts b/dist/browser.d.ts
+--- a/dist/browser.d.ts
++++ b/dist/browser.d.ts
+@@ -61,0 +62,13 @@
++type BrowserTraceEntryKind = "action" | "expect" | "mark" | "lifecycle";
++interface MarkOptions {
++	/**
++	* Optional stack string used to resolve marker location.
++	* Useful for wrapper libraries that need to forward the end-user callsite.
++	*/
++	stack?: string;
++	/**
++	* Optional marker kind that's used to categorize the marker in the trace viewer.
++	* @default 'mark'
++	*/
++	kind?: BrowserTraceEntryKind;
++}
+@@ -64 +77 @@
+-export type { BrowserCommands, CDPSession, FsOptions };
++export type { BrowserCommands, BrowserTraceEntryKind, CDPSession, FsOptions, MarkOptions };
+diff --git a/dist/chunks/plugin.d.BbcoZhuj.d.ts b/dist/chunks/plugin.d.BbcoZhuj.d.ts
+--- a/dist/chunks/plugin.d.BbcoZhuj.d.ts
++++ b/dist/chunks/plugin.d.BbcoZhuj.d.ts
+@@ -3329 +3329 @@
+-	provider?: string | undefined;
++	provider?: string;
+@@ -4402 +4402 @@
+-	vmMemoryLimit?: UserConfig["vmMemoryLimit"];
++	vmMemoryLimit?: string | number;
