@@ -54,8 +54,9 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 		picker.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 		out, _ = picker.Render(width, height)
 		assertFits(t, "models paged", out)
-		if picker.cursor != 0 || picker.list.cursorLine == 0 || !strings.Contains(stripANSIstr(out), "▶") {
-			t.Fatalf("paged oversized model = cursor %d line %d, selected marker missing from %q", picker.cursor, picker.list.cursorLine, stripANSIstr(out))
+		view := picker.list.View()
+		if picker.list.Cursor() != 0 || len(view.Rows) == 0 || view.Rows[0].ItemLine == 0 || !strings.Contains(stripANSIstr(out), "▶") {
+			t.Fatalf("paged oversized model = cursor %d rows %v, selected marker missing from %q", picker.list.Cursor(), view.Rows, stripANSIstr(out))
 		}
 	})
 

@@ -72,7 +72,7 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 	}
 	views := []view{
 		{name: "subagent roster", tab: tabSubagents, sub: subagentState{cursor: 1}, f: fleet},
-		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", detail: boundedViewport{offset: 3}}, f: fleet},
+		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", detail: agentsTestViewport(3)}, f: fleet},
 		{name: "subagent missing", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "missing"}},
 		{name: "subagent empty", tab: tabSubagents},
 		{name: "parallel roster", tab: tabParallel, par: parallelState{cursor: 1}, g: groups},
@@ -80,11 +80,11 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 		{name: "parallel missing", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "missing"}},
 		{name: "parallel empty", tab: tabParallel},
 		{name: "team roster", tab: tabTeams, team: teamState{cursor: 1}, b: teamBlock},
-		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", detail: boundedViewport{offset: 4}}, b: teamBlock},
+		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", detail: agentsTestViewport(4)}, b: teamBlock},
 		{name: "team missing", tab: tabTeams, team: teamState{view: teamFocus, member: "missing"}, b: teamBlock},
-		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, detail: boundedViewport{offset: 2}}, b: teamBlock},
+		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, detail: agentsTestViewport(2)}, b: teamBlock},
 		{name: "team tasks empty", tab: tabTeams, team: teamState{view: teamTasks}, b: &block{}},
-		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, detail: boundedViewport{offset: 2}}, b: teamBlock},
+		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, detail: agentsTestViewport(2)}, b: teamBlock},
 		{name: "team findings empty", tab: tabTeams, team: teamState{view: teamFindings}, b: &block{}},
 		{name: "team absent", tab: tabTeams},
 	}
@@ -112,7 +112,7 @@ func TestPreparedAgentsDetailRenderersKeepSourceViewportAcrossHeightProbes(t *te
 	fleet, _, teamBlock := overlayPreparationFixtures()
 	th, hk := aztec(), defaultHelpKeys()
 	const width = 80
-	detail := boundedViewport{offset: 1 << 20}
+	detail := agentsTestViewport(1 << 20)
 
 	tests := []struct {
 		name    string
@@ -168,7 +168,7 @@ func TestPreparedAgentsDetailRenderersKeepSourceViewportAcrossHeightProbes(t *te
 func BenchmarkAgentsOverlayPreparation(b *testing.B) {
 	fleet, _, _ := overlayPreparationFixtures()
 	th, hk := aztec(), defaultHelpKeys()
-	sub := subagentState{view: subagentFocus, child: "selected", detail: boundedViewport{offset: 3}}
+	sub := subagentState{view: subagentFocus, child: "selected", detail: agentsTestViewport(3)}
 	b.Run("repeated-preparation", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {

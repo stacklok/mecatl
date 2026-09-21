@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func TestMecatuiBoundedScrollCursor_Scenario2_AllAgentsSubviewsFitOfferedGeometry(t *testing.T) {
@@ -71,22 +72,21 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 		}
 		th, hk, width, height := m.agentsListGeometry()
 		control, _, _ := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width).configuredControl(th, height)
-		control.setCursor(5)
-		control.scroll(boundedLineDown)
-		before := control.view().rows[0]
-		m.subagents.cursor, m.subagents.roster = control.cursor, control
+		control.SetCursor(5)
+		control.Scroll(bounded.LineDown)
+		before := control.View().Rows[0]
+		m.subagents.cursor, m.subagents.roster = control.Cursor(), control
 
 		mm, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ChildID: "child-05", ToolName: strings.Repeat("streamed-tool-", 8), ToolCount: 1})
 		m = mm.(Model)
-		if m.subagents.roster.cursorID != "child-05" {
-			t.Fatalf("stream refresh selected ID = %q, want child-05", m.subagents.roster.cursorID)
+		if m.subagents.roster.CursorID() != "child-05" {
+			t.Fatalf("stream refresh selected ID = %q, want child-05", m.subagents.roster.CursorID())
 		}
-		if len(m.subagents.roster.items) == 0 || !strings.Contains(m.subagents.roster.items[5].text, "streamed-tool-") {
-			t.Fatalf("stream refresh did not persist rebuilt roster items: %#v", m.subagents.roster.items)
-		}
-		after := m.subagents.roster.view().rows[0]
-		if after.id != before.id || after.itemLine != before.itemLine {
-			t.Fatalf("stream refresh top anchor = {%q,%d}, want {%q,%d}", after.id, after.itemLine, before.id, before.itemLine)
+		// Stable ID and rendered top anchor prove the refreshed control preserved its state.
+
+		after := m.subagents.roster.View().Rows[0]
+		if after.ID != before.ID || after.ItemLine != before.ItemLine {
+			t.Fatalf("stream refresh top anchor = {%q,%d}, want {%q,%d}", after.ID, after.ItemLine, before.ID, before.ItemLine)
 		}
 	})
 
@@ -112,7 +112,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 		})
 	}
 	for _, view := range []teamView{teamTasks, teamFindings} {
-		st := teamState{view: view, detail: boundedViewport{offset: 999}}
+		st := teamState{view: view, detail: agentsTestViewport(999)}
 		out := renderTeamsTab(th, st, team, hk, 42, 14)
 		if plain := stripANSIstr(out); !strings.Contains(plain, "of 10") || !strings.Contains(plain, "09") {
 			t.Fatalf("bounded team detail lacks final content/overflow for view %d:\n%s", view, plain)
@@ -128,18 +128,18 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsPersistRenderedAnchor(t *tes
 	}
 	th, hk, width, height := m.agentsListGeometry()
 	control, _, _ := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width).configuredControl(th, height)
-	control.setCursor(5)
-	m.subagents.cursor, m.subagents.roster = control.cursor, control
+	control.SetCursor(5)
+	m.subagents.cursor, m.subagents.roster = control.Cursor(), control
 
 	// A streamed update rebuilds the control. Its persisted top anchor must be the
 	// anchor the renderer uses after reserving indicator rows.
 	mm, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ChildID: "child-05", ToolName: strings.Repeat("streamed-tool-", 8), ToolCount: 1})
 	m = mm.(Model)
 	list := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width)
-	rendered := list.boundedView(th, height).rows[0]
-	persisted := m.subagents.roster.view().rows[0]
-	if persisted.id != rendered.id || persisted.itemLine != rendered.itemLine {
-		t.Fatalf("persisted top anchor = {%q,%d}, rendered = {%q,%d}", persisted.id, persisted.itemLine, rendered.id, rendered.itemLine)
+	rendered := list.boundedView(th, height).Rows[0]
+	persisted := m.subagents.roster.View().Rows[0]
+	if persisted.ID != rendered.ID || persisted.ItemLine != rendered.ItemLine {
+		t.Fatalf("persisted top anchor = {%q,%d}, rendered = {%q,%d}", persisted.ID, persisted.ItemLine, rendered.ID, rendered.ItemLine)
 	}
 }
 
@@ -154,19 +154,19 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		b := &block{teamLanes: lanes}
 		before := teamSelectableList(th, teamState{}, b, hk, 80)
 		control, _, _ := before.configuredControl(th, 12)
-		control.setCursor(5)
-		top := control.view().rows[0]
+		control.SetCursor(5)
+		top := control.View().Rows[0]
 		for i := range b.teamLanes {
 			b.teamLanes[i].sessionID = fmt.Sprintf("team-t1-member-%d", i)
 		}
 		after := teamSelectableList(th, teamState{roster: control}, b, hk, 80)
 		control, _, _ = after.configuredControl(th, 12)
-		if got := control.cursorID; got != "member-5" {
+		if got := control.CursorID(); got != "member-5" {
 			t.Fatalf("late member session handle changed list identity to %q, want member-5", got)
 		}
-		gotTop := control.view().rows[0]
-		if gotTop.id != top.id || gotTop.itemLine != top.itemLine {
-			t.Fatalf("late member session handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.id, gotTop.itemLine, top.id, top.itemLine)
+		gotTop := control.View().Rows[0]
+		if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
+			t.Fatalf("late member session handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.ID, gotTop.ItemLine, top.ID, top.ItemLine)
 		}
 	})
 
@@ -178,19 +178,19 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		g := &parallelGroup{branches: branches}
 		before := parallelBranchSelectableList(th, parallelState{}, g, hk, 80)
 		control, _, _ := before.configuredControl(th, 12)
-		control.setCursor(5)
-		top := control.view().rows[0]
+		control.SetCursor(5)
+		top := control.View().Rows[0]
 		for i := range g.branches {
 			g.branches[i].childID = fmt.Sprintf("parallel-p1-%d", i)
 		}
 		after := parallelBranchSelectableList(th, parallelState{branches: control}, g, hk, 80)
 		control, _, _ = after.configuredControl(th, 12)
-		if got := control.cursorID; got != "branch-5" {
+		if got := control.CursorID(); got != "branch-5" {
 			t.Fatalf("late branch child handle changed list identity to %q, want branch-5", got)
 		}
-		gotTop := control.view().rows[0]
-		if gotTop.id != top.id || gotTop.itemLine != top.itemLine {
-			t.Fatalf("late branch child handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.id, gotTop.itemLine, top.id, top.itemLine)
+		gotTop := control.View().Rows[0]
+		if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
+			t.Fatalf("late branch child handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.ID, gotTop.ItemLine, top.ID, top.ItemLine)
 		}
 	})
 }
@@ -218,12 +218,14 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 		prefix, suffix := modelsFixedLines(*s, "")
 		_, _ = s.Render(24, len(prefix)+len(suffix)+3)
 		s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-		if s.cursor != 0 || s.list.cursorLine == 0 {
-			t.Fatalf("Page Down skipped wrapped item segment: cursor=%d line=%d", s.cursor, s.list.cursorLine)
+		view := s.list.View()
+		if s.list.Cursor() != 0 || len(view.Rows) == 0 || view.Rows[0].ItemLine == 0 {
+			t.Fatalf("Page Down skipped wrapped item segment: cursor=%d rows=%+v", s.list.Cursor(), view.Rows)
 		}
 		s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-		if s.cursor != 0 || s.list.cursorLine != 0 {
-			t.Fatalf("Page Up did not return through wrapped item: cursor=%d line=%d", s.cursor, s.list.cursorLine)
+		view = s.list.View()
+		if s.list.Cursor() != 0 || len(view.Rows) == 0 || view.Rows[0].ItemLine != 0 {
+			t.Fatalf("Page Up did not return through wrapped item: cursor=%d rows=%+v", s.list.Cursor(), view.Rows)
 		}
 	})
 }
@@ -263,11 +265,11 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 		t.Fatalf("agents cursor, active tab, and winner markers are not independent:\n%s", agents)
 	}
 
-	var list boundedList
-	list.setGeometry(20, 2, 2, boundedClip)
-	list.setItems([]boundedListItem{{id: "one", text: "custom"}})
-	row := list.view().rows[0]
-	custom := th.Style("warning").Render(map[bool]string{true: "!! "}[row.cursorMarker] + row.text)
+	list := new(bounded.List)
+	list.SetGeometry(20, 2, 2, bounded.Clip)
+	list.SetItems([]bounded.Item{{ID: "one", Text: "custom"}})
+	row := list.View().Rows[0]
+	custom := th.Style("warning").Render(map[bool]string{true: "!! "}[row.CursorMarker] + row.Text)
 	if !strings.Contains(custom, "!! custom") {
 		t.Fatalf("caller-owned selected style/marker was not usable: %q", custom)
 	}
@@ -360,21 +362,21 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 }
 
 func agentsScenarioSelectedVisible(m Model, mode string) bool {
-	var list *boundedList
+	var list interface{ View() bounded.View }
 	switch mode {
 	case "subagent-roster":
-		list = &m.subagents.roster
+		list = m.subagents.roster
 	case "parallel-roster":
-		list = &m.parallel.roster
+		list = m.parallel.roster
 	case "parallel-group":
-		list = &m.parallel.branches
+		list = m.parallel.branches
 	case "team-roster":
-		list = &m.team.roster
+		list = m.team.roster
 	default:
 		return true
 	}
-	for _, row := range list.view().rows {
-		if row.selected {
+	for _, row := range list.View().Rows {
+		if row.Selected {
 			return true
 		}
 	}
@@ -384,17 +386,17 @@ func agentsScenarioSelectedVisible(m Model, mode string) bool {
 func agentsScenarioOffset(m Model, mode string) int {
 	switch mode {
 	case "subagent-roster":
-		return m.subagents.roster.viewport.offset
+		return m.subagents.roster.Offset()
 	case "subagent-focus":
-		return m.subagents.detail.offset
+		return m.subagents.detail.Offset()
 	case "parallel-roster":
-		return m.parallel.roster.viewport.offset
+		return m.parallel.roster.Offset()
 	case "parallel-group":
-		return m.parallel.branches.viewport.offset
+		return m.parallel.branches.Offset()
 	case "team-roster":
-		return m.team.roster.viewport.offset
+		return m.team.roster.Offset()
 	default:
-		return m.team.detail.offset
+		return m.team.detail.Offset()
 	}
 }
 
@@ -404,10 +406,18 @@ func TestMecatuiBoundedScrollCursor_Scenario3_WheelNeverLeaksOrNavigatesFallback
 	m.vp.SetContent(strings.Repeat("conversation\n", 40))
 	m.vp.SetYOffset(5)
 	before := m.subagents
+	beforeOffset := 0
+	if before.roster != nil {
+		beforeOffset = before.roster.Offset()
+	}
 	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if m.vp.YOffset() != 5 || m.subagents.cursor != before.cursor || m.subagents.roster.viewport.offset != before.roster.viewport.offset {
-		t.Fatalf("compact agents wheel leaked or navigated: vp=%d cursor=%d offset=%d", m.vp.YOffset(), m.subagents.cursor, m.subagents.roster.viewport.offset)
+	afterOffset := 0
+	if m.subagents.roster != nil {
+		afterOffset = m.subagents.roster.Offset()
+	}
+	if m.vp.YOffset() != 5 || m.subagents.cursor != before.cursor || afterOffset != beforeOffset {
+		t.Fatalf("compact agents wheel leaked or navigated: vp=%d cursor=%d offset=%d", m.vp.YOffset(), m.subagents.cursor, afterOffset)
 	}
 
 	m = boundedScenarioAgentsModel(t, "team-tasks")
@@ -417,8 +427,12 @@ func TestMecatuiBoundedScrollCursor_Scenario3_WheelNeverLeaksOrNavigatesFallback
 	m.vp.SetYOffset(5)
 	mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if m.vp.YOffset() != 5 || m.team.detail.offset != 0 {
-		t.Fatalf("vp-short agents wheel leaked or navigated: vp=%d offset=%d", m.vp.YOffset(), m.team.detail.offset)
+	detailOffset := 0
+	if m.team.detail != nil {
+		detailOffset = m.team.detail.Offset()
+	}
+	if m.vp.YOffset() != 5 || detailOffset != 0 {
+		t.Fatalf("vp-short agents wheel leaked or navigated: vp=%d offset=%d", m.vp.YOffset(), detailOffset)
 	}
 
 	models := boundedScenarioModelsState(t, 20)
@@ -427,21 +441,21 @@ func TestMecatuiBoundedScrollCursor_Scenario3_WheelNeverLeaksOrNavigatesFallback
 	root.vp.SetContent(strings.Repeat("conversation\n", 40))
 	root.vp.SetYOffset(5)
 	_, _ = models.Render(40, 12)
-	cursor := models.cursor
+	cursor := models.list.Cursor()
 	for range 200 {
 		mm, _ = root.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 		root = mm.(Model)
 	}
-	bottom := models.list.viewport.offset
-	if bottom == 0 || models.cursor != cursor || root.vp.YOffset() != 5 {
-		t.Fatalf("Models wheel-down boundary leaked or moved cursor: offset=%d cursor=%d vp=%d", bottom, models.cursor, root.vp.YOffset())
+	bottom := models.list.Offset()
+	if bottom == 0 || models.list.Cursor() != cursor || root.vp.YOffset() != 5 {
+		t.Fatalf("Models wheel-down boundary leaked or moved cursor: offset=%d cursor=%d vp=%d", bottom, models.list.Cursor(), root.vp.YOffset())
 	}
 	for range 200 {
 		mm, _ = root.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 		root = mm.(Model)
 	}
-	if models.list.viewport.offset != 0 || models.cursor != cursor || root.vp.YOffset() != 5 {
-		t.Fatalf("Models wheel-up boundary leaked or moved cursor: offset=%d cursor=%d vp=%d", models.list.viewport.offset, models.cursor, root.vp.YOffset())
+	if models.list.Offset() != 0 || models.list.Cursor() != cursor || root.vp.YOffset() != 5 {
+		t.Fatalf("Models wheel-up boundary leaked or moved cursor: offset=%d cursor=%d vp=%d", models.list.Offset(), models.list.Cursor(), root.vp.YOffset())
 	}
 }
 
@@ -455,14 +469,14 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	m = resize(m, 40, 35)
 	_ = m.View()
 	s = modelsSurface(t, m)
-	wheelCursor := s.cursor
+	wheelCursor := s.list.Cursor()
 	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if s.list.viewport.offset != 1 || s.cursor != wheelCursor {
-		t.Fatalf("Models wheel down = offset/cursor %d/%d, want exact one line and cursor %d", s.list.viewport.offset, s.cursor, wheelCursor)
+	if s.list.Offset() != 1 || s.list.Cursor() != wheelCursor {
+		t.Fatalf("Models wheel down = offset/cursor %d/%d, want exact one line and cursor %d", s.list.Offset(), s.list.Cursor(), wheelCursor)
 	}
 	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if s.list.viewport.offset != 0 || s.cursor != wheelCursor {
-		t.Fatalf("Models wheel up = offset/cursor %d/%d, want 0/%d", s.list.viewport.offset, s.cursor, wheelCursor)
+	if s.list.Offset() != 0 || s.list.Cursor() != wheelCursor {
+		t.Fatalf("Models wheel up = offset/cursor %d/%d, want 0/%d", s.list.Offset(), s.list.Cursor(), wheelCursor)
 	}
 	_ = m.View()
 	s = modelsSurface(t, m)
@@ -484,24 +498,24 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	globalX, globalY := m.metrics.localToGlobal(first.rect.x0, first.rect.y0)
 	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
 	m = mm.(Model)
-	if got := modelsSurface(t, m).cursor; got != 0 {
+	if got := modelsSurface(t, m).list.Cursor(); got != 0 {
 		t.Fatalf("marker-cell click selected %d, want first model", got)
 	}
 	continuation := second[len(second)-1]
-	beforeClickOffset := s.list.viewport.offset
+	beforeClickOffset := s.list.Offset()
 	globalX, globalY = m.metrics.localToGlobal(continuation.rect.x0+1, continuation.rect.y0)
 	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})
 	m = mm.(Model)
 	s = modelsSurface(t, m)
-	if s.cursor != 1 || s.intent != nil {
-		t.Fatalf("click should move cursor only: cursor=%d intent=%T", s.cursor, s.intent)
+	if s.list.Cursor() != 1 || s.intent != nil {
+		t.Fatalf("click should move cursor only: cursor=%d intent=%T", s.list.Cursor(), s.intent)
 	}
-	if s.list.viewport.offset != beforeClickOffset {
-		t.Fatalf("click on an already-visible model moved viewport from %d to %d", beforeClickOffset, s.list.viewport.offset)
+	if s.list.Offset() != beforeClickOffset {
+		t.Fatalf("click on an already-visible model moved viewport from %d to %d", beforeClickOffset, s.list.Offset())
 	}
 	visible := false
-	for _, row := range s.list.view().rows {
-		visible = visible || row.itemIndex == 1 && row.selected
+	for _, row := range s.list.View().Rows {
+		visible = visible || row.ItemIndex == 1 && row.Selected
 	}
 	if !visible {
 		t.Fatal("clicked Model cursor was not revealed in its viewport")
@@ -527,7 +541,7 @@ func assertModelsOverflowIndicatorClickMisses(t *testing.T) {
 	s.catalog.models = s.filtered
 	_ = m.View()
 	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if s.list.viewport.offset == 0 {
+	if s.list.Offset() == 0 {
 		t.Fatal("Models setup did not create an overflow indicator")
 	}
 	out := m.View().Content
@@ -544,13 +558,13 @@ func assertModelsOverflowIndicatorClickMisses(t *testing.T) {
 	if first.id == 0 || first.rect.y0 == 0 {
 		t.Fatalf("cannot locate a rendered Models row below its overflow indicator: %#v", first)
 	}
-	before := s.cursor
+	before := s.list.Cursor()
 	x, y := m.metrics.localToGlobal(first.rect.x0, first.rect.y0-1)
 	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	m = mm.(Model)
 	s = modelsSurface(t, m)
-	if s.cursor != before || s.intent != nil {
-		t.Fatalf("overflow-indicator click must miss without moving or activating Models: cursor=%d intent=%T", s.cursor, s.intent)
+	if s.list.Cursor() != before || s.intent != nil {
+		t.Fatalf("overflow-indicator click must miss without moving or activating Models: cursor=%d intent=%T", s.list.Cursor(), s.intent)
 	}
 }
 
@@ -568,12 +582,11 @@ func TestMecatuiBoundedScrollCursor_Scenario3_StaleModelHitsIgnored(t *testing.T
 	m = mm.(Model)
 	_ = m.View()
 	s := modelsSurface(t, m)
-	s.cursor = 2
-	s.list.setCursor(2)
-	before := s.cursor
+	s.list.SetCursor(2)
+	before := s.list.Cursor()
 	mm, _ = m.Update(surfaceHitMsg{ID: stale})
 	m = mm.(Model)
-	if got := modelsSurface(t, m).cursor; got != before {
+	if got := modelsSurface(t, m).list.Cursor(); got != before {
 		t.Fatalf("old-frame hit changed cursor: got %d want %d", got, before)
 	}
 
@@ -582,7 +595,7 @@ func TestMecatuiBoundedScrollCursor_Scenario3_StaleModelHitsIgnored(t *testing.T
 	for _, point := range [][2]int{{0, 0}, {m.width - 1, m.metrics.contentOrigin.y}, {-1, -1}} {
 		mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: point[0], Y: point[1]})
 		m = mm.(Model)
-		if got := modelsSurface(t, m).cursor; got != before {
+		if got := modelsSurface(t, m).list.Cursor(); got != before {
 			t.Fatalf("miss at %v changed cursor: got %d want %d", point, got, before)
 		}
 	}

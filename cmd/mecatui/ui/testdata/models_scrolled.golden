@@ -1,10 +1,25 @@
  mecatui  ·  session sess-test-00  ·  gpt-5  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-                                               ┏━━━━┓
-                                               ┃    ┃
-                                               ┃    ┃
-                                               ┃    ┃
-                                               ┗━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Models  (30)                                                                                    ┃
+┃  current: gpt-5 (server default)                                                                 ┃
+┃  > filter models…                                                                                ┃
+┃                                                                                                  ┃
+┃  Switching models is expensive as it clears caches.                                              ┃
+┃                                                                                                  ┃
+┃  ↑ 26 lines                                                                                      ┃
+┃       prov · model-026                                                                           ┃
+┃       prov · model-027                                                                           ┃
+┃       prov · model-028                                                                           ┃
+┃  ▶    prov · wrapped model label wrapped model label wrapped model label wrapped model label wr  ┃
+┃    apped model label wrapped model label wrapped model label wrapped model label                 ┃
+┃                                                                                                  ┃
+┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / cl  ┃
+┃  ● current  ★ global default                                                                     ┃
+┃  reason = emits reasoning · set its effort tier with /effort                                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

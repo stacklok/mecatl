@@ -687,8 +687,8 @@ func TestAgentsRosterWindowed(t *testing.T) {
 	th, hk, width, height := m.agentsListGeometry()
 	view := teamSelectableList(th, m.team, m.conv.latestTeamBlock(), hk, width).boundedView(th, height)
 	visible := make(map[int]struct{})
-	for _, row := range view.rows {
-		visible[row.itemIndex] = struct{}{}
+	for _, row := range view.Rows {
+		visible[row.ItemIndex] = struct{}{}
 	}
 	rows := len(visible)
 	if rows >= n {

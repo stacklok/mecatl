@@ -1,6 +1,5 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents  ▸ Parallel    Teams                                                            ┃
@@ -14,7 +13,8 @@
   ┃  ▶ ✓ branch-1 · refactor with a map                                                          ┃
   ┃      done · 900ms · 2 tools · ↑12K ↓3K                                                       ┃
   ┃      │   ✓ Edit                                                                              ┃
-  ┃    · +2 branches below                                                                       ┃
+  ┃    ★ ✓ branch-2 · refactor with a slice                                                      ┃
+  ┃    · +1 branches below                                                                       ┃
   ┃                                                                                              ┃
   ┃  esc back · ↑/↓ select · pgup/pgdn page · home/end first/last                                ┃
   ┃                                                                                              ┃

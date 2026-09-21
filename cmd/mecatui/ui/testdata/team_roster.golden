@@ -1,6 +1,5 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents    Parallel  ▸ Teams                                                            ┃
@@ -14,6 +13,7 @@
   ┃      Grep… · researcher                                                                      ┃
   ┃      ↑1.2K ↓80                                                                               ┃
   ┃    ◆ ✎ builder                                                                               ┃
+  ┃      Edit… · implementer                                                                     ┃
   ┃    · +1 rows below                                                                           ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close         ┃

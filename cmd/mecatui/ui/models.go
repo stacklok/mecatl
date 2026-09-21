@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // models.go owns /models installation plus model-selection restart and persistence
@@ -36,6 +37,7 @@ func (m Model) openModels() (tea.Model, tea.Cmd) {
 		provenance:   m.modelProvenanceLine(),
 		loading:      true,
 		filter:       ti,
+		list:         new(bounded.List),
 		deps:         (&m).surfaceDeps(),
 	}
 	return m, tea.Batch(client.ListModelsCmd(m.deps.Ctx, m.deps.Models, requestToken), textinput.Blink)

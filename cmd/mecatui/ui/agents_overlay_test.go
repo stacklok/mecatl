@@ -19,6 +19,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // startSub / toolSub / endSub build the three subagent.* projections for a child.
@@ -717,7 +718,7 @@ func TestSubagentRosterWindowed(t *testing.T) {
 	}
 	out := stripANSIstr(m.View().Content)
 	listTh, hk, width, height := m.agentsListGeometry()
-	rows := len(subagentSelectableList(listTh, m.subagents, m.conv.subagentFleet, hk, width).boundedView(listTh, height).rows)
+	rows := len(subagentSelectableList(listTh, m.subagents, m.conv.subagentFleet, hk, width).boundedView(listTh, height).Rows)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be < fleet %d", rows, n)
 	}
@@ -866,6 +867,53 @@ func TestRosterRouteNavigation(t *testing.T) {
 				t.Errorf("pgdown cursor = %d, want a later bounded item", got)
 			}
 		})
+	}
+}
+
+func TestAgentsKeyboardPagingUsesPhysicalRowsAndIndicators(t *testing.T) {
+	m := resize(newMCPModel(t, aztec(), nil), 32, 40)
+	m.conv.subagentFleet = make([]subagentLane, 8)
+	for i := range m.conv.subagentFleet {
+		m.conv.subagentFleet[i] = subagentLane{
+			childID: fmt.Sprintf("paged-%02d", i),
+			goal:    fmt.Sprintf("paged-%02d %s\nsecond physical source line", i, strings.Repeat("wrapped ", 10)),
+			current: strings.Repeat("metadata ", 6),
+		}
+	}
+
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	m = mm.(Model)
+	if m.agentsTab != tabSubagents {
+		t.Fatalf("agents tab = %v, want subagents", m.agentsTab)
+	}
+	th, hk, width, height := m.agentsListGeometry()
+	probeState := m.subagents
+	probeState.roster = new(bounded.List)
+	beforeList := subagentSelectableList(th, probeState, m.conv.subagentFleet, hk, width)
+	beforeControl, capacity, reveal := beforeList.configuredControl(th, height)
+	before := beforeControl.ViewWithIndicators(capacity, reveal)
+	if before.Below == 0 || beforeControl.Height() >= capacity {
+		t.Fatalf("test premise requires a below indicator to reduce physical capacity: capacity=%d height=%d view=%#v", capacity, beforeControl.Height(), before)
+	}
+	beforeControl.Move(bounded.PageDown)
+	const wantID = "paged-04"
+	if got := beforeControl.CursorID(); got != wantID {
+		t.Fatalf("physical Page Down target = %q, want %q", got, wantID)
+	}
+
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = mm.(Model)
+	if got := m.subagents.roster.CursorID(); got != wantID {
+		t.Fatalf("agents key-routed Page Down selected %q, want first item after the indicator-adjusted physical window %q", got, wantID)
+	}
+	afterList := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width)
+	after := afterList.boundedView(th, height)
+	if after.Above == 0 || after.Below == 0 || m.subagents.roster.Height() >= capacity-1 {
+		t.Fatalf("paged physical view must reserve both overflow indicators: capacity=%d height=%d view=%#v", capacity, m.subagents.roster.Height(), after)
+	}
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "▶") || !strings.Contains(out, wantID) {
+		t.Fatalf("key-routed Page Down selection is not visible in the agents overlay:\n%s", out)
 	}
 }
 
@@ -1545,13 +1593,13 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"subagent empty", "▶ Subagents · esc close", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabSubagents; return m }},
 		{"subagent focus", "▶ subagent nt-kid · esc back", func(m Model) Model {
 			m.team.view, m.agentsTab = teamRoster, tabSubagents
-			m.subagents = subagentState{view: subagentFocus, child: "subagent-kid", detail: boundedViewport{offset: 3}}
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-kid", detail: agentsTestViewport(3)}
 			m.conv.subagentFleet = []subagentLane{{childID: "subagent-kid"}}
 			return m
 		}},
 		{"subagent missing focus", "▶ subagent t-gone · esc back", func(m Model) Model {
 			m.team.view, m.agentsTab = teamRoster, tabSubagents
-			m.subagents = subagentState{view: subagentFocus, child: "subagent-gone", detail: boundedViewport{offset: 3}}
+			m.subagents = subagentState{view: subagentFocus, child: "subagent-gone", detail: agentsTestViewport(3)}
 			return m
 		}},
 		{"parallel roster", "▶ Parallel · esc close", func(m Model) Model {
@@ -1581,19 +1629,19 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"team focus", "▶ agent ann · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann", detail: boundedViewport{offset: 3}}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann", detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team missing focus", "▶ agent bob · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamFocus, member: "bob", detail: boundedViewport{offset: 3}}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamFocus, member: "bob", detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team tasks", "▶ Tasks · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamTasks, detail: boundedViewport{offset: 3}}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamTasks, detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team tasks empty", "▶ Tasks · esc back", func(m Model) Model {
@@ -1606,7 +1654,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"team findings", "▶ Findings · esc back", func(m Model) Model {
 			b := teamBlock()
 			m.conv.blocks = append(m.conv.blocks, b)
-			m.team, m.agentsTab = teamState{view: teamFindings, detail: boundedViewport{offset: 3}}, tabTeams
+			m.team, m.agentsTab = teamState{view: teamFindings, detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team findings empty", "▶ Findings · esc back", func(m Model) Model {
@@ -1621,7 +1669,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		for _, tc := range cases {
 			t.Run(fmt.Sprintf("h%d/%s", height, tc.name), func(t *testing.T) {
 				m := tc.setup(resize(newMCPModel(t, aztec(), nil), 32, height))
-				before := []int{m.subagents.cursor, m.subagents.detail.offset, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.detail.offset}
+				before := []int{m.subagents.cursor, agentsTestOffset(m.subagents.detail), m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, agentsTestOffset(m.team.detail)}
 				_ = m.View() // exercise the final view assembly before inspecting its overlay region.
 				body := stripANSIstr(m.renderBody())
 				if got := lipgloss.Height(body); got != 1 {
@@ -1635,7 +1683,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 				}
 				mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 				m = mm.(Model)
-				after := []int{m.subagents.cursor, m.subagents.detail.offset, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, m.team.detail.offset}
+				after := []int{m.subagents.cursor, agentsTestOffset(m.subagents.detail), m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, agentsTestOffset(m.team.detail)}
 				if !slices.Equal(before, after) {
 					t.Fatalf("compact navigation changed state: before=%v after=%v", before, after)
 				}
@@ -1950,8 +1998,8 @@ func TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport(t *
 	listTh, hk, width, height := m.agentsListGeometry()
 	list := subagentSelectableList(listTh, m.subagents, m.conv.subagentFleet, hk, width)
 	view := list.boundedView(listTh, height)
-	if len(view.rows) == 0 || view.rows[0].itemIndex > m.subagents.cursor || view.rows[len(view.rows)-1].itemIndex < m.subagents.cursor {
-		t.Fatalf("wrapped selected row %d is outside bounded physical view: %#v", m.subagents.cursor, view.rows)
+	if len(view.Rows) == 0 || view.Rows[0].ItemIndex > m.subagents.cursor || view.Rows[len(view.Rows)-1].ItemIndex < m.subagents.cursor {
+		t.Fatalf("wrapped selected row %d is outside bounded physical view: %#v", m.subagents.cursor, view.Rows)
 	}
 	body := stripANSIstr(list.render(listTh, height))
 	selected := stripANSIstr(list.rows[m.subagents.cursor])
@@ -1967,13 +2015,13 @@ func TestAgentsOverlayLayoutBoundaryExactFitAndOneLineShort(t *testing.T) {
 	th, hk := aztec(), defaultHelpKeys()
 	const width = 80
 	// The complete card, tab strip, separator, and empty Teams body fit in
-	// eleven rows once all rendered frame rows are charged.
-	exact := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 11, 24))
+	// ten rows once all rendered frame rows are charged.
+	exact := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 10, 24))
 	if !strings.Contains(exact, "┏") || !strings.Contains(exact, "no team has run this session") || !strings.Contains(exact, "esc close") {
 		t.Fatalf("exact-fit normal card lost its frame or essential body:\n%s", exact)
 	}
 
-	short := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 10, 24))
+	short := stripANSIstr(renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{}, nil, nil, nil, hk, width, 9, 24))
 	if strings.Contains(short, "┏") || !strings.Contains(short, "vp short") || !strings.Contains(short, "esc close") {
 		t.Fatalf("one-line-short viewport must use the unframed viewport fallback:\n%s", short)
 	}

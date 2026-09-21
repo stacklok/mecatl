@@ -10,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
@@ -77,12 +78,11 @@ func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
 	s := modelsSurface(t, m)
 	_, _ = s.Render(40, 15)
 
-	s.list.setCursor(5)
-	s.cursor = s.list.cursor
-	s.list.scroll(boundedLineDown)
-	beforeTop := s.list.view().rows[0]
-	if s.list.cursorID != "provider\x00model-5" || beforeTop.id == "" {
-		t.Fatalf("refresh setup cursor/top = %q/%q", s.list.cursorID, beforeTop.id)
+	s.list.SetCursor(5)
+	s.list.Scroll(bounded.LineDown)
+	beforeTop := s.list.View().Rows[0]
+	if s.list.CursorID() != "provider\x00model-5" || beforeTop.ID == "" {
+		t.Fatalf("refresh setup cursor/top = %q/%q", s.list.CursorID(), beforeTop.ID)
 	}
 
 	reordered := append([]client.ModelInfo{models[5], models[0], models[1]}, models[2:5]...)
@@ -92,11 +92,11 @@ func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
 	s.catalog.models, s.filtered = reordered, reordered
 	_, _ = s.Render(40, 15)
 	s = modelsSurface(t, m)
-	if got := s.list.cursorID; got != "provider\x00model-5" {
+	if got := s.list.CursorID(); got != "provider\x00model-5" {
 		t.Fatalf("reordered refresh selected %q, want provider/model-5", got)
 	}
-	if afterTop := s.list.view().rows[0]; afterTop.id != beforeTop.id || afterTop.itemLine != beforeTop.itemLine {
-		t.Fatalf("reordered refresh top anchor = {%q,%d}, want {%q,%d}", afterTop.id, afterTop.itemLine, beforeTop.id, beforeTop.itemLine)
+	if afterTop := s.list.View().Rows[0]; afterTop.ID != beforeTop.ID || afterTop.ItemLine != beforeTop.ItemLine {
+		t.Fatalf("reordered refresh top anchor = {%q,%d}, want {%q,%d}", afterTop.ID, afterTop.ItemLine, beforeTop.ID, beforeTop.ItemLine)
 	}
 }
 
@@ -193,7 +193,7 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if s.cursor != 3 {
-		t.Fatalf("cursor after pgdown = %d, want first item after the effective 3-row window", s.cursor)
+	if s.list.Cursor() != 3 {
+		t.Fatalf("cursor after pgdown = %d, want first item after the effective 3-row window", s.list.Cursor())
 	}
 }

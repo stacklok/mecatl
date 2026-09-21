@@ -62,9 +62,9 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 		marker string
 		rows   int
 	}{
-		{"subagent roster", rosterOut, "goal-", len(subagentSelectableList(th, subagentState{cursor: 6}, fleet, hk, bodyWidth).boundedView(th, height).rows)},
-		{"parallel roster", parallelOut, "branches", len(parallelSelectableList(th, parallelState{cursor: 6}, groups, hk, bodyWidth).boundedView(th, height).rows)},
-		{"team roster", teamOut, "member-", len(teamSelectableList(th, teamState{cursor: 6}, team, hk, bodyWidth).boundedView(th, height).rows)},
+		{"subagent roster", rosterOut, "goal-", len(subagentSelectableList(th, subagentState{cursor: 6}, fleet, hk, bodyWidth).boundedView(th, height).Rows)},
+		{"parallel roster", parallelOut, "branches", len(parallelSelectableList(th, parallelState{cursor: 6}, groups, hk, bodyWidth).boundedView(th, height).Rows)},
+		{"team roster", teamOut, "member-", len(teamSelectableList(th, teamState{cursor: 6}, team, hk, bodyWidth).boundedView(th, height).Rows)},
 		{"tasks", tasksOut, "task-", teamTasksRows(height)},
 		{"findings", findingsOut, "finding-", teamFindingsRows(height)},
 	} {

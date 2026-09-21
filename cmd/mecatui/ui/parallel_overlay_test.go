@@ -391,7 +391,7 @@ func TestParallelRosterWindowed(t *testing.T) {
 	}
 	out := stripANSIstr(m.View().Content)
 	th, hk, width, height := m.agentsListGeometry()
-	rows := len(parallelSelectableList(th, m.parallel, m.conv.parallelGroups, hk, width).boundedView(th, height).rows)
+	rows := len(parallelSelectableList(th, m.parallel, m.conv.parallelGroups, hk, width).boundedView(th, height).Rows)
 	if rows >= n {
 		t.Fatalf("test premise broken: window %d must be < groups %d", rows, n)
 	}
