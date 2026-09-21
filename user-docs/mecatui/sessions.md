@@ -42,13 +42,10 @@ mecatui: final-session-id="01JOPAQUESESSIONID"
 
 ## Inspect the active session during a run
 
-Run `/session` at any point after a session is bound, including while the agent
-is responding or waiting on a tool. Mecatui opens the read-only details overlay
-with the full session ID. Press `c` to copy that exact ID, then press `esc` to
-close the overlay and return focus to the conversation. Opening the overlay
-does not cancel, pause, or steer the run.
-
-When no session is bound, `/session` keeps the `no active session` response.
+Run `/session` after a session is bound to open its read-only details overlay,
+including while the agent is responding or waiting on a tool. Press `c` to copy
+the full session ID. Press `esc` to close the overlay and return focus to the
+conversation. Opening the overlay does not cancel, pause, or steer the run.
 
 ## Browse and maintain stored sessions
 
@@ -155,8 +152,8 @@ mecatui debug 01JOPAQUESESSIONID \
 mecatui debug 01JOPAQUESESSIONID --debug-mcp github
 ```
 
-`TARGET` can be the full ID or the displayed 12-column handle. If a handle is
-ambiguous, copy the full ID from `/session` and try again. Use the embedded
+`TARGET` can be the full ID or the short displayed ID. If the displayed ID is
+ambiguous, open `/session`, copy the full ID, and try again. Use the embedded
 command for an embedded store and `connect ADDRESS` for the server that owns the
 target. The optional `--prompt` value replaces the default diagnosis objective.
 

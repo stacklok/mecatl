@@ -315,7 +315,7 @@ type Deps struct {
 	NoMouse bool
 
 	// TerminalTitle receives the display-safe snapshot during View. Its implementation
-	// writes only through Bubble Tea's configured output writer.
+	// stages the title; Bubble Tea's configured output writer delivers it with the frame.
 	TerminalTitle func(statusline.Input)
 
 	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,

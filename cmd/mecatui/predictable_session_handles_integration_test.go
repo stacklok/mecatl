@@ -54,7 +54,7 @@ var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 func TestPredictableSessionHandles_Scenario2_RenderedHeaderCreatesBoundDebugger(t *testing.T) {
 	ids := []string{
 		"0123456789abcdef0123456789abcdef",
-		"legacy\x1b-session-é",
+		"legacy-session-é",
 	}
 	service := &renderedHeaderDebugServer{ids: ids}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

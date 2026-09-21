@@ -12,8 +12,9 @@ import (
 
 const terminalTitleRunes = 160
 
-// terminalTitleController is the sole terminal-title output authority. Set runs
-// during View; its mutex serializes OSC updates with Bubble Tea frame writes.
+// terminalTitleController is the sole terminal-title output authority. Set stages
+// the title rendered during View; Write serializes a changed OSC update immediately
+// before the corresponding Bubble Tea frame.
 type terminalTitleController struct {
 	mu        sync.Mutex
 	output    io.Writer
@@ -53,21 +54,21 @@ func (c *terminalTitleController) Set(input statusline.Input) {
 		title = "DEBUG " + title
 	}
 	c.pending = sanitizeTerminalTitle(title)
-	c.flush()
 }
 
-func (c *terminalTitleController) flush() {
+func (c *terminalTitleController) flush() error {
 	if c.pending == c.last || (c.pending == "" && !c.wrote) {
-		return
+		return nil
 	}
 	if _, err := io.WriteString(c.output, "\x1b]0;"+c.pending+"\a"); err != nil {
 		c.writeErr = err
-		return
+		return err
 	}
 	c.last = c.pending
 	if c.last != "" {
 		c.wrote = true
 	}
+	return nil
 }
 
 func (c *terminalTitleController) Write(p []byte) (int, error) {
@@ -78,6 +79,9 @@ func (c *terminalTitleController) Write(p []byte) (int, error) {
 	}
 	if c.writeErr != nil {
 		return 0, c.writeErr
+	}
+	if err := c.flush(); err != nil {
+		return 0, err
 	}
 	return c.output.Write(p)
 }

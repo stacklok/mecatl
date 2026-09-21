@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -15,15 +16,24 @@ func TestADR_0344_Scenario1_ControllerOwnsSerializedOSC0(t *testing.T) {
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}} · {{.MainAgent.State}}"))
 
 	controller.Set(statusline.Input{Session: statusline.Session{Title: "first"}, MainAgent: statusline.MainAgent{State: "idle"}})
-	if got := output.String(); got != "\x1b]0;first · idle\a" {
-		t.Fatalf("title change must be delivered without a Bubble Tea frame: %q", got)
+	if got := output.String(); got != "" {
+		t.Fatalf("View callback wrote before a Bubble Tea frame: %q", got)
 	}
 	if _, err := controller.Write([]byte("frame one")); err != nil {
 		t.Fatalf("write first frame: %v", err)
 	}
+	if got := output.String(); got != "\x1b]0;first · idle\aframe one" {
+		t.Fatalf("title was not flushed immediately before first frame: %q", got)
+	}
 	controller.Set(statusline.Input{Session: statusline.Session{Title: "second"}, MainAgent: statusline.MainAgent{State: "thinking"}})
+	if got := output.String(); got != "\x1b]0;first · idle\aframe one" {
+		t.Fatalf("changed title wrote before the next frame: %q", got)
+	}
 	if _, err := controller.Write([]byte("frame two")); err != nil {
 		t.Fatalf("write second frame: %v", err)
+	}
+	if got := output.String(); got != "\x1b]0;first · idle\aframe one\x1b]0;second · thinking\aframe two" {
+		t.Fatalf("changed title was not flushed immediately before second frame: %q", got)
 	}
 
 	var wg sync.WaitGroup
@@ -117,14 +127,35 @@ func TestTerminalTitleCleanupAfterGracefulCancellation(t *testing.T) {
 	var output bytes.Buffer
 	controller := newTerminalTitleController(&output, true, mustTitleRenderer(t, "{{.Session.Title}}"))
 	controller.Set(statusline.Input{Session: statusline.Session{Title: "running"}})
+	if _, err := controller.Write([]byte("frame")); err != nil {
+		t.Fatalf("write running frame: %v", err)
+	}
 
 	if err := closeTerminalTitle(controller); err != nil {
 		t.Fatalf("close title after context cancellation: %v", err)
 	}
-	if got := output.String(); got != "\x1b]0;running\a\x1b]0;\a" {
-		t.Fatalf("graceful cancellation cleanup = %q, want title followed by one clear", got)
+	if got := output.String(); got != "\x1b]0;running\aframe\x1b]0;\a" {
+		t.Fatalf("graceful cancellation cleanup = %q, want framed title followed by one clear", got)
 	}
 }
+
+func TestTerminalTitleWriteErrorIsReturnedWithFrameWrite(t *testing.T) {
+	controller := newTerminalTitleController(failingTitleWriter{}, true, mustTitleRenderer(t, "{{.Session.Title}}"))
+	controller.Set(statusline.Input{Session: statusline.Session{Title: "running"}})
+
+	if _, err := controller.Write([]byte("frame")); !errors.Is(err, errTitleWrite) {
+		t.Fatalf("Write() error = %v, want title output error", err)
+	}
+	if err := controller.Close(); !errors.Is(err, errTitleWrite) {
+		t.Fatalf("Close() error = %v, want retained title output error", err)
+	}
+}
+
+var errTitleWrite = errors.New("title output failed")
+
+type failingTitleWriter struct{}
+
+func (failingTitleWriter) Write([]byte) (int, error) { return 0, errTitleWrite }
 
 func TestADR_0344_Scenario1_SanitizesRenderedTitle(t *testing.T) {
 	if got := sanitizeTerminalTitle("one\u0085two"); got != "onetwo" {
@@ -228,13 +259,15 @@ func TestADR_0344_Scenario3_LocalAndRemotePresentation(t *testing.T) {
 		outputs = append(outputs, output.String())
 	}
 	if outputs[0] != outputs[1] || strings.Contains(outputs[0], "/private/workspace") {
-		t.Fatalf("embedded=%q connect=%q; title must be connection-independent and path-free", outputs[0], outputs[1])
+		t.Fatalf("embedded=%q connect=%q; title must be connection-independent and omit workspace path unless configured", outputs[0], outputs[1])
 	}
-	if got := renderTitle(t, "{{printf \"%+v\" .}}", input); strings.Contains(got, "/private/workspace") {
-		t.Fatalf("formatted title projection leaked workspace path: %q", got)
+	if got, want := renderTitle(t, "{{.Workspace.Path}}", input), "/private/workspace"; got != want {
+		t.Fatalf("explicit title workspace path = %q, want %q", got, want)
 	}
-	if _, err := statusline.NewTitleRenderer("{{.Workspace.Path}}"); err == nil || !strings.Contains(err.Error(), "Path") {
-		t.Fatalf("title Workspace.Path projection error = %v, want unavailable-field error", err)
+	for _, source := range []string{"{{contextMeter .Context}}", "{{contextMeterCompact .Context}}", "{{contextMeterMinimal .Context}}"} {
+		if _, err := statusline.NewTitleRenderer(source); err == nil {
+			t.Fatalf("title template unexpectedly accepts status-only function in %q", source)
+		}
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/ansi"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -295,52 +296,35 @@ func (c *Client) CreateSession(ctx context.Context, mode mecatlv1.PermissionMode
 	})
 }
 
-// SessionHandleWidth is the fixed maximum ASCII-column width of every ordinary
+// SessionHandleWidth is the fixed maximum display-column width of every ordinary
 // session handle shown by mecatui.
 const SessionHandleWidth = 12
 
-// SessionHandle returns the fixed, terminal-safe escaped prefix used by every
-// ordinary mecatui session presentation. Unreserved ASCII is copied verbatim,
-// except that a leading hyphen is escaped; every other UTF-8 byte is one
-// uppercase %HH atom. The longest complete-atom
-// prefix fitting SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have
-// no handle.
+// SessionHandle returns the canonical safe display projection of id. It retains
+// readable UTF-8 verbatim except terminal control and Unicode format characters,
+// then truncates at a grapheme boundary to SessionHandleWidth display columns.
+// Empty and invalid UTF-8 IDs have no handle.
 func SessionHandle(id string) string {
 	if id == "" || !utf8.ValidString(id) {
 		return ""
 	}
-	const hex = "0123456789ABCDEF"
-	var out strings.Builder
-	out.Grow(SessionHandleWidth)
-	for i, b := range []byte(id) {
-		safe := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' && i > 0
-		atomLen := 3
-		if safe {
-			atomLen = 1
+	id = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
 		}
-		if out.Len()+atomLen > SessionHandleWidth {
-			break
-		}
-		if safe {
-			out.WriteByte(b)
-		} else {
-			out.WriteByte('%')
-			out.WriteByte(hex[b>>4])
-			out.WriteByte(hex[b&0x0f])
-		}
-	}
-	return out.String()
+		return r
+	}, id)
+	return ansi.Truncate(id, SessionHandleWidth, "")
 }
 
 // CreateDebugSession creates a separate no-filesystem analysis session bound to
-// targetID. A target with the canonical short-handle grammar is resolved against
-// the caller-visible session inventory. Exact inventory equality wins; otherwise
-// a unique projected handle resolves to its full ID. An inventory failure or no
-// projected match leaves the target unchanged so the server's exact-ID authority
-// decides the result. Capability absence is detected from the create response
-// (the first common response carrying ServerCapabilities); an older server may
-// ignore the new target field, so that accidentally-created ordinary session is
-// closed before this method fails closed.
+// targetID. Exact inventory equality wins; otherwise a unique displayed handle
+// resolves to its full ID. An inventory failure or no displayed-handle match
+// leaves the target unchanged so the server's exact-ID authority decides the
+// result. Capability absence is detected from the create response (the first
+// common response carrying ServerCapabilities); an older server may ignore the
+// new target field, so that accidentally-created ordinary session is closed
+// before this method fails closed.
 func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
 	resolvedTarget, err := c.resolveDebugTarget(ctx, targetID)
 	if err != nil {
@@ -390,9 +374,6 @@ func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (strin
 	if err := validateDebugTarget(targetID); err != nil {
 		return "", err
 	}
-	if !isSessionHandleCandidate(targetID) {
-		return targetID, nil
-	}
 	sessions, err := c.ListSessions(ctx)
 	if err != nil {
 		return targetID, nil
@@ -412,34 +393,12 @@ func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (strin
 		}
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("session handle %q is ambiguous; %s", targetID, debugTargetExactCopyGuidance)
+		return "", fmt.Errorf("displayed session ID %q is ambiguous; %s", targetID, debugTargetExactCopyGuidance)
 	}
 	if len(matches) == 0 {
 		return targetID, nil
 	}
 	return matches[0], nil
-}
-
-func isSessionHandleCandidate(value string) bool {
-	if value == "" || len(value) > SessionHandleWidth {
-		return false
-	}
-	for i := 0; i < len(value); i++ {
-		b := value[i]
-		literal := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' && i > 0
-		if literal {
-			continue
-		}
-		if b != '%' || i+2 >= len(value) || !isUpperHex(value[i+1]) || !isUpperHex(value[i+2]) {
-			return false
-		}
-		i += 2
-	}
-	return true
-}
-
-func isUpperHex(b byte) bool {
-	return b >= '0' && b <= '9' || b >= 'A' && b <= 'F'
 }
 
 // CreateSessionWithCarryover forks sourceSessionID with model overrides. Server

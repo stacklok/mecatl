@@ -73,6 +73,43 @@ func parseStatusTemplate(name, source, fallback string) statusTemplate {
 	}
 	return statusTemplate{template: parsed, fallback: fallbackTemplate}
 }
+
+func commonTemplateFuncs() template.FuncMap {
+	return template.FuncMap{"elide": elide}
+}
+
+func statusTemplateFuncs() template.FuncMap {
+	funcs := commonTemplateFuncs()
+	funcs["contextMeter"] = contextMeter
+	funcs["contextMeterCompact"] = contextMeterCompact
+	funcs["contextMeterMinimal"] = contextMeterMinimal
+	return funcs
+}
+
+func elide(width int, value any) string {
+	if width <= 0 {
+		return ""
+	}
+	text := html.UnescapeString(stringifyTemplateValue(value))
+	if ansi.StringWidth(text) <= width {
+		return html.EscapeString(text)
+	}
+	if width == 1 {
+		return "…"
+	}
+	return html.EscapeString(ansi.Truncate(text, width, "…"))
+}
+
+func stringifyTemplateValue(value any) string {
+	switch value := value.(type) {
+	case templateText:
+		return string(value)
+	case string:
+		return value
+	default:
+		return ""
+	}
+}
 func (t statusTemplate) render(ctx context.Context, input templateInput) Document {
 	if ctx.Err() != nil || t.fallback == nil {
 		return Document{}
