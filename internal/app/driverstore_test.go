@@ -448,6 +448,33 @@ func TestBuildCatalogMemoryDriverIncludesMandatoryLifecycleTools(t *testing.T) {
 	}
 }
 
+func TestRemoteOwnershipRequiresNegotiatedAtomicCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store port.SessionStore
+		want  bool
+	}{
+		{name: "disabled", store: plainSessionStore{inner: memstore.New()}},
+		{name: "enabled", store: memstore.New(), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := startSessionStoreDriver(t, tc.store)
+			store, _, closeFn, err := buildStore(Config{SessionStoreURL: target})
+			if err != nil {
+				t.Fatalf("buildStore: %v", err)
+			}
+			defer closeFn()
+			err = requireAtomicSessionCreate(Config{OwnershipEnforced: true}, store)
+			if tc.want && err != nil {
+				t.Fatalf("capable remote store rejected: %v", err)
+			}
+			if !tc.want && (err == nil || !strings.Contains(err.Error(), "atomic create")) {
+				t.Fatalf("incapable remote store error = %v, want atomic-create rejection", err)
+			}
+		})
+	}
+}
+
 func TestOwnershipRequiresAtomicSessionCreateCapability(t *testing.T) {
 	legacy := plainSessionStore{inner: memstore.New()}
 	if err := requireAtomicSessionCreate(Config{OwnershipEnforced: true}, legacy); err == nil || !strings.Contains(err.Error(), "atomic create") {

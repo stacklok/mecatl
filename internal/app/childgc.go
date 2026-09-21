@@ -394,7 +394,7 @@ func startChildGC(parent context.Context, cfg Config, store port.SessionStore, i
 		return noop
 	}
 	pager, ok := store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(store) {
 		cfg.diag().Log(parent, port.LevelInfo, "session GC unavailable (session store has no durable metadata pager); store is never swept")
 		return noop
 	}

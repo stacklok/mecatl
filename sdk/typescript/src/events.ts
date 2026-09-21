@@ -103,11 +103,28 @@ export interface PermissionAskEventPayload {
   readonly tool: string;
 }
 
-/** Retry classification fields carried by model-retry and result payloads. @public */
-export type RetryDisposition = 0 | 1 | 2 | 3;
+/** Canonical retry classifications carried by model-retry and result payloads. @public */
+export const RetryDisposition = {
+  Unspecified: 0,
+  Unknown: 1,
+  Retryable: 2,
+  Permanent: 3,
+} as const;
 
-/** Stream-progress classification carried by model-retry and result payloads. @public */
-export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+/** One canonical retry-classification value. @public */
+export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
+
+/** Canonical stream-progress classifications carried by model-retry and result payloads. @public */
+export const StreamProgress = {
+  Unspecified: 0,
+  Unknown: 1,
+  Precommit: 2,
+  Visible: 3,
+  Complete: 4,
+} as const;
+
+/** One canonical stream-progress value. @public */
+export type StreamProgress = (typeof StreamProgress)[keyof typeof StreamProgress];
 
 /** The payload of a `model.retry` event. @public */
 export interface ModelRetryEventPayload {

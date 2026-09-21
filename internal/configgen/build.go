@@ -289,7 +289,7 @@ func storageManagementSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{
 		Key: "storage_management", Tier: TierOperator, CommentedOut: true,
-		Doc:    "Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.",
+		Doc:    "Exact verified OIDC issuer/subject pairs authorized for process-wide storage health and cleanup. Empty grants nobody; project values are ignored.",
 		Fields: fields,
 	}
 }

@@ -57,6 +57,7 @@ export {
   TransportError,
   UnsupportedFeatureError,
 } from "./errors.js";
+export { RetryDisposition, StreamProgress } from "./events.js";
 export type {
   AgentEvent,
   ApprovalEventPayload,
@@ -76,12 +77,10 @@ export type {
   ParallelEventPayload,
   PermissionAskEventPayload,
   ResultEventPayload,
-  RetryDisposition,
   ScheduleEventPayload,
   SessionTitleEventPayload,
   SteerEventPayload,
   SteerOutcomeEventPayload,
-  StreamProgress,
   SubagentEventPayload,
   TeamEvent,
   TeamEventPayload,
@@ -175,7 +174,6 @@ export {
 } from "./raw.js";
 export type {
   PermissionAskResponder,
-  PermissionVerdict,
   Run,
   RunAuthorizationRequiredOutcome,
   RunCompletedOutcome,
@@ -183,7 +181,7 @@ export type {
   RunOutcome,
   RunResult,
 } from "./run.js";
-export { RunAuthorizationRequiredError } from "./run.js";
+export { PermissionVerdict, RunAuthorizationRequiredError } from "./run.js";
 export type {
   RunControls,
   RunSteerAcknowledgement,

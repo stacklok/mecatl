@@ -634,28 +634,6 @@ func (s *Session) UsageFor(kind UsageKind) Usage {
 	return s.tokenUsage[kind].Total
 }
 
-// ResetUsage zeroes the aggregate's cumulative main usage bucket, granting a
-// fresh MaxRunTokens allowance for the next run. It is the explicit counterpart
-// to the deliberate non-reset in resetToIdle: main usage survives
-// Reopen/Interrupt/Recover so the budget brake spans the whole logical run and
-// restart. The UsageKindSessionTitle bucket is untouched.
-//
-// It is legal from any NON-running state (idle, completed, or the other terminals)
-// — NOT while running, where it would discard an in-flight turn's spend mid-budget
-// and race the loop's own RecordUsage. The SOLE caller today is the team
-// supervisor's synthesise step (engine/agent/teamsupervisor.go): a lead whose
-// working run was stopped by its MaxRunTokens must still produce the team's
-// synthesis deliverable, so the supervisor resets the lead's accumulator between
-// the working drive and the synthesis drive (the synthesis spend is then folded
-// into the team outcome separately). Returns ErrIllegalTransition from running.
-func (s *Session) ResetUsage() error {
-	if s.State == StateRunning || s.State == StateAuthorizing {
-		return fmt.Errorf("%w: ResetUsage from %q", ErrIllegalTransition, s.State)
-	}
-	delete(s.tokenUsage, UsageKindMain)
-	return nil
-}
-
 // RecordUserPrompt appends a user prompt to the conversation through the
 // aggregate root, optionally preceded by discovered project-instruction messages
 // (AGENTS.md / CLAUDE.md). It is the intention-revealing seam the loop uses

@@ -212,8 +212,8 @@ type Config struct {
 	// existing ownerless deployments and hand-built test configurations.
 	OwnershipEnforced bool
 	// StorageManagementPrincipals are exact verified issuer/subject pairs granted
-	// process-wide storage health, migration, and cleanup authority. Empty grants
-	// nobody in an ownership-enforced deployment.
+	// process-wide storage health and cleanup authority. Empty grants nobody in an
+	// ownership-enforced deployment.
 	StorageManagementPrincipals []session.Principal
 	// LocalStorageManagement explicitly grants the private embedded single-user
 	// server management authority. It is invalid with OwnershipEnforced and is
@@ -3404,7 +3404,7 @@ func requireAtomicSessionCreate(cfg Config, store port.SessionStore) error {
 	if !cfg.OwnershipEnforced {
 		return nil
 	}
-	if _, ok := store.(port.SessionCreator); !ok {
+	if !port.SupportsSessionCreate(store) {
 		return errors.New("ownership enforcement requires a session store with atomic create capability")
 	}
 	return nil

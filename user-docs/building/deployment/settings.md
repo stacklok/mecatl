@@ -158,9 +158,8 @@ those choices. Local connection credentials authenticate the client; they do
 not configure the remote server.
 
 The terminal client reads `$XDG_CONFIG_HOME/mecatui/settings.yaml` in both
-modes. These UI settings do not alter server behavior. For keymaps, the legacy
-`keymap:` entry in the shared Mecatl settings file has the lowest priority, the
-client file is next, and `mecatui --keymap` has the highest priority. See
+modes. These UI settings do not alter server behavior. For keymaps, the client
+file has the lowest priority and `mecatui --keymap` has the highest priority. See
 [Keybindings](/mecatui/keybindings.md),
 [Customize mecatui](/mecatui/customization.md), and
 [Connect to a server](/mecatui/remote-servers.md) for client and transport

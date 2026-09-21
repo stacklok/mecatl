@@ -1,10 +1,10 @@
 # ADR 0307 — Canonical durable token accounting and run-scoped budgets
 
-- Status: Accepted
+- Status: Accepted (compatibility projection superseded)
 - Date: 2026-09-04
 - Scope: durable session token accounting, model attribution, compatibility projections, and `MaxRunTokens` budget semantics
 - Supersedes: none
-- Superseded by: none
+- Superseded by: [PR 1725](https://github.com/stacklok/mecatl/pull/1725) removes the `Session.Usage` compatibility mirror; `TokenUsage`, `UsageFor`, and internal run baselines are the current contract
 
 ## Context
 

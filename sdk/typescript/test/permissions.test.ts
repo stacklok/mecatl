@@ -5,8 +5,14 @@ import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import {
   connect,
   PermissionAskAlreadyResolvedError,
-  type PermissionVerdict,
+  PermissionVerdict,
 } from "../src/index.js";
+
+describe("permission verdict constants", () => {
+  it("exports the server verdict vocabulary", () => {
+    expect(PermissionVerdict).toEqual({ AllowOnce: "allow_once", AllowAlways: "allow_always", Deny: "deny" });
+  });
+});
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

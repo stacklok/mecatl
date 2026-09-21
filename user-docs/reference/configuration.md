@@ -231,7 +231,7 @@ Managed command temporary-storage policy. Read only from user-global settings.ya
 
 Tier: **operator**
 
-Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.
+Exact verified OIDC issuer/subject pairs authorized for process-wide storage health and cleanup. Empty grants nobody; project values are ignored.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |

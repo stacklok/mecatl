@@ -80,9 +80,8 @@ Caller identity records ownership when enabled, but does not isolate sessions
 between authenticated callers.
 
 When the server provides storage management, the inventory can also offer
-**Optimize storage** and **Clean up sessions**. Optimization is non-destructive.
-Cleanup is destructive and requires confirmation. The server operator controls
-availability and retention.
+**Clean up sessions**. Cleanup is destructive and requires confirmation. The
+server operator controls availability and retention.
 
 ## Name the active chat
 

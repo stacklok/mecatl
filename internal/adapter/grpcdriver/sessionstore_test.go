@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,8 +103,58 @@ func (emptySessionCapabilitiesServer) Capabilities(context.Context, *driverv1.Se
 	return &driverv1.SessionStoreCapabilitiesResponse{}, nil
 }
 
+type fixedSessionCapabilitiesServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+	capabilities *driverv1.SessionStoreCapabilitiesResponse
+}
+
+func (s fixedSessionCapabilitiesServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return s.capabilities, nil
+}
+
 func currentSessionCapabilities() *driverv1.SessionStoreCapabilitiesResponse {
 	return &driverv1.SessionStoreCapabilitiesResponse{Contract: sessionStoreContract}
+}
+
+type wrongSessionContractServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+	operations atomic.Int32
+}
+
+func (*wrongSessionContractServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return &driverv1.SessionStoreCapabilitiesResponse{Contract: "session-store/other", Create: true, MetadataPaging: true, Lineage: true}, nil
+}
+
+func (s *wrongSessionContractServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
+	s.operations.Add(1)
+	return &driverv1.LoadResponse{}, nil
+}
+
+func TestSessionStoreNegotiatedOptionalCapabilitiesAreAuthoritative(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		capabilities *driverv1.SessionStoreCapabilitiesResponse
+		want         bool
+	}{
+		{name: "disabled", capabilities: currentSessionCapabilities()},
+		{name: "enabled", capabilities: &driverv1.SessionStoreCapabilitiesResponse{Contract: sessionStoreContract, Create: true, MetadataPaging: true, Lineage: true}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := dialBufconn(t, func(gs *grpc.Server) {
+				driverv1.RegisterSessionStoreServiceServer(gs, fixedSessionCapabilitiesServer{capabilities: tc.capabilities})
+			})
+			store := mustNewSessionStore(t, conn)
+			if got := port.SupportsSessionCreate(store); got != tc.want {
+				t.Fatalf("SupportsSessionCreate = %v, want %v", got, tc.want)
+			}
+			if got := port.SupportsSessionMetadataPaging(store); got != tc.want {
+				t.Fatalf("SupportsSessionMetadataPaging = %v, want %v", got, tc.want)
+			}
+			if got := port.SupportsSessionLineage(store); got != tc.want {
+				t.Fatalf("SupportsSessionLineage = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestSessionStoreCapabilityNegotiationRequiresCurrentContract(t *testing.T) {
@@ -122,6 +173,19 @@ func TestSessionStoreCapabilityNegotiationRequiresCurrentContract(t *testing.T) 
 		})
 		if st, err := NewSessionStore(context.Background(), conn); err == nil || st != nil {
 			t.Fatalf("empty negotiation = (%T, %v), want rejection", st, err)
+		}
+	})
+
+	t.Run("wrong nonempty contract is rejected before operations", func(t *testing.T) {
+		server := &wrongSessionContractServer{}
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, server)
+		})
+		if st, err := NewSessionStore(context.Background(), conn); err == nil || st != nil {
+			t.Fatalf("wrong-contract negotiation = (%T, %v), want rejection", st, err)
+		}
+		if got := server.operations.Load(); got != 0 {
+			t.Fatalf("backing operations = %d, want zero after constructor rejection", got)
 		}
 	})
 

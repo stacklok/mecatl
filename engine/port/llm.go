@@ -159,35 +159,12 @@ type LLMProvider interface {
 	Capabilities() ProviderCapabilities
 }
 
-// RetryDisposition and StreamProgress remain aliases here for source compatibility;
-// the neutral vocabularies live in session so durable domain state does not import
-// this outward port package.
-type RetryDisposition = session.RetryDisposition
-
-// RetryDispositionUnknown and its siblings alias the session vocabulary.
-const (
-	RetryDispositionUnknown   = session.RetryDispositionUnknown
-	RetryDispositionRetryable = session.RetryDispositionRetryable
-	RetryDispositionPermanent = session.RetryDispositionPermanent
-)
-
 // RetryDispositionError exposes a failure's causal retry classification through
 // errors.As without adding provider-specific fields to LLMRequest.
 type RetryDispositionError interface {
 	error
 	RetryDisposition() session.RetryDisposition
 }
-
-// StreamProgress aliases the session-owned semantic progress vocabulary.
-type StreamProgress = session.StreamProgress
-
-// StreamProgressUnknown and its siblings alias the session vocabulary.
-const (
-	StreamProgressUnknown   = session.StreamProgressUnknown
-	StreamProgressPrecommit = session.StreamProgressPrecommit
-	StreamProgressVisible   = session.StreamProgressVisible
-	StreamProgressComplete  = session.StreamProgressComplete
-)
 
 // StreamProgressError exposes the semantic progress of a terminal stream error.
 type StreamProgressError interface {

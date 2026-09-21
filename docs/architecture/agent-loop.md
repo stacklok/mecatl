@@ -76,18 +76,17 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
 
 The loop terminates the session in exactly one of `Complete`/`Stop`/`Cancel`/
 `Fail` and emits exactly one terminal `result` event carrying cumulative usage.
-The `result` payload includes a `Permanent` boolean — meaningful only when
-`stop=error` — that distinguishes a permanent provider rejection (retrying
-can't help) from a transient failure ([ADR 0203](../adr/0203-permanent-provider-error-signal.md)).
-A permanently-failed session that is recovered for re-entry emits a one-time
-`recover_notice` advisory BEFORE the first turn, so the operator sees the
-warning before burning a provider call.
+The `result` payload includes typed retry disposition and stream-progress facts.
+A `permanent` disposition identifies a provider rejection for which replaying the
+same request cannot help ([ADR 0239](../adr/0239-semantic-stream-retry.md)). A
+session recovered after such a failure emits a one-time `recover_notice` advisory
+before the first turn.
 
 A run-level **per-engine token budget** bounds that engine's loop: `Deps.MaxRunTokens`
 (`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is a token
 ceiling, not a currency billing cap. It is checked at the turn boundary — never
-mid-stream, so an in-flight turn always completes — against that engine session's
-accumulated `session.Usage` (input + output; cache tokens excluded). Crossing
+mid-stream, so an in-flight turn always completes — against
+`Session.UsageFor(UsageKindMain)` (input + output; cache tokens excluded). Crossing
 it ends the run cleanly with `StopBudget` (a NON-error terminal → `completed`,
 Reopen-recoverable, mirroring `StopNoProgress`). Every child engine — Subagent,
 Parallel branch, team member, and lead synthesis — inherits the configured value

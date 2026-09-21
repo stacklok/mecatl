@@ -180,7 +180,7 @@ func TestSemanticAttemptFirstVisibleTextHasNoTentativeBuffer(t *testing.T) {
 		}
 		result.stop()
 	}()
-	if result.progress != port.StreamProgressVisible || result.chunk.Text != "visible" {
+	if result.progress != session.StreamProgressVisible || result.chunk.Text != "visible" {
 		t.Fatalf("result = %+v, want directly visible text", result)
 	}
 	if result.buffered != nil {
@@ -234,33 +234,33 @@ func TestRetryDispositionUnknownIsConservative(t *testing.T) {
 		t.Fatalf("err = %v, calls = %d; want original unknown and one call", err, f.Calls())
 	}
 	var disposition port.RetryDispositionError
-	if !errors.As(err, &disposition) || disposition.RetryDisposition() != port.RetryDispositionUnknown {
+	if !errors.As(err, &disposition) || disposition.RetryDisposition() != session.RetryDispositionUnknown {
 		t.Fatalf("unknown error disposition = %v; want explicit unknown", disposition)
 	}
 	var progress port.StreamProgressError
-	if !errors.As(err, &progress) || progress.StreamProgress() != port.StreamProgressPrecommit {
+	if !errors.As(err, &progress) || progress.StreamProgress() != session.StreamProgressPrecommit {
 		t.Fatalf("unknown error progress = %v; want precommit", progress)
 	}
 }
 
 type dispositionOnlyError struct {
-	disposition port.RetryDisposition
+	disposition session.RetryDisposition
 }
 
 func (*dispositionOnlyError) Error() string { return "typed disposition" }
-func (e *dispositionOnlyError) RetryDisposition() port.RetryDisposition {
+func (e *dispositionOnlyError) RetryDisposition() session.RetryDisposition {
 	return e.disposition
 }
 
 func TestInvalidProviderDispositionNormalizesToUnknown(t *testing.T) {
-	original := &dispositionOnlyError{disposition: port.RetryDisposition(99)}
+	original := &dispositionOnlyError{disposition: session.RetryDisposition(99)}
 	_, err := Wrap(&fakeProvider{steps: []step{{outerErr: original}}}, Config{MaxAttempts: 2}).
 		Stream(context.Background(), port.LLMRequest{})
 	if !errors.Is(err, original) {
 		t.Fatalf("error did not retain provider cause: %v", err)
 	}
 	var classified port.RetryDispositionError
-	if !errors.As(err, &classified) || classified.RetryDisposition() != port.RetryDispositionUnknown {
+	if !errors.As(err, &classified) || classified.RetryDisposition() != session.RetryDispositionUnknown {
 		t.Fatalf("disposition = %v, want conservative unknown", classified)
 	}
 }
@@ -268,11 +268,11 @@ func TestInvalidProviderDispositionNormalizesToUnknown(t *testing.T) {
 func TestClassifiedErrorProjectsDirectInterfaces(t *testing.T) {
 	tests := []struct {
 		name        string
-		disposition port.RetryDisposition
+		disposition session.RetryDisposition
 	}{
-		{name: "unknown", disposition: port.RetryDispositionUnknown},
-		{name: "retryable", disposition: port.RetryDispositionRetryable},
-		{name: "permanent", disposition: port.RetryDispositionPermanent},
+		{name: "unknown", disposition: session.RetryDispositionUnknown},
+		{name: "retryable", disposition: session.RetryDispositionRetryable},
+		{name: "permanent", disposition: session.RetryDispositionPermanent},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,14 +289,14 @@ func TestClassifiedErrorProjectsDirectInterfaces(t *testing.T) {
 		})
 	}
 
-	alreadyPermanent := &dispositionOnlyError{disposition: port.RetryDispositionPermanent}
+	alreadyPermanent := &dispositionOnlyError{disposition: session.RetryDispositionPermanent}
 	_, err := Wrap(&fakeProvider{steps: []step{{outerErr: alreadyPermanent}}}, Config{MaxAttempts: 1}).
 		Stream(context.Background(), port.LLMRequest{})
 	if !errors.Is(err, alreadyPermanent) {
 		t.Fatalf("existing true permanent error missing from unwrap chain: got %T %v", err, err)
 	}
 	var progress port.StreamProgressError
-	if !errors.As(err, &progress) || progress.StreamProgress() != port.StreamProgressPrecommit {
+	if !errors.As(err, &progress) || progress.StreamProgress() != session.StreamProgressPrecommit {
 		t.Fatalf("existing permanent progress = %v, want precommit", progress)
 	}
 }
@@ -305,12 +305,12 @@ func TestDefaultDispositionDistinguishesPermanentRetryableAndUnknown(t *testing.
 	tests := []struct {
 		name string
 		err  error
-		want port.RetryDisposition
+		want session.RetryDisposition
 	}{
-		{name: "permanent 4xx", err: apiErr(400), want: port.RetryDispositionPermanent},
-		{name: "retryable 5xx", err: apiErr(503), want: port.RetryDispositionRetryable},
-		{name: "unknown status", err: apiErr(0), want: port.RetryDispositionUnknown},
-		{name: "cancellation is separate", err: context.Canceled, want: port.RetryDispositionUnknown},
+		{name: "permanent 4xx", err: apiErr(400), want: session.RetryDispositionPermanent},
+		{name: "retryable 5xx", err: apiErr(503), want: session.RetryDispositionRetryable},
+		{name: "unknown status", err: apiErr(0), want: session.RetryDispositionUnknown},
+		{name: "cancellation is separate", err: context.Canceled, want: session.RetryDispositionUnknown},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestAttemptExhaustionRetainsRetryableDisposition(t *testing.T) {
 		t.Fatalf("err = %v, want ExhaustedError", err)
 	}
 	var disposition port.RetryDispositionError
-	if !errors.As(err, &disposition) || disposition.RetryDisposition() != port.RetryDispositionRetryable {
+	if !errors.As(err, &disposition) || disposition.RetryDisposition() != session.RetryDispositionRetryable {
 		t.Fatalf("retry disposition = %v, want retryable", disposition)
 	}
 }
@@ -498,11 +498,11 @@ func TestRepeatedPrecommitIdleStallsExhaustRetryable(t *testing.T) {
 		t.Fatalf("err = %v, want ExhaustedError", err)
 	}
 	var disposition port.RetryDispositionError
-	if !errors.As(err, &disposition) || disposition.RetryDisposition() != port.RetryDispositionRetryable {
+	if !errors.As(err, &disposition) || disposition.RetryDisposition() != session.RetryDispositionRetryable {
 		t.Fatalf("disposition = %v, want retryable", disposition)
 	}
 	var progress port.StreamProgressError
-	if !errors.As(err, &progress) || progress.StreamProgress() != port.StreamProgressPrecommit {
+	if !errors.As(err, &progress) || progress.StreamProgress() != session.StreamProgressPrecommit {
 		t.Fatalf("progress = %v, want precommit", progress)
 	}
 	if f.Calls() != 2 {
@@ -527,8 +527,8 @@ func TestUnknownChunkKindCommitsConservatively(t *testing.T) {
 	}
 	var disposition port.RetryDispositionError
 	var progress port.StreamProgressError
-	if !errors.As(err, &disposition) || disposition.RetryDisposition() != port.RetryDispositionRetryable ||
-		!errors.As(err, &progress) || progress.StreamProgress() != port.StreamProgressVisible {
+	if !errors.As(err, &disposition) || disposition.RetryDisposition() != session.RetryDispositionRetryable ||
+		!errors.As(err, &progress) || progress.StreamProgress() != session.StreamProgressVisible {
 		t.Fatalf("visible failure metadata = (%v,%v), want retryable/visible", disposition, progress)
 	}
 	if len(chunks) != 1 || !reflect.DeepEqual(chunks[0], unknown) {

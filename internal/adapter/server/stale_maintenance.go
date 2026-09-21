@@ -37,7 +37,7 @@ func (s *Service) StaleRunningCandidates(ctx context.Context) ([]port.SessionMet
 		return nil, ErrManagementUnauthorized
 	}
 	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(s.cfg.Store) {
 		return nil, nil
 	}
 	var (

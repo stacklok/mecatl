@@ -430,7 +430,7 @@ func withHTTPErrorMetadata(err error) error {
 // statuses (408, 429, 5xx) through its retry logic.
 func (e *responseStreamError) StatusCode() int { return e.status }
 
-// RetryDisposition implements port.RetryDispositionError.
+// RetryDisposition implements session.RetryDispositionError.
 func (e *responseStreamError) RetryDisposition() session.RetryDisposition {
 	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
 		return session.RetryDispositionPermanent

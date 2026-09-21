@@ -2149,7 +2149,8 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, ow
 }
 
 func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) error {
-	if creator, ok := s.cfg.Store.(port.SessionCreator); ok {
+	if port.SupportsSessionCreate(s.cfg.Store) {
+		creator := s.cfg.Store.(port.SessionCreator)
 		return creator.Create(ctx, sess)
 	}
 	if s.cfg.OwnershipEnforced {
@@ -8629,7 +8630,7 @@ func validateSessionMetadataPage(page port.SessionMetadataPage, request port.Ses
 // filtering occurs before page formation and TotalCount.
 func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageRequest) (ListSessionsPage, error) {
 	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(s.cfg.Store) {
 		return ListSessionsPage{}, port.ErrSessionMetadataPagingUnsupported
 	}
 	activityProjection := port.SupportsActivityProjection(s.cfg.Store)

@@ -1369,10 +1369,10 @@ inventory.
 
 ### Remapping keys
 
-Every action in mecatui's keymap is rebindable. Three override layers exist,
-and they resolve to the same map **per action** — a higher layer rebinds only
-the actions it names. Precedence, lowest to highest: the legacy server file
-< the client file < the **CLI flag wins**:
+Every action in mecatui's keymap is rebindable. Two override layers exist,
+and they resolve to the same map **per action**. A higher layer rebinds only
+the actions it names. Precedence, lowest to highest: the client file < the
+**CLI flag wins**:
 
 - **`~/.config/mecatui/settings.yaml`** (client-owned, mecatui's own settings
   file, strictly parsed — an unknown top-level key is a startup error) —
@@ -1387,11 +1387,6 @@ the actions it names. Precedence, lowest to highest: the legacy server file
 
 - **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
   rebinds one action and overrides the YAML entry for that action.
-
-  The `keymap:` setting was migrated from `~/.config/mecatl/settings.yaml`
-  (the server-shared operator file) — the legacy location still works but is
-  **deprecated** (a startup warning names the new home), and the client file
-  wins on conflict.
 
 Settings are read **once at startup** — restart mecatui to apply a change (live
 reload is a planned follow-up, issue #456).
@@ -1688,26 +1683,20 @@ or exact-ID `--resume`; `--resume-latest` considers only active main rows and
 checks each authoritative transcript, falling back to older candidates when one
 is unavailable or empty. A server without that feature keeps the historical
 mixed Chats view and hides Drafts. Delete is explicit and permanent when
-permitted; closing this panel never deletes a draft or any other session. When the server
-advertises authenticated bounded storage health or either maintenance operation, a fifth
-**Maintenance** tab appears. Its status view shows current/reclaimable availability,
-aggregate bytes/files/formats/kinds/corruption, effective retention policy, sweep timing,
-active-job state, and last failure without session IDs, owners, paths, or content.
+permitted; closing this panel never deletes a draft or any other session. When the server advertises authenticated bounded storage health or cleanup, a fifth
+**Maintenance** tab appears. Its status view shows current availability,
+aggregate bytes/files/kinds/corruption, effective retention policy, sweep timing,
+active cleanup state, and the last failure without session IDs, owners, paths, or content.
 
-The two actions are deliberately separate and independently capability-gated. **`o` Optimize
-storage** starts with a read-only v1/v2/invalid/skipped and byte estimate, including required
-temporary space, and states that every session is preserved. Applying starts a durable bounded
-job; its screen supports status, cancel, and resume and shows progress plus bounded sanitized
-per-item failures. **`x` Clean up sessions** is destructive: its read-only plan partitions
-eligible and protected main/child/scheduled/unknown/live/awaiting rows, keeps unknown protected
-by default, and requires typing `CLEAN UP`. The single-row `y`/`enter` delete consent is inert in
-this bulk form. Apply-time stale/skipped/failed counts remain visible; retry begins a fresh dry
-run against the current generation.
+**`x` Clean up sessions** opens a destructive read-only plan. The plan partitions
+eligible and protected main/child/scheduled/unknown/live/awaiting rows, keeps unknown
+protected by default, and requires typing `CLEAN UP`. The single-row `y`/`enter`
+delete consent is inert in this bulk form. Apply-time stale/skipped/failed counts
+remain visible; retry begins a fresh dry run against the current generation.
 
-Closing the panel never cancels a maintenance job. Reopening refetches the server-owned durable
-handle and progress. Explicit cancellation stops future items; completed migrations or deletions
-stay committed. Older or unsupported servers hide unavailable actions rather than showing zero
-impact. The same inventory is
+Closing the panel never cancels a cleanup job. Reopening refetches its status.
+Explicit cancellation stops future deletions; completed deletions stay committed.
+Older or unsupported servers hide cleanup rather than showing zero impact. The same inventory is
 the initial view for `mecatui sessions` and `mecatui connect ADDRESS sessions`;
 those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,

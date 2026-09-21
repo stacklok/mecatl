@@ -47,7 +47,6 @@
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ReplaceHistoryAtBoundary(messages []Message) error
-    method func (*Session).ResetUsage() error
     method func (*Session).RestoreAuthorizationClaim(pending PendingAuthorization) error
     method func (*Session).RestoreFailedStepRetryPending(metadata RetryMetadata) error
     method func (*Session).RestoreIncarnation(inc IncarnationID) error

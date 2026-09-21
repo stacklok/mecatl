@@ -26,8 +26,15 @@ import {
   planPermissionVerdict,
 } from "./plan.js";
 
-/** A server permission verdict accepted by run.resolveAsk(). @public */
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+/** Canonical server permission verdicts. @public */
+export const PermissionVerdict = {
+  AllowOnce: "allow_once",
+  AllowAlways: "allow_always",
+  Deny: "deny",
+} as const;
+
+/** One server permission verdict accepted by run.resolveAsk(). @public */
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 
 /** An optional automatic responder invoked for each permission ask on a run. @public */
 export type PermissionAskResponder = (
@@ -102,7 +109,10 @@ export interface Run extends AsyncIterable<Event> {
    *
    * @param askId - ID carried by the permission ask.
    * @param verdict - Decision to apply to the pending ask.
-   * @returns A promise that resolves after the server accepts the verdict.
+   * @returns A promise that resolves after the verdict frame is handed to the
+   * active stream transport. This send-only API does not acknowledge server
+   * acceptance; use `Session.controls(runId).resolveAsk()` when an acknowledged
+   * control operation is required.
    * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
    * @throws `InvalidStateError` when used for a plan-approval ask.
    */

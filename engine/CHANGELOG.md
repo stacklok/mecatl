@@ -13,6 +13,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Authoritative negotiated session-store capabilities** — adds
+  `port.SessionCapabilitySupport` and the `SupportsSessionCreate`,
+  `SupportsSessionMetadataPaging`, and `SupportsSessionLineage` probes. Adapters
+  that retain optional interfaces for compatibility can now report negotiated
+  false capabilities without consumers selecting unusable operations. Added (minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
@@ -346,6 +352,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
 
 ### Removed
+
+- **`port.RetryDisposition`, `port.StreamProgress`, and their constants** — removes
+  the temporary source-compatibility aliases. Providers and decorators use the
+  canonical `session.RetryDisposition` and `session.StreamProgress` vocabularies;
+  the classifier interfaces remain port-owned. Removed/breaking (pre-v1 minor).
 
 - **Legacy session usage/permanence projections** — removes exported
   `Session.Usage`, `Event.Usage`, `ResultPayload.Permanent`,

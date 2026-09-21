@@ -320,14 +320,26 @@ func TestDeleteRemovesMetadataAndInvalidatesCursor(t *testing.T) {
 	}
 }
 
-func TestCurrentMetadataMarkerCorruptionFailsConstructor(t *testing.T) {
+func TestCurrentMetadataMarkerCorruptionFailsConstructorWithoutMutation(t *testing.T) {
 	mr := miniredis.RunT(t)
 	mr.Set(metadataIndexStateKey, "corrupt-current-marker")
+	mr.HSet(sessionKey("poison"), fieldBlob, `{"poison":true}`, fieldMtime, "1")
+	mr.RPush(toolsKey("poison"), "poison-tool")
+	mr.Set(lineageIndexStateKey, "poison-lineage-marker")
 	if _, err := New(mr.Addr()); err == nil || !strings.Contains(err.Error(), "unsupported current metadata index state") {
 		t.Fatalf("New error = %v, want current marker failure", err)
 	}
 	if got, err := mr.Get(metadataIndexStateKey); err != nil || got != "corrupt-current-marker" {
 		t.Fatalf("current marker was overwritten: %q, %v", got, err)
+	}
+	if got := mr.HGet(sessionKey("poison"), fieldBlob); got != `{"poison":true}` {
+		t.Fatalf("current poisoned session was mutated: %q", got)
+	}
+	if got, err := mr.List(toolsKey("poison")); err != nil || !slices.Equal(got, []string{"poison-tool"}) {
+		t.Fatalf("current poisoned tools were mutated: %q, %v", got, err)
+	}
+	if got, err := mr.Get(lineageIndexStateKey); err != nil || got != "poison-lineage-marker" {
+		t.Fatalf("current lineage marker was mutated: %q, %v", got, err)
 	}
 }
 
@@ -342,33 +354,105 @@ func TestCurrentSessionWithoutMetadataMarkerFailsConstructor(t *testing.T) {
 	}
 }
 
-func TestOldStoreWithoutMetadataIndexIsIgnoredUntouched(t *testing.T) {
+func TestOldStoreNamespaceIsIgnoredUntouchedWhileCurrentSameIDRestarts(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	const key = "mecatl:session:legacy"
-	mr.HSet(key, fieldBlob, `{}`, fieldMtime, "1")
-	before := mr.HGet(key, fieldBlob)
+	const id session.SessionID = "legacy"
+	const (
+		oldSessionKey  = "mecatl:session:legacy"
+		oldEventsKey   = "mecatl:events:legacy"
+		oldToolsKey    = "mecatl:tools:legacy"
+		oldLedgerKey   = "mecatl:ledger:legacy"
+		oldMetadataKey = "mecatl:session-metadata:state"
+		oldLineageKey  = "mecatl:session-lineage:v1"
+		oldLineageMark = "mecatl:session-lineage:state"
+	)
+	mr.HSet(oldSessionKey, fieldBlob, `{"poison":"old-session"}`, fieldMtime, "1")
+	mr.RPush(oldEventsKey, "poison-old-event")
+	mr.RPush(oldToolsKey, "poison-old-tool")
+	mr.HSet(oldLedgerKey, "path", "poison-old-ledger")
+	mr.Set(oldMetadataKey, "poison-old-metadata-marker")
+	mr.HSet(oldLineageKey, "poison", "poison-old-lineage")
+	mr.Set(oldLineageMark, "poison-old-lineage-marker")
+
+	spy := &redisCommandSpy{}
+	mr.Server().SetPreHook(spy.hook)
 	st, err := New(mr.Addr())
 	if err != nil {
 		t.Fatalf("New with old namespace: %v", err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	page, err := st.PageSessionMetadata(t.Context(), port.SessionMetadataPageRequest{Limit: 10})
-	if err != nil || len(page.Sessions) != 0 {
-		t.Fatalf("current metadata page = (%+v, %v), want empty", page, err)
-	}
-	current := session.New("legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/current", Revision: "current"}, session.Limits{}, time.Now().UTC())
+	current := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/current", Revision: "current"}, session.Limits{}, time.Now().UTC())
 	if err := st.Create(t.Context(), current); err != nil {
 		t.Fatalf("Create same id in current namespace: %v", err)
 	}
-	if after := mr.HGet(key, fieldBlob); after != before {
-		t.Fatalf("old metadata changed: before=%q after=%q", before, after)
+	listed, err := st.List(t.Context())
+	if err != nil || len(listed) != 1 || listed[0].ID != id {
+		t.Fatalf("List current namespace = (%+v, %v), want only %q", listed, err, id)
 	}
-	if !mr.Exists(metadataIndexStateKey) || !mr.Exists(sessionKey(current.ID)) {
-		t.Fatal("current namespace was not initialized")
+	loaded, err := st.Load(t.Context(), id)
+	if err != nil || loaded.EnvironmentRef != current.EnvironmentRef {
+		t.Fatalf("Load current same-id session = (%+v, %v)", loaded, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close before restart: %v", err)
+	}
+	restarted, err := New(mr.Addr())
+	if err != nil {
+		t.Fatalf("New after restart: %v", err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	loaded, err = restarted.Load(t.Context(), id)
+	if err != nil || loaded.EnvironmentRef != current.EnvironmentRef {
+		t.Fatalf("Load after restart = (%+v, %v)", loaded, err)
+	}
+	page, err := restarted.PageSessionMetadata(t.Context(), port.SessionMetadataPageRequest{Limit: 10})
+	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != id {
+		t.Fatalf("current metadata page after restart = (%+v, %v)", page, err)
+	}
+
+	if got := mr.HGet(oldSessionKey, fieldBlob); got != `{"poison":"old-session"}` {
+		t.Fatalf("old session changed: %q", got)
+	}
+	if got, listErr := mr.List(oldEventsKey); listErr != nil || !slices.Equal(got, []string{"poison-old-event"}) {
+		t.Fatalf("old events changed: %q, %v", got, listErr)
+	}
+	if got, listErr := mr.List(oldToolsKey); listErr != nil || !slices.Equal(got, []string{"poison-old-tool"}) {
+		t.Fatalf("old tools changed: %q, %v", got, listErr)
+	}
+	if got := mr.HGet(oldLedgerKey, "path"); got != "poison-old-ledger" {
+		t.Fatalf("old ledger changed: %q", got)
+	}
+	if got, _ := mr.Get(oldMetadataKey); got != "poison-old-metadata-marker" {
+		t.Fatalf("old metadata marker changed: %q", got)
+	}
+	if got := mr.HGet(oldLineageKey, "poison"); got != "poison-old-lineage" {
+		t.Fatalf("old lineage changed: %q", got)
+	}
+	if got, _ := mr.Get(oldLineageMark); got != "poison-old-lineage-marker" {
+		t.Fatalf("old lineage marker changed: %q", got)
+	}
+	assertOnlyCurrentNamespaceScans(t, spy.snapshot())
+}
+
+func assertOnlyCurrentNamespaceScans(t *testing.T, commands []redisCommand) {
+	t.Helper()
+	seen := 0
+	for _, command := range commands {
+		if command.name != "SCAN" {
+			continue
+		}
+		seen++
+		for i, arg := range command.args {
+			if strings.EqualFold(arg, "MATCH") && i+1 < len(command.args) && !strings.HasPrefix(command.args[i+1], storeKeyPrefix) {
+				t.Fatalf("SCAN inspected non-current namespace: %#v", command)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("test observed no SCAN command")
 	}
 }
 

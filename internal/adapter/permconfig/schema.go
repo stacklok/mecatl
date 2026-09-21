@@ -294,7 +294,7 @@ func (s *TemporaryStorageSection) UnmarshalYAML(node ast.Node) error {
 }
 
 // StorageManagementSection is the explicit operator authority for process-wide
-// storage health, migration, and cleanup.
+// storage health and cleanup.
 type StorageManagementSection struct {
 	// Version is the required schema version; the only supported value is 1.
 	Version int `yaml:"version"`

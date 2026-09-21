@@ -870,7 +870,14 @@ export interface PermissionAskEventPayload {
 export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
 
 // @public
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+export const PermissionVerdict: {
+    readonly AllowOnce: "allow_once";
+    readonly AllowAlways: "allow_always";
+    readonly Deny: "deny";
+};
+
+// @public
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 
 // @public
 export class PlanApprovalRequiredError extends InvalidStateError {
@@ -962,7 +969,15 @@ export interface ResultEventPayload {
 }
 
 // @public
-export type RetryDisposition = 0 | 1 | 2 | 3;
+export const RetryDisposition: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Retryable: 2;
+    readonly Permanent: 3;
+};
+
+// @public
+export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
 
 // @public
 export interface Run extends AsyncIterable<Event_2> {
@@ -1547,7 +1562,16 @@ interface Storage_2 {
 export { Storage_2 as Storage }
 
 // @public
-export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+export const StreamProgress: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Precommit: 2;
+    readonly Visible: 3;
+    readonly Complete: 4;
+};
+
+// @public
+export type StreamProgress = (typeof StreamProgress)[keyof typeof StreamProgress];
 
 // @public
 export interface SubagentEventPayload {

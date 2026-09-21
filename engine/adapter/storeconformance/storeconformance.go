@@ -548,7 +548,7 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 	ctx := context.Background()
 	st := newStore(t)
 	pager, ok := st.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(st) {
 		t.Fatalf("store %T does not implement port.SessionMetadataPager", st)
 	}
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
@@ -641,7 +641,7 @@ func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.Sessi
 	ctx := context.Background()
 	st := newStore(t)
 	pager, ok := st.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(st) {
 		t.Fatalf("store %T does not implement port.SessionMetadataPager", st)
 	}
 	deleter, ok := st.(port.ConditionalPrunableStore)

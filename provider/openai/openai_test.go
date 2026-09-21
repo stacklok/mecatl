@@ -1825,25 +1825,25 @@ func TestResponseStreamErrorRetryDisposition(t *testing.T) {
 	tests := []struct {
 		msg    string
 		status int
-		want   port.RetryDisposition
+		want   session.RetryDisposition
 	}{
 		// Non-retryable 4xx — permanent client-side rejections.
-		{"response failed: invalid_request_error: bad request", 400, port.RetryDispositionPermanent},
-		{"response failed: permission_error: forbidden", 403, port.RetryDispositionPermanent},
-		{"response failed: not_found_error: not found", 404, port.RetryDispositionPermanent},
+		{"response failed: invalid_request_error: bad request", 400, session.RetryDispositionPermanent},
+		{"response failed: permission_error: forbidden", 403, session.RetryDispositionPermanent},
+		{"response failed: not_found_error: not found", 404, session.RetryDispositionPermanent},
 		// Retryable codes.
-		{"response failed: rate_limit_exceeded: too many requests", 429, port.RetryDispositionRetryable},
-		{"response failed: server_error: internal error", 503, port.RetryDispositionRetryable},
-		{"response failed: gateway_timeout: upstream timeout", 504, port.RetryDispositionRetryable},
+		{"response failed: rate_limit_exceeded: too many requests", 429, session.RetryDispositionRetryable},
+		{"response failed: server_error: internal error", 503, session.RetryDispositionRetryable},
+		{"response failed: gateway_timeout: upstream timeout", 504, session.RetryDispositionRetryable},
 		// Status 0 is conservatively unknown.
-		{"response failed: unknown code", 0, port.RetryDispositionUnknown},
-		{"", 0, port.RetryDispositionUnknown},
+		{"response failed: unknown code", 0, session.RetryDispositionUnknown},
+		{"", 0, session.RetryDispositionUnknown},
 		// Context overflow is permanent even with a transient-looking status.
-		{"response failed: server_error: Your input exceeds the context window of this model.", 503, port.RetryDispositionPermanent},
-		{"stream error: server_error: input exceeds the context length", 503, port.RetryDispositionPermanent},
-		{"response failed: server_error: maximum context length exceeded", 503, port.RetryDispositionPermanent},
-		{"response failed: server_error: prompt exceeds the token limit", 503, port.RetryDispositionPermanent},
-		{"response failed: server_error: request exceeded the token limit for this model", 503, port.RetryDispositionPermanent},
+		{"response failed: server_error: Your input exceeds the context window of this model.", 503, session.RetryDispositionPermanent},
+		{"stream error: server_error: input exceeds the context length", 503, session.RetryDispositionPermanent},
+		{"response failed: server_error: maximum context length exceeded", 503, session.RetryDispositionPermanent},
+		{"response failed: server_error: prompt exceeds the token limit", 503, session.RetryDispositionPermanent},
+		{"response failed: server_error: request exceeded the token limit for this model", 503, session.RetryDispositionPermanent},
 	}
 	for _, tt := range tests {
 		e := &responseStreamError{msg: tt.msg, status: tt.status}

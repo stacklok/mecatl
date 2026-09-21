@@ -63,10 +63,9 @@ type SessionStore struct {
 	create             bool
 }
 
-// compile-time assertions that SessionStore satisfies the base port and keeps
-// the optional operation interfaces unconditionally for compatibility. The
-// negotiated flags are authoritative: unsupported calls return the existing
-// port sentinels without advertising those operations to inventory consumers.
+// compile-time assertions that SessionStore satisfies the base port and retains
+// the optional operation interfaces for compatibility. Consumers must use the
+// authoritative port capability probes before invoking negotiated operations.
 var (
 	_ port.SessionStore                   = (*SessionStore)(nil)
 	_ port.SessionCreator                 = (*SessionStore)(nil)
@@ -104,6 +103,15 @@ func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*Sessi
 	st.create = caps.GetCreate()
 	return st, nil
 }
+
+// SupportsSessionCreate reports the negotiated atomic-create capability.
+func (st *SessionStore) SupportsSessionCreate() bool { return st.create }
+
+// SupportsSessionMetadataPaging reports the negotiated metadata-paging capability.
+func (st *SessionStore) SupportsSessionMetadataPaging() bool { return st.metadataPaging }
+
+// SupportsSessionLineage reports the negotiated lineage capability.
+func (st *SessionStore) SupportsSessionLineage() bool { return st.lineage }
 
 // SupportsSessionDelete reports the negotiated backend capability. SessionStore
 // keeps implementing PrunableStore unconditionally for compatibility.

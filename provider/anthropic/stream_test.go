@@ -523,25 +523,25 @@ func TestAnthropicStreamErrorRetryDisposition(t *testing.T) {
 	tests := []struct {
 		msg    string
 		status int
-		want   port.RetryDisposition
+		want   session.RetryDisposition
 	}{
 		// Non-retryable 4xx — permanent client-side rejections.
-		{"stream error: invalid_request_error: bad request", 400, port.RetryDispositionPermanent},
-		{"stream error: permission_error: forbidden", 403, port.RetryDispositionPermanent},
-		{"stream error: not_found_error: not found", 404, port.RetryDispositionPermanent},
+		{"stream error: invalid_request_error: bad request", 400, session.RetryDispositionPermanent},
+		{"stream error: permission_error: forbidden", 403, session.RetryDispositionPermanent},
+		{"stream error: not_found_error: not found", 404, session.RetryDispositionPermanent},
 		// Retryable codes.
-		{"stream error: rate_limit_error: too many requests", 429, port.RetryDispositionRetryable},
-		{"stream error: overloaded_error: server overloaded", 503, port.RetryDispositionRetryable},
-		{"head error: api_error: internal error", 500, port.RetryDispositionRetryable},
+		{"stream error: rate_limit_error: too many requests", 429, session.RetryDispositionRetryable},
+		{"stream error: overloaded_error: server overloaded", 503, session.RetryDispositionRetryable},
+		{"head error: api_error: internal error", 500, session.RetryDispositionRetryable},
 		// Status 0 is conservatively unknown.
-		{"stream error: unknown error", 0, port.RetryDispositionUnknown},
-		{"", 0, port.RetryDispositionUnknown},
+		{"stream error: unknown error", 0, session.RetryDispositionUnknown},
+		{"", 0, session.RetryDispositionUnknown},
 		// Context overflow is permanent even with a transient-looking status.
-		{"stream error: api_error: Your input exceeds the context window of this model.", 500, port.RetryDispositionPermanent},
-		{"stream error: api_error: input exceeds the context length", 500, port.RetryDispositionPermanent},
-		{"stream error: api_error: maximum context length exceeded", 500, port.RetryDispositionPermanent},
-		{"stream error: api_error: prompt exceeds the token limit", 500, port.RetryDispositionPermanent},
-		{"stream error: api_error: request exceeded the token limit for this model", 500, port.RetryDispositionPermanent},
+		{"stream error: api_error: Your input exceeds the context window of this model.", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: input exceeds the context length", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: maximum context length exceeded", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: prompt exceeds the token limit", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: request exceeded the token limit for this model", 500, session.RetryDispositionPermanent},
 	}
 	for _, tt := range tests {
 		e := &anthropicStreamError{msg: tt.msg, status: tt.status}

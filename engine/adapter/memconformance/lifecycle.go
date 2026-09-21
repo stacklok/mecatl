@@ -3,6 +3,8 @@ package memconformance
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -86,10 +88,80 @@ func RunLifecycle(t *testing.T, newStore func(t *testing.T) tool.MemoryStore) {
 		if _, err := store.Undo(ctx, "profile/theme", second.Current.Version); err == nil {
 			t.Fatal("stale Undo succeeded")
 		}
+		afterStale, found, inspectErr := store.Inspect(ctx, "profile/theme")
+		if inspectErr != nil || !found || afterStale.Current != deleted.Current || len(afterStale.Revisions) != len(deleted.Revisions) {
+			t.Fatalf("stale Undo mutated record: before=%+v after=%+v found=%v inspect=%v", deleted, afterStale, found, inspectErr)
+		}
 		restored, err := store.Undo(ctx, "profile/theme", deleted.Current.Version)
 		if err != nil || restored.Current.Status != tool.MemoryStatusActive || restored.Current.Value != "light" || restored.Current.Origin != tool.MemoryOriginUndo {
 			t.Fatalf("Undo = (%+v, %v)", restored, err)
 		}
+	})
+
+	t.Run("undo restores predecessors and walks repeated revisions", func(t *testing.T) {
+		store := newStore(t)
+		first, err := store.Remember(ctx, tool.MemoryEntry{Key: "profile/walk", Value: "one"}, tool.MemoryCurrent{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := store.Remember(ctx, tool.MemoryEntry{Key: "profile/walk", Value: "two"}, tool.MemoryCurrent{Exists: true, Version: first.Current.Version})
+		if err != nil {
+			t.Fatal(err)
+		}
+		walkBack, err := store.Undo(ctx, "profile/walk", second.Current.Version)
+		if err != nil || walkBack.Current.Value != "one" || walkBack.Current.Status != tool.MemoryStatusActive || walkBack.Current.Origin != tool.MemoryOriginUndo {
+			t.Fatalf("Undo replacement = (%+v, %v)", walkBack, err)
+		}
+		walkDeleted, err := store.Undo(ctx, "profile/walk", walkBack.Current.Version)
+		if err != nil || walkDeleted.Current.Status != tool.MemoryStatusDeleted || walkDeleted.Current.Origin != tool.MemoryOriginUndo {
+			t.Fatalf("Undo initial creation = (%+v, %v)", walkDeleted, err)
+		}
+		if _, found, recallErr := store.Recall(ctx, "profile/walk"); recallErr != nil || found {
+			t.Fatalf("Recall after undo creation = (found=%v, err=%v), want tombstone", found, recallErr)
+		}
+		if len(walkDeleted.Revisions) != 4 {
+			t.Fatalf("walking Undo history = %+v, want two mutations and two compensations", walkDeleted.Revisions)
+		}
+	})
+
+	t.Run("undo stops unchanged at retained history boundary", func(t *testing.T) {
+		store := newStore(t)
+		var current tool.MemoryRecord
+		for i := range 70 {
+			var err error
+			expected := tool.MemoryCurrent{}
+			if current.Current.Version != "" {
+				expected = tool.MemoryCurrent{Exists: true, Version: current.Current.Version}
+			}
+			current, err = store.Remember(ctx, tool.MemoryEntry{Key: "profile/bounded", Value: fmt.Sprintf("v-%d", i)}, expected)
+			if err != nil {
+				t.Fatalf("Remember revision %d: %v", i, err)
+			}
+		}
+		for succeeded := 0; succeeded < 100; succeeded++ {
+			before := current
+			next, err := store.Undo(ctx, "profile/bounded", before.Current.Version)
+			if err == nil {
+				current = next
+				continue
+			}
+			if succeeded == 0 {
+				t.Fatalf("first bounded Undo failed: %v", err)
+			}
+			if !strings.Contains(err.Error(), "cannot undo beyond retained history") {
+				t.Fatalf("bounded Undo error = %v, want retained-history boundary", err)
+			}
+			after, found, inspectErr := store.Inspect(ctx, "profile/bounded")
+			if inspectErr != nil || !found || after.Current != before.Current || len(after.Revisions) != len(before.Revisions) {
+				t.Fatalf("failed boundary Undo mutated record: before=%+v after=%+v found=%v inspect=%v undo=%v", before, after, found, inspectErr, err)
+			}
+			entry, found, recallErr := store.Recall(ctx, "profile/bounded")
+			if recallErr != nil || !found || entry.Value != before.Current.Value {
+				t.Fatalf("failed boundary Undo changed live view: entry=%+v found=%v recall=%v", entry, found, recallErr)
+			}
+			return
+		}
+		t.Fatal("Undo crossed retained history boundary")
 	})
 
 	t.Run("concurrent exact update has one winner", func(t *testing.T) {

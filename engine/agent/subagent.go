@@ -4571,6 +4571,9 @@ func createSessionIfSupported(ctx context.Context, store port.SessionStore, sess
 	if store == nil {
 		return nil
 	}
+	if !port.SupportsSessionCreate(store) {
+		return nil
+	}
 	creator, ok := store.(port.SessionCreator)
 	if !ok {
 		return nil

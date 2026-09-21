@@ -2,6 +2,7 @@ package grpcdriver
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -126,6 +127,33 @@ func TestNegotiateMemoryStoreRejectsEmptyCapabilities(t *testing.T) {
 	})
 	if store, err := NegotiateMemoryStore(context.Background(), conn); err == nil || store != nil {
 		t.Fatalf("empty negotiation = (%T, %v), want rejection", store, err)
+	}
+}
+
+type wrongMemoryContractServer struct {
+	driverv1.UnimplementedMemoryStoreServiceServer
+	operations atomic.Int32
+}
+
+func (*wrongMemoryContractServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
+	return &driverv1.MemoryStoreCapabilitiesResponse{Contract: "memory-store/other"}, nil
+}
+
+func (s *wrongMemoryContractServer) Recall(context.Context, *driverv1.RecallRequest) (*driverv1.RecallResponse, error) {
+	s.operations.Add(1)
+	return &driverv1.RecallResponse{}, nil
+}
+
+func TestNegotiateMemoryStoreRejectsWrongNonemptyContractBeforeOperations(t *testing.T) {
+	server := &wrongMemoryContractServer{}
+	conn := dialBufconn(t, func(grpcServer *grpc.Server) {
+		driverv1.RegisterMemoryStoreServiceServer(grpcServer, server)
+	})
+	if store, err := NegotiateMemoryStore(context.Background(), conn); err == nil || store != nil {
+		t.Fatalf("wrong-contract negotiation = (%T, %v), want rejection", store, err)
+	}
+	if got := server.operations.Load(); got != 0 {
+		t.Fatalf("backing operations = %d, want zero after constructor rejection", got)
 	}
 }
 

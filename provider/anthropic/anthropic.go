@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // defaultMaxTokens is the CONSERVATIVE flat fallback for the REQUIRED max_tokens
@@ -409,15 +410,15 @@ func (e *anthropicStreamError) ProviderErrorCorrelationKind() string {
 }
 func (e *anthropicStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
-// RetryDisposition implements port.RetryDispositionError.
-func (e *anthropicStreamError) RetryDisposition() port.RetryDisposition {
+// RetryDisposition implements session.RetryDispositionError.
+func (e *anthropicStreamError) RetryDisposition() session.RetryDisposition {
 	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
-		return port.RetryDispositionPermanent
+		return session.RetryDispositionPermanent
 	}
 	if retryableStatus(e.status) {
-		return port.RetryDispositionRetryable
+		return session.RetryDispositionRetryable
 	}
-	return port.RetryDispositionUnknown
+	return session.RetryDispositionUnknown
 }
 
 // isContextOverflowMessage is duplicated from provider/openai/stream.go (separate

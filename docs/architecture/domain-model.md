@@ -134,15 +134,9 @@ verbatim on the assistant message item, never displayed or interpreted (issue
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
 - `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
-  an opaque usage kind and opaque server-selected provider/model entries; each total is
-  the sum of its entries. `main` is normal agent-run usage; `session_title`,
-  `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
-  `parallel_judge` are recognized session-associated auxiliary purposes. A kind describes why the
-  call happened, not how its model was selected; non-empty unrecognized kinds round-trip as opaque
-  forward-compatible buckets. `Session.Usage` remains a deprecated lifetime compatibility mirror
-  of `TokenUsage[main]`; the run budget uses internal per-run state rather than the mirror.
-  `router` alone additionally contributes its separate total to that internal budget to retain
-  classifier spend safety.
+  a closed usage kind and opaque server-selected provider/model entries; each total is
+  the sum of its entries. `Session.UsageFor` reads a bucket's authoritative total.
+  Run budgets measure the `main` bucket from an internal, immutable per-run baseline.
 
 ### Session titles and durable token accounting
 
@@ -166,26 +160,15 @@ accept legacy revision `0` only until a positive revision has been observed for 
 active session, then retain only a strictly higher revision. This makes a snapshot
 followed by a delayed older live event converge on the snapshot rather than regress.
 
-A physical title call records its input/output tokens only in `TokenUsage[session_title]`,
-attributed to the composition-selected opaque provider/model. It never changes
-`Session.Usage`, a main-run budget, `EvResult` usage, or the conversation. The Service
+A physical call records its input/output tokens only in `TokenUsage[session_title]`,
+attributed to the composition-selected opaque provider/model. It never changes the
+`main` usage bucket, a main-run budget, `EvResult` usage, or the conversation. The Service
 emits session-correlated, diagnostics-only lifecycle records for submission, admission,
 claim, generator selection/completion, and conditional commit loss. Completion records
 only outcome, provider/model attribution, token counts, and on failure a stable class
 plus stage; it never records prompt sources, provider error text, credentials, or model
-output.
-
-The same ledger records other session-associated auxiliary calls under their own purpose
-kinds: `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
-`parallel_judge`. Where a call uses a `models.slots` entry, the kind deliberately resembles
-that slot name, but the persisted provider/model attribution is authoritative and slots are
-not a one-to-one accounting mechanism. These buckets are forward-only best-effort records:
-reported partial-stream usage is retained, but a crash after provider execution never causes a
-request replay merely to reconstruct accounting. Calls without a source session, including dream
-and consolidation planning, are outside this ledger. See
-[ADR 0350](../adr/0350-purpose-attributed-auxiliary-token-usage.md),
-[ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md), and
-[ADR 0307](../adr/0307-canonical-durable-token-accounting.md).
+output. See [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md)
+and [ADR 0307](../adr/0307-canonical-durable-token-accounting.md).
 
 ### Event taxonomy (`engine/session/event.go`)
 

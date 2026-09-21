@@ -198,14 +198,13 @@ func TestAuthorizingRejectsConflictingMutations(t *testing.T) {
 	mustOK(t, s.PauseForAuthorization(authorizationPending()))
 	before := CloneMessages(s.Conversation.Messages)
 	for name, op := range map[string]func() error{
-		"prompt":      func() error { return s.RecordUserPrompt("new", nil) },
-		"assistant":   func() error { return s.RecordAssistant(NewAssistantMessage("new", "", nil)) },
-		"results":     func() error { return s.RecordToolResults(nil) },
-		"usage":       func() error { return s.RecordUsage(Usage{InputTokens: 1}) },
-		"reset usage": s.ResetUsage,
-		"replace":     func() error { return s.ReplaceHistory(nil) },
-		"boundary":    func() error { return s.ReplaceHistoryAtBoundary(nil) },
-		"seed":        func() error { return s.SeedHistory(nil) },
+		"prompt":    func() error { return s.RecordUserPrompt("new", nil) },
+		"assistant": func() error { return s.RecordAssistant(NewAssistantMessage("new", "", nil)) },
+		"results":   func() error { return s.RecordToolResults(nil) },
+		"usage":     func() error { return s.RecordUsage(Usage{InputTokens: 1}) },
+		"replace":   func() error { return s.ReplaceHistory(nil) },
+		"boundary":  func() error { return s.ReplaceHistoryAtBoundary(nil) },
+		"seed":      func() error { return s.SeedHistory(nil) },
 		"rehome": func() error {
 			return s.Rehome(EnvironmentRef{Kind: EnvKindLocal, ID: "/other", Revision: "in-tree-v1"})
 		},

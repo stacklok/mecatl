@@ -543,6 +543,9 @@ func (s *Store) Undo(ctx context.Context, key string, expected tool.MemoryVersio
 			}
 		}
 		if target < 0 {
+			if data.HistoryTruncated[key] {
+				return fmt.Errorf("memory: %q: cannot undo beyond retained history", key)
+			}
 			return fmt.Errorf("memory: %q: no mutation remains to undo", key)
 		}
 		if target == 0 && data.HistoryTruncated[key] {

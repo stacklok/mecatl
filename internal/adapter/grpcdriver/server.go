@@ -120,7 +120,7 @@ func (s *sessionStoreServer) Save(ctx context.Context, req *driverv1.SaveRequest
 // Create decodes the snapshot and delegates atomic first publication when supported.
 func (s *sessionStoreServer) Create(ctx context.Context, req *driverv1.SaveRequest) (*driverv1.SaveResponse, error) {
 	creator, ok := s.store.(port.SessionCreator)
-	if !ok {
+	if !ok || !port.SupportsSessionCreate(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support atomic create")
 	}
 	if req.GetSessionId() == "" || req.GetSnapshot() == nil || req.GetSnapshot().GetFormat() != SnapshotFormat || len(req.GetSnapshot().GetPayload()) == 0 {
@@ -163,13 +163,13 @@ func (s *sessionStoreServer) Load(ctx context.Context, req *driverv1.LoadRequest
 
 func (s *sessionStoreServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
 	_, prunable := s.store.(port.PrunableStore)
-	_, pager := s.store.(port.SessionMetadataPager)
 	deleteSupported := prunable
 	if support, ok := s.store.(port.SessionDeleteSupport); ok {
 		deleteSupported = support.SupportsSessionDelete()
 	}
-	_, lineage := s.store.(port.SessionLineageReader)
-	_, creator := s.store.(port.SessionCreator)
+	pager := port.SupportsSessionMetadataPaging(s.store)
+	lineage := port.SupportsSessionLineage(s.store)
+	creator := port.SupportsSessionCreate(s.store)
 	activityProjection := port.SupportsActivityProjection(s.store)
 	return &driverv1.SessionStoreCapabilitiesResponse{
 		List: prunable, MetadataPaging: pager, Delete: deleteSupported, Lineage: lineage, Create: creator,
@@ -181,7 +181,7 @@ func (s *sessionStoreServer) Capabilities(context.Context, *driverv1.SessionStor
 // ReadLineage serves the optional content-free durable lineage seam.
 func (s *sessionStoreServer) ReadLineage(ctx context.Context, req *driverv1.ReadSessionLineageRequest) (*driverv1.ReadSessionLineageResponse, error) {
 	reader, ok := s.store.(port.SessionLineageReader)
-	if !ok {
+	if !ok || !port.SupportsSessionLineage(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support lineage")
 	}
 	query := port.SessionLineageQuery{
@@ -256,7 +256,7 @@ func (s *sessionStoreServer) List(ctx context.Context, _ *driverv1.ListSessionsR
 // its total count.
 func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.PageSessionMetadataRequest) (*driverv1.PageSessionMetadataResponse, error) {
 	pager, ok := s.store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support metadata paging (port.SessionMetadataPager)")
 	}
 	if req.GetLimit() <= 0 {

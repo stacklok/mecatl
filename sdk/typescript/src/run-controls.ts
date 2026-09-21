@@ -108,7 +108,9 @@ export interface RunControls {
    * Root and surfaced-child permission asks are supported, including an
    * ordinary ask restored from a persisted awaiting run. Plan-originated asks
    * require `Session.resolvePlan()` and fail with `plan_resolution_required`.
-   * Unknown or already resolved asks fail with `ask_not_pending`.
+   * Unknown or already resolved asks fail with `ask_not_pending`. Unlike the
+   * stream-local `Run.resolveAsk()` send-only operation, this control returns
+   * only after the server acknowledges acceptance.
    *
    * @param askId - Exact permission ask ID.
    * @param verdict - Ordinary permission verdict to apply.

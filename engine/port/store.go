@@ -86,6 +86,49 @@ type SessionCreator interface {
 	Create(ctx context.Context, s *session.Session) error
 }
 
+// SessionCapabilitySupport is the authoritative optional-operation signal for
+// adapters that retain optional interfaces even when their negotiated backend
+// does not provide every operation. Stores without this signal advertise
+// optional operations by implementing their interfaces.
+type SessionCapabilitySupport interface {
+	SupportsSessionCreate() bool
+	SupportsSessionMetadataPaging() bool
+	SupportsSessionLineage() bool
+}
+
+// SupportsSessionCreate reports whether store can atomically create sessions.
+func SupportsSessionCreate(store any) bool {
+	if _, ok := store.(SessionCreator); !ok {
+		return false
+	}
+	if support, ok := store.(SessionCapabilitySupport); ok {
+		return support.SupportsSessionCreate()
+	}
+	return true
+}
+
+// SupportsSessionMetadataPaging reports whether store can page session metadata.
+func SupportsSessionMetadataPaging(store any) bool {
+	if _, ok := store.(SessionMetadataPager); !ok {
+		return false
+	}
+	if support, ok := store.(SessionCapabilitySupport); ok {
+		return support.SupportsSessionMetadataPaging()
+	}
+	return true
+}
+
+// SupportsSessionLineage reports whether store can read session lineage.
+func SupportsSessionLineage(store any) bool {
+	if _, ok := store.(SessionLineageReader); !ok {
+		return false
+	}
+	if support, ok := store.(SessionCapabilitySupport); ok {
+		return support.SupportsSessionLineage()
+	}
+	return true
+}
+
 // StoredSession is one stored session's retention-relevant identity: its id
 // plus when its snapshot was last modified (Save time, file mtime, or the
 // store's nearest equivalent). It deliberately carries NO session content —

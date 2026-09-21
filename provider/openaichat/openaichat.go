@@ -34,6 +34,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
@@ -285,15 +286,15 @@ func (e *openaichatStreamError) ProviderErrorCorrelationKind() string {
 }
 func (e *openaichatStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
-// RetryDisposition implements port.RetryDispositionError.
-func (e *openaichatStreamError) RetryDisposition() port.RetryDisposition {
+// RetryDisposition implements session.RetryDispositionError.
+func (e *openaichatStreamError) RetryDisposition() session.RetryDisposition {
 	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
-		return port.RetryDispositionPermanent
+		return session.RetryDispositionPermanent
 	}
 	if retryableStatus(e.status) {
-		return port.RetryDispositionRetryable
+		return session.RetryDispositionRetryable
 	}
-	return port.RetryDispositionUnknown
+	return session.RetryDispositionUnknown
 }
 
 // isContextOverflowMessage is duplicated from provider/openai/stream.go (separate

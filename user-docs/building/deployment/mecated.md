@@ -470,7 +470,7 @@ When configured, its Redis-backed store has no PVC requirement.
 Configure retention in the operator `settings.yaml`. Main-session deletion is
 off by default and requires `acknowledge_main_deletion: true` when enabled.
 Follow [Operate local session storage](session-storage-operations.md) for the
-schema, service definitions, backups, migration, and restore.
+schema, service definitions, backups, cleanup, and restore.
 
 `--session-store-url` replaces the local store with a gRPC driver and cannot be
 combined with `--store-dir`. Session and memory drivers must negotiate Mecatl's
