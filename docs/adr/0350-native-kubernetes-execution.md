@@ -134,6 +134,21 @@ CA/key/client removal, scope removal, rollback, or equal-generation policy drift
 security generation nor per-environment grant revocation is proof of termination. No existing SPIFFE
 issuer is assumed, and no credential crosses the provider-to-workload stdin boundary.
 
+Material publication uses the existing manifest filenames as immutable identities. Changed signing,
+server-certificate, server-key, and client-CA bytes require new generation-specific names. Stage them
+before publishing the higher-generation manifest and retain overlap files while any live/in-flight
+manifest references them. Secret and ConfigMap updates are not atomic together. One loaded manifest
+binds the confined immutable names even across projection changes; missing material fails closed before
+ledger publication. No loader projection-pinning helper or new version/config API is required under
+this operator-managed publication contract. Reusing names can publish a mixed-generation digest;
+correcting that bundle at the same generation is then rejected permanently. Recover only by forward
+publication, never by resetting authority history.
+
+Peer-ledger advancement can transiently reject a pinned replica's read before dispatch even after
+successful AcquireRun. Qualification may poll only read-only structured retryable `not_ready`, with a
+bound and immediate failure on wrong content or other errors. It must not hide mixed-material drift
+or count a released/expired claim as evidence of old-key/client rejection.
+
 Scoped administration uses one narrow extension to the existing client policy:
 `administrator:true` plus optional `administratorFor:[canonicalCreatorURI]`. Absent/empty scope preserves
 self-admin compatibility, not namespace-wide privilege. A distinct operations URI may administer only
@@ -197,7 +212,12 @@ owned cluster, scratch kubeconfig, explicit context on every command, bounded sa
 ownership-scoped cleanup. Default kind does not prove NetworkPolicy enforcement; the production profile
 uses Calico. The acceptance plan records a successful production job at `deaf1c3d1`, distinct from the
 pending final candidate and new scope/retry/Helm regression qualification. Historical local keyring
-failures no longer block that baseline. Skipped draft race lanes remain unproven.
+failures no longer block that baseline. Skipped draft race lanes remain unproven. The latest
+operator-reported run `35650128625` at `f7919f6c` passed 10/11 production tests, including scoped admin,
+Helm lifecycle/quota, and general file tools; rotation failed at the final-authority read. Offline tests
+at repair commit `96e16e926` reproduce both safe pre-dispatch replica lag and persistent mixed-material
+ledger poisoning, and prove immutable-name publication across both projection orders. They do not
+identify which mechanism caused that CI failure or establish final runtime success.
 
 The checked human live decision requires the separate `task e2e:k8s:execution:live` OpenRouter coding
 qualification **for this stack**, after deterministic qualification. It is not an always-on live CI

@@ -192,6 +192,25 @@ connections. Key windows, CA/client removal, equal-generation policy drift, key-
 different material, and rollback fail closed. RevokeEnvironment advances the separate per-environment
 grantGeneration. Neither revocation nor a changed security generation constitutes termination proof.
 
+**Rotation publication amendment:** use the existing filename fields as immutable material identities.
+Every changed signing key, server certificate, server private key, or client-CA bundle gets a new,
+generation-specific filename; never overwrite a referenced name with different bytes. Stage the added
+Secret entries before publishing the higher-generation manifest, retaining old entries until no live
+or in-flight manifest references them. ConfigMap and Secret projections are not atomic together.
+A manifest that arrives before its new files must fail closed without advancing the ledger; a material
+projection that arrives first must leave the old manifest's authority unchanged. The loader reads one
+manifest and confines each named file through `os.Root`; no projection-pinning helper, new config field,
+proto, or engine API is introduced. Runtime byte immutability is an operator publication obligation,
+not a newly enforced file-history registry. If reused filenames have already published mixed material,
+retries cannot repair equal-generation digest drift: publish a complete bundle at a higher generation,
+never reset the ledger.
+
+A peer may advance the shared ledger after a pinned replica successfully acquires a claim. Its next
+read must return structured retryable `not_ready` before dispatch until that replica reloads. Positive
+qualification uses a bounded read-only content poll for **only** `CodeNotReady && Retryable`; wrong
+content and all other errors fail immediately. This amendment adds no mutating retry. Negative
+old-client and revoked-key checks use a current, nonexpired claim, not a released phase claim.
+
 **Scoped-admin amendment, exact proposed configuration:** add optional `administratorFor: []string`
 to each `clients[]` entry, matching existing lowerCamelCase `mayAttestOwner` and `administrator`.
 For example, the nonsecret manifest fragment is:
@@ -433,6 +452,28 @@ timeout, cancellation, and forbidden-response controls in
 arbitrary forbidden creates. Those offline controls and tagged compilation are not a rerun
 of the production job.
 
+**Latest reported production context:** the operator supplied run
+[35650128625, job 106500190798](https://github.com/stacklok/mecatl/actions/runs/35650128625/job/106500190798)
+at `f7919f6c`: 10/11 production tests passed, including scoped administration, Helm lifecycle/quota,
+and general file tools. Security rotation failed after about 250 seconds on the final-authority Files
+READ immediately after successful AcquireRun (`production_qualification_test.go`, former line 279).
+This report was not independently re-fetched during the offline repair. It supersedes the earlier
+setup failure as the current reported runtime blocker, not as a final-candidate success.
+
+**Deterministic repair evidence:** implementation `96e16e926` adds
+`internal/adapter/executioncontroller/security_rotation_test.go`:
+`TestSecurityRotationPinnedReplicaReadConvergesBeforeDispatch` proves peer advancement → retryable
+`not_ready` with zero Files dispatch → reload → the same valid bridge-k2 claim succeeds.
+`TestSecurityRotationMutableNamesPoisonSameGeneration` proves that a new manifest with old
+`tls.crt`/`tls.key`/`clients.pem` can publish a mixed digest that the later complete bundle cannot replace
+at that generation. This is a reproduced defect, **not proof that it caused the CI failure**.
+`TestSecurityRotationImmutableNamesHandleProjectionSkew` proves both projection orders recover using
+new immutable filenames while retaining old entries. All three pass offline with `-race`, without
+sleeps or a cluster. The native exact-cap stdout/stderr/combined repair-expansion regression first
+failed with `Truncated=false`, then passed with `-race` after tracking clipping after UTF-8 repair;
+earlier bounded-writer truncation remains ORed into the result. Fixture publication/barrier changes
+and final runtime qualification are still separate evidence; no live inference or cluster run is claimed.
+
 [PR #1728](https://github.com/stacklok/mecatl/pull/1728), commit
 `6501b5924`, is already integrated in the implementation ancestry. Its generic live-compaction
 repair is not native-provider qualification. Final-candidate native-provider live and amended
@@ -454,7 +495,7 @@ new-head CI, final live execution, or human contract/panel approval.
 | AC3.3 | `internal/adapter/executioncontroller/file_authorization_test.go`: every supported file operation has positive and negative signed-grant controls; `internal/executionexecutor/confinement_test.go`: physical symlink traversal/search checks. Existing security manager, protocol, durable revocation, and detached-control tests remain complementary. |
 | AC3.4 | `internal/executionexecutor/executor_test.go`: `TestNativeShellCapsCombinedOutputAndRepairsUTF8`, `TestNativeShellWriteInvalidatesRecordedRead` execute the native helper for combined output bounds, malformed bytes, and actual Shell-write→Edit version refusal. `internal/adapter/executionclient/client_test.go`: `TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly` checks runner text repair after private protobuf bytes; `internal/adapter/executionclient/service_integration_test.go`: `TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain` checks identical valid UTF-8 in client events and model history. `internal/adapter/executioncontroller/store_test.go`: `TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences`; production `TestKindExecutionProductionHolderLossFencesActiveOperation` remains runtime qualification. |
 | AC4.1 | `internal/adapter/executioncontroller/store_lifecycle_test.go`: `TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient`; Kind isolation and pending-delete tests; scoped-admin non-escalation is exercised by the AC4.4 tests. |
-| AC4.2 | `internal/adapter/executioncontroller/store_revoke_test.go`: `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`; `store_concurrency_test.go`: `TestAcquireRunAndRevokeUseResourceVersionCAS`; production security rotation. |
+| AC4.2 | `internal/adapter/executioncontroller/store_revoke_test.go`: `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`; `store_concurrency_test.go`: `TestAcquireRunAndRevokeUseResourceVersionCAS`; the three deterministic rotation tests listed above at repair commit `96e16e926`. Latest reported production rotation failed; final runtime success PENDING. |
 | AC4.3 | `internal/adapter/executioncontroller/production_lifecycle_test.go`: `TestExpiredOperationLeaseFencesWithoutClearingIdentity`, `TestRecoverMissingPodRemainsFenceUnknown`, `TestRecoveredTerminalProofCanStartExactReplacement`; production holder loss. |
 | AC4.4 | `internal/adapter/executioncontroller/admin_scope_test.go`: `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminCASRetryRechecksSubject`, `TestScopedAdminMigrationReceiptRetainsUIDPreconditions`, `TestMigrationCompletedCASReplayRequiresExactSourceSchema`, `TestMigrationReceiptExpiresAfterReconciledReplacement`, `TestScopedAdminDoesNotGrantAttestationOrDataPlane`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`. Replacement-expiry test is in `internal/adapter/executioncontroller/production_lifecycle_test.go` in the pinned implementation candidate. `e2e/k8s_execution/ab_production_admin_test.go`: `TestKindExecutionProductionScopedAdministrator` exists (replacement/non-escalation, not all six routes); final Kind evidence PENDING. |
 | AC4.5 | `internal/adapter/executioncontroller/admin_scope_security_test.go`: `TestAdministratorScopeManifestValidation`, `TestAdministratorScopeDigestIsNormalizedAndAuthorityBound`; `internal/adapter/executioncontroller/admin_scope_test.go`: all-routes scope removal plus `TestScopedAdminEqualGenerationDriftFailsClosed`. Compatibility/upgrade human review PENDING. |
