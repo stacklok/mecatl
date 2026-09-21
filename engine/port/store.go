@@ -90,6 +90,12 @@ type SessionCreator interface {
 // adapters that retain optional interfaces even when their negotiated backend
 // does not provide every operation. Stores without this signal advertise
 // optional operations by implementing their interfaces.
+//
+// A decorator around a SessionStore MUST preserve every optional operation and
+// capability signal it forwards. In particular, forwarding SessionCreator while
+// dropping SessionCapabilitySupport changes a negotiated false into the legacy
+// interface-presence default of true; no probe can recover a method hidden by an
+// arbitrary decorator.
 type SessionCapabilitySupport interface {
 	SupportsSessionCreate() bool
 	SupportsSessionMetadataPaging() bool

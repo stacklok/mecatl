@@ -57,7 +57,6 @@ export {
   TransportError,
   UnsupportedFeatureError,
 } from "./errors.js";
-export { RetryDisposition, StreamProgress } from "./events.js";
 export type {
   AgentEvent,
   ApprovalEventPayload,
@@ -97,7 +96,7 @@ export type {
   UnknownHttpEvent,
   UserPromptEventPayload,
 } from "./events.js";
-export { MECATL_EVENT_KINDS } from "./events.js";
+export { MECATL_EVENT_KINDS, RetryDisposition, StreamProgress } from "./events.js";
 export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
 export type {

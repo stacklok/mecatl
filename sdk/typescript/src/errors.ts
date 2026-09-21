@@ -333,7 +333,6 @@ export class IncompatibleServerError extends MecatlError {
 export class ServerError extends MecatlError {
   declare readonly code: ServerErrorCode;
 
-  // biome-ignore lint/complexity/noUselessConstructor: this narrows code to the server vocabulary.
   constructor(
     message: string,
     options: Omit<MecatlErrorOptions, "code"> & { code: ServerErrorCode },

@@ -437,6 +437,13 @@ func TestOldStoreNamespaceIsIgnoredUntouchedWhileCurrentSameIDRestarts(t *testin
 	assertOnlyCurrentNamespaceScans(t, spy.snapshot())
 }
 
+func TestCurrentNamespaceScanRequiresMatch(t *testing.T) {
+	command := redisCommand{name: "SCAN", args: []string{"0"}}
+	if scanMatchesCurrentNamespace(command) {
+		t.Fatalf("bare SCAN accepted as current-namespace bounded: %#v", command)
+	}
+}
+
 func assertOnlyCurrentNamespaceScans(t *testing.T, commands []redisCommand) {
 	t.Helper()
 	seen := 0
@@ -445,15 +452,22 @@ func assertOnlyCurrentNamespaceScans(t *testing.T, commands []redisCommand) {
 			continue
 		}
 		seen++
-		for i, arg := range command.args {
-			if strings.EqualFold(arg, "MATCH") && i+1 < len(command.args) && !strings.HasPrefix(command.args[i+1], storeKeyPrefix) {
-				t.Fatalf("SCAN inspected non-current namespace: %#v", command)
-			}
+		if !scanMatchesCurrentNamespace(command) {
+			t.Fatalf("SCAN is not bounded to the current namespace: %#v", command)
 		}
 	}
 	if seen == 0 {
 		t.Fatal("test observed no SCAN command")
 	}
+}
+
+func scanMatchesCurrentNamespace(command redisCommand) bool {
+	for i, arg := range command.args {
+		if strings.EqualFold(arg, "MATCH") {
+			return i+1 < len(command.args) && strings.HasPrefix(command.args[i+1], storeKeyPrefix)
+		}
+	}
+	return false
 }
 
 func assertOwnerPage(t *testing.T, page port.SessionMetadataPage, owner *session.Principal, wantTotal, wantRows int) {
