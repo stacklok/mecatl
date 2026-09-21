@@ -6,7 +6,6 @@ import (
 	"net"
 	"strings"
 	"testing"
-	"unicode"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -120,12 +119,6 @@ func TestPredictableSessionHandles_Scenario1_OnlyHandleWidthAPI(t *testing.T) {
 	if got := SessionHandle("123456789012-rest"); got != "123456789012" {
 		t.Fatalf("SessionHandle = %q", got)
 	}
-	if got := SessionHandle("1234567890雪-rest"); got != "1234567890雪" {
-		t.Fatalf("SessionHandle must not split graphemes: %q", got)
-	}
-	if got := SessionHandle("safe\x1b\n\t\u202e-handle"); got != "safe-handle" {
-		t.Fatalf("SessionHandle must remove control and format characters: %q", got)
-	}
 	if got := SessionHandle("short"); got != "short" {
 		t.Fatalf("SessionHandle short = %q", got)
 	}
@@ -150,11 +143,11 @@ func TestCreateDebugSessionResolution(t *testing.T) {
 		{name: "exact equality precedes projection", target: handle, sessions: []*mecatlv1.SessionSummary{{SessionId: handle + "-projected"}, {SessionId: handle}}, wantTarget: handle, wantCreates: 1, wantLists: 1},
 		{name: "unique projection", target: handle, sessions: []*mecatlv1.SessionSummary{{SessionId: handle + "-full"}, {SessionId: "other"}}, wantTarget: handle + "-full", wantCreates: 1, wantLists: 1},
 		{name: "duplicate inventory row is one match", target: handle, sessions: []*mecatlv1.SessionSummary{{SessionId: handle + "-full"}, {SessionId: handle + "-full"}}, wantTarget: handle + "-full", wantCreates: 1, wantLists: 1},
-		{name: "ambiguous displayed ID", target: handle, sessions: []*mecatlv1.SessionSummary{{SessionId: handle + "-one"}, {SessionId: handle + "-two"}}, wantErr: "full exact session ID", wantLists: 1},
+		{name: "ambiguous projection", target: handle, sessions: []*mecatlv1.SessionSummary{{SessionId: handle + "-one"}, {SessionId: handle + "-two"}}, wantErr: "full exact session ID", wantLists: 1},
 		{name: "no match falls through exact", target: handle, createErr: errors.New("server exact lookup: not found"), wantTarget: handle, wantErr: "server exact lookup: not found", wantCreates: 1, wantLists: 1},
 		{name: "inventory failure falls through exact", target: handle, listErr: errors.New("inventory unavailable"), createErr: errors.New("server exact lookup: denied"), wantTarget: handle, wantErr: "server exact lookup: denied", wantCreates: 1, wantLists: 1},
-		{name: "long exact wins", target: handle + "-full", sessions: []*mecatlv1.SessionSummary{{SessionId: handle + "-full"}}, wantTarget: handle + "-full", wantCreates: 1, wantLists: 1},
-		{name: "leading hyphen displayed ID resolves", target: "-leading-res", sessions: []*mecatlv1.SessionSummary{{SessionId: "-leading-rest"}}, wantTarget: "-leading-rest", wantCreates: 1, wantLists: 1},
+		{name: "long exact bypasses inventory", target: handle + "-full", wantTarget: handle + "-full", wantCreates: 1},
+		{name: "non-handle exact bypasses inventory", target: "-leading", wantTarget: "-leading", wantCreates: 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,49 +172,55 @@ func TestCreateDebugSessionResolution(t *testing.T) {
 	}
 }
 
-func TestCreateDebugSessionResolvesRenderedControlSafeHandle(t *testing.T) {
-	const fullID = "visible\x1b\n\t\u202e-handle-rest"
-	handle := SessionHandle(fullID)
-	if handle != "visible-hand" || strings.ContainsFunc(handle, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
-		t.Fatalf("SessionHandle(%q) = %q, want a control-safe actionable handle", fullID, handle)
-	}
-
-	fake := &debugHarness{
-		caps:     &mecatlv1.ServerCapabilities{SessionDebug: true},
-		sessions: []*mecatlv1.SessionSummary{{SessionId: fullID}},
-	}
-	cl := &Client{svc: fake}
-	_, resolved, _, _, err := cl.CreateDebugSession(context.Background(), handle, 0, ModelSelection{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fake.request.GetDebugTargetSessionId() != fullID || resolved != fullID {
-		t.Fatalf("rendered handle %q resolved target=%q, returned=%q, want %q", handle, fake.request.GetDebugTargetSessionId(), resolved, fullID)
-	}
-}
-
-func TestCreateDebugSessionResolvesAnyDisplayedUTF8Handle(t *testing.T) {
+func TestPredictableSessionHandles_Scenario2_HandleGrammarAndUnifiedTarget(t *testing.T) {
 	tests := []struct {
-		name, target, fullID string
+		name      string
+		target    string
+		fullID    string
+		candidate bool
+		reject    bool
 	}{
-		{name: "leading hyphen", target: "-legacy-hand", fullID: "-legacy-handle"},
-		{name: "percent", target: "%2F-full-id-", fullID: "%2F-full-id-rest"},
-		{name: "slash", target: "abc/def-rest", fullID: "abc/def-rest-more"},
-		{name: "multibyte", target: "éclair-sessi", fullID: "éclair-session-more"},
+		{name: "empty", target: "", reject: true},
+		{name: "one safe atom", target: "a", fullID: "a", candidate: true},
+		{name: "exactly twelve safe", target: "abcdefghijkl", fullID: "abcdefghijkl", candidate: true},
+		{name: "uppercase escape exactly fits", target: "123456789%2F", fullID: "123456789/", candidate: true},
+		{name: "uppercase escapes", target: "%C3%A9", fullID: "é", candidate: true},
+		{name: "escape cannot fit", target: "1234567890%2F"},
+		{name: "too long", target: "abcdefghijklm"},
+		{name: "lowercase escape", target: "%2f"},
+		{name: "truncated escape", target: "%2"},
+		{name: "malformed escape", target: "%GG"},
+		{name: "leading hyphen", target: "-legacy"},
+		{name: "literal percent", target: "abc%def"},
+		{name: "other ascii", target: "abc/def"},
+		{name: "multibyte", target: "é"},
+		{name: "invalid utf8", target: string([]byte{0xff}), reject: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := &debugHarness{
-				caps:     &mecatlv1.ServerCapabilities{SessionDebug: true},
-				sessions: []*mecatlv1.SessionSummary{{SessionId: tc.fullID}},
+			fake := &debugHarness{caps: &mecatlv1.ServerCapabilities{SessionDebug: true}}
+			if tc.candidate {
+				fake.sessions = []*mecatlv1.SessionSummary{{SessionId: tc.fullID}}
 			}
 			cl := &Client{svc: fake}
-			_, resolved, _, _, err := cl.CreateDebugSession(context.Background(), tc.target, 0, ModelSelection{})
+			_, _, _, _, err := cl.CreateDebugSession(context.Background(), tc.target, 0, ModelSelection{})
+			if tc.reject {
+				if err == nil || fake.createCalls != 0 || fake.listCalls != 0 {
+					t.Fatalf("rejected target error=%v create=%d list=%d", err, fake.createCalls, fake.listCalls)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if fake.listCalls != 1 || fake.request.GetDebugTargetSessionId() != tc.fullID || resolved != tc.fullID {
-				t.Fatalf("lists=%d target=%q resolved=%q, want %q", fake.listCalls, fake.request.GetDebugTargetSessionId(), resolved, tc.fullID)
+			wantLists := 0
+			wantTarget := tc.target
+			if tc.candidate {
+				wantLists = 1
+				wantTarget = tc.fullID
+			}
+			if fake.listCalls != wantLists || fake.request.GetDebugTargetSessionId() != wantTarget {
+				t.Fatalf("lists=%d target=%q, want lists=%d target=%q", fake.listCalls, fake.request.GetDebugTargetSessionId(), wantLists, wantTarget)
 			}
 		})
 	}

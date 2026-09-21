@@ -209,15 +209,14 @@ server is authoritative.
 
 - **`mecatui debug TARGET [flags]`** — create a separate durable no-filesystem
   analysis session permanently bound to that stored target. `TARGET` may be an exact full opaque
-  ID, including the exact ID printed when mecatui exits, or the displayed 12-display-column
-  short handle. For a non-empty valid-UTF-8 ID, the handle removes Unicode control (`Cc`) and
-  format (`Cf`) runes, retains every other rune verbatim, then truncates at a grapheme boundary.
-  The handle has no leading `#` marker. Every valid non-empty target consults the complete
-  caller-visible inventory. Exact full-ID equality wins; otherwise one unique identical displayed
-  handle resolves. Ambiguous projections create nothing and direct you to copy the full exact ID
-  from `/session` and pass it as `TARGET` to the same command. If inventory fails or no handle
-  matches, `TARGET` is sent unchanged and the server's ordinary exact-ID authorization/not-found
-  path decides.
+  ID, including the exact ID printed when mecatui exits, or the displayed 12-column short handle:
+  safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` becomes `%2D`; every other
+  UTF-8 byte is uppercase `%HH`, and only complete atoms that fit are shown. The handle has no
+  leading `#` marker. A syntactically valid short target consults the complete caller-visible
+  inventory. Exact full-ID equality wins; otherwise one unique projected match resolves.
+  Ambiguous projections create nothing and direct you to copy the full exact ID from `/session`
+  and pass it as `TARGET` to the same command. If inventory fails or no handle matches, `TARGET`
+  is sent unchanged and the server's ordinary exact-ID authorization/not-found path decides.
   The invocation is the consent gesture: diagnostic evidence may contain prompts, outputs, tool
   arguments/results, file paths, and secrets and will be sent to the selected model. It then
   submits a default diagnostic prompt automatically. The target is never resumed, leased,
@@ -428,15 +427,15 @@ server. After reviewing it, send a new current prompt such as `Publish this issu
 each mutating call opens an approval card even under yolo/configured allow. Allow once sends
 one request. A later mutation asks again; Allow always is deliberately not learned.
 
-These commands accept either an exact full opaque session ID or the displayed 12-display-column
-handle as `TARGET`. For a non-empty valid-UTF-8 ID, the handle removes Unicode control (`Cc`) and
-format (`Cf`) runes, retains every other rune verbatim, then truncates at a grapheme boundary.
-The displayed literal has no leading `#` and is itself the debug argument. Every valid non-empty
-target consults the complete caller-visible inventory. Exact full-ID equality wins; otherwise one
-unique identical displayed handle resolves. On ambiguity, open `/session`, copy the exact full ID,
-and pass it as `TARGET` through the same command. If inventory lookup fails or no projection
-matches, mecatui sends `TARGET` unchanged and reports the ordinary server exact-ID
-authorization/not-found result. These commands do not attach to or continue the target.
+These commands accept either an exact full opaque session ID or the displayed 12-column short
+handle as `TARGET`. The handle renders safe `[A-Za-z0-9._-]` bytes literally except that a leading
+`-` becomes `%2D`; every other UTF-8 byte is an uppercase `%HH` atom, and rendering stops before an
+atom that would exceed 12 ASCII columns. The displayed literal has no leading `#` and is itself the
+debug argument. A syntactically valid short target consults the complete caller-visible inventory.
+Exact full-ID equality wins; otherwise one unique projected match resolves. On ambiguity, open
+`/session`, copy the exact full ID, and pass it as `TARGET` through the same command. If inventory
+lookup fails or no projection matches, mecatui sends `TARGET` unchanged and reports the ordinary
+server exact-ID authorization/not-found result. These commands do not attach to or continue the target.
 They authorize it, create a separate durable no-filesystem debug session, keep a visible privacy disclosure in the TUI, and submit one first genuine user turn. That turn is ordered as the diagnosis
 objective, the required status/transcript/pagination workflow, the expected report sections,
 and finally the same sanitized current-client/server report produced by bare `/diagnostics`.
@@ -1595,10 +1594,10 @@ with explicit newlines and soft wraps to eight rows, then scrolls internally to 
 the caret visible.
 
 **Header bar.** `mecatui · session <handle> · <model> · mode <mode> · <server>`.
-The session segment uses a fixed readable 12-display-column handle. For a non-empty valid-UTF-8
-ID, it removes Unicode control (`Cc`) and format (`Cf`) runes, retains every other rune verbatim,
-and truncates at a grapheme boundary. It has no leading `#` and is the literal accepted by
-positional `mecatui debug` when it resolves uniquely.
+The session segment uses a fixed terminal-safe 12-column handle: safe `[A-Za-z0-9._-]`
+bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
+uppercase `%HH`, and only complete atoms that fit are shown. It has no leading `#` and
+is the literal accepted by positional `mecatui debug` when it resolves uniquely.
 Type **`/session`** for the safe quoted full ID and active-session metadata, or press
 **`c`** there to copy the exact ID through the clipboard.
 The **mode segment** shows the server-confirmed permission posture for the current session;
@@ -1736,11 +1735,11 @@ cancels the outstanding request and never creates or rebinds a session.
 
 Each row shows a state badge, relative modification time, turn count, title,
 short handle, and model. The active chat is explicitly marked **`[current]`**;
-a team member row also identifies its member. The handle is the same fixed readable
-12-display-column projection as the header (no `#`): for a non-empty valid-UTF-8 ID, it
-removes Unicode control (`Cc`) and format (`Cf`) runes, retains every other rune verbatim,
-and truncates at a grapheme boundary. The full opaque ID remains what the client sends back to
-the server.
+a team member row also identifies its member. The handle is the same fixed
+12-column escaped-prefix literal as the header (no `#`): safe `[A-Za-z0-9._-]`
+bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
+uppercase `%HH`, and only complete atoms that fit are retained. The full opaque ID remains
+what the client sends back to the server.
 
 Pressing `enter` follows server-authored capabilities. A public Chat is
 **Continue**: mecatui first loads the authoritative snapshot-derived

@@ -807,14 +807,14 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat.
 The sibling `mecatui debug TARGET` and
 `mecatui connect ADDRESS debug TARGET` forms create a separate durable `debug` session whose trusted relationship metadata binds
-one authorized target. The proto-free UI uses the same fixed 12-display-column, readable handle
-as the header, implemented by `cmd/mecatui/client/client.go` (`SessionHandle`): for a non-empty
-valid-UTF-8 ID, it removes Unicode control (`Cc`) and format (`Cf`) runes, keeps every other rune
-verbatim, then truncates at a grapheme boundary. The displayed literal has no leading `#`. For every
-valid non-empty target, the client consults the complete caller-filtered inventory: exact full-ID
-equality wins automatically, otherwise one unique identical displayed handle resolves. Multiple
-projections direct the caller to copy and pass the full exact ID as `TARGET`. Inventory failure or
+one authorized target. The proto-free UI uses the same fixed 12-column, terminal-safe handle as the header: safe
+`[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; all other UTF-8
+bytes are uppercase `%HH`, with only complete atoms that fit. The displayed literal has no leading
+`#`. A syntactically valid short target is resolved against the complete caller-filtered inventory:
+exact full-ID equality wins automatically, otherwise one unique projected match resolves. Multiple
+projections fail with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or
 no match passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path.
+Longer or malformed targets likewise remain exact-ID inputs automatically.
 Only the resolved exact ID crosses the real `Client.CreateDebugSession` request boundary, and the
 server remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
