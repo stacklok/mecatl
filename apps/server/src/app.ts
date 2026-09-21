@@ -9,6 +9,8 @@ import {
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
+import type { ActivityLimits } from "./config.js";
+import { requestBodyLimit } from "./http/body-limit.js";
 import type { AppEnv } from "./http/env.js";
 import { problem, sanitizeUpstreamDetail, validationDetail } from "./http/problem.js";
 import {
@@ -22,8 +24,10 @@ import {
 } from "./http/security.js";
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
+import { type ChatService, createMecatlChatService } from "./mecatl/chat.js";
 import { type MecatlRuntime, RuntimeNotReadyError } from "./mecatl/runtime.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerChatRoutes } from "./routes/chat.js";
 
 export const openApiInfo = {
   info: { title: "Mecatl Studio API", version: "1.0.0" },
@@ -63,7 +67,10 @@ const runtimeRoute = createRoute({
 });
 
 export interface AppDependencies {
+  /** Bounds on durable activity replay; defaults are the config defaults. */
+  readonly activity?: ActivityLimits;
   readonly authentication?: AuthenticationService;
+  readonly chat?: ChatService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
   /** How long a feature request waits for compatibility negotiation before `503`. */
@@ -101,6 +108,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use("/api/v1/auth/*", authLimiter);
   app.use("/oauth/callback", authLimiter);
   app.use("/api/v1/*", sameOriginMutations(security));
+  app.use("/api/v1/*", requestBodyLimit());
 
   registerAuthRoutes(app, authentication, runtime);
 
@@ -162,6 +170,11 @@ export function createApp(dependencies: AppDependencies = {}) {
       throw error;
     }
   });
+
+  const chat =
+    dependencies.chat ??
+    (runtime === undefined ? undefined : createMecatlChatService(runtime.client));
+  registerChatRoutes(app, chat, dependencies.activity);
 
   if (dependencies.webDist !== undefined) app.use("*", spaHandler(dependencies.webDist));
 

@@ -4,6 +4,6 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
-    throw redirect({ to: "/workspace", replace: true });
+    throw redirect({ search: { sessionId: undefined }, to: "/workspace/chat", replace: true });
   },
 });

@@ -4,8 +4,8 @@
 import { type DefaultError, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { completeAuthLogin, getAuthSession, getHealth, getRuntime, logoutAuthSession, type Options, startAuthLogin } from '../sdk.gen';
-import type { CompleteAuthLoginData, CompleteAuthLoginError, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, StartAuthLoginData, StartAuthLoginError } from '../types.gen';
+import { cancelRun, clearSession, compactSession, completeAuthLogin, createSession, deleteSession, forkSession, getAuthSession, getHealth, getRuntime, getSessionDetail, getSessionTranscript, listSessions, logoutAuthSession, type Options, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun } from '../sdk.gen';
+import type { CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CreateSessionData, CreateSessionError, CreateSessionResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -128,3 +128,188 @@ export const getRuntimeOptions = (options?: Options<GetRuntimeData>) => queryOpt
     },
     queryKey: getRuntimeQueryKey(options)
 });
+
+export const listSessionsQueryKey = (options?: Options<ListSessionsData>) => createQueryKey('listSessions', options);
+
+export const listSessionsOptions = (options?: Options<ListSessionsData>) => queryOptions<ListSessionsResponse, ListSessionsError, ListSessionsResponse, ReturnType<typeof listSessionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listSessions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listSessionsQueryKey(options)
+});
+
+export const createSessionMutation = (options?: Partial<Options<CreateSessionData>>): UseMutationOptions<CreateSessionResponse, CreateSessionError, Options<CreateSessionData>> => {
+    const mutationOptions: UseMutationOptions<CreateSessionResponse, CreateSessionError, Options<CreateSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await createSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const getSessionTranscriptQueryKey = (options: Options<GetSessionTranscriptData>) => createQueryKey('getSessionTranscript', options);
+
+export const getSessionTranscriptOptions = (options: Options<GetSessionTranscriptData>) => queryOptions<GetSessionTranscriptResponse, GetSessionTranscriptError, GetSessionTranscriptResponse, ReturnType<typeof getSessionTranscriptQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getSessionTranscript({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getSessionTranscriptQueryKey(options)
+});
+
+export const deleteSessionMutation = (options?: Partial<Options<DeleteSessionData>>): UseMutationOptions<DeleteSessionResponse, DeleteSessionError, Options<DeleteSessionData>> => {
+    const mutationOptions: UseMutationOptions<DeleteSessionResponse, DeleteSessionError, Options<DeleteSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await deleteSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const getSessionDetailQueryKey = (options: Options<GetSessionDetailData>) => createQueryKey('getSessionDetail', options);
+
+export const getSessionDetailOptions = (options: Options<GetSessionDetailData>) => queryOptions<GetSessionDetailResponse, GetSessionDetailError, GetSessionDetailResponse, ReturnType<typeof getSessionDetailQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getSessionDetail({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getSessionDetailQueryKey(options)
+});
+
+export const renameSessionMutation = (options?: Partial<Options<RenameSessionData>>): UseMutationOptions<RenameSessionResponse, RenameSessionError, Options<RenameSessionData>> => {
+    const mutationOptions: UseMutationOptions<RenameSessionResponse, RenameSessionError, Options<RenameSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await renameSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const setSessionModeMutation = (options?: Partial<Options<SetSessionModeData>>): UseMutationOptions<SetSessionModeResponse, SetSessionModeError, Options<SetSessionModeData>> => {
+    const mutationOptions: UseMutationOptions<SetSessionModeResponse, SetSessionModeError, Options<SetSessionModeData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await setSessionMode({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const compactSessionMutation = (options?: Partial<Options<CompactSessionData>>): UseMutationOptions<CompactSessionResponse, CompactSessionError, Options<CompactSessionData>> => {
+    const mutationOptions: UseMutationOptions<CompactSessionResponse, CompactSessionError, Options<CompactSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await compactSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const forkSessionMutation = (options?: Partial<Options<ForkSessionData>>): UseMutationOptions<ForkSessionResponse, ForkSessionError, Options<ForkSessionData>> => {
+    const mutationOptions: UseMutationOptions<ForkSessionResponse, ForkSessionError, Options<ForkSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await forkSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const clearSessionMutation = (options?: Partial<Options<ClearSessionData>>): UseMutationOptions<ClearSessionResponse, ClearSessionError, Options<ClearSessionData>> => {
+    const mutationOptions: UseMutationOptions<ClearSessionResponse, ClearSessionError, Options<ClearSessionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await clearSession({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const cancelRunMutation = (options?: Partial<Options<CancelRunData>>): UseMutationOptions<CancelRunResponse, CancelRunError, Options<CancelRunData>> => {
+    const mutationOptions: UseMutationOptions<CancelRunResponse, CancelRunError, Options<CancelRunData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await cancelRun({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const steerRunMutation = (options?: Partial<Options<SteerRunData>>): UseMutationOptions<SteerRunResponse, SteerRunError, Options<SteerRunData>> => {
+    const mutationOptions: UseMutationOptions<SteerRunResponse, SteerRunError, Options<SteerRunData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await steerRun({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const resolveRunPermissionMutation = (options?: Partial<Options<ResolveRunPermissionData>>): UseMutationOptions<ResolveRunPermissionResponse, ResolveRunPermissionError, Options<ResolveRunPermissionData>> => {
+    const mutationOptions: UseMutationOptions<ResolveRunPermissionResponse, ResolveRunPermissionError, Options<ResolveRunPermissionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await resolveRunPermission({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};

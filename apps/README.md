@@ -8,6 +8,11 @@
 > shape of this API yet. The published image carries
 > `org.stacklok.mecatl.studio.stability=early-access` for the same reason.
 
+Studio ships the bootstrap (health, runtime status, browser login, the shell) plus its
+product features, starting with chat. Each feature lands with its own acceptance plan
+under `docs/acceptance/studio-*.md`, which lists exactly what it ships. The published image is
+`ghcr.io/stacklok/mecatl/studio`.
+
 Mecatl Studio is a browser UI for a mecatl deployment, split in three packages that form
 one self-contained pnpm workspace (pnpm 12.4.2, Node 24, see `package.json`):
 
@@ -118,6 +123,8 @@ when it exists, and `docker compose` reads `apps/.env`.
 | `STUDIO_TRUSTED_PROXY_HOPS`    | `0`                                           | Number of trusted reverse-proxy hops in front of Studio. `0` uses the socket peer as the client address; `n > 0` uses the corresponding right-most `X-Forwarded-For` entry.  |
 | `STUDIO_RATE_LIMIT_MAX`        | `20`                                          | Requests allowed per client address per window on `/api/v1/auth/*`.                                                                                                        |
 | `STUDIO_RATE_LIMIT_WINDOW_MS`  | `60000`                                       | The rate-limit window in milliseconds.                                                                                                                                     |
+| `STUDIO_ACTIVITY_REPLAY_MAX` | `2000` | Durable replay events one activity request forwards before it reports truncation. Live events are never bounded. |
+| `STUDIO_ACTIVITY_MAX_STREAMS` | `4` | Concurrent activity streams one session admits per replica; beyond it the route answers `429`. |
 | `STUDIO_LOG_LEVEL`             | `info`                                        | `debug`, `info`, `warn`, or `error`.                                                                                                                                       |
 | `STUDIO_WEB_DIST`              | `../web/dist` relative to the server package (`/app/web/dist` in the image) | Directory holding the built SPA the BFF serves. Normally you never set it; the Dockerfile does.                                                        |
 

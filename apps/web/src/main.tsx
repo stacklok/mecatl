@@ -6,11 +6,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AuthGate } from "./features/auth/auth-gate";
 import { installCsrfInterceptor } from "./lib/api-client";
+import { initializeProfilePreferences } from "./lib/profile-preferences";
 import { initializeTheme } from "./lib/theme";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 
 initializeTheme();
+// Apply the stored UI scale before the first paint, not when Settings mounts.
+initializeProfilePreferences();
 installCsrfInterceptor();
 
 const queryClient = new QueryClient({

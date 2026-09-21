@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { LayoutDashboard } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 
 /**
- * Primary navigation. The bootstrap ships only the empty workspace; each
- * feature plan (chat, schedules, skills, settings) appends its own entry.
+ * Primary navigation. Each feature plan appends its own entry (schedules,
+ * skills, settings follow chat).
  */
 export const navItems = [
   {
-    key: "workspace",
-    label: "Workspace",
-    to: "/workspace",
-    icon: LayoutDashboard,
+    key: "chat",
+    label: "Chats",
+    to: "/workspace/chat",
+    icon: MessageCircle,
   },
 ] as const;

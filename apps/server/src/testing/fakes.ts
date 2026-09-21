@@ -2,6 +2,7 @@
 
 import type { RuntimeResponse, ServerCapabilitiesResponse } from "@mecatl-studio/contracts";
 import type {
+  Client,
   ConnectionStatus,
   ConnectionStatusListener,
   ServerCompatibility,
@@ -68,10 +69,16 @@ export function sampleSnapshot(connection: ConnectionStatus = "online"): Runtime
   };
 }
 
-export interface FakeClient extends RuntimeClient {
+/**
+ * A fake satisfying the runtime's `RuntimeClient` subset, typed as the full
+ * SDK `Client` so it can be injected wherever the real client goes. Feature
+ * adapters are tested with their own fakes; the runtime never touches
+ * `sessions`.
+ */
+export type FakeClient = Client & {
   readonly compatibility: ReturnType<typeof vi.fn<() => Promise<ServerCompatibility>>>;
   emit(status: ConnectionStatus): void;
-}
+};
 
 export function fakeClient(
   compatibility: () => Promise<ServerCompatibility> = async () => sampleCompatibility(),
@@ -79,7 +86,10 @@ export function fakeClient(
   const listeners = new Set<ConnectionStatusListener>();
   let current: ConnectionStatus = "online";
   const compatibilityMock = vi.fn(compatibility);
-  return {
+  const subset: RuntimeClient & {
+    compatibility: typeof compatibilityMock;
+    emit(status: ConnectionStatus): void;
+  } = {
     close: async () => undefined,
     compatibility: compatibilityMock,
     emit(status) {
@@ -95,6 +105,7 @@ export function fakeClient(
       },
     },
   };
+  return subset as unknown as FakeClient;
 }
 
 export function fakeRuntime(overrides: Partial<MecatlRuntime> = {}): MecatlRuntime {

@@ -280,3 +280,1033 @@ export type GetRuntimeResponses = {
 };
 
 export type GetRuntimeResponse = GetRuntimeResponses[keyof GetRuntimeResponses];
+
+export type ListSessionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/sessions';
+};
+
+export type ListSessionsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListSessionsError = ListSessionsErrors[keyof ListSessionsErrors];
+
+export type ListSessionsResponses = {
+    /**
+     * The visible Mecatl chat sessions.
+     */
+    200: {
+        complete: boolean;
+        items: Array<{
+            capabilities: {
+                delete: boolean;
+                deleteReason: string;
+                rename: boolean;
+                renameReason: string;
+            };
+            createdAt: string;
+            debugTargetSessionId: string;
+            id: string;
+            modelId: string;
+            state: string;
+            title: string;
+            turns: number;
+            updatedAt: string;
+        }>;
+    };
+};
+
+export type ListSessionsResponse = ListSessionsResponses[keyof ListSessionsResponses];
+
+export type CreateSessionData = {
+    body: {
+        debugTargetSessionId?: string;
+        mode?: 'default' | 'plan' | 'acceptEdits';
+        model?: {
+            id: string;
+            providerId: string;
+        };
+        reasoningEffort?: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+        toolAccess?: 'all' | 'noFilesystem';
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/sessions';
+};
+
+export type CreateSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type CreateSessionError = CreateSessionErrors[keyof CreateSessionErrors];
+
+export type CreateSessionResponses = {
+    /**
+     * The newly created Mecatl session.
+     */
+    201: {
+        id: string;
+    };
+};
+
+export type CreateSessionResponse = CreateSessionResponses[keyof CreateSessionResponses];
+
+export type GetSessionTranscriptData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/transcript';
+};
+
+export type GetSessionTranscriptErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetSessionTranscriptError = GetSessionTranscriptErrors[keyof GetSessionTranscriptErrors];
+
+export type GetSessionTranscriptResponses = {
+    /**
+     * The authoritative session transcript.
+     */
+    200: {
+        complete: boolean;
+        messages: Array<{
+            images: Array<{
+                data?: string;
+                mimeType: string;
+                name: string;
+                url?: string;
+            }>;
+            role: string;
+            text: string;
+            toolCalls: Array<{
+                args: string;
+                id: string;
+                name: string;
+            }>;
+            toolResult?: {
+                callId: string;
+                content: string;
+                isError: boolean;
+            };
+        }>;
+        sessionId: string;
+    };
+};
+
+export type GetSessionTranscriptResponse = GetSessionTranscriptResponses[keyof GetSessionTranscriptResponses];
+
+export type DeleteSessionData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}';
+};
+
+export type DeleteSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type DeleteSessionError = DeleteSessionErrors[keyof DeleteSessionErrors];
+
+export type DeleteSessionResponses = {
+    /**
+     * The session was deleted.
+     */
+    204: void;
+};
+
+export type DeleteSessionResponse = DeleteSessionResponses[keyof DeleteSessionResponses];
+
+export type GetSessionDetailData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}';
+};
+
+export type GetSessionDetailErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetSessionDetailError = GetSessionDetailErrors[keyof GetSessionDetailErrors];
+
+export type GetSessionDetailResponses = {
+    /**
+     * The authoritative session configuration and usage snapshot.
+     */
+    200: {
+        capabilities: {
+            image: boolean;
+            manualCompaction: boolean;
+            modelSelection: boolean;
+        };
+        id: string;
+        mode: 'default' | 'plan' | 'acceptEdits';
+        model?: {
+            id: string;
+            providerId: string;
+            contextWindow: string;
+            reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+        };
+        state: string;
+        usage: {
+            cacheReadTokens: string;
+            cacheWriteTokens: string;
+            inputTokens: string;
+            outputTokens: string;
+            reasoningTokens: string;
+        };
+    };
+};
+
+export type GetSessionDetailResponse = GetSessionDetailResponses[keyof GetSessionDetailResponses];
+
+export type RenameSessionData = {
+    body: {
+        title: string;
+    };
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}';
+};
+
+export type RenameSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type RenameSessionError = RenameSessionErrors[keyof RenameSessionErrors];
+
+export type RenameSessionResponses = {
+    /**
+     * The authoritative session title.
+     */
+    200: {
+        title: string;
+    };
+};
+
+export type RenameSessionResponse = RenameSessionResponses[keyof RenameSessionResponses];
+
+export type StartRunData = {
+    body: {
+        images?: Array<{
+            data: string;
+            mimeType: string;
+            name: string;
+        }>;
+        prompt: string;
+    };
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/runs';
+};
+
+export type StartRunErrors = {
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type StartRunError = StartRunErrors[keyof StartRunErrors];
+
+export type StartRunResponses = {
+    /**
+     * The Mecatl run event stream.
+     */
+    200: {
+        runId: string;
+        sessionId: string;
+        type: 'run.started';
+    } | {
+        event: {
+            kind: string;
+            payload?: unknown;
+            raw?: unknown;
+            runId: string;
+            seq: string;
+            text: string;
+            turn: number;
+            unknown: boolean;
+            usage?: {
+                cacheReadTokens: string;
+                cacheWriteTokens: string;
+                inputTokens: string;
+                outputTokens: string;
+                reasoningTokens: string;
+            };
+        };
+        type: 'run.event';
+    } | {
+        cursor: string;
+        reason: 'bound' | 'gap';
+        type: 'run.truncated';
+    } | {
+        code: string;
+        message: string;
+        type: 'run.error';
+    };
+};
+
+export type StartRunResponse = StartRunResponses[keyof StartRunResponses];
+
+export type WatchSessionActivityData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: {
+        resumeFrom?: string;
+    };
+    url: '/api/v1/sessions/{sessionId}/activity';
+};
+
+export type WatchSessionActivityErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type WatchSessionActivityError = WatchSessionActivityErrors[keyof WatchSessionActivityErrors];
+
+export type WatchSessionActivityResponses = {
+    /**
+     * Bounded durable replay followed by live activity. Each event frame carries its cursor in the SSE id field.
+     */
+    200: {
+        runId: string;
+        sessionId: string;
+        type: 'run.started';
+    } | {
+        event: {
+            kind: string;
+            payload?: unknown;
+            raw?: unknown;
+            runId: string;
+            seq: string;
+            text: string;
+            turn: number;
+            unknown: boolean;
+            usage?: {
+                cacheReadTokens: string;
+                cacheWriteTokens: string;
+                inputTokens: string;
+                outputTokens: string;
+                reasoningTokens: string;
+            };
+        };
+        type: 'run.event';
+    } | {
+        cursor: string;
+        reason: 'bound' | 'gap';
+        type: 'run.truncated';
+    } | {
+        code: string;
+        message: string;
+        type: 'run.error';
+    };
+};
+
+export type WatchSessionActivityResponse = WatchSessionActivityResponses[keyof WatchSessionActivityResponses];
+
+export type SetSessionModeData = {
+    body: {
+        mode: 'default' | 'plan' | 'acceptEdits';
+    };
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/mode';
+};
+
+export type SetSessionModeErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type SetSessionModeError = SetSessionModeErrors[keyof SetSessionModeErrors];
+
+export type SetSessionModeResponses = {
+    /**
+     * The authoritative session permission mode.
+     */
+    200: {
+        mode: 'default' | 'plan' | 'acceptEdits';
+    };
+};
+
+export type SetSessionModeResponse = SetSessionModeResponses[keyof SetSessionModeResponses];
+
+export type CompactSessionData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/compaction';
+};
+
+export type CompactSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type CompactSessionError = CompactSessionErrors[keyof CompactSessionErrors];
+
+export type CompactSessionResponses = {
+    /**
+     * Whether manual compaction reduced the conversation.
+     */
+    200: {
+        compacted: boolean;
+    };
+};
+
+export type CompactSessionResponse = CompactSessionResponses[keyof CompactSessionResponses];
+
+export type ForkSessionData = {
+    body: {
+        model: {
+            id: string;
+            providerId: string;
+        };
+        reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    };
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/fork';
+};
+
+export type ForkSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ForkSessionError = ForkSessionErrors[keyof ForkSessionErrors];
+
+export type ForkSessionResponses = {
+    /**
+     * A successor session forked onto the selected model and effort.
+     */
+    201: {
+        id: string;
+    };
+};
+
+export type ForkSessionResponse = ForkSessionResponses[keyof ForkSessionResponses];
+
+export type ClearSessionData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/clear';
+};
+
+export type ClearSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ClearSessionError = ClearSessionErrors[keyof ClearSessionErrors];
+
+export type ClearSessionResponses = {
+    /**
+     * An empty-history successor session, replacing this one's conversation.
+     */
+    201: {
+        id: string;
+    };
+};
+
+export type ClearSessionResponse = ClearSessionResponses[keyof ClearSessionResponses];
+
+export type RetrySessionData = {
+    body?: never;
+    path: {
+        sessionId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/retry';
+};
+
+export type RetrySessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type RetrySessionError = RetrySessionErrors[keyof RetrySessionErrors];
+
+export type RetrySessionResponses = {
+    /**
+     * The retry run event stream.
+     */
+    200: {
+        runId: string;
+        sessionId: string;
+        type: 'run.started';
+    } | {
+        event: {
+            kind: string;
+            payload?: unknown;
+            raw?: unknown;
+            runId: string;
+            seq: string;
+            text: string;
+            turn: number;
+            unknown: boolean;
+            usage?: {
+                cacheReadTokens: string;
+                cacheWriteTokens: string;
+                inputTokens: string;
+                outputTokens: string;
+                reasoningTokens: string;
+            };
+        };
+        type: 'run.event';
+    } | {
+        cursor: string;
+        reason: 'bound' | 'gap';
+        type: 'run.truncated';
+    } | {
+        code: string;
+        message: string;
+        type: 'run.error';
+    };
+};
+
+export type RetrySessionResponse = RetrySessionResponses[keyof RetrySessionResponses];
+
+export type CancelRunData = {
+    body?: never;
+    path: {
+        sessionId: string;
+        runId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/runs/{runId}/cancel';
+};
+
+export type CancelRunErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type CancelRunError = CancelRunErrors[keyof CancelRunErrors];
+
+export type CancelRunResponses = {
+    /**
+     * Cancellation was sent to the active run.
+     */
+    204: void;
+};
+
+export type CancelRunResponse = CancelRunResponses[keyof CancelRunResponses];
+
+export type SteerRunData = {
+    body: {
+        text: string;
+    };
+    path: {
+        sessionId: string;
+        runId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/runs/{runId}/steer';
+};
+
+export type SteerRunErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type SteerRunError = SteerRunErrors[keyof SteerRunErrors];
+
+export type SteerRunResponses = {
+    /**
+     * The steering instruction was sent to the active run.
+     */
+    204: void;
+};
+
+export type SteerRunResponse = SteerRunResponses[keyof SteerRunResponses];
+
+export type ResolveRunPermissionData = {
+    body: {
+        verdict: 'allow_once' | 'allow_always' | 'deny';
+    };
+    path: {
+        sessionId: string;
+        runId: string;
+        askId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/runs/{runId}/permissions/{askId}';
+};
+
+export type ResolveRunPermissionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ResolveRunPermissionError = ResolveRunPermissionErrors[keyof ResolveRunPermissionErrors];
+
+export type ResolveRunPermissionResponses = {
+    /**
+     * The permission decision was sent to the active run.
+     */
+    204: void;
+};
+
+export type ResolveRunPermissionResponse = ResolveRunPermissionResponses[keyof ResolveRunPermissionResponses];

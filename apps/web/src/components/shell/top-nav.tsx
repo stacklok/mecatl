@@ -16,9 +16,10 @@ export function TopNav() {
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-3 px-2.5 min-[500px]:px-5">
       <Link
-        aria-label="Stacklok — go to the workspace"
+        aria-label="Stacklok — go to Chats"
         className="flex shrink-0 items-center rounded-sm pl-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-        to="/workspace"
+        search={{ sessionId: undefined }}
+        to="/workspace/chat"
       >
         <span
           aria-hidden="true"

@@ -669,12 +669,33 @@ SBOM, and provenance steps as the Slack bot image, labelled
 notice between versions; `apps/docker-compose.yml` runs it against a locally built `mecated` for
 development. CI gates it with its own `studio` job and path-relevance category
 (`apps/*|.github/*|Taskfile.yml`), separate from the Go and SDK families because
-neither can change it. The bootstrap ships health, runtime status, auth, and an empty
-shell only; each feature port is a Bounded follow-up with its own acceptance plan, since
-new `/api/v1` routes and contract schemas are a public BFF interface. See
+neither can change it. The bootstrap shipped health, runtime status, auth, and the shell;
+each feature port is a Bounded follow-up with its own acceptance plan, since new
+`/api/v1` routes and contract schemas are a public BFF interface. **Chat** is the first
+feature: `/api/v1/sessions…` carries the session inventory (paged through the SDK,
+`inspect_only_kind` rows filtered, delete/rename capabilities relayed from the daemon),
+creation with mode / model / reasoning effort / `toolAccess` (`noFilesystem` → the
+`no-fs` profile), detail with cumulative usage, rename, delete, mode, compaction, fork,
+clear, and the transcript; runs, replays (`…/activity`), and retries stream as
+Server-Sent Events carrying Studio's own `type`-discriminated union — `run.started`,
+`run.event`, `run.truncated`, `run.error` — where `run.event` wraps the SDK event with `bigint` counters
+as decimal strings and an SDK kind the SDK does not model forwarded as `unknown: true`
+with its wire kind and raw payload, so protocol drift stays visible instead of being
+dropped. Replay is bounded and resumable rather than unconditional: every `run.event`
+frame carries its durable cursor in the SSE `id` field, a request resumes exactly after
+the cursor in `Last-Event-ID` (or the `resumeFrom` query parameter), a no-cursor replay
+stops after `STUDIO_ACTIVITY_REPLAY_MAX` durable replay events with a
+`run.truncated` frame that points the client at the authoritative transcript, a durable
+gap ends the stream rather than streaming across the hole, an unusable cursor is `400`,
+and a session admits `STUDIO_ACTIVITY_MAX_STREAMS` concurrent streams per replica so one
+browser cannot impose unbounded historical reads. Live events stay unbounded; cancel, steer, and permission verdicts address the exact durable run through the
+SDK's control handle and answer `409 stale_run_control` for an ended one. Every mutation
+sits behind the bootstrap's same-origin + double-submit CSRF check and, with interactive
+login active, the `401` session gate. See
 [ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
-[Studio bootstrap acceptance plan](acceptance/studio-bootstrap.md), and the workspace's
-own [README](../apps/README.md) for running and configuring it.
+[Studio bootstrap](acceptance/studio-bootstrap.md) and
+[Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own
+[README](../apps/README.md) for running and configuring it.
 
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and

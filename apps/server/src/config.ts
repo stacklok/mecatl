@@ -23,7 +23,16 @@ export interface RateLimitConfig {
   readonly windowMs: number;
 }
 
+export interface ActivityLimits {
+  /** Concurrent activity streams one session admits per replica. */
+  readonly maxStreams: number;
+  /** Durable REPLAY events one activity request forwards; live events are unbounded. */
+  readonly replayMax: number;
+}
+
 export interface StudioConfig {
+  /** Bounds on durable activity replay (see docs/acceptance/studio-chat.md). */
+  readonly activity: ActivityLimits;
   /** Inside the released image, allow static-token or no-auth runtimes. */
   readonly allowUnauthenticated: boolean;
   /** Set by the Dockerfile; refuses spawn/mock modes and gates unauthenticated runtimes. */
@@ -68,6 +77,10 @@ export function studioConfigFromEnvironment(
   }
 
   return {
+    activity: {
+      maxStreams: parseInteger(environment, "STUDIO_ACTIVITY_MAX_STREAMS", 4, 1, 1_000),
+      replayMax: parseInteger(environment, "STUDIO_ACTIVITY_REPLAY_MAX", 2_000, 1, 1_000_000),
+    },
     allowUnauthenticated: flag(environment, "STUDIO_ALLOW_UNAUTHENTICATED"),
     host: parseHost(environment.STUDIO_HOST, image),
     image,

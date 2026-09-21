@@ -3,6 +3,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { RuntimeResponse } from "@mecatl-studio/contracts";
 import type {
+  Client,
   ConnectionStatus,
   ConnectionStatusStore,
   DiagnosticRecord,
@@ -15,7 +16,11 @@ import { type Logger, silentLogger } from "../log.js";
 
 export type AuthMode = "oidc" | "static" | "none";
 
-/** The subset of the SDK client the runtime relies on; tests inject a fake. */
+/**
+ * The subset of the SDK client the runtime itself relies on. Feature adapters
+ * receive the full `Client`; tests build a fake satisfying this subset and cast
+ * it (see `testing/fakes.ts`).
+ */
 export interface RuntimeClient {
   close(): Promise<void>;
   readonly server: { compatibility(): Promise<ServerCompatibility> };
@@ -25,7 +30,7 @@ export interface RuntimeClient {
 export interface MecatlRuntime {
   /** How callers are identified to mecatl; the bootstrap flips it to `oidc` once login is configured. */
   authMode: AuthMode;
-  readonly client: RuntimeClient;
+  readonly client: Client;
   close(): Promise<void>;
   ready(): Promise<void>;
   runWithCredential<T>(accessToken: string, operation: () => Promise<T>): Promise<T>;
@@ -113,7 +118,7 @@ export interface RuntimeDependencies {
   readonly createClient?: (
     config: RuntimeConfig,
     credentialProvider: () => HeadersInit,
-  ) => Promise<RuntimeClient>;
+  ) => Promise<Client>;
   readonly logger?: Logger;
   /** Re-negotiation backoff steps in ms, bounded; tests shorten them. */
   readonly reconnectBackoffMs?: readonly number[];
@@ -208,10 +213,7 @@ function realClient(logger: Logger) {
     else if (record.level === "warn") logger.warn("sdk.diagnostic", fields);
     else logger.debug("sdk.diagnostic", fields);
   };
-  return async (
-    config: RuntimeConfig,
-    credentialProvider: () => HeadersInit,
-  ): Promise<RuntimeClient> => {
+  return async (config: RuntimeConfig, credentialProvider: () => HeadersInit): Promise<Client> => {
     if (config.source === "local") {
       return spawn({
         args: config.mock ? ["--mock"] : [],
@@ -230,7 +232,7 @@ function realClient(logger: Logger) {
 }
 
 function runtimeSnapshot(
-  client: RuntimeClient,
+  client: Client,
   config: RuntimeConfig,
   compatibility: ServerCompatibility,
 ): RuntimeResponse {

@@ -4,7 +4,7 @@
 **Work classification:** Bounded — adds the chat product surface (`/api/v1/sessions…` routes and the run SSE union) to the Studio BFF and the chat workspace to the web app, within the boundary ADR 0351 already fixed; no new durable architecture decision.
 **Decision record:** None — the browser/BFF/mecatl boundary, the published-SDK rule, and the session model are ADR 0351's; this plan only fills in the first feature contract that ADR anticipated.
 **Phase:** capability — first feature layer of the Studio stack
-**Status:** proposed, 2026-09-21. Third layer of the Studio `gh stack` (plan → bootstrap → this plan → chat implementation); scope decisions were taken by the assistant under the directing human's go-ahead and are recorded below for review.
+**Status:** landed, 2026-09-24. Candidate transition after `task studio:check`, `task docs`, and `task ac-trace` passed on the implementation layer; authoritative only when that PR merges. Proposed 2026-09-21. Third layer of the Studio `gh stack` (plan → bootstrap → this plan → chat implementation); scope decisions were taken by the assistant under the directing human's go-ahead and are recorded below for review.
 **Delivery:** Split, under the same stacking exception as [the bootstrap plan](studio-bootstrap.md): this plan is a stack layer, the implementation is the next layer, and nothing merges until the whole series is reviewed.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1736](https://github.com/stacklok/mecatl/issues/1736).

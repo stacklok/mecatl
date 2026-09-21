@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createFileRoute } from "@tanstack/react-router";
-import { EmptyWorkspace } from "../features/workspace/empty-workspace";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/workspace/")({
-  component: EmptyWorkspace,
+  beforeLoad: () => {
+    throw redirect({ search: { sessionId: undefined }, to: "/workspace/chat", replace: true });
+  },
 });
