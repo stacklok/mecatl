@@ -453,7 +453,8 @@ func prepareTeamFocusAt(th theme.Theme, b *block, member string, detail *bounded
 	return func(height int) string {
 		control := *detail
 		control.SetGeometry(bodyWidth, teamFocusRows(height), 0, bounded.Clip)
-		rows, above, below := control.View(traceLines)
+		view := control.View(traceLines)
+		rows, above, below := view.Rows, view.Above, view.Below
 		body := prefix
 		if len(traceLines) == 0 {
 			body += muted.Render("(no activity yet)")
@@ -632,7 +633,8 @@ func prepareTeamTasksAt(th theme.Theme, b *block, detail *bounded.Viewport, hk h
 	return func(height int) string {
 		control := *detail
 		control.SetGeometry(bodyWidth, teamTasksRows(height), 0, bounded.Clip)
-		rows, above, below := control.View(lines)
+		view := control.View(lines)
+		rows, above, below := view.Rows, view.Above, view.Below
 		w := renderedLineWindowBounds{start: above, end: above + len(rows), total: above + len(rows) + below, window: control.Height()}
 		return prefix + strings.Join(rows, "\n") + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.tasks)), bodyWidth)
@@ -760,7 +762,8 @@ func prepareTeamFindingsAt(th theme.Theme, b *block, detail *bounded.Viewport, h
 	return func(height int) string {
 		control := *detail
 		control.SetGeometry(bodyWidth, teamFindingsRows(height), 0, bounded.Clip)
-		rows, above, below := control.View(lines)
+		view := control.View(lines)
+		rows, above, below := view.Rows, view.Above, view.Below
 		w := renderedLineWindowBounds{start: above, end: above + len(rows), total: above + len(rows) + below, window: control.Height()}
 		return prefix + strings.Join(rows, "\n") + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", agentsDetailHint(hk, w, teamSubViewHint(hk, hk.findings)), bodyWidth)

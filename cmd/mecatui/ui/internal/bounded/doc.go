@@ -1,6 +1,8 @@
 // Package bounded provides pointer-owned, ANSI-aware bounded terminal controls.
 //
-// Viewport offsets and List logical selection are independent. Layout is measured
+// Viewport offsets and List logical selection are independent. ViewportView is a
+// contentless projection over lines supplied by its caller for each render; ListView
+// contains ListRow metadata. Layout is measured
 // in terminal display cells and invalid geometry produces an empty view. Item IDs
 // must be unique and stable across refreshes: refreshes preserve the selected ID
 // and top-visible semantic anchor; a missing selection adopts its clamped

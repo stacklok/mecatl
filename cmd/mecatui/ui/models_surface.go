@@ -266,10 +266,10 @@ func (s *modelsState) moveCursor(move bounded.Move) {
 	list.SetCursor(cursor)
 }
 
-func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bounded.Item {
-	items := make([]bounded.Item, 0, len(models))
+func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bounded.ListItem {
+	items := make([]bounded.ListItem, 0, len(models))
 	for _, model := range models {
-		items = append(items, bounded.Item{
+		items = append(items, bounded.ListItem{
 			ID:   model.ProviderID + "\x00" + model.ID,
 			Text: modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, model),
 		})

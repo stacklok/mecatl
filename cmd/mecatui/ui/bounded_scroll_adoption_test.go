@@ -267,7 +267,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 
 	list := new(bounded.List)
 	list.SetGeometry(20, 2, 2, bounded.Clip)
-	list.SetItems([]bounded.Item{{ID: "one", Text: "custom"}})
+	list.SetItems([]bounded.ListItem{{ID: "one", Text: "custom"}})
 	row := list.View().Rows[0]
 	custom := th.Style("warning").Render(map[bool]string{true: "!! "}[row.CursorMarker] + row.Text)
 	if !strings.Contains(custom, "!! custom") {
@@ -362,7 +362,7 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 }
 
 func agentsScenarioSelectedVisible(m Model, mode string) bool {
-	var list interface{ View() bounded.View }
+	var list interface{ View() bounded.ListView }
 	switch mode {
 	case "subagent-roster":
 		list = m.subagents.roster

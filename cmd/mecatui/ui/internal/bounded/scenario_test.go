@@ -15,7 +15,8 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			var viewport Viewport
 			viewport.SetGeometry(8, 2, 2, tc.policy)
-			rows, _, _ := viewport.View([]string{"\x1b[31malpha界 beta-gamma\x1b[0m", "second physical line"})
+			viewportView := viewport.View([]string{"\x1b[31malpha界 beta-gamma\x1b[0m", "second physical line"})
+			rows := viewportView.Rows
 			if len(rows) == 0 || len(rows) > 2 {
 				t.Fatalf("rendered %d physical lines, want 1..2", len(rows))
 			}
@@ -31,7 +32,8 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 		const content = "a界🙂e\u0301Z"
 		var viewport Viewport
 		viewport.SetGeometry(4, 10, 2, Wrap)
-		rows, _, _ := viewport.View([]string{"\x1b[31m" + content + "\x1b[0m"})
+		viewportView := viewport.View([]string{"\x1b[31m" + content + "\x1b[0m"})
+		rows := viewportView.Rows
 		var rebuilt strings.Builder
 		for i, row := range rows {
 			if got := 2 + ansi.StringWidth(ansi.Strip(row)); got > 4 {
@@ -51,8 +53,8 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 		for _, width := range []int{2, 1, 0, -1} {
 			var viewport Viewport
 			viewport.SetGeometry(width, 2, 2, policy)
-			if rows, _, _ := viewport.View([]string{"content"}); len(rows) != 0 {
-				t.Errorf("policy %d width %d with gutter 2 rendered %d rows, want empty", policy, width, len(rows))
+			if view := viewport.View([]string{"content"}); len(view.Rows) != 0 {
+				t.Errorf("policy %d width %d with gutter 2 rendered %d rows, want empty", policy, width, len(view.Rows))
 			}
 		}
 	}
@@ -61,7 +63,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 func TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets(t *testing.T) {
 	list := new(List)
 	list.SetGeometry(20, 3, 2, Clip)
-	list.SetItems([]Item{{ID: "zero", Text: "zero-a\nzero-b"}, {ID: "one", Text: "one-a\none-b"}, {ID: "two", Text: "two"}, {ID: "three", Text: "three-a\nthree-b"}})
+	list.SetItems([]ListItem{{ID: "zero", Text: "zero-a\nzero-b"}, {ID: "one", Text: "one-a\none-b"}, {ID: "two", Text: "two"}, {ID: "three", Text: "three-a\nthree-b"}})
 
 	list.Move(PageDown)
 	if list.Cursor() != 2 || list.CursorID() != "two" {
@@ -92,7 +94,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets(t *testing.
 func TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable(t *testing.T) {
 	list := new(List)
 	list.SetGeometry(5, 2, 2, Wrap)
-	list.SetItems([]Item{{ID: "large", Text: "\x1b[31mabcdefghijklmnopqr\x1b[0m"}, {ID: "next", Text: "next"}})
+	list.SetItems([]ListItem{{ID: "large", Text: "\x1b[31mabcdefghijklmnopqr\x1b[0m"}, {ID: "next", Text: "next"}})
 
 	for page, want := range []string{"abcdef", "ghijkl", "mnopqr"} {
 		view := list.View()
@@ -143,13 +145,13 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	if viewport.Offset() != 3 {
 		t.Fatalf("browsing offset = %d, want clamped 3", viewport.Offset())
 	}
-	if rows, _, _ := viewport.View([]string{"only"}); viewport.Offset() != 0 || len(rows) != 1 {
-		t.Fatalf("content shrink left stale offset/view: offset=%d rows=%#v", viewport.Offset(), rows)
+	if view := viewport.View([]string{"only"}); viewport.Offset() != 0 || len(view.Rows) != 1 {
+		t.Fatalf("content shrink left stale offset/view: offset=%d rows=%#v", viewport.Offset(), view.Rows)
 	}
 
 	list := new(List)
 	list.SetGeometry(12, 2, 2, Clip)
-	list.SetItems([]Item{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}, {ID: "c", Text: "c"}})
+	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}, {ID: "c", Text: "c"}})
 	list.SetCursor(1)
 	cursor, id := list.Cursor(), list.CursorID()
 	list.Scroll(LineDown)
@@ -170,7 +172,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 
 	indicators := new(List)
 	indicators.SetGeometry(12, 2, 2, Clip)
-	indicators.SetItems([]Item{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}})
+	indicators.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}})
 	indicators.Scroll(LineDown)
 	view := indicators.ViewWithIndicators(2, false)
 	if len(view.Rows) < 1 {
@@ -191,17 +193,17 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t *testing.T) {
 	list := new(List)
 	list.SetGeometry(20, 2, 2, Clip)
-	list.SetItems([]Item{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1\nb2"}, {ID: "c", Text: "c0"}})
+	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1\nb2"}, {ID: "c", Text: "c0"}})
 	list.SetCursor(1)
 	list.Move(PageDown)
-	list.SetItems([]Item{{ID: "x", Text: "x0"}, {ID: "b", Text: "b0\nb1\nb2\nb3"}, {ID: "a", Text: "a0\na1\na2"}, {ID: "c", Text: "c0"}})
+	list.SetItems([]ListItem{{ID: "x", Text: "x0"}, {ID: "b", Text: "b0\nb1\nb2\nb3"}, {ID: "a", Text: "a0\na1\na2"}, {ID: "c", Text: "c0"}})
 	if list.CursorID() != "b" || list.Cursor() != 1 {
 		t.Fatalf("refresh lost selected stable ID: cursor=(%d,%q)", list.Cursor(), list.CursorID())
 	}
 	if top := list.View().Rows[0]; top.ID != "b" || top.ItemLine != 2 {
 		t.Fatalf("refresh top anchor = {%q,%d}, want {b,2}", top.ID, top.ItemLine)
 	}
-	list.SetItems([]Item{{ID: "x", Text: "x0"}, {ID: "d", Text: "d0"}, {ID: "a", Text: "a0\na1\na2"}, {ID: "c", Text: "c0"}})
+	list.SetItems([]ListItem{{ID: "x", Text: "x0"}, {ID: "d", Text: "d0"}, {ID: "a", Text: "a0\na1\na2"}, {ID: "c", Text: "c0"}})
 	if list.CursorID() != "d" || list.Cursor() != 1 {
 		t.Fatalf("missing selected ID fallback = (%d,%q), want prior index replacement (1,d)", list.Cursor(), list.CursorID())
 	}
@@ -210,14 +212,14 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t 
 	// back to the old physical offset, clamped against the refreshed layout.
 	list = new(List)
 	list.SetGeometry(20, 2, 2, Clip)
-	list.SetItems([]Item{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}, {ID: "c", Text: "c0\nc1"}})
+	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}, {ID: "c", Text: "c0\nc1"}})
 	list.SetCursor(1)
 	list.Scroll(LineDown)
 	list.Scroll(LineDown)
 	if top := list.View().Rows[0]; top.ID != "c" || list.CursorID() != "b" {
 		t.Fatalf("top/selection setup = {%q,%q}, want {c,b}", top.ID, list.CursorID())
 	}
-	list.SetItems([]Item{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}})
+	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}})
 	if list.CursorID() != "b" {
 		t.Fatalf("missing top anchor lost selected ID: %q", list.CursorID())
 	}

@@ -1,149 +1,36 @@
 package bounded
 
-import (
-	"strings"
+import "strings"
 
-	"github.com/charmbracelet/x/ansi"
-)
+// ListItem is an entry rendered by a List.
+type ListItem struct{ ID, Text string }
 
-// Policy controls how content is fitted to the viewport.
-type Policy uint8
-
-// Content fitting policies.
-const (
-	Wrap Policy = iota
-	Clip
-)
-
-// Move identifies a viewport navigation operation.
-type Move uint8
-
-// Viewport navigation operations.
-const (
-	LineUp Move = iota
-	LineDown
-	PageUp
-	PageDown
-	Top
-	End
-)
-
-// Item is an entry rendered by a List.
-type Item struct{ ID, Text string }
-
-// Row is one rendered line in a View.
-type Row struct {
+// ListRow is one rendered line in a ListView.
+type ListRow struct {
 	Text, ID               string
 	ItemIndex, ItemLine    int
 	Selected, CursorMarker bool
 	Gutter                 string
 }
 
-// View is the bounded portion of a list and its scroll indicators.
-type View struct {
-	Rows         []Row
+// ListView is the bounded portion of a list and its scroll indicators.
+type ListView struct {
+	Rows         []ListRow
 	Above, Below int
-}
-
-// Viewport tracks the visible window over laid-out lines.
-type Viewport struct {
-	width, height, gutter int
-	policy                Policy
-	offset                int
-}
-
-// SetGeometry configures the viewport dimensions and fitting policy.
-func (v *Viewport) SetGeometry(width, height, gutter int, policy Policy) {
-	v.width, v.height, v.gutter, v.policy = width, height, max(0, gutter), policy
-	if !v.Valid() {
-		v.offset = 0
-	}
-}
-
-// Valid reports whether the viewport has usable dimensions.
-func (v *Viewport) Valid() bool { return v.width >= v.gutter+1 && v.height > 0 }
-
-// Height returns the configured viewport height.
-func (v *Viewport) Height() int { return v.height }
-
-// Offset returns the current scroll offset.
-func (v *Viewport) Offset() int { return v.offset }
-
-// Reset scrolls the viewport to its beginning.
-func (v *Viewport) Reset() { v.offset = 0 }
-
-// Clamp constrains the current offset to the configured geometry and content size.
-func (v *Viewport) Clamp(total int) { v.offset = clampScroll(v.offset, total, v.height) }
-func (v *Viewport) contentWidth() int {
-	if !v.Valid() {
-		return 0
-	}
-	return v.width - v.gutter
-}
-func (v *Viewport) layout(lines []string) []string {
-	if !v.Valid() {
-		return nil
-	}
-	var rows []string
-	for _, line := range lines {
-		for _, source := range strings.Split(line, "\n") {
-			rows = append(rows, widthLines(source, v.contentWidth(), v.policy)...)
-		}
-	}
-	return rows
-}
-func (v *Viewport) window(total int) window {
-	if !v.Valid() {
-		return window{}
-	}
-	v.offset = clampScroll(v.offset, total, v.height)
-	return lineWindow(v.offset, total, v.height)
-}
-
-// View returns the visible lines and the counts outside the viewport.
-func (v *Viewport) View(lines []string) (rows []string, above, below int) {
-	layout := v.layout(lines)
-	if len(layout) == 0 {
-		v.offset = 0
-		return nil, 0, 0
-	}
-	w := v.window(len(layout))
-	return append([]string(nil), layout[w.start:w.end]...), w.start, len(layout) - w.end
-}
-
-// Move scrolls the viewport according to move.
-func (v *Viewport) Move(move Move, total int) {
-	if !v.Valid() {
-		return
-	}
-	switch move {
-	case LineUp:
-		v.offset--
-	case LineDown:
-		v.offset++
-	case PageUp:
-		v.offset -= v.height
-	case PageDown:
-		v.offset += v.height
-	case Top:
-		v.offset = 0
-	case End:
-		v.offset = maxScrollOffset(total, v.height)
-	}
-	v.offset = clampScroll(v.offset, total, v.height)
 }
 
 // List manages selectable items in a bounded viewport.
 type List struct {
 	viewport   Viewport
-	items      []Item
+	items      []ListItem
 	cursor     int
 	cursorID   string
 	cursorLine int
 	reveal     bool
 }
+
 type listLayout struct {
-	rows         []Row
+	rows         []ListRow
 	starts, ends []int
 }
 
@@ -172,14 +59,14 @@ func (l *List) CursorID() string { return l.cursorID }
 func (l *List) RevealPending() bool { return l.reveal }
 
 // SetItems replaces the list contents while preserving compatible viewport anchors.
-func (l *List) SetItems(items []Item) {
+func (l *List) SetItems(items []ListItem) {
 	old := l.layout()
 	oldOffset, oldCursor, oldID, oldLine := l.viewport.offset, l.cursor, l.cursorID, l.cursorLine
 	topID, topLine, haveTop := "", 0, false
 	if oldOffset >= 0 && oldOffset < len(old.rows) {
 		topID, topLine, haveTop = old.rows[oldOffset].ID, old.rows[oldOffset].ItemLine, true
 	}
-	l.items = append([]Item(nil), items...)
+	l.items = append([]ListItem(nil), items...)
 	layout := l.layout()
 	if len(l.items) == 0 {
 		l.cursor, l.cursorID, l.cursorLine, l.viewport.offset = 0, "", 0, 0
@@ -250,6 +137,7 @@ func (l *List) Move(move Move) {
 	}
 	l.clamp(l.layout())
 }
+
 func (l *List) pageDown(layout listLayout, h int) {
 	if h > l.viewport.height && l.cursorLine+l.viewport.height < h {
 		l.cursorLine += l.viewport.height
@@ -266,6 +154,7 @@ func (l *List) pageDown(layout listLayout, h int) {
 	}
 	l.SetCursor(len(l.items) - 1)
 }
+
 func (l *List) pageUp(layout listLayout, h int) {
 	if h > l.viewport.height && l.cursorLine > 0 {
 		l.cursorLine = max(0, l.cursorLine-l.viewport.height)
@@ -300,15 +189,15 @@ func (l *List) pageUp(layout listLayout, h int) {
 }
 
 // View returns the visible list rows and the counts outside the viewport.
-func (l *List) View() View {
+func (l *List) View() ListView {
 	layout := l.layout()
 	if len(layout.rows) == 0 {
 		l.viewport.offset = 0
-		return View{}
+		return ListView{}
 	}
 	l.clamp(layout)
 	w := l.viewport.window(len(layout.rows))
-	rows := append([]Row(nil), layout.rows[w.start:w.end]...)
+	rows := append([]ListRow(nil), layout.rows[w.start:w.end]...)
 	marked := false
 	for i := range rows {
 		rows[i].Selected = rows[i].ID == l.cursorID
@@ -317,15 +206,15 @@ func (l *List) View() View {
 			marked = true
 		}
 	}
-	return View{Rows: rows, Above: w.start, Below: len(layout.rows) - w.end}
+	return ListView{Rows: rows, Above: w.start, Below: len(layout.rows) - w.end}
 }
 
 // ViewWithIndicators applies the one canonical indicator-adjusted geometry.
-func (l *List) ViewWithIndicators(capacity int, reveal bool) View {
+func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	if capacity <= 0 {
 		l.viewport.height = 0
 		l.reveal = false
-		return View{}
+		return ListView{}
 	}
 	reserved := 0
 	for range 3 {
@@ -364,6 +253,7 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) View {
 	l.reveal = false
 	return v
 }
+
 func (l *List) layout() listLayout {
 	layout := listLayout{starts: make([]int, len(l.items)), ends: make([]int, len(l.items))}
 	if !l.viewport.Valid() {
@@ -374,13 +264,14 @@ func (l *List) layout() listLayout {
 		layout.starts[i] = len(layout.rows)
 		for _, source := range strings.Split(item.Text, "\n") {
 			for _, text := range widthLines(source, l.viewport.contentWidth(), l.viewport.policy) {
-				layout.rows = append(layout.rows, Row{Text: text, ID: item.ID, ItemIndex: i, ItemLine: len(layout.rows) - layout.starts[i], Gutter: gutter})
+				layout.rows = append(layout.rows, ListRow{Text: text, ID: item.ID, ItemIndex: i, ItemLine: len(layout.rows) - layout.starts[i], Gutter: gutter})
 			}
 		}
 		layout.ends[i] = len(layout.rows)
 	}
 	return layout
 }
+
 func (l *List) revealCursor(layout listLayout) {
 	if len(l.items) == 0 || !l.viewport.Valid() {
 		return
@@ -400,6 +291,7 @@ func (l *List) revealCursor(layout listLayout) {
 	}
 	l.viewport.offset = clampScroll(l.viewport.offset, len(layout.rows), l.viewport.height)
 }
+
 func (l *List) clamp(layout listLayout) {
 	if len(l.items) == 0 || len(layout.rows) == 0 || !l.viewport.Valid() {
 		l.viewport.offset = 0
@@ -415,6 +307,7 @@ func (l *List) clamp(layout listLayout) {
 	l.cursorLine = min(max(0, l.cursorLine), max(0, h-1))
 	l.viewport.offset = clampScroll(l.viewport.offset, len(layout.rows), l.viewport.height)
 }
+
 func (l *List) itemIndex(id string) int {
 	for i := range l.items {
 		if l.items[i].ID == id {
@@ -424,63 +317,16 @@ func (l *List) itemIndex(id string) int {
 	return -1
 }
 
-type window struct{ start, end int }
-
-func lineWindow(scroll, total, height int) window {
-	start := clampScroll(scroll, total, height)
-	return window{start, min(total, start+height)}
-}
-func widthLines(line string, width int, policy Policy) []string {
-	if width <= 0 {
-		return nil
-	}
-	if policy == Clip {
-		return []string{ansi.Cut(line, 0, width) + "\x1b[0m"}
-	}
-	wrapped := strings.Split(ansi.Hardwrap(line, width, true), "\n")
-	lines := make([]string, 0, len(wrapped))
-	left := 0
-	for _, row := range wrapped {
-		rw := ansi.StringWidth(row)
-		if rw == 0 {
-			lines = append(lines, row+"\x1b[0m")
-			continue
-		}
-		segment := ansi.Cut(line, left, left+rw)
-		left += rw
-		if ansi.StringWidth(segment) <= width {
-			lines = append(lines, segment+"\x1b[0m")
-		}
-	}
-	if len(lines) == 0 {
-		return []string{"\x1b[0m"}
-	}
-	return lines
-}
 func lastPageOffset(h, page int) int {
 	if h <= page || page <= 0 {
 		return 0
 	}
 	return (h - 1) / page * page
 }
+
 func clampBounded(v, n int) int {
 	if n <= 0 || v < 0 {
 		return 0
 	}
 	return min(v, n-1)
-}
-func maxScrollOffset(total, window int) int {
-	if total <= window {
-		return 0
-	}
-	return total - window
-}
-func clampScroll(want, total, window int) int {
-	if want < 0 {
-		return 0
-	}
-	if mx := maxScrollOffset(total, window); want > mx {
-		return mx
-	}
-	return want
 }

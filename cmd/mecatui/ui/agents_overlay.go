@@ -1082,13 +1082,13 @@ func (l agentsSelectableList) configuredControl(th theme.Theme, height int) (*bo
 		capacity = height - th.Style("askCard").GetVerticalFrameSize() -
 			lipgloss.Height(l.header) - lipgloss.Height(l.footer) - agentsRosterSectionSeparators
 	}
-	items := make([]bounded.Item, len(l.rows))
+	items := make([]bounded.ListItem, len(l.rows))
 	for i := range l.rows {
 		id := fmt.Sprintf("row-%d", i)
 		if i < len(l.ids) && l.ids[i] != "" {
 			id = l.ids[i]
 		}
-		items[i] = bounded.Item{ID: id, Text: strings.ReplaceAll(l.rows[i], "\n    ", "\n  ")}
+		items[i] = bounded.ListItem{ID: id, Text: strings.ReplaceAll(l.rows[i], "\n    ", "\n  ")}
 	}
 	if l.control == nil {
 		l.control = new(bounded.List)
@@ -1107,12 +1107,12 @@ func (l agentsSelectableList) configuredControl(th theme.Theme, height int) (*bo
 	return l.control, max(0, capacity), reveal
 }
 
-func (l agentsSelectableList) indicatorAdjustedControl(th theme.Theme, height int) (*bounded.List, bounded.View) {
+func (l agentsSelectableList) indicatorAdjustedControl(th theme.Theme, height int) (*bounded.List, bounded.ListView) {
 	control, capacity, reveal := l.configuredControl(th, height)
 	return control, control.ViewWithIndicators(capacity, reveal)
 }
 
-func (l agentsSelectableList) boundedView(th theme.Theme, height int) bounded.View {
+func (l agentsSelectableList) boundedView(th theme.Theme, height int) bounded.ListView {
 	_, view := l.indicatorAdjustedControl(th, height)
 	return view
 }
@@ -1440,7 +1440,8 @@ func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, 
 	return func(height int) string {
 		control := *detail
 		control.SetGeometry(bodyWidth, teamFocusRows(height), 0, bounded.Clip)
-		rows, above, below := control.View(traceLines)
+		view := control.View(traceLines)
+		rows, above, below := view.Rows, view.Above, view.Below
 		body := prefix
 		if len(traceLines) == 0 {
 			body += muted.Render("(no activity yet)")
