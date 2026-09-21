@@ -364,6 +364,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio knowledge](studio-knowledge.md) — the third Studio feature layer: per-capability-gated configured and learned skills, revision-checked learned-skill actions, learning proposals and session reflection, and user-memory consolidation plans, with the knowledge workspace. Status: landed in the implementation candidate; authoritative on merge.
 
+- [Mecatl Studio settings](studio-settings.md) — the fourth Studio feature layer: the safe, capability-gated runtime-settings inventory, storage health, the eight-section settings workspace, and chat's model picker restored over the live inventory. Status: proposed.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.
