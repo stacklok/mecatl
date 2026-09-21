@@ -4,6 +4,22 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## [0.3.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.3.0)
+
+- fix(mcp): authorize client-registered MCP tools in session capability set (#1627) ([`2f33adf`](https://github.com/stacklok/mecatl/commit/2f33adfc9cc2a8aa3a3502eff9a7216ab71fc6cf))
+- feat(sdk): add run-ID-addressed controls (#1642) ([`0bf37d0`](https://github.com/stacklok/mecatl/commit/0bf37d08bfe0934ab5fa3caa1dd121624ca323b0))
+- feat(provider): ask for the prompt cache through the protocol, not the vendor (ADR 0346) (#1573) ([`2eba2cc`](https://github.com/stacklok/mecatl/commit/2eba2cc2737a0362588520ab06a51c6da16c2544))
+- feat(sdk): expose MCP workspace enrollment (#1690) ([`4c31f11`](https://github.com/stacklok/mecatl/commit/4c31f11e0b33ea276463df59a535bbeadc3ffda0))
+- fix(sdk): decode daemon HTTP timestamp and duration objects (#1686) ([`d1b659c`](https://github.com/stacklok/mecatl/commit/d1b659c1fe99bb9d5b5d8486c04b00d8edfe7b5a))
+- plan: TypeScript SDK MCP authorization lifecycle (#1687) ([`ad1cfe3`](https://github.com/stacklok/mecatl/commit/ad1cfe3c89a640905b88fb69f9905df498ba5c9c))
+- slack-bot: DM manual permission approvals instead of auto-approving (#1707) ([`e14c88d`](https://github.com/stacklok/mecatl/commit/e14c88d2c0639382cb49129c44cb494650e37cf2))
+- feat(sdk): add MCP authorization lifecycle (#1692) ([`5b0db5a`](https://github.com/stacklok/mecatl/commit/5b0db5a2608781f0c683f19864f8ecb8252969b8))
+- chore(deps): bump the npm-minor-patch group in /sdk/typescript with 3 updates (#1715) ([`39715ed`](https://github.com/stacklok/mecatl/commit/39715ed6c584b577c1f62603a21c8e2fe089e3ab))
+- slack-bot: relabel "Allow always" button to "Allow for session" (#1724) ([`9ac4798`](https://github.com/stacklok/mecatl/commit/9ac4798acb6e991365b678a7c469381765572522))
+- fix(sdk): sanitize malformed-success decode errors (#1700) ([`44786d1`](https://github.com/stacklok/mecatl/commit/44786d1755c85900becd87587b19682c49d6485b))
+
+[Compare changes](https://github.com/stacklok/mecatl/compare/sdk/typescript/v0.2.0...sdk/typescript/v0.3.0)
+
 ## [0.2.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.2.0)
 
 - fix(sdk): align Biome schema version (#1426) ([`ebb14c7`](https://github.com/stacklok/mecatl/commit/ebb14c78823946909a5ec2957d42b485bcef1e96))
