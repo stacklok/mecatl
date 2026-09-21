@@ -4,7 +4,7 @@
 **Work classification:** Bounded — restructures the client-local conversation presentation pipeline and its cache contract without changing public APIs, persistence, authority, or deployment behavior.
 **Decision record:** None — the mecatui-internal rendering boundary and its migration rationale are local to `cmd/mecatui/ui`.
 **Phase:** conversation-card rendering convergence after the landed card-layout correction
-**Status:** proposed, 2026-09-21. Operator-directed follow-up to the landed [Mecatui card layout plan](mecatui-card-layout.md).
+**Status:** approved, 2026-09-21. Plan / Interface PR [#1739](https://github.com/stacklok/mecatl/pull/1739) merged at `183bd78f02a0021c1eecb22368cf257e26950249`; the operator authorized the targeted permanent-error replay parity amendment on this implementation branch.
 **Delivery:** Split. The internal intra-UI API, card-family migration boundary, deterministic cache-key contract, and preserved scrollback invariants require interface review before implementation.
 **Expected tasks:** deferred to orchestration after the Plan / Interface review.
 
@@ -24,7 +24,7 @@ None — the operator selected the main-conversation scope, excluded modal/surfa
 - **CLI / config:** None — no flags, settings, theme selection policy, or keybindings change; existing Ctrl+t expansion remains the control for complete tool output.
 - **Events / persistence:** None — conversation block IDs, card inputs, prepared output, cache entries, and keys are process-local UI state; no session snapshot, event log, or restart contract changes.
 - **Security / authority:** None — existing plain-text terminal sanitization and the separate Glamour Markdown path remain mandatory; this introduces no new input source, permission, secret, or authority path.
-- **Compatibility / migration:** Client-internal, source-compatible migration. Existing rendering output, wrapping semantics, card expansion, selection, logical-anchor restoration, and cache fast paths remain compatible except that padding-derived double wraps/blank rows are corrected.
+- **Compatibility / migration:** Client-internal, source-compatible migration. Existing rendering output, wrapping semantics, card expansion, selection, logical-anchor restoration, and cache fast paths remain compatible except that padding-derived double wraps/blank rows are corrected and persisted permanent provider failures replay with the same permanent-error presentation as their live result.
 
 ## In scope — 3 scenarios, in implementation order
 
@@ -51,8 +51,8 @@ The main conversation's structured non-Markdown presentations migrate to the sha
   - verify: `TestMecatuiFunctionalConversationCards_Scenario2_ReadCardWrapsExactlyOnce`
 - AC2.2: Tool-card headers, arguments, results, typed artifacts, Edit/Write diffs, and Subagent/Team/Parallel projections preserve their current collapsed/expanded content and fit their final outer-card width at zero, tiny frameless-fallback, narrow, normal, and capped layouts, including unbreakable text.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario2_ToolVariantsPreserveWidthAndExpansion`
-- AC2.3: Notice, hook, permanent/non-permanent error, delivery, turn-stat, and user-prompt presentations preserve their existing labels, prefixes, collapsed/error transformations, recognized-fence handling, media placeholders, terminal-safety treatment, and width behavior through per-family preparation functions; no generic structured-block input or mode flags replace those rules.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPreserveSemantics`
+- AC2.3: Notice, hook, permanent/non-permanent error, delivery, turn-stat, and user-prompt presentations preserve their existing labels, prefixes, collapsed/error transformations, recognized-fence handling, media placeholders, terminal-safety treatment, and width behavior through per-family preparation functions; no generic structured-block input or mode flags replace those rules. A persisted `ResultMsg` with `Permanent == true` replays as the same permanent-error presentation as its live result, including the collapsed summary and expanded raw-payload behavior.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPreserveSemantics`, `TestMecatuiFunctionalConversationCards_Scenario2_PermanentErrorReplayMatchesLive`
 - AC2.4: Representative plain structured inputs containing C0/C1/ESC/DEL/control-format bytes render no unsafe terminal sequence while retaining permitted layout newlines/tabs; the Glamour Markdown path is not passed through this plain-text policy.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario2_PlainCardsRemainTerminalSafe`
 - AC2.5: Assistant Markdown, reasoning-summary rendering, and the input rail remain outside the cards package and retain their existing Glamour, emoji-width, and intentional fixed-background behavior.
