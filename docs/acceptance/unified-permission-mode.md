@@ -6,7 +6,7 @@
 **Phase:** operator surface consolidation
 **Status:** draft, 2026-09-21. Provenance: the [PR #1455 review comment](https://github.com/stacklok/mecatl/pull/1455#discussion_r4062802901) reporting that the two-knob posture plus guardrails setup is undiscoverable, that `--posture yolo` looks like the obvious pick while demoting the checker to advisory, and that `--posture auto` can run fully allow-all with nothing supervising.
 **Delivery:** Split. Seven scenarios spanning the engine domain, the proto contract, composition, four command roots, the TUI, and user documentation; the security boundary between operator ceiling and session selection needs human contract review before implementation.
-**Expected tasks:** 7
+**Expected tasks:** 8
 **Issue:** none yet. The review comment above is the provenance and the plan PR references it as ordinary text.
 **Plan PR:** added when opened
 **Approved baseline:** absent until approved
@@ -41,10 +41,10 @@ to `auto`, and a client asking for `yolo` is refused while a client asking for `
 - **Tool schemas:** None - no model-facing tool gains, loses, or changes an input or output field. The ladder is an operator and client surface; the model continues to see permission outcomes only as allow, ask, or deny results.
 - **CLI / config:** New `--permission-mode` on `mecated`, `mecatui`, `mecak8s`, and `mecatequi`, taking `plan`, `default`, `accept-edits`, `trusted`, `auto`, or `yolo`; it sets the ceiling. Default ceiling is `accept-edits` on every root except `mecak8s`, whose flag default becomes `auto` to reproduce its current `--posture auto` default. New operator-tier `permissionMode:` key in `settings.yaml`, parsed strictly, project-tier occurrences ignored with a WARN, exactly mirroring `posture:`. `Config.PermissionModeFlagSet` exists ONLY so an explicit flag outranks the YAML value, mirroring `Config.PostureFlagSet`; it is deliberately NOT an input to initial-tier derivation, because `mecak8s` reaches its `auto` ceiling through a flag DEFAULT with the bit false (pinned by `cmd/mecak8s/main_test.go`), so any provenance-based rule would silently give the shipped k8s root a different initial tier than its ceiling. Each root declares its own initial tier into the existing `server.Config.DefaultMode` instead. `--posture` and `--yolo` become deprecated aliases that still resolve, max-tier, with a WARN naming `--permission-mode`. The operator-tier `posture:` key behaves the same way. The mecatui `--mode` flag keeps its meaning as the initial session tier and gains the three new tokens. `--trust-project`, `--guardrails-model`, `--guardrails`, and `--model-slot guardrail=` are unchanged. The shipped allow-all defaults are updated in the same change to pass the kill-switch explicitly, since they run at `posture: auto` with no checker today: the `mecak8s` flag default, `.github/actions/mecatequi/action.yml` (`posture` default `auto`, `guardrails-model` empty), and `.github/workflows/mecatequi.yml`. Two new boot refusals exit non-zero before serving: ceiling at or above `auto` with no checker and no `--guardrails=off`, and ceiling exactly `trusted` on a headless root with no trust source.
 - **Events / persistence:** None - `sessnap.Snapshot` stores `session.PermissionMode` as its existing opaque string, and the three current values keep their exact spellings, so old snapshots load unchanged and new ones carry the new tokens without a schema change or migration. No `session.Event` payload gains or loses a field; the ceiling is a composition fact reported by the existing build-once startup diagnostic, not a new event. A persisted schedule keeps storing its mode as today; `schedule_manager.go` defaults an unset one to the derived initial tier instead of `ModeDefault`.
-- **Security / authority:** The ceiling is operator-tier only and is the sole authority boundary: a session may select at or below it and is refused above it, so ADR 0022's "a bypass the session can reach is a bypass prompt-injection can reach" holds in the new vocabulary. No new code path returns a permission decision ahead of `governance.Evaluate`; deny-dominance, the configured-Ask floor, and the `ScopeManaged` floor are unchanged at every tier including `yolo`. Build-time knobs derive from the ceiling, never from a live session tier. The root and no-sandbox refusal for allow-all tiers is preserved and now keys on the ceiling. Project trust remains the single ADR 0095 root-aware fold with its four sources; naming a trust-implying tier on a headless root is refused rather than silently withheld.
+- **Security / authority:** `session.ParsePermissionMode` is a TOKEN GRAMMAR ONLY and is documented as such on the symbol; it is never an authorization decision, and no caller may treat a successful parse as permission to use the tier. The clamp lives at ONE chokepoint, `Service.clampMode`, which every Service entry point calls, so the HTTP, gRPC, and ACP surfaces inherit it rather than each re-implementing it. Agent-definition frontmatter (`internal/app/agentdefs.go` `resolvePermissionMode`) KEEPS its explicit restrictive allowlist of `default`, `plan`, and `acceptEdits`, warning and falling back on anything else: a composition-bearing tier is structurally unnameable from ingested content at any trust level, which preserves today's behaviour exactly rather than adding a restriction. Persisted mode ingress (snapshot restore, fork/clear successors, and schedule fires) clamps DOWN to the current ceiling with a WARN rather than refusing, because a stored session cannot retry with a different value and refusing would brick it; live client ingress still refuses, because a client can. Delegation children never exceed their parent's effective tier. The ceiling is operator-tier only and is the sole authority boundary: a session may select at or below it and is refused above it, so ADR 0022's "a bypass the session can reach is a bypass prompt-injection can reach" holds in the new vocabulary. No new code path returns a permission decision ahead of `governance.Evaluate`; deny-dominance, the configured-Ask floor, and the `ScopeManaged` floor are unchanged at every tier including `yolo`. Build-time knobs derive from the ceiling, never from a live session tier. The root and no-sandbox refusal for allow-all tiers is preserved and now keys on the ceiling. Project trust remains the single ADR 0095 root-aware fold with its four sources; naming a trust-implying tier on a headless root is refused rather than silently withheld.
 - **Compatibility / migration:** Minor and additive on the wire and in the engine API; deprecating on the CLI for one release. Every current default is reproduced exactly: unconfigured interactive `mecated` gets ceiling `accept-edits` and initial tier `default` so shift+tab still cycles three tiers; unconfigured headless `mecated` gets the same; `mecak8s` gets ceiling and initial `auto`; `mecatui --mode plan` still starts in plan and can still cycle out. The one deliberate behavior change is `trusted`, which now also auto-accepts edits; its alias emits a WARN saying so. Flag removal is deferred to a separately classified Cleanup.
 
-## In scope - 7 scenarios, in implementation order
+## In scope - 8 scenarios, in implementation order
 
 ### Scenario 1 - one ordered ladder is the only permission vocabulary
 
@@ -175,6 +175,30 @@ the client surfaces it. See [ADR 0351](../adr/0351-one-permission-mode-ladder.md
   - verify: `TestADR_0351_ACPModePickerRespectsCeiling`
 - AC7.5: `user-docs/features/permissions-and-posture.md` documents one ladder, the ceiling and session split, both refusals, and the runtime de-escalation caveat from AC3.3, and `task docs` passes.
   - verify: inspection - prose completeness is a human review judgment under the AGENTS.md rule against pinning documentation prose in tests; `task docs` mechanically proves links and generated reference freshness.
+
+### Scenario 8 - every mode ingress clamps at one chokepoint, and ingested content cannot name authority
+
+Widening the grammar widens every parser that reads it. A mode enters the system at ten
+independent points, one of which, agent-definition frontmatter, is ingested repository content.
+`resolvePermissionMode` is safe today only because it is an explicit allowlist, and
+`session.Session.SetMode` validates the state transition but never the value, so the domain is
+not a backstop. This scenario makes the clamp structural rather than per-handler, in the spirit
+of the whole-graph guards [AGENTS.md](../../AGENTS.md) already requires elsewhere. See
+[ADR 0351](../adr/0351-one-permission-mode-ladder.md).
+
+**Acceptance:**
+- AC8.1: Every Service entry point that accepts a mode routes through one `Service.clampMode`, so the gRPC, HTTP, and ACP surfaces inherit the same refusal without re-implementing it.
+  - verify: `TestADR_0351_EveryServiceEntryClampsThroughOneChokepoint`
+- AC8.2: A structural guard enumerates every mode-bearing ingress and fails when a new one appears that does not reach the chokepoint, so a future surface cannot quietly skip it.
+  - verify: `TestADR_0351_ModeIngressStructuralGuard`
+- AC8.3: Agent-definition frontmatter accepts only `default`, `plan`, and `acceptEdits`; `trusted`, `auto`, and `yolo` warn and fall back to the caller's default, at every trust level and every def tier including an explicitly trusted project.
+  - verify: `TestADR_0351_AgentDefCannotNameCompositionBearingTier`
+- AC8.4: `session.ParsePermissionMode` is documented as a token grammar that confers no authority, and the agent-def path does not call it.
+  - verify: inspection - the guarantee is that one call site deliberately does NOT share a parser, which is proved by reading the code rather than by exercising it.
+- AC8.5: A persisted mode above the current ceiling, arriving by snapshot restore, a fork or clear successor, or a schedule fire, clamps down to the ceiling with a WARN and the session still loads.
+  - verify: `TestADR_0351_PersistedAboveCeilingClampsDownNotRefuses`
+- AC8.6: A delegation child never runs at a tier above its parent session's effective tier.
+  - verify: `TestADR_0351_ChildNeverExceedsParentTier`
 
 ## Out of scope
 
