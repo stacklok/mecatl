@@ -200,8 +200,10 @@ or in-flight manifest references them. ConfigMap and Secret projections are not 
 A manifest that arrives before its new files must fail closed without advancing the ledger; a material
 projection that arrives first must leave the old manifest's authority unchanged. The loader reads one
 manifest and confines each named file through `os.Root`; no projection-pinning helper, new config field,
-proto, or engine API is introduced. Runtime byte immutability is an operator publication obligation,
-not a newly enforced file-history registry. If reused filenames have already published mixed material,
+proto, or engine API is introduced. Before a positive rotation barrier, qualification observes the
+intended durable ledger generation; cached PodReady alone cannot establish it. Runtime byte immutability
+is an operator publication obligation, not a newly enforced file-history registry. If reused filenames
+have already published mixed material,
 retries cannot repair equal-generation digest drift: publish a complete bundle at a higher generation,
 never reset the ledger.
 
@@ -335,7 +337,7 @@ therefore requires independent environment execution fencing.
 - AC4.1: Ordinary creator client A cannot discover, attach, execute in, stream from, cancel, or retire creator client B's environment; hidden and absent allocations are indistinguishable at the public boundary. The explicit scoped administrative exception in AC4.4 permits only its named administrative RPCs.
   - verify: `TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient`, `TestScopedAdminAllRoutesOverMTLS`, `TestScopedAdminWithOwnerAttestationCannotUseAnotherCreatorsDataPlane`, `TestKindExecutionQualification` (final Kind execution PENDING).
 - AC4.2: Every command is authorized for one immutable environment revision and a distinct transient execution-fence epoch; lease loss or grant revocation prevents new commands and cancels/fences active work without exposing capability credentials to the workload or another caller's output. Same-Pod placement alone is not a security boundary.
-  - verify: `TestGrantRoundTripAndExactBindings`, `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`, `TestAcquireRunAndRevokeUseResourceVersionCAS`, `TestKindExecutionProductionSecurityRotation`, `TestKindExecutionProductionHolderLossFencesActiveOperation` (final Kind execution PENDING).
+  - verify: `TestGrantRoundTripAndExactBindings`, `TestRevokeEnvironmentFencesOldClaimWithoutChangingExecutionEpoch`, `TestAcquireRunAndRevokeUseResourceVersionCAS`, `TestSecurityRotationPinnedReplicaReadConvergesBeforeDispatch`, `TestSecurityRotationMutableNamesPoisonSameGeneration`, `TestSecurityRotationImmutableNamesHandleProjectionSkew`, `TestReadCurrentAuthorityContentRetriesOnlyPreDispatchLag`, `TestReadCurrentAuthorityContentBoundAndCancellation`, `TestKindExecutionProductionSecurityRotation`, `TestKindExecutionProductionHolderLossFencesActiveOperation` (final Kind execution PENDING).
 - AC4.3: Timeout, Pod deletion, controller restart, Lease timeout, or network partition alone never authorizes a replacement executor while an old writer may run; unknown fencing state fails closed and requires the reviewed manual/external fencing path.
   - verify: `TestExpiredOperationLeaseFencesWithoutClearingIdentity`, `TestRecoverMissingPodRemainsFenceUnknown`, `TestRecoveredTerminalProofCanStartExactReplacement`, `TestKindExecutionProductionHolderLossFencesActiveOperation` (final Kind execution PENDING); inspection — external fencing runbook review PENDING.
 - AC4.4: A distinct `administrator:true` client with `administratorFor:[creatorURI]` can administer that creator's environment through all six administrative RPCs, including migration, revocation, and retained deletion, while preserving immutable creator identity and exact owner/revision/epoch/UID/operation checks. A second creator, wrong owner, stale identity, or replay with changed inputs is denied without existence disclosure. Self-admin compatibility remains explicit; no Files/Shell/attach/run/reference or MayAttestOwner authority is gained.
@@ -471,8 +473,22 @@ at that generation. This is a reproduced defect, **not proof that it caused the 
 new immutable filenames while retaining old entries. All three pass offline with `-race`, without
 sleeps or a cluster. The native exact-cap stdout/stderr/combined repair-expansion regression first
 failed with `Truncated=false`, then passed with `-race` after tracking clipping after UTF-8 repair;
-earlier bounded-writer truncation remains ORed into the result. Fixture publication/barrier changes
-and final runtime qualification are still separate evidence; no live inference or cluster run is claimed.
+earlier bounded-writer truncation remains ORed into the result. Implementation `faacfcde7` stages and
+retains immutable fixture names, observes the requested ledger generation, and uses a bounded read-only
+barrier (30 seconds, at most 60 calls) that admits only structured retryable `not_ready`.
+`TestReadCurrentAuthorityContentRetriesOnlyPreDispatchLag` and
+`TestReadCurrentAuthorityContentBoundAndCancellation` pin success, immediate wrong-content/nonretryable/
+wrong-code failure, persistent lag, and cancellation without sleeps. The rotation generator's
+`TestForwardRestoreTrustBundleSupportsFixtureClient` pins the actual manifest filename references;
+its new filename assertions failed before the fixture fix and pass afterward. Tagged race tests and
+compilation pass. Old-client rejection uses the current successful final claim; the revoked-k1 probe
+reuses Helm's re-sign/current-claim positive controls. No new mutating retry was added; the existing
+bounded AcquireRun helper is unchanged. Full untagged `task lint` and one full `task test` invocation
+(including module race and standalone checks), docs/checker, site build, strict
+native-plan trace (32 ACs, zero missing; draft/report-only), targeted four-package race tests, and the
+offline demo pass. Tagged whole-fixture lint exposes unrelated pre-existing findings; the changed-line
+gate against baseline `2d32864cee8378939cb55137e1ab369e70a18349` passes with zero issues.
+These results do not replace final runtime qualification; no live inference or cluster run is claimed.
 
 [PR #1728](https://github.com/stacklok/mecatl/pull/1728), commit
 `6501b5924`, is already integrated in the implementation ancestry. Its generic live-compaction
@@ -507,7 +523,7 @@ new-head CI, final live execution, or human contract/panel approval.
 | AC5.6 | Deployment-documentation inspection and docs gates required on the final implementation; Kind is restart proof only. |
 | AC6.1–AC6.2 | `internal/app/remote_execution_test.go`: `TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog` includes a nonempty LOCAL Git snapshot control and REMOTE exclusion, poison-source and operator-global prompt controls, forbidden-tool errors and command/worktree discovery. `TestRemoteExecutionPreservesOperatorPermissionsUnderAuto` exercises global/explicit-file Deny and configured Ask, excluding project permissions, with allowed in-memory Shell controls. `TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall` retains the no-FS check. `internal/adapter/executionclient/service_integration_test.go`: `TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain` rejects background Shell and actual Clear/Fork unsupported-selector calls with named errors, no destination publication, and unchanged source ref/history and provider references. |
 | AC6.3 | `internal/adapter/executioncontroller/store_lifecycle_test.go`: `TestReferenceTransactionsRetainUnknownAndNeverChangeSource`; production `TestKindExecutionProductionClearForkLifecycle`. |
-| AC7.1 | `.github/workflows/k8s-e2e.yml` runs `task e2e:k8s:execution:production`; the historical reference job succeeded, but the newer job failed during quota-dependent fixture setup before tests. `internal/adapter/executioncontroller/legacy_fixture_kind_test.go` covers the bounded accounting wait offline. `e2e/k8s_execution/aa_production_migration_test.go`: `TestKindExecutionProductionCompatiblePrototypeMigration`. Final amended-candidate run **PENDING**. |
+| AC7.1 | `.github/workflows/k8s-e2e.yml` runs `task e2e:k8s:execution:production`; the historical reference job succeeded. The latest operator-reported job at `f7919f6c` passed 10/11 production tests and failed rotation's final read; it progressed past the earlier quota setup failure. Offline rotation evidence and read-only barrier controls are listed above. `internal/adapter/executioncontroller/legacy_fixture_kind_test.go` covers the bounded quota-accounting wait. Final amended-candidate run **PENDING**. |
 | AC7.2 | `e2e/k8s_execution/qualification_test.go`: `TestKindExecutionQualification`, run by the successful production profile. |
 | AC7.3 | Production `TestKindExecutionProductionFailureArtifactBoundary`; workflow bounded uploads and ownership-scoped cleanup. |
 | AC7.4 | `e2e/k8s_execution/live_qualification_test.go`: `TestKindExecutionLiveQualification` exists; successful final native-provider OpenRouter evidence **PENDING**. |
