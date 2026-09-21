@@ -214,7 +214,7 @@ function approvalBlocks(
       },
       {
         action_id: `${ACTION_PREFIX}allow_always`,
-        text: { text: "Allow always", type: "plain_text" },
+        text: { text: "Allow for session", type: "plain_text" },
         type: "button",
         value: askId,
       },
