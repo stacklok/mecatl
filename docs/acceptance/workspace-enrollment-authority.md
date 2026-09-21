@@ -8,7 +8,7 @@
 **Delivery:** Split. The change alters persisted session authority provenance, snapshot/successor behavior, and terminal enrollment failure semantics.
 **Expected tasks:** 3.
 **Issue:** [stacklok/mecatl#1740](https://github.com/stacklok/mecatl/issues/1740).
-**Plan PR:** absent until opened.
+**Plan PR:** [#1741](https://github.com/stacklok/mecatl/pull/1741).
 **Approved baseline:** absent until approved.
 
 Workspace enrollment reconfigures an idle existing session: it builds a session engine with the authenticated broker bundle and persists the same aggregate. Completion must preserve all non-broker capabilities, replace only the known dynamic broker bundle, and never widen a deliberately attenuated session. A rare duplicate between an enrolled broker registration and a non-broker registration fails the complete enrollment rather than silently redirecting or partially publishing tools.
