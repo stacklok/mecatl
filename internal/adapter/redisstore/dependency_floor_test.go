@@ -71,7 +71,7 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 	}
 	text := string(rootMod)
 	for module, version := range map[string]string{
-		"github.com/stacklok/toolhive-core":           "v0.0.46",
+		"github.com/stacklok/toolhive-core":           "v0.0.50",
 		"github.com/stacklok/toolhive-core/redisconn": "v0.0.2",
 	} {
 		if !strings.Contains(text, module+" "+version) {

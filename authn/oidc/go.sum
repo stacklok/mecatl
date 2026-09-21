@@ -33,8 +33,8 @@ github.com/shirou/gopsutil/v4 v4.26.8 h1:YQMTF/1J50B5+Y0vlo1eDRf5DoR7Gk69hY+8wjY
 github.com/shirou/gopsutil/v4 v4.26.8/go.mod h1:5O9FjBiXoTDFatIWjZZosqj4pV0DRtLx598xGbBehzM=
 github.com/stacklok/mecatl/engine v0.14.0 h1:cGUygB7auxWNmvQ2gRKgY/IBRHMNe+kB1KO7YDYxoYM=
 github.com/stacklok/mecatl/engine v0.14.0/go.mod h1:eEW9h6sXmyArEz1mO29NUFpKOqB51BJwfcsc77F8Guc=
-github.com/stacklok/toolhive-core v0.0.47 h1:b2c32sFB28T6UnQ4MdXlMC4fOOluXTr1yP/JX/lRBqA=
-github.com/stacklok/toolhive-core v0.0.47/go.mod h1:KtjAC32my8OJZa7dpMfM/VOOgQ8wgQfGpKyijcOBFE8=
+github.com/stacklok/toolhive-core v0.0.50 h1:RlU7QF2j2MJyXFIHB6DSbpB3JP2svE6MjX0gIfyDMJY=
+github.com/stacklok/toolhive-core v0.0.50/go.mod h1:AiYjq5S1t1kKQ9Gwh3NAI3FVvBymG7RH/LOseydKq78=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
