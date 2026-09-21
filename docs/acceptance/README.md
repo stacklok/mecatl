@@ -414,6 +414,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio workspace shell](studio-workspace-shell.md) — responsive workspace navigation and search interaction, accessible error routes, installable assets, and honest loaded-shell offline status. Status: proposed.
 - [Mecatl Studio appearance foundation](studio-appearance-foundation.md) — semantic light/dark tokens and Default, Aztec, Mono, and Solar choices in Appearance; same-origin fonts and pre-paint state; accessible shared controls for the 500px pivot. Status: landed (candidate, pending stacked PR merges).
+- [Unified permission mode](unified-permission-mode.md) — collapse the operator posture ladder and the per-session permission mode into one ordered vocabulary (`plan < default < accept-edits < trusted < auto < yolo`) bound at two scopes, an operator ceiling and a session tier clamped to it, plus boot refusals when an allow-all ceiling has no guardrails checker or a headless root names `trusted`. Status: proposed.
 
 ## See also
 
