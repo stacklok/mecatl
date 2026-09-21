@@ -370,74 +370,74 @@ func Of(s *session.Session) (Snapshot, error) {
 // Restore reconstructs a Session from a Snapshot by driving the session state
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
-func (snap Snapshot) Restore() (*session.Session, error) {
-	if !snap.EnvironmentRef.Valid() {
+func (s Snapshot) Restore() (*session.Session, error) {
+	if !s.EnvironmentRef.Valid() {
 		return nil, errors.New("sessnap: missing or invalid environment_ref")
 	}
-	s := session.New(snap.ID, snap.Mode, snap.EnvironmentRef, snap.Limits, snap.CreatedAt)
-	if err := s.RestoreSessionMetadata(snap.Kind, snap.Relationship); err != nil {
+	restored := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
+	if err := restored.RestoreSessionMetadata(s.Kind, s.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
 
-	if err := restoreAuthority(s, snap.Authority); err != nil {
+	if err := restoreAuthority(restored, s.Authority); err != nil {
 		return nil, err
 	}
 
 	// Rebuild the conversation history verbatim.
-	for _, dto := range snap.Messages {
-		s.Conversation.Append(fromDTO(dto))
+	for _, dto := range s.Messages {
+		restored.Conversation.Append(fromDTO(dto))
 	}
 	// Restore opaque creation labels by direct assignment. Title-specific metadata
 	// restores atomically through RestoreTitleMetadata below.
-	s.Profile = snap.Profile
-	s.ProviderID = snap.ProviderID
-	s.ModelID = snap.ModelID
-	s.ReasoningEffort = snap.ReasoningEffort
-	s.Placement = snap.Placement
-	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
-	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
-	s.DebugTargetFingerprint = snap.DebugTargetFingerprint
-	s.ExternalBinding = snap.ExternalBinding
+	restored.Profile = s.Profile
+	restored.ProviderID = s.ProviderID
+	restored.ModelID = s.ModelID
+	restored.ReasoningEffort = s.ReasoningEffort
+	restored.Placement = s.Placement
+	restored.DebugMCPServers = append([]string(nil), s.DebugMCPServers...)
+	restored.DebugMCPTools = append([]string(nil), s.DebugMCPTools...)
+	restored.DebugTargetFingerprint = s.DebugTargetFingerprint
+	restored.ExternalBinding = s.ExternalBinding
 	// RunID restores by direct assignment, like Profile/Title above: it is an
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.
-	s.BeginRun(snap.RunID)
-	s.RestoreTitleMetadata(snap.Title, snap.TitleProvenance, snap.TitleRevision, snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
+	restored.BeginRun(s.RunID)
+	restored.RestoreTitleMetadata(s.Title, s.TitleProvenance, s.TitleRevision, s.TitleGeneration, s.TitleSourcePrompts, s.TitleAttempts)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).
-	if err := s.RestoreLabels(snap.Owner, session.Authority{}); err != nil {
+	if err := restored.RestoreLabels(s.Owner, session.Authority{}); err != nil {
 		return nil, fmt.Errorf("sessnap: restore labels: %w", err)
 	}
-	if err := s.RestoreIncarnation(snap.Incarnation); err != nil {
+	if err := restored.RestoreIncarnation(s.Incarnation); err != nil {
 		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
 	}
 
-	if snap.TokenUsage == nil {
+	if s.TokenUsage == nil {
 		return nil, errors.New("sessnap: missing canonical token_usage")
 	}
-	pendingAuthorization := fromPendingAuthorizationDTO(snap.PendingAuthorization)
+	pendingAuthorization := fromPendingAuthorizationDTO(s.PendingAuthorization)
 	data := RestoreData{
-		State:                snap.State,
-		Stop:                 snap.StopReason,
-		Pending:              snap.Pending,
+		State:                s.State,
+		Stop:                 s.StopReason,
+		Pending:              s.Pending,
 		PendingAuthorization: pendingAuthorization,
-		Counters:             snap.Counters,
-		TokenUsage:           snap.TokenUsage,
-		Failure:              session.RetryMetadata{Disposition: snap.RetryDisposition, Progress: snap.StreamProgress},
-		RetryPending:         snap.RetryPending,
-		Retry:                session.RetryMetadata{Disposition: snap.RetryPendingDisposition, Progress: snap.RetryPendingProgress},
-		LastError:            snap.LastError,
+		Counters:             s.Counters,
+		TokenUsage:           s.TokenUsage,
+		Failure:              session.RetryMetadata{Disposition: s.RetryDisposition, Progress: s.StreamProgress},
+		RetryPending:         s.RetryPending,
+		Retry:                session.RetryMetadata{Disposition: s.RetryPendingDisposition, Progress: s.RetryPendingProgress},
+		LastError:            s.LastError,
 	}
-	if err := RestoreState(s, data); err != nil {
+	if err := RestoreState(restored, data); err != nil {
 		return nil, err
 	}
-	if snap.PendingWorkspaceEnrollment != nil {
-		if err := s.BeginWorkspaceEnrollment(*snap.PendingWorkspaceEnrollment); err != nil {
+	if s.PendingWorkspaceEnrollment != nil {
+		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {
 			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
 		}
 	}
-	return s, nil
+	return restored, nil
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {

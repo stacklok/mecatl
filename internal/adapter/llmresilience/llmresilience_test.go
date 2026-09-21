@@ -54,8 +54,7 @@ func TestEncryptedReasoningFallbackFailureIsNotReplayedByOuterResilience(t *test
 		// operator classifier that would otherwise retry every error.
 		Classifier: func(error) bool { return true },
 	})
-	assistant := session.NewAssistantMessage("", "opaque-blob", nil)
-	assistant.ReasoningItemID = "rs_bad"
+	assistant := session.NewAssistantMessage("", `{"v":1,"items":[{"i":"rs_bad","e":"opaque-blob"}]}`, nil)
 	req := port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}}
 
 	seq, err := wrapped.Stream(context.Background(), req)

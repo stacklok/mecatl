@@ -8,9 +8,12 @@
 
 **Follow-on:** return to the [reading map](../READING.md) and choose another topic branch. **Related:** [context & compaction](context-and-compaction.md) covers per-run context management, which is independent of memory.
 
-`tool.MemoryStore` (`RememberEntry`/`Recall`/`List`/`Forget`/`Index`/`Search`) is
-the seam for conservative, **per-project** memory (every implementation must pass
-the shared `engine/adapter/memconformance` conformance suite). The file-backed
+`tool.MemoryStore` (`Remember`/`Inspect`/`Recall`/`List`/`Forget`/`Index`/
+`Search`/`Undo`) is the mandatory lifecycle/CAS seam for conservative,
+**per-project** memory (every implementation must pass the shared
+`engine/adapter/memconformance` conformance suite). Remember is create-only for an
+absent expected state or an exact opaque-version update; Forget and Undo also
+require the exact current version. The file-backed
 `internal/adapter/memory` persists entries scoped to a project directory and exposes them to
 the model as the **Remember**, **Recall**, and **SearchMemory** tools (opt-in via
 `memory.Register`, `--memory-dir`). `internal/adapter/dream` supplies both automatic and
@@ -29,8 +32,8 @@ resets on restart. Plans bind the exact inspected lifecycle versions.
 **Automatic maintenance** remains exact-duplicate-only. It requires the local store's internal
 atomic duplicate-retirement operation, compares the survivor and source versions, and
 requires byte-identical active value and description. One source is tombstoned per transaction,
-the survivor is never rewritten, lifecycle history is retained, and base/convergence-only
-remote stores skip application. `--memory-consolidate-interval` and
+the survivor is never rewritten, lifecycle history is retained, and stores without
+the separate atomic duplicate-retirement operation skip application. `--memory-consolidate-interval` and
 `--user-model-consolidate-interval` remain separate opt-in schedules and default to zero.
 Periodic diagnostics contain counts only.
 

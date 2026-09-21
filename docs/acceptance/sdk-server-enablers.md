@@ -173,14 +173,14 @@ The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0250
   - verify: `TestSDKServerEnablers_Scenario6_CursorConformanceAllBackends`
 - AC6.2: Existing `port.EventLog` behaviour is unchanged for every backend — the additive port breaks no consumer.
   - verify: `TestADR_0250_EventLogContractUnbroken`
-- AC6.3: A cursor from a prior log generation yields `CursorExpiredError`, never silent degradation or wrong data. This holds for a LIVE FOLLOWER, not only for a cold attach: a follower has already passed the entry-point check and is parked at the tail when the basis moves, so every backend re-verifies the basis on each read cycle — and does so AFTER the read, because a blocking `XREAD` straddles a delete/recreate and can carry a record from a log that did not exist when the cycle began. The legacy path is included, where the trigger is not a delete but the in-place migration itself, guaranteed on the log's next append. (The follower half was added after review of [#869](https://github.com/stacklok/mecatl/pull/869); `memstore` and JSONL already re-checked, Redis did not, and the case reproduced as silent wrong data — a record from the replacement log — before the fix.)
-  - verify: `TestADR_0250_StaleGenerationCursorExpires`, `TestRedisStoreCursorEventLogConformance/a_reset_during_a_live_follow_expires_the_cursor`, `TestLegacyFollowerExpiresWhenMigrationLandsUnderIt`
-- AC6.4: A tampered or malformed cursor is rejected, never coerced to a position. A cursor is scoped to BOTH the session it was issued for and the log generation, so one presented against a different session is rejected too — including on the legacy path, where every pre-generation log reports the EMPTY generation and so shares a basis value the generation check alone cannot separate. (Session scoping was added after review of [#868](https://github.com/stacklok/mecatl/pull/868); it was reproduced as silent wrong data in both shipped backends first.)
-  - verify: `TestADR_0250_TamperedCursorRejected`, `TestADR_0250_CursorIsSessionScoped`, `TestADR_0250_EncodeFailureIsFailClosed`, `TestLegacyListCursorIsSessionScoped`
+- AC6.3: A cursor from a prior current-log generation yields `CursorExpiredError`, never silent degradation or wrong data. This holds for a live follower, not only for a cold attach: every retained backend re-verifies the basis on each read cycle and after the read.
+  - verify: `TestADR_0250_StaleGenerationCursorExpires`, `TestRedisStoreCursorEventLogConformance/a_reset_during_a_live_follow_expires_the_cursor`
+- AC6.4: A tampered or malformed cursor is rejected, never coerced to a position. A cursor is scoped to both the session it was issued for and the current log generation.
+  - verify: `TestADR_0250_TamperedCursorRejected`, `TestADR_0250_CursorIsSessionScoped`, `TestADR_0250_EncodeFailureIsFailClosed`
 - AC6.5: A watcher in a second process observes durable appends made by the first — the cross-process obligation, proved over Redis and JSONL. (JSONL in `06a`; Redis in `06b`, which completes the AC.)
   - verify: `TestADR_0250_CrossProcessWatchObservesAppends`
-- AC6.6: Existing Redis LIST event logs are readable after the Stream migration; no session loses its history. (`06b`.)
-  - verify: `TestSDKServerEnablers_Scenario6_LegacyRedisListMigrates`
+- AC6.6: Retired by the approved alpha compatibility cleanup: legacy Redis LIST migration is no longer a current acceptance claim, and old namespaces are ignored rather than migrated.
+  - verify: none — retired compatibility path; current-only namespace behavior is covered by `TestOldSnapshotNamespacesAreIgnoredUntouched`
 - AC6.7: A gap marker occupies an append position and advances cursors, is surfaced by `ReadAfter`, and is **skipped** by the legacy `EventLog.Read`.
   - verify: `TestADR_0250_GapMarkerIsEnvelopeNotEvent`
 - AC6.8: `session.Event` and the proto `Event` message gain no gap-related field; the event kind-parity surface is unchanged.

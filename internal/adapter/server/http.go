@@ -346,64 +346,6 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 	return &resolvedModelJSON{ProviderID: rm.ProviderID, ModelID: rm.ModelID, ContextWindow: rm.ContextWindow, ReasoningEffort: rm.ReasoningEffort}
 }
 
-// serverCapabilitiesJSON mirrors mecatlv1.ServerCapabilities for the JSON
-// surface, so an HTTP client receives the same honest feature flags the gRPC
-// client gets. Populated from the shared Service.capabilities() so the two
-// surfaces cannot drift.
-type serverCapabilitiesJSON struct {
-	MCPConnectorStatus bool                              `json:"mcp_connector_status"`
-	MCP                bool                              `json:"mcp"`
-	SlashCommands      bool                              `json:"slash_commands"`
-	Memory             bool                              `json:"memory"`
-	Skills             bool                              `json:"skills"`
-	Teams              bool                              `json:"teams"`
-	Shell              bool                              `json:"shell"`
-	Image              bool                              `json:"image"`
-	Audio              bool                              `json:"audio"`
-	ModelSelection     bool                              `json:"model_selection"`
-	Reflection         bool                              `json:"reflection"`
-	LearningProposals  bool                              `json:"learning_proposals"`
-	LearnedSkills      bool                              `json:"learned_skills"`
-	StorageHealth      bool                              `json:"storage_health"`
-	StorageCleanup     bool                              `json:"storage_cleanup"`
-	SessionDebug       bool                              `json:"session_debug"`
-	DebugMCP           bool                              `json:"debug_mcp"`
-	ManualDream        *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
-	Steer              bool                              `json:"steer"`
-	ManualCompaction   bool                              `json:"manual_compaction"`
-	Posture            string                            `json:"posture,omitempty"`
-}
-
-// capabilitiesJSON projects the shared proto capabilities onto the JSON shape.
-func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
-	if c == nil {
-		return nil
-	}
-	return &serverCapabilitiesJSON{
-		MCPConnectorStatus: c.GetMcpConnectorStatus(),
-		MCP:                c.GetMcp(),
-		SlashCommands:      c.GetSlashCommands(),
-		Memory:             c.GetMemory(),
-		Skills:             c.GetSkills(),
-		Teams:              c.GetTeams(),
-		Shell:              c.GetShell(),
-		Image:              c.GetImage(),
-		Audio:              c.GetAudio(),
-		ModelSelection:     c.GetModelSelection(),
-		Reflection:         c.GetReflection(),
-		LearningProposals:  c.GetLearningProposals(),
-		LearnedSkills:      c.GetLearnedSkills(),
-		StorageHealth:      c.GetStorageHealth(),
-		StorageCleanup:     c.GetStorageCleanup(),
-		SessionDebug:       c.GetSessionDebug(),
-		DebugMCP:           c.GetDebugMcp(),
-		ManualDream:        c.GetManualDream(),
-		Steer:              c.GetSteer(),
-		ManualCompaction:   c.GetManualCompaction(),
-		Posture:            c.GetPosture(),
-	}
-}
-
 type sessionResp struct {
 	SessionID string                 `json:"session_id"`
 	State     string                 `json:"state"`

@@ -24,7 +24,7 @@ func (f *sessionMediaFixture) CreateSession(_ context.Context, _ *mecatlv1.Creat
 	}, nil
 }
 
-func (f *sessionMediaFixture) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+func (*sessionMediaFixture) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
 	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: &mecatlv1.ServerCapabilities{Teams: true}}, nil
 }
 

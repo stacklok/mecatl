@@ -821,15 +821,17 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 		t.Fatalf("HTTP rename status = %d", resp.StatusCode)
 	}
 	var got struct {
-		Title           string `json:"title"`
-		TitleProvenance string `json:"title_provenance"`
+		TitleMetadata struct {
+			Title      string `json:"title"`
+			Provenance string `json:"provenance"`
+		} `json:"title_metadata"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		resp.Body.Close()
 		t.Fatalf("decode HTTP rename: %v", err)
 	}
 	resp.Body.Close()
-	if got.Title != "renamed" || got.TitleProvenance != string(session.TitleProvenanceOperator) {
+	if got.TitleMetadata.Title != "renamed" || got.TitleMetadata.Provenance != string(session.TitleProvenanceOperator) {
 		t.Fatalf("HTTP rename response = %+v", got)
 	}
 	resp, err = http.Post(httpServer.URL+"/v1/sessions/"+string(httpSession.ID)+"/delete", "application/json", nil)

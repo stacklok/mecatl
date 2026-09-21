@@ -18,7 +18,6 @@
     ifacemethod func (LLMProvider).Capabilities() ProviderCapabilities
     ifacemethod func (LLMProvider).Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)
     ifacemethod func (MetaLister).MetaList(ctx context.Context) ([]SessionMeta, error)
-    ifacemethod func (PermanentError).Permanent() bool
     ifacemethod func (PermissionPolicy).Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
     ifacemethod func (PermissionPolicy).Learn(sessionID session.SessionID, c session.ToolCall)
     ifacemethod func (PermissionStore).Record(sessionID session.SessionID, rule governance.Rule)
@@ -66,12 +65,6 @@
     ifacemethod func (SessionLiveness).IsLive(session.SessionID) bool
     ifacemethod func (SessionLiveness).Register(ctx context.Context, id session.SessionID, cancel context.CancelFunc) (release func(), err error)
     ifacemethod func (SessionMetadataPager).PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
-    ifacemethod func (SessionMigrationStore).AcquireSessionMigrationJob(context.Context, string) (acquired context.Context, release func() error, err error)
-    ifacemethod func (SessionMigrationStore).CheckSessionMigrationJobOwnership(context.Context) error
-    ifacemethod func (SessionMigrationStore).InspectSessionMigration(context.Context) (SessionMigrationInspection, error)
-    ifacemethod func (SessionMigrationStore).LoadSessionMigrationJob(context.Context, string) (SessionMigrationJob, error)
-    ifacemethod func (SessionMigrationStore).MigrateSessionFamily(context.Context, SessionMigrationFamily) (string, error)
-    ifacemethod func (SessionMigrationStore).SaveSessionMigrationJob(context.Context, SessionMigrationJob) error
     ifacemethod func (SessionStorageHealthProvider).SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)
     ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
@@ -119,10 +112,6 @@ const SessionLineageRetained SessionLineageState = "retained"
 const SessionLoadFailureSnapshot SessionLoadFailureClass = 2
 const SessionLoadFailureStore SessionLoadFailureClass = 1
 const SessionLoadFailureUnknown SessionLoadFailureClass = 0
-const SessionMigrationCancelled SessionMigrationState = "cancelled"
-const SessionMigrationCompleted SessionMigrationState = "completed"
-const SessionMigrationPlanned SessionMigrationState = "planned"
-const SessionMigrationRunning SessionMigrationState = "running"
 const StreamProgressComplete session.StreamProgress = 3
 const StreamProgressPrecommit session.StreamProgress = 1
 const StreamProgressUnknown session.StreamProgress = 0
@@ -183,7 +172,6 @@ type MetaLister interface{MetaList(ctx context.Context) ([]SessionMeta, error)}
 type MisfirePolicy int
 type NopDeliveryQueue struct{}
 type NopDiagnostics struct{}
-type PermanentError interface{Permanent() bool; error}
 type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
 type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
 type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}
@@ -220,12 +208,6 @@ type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID; Ge
 type SessionMetadataPage struct{Sessions []SessionDiscoveryMeta; NextCursor *SessionMetadataCursor; TotalCount int}
 type SessionMetadataPageRequest struct{Limit int; Cursor *SessionMetadataCursor; OwnershipEnforced bool; Owner *session.Principal}
 type SessionMetadataPager interface{PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)}
-type SessionMigrationError struct{ItemHandle string "json:\"item_handle\""; ReasonCode string "json:\"reason_code\""; Message string "json:\"message\""}
-type SessionMigrationFamily struct{ID session.SessionID "json:\"-\""; Handle string "json:\"handle\""; Fingerprint string "json:\"fingerprint\""; OwnerKey string "json:\"owner_key\""; Kind session.SessionKind "json:\"kind\""; State session.State "json:\"state\""; Bytes int64 "json:\"bytes\""}
-type SessionMigrationInspection struct{Available bool; UnavailableReason string; Generation string; V1Families int64; V2Families int64; InvalidFamilies int64; SkippedFamilies int64; CurrentBytes int64; ReclaimableBytes int64; TemporaryBytes int64; Families []SessionMigrationFamily}
-type SessionMigrationJob struct{ID string "json:\"id\""; PrincipalKey string "json:\"principal_key\""; State SessionMigrationState "json:\"state\""; Generation string "json:\"generation\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""; V1Families int64 "json:\"v1_families\""; V2Families int64 "json:\"v2_families\""; InvalidFamilies int64 "json:\"invalid_families\""; SkippedFamilies int64 "json:\"skipped_families\""; CurrentBytes int64 "json:\"current_bytes\""; ReclaimableBytes int64 "json:\"reclaimable_bytes\""; TemporaryBytes int64 "json:\"temporary_bytes\""; Processed int64 "json:\"processed\""; Migrated int64 "json:\"migrated\""; Failed int64 "json:\"failed\""; Errors []SessionMigrationError "json:\"errors,omitempty\""; TerminalItems map[string]bool "json:\"terminal_items,omitempty\""}
-type SessionMigrationState string
-type SessionMigrationStore interface{AcquireSessionMigrationJob(context.Context, string) (acquired context.Context, release func() error, err error); CheckSessionMigrationJobOwnership(context.Context) error; InspectSessionMigration(context.Context) (SessionMigrationInspection, error); LoadSessionMigrationJob(context.Context, string) (SessionMigrationJob, error); MigrateSessionFamily(context.Context, SessionMigrationFamily) (string, error); SaveSessionMigrationJob(context.Context, SessionMigrationJob) error}
 type SessionStorageHealth struct{Available bool; UnavailableReason string; CurrentBytes int64; CurrentBytesAvailable bool; ReclaimableBytes int64; ReclaimableBytesAvailable bool; SessionCount int64; FileCount int64; V1Count int64; V2Count int64; MainCount int64; ChildCount int64; ScheduledCount int64; UnknownCount int64; CorruptCount int64}
 type SessionStorageHealthProvider interface{SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)}
 type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*session.Session, error); Save(ctx context.Context, s *session.Session) error}

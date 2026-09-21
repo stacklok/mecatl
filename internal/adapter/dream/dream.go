@@ -413,7 +413,6 @@ func (c *Consolidator) selectEntries(ctx context.Context, entries []tool.MemoryE
 		}
 		entry := entries[(start+examined)%len(entries)]
 		examined++
-		binding := candidate{entry: entry}
 		record, found, err := c.store.Inspect(ctx, entry.Key)
 		if err != nil {
 			return nil, nil, fmt.Errorf("dream: inspect candidate: %w", err)
@@ -422,7 +421,7 @@ func (c *Consolidator) selectEntries(ctx context.Context, entries []tool.MemoryE
 			continue
 		}
 		entry = tool.MemoryEntry{Key: record.Current.Key, Value: record.Current.Value, Description: record.Current.Description, UpdatedAt: record.Current.UpdatedAt}
-		binding = candidate{entry: entry, version: record.Current.Version}
+		binding := candidate{entry: entry, version: record.Current.Version}
 		raw, err := json.Marshal(entryWireOf(entry))
 		if err != nil {
 			return nil, nil, errors.New("dream: encode candidate")

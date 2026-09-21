@@ -1,7 +1,7 @@
 # Session storage continuity — acceptance plan
 
 **Phase:** Large historical stores, migration, cleanup, and writable legacy continuity.
-**Status:** draft historical record, partially superseded 2026-09-02 by [ADR 0291](../adr/0291-server-owned-session-placement.md). Storage migration/cleanup landed; writable legacy-adoption criteria and their deleted proofs are no longer current acceptance claims.
+**Status:** superseded historical record, 2026-09-21. The directing user's approved alpha compatibility cleanup retired legacy storage migration, promotion, adoption, and maintenance APIs plus their proofs; current-only namespace behavior is authoritative and this record has no current traceability claims.
 **Issue:** [stacklok/mecatl#583](https://github.com/stacklok/mecatl/issues/583), with sub-issues [#586](https://github.com/stacklok/mecatl/issues/586)–[#596](https://github.com/stacklok/mecatl/issues/596).
 **ADR:** [ADR-0226](../adr/0226-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
 **Accumulator branch:** `acc/session-storage-continuity` (off `main`).

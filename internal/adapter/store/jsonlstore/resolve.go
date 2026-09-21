@@ -396,12 +396,12 @@ func (r sessionResolver) loadSnapshot(id session.SessionID) ([]byte, error) {
 	return nil, sessionNotFound(id)
 }
 
-func (st *Store) prepareWrite(id session.SessionID) error {
+func (*Store) prepareWrite(id session.SessionID) error {
 	return validateSessionID(id)
 }
 
-func (r sessionResolver) snapshotModifiedAt(_ session.SessionID, now time.Time) (time.Time, error) {
-	return now.UTC(), nil
+func (sessionResolver) snapshotModifiedAt(_ session.SessionID, now time.Time) time.Time {
+	return now.UTC()
 }
 
 // readablePath resolves only the current family's canonical sidecar.

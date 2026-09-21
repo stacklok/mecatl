@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** command-tool identity and POSIX compatibility
-**Status:** landed, 2026-09-09. The implementation candidate passed its required gates; `landed` becomes authoritative when its implementation PR merges.
+**Status:** landed, 2026-09-09, with the legacy `--no-bash` alias retired by the directing user's approved alpha compatibility cleanup on 2026-09-21. The canonical `--no-shell` switch remains; the obsolete alias is now rejected.
 **Delivery:** Split. This changes model-facing tool schemas, compatibility behavior, operator configuration, durable awaiting-call handling, and an engine-module dependency; those interfaces require a Plan / Interface checkpoint before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1109](https://github.com/stacklok/mecatl/issues/1109).
@@ -72,8 +72,8 @@ as an unknown-tool error. This follows the deny-dominant permission invariant in
   - verify: `TestCanonicalShellTool_Scenario2_LegacyConfigPreservesDeny`
 - AC2.2: A restored legacy `Bash` pending call is not translated into Shell: after a human verdict it follows ordinary unknown-tool handling and does not execute.
   - verify: `TestCanonicalShellTool_Scenario2_LegacyPendingCallRejected`
-- AC2.3: `--no-shell` is the advertised switch and legacy `--no-bash` has identical disabling behavior without appearing in help; current configuration and user documentation present only Shell, with one migration footnote for Bash.
-  - verify: `TestCanonicalShellTool_Scenario2_LegacyNoBashFlag`
+- AC2.3: `--no-shell` is the sole switch; the retired alpha `--no-bash` alias is rejected, and current configuration and user documentation present only Shell.
+  - verify: `TestCanonicalShellToolRejectsLegacyNoBashFlag`
 
 ### Scenario 3 — Bounded Bash-AST portability feedback is non-authoritative
 

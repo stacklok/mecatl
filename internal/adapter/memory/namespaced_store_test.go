@@ -19,7 +19,7 @@ func callerContext(subject, workspace string) context.Context {
 	return ctx
 }
 
-func createMemory(t *testing.T, ctx context.Context, store tool.MemoryStore, entry tool.MemoryEntry) tool.MemoryRecord {
+func createMemory(ctx context.Context, t *testing.T, store tool.MemoryStore, entry tool.MemoryEntry) tool.MemoryRecord {
 	t.Helper()
 	record, err := store.Remember(ctx, entry, tool.MemoryCurrent{})
 	if err != nil {
@@ -32,8 +32,8 @@ func TestCallerStorePartitionsUserMemoryByVerifiedPrincipal(t *testing.T) {
 	store := NewCallerStore(memmemory.New(), false)
 	alice := callerContext("alice", "")
 	bob := callerContext("bob", "")
-	createMemory(t, alice, store, tool.MemoryEntry{Key: "user/preference", Value: "alice"})
-	createMemory(t, bob, store, tool.MemoryEntry{Key: "user/preference", Value: "bob"})
+	createMemory(alice, t, store, tool.MemoryEntry{Key: "user/preference", Value: "alice"})
+	createMemory(bob, t, store, tool.MemoryEntry{Key: "user/preference", Value: "bob"})
 
 	aliceEntry, found, err := store.Recall(alice, "user/preference")
 	if err != nil || !found || aliceEntry.Value != "alice" {
@@ -52,8 +52,8 @@ func TestCallerStorePartitionsProjectMemoryByWorkspace(t *testing.T) {
 	store := NewCallerStore(memmemory.New(), true)
 	left := callerContext("alice", "/workspace/left")
 	right := callerContext("alice", "/workspace/right")
-	createMemory(t, left, store, tool.MemoryEntry{Key: "project/deploy", Value: "left"})
-	createMemory(t, right, store, tool.MemoryEntry{Key: "project/deploy", Value: "right"})
+	createMemory(left, t, store, tool.MemoryEntry{Key: "project/deploy", Value: "left"})
+	createMemory(right, t, store, tool.MemoryEntry{Key: "project/deploy", Value: "right"})
 
 	leftEntry, _, _ := store.Recall(left, "project/deploy")
 	rightEntry, _, _ := store.Recall(right, "project/deploy")
@@ -69,8 +69,8 @@ func TestNamespacedStorePreservesCASAndLogicalKeys(t *testing.T) {
 	base := memmemory.New()
 	left := NewNamespacedStore(base, "left")
 	right := NewNamespacedStore(base, "right")
-	first := createMemory(t, context.Background(), left, tool.MemoryEntry{Key: "profile/editor", Value: "helix"})
-	createMemory(t, context.Background(), right, tool.MemoryEntry{Key: "profile/editor", Value: "vim"})
+	first := createMemory(context.Background(), t, left, tool.MemoryEntry{Key: "profile/editor", Value: "helix"})
+	createMemory(context.Background(), t, right, tool.MemoryEntry{Key: "profile/editor", Value: "vim"})
 
 	updated, err := left.Remember(context.Background(), tool.MemoryEntry{Key: "profile/editor", Value: "zed"}, tool.MemoryCurrent{Exists: true, Version: first.Current.Version})
 	if err != nil || updated.Current.Key != "profile/editor" {

@@ -150,16 +150,19 @@ func (s *NamespacedStore) logicalError(err error) error {
 	return err
 }
 
+// Inspect returns the lifecycle record for a logical key in this namespace.
 func (s *NamespacedStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
 	record, ok, err := s.store.Inspect(ctx, s.key(key))
 	return s.trimRecord(record), ok, s.logicalError(err)
 }
 
+// Forget tombstones a logical key when its current version matches expected.
 func (s *NamespacedStore) Forget(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	record, err := s.store.Forget(ctx, s.key(key), expected)
 	return s.trimRecord(record), s.logicalError(err)
 }
 
+// Undo restores a logical key when its current version matches expected.
 func (s *NamespacedStore) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	record, err := s.store.Undo(ctx, s.key(key), expected)
 	return s.trimRecord(record), s.logicalError(err)
@@ -311,6 +314,7 @@ func (s *CallerStore) Search(ctx context.Context, query string, limit int) ([]to
 	return store.Search(ctx, query, limit)
 }
 
+// Inspect returns the lifecycle record for a key in the verified caller's namespace.
 func (s *CallerStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -319,6 +323,7 @@ func (s *CallerStore) Inspect(ctx context.Context, key string) (tool.MemoryRecor
 	return store.Inspect(ctx, key)
 }
 
+// Forget tombstones a key in the verified caller's namespace.
 func (s *CallerStore) Forget(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {
@@ -327,6 +332,7 @@ func (s *CallerStore) Forget(ctx context.Context, key string, expected tool.Memo
 	return store.Forget(ctx, key, expected)
 }
 
+// Undo restores a key in the verified caller's namespace.
 func (s *CallerStore) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	store, err := s.scoped(ctx)
 	if err != nil {

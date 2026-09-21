@@ -229,15 +229,19 @@ func TestHTTPApprove(t *testing.T) {
 			events = append(events, &ev)
 			if ev.GetType() == "permission.ask" && !approved {
 				approved = true
-				body, _ := json.Marshal(map[string]any{"ask_id": ev.GetAsk().GetAskId(), "allow": true})
-				ar, aerr := http.Post(srv.URL+"/v1/sessions/"+id+"/approve",
+				body, _ := json.Marshal(map[string]any{
+					"expected_run_id": ev.GetRunId(),
+					"ask_id":          ev.GetAsk().GetAskId(),
+					"verdict":         session.VerdictStringAllowOnce,
+				})
+				ar, aerr := http.Post(srv.URL+"/v1/sessions/"+id+"/controls/resolve-ask",
 					"application/json", bytes.NewReader(body))
 				if aerr != nil {
 					t.Fatalf("POST approve: %v", aerr)
 				}
 				ar.Body.Close()
-				if ar.StatusCode != http.StatusNoContent {
-					t.Fatalf("approve status = %d", ar.StatusCode)
+				if ar.StatusCode != http.StatusOK {
+					t.Fatalf("resolve ask status = %d", ar.StatusCode)
 				}
 			}
 			if ev.GetType() == "result" {

@@ -77,21 +77,24 @@ var (
 	_ port.SessionLineageReader           = (*SessionStore)(nil)
 )
 
-const sessionCapabilityTimeout = 5 * time.Second
+const (
+	sessionCapabilityTimeout = 5 * time.Second
+	sessionStoreContract     = "session-store/1"
+)
 
-// NewSessionStore wraps an established driver connection (see Dial), probing
-// optional operations once. UNIMPLEMENTED means an older Save/Load-only driver;
-// any other probe failure fails construction rather than guessing capabilities.
+// NewSessionStore wraps an established driver connection (see Dial) and
+// requires the exact current base contract before trusting optional capability
+// bits. There is no old-peer or UNIMPLEMENTED fallback.
 func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*SessionStore, error) {
 	st := &SessionStore{client: driverv1.NewSessionStoreServiceClient(conn)}
 	probeCtx, cancel := context.WithTimeout(ctx, sessionCapabilityTimeout)
 	defer cancel()
 	caps, err := st.client.Capabilities(probeCtx, &driverv1.SessionStoreCapabilitiesRequest{})
-	if status.Code(err) == codes.Unimplemented {
-		return st, nil
-	}
 	if err != nil {
 		return nil, rpcErr(probeCtx, "negotiate session-store capabilities", err)
+	}
+	if caps == nil || caps.GetContract() != sessionStoreContract {
+		return nil, fmt.Errorf("remote session driver contract is %q, want %q", caps.GetContract(), sessionStoreContract)
 	}
 	st.list = caps.GetList()
 	st.metadataPaging = caps.GetMetadataPaging()
@@ -314,23 +317,13 @@ func metadataAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadataCu
 		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
 }
 
-// legacyOrBoundCursorFields reports whether Generation/Scope/Continuation are
-// either all absent (an older peer's pre-generation-binding cursor, still a
-// legitimate value per port.PaginateSessionMetadata) or all present (this
-// protocol's generation-bound cursor) -- never a partial mix, which would
-// indicate a corrupt or forged cursor. A version-skewed peer that never
-// populates these fields degrades to ErrSessionMetadataCursorRestart on the
-// next page rather than a hard reject; see docs/adr/0226-session-storage-maintenance.md.
-func legacyOrBoundCursorFields(generation, scope, continuation string) bool {
-	if generation == "" && scope == "" && continuation == "" {
-		return true
-	}
+func completeBoundCursorFields(generation, scope, continuation string) bool {
 	return generation != "" && scope != "" && continuation != ""
 }
 
 func validPortMetadataCursor(cursor *port.SessionMetadataCursor) bool {
 	return cursor != nil && cursor.ID != "" && utf8.ValidString(string(cursor.ID)) &&
-		legacyOrBoundCursorFields(cursor.Generation, cursor.Scope, cursor.Continuation)
+		completeBoundCursorFields(cursor.Generation, cursor.Scope, cursor.Continuation)
 }
 
 func validateMetadataPage(page port.SessionMetadataPage, request port.SessionMetadataPageRequest) error {
@@ -440,7 +433,7 @@ func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse, activityP
 	}
 	if cursor := resp.GetNextCursor(); cursor != nil {
 		if cursor.GetModifiedAt() == nil || cursor.GetModifiedAt().CheckValid() != nil || cursor.GetSessionId() == "" ||
-			!legacyOrBoundCursorFields(cursor.GetGeneration(), cursor.GetScope(), cursor.GetContinuation()) {
+			!completeBoundCursorFields(cursor.GetGeneration(), cursor.GetScope(), cursor.GetContinuation()) {
 			return port.SessionMetadataPage{}, fmt.Errorf("grpcdriver: page metadata: driver returned an invalid next cursor")
 		}
 		page.NextCursor = &port.SessionMetadataCursor{

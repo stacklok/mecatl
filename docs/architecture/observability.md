@@ -403,11 +403,19 @@ The session and memory stores have a **wire seam**: an operator can point
 either at a remote, operator-run **driver process** speaking the
 `mecatl.driver.v1` protocol (`contracts/proto/mecatl/driver/v1/` —
 `SessionStoreService` for `port.SessionStore`, `MemoryStoreService` for
-`tool.MemoryStore`). Memory lifecycle is an additive optional capability: the original
-six memory RPCs stay wire-compatible, while RememberVersioned/InspectMemory/
-ForgetVersioned/UndoLatest carry opaque versions and revision history. The profile
-read deliberately uses original `List`, so old drivers retain profile parity;
-destructive lifecycle calls against an old driver return an honest unsupported error.
+`tool.MemoryStore`). Both services require successful bounded capability
+negotiation with the exact current base-contract marker before composition; an
+old peer, an empty response, timeout, or transport failure fails construction.
+Memory's wire surface directly mirrors the mandatory lifecycle/CAS port:
+Remember carries the complete expected presence/version, Inspect returns bounded
+history, and Forget/Undo require exact opaque versions. There is no unconditional
+write/delete RPC and no fallback to an older memory contract. Session capability
+bits remain honest for genuinely optional backend operations such as listing,
+metadata paging, deletion, lineage, create, and activity projection. Metadata
+continuation cursors are accepted only when key, generation, ownership scope, and
+opaque continuation are all present. Remote driver backing stores own their
+namespace; the harness neither scans old driver artifacts nor guesses formats from
+opaque payload bytes.
 The durable **schedule registry** has the same seam:
 `ScheduleStoreService` + `ScheduleOneShotReArmerService` back
 `port.ScheduleStore` + `port.ScheduleOneShotReArmer` (`--schedule-store-url`,

@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -19,17 +17,6 @@ func newInternalStore(t *testing.T) *Store {
 		t.Fatalf("New: %v", err)
 	}
 	return st
-}
-
-func snapshotLine(t *testing.T, id session.SessionID, title string) []byte {
-	t.Helper()
-	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "current"}, session.Limits{}, time.Unix(1, 0).UTC())
-	s.SetTitle(title)
-	line, err := sessnap.Marshal(s)
-	if err != nil {
-		t.Fatalf("sessnap.Marshal: %v", err)
-	}
-	return line
 }
 
 func writeBytes(t *testing.T, path string, content []byte) {

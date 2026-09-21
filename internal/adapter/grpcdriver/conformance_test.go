@@ -145,7 +145,11 @@ func TestGRPCMemoryStoreConformance(t *testing.T) {
 		conn := dialBufconn(t, func(gs *grpc.Server) {
 			driverv1.RegisterMemoryStoreServiceServer(gs, NewMemoryStoreServer(backend))
 		})
-		return NewMemoryStore(conn)
+		store, err := NegotiateMemoryStore(t.Context(), conn)
+		if err != nil {
+			t.Fatalf("NegotiateMemoryStore: %v", err)
+		}
+		return store
 	})
 }
 

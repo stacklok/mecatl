@@ -127,7 +127,7 @@ func (st *Store) inventoryFingerprint() (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func (st *Store) inventorySources() (map[string]inventoryCatalogSource, error) {
+func (*Store) inventorySources() (map[string]inventoryCatalogSource, error) {
 	return map[string]inventoryCatalogSource{}, nil
 }
 

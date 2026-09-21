@@ -473,8 +473,15 @@ Follow [Operate local session storage](session-storage-operations.md) for the
 schema, service definitions, backups, migration, and restore.
 
 `--session-store-url` replaces the local store with a gRPC driver and cannot be
-combined with `--store-dir`. Current remote drivers do not support OIDC caller
-ownership; use local JSONL or `mecak8s` for multi-user deployments.
+combined with `--store-dir`. Session and memory drivers must negotiate Mecatl's
+current contract at startup; old or partially implemented peers are rejected.
+Optional session operations such as listing, metadata paging, deletion, lineage,
+atomic create, and activity projection remain capability-gated. Remote driver
+operators own their backing namespace and upgrade policy: Mecatl does not scan,
+adopt, migrate, or reject unrelated old driver artifacts. Malformed data returned
+from the selected current namespace fails closed. Current remote drivers do not
+support OIDC caller ownership; use local JSONL or `mecak8s` for multi-user
+deployments.
 
 `--learning-store-url` selects a trusted single-tenant driver for distributed
 learning. Startup rejects partial driver support and deployments with OIDC

@@ -22,7 +22,11 @@ func newWiredMemoryStore(t *testing.T) (*MemoryStore, *memory.Store) {
 	conn := dialBufconn(t, func(server *grpc.Server) {
 		driverv1.RegisterMemoryStoreServiceServer(server, NewMemoryStoreServer(backend))
 	})
-	return NewMemoryStore(conn), backend
+	store, err := NegotiateMemoryStore(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NegotiateMemoryStore: %v", err)
+	}
+	return store.(*MemoryStore), backend
 }
 
 func TestMemoryCASRoundTripOverCurrentGeneratedBridge(t *testing.T) {
@@ -105,5 +109,47 @@ func TestNegotiateMemoryStoreRequiresMandatoryCapabilities(t *testing.T) {
 	})
 	if _, err := NegotiateMemoryStore(context.Background(), conn); err == nil {
 		t.Fatal("old driver without capabilities was accepted")
+	}
+}
+
+type emptyMemoryCapabilitiesServer struct {
+	driverv1.UnimplementedMemoryStoreServiceServer
+}
+
+func (emptyMemoryCapabilitiesServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
+	return &driverv1.MemoryStoreCapabilitiesResponse{}, nil
+}
+
+func TestNegotiateMemoryStoreRejectsEmptyCapabilities(t *testing.T) {
+	conn := dialBufconn(t, func(server *grpc.Server) {
+		driverv1.RegisterMemoryStoreServiceServer(server, emptyMemoryCapabilitiesServer{})
+	})
+	if store, err := NegotiateMemoryStore(context.Background(), conn); err == nil || store != nil {
+		t.Fatalf("empty negotiation = (%T, %v), want rejection", store, err)
+	}
+}
+
+type malformedMemoryRecordServer struct {
+	driverv1.UnimplementedMemoryStoreServiceServer
+}
+
+func (malformedMemoryRecordServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
+	return &driverv1.MemoryStoreCapabilitiesResponse{Contract: memoryStoreContract}, nil
+}
+
+func (malformedMemoryRecordServer) Remember(context.Context, *driverv1.RememberRequest) (*driverv1.MemoryRecordResponse, error) {
+	return &driverv1.MemoryRecordResponse{Record: &driverv1.MemoryRecord{}}, nil
+}
+
+func TestMemoryClientRejectsMalformedCurrentRecord(t *testing.T) {
+	conn := dialBufconn(t, func(server *grpc.Server) {
+		driverv1.RegisterMemoryStoreServiceServer(server, malformedMemoryRecordServer{})
+	})
+	store, err := NegotiateMemoryStore(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NegotiateMemoryStore: %v", err)
+	}
+	if _, err := store.Remember(context.Background(), tool.MemoryEntry{Key: "profile/editor", Value: "helix"}, tool.MemoryCurrent{}); err == nil {
+		t.Fatal("malformed current record was accepted")
 	}
 }

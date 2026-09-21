@@ -52,7 +52,7 @@ permanently-failed session is recovered for re-entry.
 
 The pieces:
 
-1. **`engine/port/llm.go` (`PermanentError`):** a new interface with a single `Permanent()
+1. **[`PermanentError` in `engine/port/llm.go` at the decision commit](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/engine/port/llm.go):** a new interface with a single `Permanent()
    bool` method, documented as fail-open (a nil target / non-implementing error is NOT
    permanent). It carries no provider detail — the adapter's `Error()` string is the
    human-readable surface.

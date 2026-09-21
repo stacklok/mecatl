@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -93,26 +94,34 @@ type oldSessionStoreServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
 }
 
-func TestSessionStoreCapabilityNegotiationOldAndNewDrivers(t *testing.T) {
-	t.Run("old driver is base-only", func(t *testing.T) {
+type emptySessionCapabilitiesServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (emptySessionCapabilitiesServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return &driverv1.SessionStoreCapabilitiesResponse{}, nil
+}
+
+func currentSessionCapabilities() *driverv1.SessionStoreCapabilitiesResponse {
+	return &driverv1.SessionStoreCapabilitiesResponse{Contract: sessionStoreContract}
+}
+
+func TestSessionStoreCapabilityNegotiationRequiresCurrentContract(t *testing.T) {
+	t.Run("unimplemented capability RPC is rejected", func(t *testing.T) {
 		conn := dialBufconn(t, func(gs *grpc.Server) {
 			driverv1.RegisterSessionStoreServiceServer(gs, oldSessionStoreServer{})
 		})
-		st := mustNewSessionStore(t, conn)
-		if _, ok := any(st).(port.PrunableStore); !ok {
-			t.Fatal("old driver client lost unconditional PrunableStore compatibility")
+		if st, err := NewSessionStore(context.Background(), conn); err == nil || st != nil {
+			t.Fatalf("old driver negotiation = (%T, %v), want rejection", st, err)
 		}
-		if _, ok := any(st).(port.SessionMetadataPager); !ok {
-			t.Fatal("old driver client lost unconditional SessionMetadataPager compatibility")
-		}
-		if st.SupportsSessionDelete() {
-			t.Fatal("old driver advertised delete support")
-		}
-		if _, err := st.List(context.Background()); !errors.Is(err, port.ErrPruneUnsupported) {
-			t.Fatalf("old driver List error = %v, want ErrPruneUnsupported", err)
-		}
-		if _, err := st.PageSessionMetadata(context.Background(), port.SessionMetadataPageRequest{Limit: 1}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
-			t.Fatalf("old driver PageSessionMetadata error = %v, want unsupported", err)
+	})
+
+	t.Run("empty capability response is rejected", func(t *testing.T) {
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, emptySessionCapabilitiesServer{})
+		})
+		if st, err := NewSessionStore(context.Background(), conn); err == nil || st != nil {
+			t.Fatalf("empty negotiation = (%T, %v), want rejection", st, err)
 		}
 	})
 
@@ -174,6 +183,45 @@ func TestNewSessionStoreFailsClosedOnCapabilityProbeFailure(t *testing.T) {
 	})
 }
 
+func TestMetadataCursorRequiresCompleteBinding(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	base := port.SessionMetadataCursor{ID: "session", ModifiedAt: now, Generation: "generation", Scope: "scope", Continuation: "continuation"}
+	if _, err := pageMetadataRequest(port.SessionMetadataPageRequest{Limit: 1, Cursor: &base}); err != nil {
+		t.Fatalf("bound cursor rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*port.SessionMetadataCursor){
+		"generation":   func(c *port.SessionMetadataCursor) { c.Generation = "" },
+		"scope":        func(c *port.SessionMetadataCursor) { c.Scope = "" },
+		"continuation": func(c *port.SessionMetadataCursor) { c.Continuation = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cursor := base
+			mutate(&cursor)
+			if _, err := pageMetadataRequest(port.SessionMetadataPageRequest{Limit: 1, Cursor: &cursor}); err == nil {
+				t.Fatal("partial cursor was accepted")
+			}
+		})
+	}
+}
+
+func TestMetadataCursorBoundRoundTripAndUnboundResponseRejection(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	bound := &driverv1.SessionMetadataCursor{
+		ModifiedAt: timestamppb.New(now), SessionId: "session", Generation: "generation", Scope: "scope", Continuation: "continuation",
+	}
+	page, err := metadataPageFromProto(&driverv1.PageSessionMetadataResponse{NextCursor: bound}, false)
+	if err != nil {
+		t.Fatalf("bound cursor response: %v", err)
+	}
+	if page.NextCursor == nil || page.NextCursor.Generation != "generation" || page.NextCursor.Scope != "scope" || page.NextCursor.Continuation != "continuation" {
+		t.Fatalf("bound cursor changed: %+v", page.NextCursor)
+	}
+	unbound := &driverv1.SessionMetadataCursor{ModifiedAt: timestamppb.New(now), SessionId: "session"}
+	if _, err := metadataPageFromProto(&driverv1.PageSessionMetadataResponse{NextCursor: unbound}, false); err == nil {
+		t.Fatal("unbound response cursor was accepted")
+	}
+}
+
 // TestLoadMissWrapsSentinel pins the §C table's not-found row: a driver
 // NOT_FOUND surfaces as ErrNotFound wrapping port.ErrSessionNotFound, with
 // the id in the message.
@@ -220,6 +268,10 @@ type unknownFormatServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
 }
 
+func (unknownFormatServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return currentSessionCapabilities(), nil
+}
+
 func TestLoadTransportFailureIsClassifiedStore(t *testing.T) {
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterSessionStoreServiceServer(gs, unavailableLoadServer{})
@@ -263,12 +315,20 @@ type snapshotLoadServer struct {
 	payload []byte
 }
 
+func (snapshotLoadServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return currentSessionCapabilities(), nil
+}
+
 func (s snapshotLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
 	return &driverv1.LoadResponse{Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: s.payload}}, nil
 }
 
 type unavailableLoadServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (unavailableLoadServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return currentSessionCapabilities(), nil
 }
 
 func (unavailableLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
@@ -303,6 +363,10 @@ func TestSaveNilSessionNoRPC(t *testing.T) {
 type countingSessionServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
 	saves int
+}
+
+func (*countingSessionServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return currentSessionCapabilities(), nil
 }
 
 func (s *countingSessionServer) Save(context.Context, *driverv1.SaveRequest) (*driverv1.SaveResponse, error) {
@@ -485,7 +549,7 @@ type notFoundDeleteServer struct {
 }
 
 func (notFoundDeleteServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
-	return &driverv1.SessionStoreCapabilitiesResponse{Delete: true}, nil
+	return &driverv1.SessionStoreCapabilitiesResponse{Delete: true, Contract: sessionStoreContract}, nil
 }
 
 func (notFoundDeleteServer) Delete(context.Context, *driverv1.DeleteSessionRequest) (*driverv1.DeleteSessionResponse, error) {

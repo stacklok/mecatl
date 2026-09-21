@@ -83,8 +83,9 @@ service SessionStoreService {
   // harness client and mapped to success).
   rpc Delete(DeleteSessionRequest) returns (DeleteSessionResponse);
 
-  // Capabilities negotiates optional additive operations. Old drivers return
-  // UNIMPLEMENTED and are treated as supporting only Save/Load.
+  // Capabilities is mandatory current-contract negotiation. UNIMPLEMENTED,
+  // transport failure, timeout, or a missing/wrong contract marker fails
+  // construction; optional backend operations remain represented by booleans.
   rpc Capabilities(SessionStoreCapabilitiesRequest) returns (SessionStoreCapabilitiesResponse);
 }
 
@@ -243,6 +244,9 @@ message SessionStoreCapabilitiesResponse {
   bool lineage = 4;
   bool create = 5;
   bool activity_projection = 6;
+  // contract identifies the indivisible current base Save/Load contract. The
+  // optional booleans above describe only genuinely optional backend seams.
+  string contract = 7 [(buf.validate.field).string.min_len = 1];
 }
 
 message ReadSessionLineageRequest {

@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
+
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
 func TestCanonicalHarnessProtocolReservations(t *testing.T) {

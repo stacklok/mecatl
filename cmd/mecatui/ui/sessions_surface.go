@@ -76,8 +76,6 @@ const (
 	maintenanceCleanupJob
 )
 
-const maintenanceBatchSize int32 = 25
-
 type cleanupPlanMsg struct {
 	plan client.CleanupPlan
 	err  error

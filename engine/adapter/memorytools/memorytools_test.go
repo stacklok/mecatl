@@ -95,7 +95,7 @@ func (s *fakeStore) Forget(_ context.Context, key string, expected tool.MemoryVe
 	s.records[key] = record
 	return record, nil
 }
-func (s *fakeStore) Undo(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+func (*fakeStore) Undo(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
 	return tool.MemoryRecord{}, errors.New("not implemented")
 }
 func (*fakeStore) Index(context.Context) ([]tool.MemoryEntry, error) { return nil, nil }

@@ -473,7 +473,7 @@ func TestNonLaunchReflectionDoesNotReadLaunchProjectMemory(t *testing.T) {
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{})
 	t.Cleanup(coordinator.Close)
 	project := memmemory.New()
-	rememberProfile(t, context.Background(), project, tool.MemoryEntry{Key: "project/launch", Value: "launch-only"})
+	rememberProfile(context.Background(), t, project, tool.MemoryEntry{Key: "project/launch", Value: "launch-only"})
 	inputs := make(chan learning.Input, 1)
 	observer := &reflectionObserver{
 		coordinator: coordinator, reflector: captureReflectionInput{input: inputs}, repository: memproposal.New(),

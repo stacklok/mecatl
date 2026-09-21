@@ -553,10 +553,7 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 		if err := st.prepareWrite(s.ID); err != nil {
 			return err
 		}
-		modifiedAt, err := st.resolver.snapshotModifiedAt(s.ID, time.Now())
-		if err != nil {
-			return fmt.Errorf("jsonlstore: resolve snapshot modification time: %w", err)
-		}
+		modifiedAt := st.resolver.snapshotModifiedAt(s.ID, time.Now())
 		data, err := json.Marshal(currentSnapshot{
 			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Activity: session.ActivityOf(s.Conversation.Messages), Snapshot: payload,
 		})

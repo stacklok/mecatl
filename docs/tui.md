@@ -855,8 +855,7 @@ a wired user-model lister. It fires `GetUserModel` (a **live** read of the
 user-model store's bounded index) and shows count · size · hash over a key/description
 list. Move with `↑`/`↓`; `enter` lazily requests the selected key's exact current
 value and up to 16 recent lifecycle revisions. Every server-derived field is terminal-
-sanitized. Old/base-only stores show the current value and honestly report history as
-unavailable. Proposal-linked revisions show the proposal id beside their existing provenance.
+sanitized. Current stores show the exact current value and up to 16 retained revisions. Proposal-linked revisions show the proposal id beside their existing provenance.
 `esc` returns from detail or closes the panel. The surface is read-only:
 Forget remains an ordinary model tool behind its permission gate.
 

@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 )
 
-func rememberProfile(t *testing.T, ctx context.Context, store tool.MemoryStore, entry tool.MemoryEntry) {
+func rememberProfile(ctx context.Context, t *testing.T, store tool.MemoryStore, entry tool.MemoryEntry) {
 	t.Helper()
 	current, found, err := store.Inspect(ctx, entry.Key)
 	if err != nil {
@@ -36,14 +36,14 @@ func TestUserFacingChildRolesInjectFreshVolatileOperatorProfile(t *testing.T) {
 	for _, role := range []string{"task", "parallel", "member:lead"} {
 		t.Run(role, func(t *testing.T) {
 			store := memmemory.New()
-			rememberProfile(t, context.Background(), store, tool.MemoryEntry{Key: "user/output/language", Value: "Prefer French by default."})
+			rememberProfile(context.Background(), t, store, tool.MemoryEntry{Key: "user/output/language", Value: "Prefer French by default."})
 			var requests []port.LLMRequest
 			provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))
 			cfg := Config{Model: "m", operatorProfileSource: store}
 			eng := newChildEngineForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 
 			runChildProfileTurn(t, eng, "child-1", "Answer in English, exactly.")
-			rememberProfile(t, context.Background(), store, tool.MemoryEntry{Key: "user/output/language", Value: "Prefer Japanese by default."})
+			rememberProfile(context.Background(), t, store, tool.MemoryEntry{Key: "user/output/language", Value: "Prefer Japanese by default."})
 			runChildProfileTurn(t, eng, "child-2", "Keep this prompt verbatim.")
 			if len(requests) != 2 || !strings.Contains(requests[0].System.VolatileSuffix, "Prefer French") || !strings.Contains(requests[1].System.VolatileSuffix, "Prefer Japanese") {
 				t.Fatalf("profile did not refresh per child request: %#v", requests)
@@ -74,8 +74,8 @@ func TestOperatorProfileSourceIsCallerScoped(t *testing.T) {
 	store := memory.NewCallerStore(memmemory.New(), false)
 	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "alice"})
 	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "bob"})
-	rememberProfile(t, alice, store, tool.MemoryEntry{Key: "user/preference", Value: "alice-profile"})
-	rememberProfile(t, bob, store, tool.MemoryEntry{Key: "user/preference", Value: "bob-profile"})
+	rememberProfile(alice, t, store, tool.MemoryEntry{Key: "user/preference", Value: "alice-profile"})
+	rememberProfile(bob, t, store, tool.MemoryEntry{Key: "user/preference", Value: "bob-profile"})
 
 	var requests []port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))

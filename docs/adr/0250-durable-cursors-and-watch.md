@@ -134,7 +134,7 @@ Bounded paging over a long log becomes possible for the first time.
 - **A Redis storage-format migration.** Existing `mecatl:events:*` LIST keys must be read
   by a legacy path or migrated, and `eventsKey(id)` is embedded in the delete/rebuild Lua
   scripts in [`internal/adapter/redisstore/metadata_index.go`](../../internal/adapter/redisstore/metadata_index.go),
-  so a new key shape threads through those too. [`internal/adapter/redisstore/migration.go`](../../internal/adapter/redisstore/migration.go)
+  so a new key shape threads through those too. [`migration.go` at the decision commit](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/internal/adapter/redisstore/migration.go)
   and [`internal/adapter/redisstore/generation.go`](../../internal/adapter/redisstore/generation.go)
   are precedent, but this is real work with a real crash-safety surface.
 

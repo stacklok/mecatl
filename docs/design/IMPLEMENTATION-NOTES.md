@@ -622,16 +622,11 @@ tools (`InspectSubagent`/`InspectMember`/`SubagentStatus`) carry the same floor-
 (issue #37 — see the Subagent-inspection section below for the rationale; guarded by
 `internal/app/inspect_perm_test.go`).
 
-The optional `tool.MemoryLifecycleStore` capability adds versioned `Inspect*`, compare-version
-`Forget*`, and compensating `Undo*` tools through the portable
-`engine/adapter/memorytools/memorytools.go` implementation. The flocked local adapter keeps the
-legacy active projection and revision history in the same atomically-renamed `memory.json`:
-old files are read without rewrite and their imported baseline is materialized by the first
-mutation. The format is current-value compatible with older binaries, but a one-way downgrade
-caveat applies: an older binary that writes the file does not know the additive `history` field
-and discards revision/undo history (not the active values). Lifecycle mutation tools are not
-added to the built-in allow floor; the existing permission fold therefore governs them without
-loosening policy.
+The mandatory `tool.MemoryStore` contract carries exact lifecycle/CAS semantics through the
+portable `engine/adapter/memorytools/memorytools.go` implementation. The flocked local adapter
+stores revision history in the atomically-renamed current `memory-v2.json` namespace. Old
+`memory.json` files are ignored and untouched; malformed records in `memory-v2.json` fail closed.
+The six model-facing memory tools retain their existing permission posture.
 
 
 ## Delegated authority
@@ -4289,13 +4284,14 @@ displayed in the ui.
 ### `memory` (operator profile + lifecycle, ADR 0107)
 
 The unchanged `tool.MemoryStore` base remains the six ordinary operations. The optional
-`tool.MemoryLifecycleStore` adds compare-version Remember, exact Inspect, tombstone Forget,
-and compensating Undo. Portable bodies live in `engine/adapter/memorytools`; both project and
-user families register through the same catalog path, with lifecycle tools conditional on the
-capability. The local adapter keeps legacy entries plus revision history in ONE `memory.json`
-document. `internal/adapter/memory/store.go` (`withExclusiveLock`) holds the in-process mutex
-and stable-sentinel flock across load→mutate→atomic-save; `materializeLegacy` migrates a key
-lazily inside that transaction. No history sidecar exists.
+`tool.MemoryStore` is the indivisible lifecycle/CAS contract: compare-current Remember,
+exact Inspect, Recall/List/Index/Search reads, tombstone Forget, and compensating Undo. Portable
+bodies live in `engine/adapter/memorytools`; project and user families register through the
+same catalog path. The local adapter stores only the current `memory-v2.json` namespace with
+revision history. `internal/adapter/memory/store.go` holds the in-process mutex and
+stable-sentinel flock across load→mutate→atomic-save. Old `memory.json` artifacts are not
+scanned, migrated, adopted, rejected globally, or removed; malformed records in the selected
+current namespace fail closed.
 
 The user-scoped store also satisfies `prompt.OperatorProfileSource`. Standard composition sets
 `agent.Deps.OperatorProfileSource`; `engine/agent/loop.go` (`refreshOperatorProfile`) reloads it
@@ -4305,11 +4301,16 @@ the volatile system suffix. The cache-stable prefix and persisted conversation s
 `prompt.UserModelAssembler` is retained as a public compatibility surface but is no longer in
 standard turn-0 assembly; the project `MemoryIndexAssembler` remains and never carries values.
 
-The original six `MemoryStoreService` RPCs remain unchanged. Four additive lifecycle RPCs
-preserve opaque versions/history. The grpc client uses original `List` for operator-profile
-parity with old drivers; destructive lifecycle calls never downgrade on `UNIMPLEMENTED`. The
-capability RPC is bounded by a fixed five-second ceiling while retaining any shorter caller
-deadline, and a failed probe closes the partially assembled catalog connection.
+The gRPC memory service mirrors that canonical port directly: Remember carries a complete
+expected presence/version, Inspect returns bounded history, and Forget/Undo carry exact opaque
+versions. Unconditional and alpha compatibility RPCs are absent. Memory and session drivers
+must return the exact current contract marker from the mandatory capability RPC within the
+fixed five-second ceiling (or a shorter caller deadline); UNIMPLEMENTED, empty/wrong markers,
+timeouts, and transport failures fail construction. Session capability booleans are retained
+only for genuinely optional backend operations. Metadata continuation cursors require a valid
+key plus non-empty generation, ownership scope, and opaque continuation on both sides of the
+wire. A remote backing store owns its namespace: the harness does not inspect old driver
+artifacts or infer a format from opaque blobs, while malformed current responses fail closed.
 `GetUserModel{key}` is a read-only, lazy exact-detail extension. It exposes no mutation method,
 so Forget/Undo still pass through the normal dispatcher, hooks, and permission evaluator.
 Remember/Recall/Search/Inspect/Undo are built-in floor Allows; Forget is a floor Ask; all lose
@@ -4319,7 +4320,7 @@ New lifecycle writes reject invalid keys and high-confidence credential shapes. 
 profile, driver, server, and TUI projections all use `engine/tool/memorylifecycle.go`
 (`CanonicalMemoryText`) before classification: malformed UTF-8 is repaired and the same Unicode
 format/control set is removed before directive/secret checks and rendering. This applies equally
-to imported, legacy-migrated, local, and remote records without suppressing ordinary Unicode or
+to current local and remote records without suppressing ordinary Unicode or
 instruction-like prose. Both reference stores retain 64 revisions per key and persist an
 origin-known/truncated marker; Undo may remove a value only when retained history proves the target
 was its creation, and fails without mutation at a truncated predecessor boundary.
@@ -7844,9 +7845,11 @@ The settled decisions, condensed:
   conformance run exercises encode→wire→decode→state-machine→encode→wire→decode.
 - **C — Error mapping.** Load miss: `NOT_FOUND` → `grpcdriver.ErrNotFound` wrapping
   `port.ErrSessionNotFound` (id in message). Save(nil): client-side `sessnap.ErrNilSession`,
-  zero RPCs. Recall miss: `found=false`, NEVER `NOT_FOUND`. Forget(missing): OK (idempotent).
-  Blank RememberEntry key: `INVALID_ARGUMENT` (server wrapper pre-validates; the in-process
-  store's own rejection stays conformance-tested). Failed RPC with a done caller ctx: rewrap
+  zero RPCs. Recall miss: `found=false`, NEVER `NOT_FOUND`. Missing-memory Forget/Undo:
+  `NOT_FOUND` maps to `tool.ErrMemoryNotFound`; stale CAS maps through a structured version
+  conflict. Remember requires an entry plus a complete absent-or-present expected state; blank
+  keys, absent expected versions for updates/deletes, and malformed returned lifecycle records
+  fail closed. Failed RPC with a done caller ctx: rewrap
   `ctx.Err()` so `errors.Is(_, context.Canceled/DeadlineExceeded)` holds harness-side.
   Everything else: `"grpcdriver: <op>: %w"` — NO transient/permanent classification. Server
   wrapper: `ErrSessionNotFound`→`NotFound`, ctx errors→`Canceled`/`DeadlineExceeded`, else

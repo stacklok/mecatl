@@ -21,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -384,8 +383,6 @@ func TestBuildCatalogMemoryDriverRegistersTools(t *testing.T) {
 	}
 }
 
-type appBaseOnlyMemory struct{ tool.MemoryStore }
-
 type appBlockingMemoryCapabilities struct {
 	driverv1.UnimplementedMemoryStoreServiceServer
 }
@@ -430,7 +427,7 @@ func TestBuildCatalogMemoryDriverIncludesMandatoryLifecycleTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := grpc.NewServer()
-	driverv1.RegisterMemoryStoreServiceServer(server, grpcdriver.NewMemoryStoreServer(appBaseOnlyMemory{memmemory.New()}))
+	driverv1.RegisterMemoryStoreServiceServer(server, grpcdriver.NewMemoryStoreServer(memmemory.New()))
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
 
