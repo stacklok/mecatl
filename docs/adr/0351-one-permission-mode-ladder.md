@@ -227,14 +227,17 @@ withheld, which is word for word the incoherent state section 5's headless gate 
 boot into. A value that is either a silent grant or a self-contradiction has no third reading.
 
 The principled line, for the honest counterargument that project permission ALLOWs are already
-a trust-gated authority grant: every other trust-gated grant here is LATTICE-BOUNDED. A project
-ALLOW is tool-and-pattern scoped, sits at `ScopeLocalProject`/`ScopeSharedProject` beneath
-`ScopeCLI` and `ScopeManaged`, stays deny-dominated, and cannot suppress a configured Ask. A
-tier name is blanket and carries no scope at all. A mode is not a rule, so it escapes the
-lattice that bounds everything else, and the precedent argues against extension rather than for
-it. Keeping the two decoupled also means a future widening of project trust, a
-`trustedWorkspaces:` glob or a remembered `trust.yaml` entry, cannot silently widen who picks
-the harness's authority tier.
+a trust-gated authority grant, does not depend on where project sits in the lattice, so a
+future lattice change cannot break it. Every authority grant this codebase accepts from
+ingested content is LATTICE-RESIDENT: it is a Rule, it carries a Scope, it is deny-dominated,
+and it can loosen only the built-in floor. `engine/governance/evaluator.go` admits exactly one
+loosening, `ask.Scope == ScopeBuiltinDefault && allow.Scope.HasHigherPrecedenceThan(ask.Scope)`,
+so a project ALLOW outranks a `ScopeUser` Ask and still cannot suppress it. A permission mode
+is none of those things. It has no Scope, it is not a Rule, and it flips the floor wholesale.
+Admitting a tier name from ingested content would be the first authority grant in the system
+that escapes the fold bounding all the others. Keeping the two decoupled also means a future
+widening of project trust, a `trustedWorkspaces:` glob or a remembered `trust.yaml` entry,
+cannot silently widen who picks the harness's authority tier.
 
 `session.ParsePermissionMode` is a TOKEN GRAMMAR and nothing more. A successful parse is never
 permission to use the tier. The one call site that deliberately does NOT share it is
