@@ -1997,7 +1997,7 @@ func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
 			out.WriteString("\n")
 		}
 		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, false), bodyWidth))
+		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, b.teamDone), bodyWidth))
 		if expand {
 			if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
 				out.WriteString("\n")

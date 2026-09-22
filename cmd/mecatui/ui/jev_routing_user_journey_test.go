@@ -114,6 +114,28 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	}
 	completedTeamExpanded := stripANSIstr(r.renderBlock(0, teamBlock, true))
 	assertRoutingDetail(t, "expanded completed Team card", completedTeamExpanded)
+	for _, tc := range []struct {
+		name, want string
+		stopped    bool
+		retries    int
+	}{
+		{name: "done", want: "done"},
+		{name: "stopped", want: "stopped — cancelled", stopped: true},
+		{name: "retried", want: "done (retried)", retries: 1},
+	} {
+		t.Run("completed Team lane "+tc.name, func(t *testing.T) {
+			terminal := *teamBlock
+			terminal.teamLanes = append([]teamLane(nil), teamBlock.teamLanes...)
+			terminal.teamLanes[0].stopped = tc.stopped
+			terminal.teamLanes[0].stopReason = teamStopReasonCancelled
+			terminal.teamLanes[0].errorRounds = tc.retries
+			view := stripANSIstr(r.renderTeam(&terminal, true, 100))
+			if !strings.Contains(view, "lead [lead] · "+tc.want+" ·") || strings.Contains(view, "Read…") {
+				t.Errorf("completed Team lane did not show %q:\n%s", tc.want, view)
+			}
+			assertRoutingDetail(t, "completed Team lane "+tc.name, view)
+		})
+	}
 
 	// Historic team.end events carried no per-member routing decision. Their compact
 	// terminal summary remains exactly the pre-router one-line fallback.
