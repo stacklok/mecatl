@@ -1568,6 +1568,19 @@ command roots acquire it through `cliconfig.ResolvedCredentials`; it has no YAML
 form. Guards are the twelve `TestADR_0350_*` tests across the adapter, composition, and
 configuration packages.
 
+Every configured-router decision is copied onto the existing delegation start
+projection as `session.RoutingDecision`: configured backend/classifier, validated
+candidate, optional confidence/threshold, outcome, and the post-decision breaker
+snapshot. `model` and `routing_reason` remain the actual-model and final-reason
+authorities. `cmd/mecatui/client/msgs.go` preserves optional presence, while
+`cmd/mecatui/ui/conversation.go` clones the decision into Subagent, Parallel, and
+Team state at start so later activity cannot clear or mutate it. The compact renderer
+adds only a fallback candidate/confidence cue. Expanded Subagent cards and all three
+F6 focus views render the full snapshot; nil confidence is `unavailable`, an explicit
+zero threshold is `disabled (0.00)`, and historical nil decisions retain the old
+label. The durable `InspectSession` delegation projection reads the same persisted
+start evidence and never infers missing evidence.
+
 **Extending the router to team members + Parallel branches (ADR 0034).** The router PRIMITIVE
 is family-agnostic: the ONE `parentCaps.routeTask` closure (above) is bound per run by the
 dispatcher and is already threaded into `ParallelTool` and the team `Supervisor` (both hold

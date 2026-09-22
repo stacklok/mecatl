@@ -1904,6 +1904,14 @@ stays context-isolated):
     team live → Teams; parallel live → Parallel; subagents ran → Subagents; parallel ran →
     Parallel; team ran → Teams). `/team` opens the same overlay pinned to the Teams tab.
 
+  Delegation model lines remain compact. A routing fallback can add one candidate line with
+  its confidence and threshold comparison while `model:` continues to name the model that
+  actually ran. Expanded Subagent cards and focused rows in all three F6 tabs show the
+  configured backend and classifier, candidate, actual model, final reason, threshold, and
+  breaker miss snapshot. Missing LLM confidence reads `unavailable`; an explicit zero Jev
+  threshold reads `disabled (0.00)`. Historical events without a routing decision retain
+  the previous model label without inferred evidence.
+
   A subagent that ended via a non-`end_turn` terminal renders a sensible label — the
   newer Subagent/Team stop reasons (`budget` → "budget", `structured_output` → "schema",
   `no_progress` → "no-progress", the `max_*` limits → "max-turns"/"max-tools") ride the

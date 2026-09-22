@@ -1645,7 +1645,7 @@ func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 		out.WriteString(renderDelegationToolCardText(muted, "↳ "+sanitizeTerminal(b.subGoal), bodyWidth))
 		out.WriteString("\n")
 	}
-	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel); routed != "" {
+	if routed := delegationModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel, b.subRoutingDecision); routed != "" {
 		out.WriteString(renderDelegationToolCardText(muted, routed, bodyWidth))
 		out.WriteString("\n")
 	}
@@ -1656,6 +1656,10 @@ func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 	}
 
 	if expand {
+		if detail := routingDecisionDetail(b.subRoutingDecision, b.subModel, b.subRoutingReason); detail != "" {
+			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
+			out.WriteString("\n")
+		}
 		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
 		if trace := r.renderTraceAtWidth(b.subTrace, bodyWidth); trace != "" {
 			out.WriteString("\n")
@@ -1683,7 +1687,6 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 	routedModel = sanitizeTerminal(routedModel)
 	routingReason = sanitizeTerminal(routingReason)
 	model = sanitizeTerminal(model)
-	// Router fired: show the routed cue (category + the routed model).
 	if category != "" || routedModel != "" {
 		if routedModel == "" {
 			return "routed: " + category
@@ -1693,19 +1696,104 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 		}
 		return "routed: " + category + " → " + routedModel
 	}
-	// Plain case: show the concrete model the child ran on, plus the miss reason.
 	if model != "" {
 		if routingReason != "" {
 			return "model: " + model + " · not routed: " + routingReason
 		}
 		return "model: " + model
 	}
-	// No model known (e.g. an aborted branch that ran on nothing) but the router was
-	// skipped: surface the reason so a router-off/pinned delegation is not silent.
 	if routingReason != "" {
 		return "not routed: " + routingReason
 	}
 	return ""
+}
+
+// delegationModelLabel preserves the historical model line when decision is nil.
+// A fallback may add one candidate line, but the actual model always comes from
+// the existing authoritative model field rather than the rejected candidate.
+func delegationModelLabel(category, routedModel, routingReason, model string, decision *client.RoutingDecision) string {
+	label := subagentModelLabel(category, routedModel, routingReason, model)
+	if decision == nil || decision.Outcome != "fallback" {
+		return label
+	}
+	if sanitizeTerminal(model) != "" && sanitizeTerminal(routingReason) != "" {
+		label = "model: " + sanitizeTerminal(model) + " · fallback: " + sanitizeTerminal(routingReason)
+	}
+	candidate := routingCandidateCue(decision)
+	if candidate == "" {
+		return label
+	}
+	if label == "" {
+		return candidate
+	}
+	return label + "\n" + candidate
+}
+
+func routingCandidateCue(decision *client.RoutingDecision) string {
+	candidate := sanitizeTerminal(decision.CandidateCategory)
+	candidateModel := sanitizeTerminal(decision.CandidateModel)
+	if candidate == "" && candidateModel == "" {
+		return ""
+	}
+	line := "candidate: " + candidate
+	if candidate != "" && candidateModel != "" {
+		line += " → " + candidateModel
+	} else if candidateModel != "" {
+		line += candidateModel
+	}
+	if decision.Confidence != nil {
+		line += fmt.Sprintf(" · confidence %.2f", *decision.Confidence)
+		if decision.MinimumConfidence != nil && *decision.MinimumConfidence > 0 && *decision.Confidence < *decision.MinimumConfidence {
+			line += fmt.Sprintf(" < threshold %.2f", *decision.MinimumConfidence)
+		}
+	}
+	return line
+}
+
+// routingDecisionDetail renders the complete bounded decision snapshot for an
+// expanded card or F6 focus pane. Optional numeric presence is explicit.
+func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason string) string {
+	if decision == nil {
+		return ""
+	}
+	confidence := unavailableText
+	if decision.Confidence != nil {
+		confidence = fmt.Sprintf("%.2f", *decision.Confidence)
+	}
+	threshold := unavailableText
+	if decision.MinimumConfidence != nil {
+		threshold = fmt.Sprintf("%.2f", *decision.MinimumConfidence)
+		if *decision.MinimumConfidence == 0 {
+			threshold = "disabled (0.00)"
+		}
+	}
+	candidate := sanitizeTerminal(decision.CandidateCategory)
+	candidateModel := sanitizeTerminal(decision.CandidateModel)
+	if candidate == "" {
+		candidate = unavailableText
+	}
+	if candidateModel != "" {
+		candidate += " → " + candidateModel
+	}
+	actualModel = sanitizeTerminal(actualModel)
+	if actualModel == "" {
+		actualModel = unavailableText
+	}
+	reason = sanitizeTerminal(reason)
+	if reason == "" {
+		reason = "no final reason"
+	}
+	breaker := "closed"
+	if decision.BreakerOpen {
+		breaker = "open"
+	}
+	return fmt.Sprintf("backend: %s · classifier: %s · outcome: %s\n"+
+		"candidate: %s · confidence: %s · threshold: %s\n"+
+		"actual model: %s · reason: %s\n"+
+		"breaker: %d/%d misses · %s",
+		sanitizeTerminal(decision.Backend), sanitizeTerminal(decision.ClassifierModel), sanitizeTerminal(decision.Outcome),
+		candidate, confidence, threshold, actualModel, reason,
+		decision.ConsecutiveMisses, decision.MissLimit, breaker)
 }
 
 // subagentLiveLine is the calm, monotonic collapsed status line: the child's live

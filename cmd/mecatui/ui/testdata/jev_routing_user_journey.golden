@@ -1,0 +1,84 @@
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ … Subagent                                                                                    │
+ │ ↳ inspect routing                                                                             │
+ │ model: gpt-6-astra · fallback: low-confidence                                                 │
+ │ candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50                          │
+ │ backend: jev · classifier: jev-1.13.0 · outcome: fallback                                     │
+ │ candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                        │
+ │ actual model: gpt-6-astra · reason: low-confidence                                            │
+ │ breaker: 2/3 misses · closed                                                                  │
+ │ subagent · bounded previews — child content is clamped + scrubbed, never in the parent conver │
+ │ sation                                                                                        │
+ │   ✓ Read                                                                                      │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+       ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+       ┃                                                                                                        ┃
+       ┃  ▸ Subagents    Parallel    Teams                                                                      ┃
+       ┃                                                                                                        ┃
+       ┃  subagent · inspect routing                                                                            ┃
+       ┃  ◐ inspect routing #-child                                                                             ┃
+       ┃      model: gpt-6-astra · fallback: low-confidence                                                     ┃
+       ┃      candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50 · Read… · 1 tool · ↑0 ↓0     ┃
+       ┃    backend: jev · classifier: jev-1.13.0 · outcome: fallback                                           ┃
+       ┃      candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                            ┃
+       ┃      actual model: gpt-6-astra · reason: low-confidence                                                ┃
+       ┃      breaker: 2/3 misses · closed                                                                      ┃
+       ┃    bounded previews — child content is clamped + scrubbed, never in the parent conversation            ┃
+       ┃                                                                                                        ┃
+       ┃    ✓ Read                                                                                              ┃
+       ┃                                                                                                        ┃
+       ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                               ┃
+       ┃                                                                                                        ┃
+       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected    ⟳ team-1 · 1/1 working · f6 agents  ⑂ parallel 1◐ 0✓ · f6  ⛭ subagents 1◐ 0✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

@@ -567,7 +567,9 @@ paths. Jev receives the delegated task as System One state and one fixed Choice
 question whose criteria are the operator's category names and descriptions. The
 adapter accepts only an exact offered category and maps that category through the
 same local alias-to-model resolver as the LLM classifier. It does not enter the
-provider registry or change the engine callback.
+provider registry. Both backends return the engine-owned `ModelRouteResult`, while
+the configured `SubagentModelRouter` wrapper retains backend, classifier model, and
+optional threshold for skipped decisions.
 
 Active Jev requires the environment-only `TYPESAFE_API_KEY`. Its defaults are
 model `jev-1.13.0` and no confidence filter. A configured confidence threshold
@@ -649,6 +651,18 @@ MISS logs an INFO naming the reason (`degenerate-input`/`classifier-error`/`canc
 routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through
 the gRPC + HTTP relays and rendered by mecatui (inline card + f6 fleet roster).
+
+A configured router also attaches one optional `RoutingDecision` snapshot to each
+Subagent, Parallel branch, or Team member start projection. The snapshot carries the
+configured backend and classifier, locally validated candidate, optional confidence
+and threshold, `routed|fallback|skipped` outcome, and the post-decision breaker
+state. Existing `model`, `routed_category`, `routed_model`, and `routing_reason`
+remain authoritative for the model that ran and the final reason. Start events take
+independent copies, and later tool/end events do not clear them. Historical events
+without the snapshot remain absent. Mecatui keeps the compact model cue, adds a
+candidate/confidence line for a fallback, and shows all decision fields in expanded
+cards and F6 focus panes. `InspectSession` reads the same persisted start evidence in
+its `delegation` view without reconstructing it from display fields.
 
 The structured miss/gate half of this observability surface is described below under the
 per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
