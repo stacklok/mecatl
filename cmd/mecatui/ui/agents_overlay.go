@@ -1131,15 +1131,8 @@ func (l agentsSelectableList) render(th theme.Theme, height int) string {
 		middle = append(middle, renderDelegationRows(l.muted, "  ", fmt.Sprintf("· +%d %s above", count, noun), 0))
 	}
 	for _, row := range view.Rows {
-		prefix := row.Gutter
-		if row.CursorMarker {
-			prefix = "▶ "
-		}
-		style := l.muted
-		if row.Selected {
-			style = th.Style("spinner")
-		}
-		middle = append(middle, style.Render(prefix+row.Text))
+		presentation := presentListRow(row, th.Style("spinner"), l.muted)
+		middle = append(middle, presentation.Style.Render(presentation.Text))
 	}
 	if view.Below > 0 {
 		count, noun := len(l.rows)-view.Rows[len(view.Rows)-1].ItemIndex-1, l.noun

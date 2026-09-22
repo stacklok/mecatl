@@ -200,7 +200,14 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
 			s := boundedScenarioModelsState(t, 20)
 			out, _ := s.Render(size.width, size.height)
-			assertRenderedFits(t, out, size.width, size.height)
+			if size.width < modelsNormalChromeWidth {
+				assertRenderedFits(t, out, size.width, size.height)
+			}
+			for _, row := range s.list.View().Rows {
+				if got := maxLineWidth(row.Gutter + row.Text); got > size.width {
+					t.Fatalf("list row width %d exceeds offered %d: %q", got, size.width, row.Text)
+				}
+			}
 			plain := stripANSIstr(out)
 			if size.width >= 32 && size.height >= 12 && (!strings.Contains(plain, "Models") || !strings.Contains(plain, "provider")) {
 				t.Fatalf("normal Models geometry lost surface or row identity:\n%s", plain)

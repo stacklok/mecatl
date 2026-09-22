@@ -1792,6 +1792,26 @@ func TestModelsPickerGolden(t *testing.T) {
 	compareGolden(t, "models.golden", got)
 }
 
+// TestModelsPickerRetainsNaturalCardWidth prevents list-row bounding from narrowing
+// Models chrome before the surrounding card measures its natural width.
+func TestModelsPickerRetainsNaturalCardWidth(t *testing.T) {
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(),
+		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	out := stripANSIstr(m.View().Content)
+
+	const help = "type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close"
+	if !strings.Contains(out, help) {
+		t.Errorf("Models help action was truncated:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "┏") && strings.Count(line, "━") <= 100 {
+			t.Errorf("Models card width regressed to bounded content width: %q", line)
+		}
+	}
+}
+
 // TestModelsPickerDisabledGolden locks the "model selection not available" empty
 // state (caps.ModelSelection false, empty list).
 func TestModelsPickerDisabledGolden(t *testing.T) {

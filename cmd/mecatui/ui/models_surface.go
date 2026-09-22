@@ -25,7 +25,10 @@ type modelsView int
 const (
 	modelsNone modelsView = iota
 	modelsPanel
-	modelsMinRows = 3
+
+	// modelsNormalChromeWidth distinguishes the compact fallback, where all
+	// chrome must fit, from ordinary card rendering, which measures natural text.
+	modelsNormalChromeWidth = 80
 )
 
 // modelsState owns the dynamic /models picker. Durable catalog state remains on Model.
@@ -76,31 +79,33 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	s.hitItems = make(map[HitID]int)
 
 	lines := make([]string, 0, height)
-	appendLine := func(line string) {
+	appendChrome := func(line string) {
+		if len(lines) < max(0, height) {
+			// Keep normal Models chrome intact so the surrounding card can retain its
+			// historical natural width. Compact geometry still needs a hard bound.
+			if width < modelsNormalChromeWidth {
+				line = boundedDisplayLine(line, width)
+			}
+			lines = append(lines, line)
+		}
+	}
+	appendRow := func(line string) {
 		if len(lines) < max(0, height) {
 			lines = append(lines, boundedDisplayLine(line, width))
 		}
 	}
 	for _, line := range prefix {
-		appendLine(line)
+		appendChrome(line)
 	}
 	regions := make([]ClickableRegion, 0, len(view.Rows))
 	if view.Above > 0 {
-		appendLine(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d lines", view.Above)))
+		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d lines", view.Above)))
 	}
 	if len(view.Rows) > 0 {
 		for _, row := range view.Rows {
-			marker := "  "
-			if row.CursorMarker {
-				marker = "▶ "
-			}
-			text := marker + row.Text
-			style := s.deps.theme.Style("muted")
-			if row.Selected {
-				style = s.deps.theme.Style("spinner")
-			}
+			presentation := presentListRow(row, s.deps.theme.Style("spinner"), s.deps.theme.Style("muted"))
 			y := len(lines)
-			appendLine(style.Render(text))
+			appendRow(presentation.Style.Render(presentation.Text))
 			if y < len(lines) && s.deps.hits != nil {
 				id := s.deps.hits.allocate()
 				x1 := min(max(0, width), lipgloss.Width(lines[y]))
@@ -112,10 +117,10 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 		}
 	}
 	if view.Below > 0 {
-		appendLine(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d lines", view.Below)))
+		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d lines", view.Below)))
 	}
 	for _, line := range suffix {
-		appendLine(line)
+		appendChrome(line)
 	}
 	return strings.Join(lines, "\n"), regions
 }

@@ -2,21 +2,21 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                  ┃
-┃  Models                                                                                          ┃
-┃  current: gpt-5 (server default)                                                                 ┃
-┃  > filter models…                                                                                ┃
-┃                                                                                                  ┃
-┃  Switching models is expensive as it clears caches.                                              ┃
-┃                                                                                                  ┃
-┃  No selectable models advertised.                                                                ┃
-┃                                                                                                  ┃
-┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / cl  ┃
-┃  ● current  ★ global default                                                                     ┃
-┃  reason = emits reasoning · set its effort tier with /effort                                     ┃
-┃                                                                                                  ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                     ┃
+┃  Models                                                                                             ┃
+┃  current: gpt-5 (server default)                                                                    ┃
+┃  > filter models…                                                                                   ┃
+┃                                                                                                     ┃
+┃  Switching models is expensive as it clears caches.                                                 ┃
+┃                                                                                                     ┃
+┃  No selectable models advertised.                                                                   ┃
+┃                                                                                                     ┃
+┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
+┃  ● current  ★ global default                                                                        ┃
+┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
+┃                                                                                                     ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

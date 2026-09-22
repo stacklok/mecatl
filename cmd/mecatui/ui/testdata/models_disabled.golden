@@ -2,22 +2,22 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                  ┃
-┃  Models                                                                                          ┃
-┃  current: gpt-5 (server default)                                                                 ┃
-┃  > filter models…                                                                                ┃
-┃                                                                                                  ┃
-┃  Switching models is expensive as it clears caches.                                              ┃
-┃                                                                                                  ┃
-┃  Model selection is not available on this server.                                                ┃
-┃  Configure a provider on the server, then reconnect.                                             ┃
-┃                                                                                                  ┃
-┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / cl  ┃
-┃  ● current  ★ global default                                                                     ┃
-┃  reason = emits reasoning · set its effort tier with /effort                                     ┃
-┃                                                                                                  ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                     ┃
+┃  Models                                                                                             ┃
+┃  current: gpt-5 (server default)                                                                    ┃
+┃  > filter models…                                                                                   ┃
+┃                                                                                                     ┃
+┃  Switching models is expensive as it clears caches.                                                 ┃
+┃                                                                                                     ┃
+┃  Model selection is not available on this server.                                                   ┃
+┃  Configure a provider on the server, then reconnect.                                                ┃
+┃                                                                                                     ┃
+┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
+┃  ● current  ★ global default                                                                        ┃
+┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
+┃                                                                                                     ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 
