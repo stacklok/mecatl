@@ -146,27 +146,11 @@ type parentCaps struct {
 	// plain Execute path (no parent session threaded) — a fork:true call then errors
 	// with an honest "not supported on this run", never a silent fresh-context child.
 	forkHistory func() []session.Message
-	// routeTask, when non-nil, is the OPT-IN semantic model router (ADR 0031): given a
-	// Subagent call's (model-authored, untrusted) task prompt it returns the chosen
-	// CATEGORY label and the ALREADY-RESOLVED concrete model id to mint the child on,
-	// plus ok. It is bound by the dispatcher (Engine.parentCaps) over the engine's
-	// SubagentModelRouter closure + this run's router breaker, so a fan-out's classifier
-	// spend is serialised and circuit-broken per run. The Subagent run() hook consults it
-	// ONLY for a plain default delegation (no per-call model/agent/fork/resume) and is
-	// FAIL-SOFT: ok=false → the call inherits the default explorer model unchanged. nil
-	// when no router is wired (the default) or on a child run (no nesting). The returned
-	// model is an opaque model string — engine/agent stays model-string-only (the layering
-	// rule); composition owns aliases/slots/the cap.
-	//
-	// reason is the internal why on a MISS (ok=false): the classifier's missReason passed
-	// through to diagnostics/event projection, or a harness-synthesised gate constant
-	// (session.RoutingReasonBreakerOpen / RoutingReasonAborted) when the classifier was
-	// skipped. Empty on a hit. routingReasonPayload reduces it to a closed static code before
-	// it rides delegation-start events (issue #397), so arbitrary callback text cannot cross.
-	//
-	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
-	// (issue #94); see SubagentModelRouter.
-	routeTask     func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
+	// routeDecision, when non-nil, is the OPT-IN semantic model router (ADR 0031).
+	// It returns one typed result carrying the candidate, canonical final reason,
+	// accepted-route bit, and bounded decision snapshot. It is bound by the
+	// dispatcher over this run's breaker and usage fold. A nil callback means the
+	// router is unavailable; children never receive it, preserving no-nesting.
 	routeDecision func(ctx context.Context, taskPrompt string) modelRoutingResult
 	// skipRoute snapshots configured router metadata and current breaker state for a
 	// delegation gate that intentionally bypasses classification.
@@ -202,14 +186,10 @@ type parentCaps struct {
 }
 
 func (c parentCaps) routeConfigured(ctx context.Context, prompt string) modelRoutingResult {
-	if c.routeDecision != nil {
-		return c.routeDecision(ctx, prompt)
+	if c.routeDecision == nil {
+		return modelRoutingResult{reason: session.RoutingReasonRouterDisabled}
 	}
-	if c.routeTask != nil {
-		category, model, reason, ok := c.routeTask(ctx, prompt)
-		return modelRoutingResult{category: category, model: model, reason: reason, ok: ok}
-	}
-	return modelRoutingResult{reason: session.RoutingReasonRouterDisabled}
+	return c.routeDecision(ctx, prompt)
 }
 
 // inheritOwner stamps the parent session's owner onto a freshly-minted child
@@ -2160,7 +2140,7 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 	} else if writable && t.writableEngineFactory == nil {
 		return skipped(session.RoutingReasonRouterDisabled)
 	}
-	if caps.routeTask == nil && caps.routeDecision == nil {
+	if caps.routeDecision == nil {
 		return skipped(session.RoutingReasonRouterDisabled)
 	}
 	routed := caps.routeConfigured(ctx, args.Prompt)

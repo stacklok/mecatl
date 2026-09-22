@@ -790,6 +790,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("%w for %q", ErrNilEngine, spec.Name)
 	}
+	routeAccepted := strings.TrimSpace(routedModel) == "" || eng.Model() == strings.TrimSpace(routedModel)
+	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
 
 	// Workspace selection (three tiers). needFork is true for any member that runs in
 	// its OWN isolated workspace — a Mutating member (force-copy fork, s.forker) or a
@@ -956,7 +959,7 @@ func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (cat
 		}
 		return "", "", session.RoutingReasonAgentDefPinned, decision
 	}
-	if s.caps.routeTask == nil && s.caps.routeDecision == nil {
+	if s.caps.routeDecision == nil {
 		return "", "", session.RoutingReasonRouterDisabled, nil
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
@@ -988,6 +991,14 @@ func (s *Supervisor) memberRoutingDecision(name string) *session.RoutingDecision
 		return cloneRoutingDecision(m.routingDecision)
 	}
 	return nil
+}
+
+func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.IncarnationID, bool) {
+	m, ok := s.members[name]
+	if !ok || m.sess == nil {
+		return "", "", false
+	}
+	return m.sess.ID, m.sess.Incarnation(), true
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs

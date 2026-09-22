@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
@@ -55,9 +56,9 @@ func sanitizedRoutingDecision(in *session.RoutingDecision) *session.RoutingDecis
 		return nil
 	}
 	out := &session.RoutingDecision{
-		ClassifierModel:   clampPreview(in.ClassifierModel),
-		CandidateCategory: clampPreview(in.CandidateCategory),
-		CandidateModel:    clampPreview(in.CandidateModel),
+		ClassifierModel:   sanitizedRoutingText(in.ClassifierModel),
+		CandidateCategory: sanitizedRoutingText(in.CandidateCategory),
+		CandidateModel:    sanitizedRoutingText(in.CandidateModel),
 		Confidence:        validRoutingScore(in.Confidence),
 		MinimumConfidence: validRoutingScore(in.MinimumConfidence),
 		ConsecutiveMisses: in.ConsecutiveMisses,
@@ -73,6 +74,20 @@ func sanitizedRoutingDecision(in *session.RoutingDecision) *session.RoutingDecis
 		out.Outcome = in.Outcome
 	}
 	return out
+}
+
+func sanitizedRoutingText(in string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, session.ToValidUTF8(in))
+	runes := []rune(strings.TrimSpace(clean))
+	if len(runes) > maxRoutingReasonPreview {
+		runes = runes[:maxRoutingReasonPreview]
+	}
+	return string(runes)
 }
 
 func cloneRoutingDecision(in *session.RoutingDecision) *session.RoutingDecision {

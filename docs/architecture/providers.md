@@ -581,8 +581,8 @@ disabled. These transport bounds do not bound arbitrary CPU time in SDK JSON
 processing. Every failure remains fail-soft. The adapter returns only a small
 adapter-local typed status; composition maps it to the engine-owned common outcomes
 `classifier-error`, `bad-verdict`, `unknown-category`, `low-confidence`,
-`input-over-limit`, `capacity-timeout`, `cancelled`, or `timeout` before invoking the
-unchanged callback. Caller cancellation is distinct from caller, request, and typed SDK
+`input-over-limit`, `capacity-timeout`, `cancelled`, or `timeout` before returning the
+shared typed router result. Caller cancellation is distinct from caller, request, and typed SDK
 deadlines, and arbitrary SDK error text is never classified. Reported
 input and output usage survives hits, low-confidence misses, mapping misses, and
 protocol errors that contain validated usage.
@@ -661,14 +661,15 @@ remain authoritative for the model that ran and the final reason. Start events t
 independent copies, and later tool/end events do not clear them. Historical events
 without the snapshot remain absent. Mecatui keeps the compact model cue, adds a
 candidate/confidence line for a fallback, and shows all decision fields in expanded
-cards and F6 focus panes. `InspectSession` reads the same persisted start evidence in
+Subagent and Team cards (including completed Subagents) and all three F6 focus panes.
+`InspectSession` reads the same persisted start evidence in
 its `delegation` view without reconstructing it from display fields.
 
 The structured miss/gate half of this observability surface is described below under the
 per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
 
 **Team members + Parallel branches (ADR 0034).** The same router governs the other two
-delegation families, reusing the one `parentCaps.routeTask` closure the dispatcher binds per
+delegation families, reusing the one typed `parentCaps.routeDecision` closure the dispatcher binds per
 run (so a mixed turn shares ONE breaker / miss-counter / classifier-usage fold across all
 families). The per-family seam respects each family's engine lifetime:
 
@@ -679,7 +680,7 @@ families). The per-family seam respects each family's engine lifetime:
   Team-tool goroutine, so members classify one at a time. The routed model id threads
   through the `MemberEngine` factory's new `routedModel` parameter; the
   `EvTeamStart` roster entry carries `RoutedCategory`/`RoutedModel`. The gRPC `RunTeam`
-  direct path is **zero-caps** (no `routeTask`), so it never routes — byte-identical.
+  direct path is **zero-caps** (no `routeDecision`), so it never routes — byte-identical.
 - A **Parallel branch** is classified **per-branch in `runBranch`** (each branch routes at
   most once) over an OPTIONAL `engineFactory` (the `WithSubagentEngineFactory` shape); on a
   hit the branch runs on the routed engine, on a miss/unwired the shared branch child. The

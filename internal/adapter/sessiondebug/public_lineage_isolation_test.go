@@ -286,6 +286,21 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}
 	root := session.New("routing-root", session.ModeDefault, env, session.Limits{}, time.Unix(10, 0))
 	root.Owner = (&session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}).Clone()
+	if err := root.RecordUserPrompt("form team", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall("team-call", "Team", nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.RecordToolResults([]session.ToolResult{session.NewToolResult("team-call", "done")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Complete(); err != nil {
+		t.Fatal(err)
+	}
 	sub, err := session.NewSubagent("routing-sub", session.ModeDefault, env, session.Limits{}, time.Unix(11, 0), root.ID, root.Incarnation(), "sub-call")
 	if err != nil {
 		t.Fatal(err)
@@ -305,12 +320,12 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 		}
 	}
 	zero := 0.0
-	decision := &session.RoutingDecision{Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable", Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", MissLimit: 3}
+	decision := &session.RoutingDecision{Backend: "jev", ClassifierModel: "jev-1.13.0\u202e", CandidateCategory: "deep\u200b", CandidateModel: "capable", Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", MissLimit: 3}
 	log := memstore.NewEventLog()
 	for _, ev := range []session.Event{
 		{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "sub-call", ChildID: string(sub.ID), ChildIncarnation: sub.Incarnation(), Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision}},
 		{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{ParentCallID: "parallel-call", Kind: session.ParallelBranchStart, BranchIndex: 1, ChildID: string(parallel.ID), ChildIncarnation: parallel.Incarnation(), Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision}},
-		{Type: session.EvTeamStart, Team: &session.TeamPayload{ParentCallID: "team-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer", Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision}}}},
+		{Type: session.EvTeamStart, Team: &session.TeamPayload{ParentCallID: "team-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer", Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision, MemberSessionID: member.ID, MemberIncarnation: member.Incarnation()}}}},
 	} {
 		if err := log.Append(t.Context(), root.ID, ev); err != nil {
 			t.Fatal(err)
@@ -318,6 +333,9 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 	result := inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`)
 	body := evidence(t, result)
+	if strings.Contains(result.Content, string(member.ID)) || strings.Contains(result.Content, string(member.Incarnation())) || strings.Contains(result.Content, "member_session_id") || strings.Contains(result.Content, "member_incarnation") {
+		t.Fatalf("private team lifetime leaked through debugger JSON: %s", result.Content)
+	}
 	rows, ok := body["rows"].([]any)
 	if !ok || len(rows) != 3 {
 		t.Fatalf("routing rows = %#v", body["rows"])
@@ -328,7 +346,7 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 			t.Fatalf("final routing facts missing: %#v", row)
 		}
 		rd, ok := row["routing_decision"].(map[string]any)
-		if !ok || rd["backend"] != "jev" || rd["confidence"] != float64(0) || rd["minimum_confidence"] != float64(0) {
+		if !ok || rd["backend"] != "jev" || rd["classifier_model"] != "jev-1.13.0" || rd["candidate_category"] != "deep" || rd["confidence"] != float64(0) || rd["minimum_confidence"] != float64(0) {
 			t.Fatalf("decision missing optional zero: %#v", row)
 		}
 	}
@@ -337,9 +355,26 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	if err := historicalLog.Append(t.Context(), root.ID, session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "sub-call", ChildID: string(sub.ID), ChildIncarnation: sub.Incarnation()}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := historicalLog.Append(t.Context(), root.ID, session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
+		ParentCallID: "team-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	historical := inspect(t, sessiondebug.New(root.ID, store, historicalLog), `{"view":"delegation"}`)
 	if strings.Contains(historical.Content, "routing_decision") {
 		t.Fatalf("historical event fabricated routing evidence: %s", historical.Content)
+	}
+	if got := len(evidence(t, historical)["rows"].([]any)); got != 1 {
+		t.Fatalf("historical roster without exact identity joined by tuple: %s", historical.Content)
+	}
+	wrongCallLog := memstore.NewEventLog()
+	if err := wrongCallLog.Append(t.Context(), root.ID, session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
+		ParentCallID: "not-a-parent-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer", MemberSessionID: member.ID, MemberIncarnation: member.Incarnation()}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(evidence(t, inspect(t, sessiondebug.New(root.ID, store, wrongCallLog), `{"view":"delegation"}`))["rows"].([]any)); got != 0 {
+		t.Fatalf("team roster joined without the same parent Team call: %d rows", got)
 	}
 	unavailable := inspect(t, sessiondebug.New(root.ID, store, nil), `{"view":"delegation"}`)
 	if !strings.Contains(unavailable.Content, "event log is not configured") || strings.Contains(unavailable.Content, "routing_decision") {
@@ -354,8 +389,8 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 		t.Fatalf("failed append was inferred or fabricated: %s", failedEvidence.Content)
 	}
 
-	// A second retained incarnation with the same team/member key makes the roster
-	// join ambiguous; fail closed instead of selecting either child.
+	// A second retained incarnation with the same team/member labels cannot capture
+	// the roster row because the exact trusted lifetime still identifies the original.
 	ambiguous, err := session.NewTeamMember("routing-team-member-2", session.ModeDefault, env, session.Limits{}, time.Unix(14, 0), "team-1", "reviewer", root.ID, root.Incarnation())
 	if err != nil {
 		t.Fatal(err)
@@ -366,8 +401,8 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 	result = inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`)
 	rows = evidence(t, result)["rows"].([]any)
-	if len(rows) != 2 {
-		t.Fatalf("ambiguous team roster join did not fail closed: %#v", rows)
+	if len(rows) != 3 {
+		t.Fatalf("same-label replacement displaced the exact team lifetime: %#v", rows)
 	}
 	if err := store.Delete(t.Context(), member.ID); err != nil {
 		t.Fatal(err)
@@ -375,7 +410,19 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	if err := store.Delete(t.Context(), ambiguous.ID); err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := session.NewTeamMember("routing-team-member-foreign", session.ModeDefault, env, session.Limits{}, time.Unix(15, 0), "team-1", "reviewer", root.ID, root.Incarnation())
+	replacement, err := session.NewTeamMember(member.ID, session.ModeDefault, env, session.Limits{}, time.Unix(15, 0), "team-1", "reviewer", root.ID, root.Incarnation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.Owner = root.Owner.Clone()
+	if err := store.Save(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+	rows = evidence(t, inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`))["rows"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("deleted lifetime rebound to same-id replacement incarnation: %#v", rows)
+	}
+	foreign, err := session.NewTeamMember("routing-team-member-foreign", session.ModeDefault, env, session.Limits{}, time.Unix(16, 0), "team-1", "reviewer", root.ID, root.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}

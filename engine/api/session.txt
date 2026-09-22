@@ -377,7 +377,7 @@ type StreamProgress uint8
 type SubagentPayload struct{ParentCallID string; ChildID string; ChildIncarnation IncarnationID; Goal string; Background bool; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; Cause string; DurationMs int64}
 type TeamFindingSnapshot struct{Member string; Body string}
 type TeamMemberDisposition struct{Name string; Disposition string; Reason string; ErrorRounds int}
-type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string}
+type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string; MemberSessionID SessionID; MemberIncarnation IncarnationID}
 type TeamPayload struct{ParentCallID string; TeamID string; Roster []TeamMemberSpec; Member string; MemberSessionID string; MemberIncarnation IncarnationID; InnerKind EventType; Text string; ToolName string; Detail string; IsError bool; Rounds int; Stop StopReason; Usage Usage; ContextUsed int64; ContextWindow int64; Tasks []TeamTaskSnapshot; Findings []TeamFindingSnapshot; Dispositions []TeamMemberDisposition; Cause string}
 type TeamTaskSnapshot struct{ID string; Description string; State string; Assignee string; Deps []string}
 type TitleAttempt struct{ID string; Outcome TitleAttemptOutcome}

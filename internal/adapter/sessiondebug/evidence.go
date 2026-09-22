@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"strings"
+	"unicode"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -95,7 +96,12 @@ func (t *inspectTool) delegationView(ctx context.Context, s *session.Session, gr
 	}
 	byLifetime := map[string]lineageNode{}
 	for _, n := range graph.Nodes {
-		byLifetime[lineageLifetimeKey(string(n.ID), session.IncarnationID(n.Incarnation))] = n
+		key := lineageLifetimeKey(string(n.ID), session.IncarnationID(n.Incarnation))
+		if _, duplicate := byLifetime[key]; duplicate {
+			byLifetime[key] = lineageNode{}
+			continue
+		}
+		byLifetime[key] = n
 	}
 	results := parentResults(s)
 	matched := 0
@@ -213,10 +219,15 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 	if p := ev.Team; p != nil {
 		c, e := conclusion(p.ParentCallID, results)
 		if ev.Type == session.EvTeamStart {
+			if !parentToolCallExists(root, p.ParentCallID, "Team") {
+				return nil
+			}
 			rows := make([]delegationRow, 0, len(p.Roster))
 			for _, m := range p.Roster {
-				n, proven := teamRosterChild(p.TeamID, m.Name, nodes, root)
-				if !proven {
+				n, proven := childFields(string(m.MemberSessionID), m.MemberIncarnation, nodes, root)
+				if !proven || n.Kind != session.SessionKindTeamMember || n.Edge != delegationTeam ||
+					n.Relationship.ParentSessionID != root.ID || n.Relationship.ParentIncarnation != root.Incarnation() ||
+					n.Relationship.TeamID != p.TeamID || n.Relationship.MemberName != m.Name {
 					continue
 				}
 				rows = append(rows, delegationRow{
@@ -245,18 +256,18 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 	return nil
 }
 
-func teamRosterChild(teamID, member string, nodes map[string]lineageNode, root *session.Session) (lineageNode, bool) {
-	var match lineageNode
-	count := 0
-	for _, n := range nodes {
-		if n.Kind != session.SessionKindTeamMember || n.Edge != delegationTeam || n.Relationship.TeamID != teamID || n.Relationship.MemberName != member ||
-			n.State != string(port.SessionLineageRetained) || n.OwnerScope != session.PrincipalScopeHash(root.Owner) || n.Handle == "" || !session.IncarnationID(n.Incarnation).Valid() {
-			continue
-		}
-		match = n
-		count++
+func parentToolCallExists(root *session.Session, callID, toolName string) bool {
+	if root == nil || callID == "" {
+		return false
 	}
-	return match, count == 1
+	for _, message := range root.Conversation.Messages {
+		for _, call := range message.ToolCalls {
+			if string(call.ID) == callID && call.Name == toolName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func projectRoutingDecision(in *session.RoutingDecision) *routingDecisionEvidence {
@@ -288,7 +299,13 @@ func safeProbability(in *float64) *float64 {
 }
 
 func safeRoutingLine(in string) string {
-	runes := []rune(safeLine(in))
+	clean := strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, session.ToValidUTF8(in))
+	runes := []rune(strings.TrimSpace(clean))
 	if len(runes) > 200 {
 		runes = runes[:200]
 	}

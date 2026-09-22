@@ -252,7 +252,7 @@ func routingProbability(in *float64) *float64 {
 
 func routingEvidenceString(in string) string {
 	clean := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -281,11 +281,11 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		ChildId:         p.ChildID,
 		BranchLabel:     valid(p.BranchLabel),
 		Goal:            valid(p.Goal),
-		RoutedCategory:  p.RoutedCategory,
-		RoutedModel:     p.RoutedModel,
-		RoutingReason:   p.RoutingReason,
+		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
+		RoutedModel:     routingEvidenceString(p.RoutedModel),
+		RoutingReason:   routingEvidenceString(p.RoutingReason),
 		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
-		Model:           p.Model,
+		Model:           routingEvidenceString(p.Model),
 		ToolName:        valid(p.ToolName),
 		IsError:         p.IsError,
 		ToolCount:       ClampInt32(p.ToolCount),
@@ -451,11 +451,11 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 			Role:            valid(m.Role),
 			Mutating:        m.Mutating,
 			Lead:            m.Lead,
-			RoutedCategory:  m.RoutedCategory,
-			RoutedModel:     m.RoutedModel,
-			RoutingReason:   m.RoutingReason,
+			RoutedCategory:  routingEvidenceString(m.RoutedCategory),
+			RoutedModel:     routingEvidenceString(m.RoutedModel),
+			RoutingReason:   routingEvidenceString(m.RoutingReason),
 			RoutingDecision: toProtoRoutingDecision(m.RoutingDecision),
-			Model:           m.Model,
+			Model:           routingEvidenceString(m.Model),
 		})
 	}
 	tasks := make([]*mecatlv1.TeamTask, 0, len(p.Tasks))
@@ -577,11 +577,11 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		ChildId:         p.ChildID,
 		Goal:            valid(p.Goal),
 		Background:      p.Background,
-		RoutedCategory:  p.RoutedCategory,
-		RoutedModel:     p.RoutedModel,
-		RoutingReason:   p.RoutingReason,
+		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
+		RoutedModel:     routingEvidenceString(p.RoutedModel),
+		RoutingReason:   routingEvidenceString(p.RoutingReason),
 		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
-		Model:           p.Model,
+		Model:           routingEvidenceString(p.Model),
 		ToolName:        valid(p.ToolName),
 		IsError:         p.IsError,
 		ToolCount:       ClampInt32(p.ToolCount),

@@ -15,7 +15,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
-  snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).
+  snapshots on Subagent, Parallel, and Team-member start payloads. Team roster entries
+  also carry trusted log-only `MemberSessionID` and `MemberIncarnation` correlation for
+  exact retained-lifetime debugger joins. Added (minor).
 
 - **Backend-neutral router outcomes** — adds `agent.RouterMissTimeout`,
   `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and

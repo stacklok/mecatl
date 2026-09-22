@@ -32,6 +32,7 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 		client.ToolCallMsg{ID: "sub-call", Name: "Subagent", Args: `{"prompt":"inspect routing"}`},
 		client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub-call", ChildID: "sub-child", Goal: "inspect routing", Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision},
 		client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "sub-call", ChildID: "sub-child", InnerKind: "tool.call", ToolName: "Read", ToolCount: 1},
+		client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "sub-call", ChildID: "sub-child", Stop: "end_turn"},
 		client.ParallelMsg{Kind: client.ParallelStart, ParentCallID: "parallel-call", Join: "all", BranchCount: 1},
 		client.ParallelMsg{Kind: client.ParallelBranchStart, ParentCallID: "parallel-call", BranchIndex: 0, ChildID: "parallel-child", BranchLabel: "branch-1", Goal: "inspect routing", Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision},
 		client.ParallelMsg{Kind: client.ParallelBranchTool, ParentCallID: "parallel-call", BranchIndex: 0, InnerKind: "tool.call", ToolName: "Grep", ToolCount: 1},
@@ -69,7 +70,21 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	}
 
 	expanded := stripANSIstr(r.renderBlock(0, subBlock, true))
-	assertRoutingDetail(t, "expanded Subagent card", expanded)
+	assertRoutingDetail(t, "expanded completed Subagent card", expanded)
+	if got := strings.Count(expanded, "candidate: medium"); got != 1 {
+		t.Errorf("expanded fallback duplicated compact candidate cue %d times:\n%s", got, expanded)
+	}
+	var teamBlock *block
+	for i := range m.conv.blocks {
+		if m.conv.blocks[i].toolID == "team-call" {
+			teamBlock = &m.conv.blocks[i]
+			break
+		}
+	}
+	if teamBlock == nil {
+		t.Fatal("Team tool block was not created")
+	}
+	assertRoutingDetail(t, "expanded Team card", stripANSIstr(r.renderBlock(0, teamBlock, true)))
 
 	views := map[string]string{}
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
@@ -119,8 +134,8 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	zero := 0.0
 	zeroDecision := &client.RoutingDecision{Backend: "jev", ClassifierModel: "jev-1.13.0", Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", MissLimit: 3}
 	zeroDetail := routingDecisionDetail(zeroDecision, "gpt-6-astra", "")
-	if !strings.Contains(zeroDetail, "confidence: 0.00") || !strings.Contains(zeroDetail, "threshold: disabled (0.00)") {
-		t.Errorf("known zero must remain distinct from absence: %q", zeroDetail)
+	if !strings.Contains(zeroDetail, "confidence: 0.00") || !strings.Contains(zeroDetail, "threshold: disabled (0.00)") || !strings.Contains(zeroDetail, "reason: accepted") || strings.Contains(zeroDetail, "no final reason") {
+		t.Errorf("known zero and healthy accepted outcome must remain truthful: %q", zeroDetail)
 	}
 	llmDetail := routingDecisionDetail(&client.RoutingDecision{Backend: "llm", ClassifierModel: "quick", Outcome: "fallback", MissLimit: 3}, "gpt-6-astra", "bad-verdict")
 	if !strings.Contains(llmDetail, "confidence: unavailable") || strings.Contains(llmDetail, "confidence: 0.00") {
@@ -135,6 +150,14 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	const historical = "model: gpt-6-astra · not routed: pinned-model"
 	if got := delegationModelLabel("", "", "pinned-model", "gpt-6-astra", nil); got != historical {
 		t.Errorf("historical nil label = %q, want byte-identical %q", got, historical)
+	}
+	hostileDetail := routingDecisionDetail(&client.RoutingDecision{
+		Backend: "jev\u202e", ClassifierModel: "jev\u200b", CandidateCategory: "deep\u2066", CandidateModel: "model\u202d", Outcome: "fallback",
+	}, "actual\u202e", "low-confidence\u200b")
+	for _, marker := range []rune{'\u202e', '\u200b', '\u2066', '\u202d'} {
+		if strings.ContainsRune(hostileDetail, marker) {
+			t.Errorf("routing detail retained Unicode format control %U: %q", marker, hostileDetail)
+		}
 	}
 
 	compareGolden(t, "jev_routing_user_journey.golden", []byte(expanded+"\n\n"+views["Subagent focus"]+"\n"))

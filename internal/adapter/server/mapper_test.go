@@ -30,7 +30,7 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	for name, ev := range map[string]session.Event{
 		"subagent": {Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: decision}},
 		"parallel": {Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{RoutingDecision: decision}},
-		"team":     {Type: session.EvTeamStart, Team: &session.TeamPayload{Roster: []session.TeamMemberSpec{{Name: "reviewer", RoutingDecision: decision}}}},
+		"team":     {Type: session.EvTeamStart, Team: &session.TeamPayload{Roster: []session.TeamMemberSpec{{Name: "reviewer", RoutingDecision: decision, MemberSessionID: "private-member-id", MemberIncarnation: session.NewIncarnationID()}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			pb := toProto(ev)
@@ -52,13 +52,16 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 					t.Fatalf("protobuf JSON %s missing %s", text, want)
 				}
 			}
+			if strings.Contains(text, "private-member-id") || strings.Contains(text, "memberIncarnation") {
+				t.Fatalf("private team lifetime leaked onto wire: %s", text)
+			}
 		})
 	}
 
 	bad := math.NaN()
 	hostile := &session.RoutingDecision{
-		Backend: "custom\x00", ClassifierModel: "model\xff", CandidateCategory: strings.Repeat("x", 1000),
-		CandidateModel: "candidate\nsecret", Confidence: &bad, MinimumConfidence: &bad, Outcome: "invented",
+		Backend: "custom\x00", ClassifierModel: "model\xff\u202e", CandidateCategory: strings.Repeat("x", 1000),
+		CandidateModel: "candidate\nsecret\u200b", Confidence: &bad, MinimumConfidence: &bad, Outcome: "invented",
 	}
 	pb := toProto(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: hostile}})
 	if _, err := protojson.Marshal(pb); err != nil {
@@ -68,7 +71,7 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	if got.GetBackend() != "" || got.GetOutcome() != "" || got.Confidence != nil || got.MinimumConfidence != nil {
 		t.Fatalf("unsafe closed/numeric evidence survived: %+v", got)
 	}
-	if len([]rune(got.GetCandidateCategory())) > 200 || strings.ContainsAny(got.GetCandidateModel(), "\n\r\x00") {
+	if len([]rune(got.GetCandidateCategory())) > 200 || strings.ContainsAny(got.GetCandidateModel(), "\n\r\x00") || strings.ContainsRune(got.GetCandidateModel(), '\u200b') || strings.ContainsRune(got.GetClassifierModel(), '\u202e') {
 		t.Fatalf("unbounded/control-bearing candidate survived: %+v", got)
 	}
 	for name, invalid := range map[string]float64{"positive infinity": math.Inf(1), "negative infinity": math.Inf(-1), "below range": -0.01, "above range": 1.01} {

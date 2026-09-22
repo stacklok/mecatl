@@ -45,8 +45,8 @@ func routerTool() *SubagentTool {
 // A plain default delegation with a wired routeTask mints the child on the ROUTED model.
 func TestRunRouteTaskRoutesPlainDelegation(t *testing.T) {
 	tl := routerTool()
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"deep work"}`)),
@@ -66,9 +66,9 @@ func TestRunRouteTaskRoutesPlainDelegation(t *testing.T) {
 func TestRunExplicitModelBeatsRouter(t *testing.T) {
 	tl := routerTool()
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "router-model", "", true
+		return modelRoutingResult{category: "large", model: "router-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","model":"explicit-model"}`)),
@@ -93,9 +93,9 @@ func TestRunForkDoesNotRoute(t *testing.T) {
 	caps := parentCaps{
 		children:    newChildRunRegistry(),
 		forkHistory: func() []session.Message { return nil }, // turn-0 fork → empty snapshot (benign)
-		routeTask: func(context.Context, string) (string, string, string, bool) {
+		routeDecision: func(context.Context, string) modelRoutingResult {
 			calls++
-			return "large", "router-model", "", true
+			return modelRoutingResult{category: "large", model: "router-model", ok: true}
 		},
 	}
 	_, err := tl.ExecuteWithParent(context.Background(),
@@ -123,9 +123,9 @@ func TestRunNamedAgentBeatsRouter(t *testing.T) {
 		WithPinnedAgents([]string{"reviewer"}),
 	).(*SubagentTool)
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "router-model", "", true
+		return modelRoutingResult{category: "large", model: "router-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","agent":"reviewer"}`)),
@@ -165,10 +165,10 @@ func routableAgentTool(factoryOK, wireFactory bool, defLimits session.Limits) *S
 }
 
 // hitRoute returns a routeTask that always classifies to model, counting consultations.
-func hitRoute(calls *int, model string) func(context.Context, string) (string, string, string, bool) {
-	return func(context.Context, string) (string, string, string, bool) {
+func hitRoute(calls *int, model string) func(context.Context, string) modelRoutingResult {
+	return func(context.Context, string) modelRoutingResult {
 		*calls++
-		return "large", model, "", true
+		return modelRoutingResult{category: "large", model: model, ok: true}
 	}
 }
 
@@ -179,7 +179,7 @@ func hitRoute(calls *int, model string) func(context.Context, string) (string, s
 func TestRunRoutableAgentRoutesViaFactory(t *testing.T) {
 	tl := routableAgentTool(true, true, session.Limits{})
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
 		memEnv("/ws"), nil, caps)
@@ -230,9 +230,9 @@ func TestRunRoutableAgentMissUsesPrebuilt(t *testing.T) {
 			start = ev.Subagent
 		}
 	}
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "", "", RouterMissBadVerdict, false // miss
+		return modelRoutingResult{reason: RouterMissBadVerdict} // miss
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
@@ -263,8 +263,8 @@ func TestRunBackgroundMissCarriesRoutingReason(t *testing.T) {
 			start = ev.Subagent
 		}
 	}
-	caps := parentCaps{children: reg, routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "", "", RouterMissCancelled, false
+	caps := parentCaps{children: reg, routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{reason: RouterMissCancelled}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","background":true}`)),
@@ -293,7 +293,7 @@ func TestRunBackgroundMissCarriesRoutingReason(t *testing.T) {
 func TestRunRoutableAgentNoFactoryDoesNotSpendClassifier(t *testing.T) {
 	tl := routableAgentTool(true, false /*no factory*/, session.Limits{})
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
 		memEnv("/ws"), nil, caps)
@@ -320,7 +320,7 @@ func TestRunRoutableAgentFactoryDeclineUsesPrebuilt(t *testing.T) {
 			start = ev.Subagent
 		}
 	}
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
 		memEnv("/ws"), emit, caps)
@@ -354,7 +354,7 @@ func TestRunRoutableAgentFactoryDeclineUsesPrebuilt(t *testing.T) {
 func TestRunExplicitAgentModelBypassesRouter(t *testing.T) {
 	tl := routableAgentTool(true, true, session.Limits{})
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","agent":"reviewer","model":"fast"}`)),
 		memEnv("/ws"), nil, caps)
@@ -376,11 +376,11 @@ func TestRunExplicitAgentModelBypassesRouter(t *testing.T) {
 // precedence decision, so the assertion is deterministic and needs no store fixture.
 func TestRunResumeDoesNotRoute(t *testing.T) {
 	var calls int
-	route := func(context.Context, string) (string, string, string, bool) {
+	route := func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "router-model", "", true
+		return modelRoutingResult{category: "large", model: "router-model", ok: true}
 	}
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: route}
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: route}
 	args := subagentArgs{Prompt: "x", Resume: "subagent-abc"}
 	tl := routerTool()
 	cat, model, reason, _ := tl.maybeRouteModel(context.Background(), args, true /*resuming*/, false /*writable*/, caps)
@@ -403,12 +403,12 @@ func TestRunResumeDoesNotRoute(t *testing.T) {
 // (router absent / pinned model / agent-def pinned / inherited default→routed / classifier
 // miss) plus the fork gate and a classifier-miss pass-through.
 func TestMaybeRouteModelGateAttribution(t *testing.T) {
-	routeOK := func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	routeOK := func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}
-	routeMiss := func(reason string) func(context.Context, string) (string, string, string, bool) {
-		return func(context.Context, string) (string, string, string, bool) {
-			return "", "", reason, false
+	routeMiss := func(reason string) func(context.Context, string) modelRoutingResult {
+		return func(context.Context, string) modelRoutingResult {
+			return modelRoutingResult{reason: reason}
 		}
 	}
 	// agentModelFactory wires the agent+model factory (issue #286) so a ROUTABLE def can be
@@ -423,8 +423,8 @@ func TestMaybeRouteModelGateAttribution(t *testing.T) {
 		args     subagentArgs
 		resuming bool
 		writable bool
-		route    func(context.Context, string) (string, string, string, bool) // nil = router absent
-		tool     func() *SubagentTool                                         // nil = routerTool()
+		route    func(context.Context, string) modelRoutingResult // nil = router absent
+		tool     func() *SubagentTool                             // nil = routerTool()
 		wantCat  string
 		wantMod  string
 		wantWhy  string
@@ -521,7 +521,7 @@ func TestMaybeRouteModelGateAttribution(t *testing.T) {
 			if tc.tool != nil {
 				tl = tc.tool()
 			}
-			caps := parentCaps{children: newChildRunRegistry(), routeTask: tc.route}
+			caps := parentCaps{children: newChildRunRegistry(), routeDecision: tc.route}
 			cat, model, reason, _ := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, tc.writable, caps)
 			if cat != tc.wantCat || model != tc.wantMod {
 				t.Fatalf("routed = (%q, %q), want (%q, %q)", cat, model, tc.wantCat, tc.wantMod)
@@ -677,8 +677,8 @@ func TestADR_0350_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
 // the delegation still completes, never errors.
 func TestRunRouteTaskMissInheritsDefault(t *testing.T) {
 	tl := routerTool()
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "", "", RouterMissBadVerdict, false // miss
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{reason: RouterMissBadVerdict} // miss
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
@@ -731,9 +731,9 @@ func writableRouterTool(found bool) *SubagentTool {
 func TestRunWritableRoutesWhenFactoryWired(t *testing.T) {
 	tl := writableRouterTool(true)
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
@@ -763,8 +763,8 @@ func TestRunWritableRoutedFactoryMissFailSoft(t *testing.T) {
 			start = ev.Subagent
 		}
 	}
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
@@ -814,7 +814,7 @@ func TestRunWritableRoutableAgentRoutesViaFactory(t *testing.T) {
 			if ev.Type == session.EvSubagentStart {
 				start = ev.Subagent
 			}
-		}, parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")})
+		}, parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(&calls, "router-model")})
 	if err != nil || res.IsError {
 		t.Fatalf("routed writable specialist failed: %v %+v", err, res)
 	}
@@ -839,9 +839,9 @@ func TestRunWritableRoutableAgentMissUsesOrdinarySpecialist(t *testing.T) {
 			if ev.Type == session.EvSubagentStart {
 				start = ev.Subagent
 			}
-		}, parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+		}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 			calls++
-			return "", "", RouterMissBadVerdict, false
+			return modelRoutingResult{reason: RouterMissBadVerdict}
 		}})
 	if err != nil || res.IsError || !strings.Contains(res.Content, "WRITABLE-SPECIALIST") {
 		t.Fatalf("router miss did not use ordinary writable specialist: %v %+v", err, res)
@@ -860,7 +860,7 @@ func TestRunWritableRoutableAgentUnavailableTargetFallsBack(t *testing.T) {
 			if ev.Type == session.EvSubagentStart {
 				start = ev.Subagent
 			}
-		}, parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(new(int), "missing-model")})
+		}, parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(new(int), "missing-model")})
 	if err != nil || res.IsError || !strings.Contains(res.Content, "WRITABLE-SPECIALIST") {
 		t.Fatalf("unavailable routed target did not fall back: %v %+v", err, res)
 	}
@@ -874,7 +874,7 @@ func TestRunWritableRoutableAgentMissingFactoryBypassesClassifier(t *testing.T) 
 	var calls int
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"fix it","mode":"read-write","agent":"reviewer"}`)),
-		memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")})
+		memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry(), routeDecision: hitRoute(&calls, "router-model")})
 	if err != nil || res.IsError || !strings.Contains(res.Content, "WRITABLE-SPECIALIST") {
 		t.Fatalf("missing routed factory did not use ordinary writable specialist: %v %+v", err, res)
 	}
@@ -901,7 +901,7 @@ func TestWritableRoutableAgentRequiresBothFactories(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := append(append([]SubagentOption{}, base...), tc.opt)
 			tl := NewSubagentTool(markerEngine("DEFAULT"), opts...).(*SubagentTool)
-			_, model, reason, _ := tl.maybeRouteModel(context.Background(), subagentArgs{Prompt: "x", Agent: "reviewer"}, false, true, parentCaps{routeTask: route})
+			_, model, reason, _ := tl.maybeRouteModel(context.Background(), subagentArgs{Prompt: "x", Agent: "reviewer"}, false, true, parentCaps{routeDecision: route})
 			if model != "" || reason != session.RoutingReasonRouterDisabled {
 				t.Fatalf("routing = (model=%q reason=%q), want disabled", model, reason)
 			}
@@ -939,7 +939,7 @@ func TestWritableNamedRoutingPrecedenceBypassesClassifier(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, model, reason, _ := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, true, parentCaps{routeTask: route})
+			_, model, reason, _ := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, true, parentCaps{routeDecision: route})
 			if model != "" || reason != tc.want {
 				t.Fatalf("routing = (model=%q reason=%q), want empty model and %q", model, reason, tc.want)
 			}
@@ -965,9 +965,9 @@ func TestRunWritableDoesNotSpendClassifierWhenFactoryUnwired(t *testing.T) {
 	tl := NewSubagentTool(markerEngine("READ-ONLY"),
 		WithWritableChildEngine(markerEngine("WRITABLE-DEFAULT"))).(*SubagentTool)
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
@@ -1032,13 +1032,13 @@ func TestRouterBreakerOpensAfterConsecutiveMisses(t *testing.T) {
 	// then derive the production routeTask via parentCaps.
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)
-	if caps.routeTask == nil {
+	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
 	}
 	// Call past the threshold: the first defaultModelRouterMaxMisses calls consult the
 	// underlying router (all miss), the breaker opens, and subsequent calls SKIP it.
 	for i := 0; i < defaultModelRouterMaxMisses+3; i++ {
-		caps.routeTask(context.Background(), "task")
+		caps.routeDecision(context.Background(), "task")
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -1074,22 +1074,22 @@ func TestRouterBreakerResetsOnSuccess(t *testing.T) {
 	caps := mainEngine.parentCaps(run, nil, 0)
 	// Two misses (below the threshold of 3), then a success resets, then more misses must
 	// not trip immediately — proving the reset.
-	caps.routeTask(context.Background(), "t")
-	caps.routeTask(context.Background(), "t")
+	caps.routeDecision(context.Background(), "t")
+	caps.routeDecision(context.Background(), "t")
 	mu.Lock()
 	hit = true
 	mu.Unlock()
-	if _, _, _, ok := caps.routeTask(context.Background(), "t"); !ok {
+	if got := caps.routeDecision(context.Background(), "t"); !got.ok {
 		t.Fatal("a success must classify")
 	}
 	mu.Lock()
 	hit = false
 	mu.Unlock()
 	// Three more misses are needed to re-open (the count was reset).
-	caps.routeTask(context.Background(), "t")
-	caps.routeTask(context.Background(), "t")
-	caps.routeTask(context.Background(), "t")
-	caps.routeTask(context.Background(), "t") // this one should be skipped (breaker open again)
+	caps.routeDecision(context.Background(), "t")
+	caps.routeDecision(context.Background(), "t")
+	caps.routeDecision(context.Background(), "t")
+	caps.routeDecision(context.Background(), "t") // this one should be skipped (breaker open again)
 	mu.Lock()
 	defer mu.Unlock()
 	// 2 (initial misses) + 1 (success) + 3 (re-trip) = 6 underlying consultations; the 7th
@@ -1132,7 +1132,7 @@ func TestRouterBreakerSerializesConcurrentCalls(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			caps.routeTask(context.Background(), "concurrent task")
+			caps.routeDecision(context.Background(), "concurrent task")
 		}()
 	}
 	wg.Wait()
@@ -1151,7 +1151,7 @@ func TestRouterBreakerSerializesConcurrentCalls(t *testing.T) {
 }
 
 // TestRouterBreakerSharedAcrossFamilies (ADR 0034): all three delegation families
-// (Subagent / Parallel branches / team members) route through the ONE caps.routeTask the
+// (Subagent / Parallel branches / team members) route through the ONE caps.routeDecision the
 // dispatcher binds per run, so a mixed turn shares a SINGLE breaker + miss counter. Here a
 // Parallel fan-out of N branches and one Subagent-shaped call all consult the same
 // always-miss router; the breaker must open ONCE after exactly `max` underlying
@@ -1180,20 +1180,20 @@ func TestRouterBreakerSharedAcrossFamilies(t *testing.T) {
 	caps := mainEngine.parentCaps(run, nil, 0)
 
 	// Simulate a mixed turn: several "parallel branch" classifications + one "subagent"
-	// classification, concurrently, all through the SAME caps.routeTask. The combined
+	// classification, concurrently, all through the SAME caps.routeDecision. The combined
 	// consult count must cap at `max` — proving one breaker spans the families.
 	const parallelBranches = 5
 	var wg sync.WaitGroup
 	for i := 0; i < parallelBranches; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); caps.routeTask(context.Background(), "branch task") }()
+		go func() { defer wg.Done(); caps.routeDecision(context.Background(), "branch task") }()
 	}
 	wg.Add(1)
-	go func() { defer wg.Done(); caps.routeTask(context.Background(), "subagent task") }()
+	go func() { defer wg.Done(); caps.routeDecision(context.Background(), "subagent task") }()
 	wg.Wait()
 	// A few more after they've all run: the breaker is open, so these are skipped too.
-	caps.routeTask(context.Background(), "later")
-	caps.routeTask(context.Background(), "later")
+	caps.routeDecision(context.Background(), "later")
+	caps.routeDecision(context.Background(), "later")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1229,14 +1229,14 @@ func TestRouteTaskPropagatesRunCtx(t *testing.T) {
 	})
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)
-	if caps.routeTask == nil {
+	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		caps.routeTask(ctx, "task")
+		caps.routeDecision(ctx, "task")
 		close(done)
 	}()
 	// Cancel the run ctx; the router closure must unblock and return (fail-soft) rather
@@ -1291,18 +1291,18 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, parentSess, 0)
-	if caps.routeTask == nil {
+	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
 	}
 
 	// First call: fold perCall into the parent session.
-	caps.routeTask(context.Background(), "task 1")
+	caps.routeDecision(context.Background(), "task 1")
 	if got := parentSess.Usage.TotalTokens(); got != perCall {
 		t.Fatalf("after first routeTask call: sess.Usage.TotalTokens() = %d, want %d (first fold)", got, perCall)
 	}
 
 	// Second call: fold another perCall — must ACCUMULATE, not overwrite.
-	caps.routeTask(context.Background(), "task 2")
+	caps.routeDecision(context.Background(), "task 2")
 	if got := parentSess.Usage.TotalTokens(); got != 2*perCall {
 		t.Fatalf("after second routeTask call: sess.Usage.TotalTokens() = %d, want %d (cumulative fold)", got, 2*perCall)
 	}
@@ -1334,19 +1334,19 @@ func TestRouteTaskNewCanonicalMissesShareBreakerAndFoldUsageOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
-			route := engine.parentCaps(run, parent, 0).routeTask
+			route := engine.parentCaps(run, parent, 0).routeDecision
 			for i := 0; i < defaultModelRouterMaxMisses; i++ {
-				_, _, gotReason, ok := route(t.Context(), "task")
-				if ok || gotReason != reason {
-					t.Fatalf("miss %d = reason %q ok=%v, want %q false", i+1, gotReason, ok, reason)
+				got := route(t.Context(), "task")
+				if got.ok || got.reason != reason {
+					t.Fatalf("miss %d = reason %q ok=%v, want %q false", i+1, got.reason, got.ok, reason)
 				}
 				if got := parent.Usage.InputTokens; got != (i+1)*perCall {
 					t.Fatalf("after miss %d usage=%d, want exactly %d", i+1, got, (i+1)*perCall)
 				}
 			}
-			_, _, gotReason, ok := route(t.Context(), "skipped")
-			if ok || gotReason != session.RoutingReasonBreakerOpen {
-				t.Fatalf("post-threshold route = reason %q ok=%v", gotReason, ok)
+			got := route(t.Context(), "skipped")
+			if got.ok || got.reason != session.RoutingReasonBreakerOpen {
+				t.Fatalf("post-threshold route = reason %q ok=%v", got.reason, got.ok)
 			}
 			if calls != defaultModelRouterMaxMisses || parent.Usage.InputTokens != defaultModelRouterMaxMisses*perCall {
 				t.Fatalf("calls=%d usage=%d, want %d calls and exactly-once usage %d", calls, parent.Usage.InputTokens,
@@ -1385,8 +1385,7 @@ func TestRouteTaskFoldsClassifierUsageOnMissPath(t *testing.T) {
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, parentSess, 0)
 
-	_, _, _, routeOK := caps.routeTask(context.Background(), "classify me")
-	if routeOK {
+	if routed := caps.routeDecision(context.Background(), "classify me"); routed.ok {
 		t.Fatal("the underlying router misses (ok=false), routeTask must pass through as miss")
 	}
 	if got := parentSess.Usage.TotalTokens(); got != perCall {
@@ -1435,7 +1434,7 @@ func TestClassifierSpendTripsMaxRunTokens(t *testing.T) {
 
 	tripped := false
 	for i := 0; i < 10; i++ {
-		caps.routeTask(context.Background(), "classify")
+		caps.routeDecision(context.Background(), "classify")
 		if mainEngine.budgetExhausted(run, parentSess.Usage) {
 			tripped = true
 			// Assert it tripped at exactly the expected call (wantTrip-th call crosses budget).

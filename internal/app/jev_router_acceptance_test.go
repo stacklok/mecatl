@@ -316,6 +316,56 @@ func TestADR_0350_Scenario3_CompositionParity(t *testing.T) {
 	}
 }
 
+func TestJevLowConfidenceCandidateSurvivesRealDelegation(t *testing.T) {
+	srv, calls := jevTestServer(t, "small", 0.42, 4, 2)
+	provider := &jevBuildProvider{}
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
+		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, Model: "inherited-model",
+		RouterBackend: "jev", RouterJevModel: "jev-1.13.0", RouterJevBaseURL: srv.URL,
+		RouterJevMinimumConfidence: 0.50, TypesafeAPIKey: "secret",
+		ModelAliases: map[string]string{"candidate-alias": "locally-resolved-candidate"},
+		RouterCategories: []permconfig.RouterCategory{
+			{Name: "small", Description: "small task", Model: "candidate-alias"},
+			{Name: "large", Description: "large task", Model: "other-model"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	created, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRun(t.Context(), created.ID, "delegate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, starts := drainRunWithSubagentStart(run)
+	if final != "parent done" || len(starts) != 1 || calls.Load() != 1 {
+		t.Fatalf("run final=%q starts=%d Jev calls=%d", final, len(starts), calls.Load())
+	}
+	start := starts[0]
+	if start.RoutedCategory != "" || start.RoutedModel != "" || start.RoutingReason != agent.RouterMissLowConfidence || start.Model != "inherited-model" {
+		t.Fatalf("low-confidence final routing truth = %+v", start)
+	}
+	decision := start.RoutingDecision
+	if decision == nil || decision.CandidateCategory != "small" || decision.CandidateModel != "locally-resolved-candidate" || decision.Confidence == nil || *decision.Confidence != 0.42 || decision.MinimumConfidence == nil || *decision.MinimumConfidence != 0.50 || decision.Outcome != "fallback" {
+		t.Fatalf("low-confidence candidate evidence = %+v", decision)
+	}
+	loaded, err := built.Service.GetSession(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Usage.InputTokens != 4 || loaded.Usage.OutputTokens != 2 {
+		t.Fatalf("classifier usage = %+v, want exactly once 4/2", loaded.Usage)
+	}
+	if models := provider.models(); len(models) != 1 || models[0] != "inherited-model" {
+		t.Fatalf("low-confidence candidate ran instead of inherited model: %v", models)
+	}
+}
+
 func jevChoiceServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32

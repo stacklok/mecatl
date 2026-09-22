@@ -43,12 +43,12 @@ func TestRouteTaskMissLogsReason(t *testing.T) {
 		diag:     diag,
 	}
 	caps := mainEngine.parentCaps(run, nil, 0)
-	if caps.routeTask == nil {
+	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
 	}
 
 	// Drive ONE plain delegation classification whose task prompt embeds the sentinel.
-	caps.routeTask(context.Background(), "please route this task: "+sentinel)
+	caps.routeDecision(context.Background(), "please route this task: "+sentinel)
 
 	records := diag.snapshot()
 	var missLines int
@@ -149,7 +149,7 @@ func TestRouteTaskMissEmptyReasonFallsBackToEmptyModel(t *testing.T) {
 	}
 	caps := mainEngine.parentCaps(run, nil, 0)
 
-	caps.routeTask(context.Background(), "task")
+	caps.routeDecision(context.Background(), "task")
 
 	var found bool
 	for _, r := range diag.snapshot() {
@@ -192,7 +192,7 @@ func TestRouterBreakerOpenSkipStaysSilent(t *testing.T) {
 	// Call well PAST the breaker max: the first `max` calls consult the classifier (each
 	// logs one per-miss INFO), the breaker opens, and the remaining calls SKIP it silently.
 	for i := 0; i < defaultModelRouterMaxMisses+4; i++ {
-		caps.routeTask(context.Background(), "task")
+		caps.routeDecision(context.Background(), "task")
 	}
 
 	var missLines int
@@ -204,5 +204,37 @@ func TestRouterBreakerOpenSkipStaysSilent(t *testing.T) {
 	if missLines != defaultModelRouterMaxMisses {
 		t.Fatalf("per-miss INFO count = %d, want exactly %d (the breaker-open skip path must stay silent, never max+skips)",
 			missLines, defaultModelRouterMaxMisses)
+	}
+}
+
+func TestRouteDecisionDiagnosticsSanitizeHostileCallbackMetadata(t *testing.T) {
+	const forbidden = "private-task-marker"
+	diag := newInternalCapturingDiag()
+	mainEngine := NewEngine(Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
+		SubagentModelRouter: &SubagentModelRouter{
+			Backend: "jev", ClassifierModel: "classifier\u202emodel\u200b",
+			Route: func(context.Context, string) ModelRouteResult {
+				return ModelRouteResult{
+					Category: "candidate\u202e\x1b[31m",
+					Model:    "target\u200b\nmodel",
+					Reason:   "opaque SDK error: " + forbidden + "\u202e\x1b[2J",
+				}
+			},
+		},
+	})
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: diag}
+	caps := mainEngine.parentCaps(run, nil, 0)
+	got := caps.routeConfigured(context.Background(), forbidden)
+	if got.decision == nil || got.reason != routingReasonGeneric {
+		t.Fatalf("canonical miss = reason %q decision %+v", got.reason, got.decision)
+	}
+	for _, record := range diag.snapshot() {
+		for key, value := range record.attrs {
+			text := fmt.Sprint(value)
+			if strings.Contains(text, forbidden) || strings.ContainsAny(text, "\x1b\n") || strings.ContainsRune(text, '\u202e') || strings.ContainsRune(text, '\u200b') {
+				t.Fatalf("diagnostic %q leaked hostile %s metadata: %q", record.msg, key, text)
+			}
+		}
 	}
 }

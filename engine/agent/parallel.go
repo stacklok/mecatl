@@ -1210,7 +1210,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 // run (no nesting — a Parallel branch child has no Parallel tool) and when no router is
 // wired (the byte-identical default).
 func (t *ParallelTool) maybeRouteBranchModel(ctx context.Context, caps parentCaps, prompt string) (category, model, reason string, decision *session.RoutingDecision) {
-	if t.engineFactory == nil || (caps.routeTask == nil && caps.routeDecision == nil) {
+	if t.engineFactory == nil || caps.routeDecision == nil {
 		if caps.skipRoute != nil {
 			decision = caps.skipRoute(session.RoutingReasonRouterDisabled)
 		}

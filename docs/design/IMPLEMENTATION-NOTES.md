@@ -1377,7 +1377,7 @@ consecutive-miss count; armed in `Engine.Run` iff `Deps.SubagentModelRouter != n
 `Deps` field + `Run.router`). The closure lives in `Engine.parentCaps` (next to `adjudicate`): it
 holds the mutex across the whole classification, skips on an open breaker or a fired `hardAbort`,
 notes misses (one-time breaker-opened INFO via `r.diag`), resets on a success, and emits the
-per-classification INFO — all at the **dispatch-time `routeTask` closure** (like the
+per-classification INFO — all at the **dispatch-time `routeDecision` closure** (like the
 policy-deny INFO), never the `resolveChildAsk` child chokepoint, never a fourth loop line.
 The closure also folds the classifier's `session.Usage` into the parent `sess.Usage`
 UNCONDITIONALLY (hit OR miss) via `_ = sess.RecordUsage(classifierUsage)` BEFORE the
@@ -1460,10 +1460,10 @@ additive `RoutingReason` now rides all three delegation-start events —
 `resume` / `fork` / `router-disabled` / `route-target-unavailable` / `breaker-open` /
 `aborted`) or a static
 classifier/composition miss code (`RouterMiss*`, `category-selector-empty`, …).
-The internal `parentCaps.routeTask` closure widened to
-`(category, model, reason, ok)` (the exported `Deps.SubagentModelRouter` is
-untouched — it already returned `missReason`); the three `maybeRoute*` gates
-attribute their own gate; the dispatch `routeTaskBody` synthesizes
+The internal `parentCaps.routeDecision` closure carries one typed
+`modelRoutingResult` containing candidate, final reason, accepted-route bit, and the
+bounded decision snapshot; there is no legacy tuple callback or compatibility bridge.
+The three `maybeRoute*` gates attribute their own gate; the dispatch `routeTaskBody` synthesizes
 `breaker-open`/`aborted`. There is NO `WithRouterConfigured` bit — a nil router IS
 the honest router-absent signal. The Subagent gate (`maybeRouteModel`) attributes
 the explicit CHOICE gates (resume / fork / per-call `model` / agent-def pin) BEFORE
@@ -1543,13 +1543,14 @@ model (default `jev-1.13.0`), optional base URL, and finite `[0,1]` confidence t
 Schema validation always runs. Active-backend validation runs later in `prepareJevRouter`,
 after the taxonomy and kill-switch fold: inactive routing constructs no client and skips
 credentials, endpoint checks, and backend-selection conflicts. Active Jev requires
-`TYPESAFE_API_KEY` and rejects explicitly authored LLM-only classifier/default keys;
-active LLM rejects a Jev block. Presence bits distinguish authored keys from inherited
-slot defaults.
+`TYPESAFE_API_KEY` and rejects an explicitly authored LLM-only `classifier-slot`;
+the common `default-category` hint is accepted for both backends. Active LLM rejects a
+Jev block. Presence bits distinguish authored keys from inherited slot defaults.
 
 `internal/adapter/jevrouter` owns one Typesafe v0.1.0 client and one eight-slot semaphore
-per Build. `buildModelRouterTask` selects that client only for Jev and keeps the existing
-callback, category-to-model alias mapping, routing eligibility, breaker, and usage fold.
+per Build. `buildModelRouterTask` selects that client only for Jev and returns the shared
+typed `agent.SubagentModelRouter`/`agent.ModelRouteResult` contract; category-to-model alias
+mapping, routing eligibility, breaker, and usage fold remain common.
 The adapter returns an adapter-local `MissKind` mechanism value, never a backend-prefixed
 machine string and never an engine import. Composition exhaustively translates its eight
 failure values to the engine-owned common taxonomy; an unknown local value fails closed to
@@ -1575,14 +1576,15 @@ snapshot. `model` and `routing_reason` remain the actual-model and final-reason
 authorities. `cmd/mecatui/client/msgs.go` preserves optional presence, while
 `cmd/mecatui/ui/conversation.go` clones the decision into Subagent, Parallel, and
 Team state at start so later activity cannot clear or mutate it. The compact renderer
-adds only a fallback candidate/confidence cue. Expanded Subagent cards and all three
-F6 focus views render the full snapshot; nil confidence is `unavailable`, an explicit
+adds only a fallback candidate/confidence cue. Expanded Subagent and Team cards plus
+all three F6 focus views render the full snapshot, including after a Subagent completes;
+nil confidence is `unavailable`, an explicit
 zero threshold is `disabled (0.00)`, and historical nil decisions retain the old
 label. The durable `InspectSession` delegation projection reads the same persisted
 start evidence and never infers missing evidence.
 
 **Extending the router to team members + Parallel branches (ADR 0034).** The router PRIMITIVE
-is family-agnostic: the ONE `parentCaps.routeTask` closure (above) is bound per run by the
+is family-agnostic: the ONE typed `parentCaps.routeDecision` closure (above) is bound per run by the
 dispatcher and is already threaded into `ParallelTool` and the team `Supervisor` (both hold
 `parentCaps`). ADR 0034 reuses it verbatim for the other two delegation families — NO new
 breaker, NO new usage-fold, NO change to `RunModelRouter`/`buildModelRouterTask`/the config.

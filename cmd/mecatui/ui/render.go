@@ -1645,9 +1645,19 @@ func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 		out.WriteString(renderDelegationToolCardText(muted, "↳ "+sanitizeTerminal(b.subGoal), bodyWidth))
 		out.WriteString("\n")
 	}
-	if routed := delegationModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel, b.subRoutingDecision); routed != "" {
-		out.WriteString(renderDelegationToolCardText(muted, routed, bodyWidth))
+	modelLabel := delegationModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel, b.subRoutingDecision)
+	if expand && b.subRoutingDecision != nil {
+		modelLabel = ""
+	}
+	if modelLabel != "" {
+		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
 		out.WriteString("\n")
+	}
+	if expand {
+		if detail := routingDecisionDetail(b.subRoutingDecision, b.subModel, b.subRoutingReason); detail != "" {
+			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
+			out.WriteString("\n")
+		}
 	}
 
 	if b.subDone {
@@ -1656,10 +1666,6 @@ func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 	}
 
 	if expand {
-		if detail := routingDecisionDetail(b.subRoutingDecision, b.subModel, b.subRoutingReason); detail != "" {
-			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			out.WriteString("\n")
-		}
 		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
 		if trace := r.renderTraceAtWidth(b.subTrace, bodyWidth); trace != "" {
 			out.WriteString("\n")
@@ -1781,7 +1787,11 @@ func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason
 	}
 	reason = sanitizeTerminal(reason)
 	if reason == "" {
-		reason = "no final reason"
+		if decision.Outcome == "routed" {
+			reason = "accepted"
+		} else {
+			reason = unavailableText
+		}
 	}
 	breaker := "closed"
 	if decision.BreakerOpen {
@@ -1985,6 +1995,10 @@ func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
 		out.WriteString("\n")
 		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, false), bodyWidth))
 		if expand {
+			if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+				out.WriteString("\n")
+				out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
+			}
 			if tr := r.renderTraceAtWidth(ln.trace, bodyWidth); tr != "" {
 				out.WriteString("\n")
 				out.WriteString(tr)

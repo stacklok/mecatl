@@ -412,6 +412,10 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 			roster[i].RoutingReason = routingReasonPayload(reason)
 			roster[i].RoutingDecision = sup.memberRoutingDecision(roster[i].Name)
 			roster[i].Model = sup.MemberModel(roster[i].Name)
+			if memberID, incarnation, ok := sup.memberIdentity(roster[i].Name); ok {
+				roster[i].MemberSessionID = memberID
+				roster[i].MemberIncarnation = incarnation
+			}
 		}
 		emit(session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
 			ParentCallID: string(call.ID),

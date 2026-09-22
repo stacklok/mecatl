@@ -1169,6 +1169,11 @@ type TeamMemberSpec struct {
 	// rides the proto/client wire end-to-end (team.start roster: TeamMemberSpec.model =
 	// field 7), surfaced via the server mapper — see ADR 0035.
 	Model string
+	// MemberSessionID and MemberIncarnation are trusted, log-only correlation for the
+	// exact enrolled member lifetime. They are deliberately omitted from every public
+	// wire and debugger JSON projection and must never be derived from the naming scheme.
+	MemberSessionID   SessionID
+	MemberIncarnation IncarnationID
 }
 
 // Routing-reason gate constants (issue #397): the CLOSED set of harness-authored reasons

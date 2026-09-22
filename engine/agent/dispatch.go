@@ -1690,10 +1690,6 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		caps.routeDecision = func(ctx context.Context, taskPrompt string) modelRoutingResult {
 			return routeTaskBody(ctx, taskPrompt, route, breaker, hardAbort, diag, foldUsage)
 		}
-		caps.routeTask = func(ctx context.Context, taskPrompt string) (string, string, string, bool) {
-			out := caps.routeDecision(ctx, taskPrompt)
-			return out.category, out.model, out.reason, out.ok
-		}
 		caps.skipRoute = func(_ string) *session.RoutingDecision {
 			breaker.mu.Lock()
 			defer breaker.mu.Unlock()
@@ -1807,25 +1803,30 @@ func routeTaskBody(
 	result := router.Route(ctx, taskPrompt)
 	foldUsage(result.Usage)
 	if !result.OK || strings.TrimSpace(result.Model) == "" {
-		logRouterMissReason(ctx, diag, result.Reason)
-		if justOpened := noteRouterMiss(breaker); justOpened && diag != nil {
+		switch {
+		case result.OK:
+			result.Reason = routingReasonEmptyModel
+		case strings.TrimSpace(result.Reason) == "":
+			result.Reason = routingReasonGeneric
+		default:
+			result.Reason = routingReasonPayload(result.Reason)
+		}
+		justOpened := noteRouterMiss(breaker)
+		decision := routerDecision(router, result, "fallback", breaker)
+		logRouterMissReason(ctx, diag, result.Reason, decision)
+		if justOpened && diag != nil {
 			diag.Log(ctx, port.LevelInfo,
 				"subagent model router: breaker OPEN after consecutive misses; remaining subagents this run inherit the default model",
 				"threshold", breaker.max)
 		}
-		if result.Reason == "" {
-			result.Reason = routingReasonEmptyModel
-		}
-		return modelRoutingResult{reason: result.Reason,
-			decision: routerDecision(router, result, "fallback", breaker)}
+		return modelRoutingResult{reason: result.Reason, decision: decision}
 	}
 	breaker.consecutiveMiss = 0
+	decision := routerDecision(router, result, "routed", breaker)
 	if diag != nil {
-		diag.Log(ctx, port.LevelInfo,
-			"subagent routed", "category", result.Category, "model", result.Model)
+		diag.Log(ctx, port.LevelInfo, "subagent routed", routingDiagnosticAttrs(decision)...)
 	}
-	return modelRoutingResult{category: result.Category, model: result.Model, ok: true,
-		decision: routerDecision(router, result, "routed", breaker)}
+	return modelRoutingResult{category: result.Category, model: result.Model, ok: true, decision: decision}
 }
 
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain
@@ -1835,16 +1836,38 @@ func routeTaskBody(
 // classifier output (gauntlet #7). A nil diag is a no-op; a blank reason (a route that
 // reported ok but a blank model — a defensive belt-and-braces path with no reason of its
 // own) is logged as "empty-model".
-func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason string) {
+func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason string, decision *session.RoutingDecision) {
 	if diag == nil {
 		return
 	}
-	if missReason == "" {
-		missReason = "empty-model"
-	}
+	attrs := []any{"reason", routingReasonPayload(missReason)}
+	attrs = append(attrs, routingDiagnosticAttrs(decision)...)
 	diag.Log(ctx, port.LevelInfo,
 		"subagent model router: classification MISSED; child inherits the default model",
-		"reason", missReason)
+		attrs...)
+}
+
+func routingDiagnosticAttrs(decision *session.RoutingDecision) []any {
+	if decision == nil {
+		return nil
+	}
+	attrs := []any{
+		"backend", decision.Backend,
+		"classifier_model", decision.ClassifierModel,
+		"candidate_category", decision.CandidateCategory,
+		"candidate_model", decision.CandidateModel,
+		"outcome", decision.Outcome,
+		"consecutive_misses", decision.ConsecutiveMisses,
+		"miss_limit", decision.MissLimit,
+		"breaker_open", decision.BreakerOpen,
+	}
+	if decision.Confidence != nil {
+		attrs = append(attrs, "confidence", *decision.Confidence)
+	}
+	if decision.MinimumConfidence != nil {
+		attrs = append(attrs, "minimum_confidence", *decision.MinimumConfidence)
+	}
+	return attrs
 }
 
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for
