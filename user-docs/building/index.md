@@ -28,6 +28,8 @@ points for providers, storage, policies, tools, and other adapters.
 - [TypeScript SDK](/building/typescript-sdk/index.md) covers application
   connections, sessions and runs, approvals, durable activity, and callback
   tools.
+- [Connect with gRPC or HTTP](/building/grpc-http.md) covers direct client
+  integration and links to the transport contracts.
 - [Extension points](/building/extension-points/index.md) covers the Go ports
   for model providers, storage, permissions, tools, and other adapters.
 - [API stability](/building/api-stability.md) identifies the supported Go

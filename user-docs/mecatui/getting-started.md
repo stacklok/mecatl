@@ -34,7 +34,7 @@ mecatui --version
 ```
 
 The version command should print a release tag. For signed archives and source
-builds, see [Install Mecatl](/install.md).
+builds, see [Install and verify Mecatl](/install.md).
 
 ## Start mecatui
 
