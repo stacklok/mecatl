@@ -28,7 +28,7 @@ is an operator-controlled first production slice with explicit limits; release m
 
 The existing plan PR #1579 and implementation PR #1614 form a human-authorized **draft** stack. The
 [acceptance plan](../acceptance/native-kubernetes-execution.md) now authors the exact proposed contract,
-reconciled against implementation `deaf1c3d1dfe7ea92afc8fe826f1bc613080f219`. API, schema, and security
+reconciled against tested runtime `2020e59934369e8f771059d0c173fa4cbf964c7e`. API, schema, and security
 review approvals remain unchecked; neither authored specs nor draft code is a merged approved baseline.
 This amendment also authorizes development of scoped administration, continuing provisioning retries,
 and retained-resource Helm lifecycle safeguards on those existing PRs. Human alone merges.
@@ -210,20 +210,27 @@ node-disaster recovery; kind host-local storage proves restart survival only.
 The focused mock-only kind tasks run on the supported generic toolchain, including CI, with a unique
 owned cluster, scratch kubeconfig, explicit context on every command, bounded sanitized artifacts, and
 ownership-scoped cleanup. Default kind does not prove NetworkPolicy enforcement; the production profile
-uses Calico. The acceptance plan records a successful production job at `deaf1c3d1`, distinct from the
-pending final candidate and new scope/retry/Helm regression qualification. Historical local keyring
-failures no longer block that baseline. Skipped draft race lanes remain unproven. The latest
-operator-reported run `35650128625` at `f7919f6c` passed 10/11 production tests, including scoped admin,
-Helm lifecycle/quota, and general file tools; rotation failed at the final-authority read. Offline tests
-at repair commit `96e16e926` reproduce both safe pre-dispatch replica lag and persistent mixed-material
-ledger poisoning, and prove immutable-name publication across both projection orders. They do not
-identify which mechanism caused that CI failure or establish final runtime success.
+uses Calico. The acceptance plan retains historical production success at `deaf1c3d1` and the
+later reported run `35650128625` at `f7919f6c` which passed 10/11 scenarios but failed rotation
+at the final-authority read. Offline tests at repair commit `96e16e926` reproduce safe
+pre-dispatch replica lag and persistent mixed-material ledger poisoning, and prove immutable-name
+publication across both projection orders. They do not identify which mechanism caused that
+historical failure. Historical local keyring failures and qualification failures are no longer
+current blockers: the [candidate completion receipt](../acceptance/native-kubernetes-execution.md#candidate-completion-receipt)
+records all 11 production Kind+Calico scenarios passing at runtime SHA
+`2020e59934369e8f771059d0c173fa4cbf964c7e`, including scope/retry/Helm lifecycle qualification.
+Draft full-race CI remained skipped; earlier local full-race and latest targeted-race results
+are distinguished in that receipt, not represented as a draft full-race CI execution.
 
 The checked human live decision requires the separate `task e2e:k8s:execution:live` OpenRouter coding
 qualification **for this stack**, after deterministic qualification. It is not an always-on live CI
 dependency. Prove model-driven tools, independently verified persistent artifacts, and a successful
-bound test command; generic mecak8s live CI is not native-provider evidence. No final native live run is
-claimed. The generic compaction live-lane correction in merged #1728 is separate from this capability.
+bound test command; generic mecak8s live CI is not native-provider evidence. Manual exact-head run
+[35700303737](https://github.com/stacklok/mecatl/actions/runs/35700303737) supplied that evidence
+after production qualification: real OpenRouter coding, independent exact-ref typed-gRPC
+reattachment/run acquisition and file/test verification, followed by verified cleanup. This is
+qualification of the tested runtime SHA, not approval or a claim that documentation-only descendant
+heads executed live. The generic compaction live-lane correction in merged #1728 remains separate.
 
 Use verified nonsecret endpoint/protocol/model configuration in an authenticated operator-controlled
 cluster. A trusted runtime-only loader consumes the approved protected file channel into a narrowly
@@ -251,8 +258,9 @@ separation are required but not sufficient.
 security approval and release maturity remain unresolved. Authorized pre-merge development may proceed
 on the existing draft stack, but no review, approval, landed status, or merge is inferred. Completion
 requires strict AC trace, full offline/race/build/API/docs/site/demo gates, independent panel review,
-final deterministic qualification, and stack-specific native live evidence. New scope, retry, and Helm
-behavioral proofs remain pending. Human alone merges.
+final deterministic qualification, and stack-specific native live evidence. The latter two now have
+successful candidate receipts, including scope, retry, and Helm scenarios; the plan preserves partial
+proof boundaries and outstanding human/panel reviews. Human alone merges.
 
 ## See also
 
