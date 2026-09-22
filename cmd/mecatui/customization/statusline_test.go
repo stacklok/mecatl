@@ -1,5 +1,5 @@
-// Package statusline tests the dependency-leaf status protocol.
-package statusline
+// Package customization tests the dependency-leaf presentation customization protocol.
+package customization
 
 import (
 	"context"

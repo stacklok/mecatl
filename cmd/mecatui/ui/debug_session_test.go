@@ -121,17 +121,6 @@ func TestDebugSessionDetailsShowAndCopyExactTargetID(t *testing.T) {
 	}
 }
 
-func TestDebugWindowTitleStartsWithStableHandleAcrossPhases(t *testing.T) {
-	m := debugUIModel("target-session", 80)
-	prefix := "DEBUG " + client.SessionHandle("target-session")
-	for _, p := range []phase{phaseConnecting, phaseIdle, phaseRunning, phaseAwaitingApproval, phaseFatal} {
-		m.phase = p
-		if got := m.windowTitle(); !strings.HasPrefix(got, prefix) {
-			t.Fatalf("phase %v title = %q", p, got)
-		}
-	}
-}
-
 func TestDebugSessionDisablesWorkspaceEnrollment(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{}
 	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)

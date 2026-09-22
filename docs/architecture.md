@@ -807,17 +807,16 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat.
 The sibling `mecatui debug TARGET` and
 `mecatui connect ADDRESS debug TARGET` forms create a separate durable `debug` session whose trusted relationship metadata binds
-one authorized target. The proto-free UI uses the same fixed 12-column,
-terminal-safe handle as the header: safe `[A-Za-z0-9._-]` bytes are literal except that
-a leading `-` is encoded as `%2D`; all other UTF-8 bytes are uppercase `%HH`, with only
-complete atoms that fit. The displayed literal has no leading `#`. A syntactically valid
-short target is resolved against the complete caller-filtered inventory: exact full-ID equality
-wins automatically, otherwise one unique projected match resolves. Multiple projections fail
-with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or no match
-passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path. Longer
-or malformed targets likewise remain exact-ID inputs automatically. Only the resolved exact ID
-crosses the real `Client.CreateDebugSession` request boundary, and the server remains the final
-authority.
+one authorized target. The proto-free UI uses the same fixed 12-column, terminal-safe handle as the header: safe
+`[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; all other UTF-8
+bytes are uppercase `%HH`, with only complete atoms that fit. The displayed literal has no leading
+`#`. A syntactically valid short target is resolved against the complete caller-filtered inventory:
+exact full-ID equality wins automatically, otherwise one unique projected match resolves. Multiple
+projections fail with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or
+no match passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path.
+Longer or malformed targets likewise remain exact-ID inputs automatically.
+Only the resolved exact ID crosses the real `Client.CreateDebugSession` request boundary, and the
+server remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
 contract, and always exposes the target-bound `InspectSession` tool; the model cannot
 choose another target or submit a raw session ID. A create request may additionally name
@@ -902,9 +901,10 @@ first user turn ordered as objective, required InspectSession workflow, expected
 structure, then a delimited sanitized debugger-runtime context. The runtime block is
 compatibility/transport context, never target evidence; a custom `--prompt` changes only the
 objective. Durable safety, authority, and source hierarchy stay in the stable system Role.
-Its normal padded header keeps amber/bold `DEBUG target <handle>`
-ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title uses the same handle. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
+Its normal padded header keeps amber/bold `DEBUG target <handle>` ahead of lower-priority details,
+and `/session` exposes and copies the safely quoted exact target. The configured/default terminal
+title has a `DEBUG` prefix and no mandatory handle; a custom title template may include the handle.
+See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. Unknown legacy/custom rows remain inspect-only:
@@ -928,7 +928,7 @@ unclaimed events reach the Bubbles textarea. The default action map therefore le
 previous line; Agents, Effort, and MCP Prompts use `f6`, `f7`, and `f8`.
 
 Its local status customization is a separate
-client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
+client-owned seam: `cmd/mecatui/customization.Source` receives display-safe `Input`
 snapshots from the UI and publishes latest semantic `Result` spans. It owns
 responsive template evaluation or a direct local executable, refresh and
 cancellation; the UI owns theme resolution, renderer chrome, clipping, and

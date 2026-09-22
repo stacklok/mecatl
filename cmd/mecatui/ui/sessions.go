@@ -131,7 +131,7 @@ func (m Model) sessionCopyTarget() string {
 func safeSessionID(id string) string { return strconv.QuoteToASCII(id) }
 
 func (m Model) openSessionDetails() (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.sessionID == "" {
+	if m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session")
 		return m, nil
 	}

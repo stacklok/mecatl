@@ -1,4 +1,4 @@
-package statusline
+package customization
 
 import "time"
 
@@ -46,10 +46,10 @@ type ServerTarget struct {
 }
 
 // Session carries optional user-facing session facts. Title is empty when no
-// custom or generated title exists. Handle is the fixed, terminal-safe escaped
-// session prefix used by ordinary mecatui presentation. Mode is the active
-// permission mode. ReasoningEffort is either empty (unset or unsupported) or one
-// of "low", "medium", "high", "xhigh", or "max".
+// custom or generated title exists. Handle is the short displayed session prefix
+// used by ordinary mecatui presentation. Mode is the active permission mode.
+// ReasoningEffort is either empty (unset or unsupported) or one of "low", "medium",
+// "high", "xhigh", or "max".
 type Session struct {
 	Title           string
 	Handle          string

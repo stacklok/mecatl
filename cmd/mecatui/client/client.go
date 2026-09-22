@@ -302,9 +302,8 @@ const SessionHandleWidth = 12
 // SessionHandle returns the fixed, terminal-safe escaped prefix used by every
 // ordinary mecatui session presentation. Unreserved ASCII is copied verbatim,
 // except that a leading hyphen is escaped; every other UTF-8 byte is one
-// uppercase %HH atom. The longest complete-atom
-// prefix fitting SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have
-// no handle.
+// uppercase %HH atom. The longest complete-atom prefix fitting
+// SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have no handle.
 func SessionHandle(id string) string {
 	if id == "" || !utf8.ValidString(id) {
 		return ""

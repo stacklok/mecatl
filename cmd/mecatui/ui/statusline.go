@@ -5,11 +5,11 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-func statusSpansText(spans []statusline.Span) string {
+func statusSpansText(spans []customization.Span) string {
 	var b strings.Builder
 	for _, span := range spans {
 		b.WriteString(sanitizeTerminal(span.Text))
@@ -17,11 +17,11 @@ func statusSpansText(spans []statusline.Span) string {
 	return b.String()
 }
 
-func statusSurfaceFits(surface statusline.Surface, width int) bool {
+func statusSurfaceFits(surface customization.Surface, width int) bool {
 	return lipgloss.Width(statusSpansText(surface.Spans)) <= width
 }
 
-func renderStatusSurface(th theme.Theme, surface statusline.Surface, width int, rightAlign bool) string {
+func renderStatusSurface(th theme.Theme, surface customization.Surface, width int, rightAlign bool) string {
 	line := renderStatusSpans(th, surface.Spans)
 	if !rightAlign {
 		return line
@@ -31,7 +31,7 @@ func renderStatusSurface(th theme.Theme, surface statusline.Surface, width int, 
 	}
 	return line
 }
-func renderStatusSpans(th theme.Theme, spans []statusline.Span) string {
+func renderStatusSpans(th theme.Theme, spans []customization.Span) string {
 	var b strings.Builder
 	for _, span := range spans {
 		text := sanitizeTerminal(span.Text)
@@ -51,24 +51,24 @@ func renderStatusSpans(th theme.Theme, spans []statusline.Span) string {
 	}
 	return b.String()
 }
-func statusColor(th theme.Theme, token statusline.Token) string {
+func statusColor(th theme.Theme, token customization.Token) string {
 	p := th.Palette
 	switch token {
-	case statusline.TokenMuted:
+	case customization.TokenMuted:
 		return p.TextMuted
-	case statusline.TokenPrimary:
+	case customization.TokenPrimary:
 		return p.Primary
-	case statusline.TokenSecondary:
+	case customization.TokenSecondary:
 		return p.Secondary
-	case statusline.TokenAccent:
+	case customization.TokenAccent:
 		return p.Accent
-	case statusline.TokenSuccess:
+	case customization.TokenSuccess:
 		return p.Success
-	case statusline.TokenWarning:
+	case customization.TokenWarning:
 		return p.Warning
-	case statusline.TokenError:
+	case customization.TokenError:
 		return p.Error
-	case statusline.TokenInfo:
+	case customization.TokenInfo:
 		return p.Info
 	default:
 		return p.Text

@@ -41,7 +41,9 @@ func (m Model) View() tea.View {
 	var v tea.View
 	v.KeyboardEnhancements.ReportEventTypes = true
 	v.AltScreen = !m.deps.NoAltScreen
-	v.WindowTitle = m.windowTitle()
+	if m.deps.TerminalTitle != nil {
+		m.deps.TerminalTitle(m.statusLineSnapshot())
+	}
 	// Capture the mouse — but ONLY on the alt screen, and ONLY when mouse capture
 	// is not disabled. Capturing the mouse buys wheel-scroll and the in-app
 	// drag-select/copy layer (see selection.go) at the cost of the terminal's OWN

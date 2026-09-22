@@ -66,10 +66,30 @@ time value and supports `{{.Clock.Now.Format "15:04"}}`. The `Human` members are
 preformatted display values; use each `Raw` member when a template needs an
 exact count.
 
-### Context meter functions
+### Common template functions
 
-Templates provide three functions that render the current context use as
-StatusML. Use the function that matches the template variant:
+Status and terminal-title templates support `elide WIDTH VALUE`. A non-positive
+width produces an empty value, a fitting value is unchanged, width `1` produces
+`…`, and a wider value is shortened to the widest fitting prefix followed by
+`…`.
+
+They also support `lookup KEY match value ...`. It returns the value from the
+first pair whose match exactly equals `KEY`; with no match, it returns an empty
+string. For example, a title or status template can map an agent state to a
+short label:
+
+```gotemplate
+{{lookup .MainAgent.State "idle" "ready" "thinking" "working" "failed" "error"}}
+```
+
+The helper is text-only and is available in both status and terminal-title
+templates.
+
+### Status-only context meter functions
+
+Status templates provide three functions that render the current context use as
+StatusML. They are not available to terminal-title templates. Use the function
+that matches the status template variant:
 
 - `contextMeter .Context` for `full`
 - `contextMeterCompact .Context` for `compact`
@@ -101,7 +121,7 @@ refreshes it.
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
-|`Session.Handle`|string|Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field in protocol v2; no digest alias is emitted.|
+|`Session.Handle`|string|Short displayed session ID, available to custom status and terminal-title templates. Use `/session` to copy the full ID.|
 |`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
 |`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
 |`Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route`|strings|Provider/model routing identifiers, display label, and observed downstream route.|
@@ -112,7 +132,7 @@ refreshes it.
 |`Context.Percent`|integer|`Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown.|
 |`Workspace.Location`|string|`local`, `remote`, or `unknown`.|
 |`Workspace.Name`|string|Provider-supplied workspace display metadata. It is not a directory basename or a usable path.|
-|`Workspace.Path`|string|Exact local root returned by the privileged local-context RPC. It is available to status templates through their StatusML-escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions.|
+|`Workspace.Path`|string|Exact local root returned by the privileged local-context RPC. It is available to templates through their escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions.|
 |`Terminal.Rows`, `Terminal.Cols`|integers|Measured terminal dimensions.|
 |`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns remaining after the client reserves mandatory header and footer lanes.|
 |`MainAgent.State`|string|`connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`.|
@@ -315,6 +335,49 @@ surface with a stale marker when it fits, or falls back to the shipped default.
 For the lower-level client architecture and the complete source lifecycle, see
 the
 [status-line section in `docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#local-status-lines).
+
+## Customize the terminal title
+
+`mecatui` updates the terminal title when its rendered value changes and clears
+it on a clean exit. Title templates produce plain text and are independent of
+StatusML and status commands.
+
+Configure the title in the client-owned
+`$XDG_CONFIG_HOME/mecatui/settings.yaml` file (normally
+`~/.config/mecatui/settings.yaml`):
+
+```yaml
+terminal_title:
+  enabled: true
+```
+
+Set `template` to replace the shipped title template.
+
+The setting applies to embedded and connected clients. The shipped title is
+state-aware: it prefixes a titled session with a state label and elides the
+title to 40 display columns. Without a title, it shows the state label with
+`mecatui` when a session handle is available, otherwise just `mecatui`. It does
+not include the session handle itself; add `.Session.Handle` when you want one.
+Title templates use the shared template input described in [Status input
+reference](#status-input-reference), including `Workspace.Path`, and support
+the common `elide` and `lookup` functions.
+
+Title writes follow this precedence:
+
+1. `--terminal-title=off` disables the controller, while
+   `--terminal-title=on` enables it even when settings disable it. Both forms
+   accept `true`, `false`, `1`, and `0`.
+2. When the flag is absent, `MECATUI_NO_TERMINAL_TITLE=1` or `true` disables
+   title writes.
+3. When neither explicit control applies, `terminal_title.enabled` controls
+   the feature. The default is enabled.
+
+A terminal emulator or multiplexer decides whether and where to show the title,
+so a tab or pane label can remain unchanged. Disable titles when the terminal
+environment owns title presentation. Invalid YAML, unknown fields, and invalid
+title templates stop startup with an error that identifies `terminal_title` or
+`terminal_title.template`. Restart `mecatui` after changing this file; settings
+are not hot-reloaded.
 
 ## Next steps
 
