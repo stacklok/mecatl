@@ -90,7 +90,7 @@ while `mecatui` and future web or desktop interfaces act as clients connected to
 the same runtime.
 
 You can build another client on top of Mecatl using the [gRPC or HTTP/SSE
-APIs](/operating/grpc-http.md) or the [TypeScript
+APIs](/building/grpc-http.md) or the [TypeScript
 SDK](/building/getting-started/typescript-sdk.md). An existing harness would
 need a dedicated integration to hand its agent loop over to Mecatl.
 

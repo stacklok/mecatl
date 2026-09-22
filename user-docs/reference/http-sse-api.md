@@ -9,7 +9,7 @@ sidebar_position: 3
 
 This is the detailed operator and wire reference. For the client-integration
 entry point, shared event lifecycle, and gRPC comparison, start with
-[Drive via gRPC / HTTP](/operating/grpc-http.md).
+[Drive via gRPC / HTTP](/building/grpc-http.md).
 
 The HTTP adapter wraps the same service. Every event is emitted as one SSE
 `data:` line carrying the generated proto Go value marshalled by `encoding/json`
@@ -502,4 +502,4 @@ JSON-RPC frames.
 ## Related information
 
 - [gRPC API reference](./grpc-api.md)
-- [Drive via gRPC / HTTP](/operating/grpc-http.md)
+- [Drive via gRPC / HTTP](/building/grpc-http.md)

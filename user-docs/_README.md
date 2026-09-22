@@ -23,7 +23,7 @@ directories; do not create a manual sidebar to express this structure.
 |-|-|-|
 |`intro.md`|New readers choosing among the terminal-client, operator, and builder paths.|Detailed instructions and reference material. Link to the owning section.|
 |`cloud-native-harness.md`|Readers understanding Mecatl's defining architecture and how it differs from desktop harnesses.|Task-oriented setup, deployment, and configuration. Link to the owning guide.|
-|`install.md`|Readers who need Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, deployment artifacts, and source builds.|First-run workflow, configuration, and deployment-specific steps. Link to the owning client or deployment page.|
+|`install.md`|Readers who need Mecatl executables on a workstation or host: Homebrew, release archives and their verification, and source builds.|First-run workflow, configuration, and deployment-specific steps. Link to the owning client or deployment page.|
 |`mecatui/`|Terminal users who need to install, start, connect, configure, or troubleshoot the `mecatui` client.|Server deployment, server policy, and shared feature semantics. Link to the owning server or feature page.|
 |`operating/`|Operators deploying, securing, and maintaining `mecated`, `mecak8s`, `mecatequi`, and remote services.|Client workflows, embedding APIs, and shared capability behavior. Link to the owning client, builder, or capability page.|
 |`building/getting-started/`|Builders and embedders following a first path, such as creating an agent or using the TypeScript SDK.|Exhaustive API reference, operations procedures, and feature configuration.|
@@ -71,8 +71,8 @@ feature guide.
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `features/memory.md`|Extension-point pages document the importable interfaces.|
 |Hooks|`features/hooks.md`|`building/extension-points/hook-runner.md` owns host-integration details.|
 |Configuration schema|`reference/configuration.md`|`operating/settings.md` explains which configuration plane to use.|
-|gRPC API|`reference/grpc-api.md`|`operating/grpc-http.md` explains client integration and transport choice.|
-|HTTP and SSE API|`reference/http-sse-api.md`|`operating/grpc-http.md` explains client integration and transport choice.|
+|gRPC API|`reference/grpc-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
+|HTTP and SSE API|`reference/http-sse-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
 |TypeScript SDK workflows|`building/getting-started/typescript-sdk.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
 |TypeScript SDK method reference|`reference/typescript-sdk-api/`|SDK guides link to the generated entry-point reference instead of copying signatures or option inventories.|
 |Troubleshooting|The troubleshooting section nearest the affected workflow|Do not create a second catch-all list when the owning page can provide the remedy.|

@@ -56,5 +56,5 @@ complete public surface.
 - [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md)
 - [Subagents, teams, and parallel work](/features/subagents-and-teams.md)
 - [Scheduled tasks](/features/scheduled-tasks.md)
-- [Drive Mecatl through gRPC or HTTP](/operating/grpc-http.md)
+- [Drive Mecatl through gRPC or HTTP](/building/grpc-http.md)
 - [Feature availability](/features/capability-matrix.md)

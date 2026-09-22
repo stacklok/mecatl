@@ -31,7 +31,6 @@ To see the Kubernetes model locally, follow
 - [Run your first local session](/mecatui/getting-started.md)
 - [Configure a deployment](./settings.md)
 - [Operate local session storage](./session-storage-operations.md)
-- [Connect clients through gRPC or HTTP/SSE](./grpc-http.md)
 - [Run the `mecatui` container image](./mecatui.md)
 - [Run the Mecatl Studio web UI](./studio.md) (early access)
 - [Monitor and diagnose Mecatl](./observability.md)

@@ -14,7 +14,7 @@ not restate it.
 | **Contributor / agent** | [`READING.md`](READING.md) → foundation spine (architecture → domain → ports → loop) → topic branches |
 | **Operator** | [`../README.md`](../README.md) → [public documentation](https://mecatl.dev/docs/) → [run `mecated`](https://mecatl.dev/docs/operating/mecated) |
 | **Library consumer** | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
-| **API client developer** | [Drive via gRPC / HTTP](https://mecatl.dev/docs/operating/grpc-http) → [`contracts/proto/mecatl/v1/`](../contracts/proto/mecatl/v1) → [gRPC reference](https://mecatl.dev/docs/reference/grpc-api) or [HTTP/SSE reference](https://mecatl.dev/docs/reference/http-sse-api) |
+| **API client developer** | [Drive via gRPC / HTTP](https://mecatl.dev/docs/building/grpc-http) → [`contracts/proto/mecatl/v1/`](../contracts/proto/mecatl/v1) → [gRPC reference](https://mecatl.dev/docs/reference/grpc-api) or [HTTP/SSE reference](https://mecatl.dev/docs/reference/http-sse-api) |
 
 ## Nearby
 

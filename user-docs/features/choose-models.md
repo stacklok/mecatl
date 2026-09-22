@@ -463,7 +463,7 @@ A bare `model_id` returns HTTP 400 or gRPC `InvalidArgument`. The same applies
 to an unknown or unavailable provider. The API returns the new session ID and
 resolved model information after successful creation.
 
-See [Drive via gRPC / HTTP](/operating/grpc-http.md) for the shared
+See [Drive via gRPC / HTTP](/building/grpc-http.md) for the shared
 session lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md)
 for endpoint details.
 
