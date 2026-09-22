@@ -70,9 +70,9 @@ feature guide.
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `features/memory.md`|Extension-point pages document the importable interfaces.|
 |Hooks|`features/hooks.md`|`building/extension-points/hook-runner.md` owns host-integration details.|
 |Configuration schema|`reference/configuration.md`|`operating/settings.md` explains which configuration plane to use.|
-|gRPC API behavior|`reference/grpc-api.md`|`operating/grpc-http.md` explains client integration and transport choice.|
+|gRPC API behavior|`reference/grpc-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
 |gRPC schema|`reference/grpc-schema.md`|The generated page owns exact services, RPC signatures, messages, enums, fields, and proto comments; `reference/grpc-api.md` owns behavior and semantics.|
-|HTTP and SSE API|`reference/http-sse-api.md`|`operating/grpc-http.md` explains client integration and transport choice.|
+|HTTP and SSE API|`reference/http-sse-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
 |TypeScript SDK workflows|`building/getting-started/typescript-sdk.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
 |TypeScript SDK method reference|`reference/typescript-sdk-api/`|SDK guides link to the generated entry-point reference instead of copying signatures or option inventories.|
 |Troubleshooting|The troubleshooting section nearest the affected workflow|Do not create a second catch-all list when the owning page can provide the remedy.|

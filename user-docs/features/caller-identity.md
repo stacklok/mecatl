@@ -236,4 +236,4 @@ see
 
 - [MCP OAuth and credentials](./mcp-oauth-and-credentials.md)
 - [Session continuity](./session-continuity.md)
-- [Drive via gRPC / HTTP](/operating/grpc-http.md)
+- [Drive via gRPC / HTTP](/building/grpc-http.md)

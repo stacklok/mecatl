@@ -23,7 +23,7 @@ brew install stacklok/tap/mecatl
 mecated --version
 ```
 
-For release archives and source builds, see [Install Mecatl](/install.md). The
+For release archives and source builds, see [Install and verify Mecatl](/install.md). The
 SDK uses the `binaryPath` option when set. Node.js and Bun then check
 `MECATED_BIN` and `PATH`; Deno checks `PATH`. The SDK does not download a
 binary.
