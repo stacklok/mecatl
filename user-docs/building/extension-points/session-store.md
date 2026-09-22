@@ -206,10 +206,9 @@ Run `eventlogconformance.Run` for `EventLog`. For `CursorEventLog`, pass
 `eventlogconformance.RunCursor` a `CursorSuite` with `New`, `Reset`, and
 `NewPair` functions. `New` creates an isolated log, `Reset` changes a log's
 positional basis, and `NewPair` returns independently constructed handles over
-the same durable state. Only an in-memory backend should use
-`SkipCrossProcess` instead of `NewPair`. The suites cover isolation, ordering,
-large records, early iterator termination, cursor semantics, and concurrent
-access.
+the same durable state. Only an in-memory backend should use `SkipCrossProcess`
+instead of `NewPair`. The suites cover isolation, ordering, large records, early
+iterator termination, cursor semantics, and concurrent access.
 
 Run `storeconformance.RunPrunable` if your store implements `PrunableStore`.
 

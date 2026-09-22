@@ -54,21 +54,22 @@ during normal operations without making durable sessions disappear. See
 A worker can be disposable while a session is not. With durable storage and
 coordination, a replacement process resumes from the last persisted turn
 boundary. It does not resume an in-flight operation, and work after the last
-successful save can be lost. See [Session continuity](/features/sessions/session-continuity.md)
-for the storage, recovery, and single-writer model.
+successful save can be lost. See
+[Session continuity](/features/sessions/session-continuity.md) for the storage,
+recovery, and single-writer model.
 
 ### Build a governed tool ecosystem
 
 A cloud-native harness does not need an unrestricted remote desktop to be
 useful. Mecatl can expose purpose-built tools, MCP services, skills, and
-application integrations through an explicit catalog with permission, audit,
-and execution-environment boundaries.
+application integrations through an explicit catalog with permission, audit, and
+execution-environment boundaries.
 
-Shell remains an available, governed capability when it is needed. The
-direction is to make it less necessary by expanding purpose-built, permissioned
-tools and service integrations for common agent tasks. See
-[Execution environments](/features/security-and-execution/execution-environments.md) and
-[extension points](/building/extension-points/index.md).
+Shell remains an available, governed capability when it is needed. The direction
+is to make it less necessary by expanding purpose-built, permissioned tools and
+service integrations for common agent tasks. See
+[Execution environments](/features/security-and-execution/execution-environments.md)
+and [extension points](/building/extension-points/index.md).
 
 ### Serve more than one kind of client
 
@@ -89,10 +90,11 @@ breaks those pieces apart. Its engine can run locally or remotely on Kubernetes,
 while `mecatui` and future web or desktop interfaces act as clients connected to
 the same runtime.
 
-You can build another client on top of Mecatl using the [gRPC or HTTP/SSE
-APIs](/building/grpc-http.md) or the [TypeScript
-SDK](/building/getting-started/typescript-sdk.md). An existing harness would
-need a dedicated integration to hand its agent loop over to Mecatl.
+You can build another client on top of Mecatl using the
+[gRPC or HTTP/SSE APIs](/building/grpc-http.md) or the
+[TypeScript SDK](/building/getting-started/typescript-sdk.md). An existing
+harness would need a dedicated integration to hand its agent loop over to
+Mecatl.
 
 ## Where this is going
 
@@ -102,17 +104,20 @@ current architecture. We are working toward:
 - **More clients.** Mecatl already supports the TUI, gRPC, HTTP/SSE, and the
   TypeScript SDK. Next are web, desktop, and mobile clients, along with new
   interaction models such as Slack and collaborative documents, all over the
-  same client/server core. See the [TypeScript SDK](https://github.com/stacklok/mecatl/tree/main/sdk/typescript)
-  and [gRPC and HTTP/SSE contracts](https://github.com/stacklok/mecatl/tree/main/contracts/proto).
+  same client/server core. See the
+  [TypeScript SDK](https://github.com/stacklok/mecatl/tree/main/sdk/typescript)
+  and
+  [gRPC and HTTP/SSE contracts](https://github.com/stacklok/mecatl/tree/main/contracts/proto).
 - **Strong identity.** We want external systems to receive a verifiable
   delegation chain showing which user, agent, and subagent acted with which
   authority. The proposed design makes Mecatl its own SPIFFE trust domain and
-  encodes that chain in JWTs. See the [agent identity model](https://github.com/stacklok/mecatl/blob/main/docs/agent-identity-model.md)
+  encodes that chain in JWTs. See the
+  [agent identity model](https://github.com/stacklok/mecatl/blob/main/docs/agent-identity-model.md)
   working draft.
 - **More tools.** We want a richer ecosystem beyond MCP, including tools that
-  can call each other directly with narrowly scoped resources instead of
-  copying large inputs through the harness and agent context. [Scoped Resource
-  Grants](https://github.com/stacklok/mecatl/blob/main/docs/scoped-resource-grants.md)
+  can call each other directly with narrowly scoped resources instead of copying
+  large inputs through the harness and agent context.
+  [Scoped Resource Grants](https://github.com/stacklok/mecatl/blob/main/docs/scoped-resource-grants.md)
   proposes short-lived, attenuable grants and direct tool-to-service data paths;
   it is also a working draft.
 - **Cryptographic context attestation.** We want packaged agent context to be

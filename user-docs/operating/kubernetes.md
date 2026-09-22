@@ -155,8 +155,8 @@ task mecak8s:kind-destroy
 
 ## Next steps
 
-- [Operate mecak8s](/operating/mecak8s.md) to configure a real model
-  provider, authentication, Redis, and production Helm values.
+- [Operate mecak8s](/operating/mecak8s.md) to configure a real model provider,
+  authentication, Redis, and production Helm values.
 - [Connect to a server](/mecatui/remote-servers.md) for TLS, bearer token, and
   OIDC client workflows.
 - [Choose how to run Mecatl](./choose-deployment.md) to compare `mecated`,

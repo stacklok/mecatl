@@ -12,9 +12,9 @@ Configure the process that runs the agent. A `mecatui` client connected to a
 remote server cannot change that server's providers, permissions, storage, or
 other operator settings.
 
-Mecatl separates shared agent policy, credentials, daemon topology,
-command-line overrides, and terminal UI preferences. Keep each setting in its
-own configuration plane.
+Mecatl separates shared agent policy, credentials, daemon topology, command-line
+overrides, and terminal UI preferences. Keep each setting in its own
+configuration plane.
 
 ## Configuration at a glance
 
@@ -57,11 +57,11 @@ A trusted project can contribute project-tier settings from
 `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml`. Operator-only settings
 remain user-global. Permission sources have their own ordered scopes, including
 explicit `--permission-config` files. See
-[Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for the
-trust and precedence rules.
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+for the trust and precedence rules.
 
-An applicable explicit CLI value overrides the corresponding file setting.
-Flags and environment variables are command-specific, so check the command's
+An applicable explicit CLI value overrides the corresponding file setting. Flags
+and environment variables are command-specific, so check the command's
 `--help-all` output before reusing an option with another executable or mode.
 
 `daemon.yaml` uses its own precedence: defaults, then the daemon file, then an
@@ -95,15 +95,15 @@ inspect, print, copy, write, or commit credential values.
 Mecatl never restores its own provider, web-search, server, driver, MCP, or
 other configured credential references. Read-only Subagents, Team members,
 Parallel branches, and internal Git operations retain fully scrubbed
-environments. A direct-write Subagent uses the main runner and receives the
-same deliberate grants. Independent attenuation for direct-write children
-requires a future same-workspace child runner; direct-write mode is not a child
+environments. A direct-write Subagent uses the main runner and receives the same
+deliberate grants. Independent attenuation for direct-write children requires a
+future same-workspace child runner; direct-write mode is not a child
 credential-isolation boundary.
 
-The setting applies to `mecated`, `mecak8s`, `mecatequi`, and the server embedded
-by bare `mecatui`. A custom placement provider owns its complete execution
-environment and is unchanged. Project `command_runner` blocks are ignored with
-a value-free warning. See the
+The setting applies to `mecated`, `mecak8s`, `mecatequi`, and the server
+embedded by bare `mecatui`. A custom placement provider owns its complete
+execution environment and is unchanged. Project `command_runner` blocks are
+ignored with a value-free warning. See the
 [configuration reference](/reference/configuration.md#command_runner) for the
 complete schema.
 
@@ -140,12 +140,12 @@ an error. A missing explicit `--api-key-file` path produces a warning. On Unix,
 Mecatl also warns when group or other users can read the file. Use mode `0600`
 on a shared host and restart the process after replacing a credential.
 
-The experimental `openai-codex` provider reads one token snapshot at startup
-and has no login or refresh flow. When both the token and file include an
-account or expiry claim, the values must agree, and the earlier expiry applies.
-Mode `0600` blocks other users, but another process running as the same user can
-still read the plaintext file. Use a dedicated operating-system account or a
-stronger sandbox when you need isolation from same-user processes.
+The experimental `openai-codex` provider reads one token snapshot at startup and
+has no login or refresh flow. When both the token and file include an account or
+expiry claim, the values must agree, and the earlier expiry applies. Mode `0600`
+blocks other users, but another process running as the same user can still read
+the plaintext file. Use a dedicated operating-system account or a stronger
+sandbox when you need isolation from same-user processes.
 
 ## Embedded and connected mecatui
 
@@ -154,8 +154,8 @@ credentials, and embedded-server flags control provider availability, workspace
 policy, storage, and permissions.
 
 `mecatui connect ADDRESS` connects to an existing server whose operator controls
-those choices. Local connection credentials authenticate the client; they do
-not configure the remote server.
+those choices. Local connection credentials authenticate the client; they do not
+configure the remote server.
 
 The terminal client reads `$XDG_CONFIG_HOME/mecatui/settings.yaml` in both
 modes. These UI settings do not alter server behavior. For keymaps, the client
@@ -167,12 +167,12 @@ details.
 
 ## Next steps
 
-- [Choose models and providers](/features/sessions/choose-models.md) covers provider,
-  model, and endpoint selection.
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) covers
-  permission files, project trust, guardrails, and automation posture.
-- [MCP client](/features/security-and-execution/mcp-client.md) covers streaming-HTTP MCP
-  servers and their authentication profiles.
+- [Choose models and providers](/features/sessions/choose-models.md) covers
+  provider, model, and endpoint selection.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  covers permission files, project trust, guardrails, and automation posture.
+- [MCP client](/features/security-and-execution/mcp-client.md) covers
+  streaming-HTTP MCP servers and their authentication profiles.
 - [Connect to a server](/mecatui/remote-servers.md) covers remote transport,
   TLS, and client authentication.
 - [Keybindings](/mecatui/keybindings.md) covers the client-owned keymap schema

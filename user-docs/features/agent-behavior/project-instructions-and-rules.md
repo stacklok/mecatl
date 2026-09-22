@@ -157,7 +157,8 @@ never automatically permits a tool that the policy denies.
   namespaces when callers must not see one another's files.
 
 For the full trust precedence, drift behavior, posture matrix, and deployment
-examples, see [Workspace trust](/features/security-and-execution/permissions-and-posture.md).
+examples, see
+[Workspace trust](/features/security-and-execution/permissions-and-posture.md).
 
 ## Next steps
 

@@ -78,8 +78,9 @@ location.
 Filesystem tools and Shell operate in the namespace where the harness runs. In
 `mecak8s`, that normally means the pod’s workspace and command environment, not
 the client’s machine. A remote client does not upload or share its local
-checkout. See [Execution environments](/features/security-and-execution/execution-environments.md) for the
-workspace, runner, no-FS, child-environment, and reattachment model.
+checkout. See
+[Execution environments](/features/security-and-execution/execution-environments.md)
+for the workspace, runner, no-FS, child-environment, and reattachment model.
 
 ## ACP editor integration
 

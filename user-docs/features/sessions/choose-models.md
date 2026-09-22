@@ -57,15 +57,17 @@ and keybinding details.
 
 ### Set up a local provider
 
-Run `mecatui providers setup [PROVIDER]` to configure the embedded server. Without
-a name, choose from the listed providers. It does not start a server or open the
-TUI. `mecatui connect ADDRESS` always uses the remote server's configuration.
+Run `mecatui providers setup [PROVIDER]` to configure the embedded server.
+Without a name, choose from the listed providers. It does not start a server or
+open the TUI. `mecatui connect ADDRESS` always uses the remote server's
+configuration.
 
-For API-key providers, setup can reuse an effective credential without copying an
-environment value to disk, or accept a replacement through hidden terminal input.
-It explains where to obtain provider-specific keys; API use may incur charges.
-Keys are never command arguments, and empty, invalid, or control-character values
-are rejected before saving. Saving requires confirmation.
+For API-key providers, setup can reuse an effective credential without copying
+an environment value to disk, or accept a replacement through hidden terminal
+input. It explains where to obtain provider-specific keys; API use may incur
+charges. Keys are never command arguments, and empty, invalid, or
+control-character values are rejected before saving. Saving requires
+confirmation.
 
 Environment credentials or an operator-selected owner-only API-key file supply
 API keys. The file is plaintext, so its permissions are not encryption: same-UID
@@ -78,8 +80,8 @@ credential-file and daemon configuration details.
 After setup, you may set the embedded default with
 `mecatui providers set-default PROVIDER [MODEL]`; declining leaves the current
 default unchanged. `mecatui providers` and `mecatui providers status [PROVIDER]`
-report local configuration without revealing credentials. Presence does not prove
-model access, billing, or account health.
+report local configuration without revealing credentials. Presence does not
+prove model access, billing, or account health.
 
 `openai-codex` is distinct from the public `openai` API-key provider. Setup can
 reuse a locally usable manual Codex subscription token for default selection but
@@ -88,8 +90,9 @@ never requests, writes, refreshes, imports, or removes that token. See the
 
 Use `providers add PROVIDER` to define a custom provider, `login PROVIDER` to
 manage its locally owned credential, and `logout` or `remove` to remove it.
-Custom OIDC login can use `--no-browser` on a headless host. ToolHive credentials
-and lifecycle are external: use `thv llm` tooling, not these provider commands.
+Custom OIDC login can use `--no-browser` on a headless host. ToolHive
+credentials and lifecycle are external: use `thv llm` tooling, not these
+provider commands.
 
 ### Endpoint overrides
 
@@ -153,22 +156,22 @@ the accepted flavors and fields.
 
 ### Select OpenRouter models
 
-One OpenRouter API key registers two protocol-specific providers, the same
-split the ToolHive gateway uses:
+One OpenRouter API key registers two protocol-specific providers, the same split
+the ToolHive gateway uses:
 
 |Provider ID|Inference|
 |-|-|
 |`openrouter`|`POST /v1/responses`|
 |`openrouter-anthropic`|`POST /v1/messages`|
 
-Both providers cache. Mecatl asks for a prompt cache on every request, using
-the Responses protocol's own `prompt_cache_breakpoint`, so a model that caches
-only when asked is covered on any endpoint. That includes the ToolHive gateway
-and any OpenAI-compatible endpoint you configure yourself.
+Both providers cache. Mecatl asks for a prompt cache on every request, using the
+Responses protocol's own `prompt_cache_breakpoint`, so a model that caches only
+when asked is covered on any endpoint. That includes the ToolHive gateway and
+any OpenAI-compatible endpoint you configure yourself.
 
-Select Anthropic models under `openrouter-anthropic` when you want more than
-the floor. That endpoint speaks the Anthropic Messages protocol, which carries
-four cache breakpoints instead of one and lets you set a cache lifetime with
+Select Anthropic models under `openrouter-anthropic` when you want more than the
+floor. That endpoint speaks the Anthropic Messages protocol, which carries four
+cache breakpoints instead of one and lets you set a cache lifetime with
 `--anthropic-cache-ttl` (`5m` or `1h`). The Responses protocol expresses
 neither.
 
@@ -196,7 +199,7 @@ Messages providers.
 It does not turn off caching completely. On a Messages provider, the breakpoint
 covering the system prompt is emitted whatever you set, so the provider is still
 asked to retain that prefix for the cache lifetime. A deployment relying on a
-zero-retention arrangement therefore needs `--no-prompt-cache` *and* a model
+zero-retention arrangement therefore needs `--no-prompt-cache` _and_ a model
 route that avoids the Messages providers: `anthropic`, `openrouter-anthropic`,
 `toolhive-anthropic`, and any provider you defined with
 `api_flavor: anthropic-messages`.
@@ -464,9 +467,9 @@ A bare `model_id` returns HTTP 400 or gRPC `InvalidArgument`. The same applies
 to an unknown or unavailable provider. The API returns the new session ID and
 resolved model information after successful creation.
 
-See [Drive via gRPC / HTTP](/building/grpc-http.md) for the shared
-session lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md)
-for endpoint details.
+See [Drive via gRPC / HTTP](/building/grpc-http.md) for the shared session
+lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md) for
+endpoint details.
 
 ## Model inventory and capabilities
 
@@ -516,8 +519,9 @@ session as authoritative.
 ## Next steps
 
 - [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
-- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md) for session
-  creation and continuation.
-- [Context windows](/features/sessions/context-windows.md) for context limits and fallback.
-- [Capability and deployment matrix](/features/get-oriented/capability-matrix.md) for deployment
-  availability.
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
+  for session creation and continuation.
+- [Context windows](/features/sessions/context-windows.md) for context limits
+  and fallback.
+- [Capability and deployment matrix](/features/get-oriented/capability-matrix.md)
+  for deployment availability.

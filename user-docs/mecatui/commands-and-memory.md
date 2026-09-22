@@ -53,8 +53,8 @@ server. For configuration details, see
 If a command is absent or unavailable, the connected server does not support it
 under its current configuration and policy. For learning, consolidation, and
 authorization behavior, see [Learning](/features/agent-behavior/learning.md) and
-[Dreaming and memory consolidation](/features/agent-behavior/dreaming.md). Builders configuring
-stores, retention, or learning should use the
+[Dreaming and memory consolidation](/features/agent-behavior/dreaming.md).
+Builders configuring stores, retention, or learning should use the
 [memory guide](/features/agent-behavior/memory.md).
 
 ## Next steps

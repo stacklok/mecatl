@@ -33,9 +33,8 @@ sessions from Redis. The pod is disposable; the session is not.
 ## Try mecak8s locally
 
 The repository includes a disposable local Kind environment with Redis and two
-`mecak8s` replicas. Follow
-[Try Mecatl on Kubernetes](/operating/kubernetes.md) to create
-the cluster and connect with `mecatui`.
+`mecak8s` replicas. Follow [Try Mecatl on Kubernetes](/operating/kubernetes.md)
+to create the cluster and connect with `mecatui`.
 
 For the optional Keycloak qualification flow and implementation details, see the
 [local Kind README](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md).
@@ -151,8 +150,9 @@ not send workspace paths or private environment references. By default, new
 sessions have no filesystem access. Schedules retain that placement, and
 delegation cannot add filesystem access that the parent lacks.
 
-See [Execution environments](/features/security-and-execution/execution-environments.md) for the
-shared placement, no-FS, child-environment, and reattachment model.
+See
+[Execution environments](/features/security-and-execution/execution-environments.md)
+for the shared placement, no-FS, child-environment, and reattachment model.
 
 The no-FS default is intentional. A standard mecak8s pod is storage-free and has
 no authoritative filesystem root, so the server binds omitted/default profile to
@@ -241,8 +241,8 @@ watches. Size the follower limit for the expected per-pod watch concurrency,
 then give the pool at least that many connections. Include every replica and
 briefly overlapping credential generations in the Redis connection budget.
 
-When the process has admitted the maximum number of followers, a new watch
-ends with `watch_capacity`. gRPC reports `RESOURCE_EXHAUSTED`; HTTP retains its
+When the process has admitted the maximum number of followers, a new watch ends
+with `watch_capacity`. gRPC reports `RESOURCE_EXHAUSTED`; HTTP retains its
 status 200 event stream and sends a terminal `event: error` frame. The
 TypeScript SDK reconnects from the last processed cursor with the same filter.
 This code is separate from `watch_lagging`, which means a client did not consume
@@ -454,28 +454,28 @@ On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
 broker catalogue: enrollment state, connector names, catalogue state, and tool
 counts. Opening and refresh read only that local state; they do not probe an
 upstream, refresh credentials, or enroll connectors. When the owner-authorized
-session is stably idle and the enrollment controller is wired, `/mcp` (or Ctrl+O)
-offers `c connect tools` after a fresh session, completed turns, a prior
+session is stably idle and the enrollment controller is wired, `/mcp` (or
+Ctrl+O) offers `c connect tools` after a fresh session, completed turns, a prior
 connection, a failed/terminal attempt, or a broker-process restart. A persisted
 name or inventory row never proves live connectivity: after restart the panel
 truthfully reports broker state unavailable and protected tools remain
-unavailable until the owner explicitly refreshes this same session.
-Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
-second refresh are blocked until the existing operation settles. The existing
-browser flow continues without a reopen-browser action. A running or awaiting
-session does not offer refresh. Setup is destructive and bundle-wide: starting
-it withdraws broker tools, and cancellation or failure leaves them unavailable;
+unavailable until the owner explicitly refreshes this same session. Pending
+setup shows “Setup in progress” and `x cancel setup`; prompts and a second
+refresh are blocked until the existing operation settles. The existing browser
+flow continues without a reopen-browser action. A running or awaiting session
+does not offer refresh. Setup is destructive and bundle-wide: starting it
+withdraws broker tools, and cancellation or failure leaves them unavailable;
 `/tools-connect` and `/tools-cancel` remain unchanged bare-command shortcuts.
 
 ToolHive remains the sole custodian of upstream OAuth presentation, callback
 state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only
-its opaque enrollment control. Broker OAuth mode remains constrained to one
-Helm replica (`replicaCount: 1`); this refresh path is explicit same-session
+its opaque enrollment control. Broker OAuth mode remains constrained to one Helm
+replica (`replicaCount: 1`); this refresh path is explicit same-session
 recovery, not automatic recovery, high availability, or multi-replica routing.
 The panel still requires the existing authenticated verified principal and a
-matching owned session; broker-only and direct-MCP compositions remain
-mutually exclusive, so broker-only sessions do not offer direct resources,
-prompts, or groups.
+matching owned session; broker-only and direct-MCP compositions remain mutually
+exclusive, so broker-only sessions do not offer direct resources, prompts, or
+groups.
 
 The panel is not an upstream health check. It requires the authenticated owner
 of the session. Broker-only sessions do not expose direct MCP resources,
@@ -688,14 +688,14 @@ username, and password file, so Kubernetes projected-Secret `..data` swaps are
 observed. One coalesced event re-reads the **complete** configured file set. The
 process builds fresh durability and follow clients through the same validation
 and verified-TLS path, and publishes the pair only after bounded successful
-PING/TLS/auth probes. Invalid or
-partially projected material leaves the last valid client active; bounded
-single-flight retries cover the window where the Secret projection and
-Redis-side ACL/trust update settle in different orders. New operations use the
-replacement pair, while in-flight operations and migration locks finish on their
-original durability client before it closes. No Redis files configured means no
-reload watcher. Credential files may end in one newline, as Kubernetes Secret
-projections commonly do; other whitespace remains part of the credential.
+PING/TLS/auth probes. Invalid or partially projected material leaves the last
+valid client active; bounded single-flight retries cover the window where the
+Secret projection and Redis-side ACL/trust update settle in different orders.
+New operations use the replacement pair, while in-flight operations and
+migration locks finish on their original durability client before it closes. No
+Redis files configured means no reload watcher. Credential files may end in one
+newline, as Kubernetes Secret projections commonly do; other whitespace remains
+part of the credential.
 
 `--redis-url` takes a bare `host:port`. A `redis://` or `rediss://` URL is
 rejected on every path, plaintext included, and the rejection never repeats the
@@ -772,8 +772,8 @@ traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator
 network-isolation responsibility. The `readyz` probe is dynamic: it calls
 `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis
 failure shows up as not-ready and removes the pod from Service endpoints without
-a restart. The startup and readiness probes use a 3-second kubelet timeout so the
-2-second Redis bound can complete before Kubernetes abandons the request.
+a restart. The startup and readiness probes use a 3-second kubelet timeout so
+the 2-second Redis bound can complete before Kubernetes abandons the request.
 
 ---
 
@@ -812,9 +812,9 @@ successor recovers the session and previous `allow-always` decisions from Redis.
 ## Verify session failover
 
 Use the disposable cluster from
-[Try Mecatl on Kubernetes](/operating/kubernetes.md), which runs
-two ready replicas without production authentication. Get both pod names and
-forward the first pod's HTTP port:
+[Try Mecatl on Kubernetes](/operating/kubernetes.md), which runs two ready
+replicas without production authentication. Get both pod names and forward the
+first pod's HTTP port:
 
 ```sh
 POD_A=$(kubectl get pods -n mecatl -l app.kubernetes.io/component=agent -o jsonpath='{.items[0].metadata.name}')
@@ -880,8 +880,8 @@ lease TTL expires. Retry the request after the TTL to confirm that it returns
 
 Enable OIDC to authenticate every request and isolate sessions, schedules,
 teams, and memory by the verified `(issuer, subject)` owner. See
-[Caller identity and OIDC](/features/security-and-execution/caller-identity.md) for the shared behavior
-and client workflows.
+[Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
+for the shared behavior and client workflows.
 
 ### Check existing data first
 
@@ -1100,11 +1100,11 @@ Use an API-key provider instead of mounting a local Codex OAuth credential.
 
 ## What's next
 
-- [Choose how to run Mecatl](/operating/choose-deployment.md) —
-  decision tree comparing all four options.
+- [Choose how to run Mecatl](/operating/choose-deployment.md) — decision tree
+  comparing all four options.
 - [Run mecated standalone](/operating/mecated.md) — the interactive,
   single-server alternative with a full operator surface.
-- [Embed the engine directly](/building/embed-engine.md) — bring your
-  own composition if you need to run the loop inside an existing service.
-- [Single-shot CI with mecatequi](/operating/mecatequi.md) — the
-  stateless, one-prompt-per-run option for GitHub Actions.
+- [Embed the engine directly](/building/embed-engine.md) — bring your own
+  composition if you need to run the loop inside an existing service.
+- [Single-shot CI with mecatequi](/operating/mecatequi.md) — the stateless,
+  one-prompt-per-run option for GitHub Actions.

@@ -6,12 +6,13 @@ description:
   source build.
 ---
 
-import ReleaseArchivesAndSource from '../_partials/release-archives-and-source.mdx';
+import ReleaseArchivesAndSource from
+'../_partials/release-archives-and-source.mdx';
 
 # Install mecatui
 
-Install `mecatui`, the terminal client, and `mecated`, the standalone server,
-on macOS or Linux.
+Install `mecatui`, the terminal client, and `mecated`, the standalone server, on
+macOS or Linux.
 
 ## Install with Homebrew
 

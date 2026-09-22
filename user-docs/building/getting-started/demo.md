@@ -145,10 +145,10 @@ charges.
 
 - [Build your first agent](./first-agent.md) to embed the engine in a Go
   application.
-- [Choose how to run Mecatl](/operating/choose-deployment.md) to select a deployment
-  topology.
-- [Explore the agent loop](/features/sessions/agent-loop.md) to understand
-  the events and control flow shown by the demo.
+- [Choose how to run Mecatl](/operating/choose-deployment.md) to select a
+  deployment topology.
+- [Explore the agent loop](/features/sessions/agent-loop.md) to understand the
+  events and control flow shown by the demo.
 
 ## Related information
 

@@ -174,8 +174,8 @@ router.
 
 ## Next steps
 
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for delegated
-  approval behavior.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  for delegated approval behavior.
 - [Agent definitions](/building/extension-points/agent-definitions.md) to define
   named specialists.
 - [Core tools](/features/sessions/tools.md) for the rest of the default catalog.

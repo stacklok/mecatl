@@ -58,9 +58,10 @@ mutable local profile:
 mecated mcp login SERVER [--no-browser] [--file PATH | --permission-config PATH ...]
 ```
 
-See [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md) for profile
-configuration, encrypted storage, dynamic client registration, rotation, and
-recovery.
+See
+[MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
+for profile configuration, encrypted storage, dynamic client registration,
+rotation, and recovery.
 
 ### ToolHive discovery
 
@@ -165,8 +166,9 @@ rather than changing the session's tools while it runs.
 
 ## Authentication and credentials
 
-[MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md) covers OAuth
-login, encrypted credential storage, rotation, and Kubernetes provisioning.
+[MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
+covers OAuth login, encrypted credential storage, rotation, and Kubernetes
+provisioning.
 
 ## Global vs per-session MCP servers
 
@@ -183,5 +185,5 @@ per-session engines can remain open, so close sessions you no longer need with
 
 - [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
   add custom tools and control the catalog exposed to the model.
-- [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md) to
-  configure authentication and rotation.
+- [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
+  to configure authentication and rotation.

@@ -126,8 +126,9 @@ Before each turn, Mecatl estimates the complete model request and compacts
 persisted history when it approaches the selected model's context window. A
 separate run-token budget can end the session between turns.
 
-[Context windows](/features/sessions/context-windows.md) owns the resolution order, compaction
-strategies, thresholds, token-budget behavior, and `mecatui` context meter.
+[Context windows](/features/sessions/context-windows.md) owns the resolution
+order, compaction strategies, thresholds, token-budget behavior, and `mecatui`
+context meter.
 
 ---
 
@@ -145,17 +146,18 @@ Every run ends in exactly one of three terminal states:
 next turn boundary. Restart closes incomplete tool calls with error results so
 the conversation remains valid.
 
-The service repairs incomplete tool calls before recovering a failed,
-cancelled, or abandoned run. An awaiting session keeps its pending approval.
-See [Start and resume sessions](/features/sessions/start-and-resume-sessions.md) for the client
-workflow and [Session continuity](/features/sessions/session-continuity.md) for persistence and
-crash recovery.
+The service repairs incomplete tool calls before recovering a failed, cancelled,
+or abandoned run. An awaiting session keeps its pending approval. See
+[Start and resume sessions](/features/sessions/start-and-resume-sessions.md) for
+the client workflow and
+[Session continuity](/features/sessions/session-continuity.md) for persistence
+and crash recovery.
 
 ## Next steps
 
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for how the permission rule
-  engine and model-based guardrails work.
-- [Hook system](/features/security-and-execution/hooks.md) for lifecycle hooks that fire before and after tool
-  calls, prompts, and sessions.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  for how the permission rule engine and model-based guardrails work.
+- [Hook system](/features/security-and-execution/hooks.md) for lifecycle hooks
+  that fire before and after tool calls, prompts, and sessions.
 - [Extension points](/building/extension-points/index.md) to replace providers,
   stores, policies, and other capabilities.

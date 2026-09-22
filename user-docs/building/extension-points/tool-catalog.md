@@ -205,12 +205,12 @@ remain private to the adapter.
 A skill is also available as a slash command. Local command files take
 precedence over a skill with the same name, and skills take precedence over
 driver commands and MCP prompts. See
-[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for file
-format and discovery behavior.
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)
+for file format and discovery behavior.
 
-Validate a custom source with
-`engine/adapter/sourceconformance.RunSkillSource`. The test factory must return
-a fresh source that serves exactly `sourceconformance.Fixture`.
+Validate a custom source with `engine/adapter/sourceconformance.RunSkillSource`.
+The test factory must return a fresh source that serves exactly
+`sourceconformance.Fixture`.
 
 ## Share catalog state safely
 

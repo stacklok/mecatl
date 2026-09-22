@@ -95,8 +95,8 @@ memory tools and their permission rules.
 Set `--no-user-model` to disable the user model.
 
 Completed-trajectory learning is separate from explicit memory tools and dream
-consolidation. See [Learning](/features/agent-behavior/learning.md) for its review and activation
-policy.
+consolidation. See [Learning](/features/agent-behavior/learning.md) for its
+review and activation policy.
 
 ## Defaults
 

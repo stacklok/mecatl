@@ -3,8 +3,7 @@ sidebar_position: 1
 slug: /
 title: Mecatl
 sidebar_label: Introduction
-description:
-  Find the right guide for using, deploying, or building with Mecatl.
+description: Find the right guide for using, deploying, or building with Mecatl.
 ---
 
 # Mecatl
@@ -19,9 +18,9 @@ same core locally, as a shared service, or inside an application.
 Use `mecatui` when you want to work with an agent from your terminal. It can
 start a private server for your local workspace or connect to a remote Mecatl
 service. Operators run that service with `mecated`, or with `mecak8s` when they
-need Kubernetes-native storage and coordination. Application builders can
-embed the Go engine, or connect through the TypeScript SDK and the gRPC or
-HTTP/SSE APIs.
+need Kubernetes-native storage and coordination. Application builders can embed
+the Go engine, or connect through the TypeScript SDK and the gRPC or HTTP/SSE
+APIs.
 
 ```mermaid
 flowchart LR
@@ -34,10 +33,10 @@ flowchart LR
 ```
 
 The runtime can be disposable while its session state and execution concerns
-live in services that you manage. That design lets Mecatl fit the deployment
-and governance patterns you already use for applications. Read [What is a
-cloud-native harness?](/cloud-native-harness.md) for the architecture and its
-implications.
+live in services that you manage. That design lets Mecatl fit the deployment and
+governance patterns you already use for applications. Read
+[What is a cloud-native harness?](/cloud-native-harness.md) for the architecture
+and its implications.
 
 ## Start with the journey that fits your work
 

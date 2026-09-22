@@ -115,17 +115,17 @@ Run `mecatui logout mecated.example.com:443` to remove the saved enrollment. Use
 
 ## Manage local provider credentials
 
-Remote enrollment and embedded provider credentials are separate. `mecatui login
-ADDRESS` authenticates this client to a remote server; it cannot configure that
-server's providers. For an embedded server, use `mecatui providers setup` or the
-named provider commands. Custom OIDC login supports `--no-browser` when no
-browser is available.
+Remote enrollment and embedded provider credentials are separate.
+`mecatui login ADDRESS` authenticates this client to a remote server; it cannot
+configure that server's providers. For an embedded server, use
+`mecatui providers setup` or the named provider commands. Custom OIDC login
+supports `--no-browser` when no browser is available.
 
 Provider definitions and credential custody are operator configuration. API keys
 come from the environment or an operator-managed file; keep secrets out of
-command arguments, settings, prompts, and logs. See [Choose models and
-providers](/features/sessions/choose-models.md#set-up-a-local-provider) and [Run mecated
-standalone](/operating/mecated.md#configure-providers).
+command arguments, settings, prompts, and logs. See
+[Choose models and providers](/features/sessions/choose-models.md#set-up-a-local-provider)
+and [Run mecated standalone](/operating/mecated.md#configure-providers).
 
 ToolHive has a separate external lifecycle and owns its LLM credentials. Use
 `thv llm` tooling for ToolHive setup; ToolHive MCP discovery and manual OpenAI
@@ -133,9 +133,9 @@ Codex authentication are separate workflows.
 
 ## Next steps
 
-- [Try Mecatl on Kubernetes](/operating/kubernetes.md) to connect
-  the same client to a local `mecak8s` deployment.
-- [Run mecated standalone](/operating/mecated.md) to configure
-  persistence, providers, TLS, authentication, and observability.
+- [Try Mecatl on Kubernetes](/operating/kubernetes.md) to connect the same
+  client to a local `mecak8s` deployment.
+- [Run mecated standalone](/operating/mecated.md) to configure persistence,
+  providers, TLS, authentication, and observability.
 - [Troubleshoot mecatui](./troubleshooting.md) if startup, login, or connection
   fails.

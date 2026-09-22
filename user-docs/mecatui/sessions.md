@@ -30,8 +30,9 @@ still return an error. You can combine either resume option with `--prompt` to
 send a task after the transcript loads.
 
 A resumed chat is the stored chat, not a copy. It keeps its model and exact
-server-owned placement. See [Session continuity](/features/sessions/session-continuity.md)
-for the storage and recovery behavior behind resume.
+server-owned placement. See
+[Session continuity](/features/sessions/session-continuity.md) for the storage
+and recovery behavior behind resume.
 
 To get the active session ID, run `/session` and press `c` to copy it. On a
 normal exit, `mecatui` also writes a machine-readable handoff to standard error:
@@ -120,9 +121,9 @@ context limit. The server reduces the persisted history sent to the model while
 keeping the session and visible scrollback. The command creates no chat turn,
 but a cascade summary can use model tokens.
 
-The command appears only when the server supports manual compaction.
-See [Context windows](/features/sessions/context-windows.md) for automatic compaction,
-window resolution, and operator configuration.
+The command appears only when the server supports manual compaction. See
+[Context windows](/features/sessions/context-windows.md) for automatic
+compaction, window resolution, and operator configuration.
 
 ## Move a chat to a worktree
 
@@ -156,7 +157,11 @@ mecatui debug 01JOPAQUESESSIONID --debug-mcp github
 Use the embedded command for an embedded store and `connect ADDRESS` for the server that owns the
 target. The optional `--prompt` value replaces the default diagnosis objective.
 
-When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI stating that the selected model will receive bounded target evidence. That evidence can contain prompts, model output, tool arguments and results, paths, and secrets. Invoking the command is the consent gesture; the default diagnostic prompt is then submitted automatically.
+When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI
+stating that the selected model will receive bounded target evidence. That
+evidence can contain prompts, model output, tool arguments and results, paths,
+and secrets. Invoking the command is the consent gesture; the default diagnostic
+prompt is then submitted automatically.
 
 The analysis session has no filesystem or shell access. By default, it can only
 use `InspectSession` to read bounded retained evidence. It cannot resume,
@@ -193,7 +198,7 @@ Use `--no-store` only when you want a non-persistent, in-memory session.
 
 ## Related information
 
-- [Operate local session storage](/operating/session-storage-operations.md)
-  for daemon retention, backup, and restore procedures.
+- [Operate local session storage](/operating/session-storage-operations.md) for
+  daemon retention, backup, and restore procedures.
 - [Continue a chat at startup](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#continue-a-chat-at-startup)
   for the exhaustive eligibility and overlay behavior.

@@ -174,9 +174,9 @@ The reusable workflow supports two triggers through `workflow_call` inputs:
 - **Issue comment:** A maintainer posts the configured mention, which defaults
   to `@mecatequi`. The workflow runs against the comment body.
 
-On private repositories, applying a label or posting the trigger requires
-triage or write access. On public repositories, add a dedicated
-permission-check job that calls the `collaborators/{user}/permission` API.
+On private repositories, applying a label or posting the trigger requires triage
+or write access. On public repositories, add a dedicated permission-check job
+that calls the `collaborators/{user}/permission` API.
 
 ### Publish token
 
@@ -191,9 +191,9 @@ The `publish` job selects its write token in this order:
 ### Customize the PR description
 
 By default, `publish` writes a pull request body with the agent summary, changed
-files, run link, and `Closes #<N>`. To customize it, add
-a template at `.github/mecatequi/pr-body.md`. Use the `pr-body-template` input
-to select a different path.
+files, run link, and `Closes #<N>`. To customize it, add a template at
+`.github/mecatequi/pr-body.md`. Use the `pr-body-template` input to select a
+different path.
 
 The publish step always prepends its agent-authored-content warning. Do not
 repeat that warning in your template. A custom template also owns its issue
@@ -250,17 +250,17 @@ corrupt both.
 ### Provider keys
 
 `--default-provider` selects a provider. The matching credential must be
-available, or the run fails with `no LLM provider available`.
-`OPENAI_API_KEY` enables OpenAI without an explicit provider selection. For
-OpenRouter, Anthropic, or OpenCode Go, set the corresponding key and select the
-provider explicitly.
+available, or the run fails with `no LLM provider available`. `OPENAI_API_KEY`
+enables OpenAI without an explicit provider selection. For OpenRouter,
+Anthropic, or OpenCode Go, set the corresponding key and select the provider
+explicitly.
 
 The experimental `openai-codex` provider has no environment key. Put a manual
 ChatGPT Codex OAuth snapshot in owner-only `auth.yaml`, pass
-`--api-key-file PATH --default-provider openai-codex`, and replace the token
-and restart the job when it expires or is rejected. It uses an undocumented
-private backend and a separate billing identity from public OpenAI API credit.
-There is no login or refresh flow. See
+`--api-key-file PATH --default-provider openai-codex`, and replace the token and
+restart the job when it expires or is rejected. It uses an undocumented private
+backend and a separate billing identity from public OpenAI API credit. There is
+no login or refresh flow. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).
 
 ### Telemetry
@@ -328,9 +328,9 @@ exits 2.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/operating/choose-deployment.md)
-  for other deployment options.
-- [Run mecated standalone](/operating/mecated.md) for interactive
-  clients and durable sessions.
-- [Configure permissions and posture](/features/security-and-execution/permissions-and-posture.md) for
-  autonomous runs.
+- [Choose how to run Mecatl](/operating/choose-deployment.md) for other
+  deployment options.
+- [Run mecated standalone](/operating/mecated.md) for interactive clients and
+  durable sessions.
+- [Configure permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  for autonomous runs.

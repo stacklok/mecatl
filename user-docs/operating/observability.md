@@ -197,7 +197,7 @@ reporting with one of the controls above.
 
 ## Next steps
 
-- [Run `mecated`](/operating/mecated.md) to configure the admin
-  listener, OTLP export, and durable storage.
+- [Run `mecated`](/operating/mecated.md) to configure the admin listener, OTLP
+  export, and durable storage.
 - [Session store extension point](/building/extension-points/session-store.md)
   to provide custom persistence and audit recording.

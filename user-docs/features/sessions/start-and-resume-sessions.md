@@ -114,8 +114,7 @@ live run based only on a persisted snapshot.
 
 ## Next steps
 
-- [Session continuity](/features/sessions/session-continuity.md) for storage, recovery, and
-  maintenance.
+- [Session continuity](/features/sessions/session-continuity.md) for storage,
+  recovery, and maintenance.
 - [Use mecatui](/mecatui/index.md) for the interactive terminal workflow.
-- [Drive via gRPC / HTTP](/building/grpc-http.md) for client
-  integrations.
+- [Drive via gRPC / HTTP](/building/grpc-http.md) for client integrations.

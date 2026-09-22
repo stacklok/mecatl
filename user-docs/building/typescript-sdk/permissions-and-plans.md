@@ -43,23 +43,21 @@ session handle and use prompt-free run controls:
 
 ```ts
 const session = await client.sessions.get(storedSessionId);
-await session.controls(storedRunId).resolveAsk(
-  storedAskId,
-  'allow_once',
-  { timeoutMs: 10_000 }
-);
+await session
+  .controls(storedRunId)
+  .resolveAsk(storedAskId, 'allow_once', { timeoutMs: 10_000 });
 ```
 
 This path resolves an ordinary root or surfaced-child permission ask on that
 exact run. It can resume an ordinary ask from a persisted awaiting run after a
-daemon restart. An unknown or already resolved ask returns
-`ask_not_pending`. A plan-originated ask returns `plan_resolution_required` and
-remains pending for the plan workflow.
+daemon restart. An unknown or already resolved ask returns `ask_not_pending`. A
+plan-originated ask returns `plan_resolution_required` and remains pending for
+the plan workflow.
 
 The acknowledgement is one unary response. A transport failure, caller
-cancellation, or deadline after dispatch can reject the promise after the
-server accepts the verdict. Reconcile that ambiguous case from the session's
-durable activity before retrying.
+cancellation, or deadline after dispatch can reject the promise after the server
+accepts the verdict. Reconcile that ambiguous case from the session's durable
+activity before retrying.
 
 ## Continue after MCP authorization
 
@@ -67,9 +65,9 @@ Create a session-bound authorization handle from the handoff returned by
 `Run.outcome()`. The handle stores correlation only and performs no request or
 state check during construction:
 
-Use this workflow only for `authorization.required` handoffs from
-session-scoped ToolHive broker tools. It does not configure direct or global
-MCP profiles or manage their credentials. For those host-local profiles, use
+Use this workflow only for `authorization.required` handoffs from session-scoped
+ToolHive broker tools. It does not configure direct or global MCP profiles or
+manage their credentials. For those host-local profiles, use
 [`mecated mcp add` or `mecated mcp login`](/features/security-and-execution/mcp-oauth-and-credentials.md).
 
 ```ts
@@ -95,8 +93,7 @@ After the person completes the external flow, create one explicit recheck:
 ```ts
 const flow = authorization.recheck(
   {
-    onPermissionAsk: (ask) =>
-      ask.tool === 'Read' ? 'allow_once' : 'deny',
+    onPermissionAsk: (ask) => (ask.tool === 'Read' ? 'allow_once' : 'deny'),
     permissionRequestOptions: { timeoutMs: 10_000 },
   },
   { signal: recheckSignal, timeoutMs: 30_000 }
@@ -104,11 +101,11 @@ const flow = authorization.recheck(
 const result = await flow.result();
 ```
 
-`recheck()` and `cancel()` each return a new lazy,
-single-consumption `McpAuthorizationFlow`. The operation starts when the first
-iterator `next()` or `result()` consumes the flow, not when your application
-creates the flow or requests its iterator. Request headers, callbacks, signals,
-and deadlines apply only to that flow, and the SDK adds exact session affinity.
+`recheck()` and `cancel()` each return a new lazy, single-consumption
+`McpAuthorizationFlow`. The operation starts when the first iterator `next()` or
+`result()` consumes the flow, not when your application creates the flow or
+requests its iterator. Request headers, callbacks, signals, and deadlines apply
+only to that flow, and the SDK adds exact session affinity.
 
 The result discriminant defines the next application action:
 
@@ -122,25 +119,25 @@ The result discriminant defines the next application action:
 Iteration yields the same decoded events in wire order. Choose iteration or
 `result()` once for each flow. An unknown status, mismatched authorization ID,
 changed original call or continuation run ID, or malformed terminal sequence
-throws `ProtocolError`. The server enforces session ownership through the session
-affinity on the request.
+throws `ProtocolError`. The server enforces session ownership through the
+session affinity on the request.
 
 The application owns permission policy. `onPermissionAsk` receives only an
 ordinary permission ask observed on the continuation. Its verdict uses
 `permissionRequestOptions`, while manual `resolveAsk()` uses only the options
 passed to that method. Both controls address the exact observed continuation
-run. A plan-originated ask remains in the event stream and requires the
-separate plan workflow or explicit continuation cancellation. Servers need the
+run. A plan-originated ask remains in the event stream and requires the separate
+plan workflow or explicit continuation cancellation. Servers need the
 `prompt_free_controls` feature for permission replies and
 `cancelContinuation()`; status-only flows do not require that feature.
 
 ### Bound polling and recovery
 
-Choose the recheck cadence and its stopping condition in your application.
-The SDK performs no polling, mutation retry, transparent reconnect, durable
-watch, browser action, or authorization-state persistence. Cancelling a request
-releases the SDK's stream and controls, but the server remains authoritative
-for any transition committed before cancellation reached it.
+Choose the recheck cadence and its stopping condition in your application. The
+SDK performs no polling, mutation retry, transparent reconnect, durable watch,
+browser action, or authorization-state persistence. Cancelling a request
+releases the SDK's stream and controls, but the server remains authoritative for
+any transition committed before cancellation reached it.
 
 A response lost before your application observes the status or
 `continuationRunId` can be unrecoverable through this lifecycle. A later
@@ -157,10 +154,10 @@ the attached run ID and non-empty authorization and call IDs. It yields and
 checkpoints that event, then sets `live` to `false`. A session-wide activity
 stream remains open.
 
-Disconnect effects depend on the continuation phase and transport. gRPC
-detaches and drains ordinary continuation work, but it cancels a continuation
-stranded on an ordinary permission ask. HTTP requests cancellation for a
-still-active continuation and drains it. After a continuation commits a later
+Disconnect effects depend on the continuation phase and transport. gRPC detaches
+and drains ordinary continuation work, but it cancels a continuation stranded on
+an ordinary permission ask. HTTP requests cancellation for a still-active
+continuation and drains it. After a continuation commits a later
 `authorization.required` park, either transport preserves that new pending
 authorization. Terminal races remain server-authoritative.
 
@@ -218,8 +215,8 @@ needs the durable timeline across both run IDs.
   authorization-parked runs.
 - [Resume durable activity](./durable-activity.md) to observe approved plans
   across both runs.
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for the
-  server-side permission model.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  for the server-side permission model.
 
 ## Related information
 

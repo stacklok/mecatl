@@ -92,9 +92,9 @@ An operator can disable shell access for the entire deployment.
 same effect. The user-global `command_runner.shell` setting selects the default
 interpreter, while `command_runner.environment.inherit` can grant named external
 variables only to built-in main runners. See
-[Configure Mecatl](/operating/settings.md#configure-the-command-runner)
-for precedence and credential-boundary details. This applies whether or not a
-client requests the `no-fs` session profile. See
+[Configure Mecatl](/operating/settings.md#configure-the-command-runner) for
+precedence and credential-boundary details. This applies whether or not a client
+requests the `no-fs` session profile. See
 [Run mecated standalone](/operating/mecated.md#flag-reference).
 
 ### Managed temporary storage (Linux and macOS)
@@ -126,8 +126,8 @@ A session created with `profile: "no-fs"` removes
 from the catalog. `WebFetch`, `WebSearch`, memory, and MCP tools remain.
 Children inherit the file-less catalog. Clients choose the profile when creating
 the session; the model cannot change it. See
-[Execution environments](/features/security-and-execution/execution-environments.md) for filesystem
-and no-filesystem placement.
+[Execution environments](/features/security-and-execution/execution-environments.md)
+for filesystem and no-filesystem placement.
 
 ---
 
@@ -137,9 +137,10 @@ Configured memory stores add project and user-memory tools. Delegation adds
 `Subagent`, `Parallel`, and `Team`. These tools use the same catalog and
 permission path as the core tools.
 
-See [Memory and user model](/features/agent-behavior/memory.md) for memory lifecycle operations and
-[Subagents, teams, and parallel work](/features/agent-behavior/subagents-and-teams.md) for delegation
-behavior.
+See [Memory and user model](/features/agent-behavior/memory.md) for memory
+lifecycle operations and
+[Subagents, teams, and parallel work](/features/agent-behavior/subagents-and-teams.md)
+for delegation behavior.
 
 ---
 
@@ -158,14 +159,15 @@ Tools that implement `tool.Disclosable` remain hidden until `ToolSearch` loads
 them. Other tools always appear in the model's catalog.
 
 The `Skill` tool loads instruction bundles on demand. See
-[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for discovery,
-activation, and slash-command behavior.
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)
+for discovery, activation, and slash-command behavior.
 
 ---
 
 ## Next steps
 
-- [MCP client](/features/security-and-execution/mcp-client.md) to connect external MCP servers. Their catalog
-  names use the `mcp__<server>__<tool>` format.
+- [MCP client](/features/security-and-execution/mcp-client.md) to connect
+  external MCP servers. Their catalog names use the `mcp__<server>__<tool>`
+  format.
 - [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
   add custom tools, configure skills, and control what the model can see.

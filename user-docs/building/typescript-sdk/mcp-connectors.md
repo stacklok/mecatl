@@ -25,14 +25,12 @@ Read the server's compatibility descriptor before offering the workflow:
 ```ts title="Check workspace enrollment support"
 const compatibility = await client.server.compatibility();
 
-const canInspectConnectors =
-  compatibility.capabilities.mcpConnectorStatus;
-const canEnrollWorkspace =
-  compatibility.capabilities.workspaceEnrollment;
+const canInspectConnectors = compatibility.capabilities.mcpConnectorStatus;
+const canEnrollWorkspace = compatibility.capabilities.workspaceEnrollment;
 ```
 
-These capability values help your application choose which controls to show.
-The server still decides whether each request is eligible when it receives the
+These capability values help your application choose which controls to show. The
+server still decides whether each request is eligible when it receives the
 request. A deployment or session can change after capability discovery.
 
 ## Inspect connector inventory
@@ -64,11 +62,11 @@ enrollment operation.
 Treat the aggregate inventory states separately from the states returned by
 enrollment controls:
 
-| Inventory field                       | Values                                                          | Meaning                                                |
-| ------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |
-| `availability`                        | `available`, `unavailable`, `unknown`                            | Whether the process-local broker snapshot can be read. |
-| `enrollmentState`                     | `not_required`, `not_started`, `pending`, `completed`, `unknown` | The current whole-bundle enrollment observation.       |
-| `connectors[].catalogueState`         | `hidden`, `declared`, `discovered`, `unknown`                    | Broker-local publication for one display row.          |
+|Inventory field|Values|Meaning|
+|-|-|-|
+|`availability`|`available`, `unavailable`, `unknown`|Whether the process-local broker snapshot can be read.|
+|`enrollmentState`|`not_required`, `not_started`, `pending`, `completed`, `unknown`|The current whole-bundle enrollment observation.|
+|`connectors[].catalogueState`|`hidden`, `declared`, `discovered`, `unknown`|Broker-local publication for one display row.|
 
 A zero `toolCount` means an empty discovered catalogue only when
 `catalogueState` is `discovered`. The same count on `hidden` or `unknown` does
@@ -85,7 +83,7 @@ import {
 } from '@stacklok-oss/mecatl-sdk';
 
 async function beginWorkspaceEnrollment(
-  session: Session,
+  session: Session
 ): Promise<string | undefined> {
   const result = await session.connectWorkspaceServices();
 
@@ -95,8 +93,8 @@ async function beginWorkspaceEnrollment(
 }
 ```
 
-The server starts a whole bundle when none is pending and otherwise observes
-the pending bundle. A pending result can include an ephemeral absolute HTTP(S)
+The server starts a whole bundle when none is pending and otherwise observes the
+pending bundle. A pending result can include an ephemeral absolute HTTP(S)
 `presentationUrl`. Pass that URL directly to your application's presentation
 layer. Avoid logging or persisting it because it can contain short-lived
 authorization material.
@@ -113,12 +111,12 @@ whether and when to observe again. The SDK never repeats the call for you.
 
 Control results use this separate state vocabulary:
 
-| Status                                      | Interpretation                                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `pending`                                   | The only known nonterminal state. It can carry `presentationUrl`.                           |
-| `connected`                                 | Terminal success.                                                                          |
-| `denied`, `cancelled`, `expired`, `failed`  | Terminal outcomes.                                                                         |
-| `unknown`                                   | A future or empty server value. Stop automatic interpretation and wait for application policy. |
+|Status|Interpretation|
+|-|-|
+|`pending`|The only known nonterminal state. It can carry `presentationUrl`.|
+|`connected`|Terminal success.|
+|`denied`, `cancelled`, `expired`, `failed`|Terminal outcomes.|
+|`unknown`|A future or empty server value. Stop automatic interpretation and wait for application policy.|
 
 Inventory does not retain failed attempts. The immediate control result is the
 only place that reports `failed`; a later inventory read reports `not_started`
@@ -127,8 +125,8 @@ after the server clears terminal enrollment state.
 ## Recover or cancel by correlation
 
 Keep the `enrollmentId` while your application owns a pending workflow. If the
-application loses a presentation URL but retains that ID, explicitly replace
-the pending enrollment:
+application loses a presentation URL but retains that ID, explicitly replace the
+pending enrollment:
 
 ```ts title="Retry a pending enrollment"
 const replacement = await session.retryWorkspaceEnrollment(enrollmentId);

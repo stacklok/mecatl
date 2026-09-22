@@ -7,8 +7,8 @@ description: Choose a Mecatl client transport and find its API contracts.
 # Connect with gRPC or HTTP
 
 `mecated` and `mecak8s` expose the same agent service through gRPC and HTTP.
-Choose the transport that matches your client, then use the linked reference
-for exact fields, routes, and response codes.
+Choose the transport that matches your client, then use the linked reference for
+exact fields, routes, and response codes.
 
 ## Choose a transport
 
@@ -66,11 +66,11 @@ For exact methods and types, see the
    retry metadata as non-retryable.
 4. If the run asks for permission, resolve the ask and continue the same
    session.
-5. Read the final result. If the configured store supports durable sessions,
-   you can later resume the session or replay its events.
+5. Read the final result. If the configured store supports durable sessions, you
+   can later resume the session or replay its events.
 
-See [Session continuity](/features/sessions/session-continuity.md) for durable storage,
-event logs, recovery, and retention behavior.
+See [Session continuity](/features/sessions/session-continuity.md) for durable
+storage, event logs, recovery, and retention behavior.
 
 Use the detailed references below for exact fields, response codes, event
 payloads, and feature-specific APIs such as schedules, teams, learning, and MCP
@@ -120,19 +120,20 @@ gRPC can send an in-flight steering instruction, or cancel one, through the live
 ## Connect securely
 
 A server bound beyond loopback needs an authentication and transport-security
-configuration before clients connect. See [Run mecated standalone](/operating/mecated.md)
-for bearer authentication, TLS/mTLS, OIDC caller identity, rate limits, and
-health endpoints.
+configuration before clients connect. See
+[Run mecated standalone](/operating/mecated.md) for bearer authentication,
+TLS/mTLS, OIDC caller identity, rate limits, and health endpoints.
 
 Browser clients also require an allowed origin. See
-[Browsers and CORS](/operating/mecated.md#browsers-and-cors). In production, put a
-same-origin backend-for-frontend in front of `mecated` so browser JavaScript
+[Browsers and CORS](/operating/mecated.md#browsers-and-cors). In production, put
+a same-origin backend-for-frontend in front of `mecated` so browser JavaScript
 does not receive the server bearer token.
 
 ## Next steps
 
-- [Run mecated standalone](/operating/mecated.md) to operate a long-running server.
+- [Run mecated standalone](/operating/mecated.md) to operate a long-running
+  server.
 - [Connect an application](/building/typescript-sdk/connect.md) with the
   TypeScript SDK.
-- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md) through
-  either transport.
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
+  through either transport.

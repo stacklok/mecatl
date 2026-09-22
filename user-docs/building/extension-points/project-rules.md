@@ -36,9 +36,9 @@ guidance and continues the run.
 Each source must limit `Body` to `prompt.MaxRuleBytes` (20 KiB). `Origin` is an
 admission tier (`project`, `user`, or `driver`), not a filesystem path or URL.
 
-Validate a custom source with
-`engine/adapter/sourceconformance.RunRulesSource`. The test factory must return
-a fresh source that serves exactly `sourceconformance.RuleFixture`.
+Validate a custom source with `engine/adapter/sourceconformance.RunRulesSource`.
+The test factory must return a fresh source that serves exactly
+`sourceconformance.RuleFixture`.
 
 `Paths` contains optional glob conditions. Mecatl includes these conditions in
 the prompt and relies on the model to apply them. An empty `Paths` slice makes a

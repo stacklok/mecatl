@@ -23,10 +23,10 @@ brew install stacklok/tap/mecatl
 mecated --version
 ```
 
-For release archives and source builds, see [Run mecated standalone](/operating/mecated.md#install-mecated). The
-SDK uses the `binaryPath` option when set. Node.js and Bun then check
-`MECATED_BIN` and `PATH`; Deno checks `PATH`. The SDK does not download a
-binary.
+For release archives and source builds, see
+[Run mecated standalone](/operating/mecated.md#install-mecated). The SDK uses
+the `binaryPath` option when set. Node.js and Bun then check `MECATED_BIN` and
+`PATH`; Deno checks `PATH`. The SDK does not download a binary.
 
 ## Start a daemon from Node.js or Bun
 
@@ -88,9 +88,10 @@ deno run \
 
 The Deno client owns the readiness file and runtime directory. It keeps the
 daemon's standard input open as a parent-liveness channel. Closing the client
-closes that channel and waits for the daemon to exit. `client.daemon.grpcAddress`
-reports the bound address, and `client.daemon.transport` is `"grpc"`. Deno clients
-do not expose the Node/Bun callback-tool or filesystem media helpers.
+closes that channel and waits for the daemon to exit.
+`client.daemon.grpcAddress` reports the bound address, and
+`client.daemon.transport` is `"grpc"`. Deno clients do not expose the Node/Bun
+callback-tool or filesystem media helpers.
 
 ## Run one prompt with `query()`
 

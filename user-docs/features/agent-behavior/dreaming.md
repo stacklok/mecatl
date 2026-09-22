@@ -124,8 +124,8 @@ project's memory. User-model operations use the configured user-model store.
 - Manual planning requires a model call.
 
 For the underlying memory tools, tiers, lifecycle versions, and learning
-boundary, see [Memory and user model](/features/agent-behavior/memory.md). For the
-broader `/dream` UI and receipt behavior, see
+boundary, see [Memory and user model](/features/agent-behavior/memory.md). For
+the broader `/dream` UI and receipt behavior, see
 [mecatui memory commands](/mecatui/commands-and-memory.md#review-and-maintain-memory).
 
 ## Next steps

@@ -23,7 +23,8 @@ weaken an MCP credential profile.
 
 These direct and global profiles are separate from session-scoped ToolHive
 broker authorization. When a broker tool returns `authorization.required`, use
-the [TypeScript SDK continuation workflow](/building/typescript-sdk/permissions-and-plans.md#continue-after-mcp-authorization)
+the
+[TypeScript SDK continuation workflow](/building/typescript-sdk/permissions-and-plans.md#continue-after-mcp-authorization)
 instead of the host-local commands on this page.
 
 A server configured with `--mcp-server name=URL` can also use the legacy
@@ -32,10 +33,9 @@ for OAuth, rotation, or deployment-managed credentials.
 
 ## Add a direct MCP profile
 
-Use `mecated mcp add` for the standard direct streaming-HTTP setup. The
-command discovers the OAuth issuer, creates the profile, selects local
-credential custody, opens browser authorization, and verifies the MCP
-connection.
+Use `mecated mcp add` for the standard direct streaming-HTTP setup. The command
+discovers the OAuth issuer, creates the profile, selects local credential
+custody, opens browser authorization, and verifies the MCP connection.
 
 Before you begin, run the command on an attended host that can open a browser.
 Supply the exact HTTPS MCP resource URL, including its path. The URL must not
@@ -52,13 +52,12 @@ The command writes these locations by default:
 - Encrypted credentials and custody metadata:
   `$XDG_STATE_HOME/mecatl/mcp-credentials`, or
   `$HOME/.local/state/mecatl/mcp-credentials` when `XDG_STATE_HOME` is unset.
-- Wrapping key with file custody:
-  `$XDG_CONFIG_HOME/mecatl/mcp-credential-key`, or
-  `$HOME/.config/mecatl/mcp-credential-key` when `XDG_CONFIG_HOME` is unset.
+- Wrapping key with file custody: `$XDG_CONFIG_HOME/mecatl/mcp-credential-key`,
+  or `$HOME/.config/mecatl/mcp-credential-key` when `XDG_CONFIG_HOME` is unset.
 
-By default, `--credential-store=auto` prefers the OS keyring. On Linux, it checks
-for Secret Service. If Secret Service is unavailable and stdin is a TTY, the
-command asks before using the protected key file. Without a TTY, automatic
+By default, `--credential-store=auto` prefers the OS keyring. On Linux, it
+checks for Secret Service. If Secret Service is unavailable and stdin is a TTY,
+the command asks before using the protected key file. Without a TTY, automatic
 selection stops and tells you to choose file custody explicitly:
 
 ```sh
@@ -77,9 +76,9 @@ remove refuse the change if the default settings file also contains an `mcp:`
 section. This check prevents that default source from shadowing the selected
 write target.
 
-The profile and credential custody are saved before browser authorization. If
-a later authorization or connection check fails, recover with `mcp login`
-instead of rerunning `mcp add`:
+The profile and credential custody are saved before browser authorization. If a
+later authorization or connection check fails, recover with `mcp login` instead
+of rerunning `mcp add`:
 
 ```sh
 mecated mcp login connector
@@ -92,8 +91,8 @@ recovery:
 mecated mcp login connector --file /etc/mecatl/settings.yaml
 ```
 
-Restart a running daemon after onboarding. Verify that the
-`mcp__connector__*` tools appear.
+Restart a running daemon after onboarding. Verify that the `mcp__connector__*`
+tools appear.
 
 ## Inspect and remove direct MCP profiles
 
@@ -162,9 +161,9 @@ mcp:
 
 `key_env` is the legacy custody option for manually managed profiles. It names
 an environment variable containing a canonical base64-encoded 32-byte wrapping
-key. In contrast, `mecated mcp add` generates the key and records native
-keyring or protected-file custody in the profile. Do not add `key_env` to a
-profile created by `mcp add`.
+key. In contrast, `mecated mcp add` generates the key and records native keyring
+or protected-file custody in the profile. Do not add `key_env` to a profile
+created by `mcp add`.
 
 For a hand-authored `key_env` profile, generate and export the wrapping key
 outside YAML:
@@ -177,9 +176,9 @@ chmod 600 "$HOME/.local/state/mecatl/mcp-oauth.key"
 export MECATL_MCP_CREDENTIAL_KEY="$(cat "$HOME/.local/state/mecatl/mcp-oauth.key")"
 ```
 
-Keep settings files owner-only. Do not put a wrapping key, client secret,
-access token, or refresh token in source control, a command argument,
-`settings.yaml`, or a prompt. Validate hand-authored settings before serving:
+Keep settings files owner-only. Do not put a wrapping key, client secret, access
+token, or refresh token in source control, a command argument, `settings.yaml`,
+or a prompt. Validate hand-authored settings before serving:
 
 ```sh
 mecated config validate --file "$HOME/.config/mecatl/settings.yaml"
@@ -198,8 +197,8 @@ mecated mcp login github --no-browser
 ```
 
 The normal command opens a browser. `--no-browser` prints the authorization URL
-for use in another browser. Use either `--file` for one settings document or
-the deprecated repeatable `--permission-config` selector for trusted operator
+for use in another browser. Use either `--file` for one settings document or the
+deprecated repeatable `--permission-config` selector for trusted operator
 settings files. The selectors are mutually exclusive:
 
 ```sh
@@ -208,10 +207,10 @@ mecated mcp login github \
   --permission-config /etc/mecatl/settings.yaml
 ```
 
-After login, restart the server and verify that the namespaced
-`mcp__github__*` tools appear. Mecatl restores the encrypted credential and
-refreshes tokens when needed. Preregistered and CIMD profiles persist
-refresh-token rotation in the local store so the next restart remains warm.
+After login, restart the server and verify that the namespaced `mcp__github__*`
+tools appear. Mecatl restores the encrypted credential and refreshes tokens when
+needed. Preregistered and CIMD profiles persist refresh-token rotation in the
+local store so the next restart remains warm.
 
 ### Direct dynamic client registration
 
@@ -232,7 +231,7 @@ mcp:
           profile: connector
           principal: local-user
           issuer: https://id.example.com
-          client: {mode: dcr, dcr: {}}
+          client: { mode: dcr, dcr: {} }
           scopes: [openid]
           request_refresh_token: false
           credentials:
@@ -240,7 +239,8 @@ mcp:
             local:
               root: /absolute/owner-only/credentials
               key_env: MECATL_MCP_CREDENTIAL_KEY
-          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+          network:
+            { additional_origins: [], private_origins: [], max_redirects: 0 }
 ```
 
 Login dynamically registers a public client and then uses the same browser/PKCE
@@ -256,27 +256,33 @@ and its grant, use `--reset-dcr-registration`. The flags are mutually exclusive
 and valid only for DCR. Ready identity drift is reset-required and may be
 replaced with `--reset-dcr-registration`. Pending identity drift is reported as
 pending-identity-mismatch; it cannot reset or retry until the matching profile,
-principal, canonical resource, and exact issuer configuration is restored,
-after which use `--retry-dcr-registration`. Corrupt, noncanonical, unsupported,
-or grant-mismatched persisted state remains repair-only: neither flag mutates
-it. The flags do not revoke an upstream registration. Complete public-client
-refresh remains deferred to
+principal, canonical resource, and exact issuer configuration is restored, after
+which use `--retry-dcr-registration`. Corrupt, noncanonical, unsupported, or
+grant-mismatched persisted state remains repair-only: neither flag mutates it.
+The flags do not revoke an upstream registration. Complete public-client refresh
+remains deferred to
 [issue #1355](https://github.com/stacklok/mecatl/issues/1355).
 
 #### Manual local-mecatui qualification
 
-Run this live procedure only with explicit authorization and an isolated owner-only config
-and credential root. Do not paste command output into an issue or PR.
+Run this live procedure only with explicit authorization and an isolated
+owner-only config and credential root. Do not paste command output into an issue
+or PR.
 
-1. Configure the DCR profile above and export its 32-byte padded-base64 credential key.
-2. Run `mecated mcp login connector`; record whether explicit consent appeared, but never
-   record the URL, code, state, registration response, client ID, or token.
-3. Start local `mecatui` with the same settings and key. Invoke only one harmless discovered
-   read-only tool and record its name and safe success category.
-4. Restart `mecatui` before access-token expiry and invoke the same tool without another login.
-5. After expiry, reconnect and confirm login-required, no refresh request, and no browser launch.
-6. Run `mecated mcp login connector` explicitly, confirm registration reuse, restart `mecatui`,
-   and invoke the same harmless tool once more.
+1. Configure the DCR profile above and export its 32-byte padded-base64
+   credential key.
+2. Run `mecated mcp login connector`; record whether explicit consent appeared,
+   but never record the URL, code, state, registration response, client ID, or
+   token.
+3. Start local `mecatui` with the same settings and key. Invoke only one
+   harmless discovered read-only tool and record its name and safe success
+   category.
+4. Restart `mecatui` before access-token expiry and invoke the same tool without
+   another login.
+5. After expiry, reconnect and confirm login-required, no refresh request, and
+   no browser launch.
+6. Run `mecated mcp login connector` explicitly, confirm registration reuse,
+   restart `mecatui`, and invoke the same harmless tool once more.
 
 Record only:
 
@@ -294,22 +300,26 @@ explicit_relogin_reused_registration: true|false
 relogin_result: success|failure:<safe-category>
 ```
 
-Exclude OAuth and registration secrets, authorization URLs, callback values, raw provider
-errors, headers, credential-store contents, and screenshots containing any of them.
+Exclude OAuth and registration secrets, authorization URLs, callback values, raw
+provider errors, headers, credential-store contents, and screenshots containing
+any of them.
 
-If a valid ready DCR profile's intentional registration binding changes, for example its
-issuer, principal, scopes, or resource, run `mecated mcp login SERVER
---reset-dcr-registration`; plain login cannot replace that registration. Pending identity drift
-is reported as pending-identity-mismatch and cannot reset or retry: restore the matching profile,
-principal, canonical resource, and exact issuer before running `--retry-dcr-registration`.
+If a valid ready DCR profile's intentional registration binding changes, for
+example its issuer, principal, scopes, or resource, run
+`mecated mcp login SERVER --reset-dcr-registration`; plain login cannot replace
+that registration. Pending identity drift is reported as
+pending-identity-mismatch and cannot reset or retry: restore the matching
+profile, principal, canonical resource, and exact issuer before running
+`--retry-dcr-registration`.
 
-For corrupt, noncanonical, unsupported, or grant-mismatched persisted registration state,
-preserve the records and configuration: do not edit, delete, or rename them. Contact the
-deployment operator or support team with only the server name and redacted command error.
-Never send credential contents, OAuth URLs, client IDs, tokens, keys, or a raw response. Reset
-and retry cannot bypass this state. For non-DCR profiles, run login again after intentional
-identity changes. To roll back, replace the whole profile with `static_bearer` or `none` and
-restart.
+For corrupt, noncanonical, unsupported, or grant-mismatched persisted
+registration state, preserve the records and configuration: do not edit, delete,
+or rename them. Contact the deployment operator or support team with only the
+server name and redacted command error. Never send credential contents, OAuth
+URLs, client IDs, tokens, keys, or a raw response. Reset and retry cannot bypass
+this state. For non-DCR profiles, run login again after intentional identity
+changes. To roll back, replace the whole profile with `static_bearer` or `none`
+and restart.
 
 ## Environment-backed credentials
 
@@ -323,8 +333,7 @@ Kubernetes Secret-backed credential. Broker OAuth instead uses an external
 browser to complete a session enrollment; its preregistered client secret, when
 needed, is still a Kubernetes Secret. Agent-facing shells receive a scrubbed
 environment so MCP/provider credentials are not exposed through Shell. See the
-[Kubernetes deployment guide](/operating/mecak8s.md) for the Secret
-wiring.
+[Kubernetes deployment guide](/operating/mecak8s.md) for the Secret wiring.
 
 ## ToolHive broker OAuth
 
@@ -352,16 +361,15 @@ protected backends may need to be enrolled again.
 A protected upstream can use `client.mode: dcr` to let ToolHive register a
 client from an HTTPS RFC 8414 discovery document. DCR requires an explicit
 OAuth2 upstream, is operator-only, and rejects insecure HTTP and private-IP
-overrides. See the [mecak8s deployment guide](/operating/mecak8s.md)
-for the Helm values.
+overrides. See the [mecak8s deployment guide](/operating/mecak8s.md) for the
+Helm values.
 
 Mecatl controls reveal only the enrollment reference, aggregate state, service
 count, and temporary presentation URL. They omit upstream names, OAuth codes,
 endpoints, and tokens. Providers return to ToolHive at
 `/v1/mcp/broker/oauth/callback`; ToolHive then completes at the configured
 Mecatl callback path. Route both paths to the same listener. See the
-[Kubernetes deployment guide](/operating/mecak8s.md) for Helm
-configuration.
+[Kubernetes deployment guide](/operating/mecak8s.md) for Helm configuration.
 
 Pending broker enrollment is process-local. After a Mecatl restart, start a new
 enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
@@ -415,8 +423,8 @@ environment-variable name.
   roots owner-only and use your deployment's secret manager for rotation.
 
 For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
-and prompts, see [MCP client](/features/security-and-execution/mcp-client.md). For the
-complete operator profile rules, see the
+and prompts, see [MCP client](/features/security-and-execution/mcp-client.md).
+For the complete operator profile rules, see the
 [configuration reference](/reference/configuration.md#mcp).
 
 ## Next steps

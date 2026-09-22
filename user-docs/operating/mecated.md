@@ -6,7 +6,8 @@ description:
   observability.
 ---
 
-import ReleaseArchivesAndSource from '../_partials/release-archives-and-source.mdx';
+import ReleaseArchivesAndSource from
+'../_partials/release-archives-and-source.mdx';
 
 # Run mecated standalone
 
@@ -105,9 +106,9 @@ ToolHive owns its LLM credentials. Use `thv llm` for setup and credential
 management; Mecatl only uses its configured or discovered gateway.
 
 If you are deploying to Kubernetes without persistent volumes, see
-[mecak8s](/operating/mecak8s.md) instead. That binary is purpose-built
-for no-PVC pod deployments, with Redis-backed state when you configure
-`--redis-url` and Kubernetes Lease coordination enabled by default.
+[mecak8s](/operating/mecak8s.md) instead. That binary is purpose-built for
+no-PVC pod deployments, with Redis-backed state when you configure `--redis-url`
+and Kubernetes Lease coordination enabled by default.
 
 ---
 
@@ -165,8 +166,8 @@ default or the `no-fs` profile, but cannot submit a path. `ListWorktrees`
 returns short-lived selectors for `ClearSession` and `ForkSession`; selectors
 expire when the server restarts. Mecatl stores the exact placement privately and
 reattaches it before each run. See
-[Execution environments](/features/security-and-execution/execution-environments.md) for the shared
-placement and reattachment model. For the underlying design, see
+[Execution environments](/features/security-and-execution/execution-environments.md)
+for the shared placement and reattachment model. For the underlying design, see
 [ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers
@@ -233,7 +234,8 @@ With `--rate-limit`, rejected tokens use a separate bucket keyed by the direct
 peer IP and return 429 when exhausted. Mecatl does not trust forwarded-IP
 headers for this check. Authentication logs omit credentials, tokens, claims,
 and caller identifiers. See
-[Caller identity and OIDC](/features/security-and-execution/caller-identity.md) for the full behavior.
+[Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
+for the full behavior.
 
 #### Daemon config file (`daemon.yaml`)
 
@@ -389,9 +391,11 @@ vouched. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md#project-trust)
 for the trust sources and headless behavior.
 
-See [Permissions & guardrails](/features/security-and-execution/permissions-and-posture.md) for the
-full rule engine. Posture is read from the operator-global `settings.yaml`
-(`posture:` key) and out-ranked by the CLI flag when both are set.
+See
+[Permissions & guardrails](/features/security-and-execution/permissions-and-posture.md)
+for the full rule engine. Posture is read from the operator-global
+`settings.yaml` (`posture:` key) and out-ranked by the CLI flag when both are
+set.
 
 ### Guardrails
 
@@ -699,8 +703,7 @@ telemetry for up to five seconds, and persists configured session state.
 Interrupted runs recover from their snapshots after restart.
 
 EOF on an inherited `--lifetime-pipe-fd` or piped `--lifetime-stdin` follows the
-same path. See
-[Hosting a spawned daemon](#hosting-a-spawned-daemon).
+same path. See [Hosting a spawned daemon](#hosting-a-spawned-daemon).
 
 ## Browsers and CORS
 
@@ -727,10 +730,9 @@ bearer token on the server and enforce Origin and CSRF policy there.
 
 ## Next steps
 
-- [Choose how to run Mecatl](/operating/choose-deployment.md)
-  for trade-offs between `mecated`, `mecak8s`, `mecatequi`, and engine
-  embedding.
-- [Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md) for the
-  rule engine, posture ladder, and guardrail checker.
-- [Cloud-native Kubernetes with mecak8s](/operating/mecak8s.md) for a
-  no-PVC deployment with Redis and Kubernetes Leases.
+- [Choose how to run Mecatl](/operating/choose-deployment.md) for trade-offs
+  between `mecated`, `mecak8s`, `mecatequi`, and engine embedding.
+- [Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md)
+  for the rule engine, posture ladder, and guardrail checker.
+- [Cloud-native Kubernetes with mecak8s](/operating/mecak8s.md) for a no-PVC
+  deployment with Redis and Kubernetes Leases.

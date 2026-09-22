@@ -86,10 +86,10 @@ discovery. See
 Chat can fail with `context window unavailable` even when the same credential
 works for chat completions: a custom provider's context window is learned by
 fetching its live model list, and some OpenAI-compatible gateways authorize or
-implement that listing endpoint differently from the completion endpoint.
-Check the server's startup log for `live model fetch failed` and its reported
-state, and confirm the credential against the listing endpoint directly, for
-example `curl -H "Authorization: Bearer <key>" <base_url>/models`.
+implement that listing endpoint differently from the completion endpoint. Check
+the server's startup log for `live model fetch failed` and its reported state,
+and confirm the credential against the listing endpoint directly, for example
+`curl -H "Authorization: Bearer <key>" <base_url>/models`.
 
 ### Recover OIDC credentials
 
@@ -108,8 +108,7 @@ and key, issuer trust, and network and TLS settings:
 - During logout, an unavailable enrollment requires checking the provider
   configuration and `mecatui providers status PROVIDER`.
 
-The
-[provider configuration guide](/operating/mecated.md#configure-providers)
+The [provider configuration guide](/operating/mecated.md#configure-providers)
 and [credential store reference](/reference/configuration.md#credential_store)
 describe the supported schema.
 
@@ -141,8 +140,7 @@ Identify the failure before changing the client configuration:
 A bearer token is allowed over plaintext loopback, but `mecatui` refuses it over
 explicit non-loopback plaintext. Saved OIDC authentication always uses verified
 TLS, even for loopback. See [Connect to a server](./remote-servers.md) and the
-operator
-[server flag reference](/operating/mecated.md#flag-reference).
+operator [server flag reference](/operating/mecated.md#flag-reference).
 
 If `mecatui login` reports `storage_unavailable`, follow the stage-specific
 action in the same message. An issuer CA read failure means checking the login

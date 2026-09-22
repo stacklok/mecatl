@@ -32,11 +32,10 @@ metrics, configuration flags, and transports.
 
 ## Dependency footprint
 
-The engine is the separate Go module
-`github.com/stacklok/mecatl/engine`. Its runtime dependencies cover concurrency,
-glob matching, YAML parsing, HTML parsing, shell parsing, and cron expressions.
-It does not pull in provider SDKs, gRPC, the terminal UI, Kubernetes clients, or
-Mecatl's root module.
+The engine is the separate Go module `github.com/stacklok/mecatl/engine`. Its
+runtime dependencies cover concurrency, glob matching, YAML parsing, HTML
+parsing, shell parsing, and cron expressions. It does not pull in provider SDKs,
+gRPC, the terminal UI, Kubernetes clients, or Mecatl's root module.
 
 ## Engine, session, and run
 
@@ -48,9 +47,9 @@ An embedding application works with three core objects:
 |`*session.Session`|Persist across runs|Holds conversation history, state, limits, usage, and the execution-environment identity.|
 |`*agent.Run`|One active run|Streams ordered events, accepts permission verdicts, and supports cancellation.|
 
-`Engine.Run` starts the loop in the background. Consume `Run.Events()` until
-the channel closes, and answer `session.EvPermissionAsk` events with
-`Run.Approve`. A restored session can continue with any compatible engine.
+`Engine.Run` starts the loop in the background. Consume `Run.Events()` until the
+channel closes, and answer `session.EvPermissionAsk` events with `Run.Approve`.
+A restored session can continue with any compatible engine.
 
 The engine and session remain independent. Subagents and team members use the
 same engine and session model with narrower tools, permissions, and limits.
@@ -61,14 +60,14 @@ same engine and session model with narrower tools, permissions, and limits.
 go get github.com/stacklok/mecatl/engine@latest
 ```
 
-The engine module is self-contained. Add an opt-in provider module separately
-if you want one of Mecatl's provider implementations.
+The engine module is self-contained. Add an opt-in provider module separately if
+you want one of Mecatl's provider implementations.
 
 ## Minimum wiring
 
-Configure the engine through `agent.Deps`. A useful run needs an LLM provider,
-a tool catalog, a permission policy, and a model identifier. Hooks,
-persistence, timing, and prompt helpers are optional.
+Configure the engine through `agent.Deps`. A useful run needs an LLM provider, a
+tool catalog, a permission policy, and a model identifier. Hooks, persistence,
+timing, and prompt helpers are optional.
 
 The following example uses in-memory reference adapters:
 
@@ -154,8 +153,8 @@ func main() {
 
 `eng.Run` returns immediately while the loop runs in the background. Consume
 `run.Events()` until the channel closes. See
-[The agent loop](/features/sessions/agent-loop.md) for the full event
-taxonomy and permission flow.
+[The agent loop](/features/sessions/agent-loop.md) for the full event taxonomy
+and permission flow.
 
 ## Ports and configuration
 
@@ -215,8 +214,7 @@ for the evidence and output-validation contract.
 
 ## What you do not get
 
-An embedding application is responsible for the capabilities outside the
-engine:
+An embedding application is responsible for the capabilities outside the engine:
 
 |Capability|Status|
 |-|-|
@@ -230,8 +228,7 @@ engine:
 |Session store backends (JSONL, Redis)|Not included in the engine module. `memstore` is. For durable or Redis-backed storage, import the root module's adapters.|
 
 If you need several of these capabilities, use `mecated`, which assembles them
-for you. See
-[Run mecated standalone](/operating/mecated.md).
+for you. See [Run mecated standalone](/operating/mecated.md).
 
 ## go.work for monorepo development
 

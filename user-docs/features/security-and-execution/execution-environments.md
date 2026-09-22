@@ -50,8 +50,7 @@ there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`, `Write`,
 create a shell or fork a workspace.
 
 The profile is fixed at session creation. The model cannot switch it during a
-run. See [Core tools](/features/sessions/tools.md) for the complete
-catalog.
+run. See [Core tools](/features/sessions/tools.md) for the complete catalog.
 
 ## Child environments
 
