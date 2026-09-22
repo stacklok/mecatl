@@ -170,7 +170,7 @@ returns either the completed result or a detached authorization handoff:
 
 This lifecycle applies to session-scoped ToolHive broker handoffs. Direct and
 global MCP profiles use the host-local
-[`mecated mcp` commands](/features/mcp-oauth-and-credentials.md) instead.
+[`mecated mcp` commands](/features/security-and-execution/mcp-oauth-and-credentials.md) instead.
 
 ```ts
 const run = await session.run('Use the configured MCP server');
@@ -296,6 +296,6 @@ prompt; the server remains authoritative.
 
 - [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for the full
   `Session`, `Run`, event, and media surfaces.
-- [Start and resume sessions](/features/start-and-resume-sessions.md)
-- [Multimodal input](/features/multimodal-input.md)
-- [Agent loop](/features/agent-loop.md)
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
+- [Multimodal input](/features/sessions/multimodal-input.md)
+- [Agent loop](/features/sessions/agent-loop.md)

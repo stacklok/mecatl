@@ -1,4 +1,5 @@
 ---
+slug: /features/named-agents
 sidebar_position: 200
 title: Define named agents
 description:
@@ -183,7 +184,7 @@ subject to the server's permission and trust policy.
 
 - [Agent definitions extension point](/building/extension-points/agent-definitions.md)
   for the complete field and source contract.
-- [Subagents, teams and parallel](/features/subagents-and-teams.md)
+- [Subagents, teams and parallel](/features/agent-behavior/subagents-and-teams.md)
   for delegation behavior and child lifecycle.
-- [Project instructions and rules](./project-instructions-and-rules.md) for
+- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md) for
   workspace trust.

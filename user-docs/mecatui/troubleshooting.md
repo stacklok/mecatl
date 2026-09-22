@@ -81,7 +81,7 @@ inspect the gateway logs for its rejection. If the provider cannot report a
 context window, configure the exact value under
 `models.context_windows.<provider-id>.<model-id>` or restore live model
 discovery. See
-[Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
+[Choose models and providers](/features/sessions/choose-models.md#set-up-a-local-provider).
 
 Chat can fail with `context window unavailable` even when the same credential
 works for chat completions: a custom provider's context window is learned by
@@ -164,7 +164,7 @@ A permanent provider rejection or context-window overflow will not succeed when
 you retry the same request unchanged. Start a new session, or change the request
 or model as directed. Retry transient connection and service failures. For
 recovery details, see
-[Session states and continuation](/features/start-and-resume-sessions.md#session-states-and-continuation).
+[Session states and continuation](/features/sessions/start-and-resume-sessions.md#session-states-and-continuation).
 
 ## A session will not resume
 

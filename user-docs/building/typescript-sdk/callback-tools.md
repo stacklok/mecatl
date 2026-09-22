@@ -113,12 +113,12 @@ session creation.
 
 - [Work with sessions and runs](./sessions-and-runs.md) to consume callback-tool
   events and terminal results.
-- [Permissions and posture](/features/permissions-and-posture.md) to configure
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) to configure
   server-side tool decisions.
 
 ## Related information
 
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for callback schemas, handlers, results, and error types.
-- [MCP client](/features/mcp-client.md)
+- [MCP client](/features/security-and-execution/mcp-client.md)
 - [Tool catalog extension point](/building/extension-points/tool-catalog.md)

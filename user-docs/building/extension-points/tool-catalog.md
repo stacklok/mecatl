@@ -155,7 +155,7 @@ session-scoped MCP servers from clients. Session-scoped connections close with
 the session; global connections close with the application.
 
 For connection options, authentication, resources, prompts, and failure
-behavior, see [MCP client](/features/mcp-client.md).
+behavior, see [MCP client](/features/security-and-execution/mcp-client.md).
 
 ## Provide skills
 
@@ -205,7 +205,7 @@ remain private to the adapter.
 A skill is also available as a slash command. Local command files take
 precedence over a skill with the same name, and skills take precedence over
 driver commands and MCP prompts. See
-[Skills, commands, and soul](/features/skills-commands-and-soul.md) for file
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for file
 format and discovery behavior.
 
 Validate a custom source with
@@ -248,6 +248,6 @@ this port to send structured tool audit data to another system.
 
 ## Next steps
 
-- [Understand tool dispatch](/features/agent-loop.md).
-- [Configure MCP servers](/features/mcp-client.md).
+- [Understand tool dispatch](/features/sessions/agent-loop.md).
+- [Configure MCP servers](/features/security-and-execution/mcp-client.md).
 - [Implement lifecycle hooks](hook-runner.md).

@@ -1,4 +1,5 @@
 ---
+slug: /features/subagents-and-teams
 sidebar_position: 190
 title: Subagents, teams, and parallel work
 description:
@@ -21,7 +22,7 @@ bounded result and status events. Use `InspectSubagent` for a Subagent or
 Parallel branch, and `InspectMember` for a team member.
 
 For how Mecatl isolates child workspaces and handles direct writes, see
-[Execution environments](/features/execution-environments.md).
+[Execution environments](/features/security-and-execution/execution-environments.md).
 
 ### Watch a delegation in `mecatui`
 
@@ -45,7 +46,7 @@ Shell.
 |-|-|
 |`prompt`|Provide the complete task and expected result. The child cannot see the parent conversation unless you use `fork`.|
 |`description`|Label the work in status views.|
-|`agent`|Use a [named specialist definition](/features/named-agents.md).|
+|`agent`|Use a [named specialist definition](/features/agent-behavior/named-agents.md).|
 |`model`|Override the inherited model.|
 |`max_turns`, `max_tool_calls`|Tighten the configured limits.|
 |`max_run_tokens`|Tighten the child's cumulative token limit. Values below 25,000 are raised to that floor.|
@@ -157,7 +158,7 @@ classifying for that run. Delegation events report why routing was skipped or
 why a target was unavailable.
 
 See
-[Choose models and providers](/features/choose-models.md#configure-aliases-slots-and-task-routing)
+[Choose models and providers](/features/sessions/choose-models.md#configure-aliases-slots-and-task-routing)
 for the routing schema. `--subagent-model-router=false` disables a configured
 router.
 
@@ -167,14 +168,14 @@ router.
   pinned or routed model.
 - `--enable-parallel=false` removes the Parallel tool.
 - Child permission rules determine which delegated calls run automatically. See
-  [Permissions and posture](./permissions-and-posture.md).
+  [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).
 - `--subagent-ask-reviewer` lets a headless model review eligible child
   permission requests.
 
 ## Next steps
 
-- [Permissions and posture](./permissions-and-posture.md) for delegated
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for delegated
   approval behavior.
 - [Agent definitions](/building/extension-points/agent-definitions.md) to define
   named specialists.
-- [Core tools](./tools.md) for the rest of the default catalog.
+- [Core tools](/features/sessions/tools.md) for the rest of the default catalog.

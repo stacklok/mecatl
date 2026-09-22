@@ -1,4 +1,5 @@
 ---
+slug: /features/session-continuity
 sidebar_position: 140
 title: Session continuity
 description:
@@ -165,6 +166,6 @@ blocked until explicitly closed.
 
 ## Next steps
 
-- [Start and resume sessions](./start-and-resume-sessions.md)
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
 - [Operate local session storage](/operating/session-storage-operations.md)
-- [Execution environments](./execution-environments.md)
+- [Execution environments](/features/security-and-execution/execution-environments.md)
