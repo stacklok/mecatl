@@ -1558,8 +1558,9 @@ state, while a completed validated response wins over a late cancellation. Indep
 validated `ProtocolError.Usage` is retained before that classification. The LLM backend uses
 the same `cancelled` versus `timeout` distinction from observed context state without parsing
 provider error prose. All misses still feed the existing three-miss per-run breaker.
-The adapter sends one fixed Choice question, validates the exact offered choice, and
-returns only static miss codes. It enforces a 10-second queue wait, a 10-second request
+The adapter sends one fixed Choice question and validates the exact offered choice. It returns
+only adapter-local typed statuses; composition projects them to canonical engine-owned miss
+codes before the callback. It enforces a 10-second queue wait, a 10-second request
 deadline, no retries or redirects, a 1 MiB response limit, HTTPS except loopback HTTP,
 64 KiB of measured input text, and at most 255 categories. `TYPESAFE_API_KEY` is in both
 envscrub exact sets, so command-environment inheritance cannot restore it. The four

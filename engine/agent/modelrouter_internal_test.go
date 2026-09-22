@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -596,34 +597,29 @@ func TestADR_0350_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
 		}
 	}
 
-	diag := newInternalCapturingDiag()
-	current := ""
-	eng := NewEngine(Deps{
-		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
-			return "", "", session.Usage{}, current, false
-		},
-	})
-	run := &Run{router: &modelRouterBreaker{max: len(canonical) + 1}, children: newChildRunRegistry(), diag: diag}
-	caps := eng.parentCaps(run, nil, 0)
-	for _, current = range canonical {
-		caps.routeTask(context.Background(), "sensitive task")
+	canonicalCaps := func(reason string) (parentCaps, *internalCapturingDiag) {
+		d := newInternalCapturingDiag()
+		eng := NewEngine(Deps{
+			LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main", Diagnostics: d,
+			SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+				return "", "", session.Usage{}, reason, false
+			},
+		})
+		run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: d}
+		return eng.parentCaps(run, nil, 0), d
 	}
-	records := diag.snapshot()
-	for _, reason := range canonical {
-		found := false
-		for _, record := range records {
+	assertDiag := func(reason string, diag *internalCapturingDiag) {
+		t.Helper()
+		for _, record := range diag.snapshot() {
 			if record.attrs["reason"] == reason {
-				found = true
-				break
+				return
 			}
 		}
-		if !found {
-			t.Fatalf("callback diagnostic omitted canonical reason %q", reason)
-		}
+		t.Fatalf("callback diagnostic omitted canonical reason %q", reason)
 	}
 
 	var subagentStart *session.SubagentPayload
+	subagentCaps, subagentDiag := canonicalCaps(RouterMissTimeout)
 	tl := routerTool()
 	_, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("canonical", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
@@ -631,25 +627,50 @@ func TestADR_0350_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
 			if ev.Type == session.EvSubagentStart {
 				subagentStart = ev.Subagent
 			}
-		}, parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-			return "", "", RouterMissTimeout, false
-		}})
+		}, subagentCaps)
 	if err != nil || subagentStart == nil || subagentStart.RoutingReason != RouterMissTimeout {
 		t.Fatalf("Subagent canonical projection = %+v, err=%v", subagentStart, err)
 	}
+	assertDiag(RouterMissTimeout, subagentDiag)
 
 	var parallelStart *session.ParallelPayload
-	emitter := branchEmitter{parentCallID: "canonical", emit: func(ev session.Event) { parallelStart = ev.Parallel }}
-	emitter.branchStart(0, "incarnation", "goal", "", "", RouterMissLowConfidence, "model")
-	if parallelStart == nil || parallelStart.RoutingReason != RouterMissLowConfidence {
-		t.Fatalf("Parallel canonical projection = %+v", parallelStart)
+	parallelCaps, parallelDiag := canonicalCaps(RouterMissLowConfidence)
+	parallel := routerParallelTool(true)
+	_, err = parallel.ExecuteWithParent(context.Background(),
+		session.NewToolCall("canonical-parallel", "Parallel", parallelArgsJSON("inspect")), memEnv("/ws"),
+		func(ev session.Event) {
+			if ev.Type == session.EvParallelBranch && ev.Parallel != nil && ev.Parallel.Kind == session.ParallelBranchStart {
+				parallelStart = ev.Parallel
+			}
+		}, parallelCaps)
+	if err != nil || parallelStart == nil || parallelStart.RoutingReason != RouterMissLowConfidence {
+		t.Fatalf("Parallel canonical projection = %+v, err=%v", parallelStart, err)
 	}
+	assertDiag(RouterMissLowConfidence, parallelDiag)
 
-	teamRoster := []session.TeamMemberSpec{{Name: "worker", RoutingReason: routingReasonPayload(RouterMissInputOverLimit)}}
-	teamStart := session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{Roster: teamRoster}}
-	if teamStart.Team.Roster[0].RoutingReason != RouterMissInputOverLimit {
-		t.Fatalf("Team canonical projection = %+v", teamStart.Team.Roster[0])
+	factory := func(tm *team.Team, spec MemberSpec, _ string) MemberBuild {
+		cat := tool.NewCatalog()
+		for _, memberTool := range MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(memberTool)
+		}
+		return MemberBuild{Engine: NewEngine(Deps{
+			LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: cat, Policy: allowAllInt(), Model: "member",
+		})}
 	}
+	teamTool := NewTeamTool(TeamMemberEngineFactory(factory))
+	teamCaps, teamDiag := canonicalCaps(RouterMissInputOverLimit)
+	var teamStart *session.TeamPayload
+	_, err = teamTool.(childCapableTool).ExecuteWithParent(context.Background(),
+		session.NewToolCall("canonical-team", "Team", json.RawMessage(`{"goal":"work","members":[{"name":"lead","role":"coordinate"}]}`)),
+		memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvTeamStart {
+				teamStart = ev.Team
+			}
+		}, teamCaps)
+	if err != nil || teamStart == nil || len(teamStart.Roster) != 1 || teamStart.Roster[0].RoutingReason != RouterMissInputOverLimit {
+		t.Fatalf("Team canonical projection = %+v, err=%v", teamStart, err)
+	}
+	assertDiag(RouterMissInputOverLimit, teamDiag)
 }
 
 // FAIL-SOFT: a routeTask MISS (ok=false) falls through to the DEFAULT explorer engine —
@@ -1284,6 +1305,54 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 	caps.routeTask(context.Background(), "task 2")
 	if got := parentSess.Usage.TotalTokens(); got != 2*perCall {
 		t.Fatalf("after second routeTask call: sess.Usage.TotalTokens() = %d, want %d (cumulative fold)", got, 2*perCall)
+	}
+}
+
+func TestRouteTaskNewCanonicalMissesShareBreakerAndFoldUsageOnce(t *testing.T) {
+	for _, reason := range []string{
+		RouterMissTimeout,
+		RouterMissLowConfidence,
+		RouterMissInputOverLimit,
+		RouterMissCapacityTimeout,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			const perCall = 11
+			calls := 0
+			engine := NewEngine(Deps{
+				LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
+				SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+					calls++
+					return "", "", session.Usage{InputTokens: perCall}, reason, false
+				},
+			})
+			parent := session.New(session.SessionID("parent-"+reason), session.ModeDefault,
+				session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
+			if err := parent.RecordUserPrompt("go", nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := parent.BeginTurn(); err != nil {
+				t.Fatal(err)
+			}
+			run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+			route := engine.parentCaps(run, parent, 0).routeTask
+			for i := 0; i < defaultModelRouterMaxMisses; i++ {
+				_, _, gotReason, ok := route(t.Context(), "task")
+				if ok || gotReason != reason {
+					t.Fatalf("miss %d = reason %q ok=%v, want %q false", i+1, gotReason, ok, reason)
+				}
+				if got := parent.Usage.InputTokens; got != (i+1)*perCall {
+					t.Fatalf("after miss %d usage=%d, want exactly %d", i+1, got, (i+1)*perCall)
+				}
+			}
+			_, _, gotReason, ok := route(t.Context(), "skipped")
+			if ok || gotReason != session.RoutingReasonBreakerOpen {
+				t.Fatalf("post-threshold route = reason %q ok=%v", gotReason, ok)
+			}
+			if calls != defaultModelRouterMaxMisses || parent.Usage.InputTokens != defaultModelRouterMaxMisses*perCall {
+				t.Fatalf("calls=%d usage=%d, want %d calls and exactly-once usage %d", calls, parent.Usage.InputTokens,
+					defaultModelRouterMaxMisses, defaultModelRouterMaxMisses*perCall)
+			}
+		})
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -486,6 +487,94 @@ func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 			t.Fatalf("Jev miss kind %d maps to %q, want %q", tc.kind, got, tc.want)
 		}
 	}
+
+	jevOutcome := func(ctx context.Context, minimumConfidence float64, task string, handler http.HandlerFunc) (session.Usage, string, bool, int32) {
+		t.Helper()
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			handler(w, r)
+		}))
+		defer srv.Close()
+		router, err := jevrouter.New(jevrouter.Options{
+			APIKey: "secret", BaseURL: srv.URL, HTTPClient: srv.Client(), MinimumConfidence: minimumConfidence,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := routerTaxonomyCfg()
+		cfg.RouterBackend, cfg.jevRouter = "jev", router
+		_, _, usage, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(ctx, task)
+		return usage, reason, ok, calls.Load()
+	}
+
+	t.Run("actual Jev SDK outcomes cross composition", func(t *testing.T) {
+		for _, tc := range []struct {
+			name       string
+			confidence float64
+			task       string
+			response   string
+			wantReason string
+			wantUsage  session.Usage
+			wantCalls  int32
+		}{
+			{
+				name: "structured unknown category", task: "task",
+				response:   `{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":"not-offered","probabilities":{"not-offered":1},"confidence":1}},"usage":{"input_tokens":2,"output_tokens":1}}`,
+				wantReason: agent.RouterMissUnknownCategory, wantUsage: session.Usage{InputTokens: 2, OutputTokens: 1}, wantCalls: 1,
+			},
+			{
+				name: "low confidence", confidence: 0.9, task: "task",
+				response:   `{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":"small","probabilities":{"small":0.6,"large":0.4},"confidence":0.6}},"usage":{"input_tokens":4,"output_tokens":2}}`,
+				wantReason: agent.RouterMissLowConfidence, wantUsage: session.Usage{InputTokens: 4, OutputTokens: 2}, wantCalls: 1,
+			},
+			{
+				name: "protocol error retains usage", task: "task",
+				response:   `{"model":"jev-1.13.0","answers":{},"usage":{"input_tokens":5,"output_tokens":3}}`,
+				wantReason: agent.RouterMissBadVerdict, wantUsage: session.Usage{InputTokens: 5, OutputTokens: 3}, wantCalls: 1,
+			},
+			{
+				name: "local input cap", task: strings.Repeat("x", 1<<16+1),
+				wantReason: agent.RouterMissInputOverLimit, wantCalls: 0,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				usage, reason, ok, calls := jevOutcome(t.Context(), tc.confidence, tc.task, func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(tc.response))
+				})
+				if ok || reason != tc.wantReason || usage != tc.wantUsage || calls != tc.wantCalls {
+					t.Fatalf("outcome = usage=%+v reason=%q ok=%v calls=%d; want usage=%+v reason=%q calls=%d",
+						usage, reason, ok, calls, tc.wantUsage, tc.wantReason, tc.wantCalls)
+				}
+			})
+		}
+	})
+
+	t.Run("live caller deadline is canonical timeout", func(t *testing.T) {
+		entered := make(chan struct{})
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			close(entered)
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})}
+		router, err := jevrouter.New(jevrouter.Options{APIKey: "secret", BaseURL: "https://example.com", HTTPClient: client})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := routerTaxonomyCfg()
+		cfg.RouterBackend, cfg.jevRouter = "jev", router
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		_, _, usage, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(ctx, "task")
+		select {
+		case <-entered:
+		default:
+			t.Fatal("deadline test never entered the SDK HTTP request")
+		}
+		if ok || reason != agent.RouterMissTimeout || usage != (session.Usage{}) {
+			t.Fatalf("deadline outcome = usage=%+v reason=%q ok=%v", usage, reason, ok)
+		}
+	})
 
 	llmReason := func(ctx context.Context, turn mockllm.Turn) string {
 		t.Helper()
