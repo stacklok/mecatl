@@ -165,10 +165,10 @@ type routerVerdict struct {
 // accumulated session.Usage (so the caller can fold it into a parent session's budget
 // brake — the #92 CWE-770 fix). It mirrors RunGuardrailCheck: bounded by
 // modelRouterTimeout, drained under a zero-capability child posture (role
-// "model-router"), and FAIL-SOFT — any failure, cancellation, unparseable verdict, or
-// hallucinated category returns ("", zero, false) so the caller inherits the default
-// model. It never returns an error: the router is never load-bearing, so a miss is just
-// a soft fall-through, not a condition the caller branches on.
+// "model-router"), and FAIL-SOFT — failure, cancellation, deadline expiry, an invalid
+// verdict, or an unknown category returns ("", observed usage, canonical miss reason,
+// false) so the caller inherits the default model. It never returns a Go error;
+// callers may inspect the common miss reason without parsing provider error text.
 //
 // Usage is returned on EVERY path including early-return degenerate inputs (zero usage)
 // and fail-soft miss paths (whatever was spent before the failure) so the caller can
