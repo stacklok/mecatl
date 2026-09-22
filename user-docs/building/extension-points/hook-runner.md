@@ -190,6 +190,6 @@ checker engine is inert and tool-limited; this is the recursion guard.
 
 ## Next steps
 
-- [Configure hooks](/features/hooks.md).
+- [Configure hooks](/features/security-and-execution/hooks.md).
 - [Implement a permission policy](permission-policy.md).
 - [Add a custom tool](tool-catalog.md#add-a-custom-tool).

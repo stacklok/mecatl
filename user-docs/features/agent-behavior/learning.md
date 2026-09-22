@@ -1,4 +1,5 @@
 ---
+slug: /features/learning
 sidebar_position: 230
 title: Learning
 description:
@@ -191,10 +192,10 @@ permissions or tools.
 - Automatic learning is not semantic or embedding search. No vector database or
   external embedding service is required or supported by this path.
 - Manual `/dream` consolidation is a separate maintenance workflow; see
-  [Dreaming and memory consolidation](./dreaming.md).
+  [Dreaming and memory consolidation](/features/agent-behavior/dreaming.md).
 
 ## Next steps
 
-- [Dreaming and memory consolidation](./dreaming.md)
-- [Memory and user model](/features/memory.md)
-- [Skills, commands, and soul](./skills-commands-and-soul.md)
+- [Dreaming and memory consolidation](/features/agent-behavior/dreaming.md)
+- [Memory and user model](/features/agent-behavior/memory.md)
+- [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)

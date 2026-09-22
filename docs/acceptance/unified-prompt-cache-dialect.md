@@ -157,7 +157,7 @@ ADR 0334's existing gateway decision to the generic constructor.
 1. Applicable `task lint`, `task test`, `task docs`, `task generate`, and `task api:check` gates pass, with regenerated `contracts/gen` committed and never hand-edited.
 2. `task ac-trace-strict` resolves every named proof when the plan becomes `landed`.
 3. `go run ./cmd/mecademo` remains green.
-4. `user-docs/features/choose-models.md` is updated in the same PR per [AGENTS.md](../../AGENTS.md)'s same-PR rule, and `task site:build` passes.
+4. `user-docs/features/sessions/choose-models.md` is updated in the same PR per [AGENTS.md](../../AGENTS.md)'s same-PR rule, and `task site:build` passes.
 5. `provider/openai`'s wire change is classified Changed (breaking) for that module's next tag per `engine/COMPATIBILITY.md`.
 6. The implementation PR links the Plan / Interface PR and approved commit and reports interface conformance.
 7. `/panel-review` reports no ship blockers or unwaived reviewer failures.

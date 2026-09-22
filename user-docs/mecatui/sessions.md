@@ -34,7 +34,7 @@ A resumed chat is the stored chat, not a copy. It keeps its model, exact
 server-owned placement, cumulative token totals, and latest saved context meter.
 The meter includes an estimate marker when the server used display-only fallback
 accounting. A chat with no saved context measurement shows an unknown value until
-a completed turn establishes one. See [Session continuity](/features/session-continuity.md)
+a completed turn establishes one. See [Session continuity](/features/sessions/session-continuity.md)
 for the storage and recovery behavior behind resume.
 
 ### Recover a pending approval
@@ -158,7 +158,7 @@ keeping the session and visible scrollback. The command creates no chat turn,
 but a cascade summary can use model tokens.
 
 The command appears only when the server supports manual compaction.
-See [Context windows](/features/context-windows.md) for automatic compaction,
+See [Context windows](/features/sessions/context-windows.md) for automatic compaction,
 window resolution, and operator configuration.
 
 ## Move a chat to a worktree

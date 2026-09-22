@@ -23,7 +23,6 @@ directories; do not create a manual sidebar to express this structure.
 |-|-|-|
 |`intro.md`|New readers choosing among the terminal-client, operator, and builder paths.|Detailed instructions and reference material. Link to the owning section.|
 |`cloud-native-harness.md`|Readers understanding Mecatl's defining architecture and how it differs from desktop harnesses.|Task-oriented setup, deployment, and configuration. Link to the owning guide.|
-|`install.md`|Readers who need Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, deployment artifacts, and source builds.|First-run workflow, configuration, and deployment-specific steps. Link to the owning client or deployment page.|
 |`mecatui/`|Terminal users who need to install, start, connect, configure, or troubleshoot the `mecatui` client.|Server deployment, server policy, and shared feature semantics. Link to the owning server or feature page.|
 |`operating/`|Operators deploying, securing, and maintaining `mecated`, `mecak8s`, `mecatequi`, and remote services.|Client workflows, embedding APIs, and shared capability behavior. Link to the owning client, builder, or capability page.|
 |`building/getting-started/`|Builders and embedders following a first path, such as creating an agent or using the TypeScript SDK.|Exhaustive API reference, operations procedures, and feature configuration.|
@@ -44,7 +43,7 @@ embedders. `operating/` is for people who own a deployed service.
 
 Keep shared behavior in `features/`. Put differences among `mecated`, `mecak8s`,
 and embedded `mecatui` in `operating/` and the
-[capability matrix](./features/capability-matrix.md).
+[capability matrix](./features/get-oriented/capability-matrix.md).
 
 ## Keep one canonical page
 
@@ -56,7 +55,7 @@ feature guide.
 
 |Topic|Canonical page|Supporting page responsibility|
 |-|-|-|
-|Installing Mecatl|`install.md`|`mecatui/getting-started.md` keeps its Homebrew happy path; deployment pages own their deployment-specific artifacts and operation.|
+|Installing `mecatui` or `mecated`|`mecatui/installation.md` and `operating/mecated.md`|Each guide owns its package and release-archive instructions. The shared archive-verification fragment keeps verification commands identical.|
 |Using the terminal client|`mecatui/`|Feature pages link to the relevant client guide rather than repeat terminal-client workflows.|
 |Agent loop and built-in tools|`features/agent-loop.md` and `features/tools.md`|Embedding guides show the minimum wiring and link to these pages for shared behavior.|
 |Scheduled tasks|`features/scheduled-tasks.md`|Deployment pages own scheduler flags and storage configuration.|
@@ -65,14 +64,13 @@ feature guide.
 |`mecated` operation and flags|`operating/mecated.md`|Feature pages explain shared behavior and link to the deployment guide for flags.|
 |`mecak8s` operation and Helm values|`operating/mecak8s.md`|Feature pages describe shared behavior without restating chart values.|
 |`mecatequi` and GitHub Actions|`operating/mecatequi.md`|Workflow maintainers keep implementation notes in `.github/workflows/README.md`.|
-|Mecatl Studio web UI|`operating/studio.md`|Feature pages describe shared behavior; the Studio page owns browser chat workflows, the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
+|Mecatl Studio web UI|`operating/studio.md`|Feature pages describe shared behavior; the Studio page owns the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
 |Provider and model selection|`features/choose-models.md`|`operating/mecated.md` owns daemon-specific credential and flag details.|
 |Workspace trust|`features/permissions-and-posture.md`|`features/project-instructions-and-rules.md` describes the project-content consequence.|
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `features/memory.md`|Extension-point pages document the importable interfaces.|
 |Hooks|`features/hooks.md`|`building/extension-points/hook-runner.md` owns host-integration details.|
 |Configuration schema|`reference/configuration.md`|`operating/settings.md` explains which configuration plane to use.|
-|gRPC API behavior|`reference/grpc-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
-|gRPC schema|`reference/grpc-schema.md`|The generated page owns exact services, RPC signatures, messages, enums, fields, and proto comments; `reference/grpc-api.md` owns behavior and semantics.|
+|gRPC API|`reference/grpc-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
 |HTTP and SSE API|`reference/http-sse-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
 |TypeScript SDK workflows|`building/getting-started/typescript-sdk.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
 |TypeScript SDK method reference|`reference/typescript-sdk-api/`|SDK guides link to the generated entry-point reference instead of copying signatures or option inventories.|

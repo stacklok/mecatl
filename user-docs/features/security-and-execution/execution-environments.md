@@ -1,4 +1,5 @@
 ---
+slug: /features/execution-environments
 sidebar_position: 330
 title: Execution environments
 description:
@@ -57,7 +58,7 @@ there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`, `Write`,
 create a shell or fork a workspace.
 
 The profile is fixed at session creation. The model cannot switch it during a
-run. See [Core tools](/features/tools.md) for the complete
+run. See [Core tools](/features/sessions/tools.md) for the complete
 catalog.
 
 ## Child environments
@@ -389,6 +390,6 @@ commit as qualified.
 
 ## Next steps
 
-- [Background Shell](/features/tools.md#background-commands)
-- [Subagents, teams, and parallel](/features/subagents-and-teams.md)
-- [Workspace trust](/features/permissions-and-posture.md)
+- [Background Shell](/features/sessions/tools.md#background-commands)
+- [Subagents, teams, and parallel](/features/agent-behavior/subagents-and-teams.md)
+- [Workspace trust](/features/security-and-execution/permissions-and-posture.md)

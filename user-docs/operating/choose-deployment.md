@@ -42,7 +42,7 @@ Kubernetes Leases by default.
 |**`mecatequi`**|Run one agent job in CI|None; each run is independent|An LLM provider key and CI runner|
 
 For a feature-by-feature comparison, see the
-[capability and deployment matrix](/features/capability-matrix.md).
+[capability and deployment matrix](/features/get-oriented/capability-matrix.md).
 
 ## Embed the engine
 

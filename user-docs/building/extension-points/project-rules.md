@@ -12,7 +12,7 @@ backend. Mecatl includes `engine/adapter/rulesfs` for Markdown files under
 conventional project and user directories.
 
 For the user-facing behavior, see
-[Project instructions and rules](/features/project-instructions-and-rules.md).
+[Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md).
 
 ## The interface
 
@@ -85,6 +85,6 @@ does not abort a run.
 
 ## Next steps
 
-- [Configure project instructions and rules](/features/project-instructions-and-rules.md).
+- [Configure project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md).
 - [Implement an agent-definition source](agent-definitions.md).
 - [Provide skills through SkillSource](tool-catalog.md#provide-skills).

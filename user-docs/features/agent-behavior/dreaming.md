@@ -1,4 +1,5 @@
 ---
+slug: /features/dreaming
 sidebar_position: 240
 title: Dreaming and memory consolidation
 description:
@@ -123,12 +124,12 @@ project's memory. User-model operations use the configured user-model store.
 - Manual planning requires a model call.
 
 For the underlying memory tools, tiers, lifecycle versions, and learning
-boundary, see [Memory and user model](/features/memory.md). For the
+boundary, see [Memory and user model](/features/agent-behavior/memory.md). For the
 broader `/dream` UI and receipt behavior, see
 [mecatui memory commands](/mecatui/commands-and-memory.md#review-and-maintain-memory).
 
 ## Next steps
 
-- [Learning](./learning.md)
-- [Memory and user model](/features/memory.md)
-- [Session continuity](./session-continuity.md)
+- [Learning](/features/agent-behavior/learning.md)
+- [Memory and user model](/features/agent-behavior/memory.md)
+- [Session continuity](/features/sessions/session-continuity.md)

@@ -54,7 +54,7 @@ during normal operations without making durable sessions disappear. See
 A worker can be disposable while a session is not. With durable storage and
 coordination, a replacement process resumes from the last persisted turn
 boundary. It does not resume an in-flight operation, and work after the last
-successful save can be lost. See [Session continuity](/features/session-continuity.md)
+successful save can be lost. See [Session continuity](/features/sessions/session-continuity.md)
 for the storage, recovery, and single-writer model.
 
 ### Build a governed tool ecosystem
@@ -67,7 +67,7 @@ and execution-environment boundaries.
 Shell remains an available, governed capability when it is needed. The
 direction is to make it less necessary by expanding purpose-built, permissioned
 tools and service integrations for common agent tasks. See
-[Execution environments](/features/execution-environments.md) and
+[Execution environments](/features/security-and-execution/execution-environments.md) and
 [extension points](/building/extension-points/index.md).
 
 ### Serve more than one kind of client
@@ -128,6 +128,6 @@ operator and capability guides describe what Mecatl supports today.
 
 - [Choose how to run Mecatl](/operating/choose-deployment.md).
 - [Deploy `mecak8s`](/operating/mecak8s.md) on Kubernetes.
-- [Understand session continuity](/features/session-continuity.md).
+- [Understand session continuity](/features/sessions/session-continuity.md).
 - [Explore extension points](/building/extension-points/index.md) for your own
   integrations.

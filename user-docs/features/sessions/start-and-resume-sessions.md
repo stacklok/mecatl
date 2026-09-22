@@ -1,4 +1,5 @@
 ---
+slug: /features/start-and-resume-sessions
 sidebar_position: 100
 title: Start and resume sessions
 description:
@@ -113,7 +114,7 @@ live run based only on a persisted snapshot.
 
 ## Next steps
 
-- [Session continuity](./session-continuity.md) for storage, recovery, and
+- [Session continuity](/features/sessions/session-continuity.md) for storage, recovery, and
   maintenance.
 - [Use mecatui](/mecatui/index.md) for the interactive terminal workflow.
 - [Drive via gRPC / HTTP](/building/grpc-http.md) for client

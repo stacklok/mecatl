@@ -374,10 +374,10 @@ const flagDrivenSection = "## Flag- / file-configured features (NOT in `settings
 	"\n" +
 	"| Feature | How it is configured | See |\n" +
 	"| --- | --- | --- |\n" +
-	"| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |\n" +
-	"| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/memory.md) |\n" +
-	"| Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/memory.md) |\n" +
-	"| Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |\n" +
+	"| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) |\n" +
+	"| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/agent-behavior/memory.md) |\n" +
+	"| Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/agent-behavior/memory.md) |\n" +
+	"| Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) |\n" +
 	"| Session leasing | `--session-lease-*` | [Run mecated standalone](/operating/mecated.md#multi-replica) |\n" +
 	"\n" +
 	"The model slots / aliases above also have CLI twins (`--model-slot` /\n" +

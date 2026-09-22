@@ -124,7 +124,7 @@ browser is available.
 Provider definitions and credential custody are operator configuration. API keys
 come from the environment or an operator-managed file; keep secrets out of
 command arguments, settings, prompts, and logs. See [Choose models and
-providers](/features/choose-models.md#set-up-a-local-provider) and [Run mecated
+providers](/features/sessions/choose-models.md#set-up-a-local-provider) and [Run mecated
 standalone](/operating/mecated.md#configure-providers).
 
 ToolHive has a separate external lifecycle and owns its LLM credentials. Use

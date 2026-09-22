@@ -64,7 +64,7 @@ slug renames, render correctly in GitHub's markdown preview, and are portable if
 ### Pattern
 
 ```markdown
-[The agent loop](/features/agent-loop.md)
+[The agent loop](/features/sessions/agent-loop.md)
 [Overview](/building/extension-points/index.md)
 [Cloud-native harness](/cloud-native-harness.md)
 ```
@@ -84,7 +84,7 @@ Docusaurus strips the `.md` extension when building URLs.
 | Pattern | Problem |
 |---------|---------|
 | `/docs/features/agent-loop` | Site-root absolute — breaks if `routeBasePath` changes; `.md` omitted so GitHub can't preview |
-| `../features/agent-loop.md` | Cross-section relative paths have a known Docusaurus v3 resolution bug with `index.md` files; use content-root-relative instead |
+| `../features/sessions/agent-loop.md` | Cross-section relative paths have a known Docusaurus v3 resolution bug with `index.md` files; use content-root-relative instead |
 | `features/agent-loop.md` (no leading `/`) | Resolves relative to current file — fine within a section, fragile across sections |
 
 ### Why cross-section relative paths break
