@@ -88,7 +88,7 @@ func PrepareUser(in UserSnapshot, layout PlainLayout, a UserAppearance) Prepared
 		lines = append(lines, wrapPrefixed("📎 ", SanitizePlain(media), a.Muted, layout.width))
 	}
 	keyValues := append([]string{in.text}, in.media...)
-	return preparePlain("user", layout, lines, keyValues)
+	return preparePlain("user", layout, lines, keyValues, 1)
 }
 
 // NoticeInput is caller-owned notice content.
@@ -114,9 +114,9 @@ func SnapshotNotice(in NoticeInput) NoticeSnapshot {
 // PrepareNotice prepares an ordinary or recovery notice.
 func PrepareNotice(in NoticeSnapshot, layout PlainLayout, a NoticeAppearance) Prepared {
 	if in.recovery {
-		return preparePlain("notice-recovery", layout, []string{wrapPrefixed("⚠ ", SanitizePlain(in.text), a.Warning, layout.width)}, []string{in.text})
+		return preparePlain("notice-recovery", layout, []string{wrapPrefixed("⚠ ", SanitizePlain(in.text), a.Warning, layout.width)}, []string{in.text}, 0)
 	}
-	return preparePlain("notice", layout, []string{wrapPrefixed("• ", SanitizePlain(in.text), a.Muted, layout.width)}, []string{in.text})
+	return preparePlain("notice", layout, []string{wrapPrefixed("• ", SanitizePlain(in.text), a.Muted, layout.width)}, []string{in.text}, 0)
 }
 
 // HookInput is caller-owned structured hook content.
@@ -156,7 +156,7 @@ func PrepareHook(in HookSnapshot, layout PlainLayout, a HookAppearance) Prepared
 		}
 		line = wrapPrefixed("• ", label, a.Muted, layout.width)
 	}
-	return preparePlain("hook", layout, []string{line}, []string{in.text, in.phase, in.tool, in.decision})
+	return preparePlain("hook", layout, []string{line}, []string{in.text, in.phase, in.tool, in.decision}, 0)
 }
 
 func hookReason(raw, phase string) string {
@@ -196,7 +196,7 @@ func SnapshotError(in ErrorInput) ErrorSnapshot { return ErrorSnapshot{text: str
 
 // PrepareError prepares a transient error.
 func PrepareError(in ErrorSnapshot, layout PlainLayout, a ErrorAppearance) Prepared {
-	return preparePlain("error", layout, []string{wrapPrefixed("✗ ", SanitizePlain(in.text), a.Error, layout.width)}, []string{in.text})
+	return preparePlain("error", layout, []string{wrapPrefixed("✗ ", SanitizePlain(in.text), a.Error, layout.width)}, []string{in.text}, 0)
 }
 
 // PermanentErrorInput is caller-owned permanent-error content.
@@ -222,7 +222,7 @@ func PreparePermanentError(in PermanentErrorSnapshot, layout PlainLayout, a Perm
 	} else {
 		lines = append(lines, a.Muted.Render("  "+layout.expandMark+" shows details"))
 	}
-	return preparePlain("permanent-error", layout, lines, []string{in.text})
+	return preparePlain("permanent-error", layout, lines, []string{in.text}, 0)
 }
 
 // PermanentErrorSummary preserves compatibility with legacy SDK-shaped errors.
@@ -308,7 +308,7 @@ func PrepareDelivery(in DeliverySnapshot, layout PlainLayout, a DeliveryAppearan
 		label += " · fire " + SanitizePlain(in.fireID)
 	}
 	lines := []string{wrapPrefixed("", label, a.Header, layout.width), wrapPrefixed("│ ", SanitizePlain(DeliveryBodyForDisplay(in.text)), a.Body, layout.width)}
-	return preparePlain("delivery", layout, lines, []string{in.scheduleName, in.fireID, in.text})
+	return preparePlain("delivery", layout, lines, []string{in.scheduleName, in.fireID, in.text}, 0)
 }
 
 // DeliveryBodyForDisplay strips only the recognized delivery fence and header.
@@ -344,7 +344,7 @@ func SnapshotTurnStat(in TurnStatInput) TurnStatSnapshot {
 
 // PrepareTurnStat prepares a turn-stat line.
 func PrepareTurnStat(in TurnStatSnapshot, layout PlainLayout, a TurnStatAppearance) Prepared {
-	return preparePlain("turn-stat", layout, []string{wrapStyled(SanitizePlain(in.text), a.Muted, layout.width)}, []string{in.text})
+	return preparePlain("turn-stat", layout, []string{wrapStyled(SanitizePlain(in.text), a.Muted, layout.width)}, []string{in.text}, 0)
 }
 
 func wrapStyled(text string, style lipgloss.Style, width int) string {
@@ -399,11 +399,21 @@ func normalizePlainWidth(src string) string {
 	return out.String()
 }
 
-func preparePlain(family string, layout PlainLayout, chunks, keyValues []string) Prepared {
+func preparePlain(family string, layout PlainLayout, chunks, keyValues []string, firstTextRow int) Prepared {
 	lines := strings.Split(strings.Join(chunks, "\n"), "\n")
 	rows := make([]Row, len(lines))
-	for i := range rows {
+	offset := 0
+	for i, line := range lines {
 		rows[i] = Row{Region: RegionChrome, FallbackRow: i}
+		if i < firstTextRow {
+			continue
+		}
+		span := graphemeCount(ansi.Strip(line))
+		rows[i] = Row{
+			Region: RegionBody, Text: true, SourceOffset: offset,
+			FallbackRow: i, GraphemeSpan: span,
+		}
+		offset += span
 	}
 	var encoded canonicalEncoder
 	encoded.string("mecatui.cards.plain/" + family + "/v1")

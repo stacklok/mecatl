@@ -16,6 +16,39 @@ func (r *renderer) plainCardLayout(expand bool) cards.PlainLayout {
 
 func preparedText(prepared cards.Prepared) string { return strings.Join(prepared.Lines, "\n") }
 
+// prepareStructuredBlock snapshots and prepares every migrated non-Markdown card
+// family. It is called only after renderBlock's cheap revision/layout admission
+// guard misses; settled cache hits therefore do no snapshot, hashing, or preparation.
+func (r *renderer) prepareStructuredBlock(b *block, expand bool) (cards.Prepared, bool) {
+	switch b.kind {
+	case blockTool, blockUser, blockNotice, blockHook, blockTurnStat, blockError, blockDelivery:
+		r.cardPrepares++
+	default:
+		return cards.Prepared{}, false
+	}
+	switch b.kind {
+	case blockTool:
+		return r.prepareToolCard(b, expand).Prepared, true
+	case blockUser:
+		return r.prepareUserBlock(b), true
+	case blockNotice:
+		return r.prepareNoticeBlock(b), true
+	case blockHook:
+		return r.prepareHookBlock(b), true
+	case blockTurnStat:
+		return r.prepareTurnStatBlock(b), true
+	case blockError:
+		if b.permanent {
+			return r.preparePermanentErrorBlock(b, expand), true
+		}
+		return r.prepareErrorBlock(b), true
+	case blockDelivery:
+		return r.prepareDeliveryBlock(b), true
+	default:
+		return cards.Prepared{}, false
+	}
+}
+
 func (r *renderer) prepareUserBlock(b *block) cards.Prepared {
 	return cards.PrepareUser(cards.SnapshotUser(cards.UserInput{Text: b.raw, Media: b.media}), r.plainCardLayout(false), cards.UserAppearance{
 		Label: r.th.Style("userLabel"), Body: r.th.Style("userBlock"), Muted: r.th.Style("muted"),

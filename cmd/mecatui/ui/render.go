@@ -166,6 +166,11 @@ type renderer struct {
 	// long the scrollback is. Touched only on the update goroutine.
 	blockRenders int
 
+	// cardPrepares counts all migrated functional-card preparations. The counter is
+	// deliberately below renderBlock's revision/layout guard so tests can prove a
+	// settled frame performs no snapshot, canonical hashing, or preparation.
+	cardPrepares int
+
 	// toolCardPrepares counts tool-card preparations. A fresh tool block prepares
 	// once for both its rendered output and structural frame provenance; semantic
 	// sections are discarded before the cache entry is retained.
@@ -294,15 +299,20 @@ type mdEntry struct {
 }
 
 // blockEntry is one memoized whole-block render: the block revision, wrap width,
-// and expand state it was produced under (the validity key) plus the rendered
-// ANSI output. Tool entries retain only per-row structural provenance; the
-// prepared card's semantic strings are discarded after producing both outputs.
+// and expand state it was produced under (the cheap admission guard), the
+// functional card's canonical prepared-output identity when applicable, and the
+// rendered ANSI output. Card entries retain only per-row structural provenance;
+// prepared inputs and semantic strings are discarded after producing both outputs.
 type blockEntry struct {
 	rev    int
 	width  int
 	expand bool
 	out    string
-	rows   []renderedRow
+	// cardKey is the canonical prepared-output identity for functional cards.
+	// rev/width/expand are only the cheap admission guard; no input snapshot or
+	// parallel semantic cache key survives preparation.
+	cardKey [32]byte
+	rows    []renderedRow
 }
 
 // defaultBlockIndent is the left margin (cells) every conversation block is indented
@@ -805,17 +815,14 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 		return e.out
 	}
 	var (
-		out  string
-		rows []renderedRow
+		out     string
+		rows    []renderedRow
+		cardKey [32]byte
 	)
-	if b.kind == blockTool {
-		prepared := r.prepareToolCard(b, expand)
-		out = prepared.render()
-		rows = functionalToolProvenanceRows(prepared.Prepared, b.id, r.indent, r.width)
-		for i := range rows {
-			rows[i].kind = b.kind
-			rows[i].indent = r.indent
-		}
+	if prepared, ok := r.prepareStructuredBlock(b, expand); ok {
+		out = preparedText(prepared)
+		rows = functionalCardProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
+		cardKey = prepared.Key
 	} else {
 		out = r.renderBlockFresh(idx, b, expand)
 	}
@@ -835,7 +842,10 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 		// blocks through here.
 		r.blockCache = map[int]blockEntry{}
 	}
-	r.blockCache[idx] = blockEntry{rev: b.rev, width: r.width, expand: expand, out: out, rows: rows}
+	r.blockCache[idx] = blockEntry{
+		rev: b.rev, width: r.width, expand: expand, out: out,
+		cardKey: cardKey, rows: rows,
+	}
 	r.blockRenders++
 	// CORRECTNESS CHOKEPOINT (shared by BOTH render paths): a fresh render of a block
 	// inside the cached incremental-join prefix invalidates that prefix. The prefix

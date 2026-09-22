@@ -22,6 +22,8 @@ type Region uint8
 const (
 	// RegionChrome identifies frame and header rows without visible semantic text.
 	RegionChrome Region = iota
+	// RegionBody identifies visible non-tool card text.
+	RegionBody
 	// RegionArguments identifies visible tool-argument text.
 	RegionArguments
 	// RegionResult identifies visible tool-result text.

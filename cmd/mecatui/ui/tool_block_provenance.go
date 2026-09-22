@@ -2,7 +2,7 @@ package ui
 
 import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
 
-func functionalToolProvenanceRows(prepared cards.Prepared, blockID uint64, indent, width int) []renderedRow {
+func functionalCardProvenanceRows(prepared cards.Prepared, blockID uint64, kind blockKind, indent, width int) []renderedRow {
 	if width <= indent {
 		indent = 0
 	}
@@ -10,6 +10,8 @@ func functionalToolProvenanceRows(prepared cards.Prepared, blockID uint64, inden
 	for i, source := range prepared.Rows {
 		region := conversationRegionChrome
 		switch source.Region {
+		case cards.RegionBody:
+			region = conversationRegionBody
 		case cards.RegionArguments:
 			region = conversationRegionArguments
 		case cards.RegionResult:
@@ -21,6 +23,8 @@ func functionalToolProvenanceRows(prepared cards.Prepared, blockID uint64, inden
 			sourceOffset: source.SourceOffset,
 			row:          source.FallbackRow,
 			text:         source.Text,
+			kind:         kind,
+			indent:       indent,
 			leading:      indent + source.LeadingColumn,
 			span:         source.GraphemeSpan,
 		}

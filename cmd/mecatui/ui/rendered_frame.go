@@ -58,8 +58,8 @@ type renderedRow struct {
 	text         bool
 	kind         blockKind
 	indent       int
-	// Tool-card rows retain only their structural location in the rendered line:
-	// canonical source offset, leading semantic grapheme, and visible span.
+	// Functional-card rows retain only their structural location in the rendered
+	// line: canonical source offset, leading semantic grapheme, and visible span.
 	leading int
 	span    int
 	// separator identifies a derived blank line between conversation blocks. It has
@@ -73,7 +73,7 @@ type renderedRow struct {
 type renderedFrame struct {
 	lines      []string
 	provenance []renderedRow
-	// Tool-card provenance is structural only; prepared semantic sections are
+	// Functional-card provenance is structural only; prepared semantic inputs are
 	// discarded at the cache boundary.
 	appendixID uint64
 }
@@ -223,12 +223,10 @@ func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand b
 	if entry, ok := r.blockFrameCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
 		return entry.rows
 	}
-	if b.kind == blockTool {
-		if entry, ok := r.blockCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
-			return entry.rows
-		}
+	if entry, ok := r.blockCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand && len(entry.rows) > 0 {
+		return entry.rows
 	}
-	rows := r.provenanceRows(b, rendered, expand, nil)
+	rows := r.provenanceRows(b, rendered, expand)
 	if r.blockFrameCache == nil {
 		r.blockFrameCache = map[int]frameBlockEntry{}
 	}
@@ -236,20 +234,8 @@ func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand b
 	return rows
 }
 
-func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCard *preparedToolCard) []renderedRow {
+func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []renderedRow {
 	lines := strings.Split(rendered, "\n")
-	if b.kind == blockTool {
-		if toolCard == nil {
-			prepared := r.prepareToolCard(b, expand)
-			toolCard = &prepared
-		}
-		rows := functionalToolProvenanceRows(toolCard.Prepared, b.id, r.indent, r.width)
-		for i := range rows {
-			rows[i].kind = b.kind
-			rows[i].indent = r.indent
-		}
-		return rows
-	}
 	rows := make([]renderedRow, len(lines))
 	region := conversationRegionChrome
 	textStart := 0
