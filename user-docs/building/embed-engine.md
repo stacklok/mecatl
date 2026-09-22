@@ -214,7 +214,7 @@ engine:
 
 If you need several of these capabilities, use `mecated`, which assembles them
 for you. See
-[Run mecated standalone](mecated.md).
+[Run mecated standalone](/operating/mecated.md).
 
 ## go.work for monorepo development
 

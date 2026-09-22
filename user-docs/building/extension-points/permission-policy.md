@@ -11,8 +11,9 @@ description:
 Mecatl's permission configuration cannot express your policy, such as when
 decisions come from an external authorization service.
 
-Use [Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md) to
-configure the supplied policy.
+Use
+[Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md)
+to configure the supplied policy.
 
 ## The interface
 

@@ -285,7 +285,7 @@ provider.
 
 If `plan` is unset, Mecatl uses the `reasoning` slot when it is configured;
 otherwise plan mode uses the session default model. See
-[Permissions and posture](/features/permissions-and-posture.md#plan-mode) for
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md#plan-mode) for
 the plan-review workflow.
 
 This example selects the Jev classifier backend. Set `TYPESAFE_API_KEY` in the
@@ -668,4 +668,4 @@ error releases it. There is no automatic replay or recovery after client restart
 API clients receive gRPC `Unavailable` with ErrorInfo domain `mecatl.stacklok.com`
 and reason `context_window_unavailable`, or HTTP 503. Match the structured reason,
 not error-message text, and retry explicitly after addressing discovery. For daemon
-configuration, see [context discovery recovery](/building/deployment/mecated.md#context-discovery-recovery).
+configuration, see [context discovery recovery](/operating/mecated.md#context-discovery-recovery).

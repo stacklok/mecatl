@@ -22,15 +22,16 @@ naming a component is still a question about the agent itself.
 ## Availability
 
 Every ordinary session you talk to carries the account, on every deployment. It
-comes from the server that builds the session rather than from a client feature or
-an operator setting, so a session with no filesystem answers these questions the
-same way a local `mecatui` session does.
+comes from the server that builds the session rather than from a client feature
+or an operator setting, so a session with no filesystem answers these questions
+the same way a local `mecatui` session does.
 
-Subagents and [analysis sessions](/mecatui/sessions.md#diagnose-a-stored-session)
-are the exception. A delegated task worker is scoped to its own job, and an
-analysis session opened with `mecatui debug` is scoped to reading another
-session's evidence; neither carries the account, so ask the session directly
-rather than through a subagent or an analysis session.
+Subagents and
+[analysis sessions](/mecatui/sessions.md#diagnose-a-stored-session) are the
+exception. A delegated task worker is scoped to its own job, and an analysis
+session opened with `mecatui debug` is scoped to reading another session's
+evidence; neither carries the account, so ask the session directly rather than
+through a subagent or an analysis session.
 
 ## What the agent knows on its own
 
@@ -38,8 +39,9 @@ The account covers the structure of Mecatl rather than its details: what each
 component is, that permission modes and operator postures are separate controls
 with separate value sets, that guardrails are a third and independent control,
 and how this documentation is organized. That is enough to frame a question
-correctly and to keep the two permission controls apart, which is the distinction
-most worth getting right. [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+correctly and to keep the two permission controls apart, which is the
+distinction most worth getting right.
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
 owns the full treatment of both controls, and the agent points you there.
 
 A question the account already covers gets answered from it, with no tool call
@@ -53,8 +55,9 @@ of them to keep current.
 ## How the agent answers deeper questions
 
 For anything past that structure, the agent reads the relevant page from
-[the documentation site](https://mecatl.dev/docs/) and answers from what it read,
-naming the page it used so you can follow up. You get the answer, not a referral.
+[the documentation site](https://mecatl.dev/docs/) and answers from what it
+read, naming the page it used so you can follow up. You get the answer, not a
+referral.
 
 Reading a page needs the `WebFetch` tool, which the built-in permission rules
 allow by default. A session without web access answers from the account it
@@ -65,9 +68,9 @@ settles the question.
 
 Questions about Mecatl are not questions about your code, so the agent does not
 search the open workspace for Mecatl's own documentation. The project you have
-open is usually unrelated to Mecatl, and finding nothing in it says nothing about
-how Mecatl behaves. When Mecatl's own source is the project you have open, the
-agent searches it like any other codebase.
+open is usually unrelated to Mecatl, and finding nothing in it says nothing
+about how Mecatl behaves. When Mecatl's own source is the project you have open,
+the agent searches it like any other codebase.
 
 ## Related information
 

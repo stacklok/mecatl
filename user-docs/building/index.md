@@ -9,8 +9,8 @@ description:
 # Build with Mecatl
 
 Use Mecatl inside your own application by embedding the Go engine or connecting
-through the TypeScript SDK. This section also covers the public extension
-points for providers, storage, policies, tools, and other adapters.
+through the TypeScript SDK. This section also covers the public extension points
+for providers, storage, policies, tools, and other adapters.
 
 ## Choose where to start
 

@@ -192,8 +192,8 @@ and call-level restrictions can remove capabilities. A child cannot regain a
 capability omitted by its parent.
 
 An agent definition's `tools:` and `disallowedTools:` fields narrow that
-specialist. Definitions from an explicit operator `--agents-dir` can establish
-a durable ceiling; project and user definitions remain subject to the parent's
+specialist. Definitions from an explicit operator `--agents-dir` can establish a
+durable ceiling; project and user definitions remain subject to the parent's
 authority.
 
 `mecated` uses the `local` authority evaluator by default. The opt-in `cedar`
@@ -300,7 +300,7 @@ replacement actions are not supported.
 
 - [PermissionPolicy](/building/extension-points/permission-policy.md) to replace
   the supplied permission policy in an embedding.
-- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md) for
-  project-ingestion behavior.
-- [Execution environments](/features/security-and-execution/execution-environments.md) for workspace and shell
-  isolation.
+- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md)
+  for project-ingestion behavior.
+- [Execution environments](/features/security-and-execution/execution-environments.md)
+  for workspace and shell isolation.

@@ -34,7 +34,8 @@ mecatui --version
 ```
 
 The version command should print a release tag. For Conda-forge, release
-archives, verification, and source builds, see [Install mecatui](./installation.md).
+archives, verification, and source builds, see
+[Install mecatui](./installation.md).
 
 ## Start mecatui
 
@@ -67,10 +68,11 @@ mecatui providers login example
 mecatui providers set-default example MODEL
 ```
 
-Setup does not launch a session; matching environment credentials take precedence
-over locally managed ones. Remote `mecatui connect ADDRESS` uses the remote
-server's provider configuration. For credential sources, secret safety, custom
-providers, and manual Codex support, see [local provider setup](/features/sessions/choose-models.md#set-up-a-local-provider).
+Setup does not launch a session; matching environment credentials take
+precedence over locally managed ones. Remote `mecatui connect ADDRESS` uses the
+remote server's provider configuration. For credential sources, secret safety,
+custom providers, and manual Codex support, see
+[local provider setup](/features/sessions/choose-models.md#set-up-a-local-provider).
 
 The welcome screen shows your workspace and active model. To use a different
 model, enter `/models`, select one, and press `enter`. A small, low-cost model

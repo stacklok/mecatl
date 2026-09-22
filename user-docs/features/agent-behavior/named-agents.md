@@ -186,5 +186,5 @@ subject to the server's permission and trust policy.
   for the complete field and source contract.
 - [Subagents, teams and parallel](/features/agent-behavior/subagents-and-teams.md)
   for delegation behavior and child lifecycle.
-- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md) for
-  workspace trust.
+- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md)
+  for workspace trust.
