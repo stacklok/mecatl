@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -110,5 +113,62 @@ func TestMecatuiFunctionalConversationCards_Scenario2_PlainCardsRemainTerminalSa
 	markdown := stripANSIstr(r.markdown("**markdown**  \nsecond line"))
 	if strings.Contains(markdown, "**markdown**") || !strings.Contains(markdown, "markdown") {
 		t.Fatalf("assistant Markdown did not retain its Glamour path: %q", markdown)
+	}
+}
+
+func TestMecatuiFunctionalConversationCards_Scenario2_MarkdownAndInputExceptionsRemainSeparate(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(48)
+	assistant := &block{
+		kind:      blockAssistant,
+		raw:       "## answer ❤️\n\n1. *formatted* item",
+		reasoning: "first summary line\nsecond summary line",
+	}
+
+	preparedBefore := r.toolCardPrepares
+	markdownBefore := r.mdRenders
+	collapsed := r.renderBlockFresh(0, assistant, false)
+	collapsedPlain := stripANSIstr(collapsed)
+	if r.toolCardPrepares != preparedBefore {
+		t.Fatalf("assistant rendering prepared a tool card: %d → %d", preparedBefore, r.toolCardPrepares)
+	}
+	if got, want := r.mdRenders, markdownBefore+1; got != want {
+		t.Fatalf("assistant output bypassed Glamour markdown rendering: renders = %d, want %d", got, want)
+	}
+	if strings.Contains(collapsedPlain, "*formatted*") {
+		t.Fatalf("assistant output bypassed Glamour markdown rendering: %q", collapsedPlain)
+	}
+	if !strings.Contains(collapsedPlain, "reasoning summary · 2 lines · ctrl+t expand") || strings.Contains(collapsedPlain, "first summary line") {
+		t.Fatalf("collapsed reasoning escaped its separate summary renderer: %q", collapsedPlain)
+	}
+	for _, line := range strings.Split(collapsed, "\n") {
+		if got, want := ansi.StringWidthWc(line), ansi.StringWidth(line); got != want {
+			t.Errorf("assistant line has mismatched emoji widths: WcWidth=%d, GraphemeWidth=%d: %q", got, want, stripANSIstr(line))
+		}
+	}
+
+	expandedPlain := stripANSIstr(r.renderBlockFresh(0, assistant, true))
+	for _, want := range []string{"summary of the model's reasoning", "may not", "reflect its actual process", "first summary line", "second summary line"} {
+		if !strings.Contains(expandedPlain, want) {
+			t.Errorf("expanded reasoning omitted %q: %q", want, expandedPlain)
+		}
+	}
+	if r.toolCardPrepares != preparedBefore {
+		t.Fatalf("expanded assistant rendering prepared a card: %d → %d", preparedBefore, r.toolCardPrepares)
+	}
+
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001"})
+	m.prompt.Rewrite("draft")
+	m.rend.inputValid = false
+	input := m.renderInput()
+	if got, want := inputRailStyle(m.deps.Theme, m.inputMode()).GetBackground(), m.deps.Theme.Color("bgPanel"); got != want {
+		t.Fatalf("input rail background = %v, want fixed panel background %v", got, want)
+	}
+	if got, want := lipgloss.Width(input), m.width; got != want {
+		t.Errorf("input rail width = %d, want fixed background width %d", got, want)
+	}
+	if !strings.Contains(input, "48;2;21;32;28") {
+		t.Errorf("input rail lost the fixed panel background: %q", input)
 	}
 }
