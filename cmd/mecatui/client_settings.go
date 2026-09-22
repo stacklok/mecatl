@@ -12,8 +12,8 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/parser"
 
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
@@ -27,37 +27,13 @@ import (
 type clientSettings struct {
 	Keymap              map[string]string    `yaml:"keymap"`
 	StatusCustomization *statusCustomization `yaml:"status_customization"`
-	TerminalTitle       terminalTitleSettings
-}
-
-type terminalTitleSettings struct {
-	Enabled  bool
-	Template string
-}
-
-type terminalTitleSettingsYAML struct {
-	Enabled  *bool  `yaml:"enabled"`
-	Template string `yaml:"template"`
-}
-
-func shippedTerminalTitleSettings() terminalTitleSettings {
-	return terminalTitleSettings{Enabled: true, Template: customization.DefaultTitleTemplate()}
-}
-
-func newTitleRenderer(settings terminalTitleSettings) (*customization.TitleRenderer, error) {
-	return customization.NewTitleRenderer(settings.Template)
-}
-
-func defaultClientSettings() clientSettings {
-	return clientSettings{TerminalTitle: shippedTerminalTitleSettings()}
 }
 
 // clientSettingsYAML is the strict decode shape. A duration stays textual until
 // after the strict YAML decode so the accepted duration syntax is explicit.
 type clientSettingsYAML struct {
-	Keymap              map[string]string          `yaml:"keymap"`
-	StatusCustomization *statusCustomizationYAML   `yaml:"status_customization"`
-	TerminalTitle       *terminalTitleSettingsYAML `yaml:"terminal_title"`
+	Keymap              map[string]string        `yaml:"keymap"`
+	StatusCustomization *statusCustomizationYAML `yaml:"status_customization"`
 }
 
 type statusCustomizationYAML struct {
@@ -151,12 +127,12 @@ func splitKeymap(raw map[string]string) map[string][]string {
 func readClientSettings() (clientSettings, error) {
 	path := clientSettingsPath(xdgconfig.OSEnv)
 	if path == "" {
-		return defaultClientSettings(), nil
+		return clientSettings{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultClientSettings(), nil
+			return clientSettings{}, nil
 		}
 		return clientSettings{}, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -173,34 +149,13 @@ func readClientSettings() (clientSettings, error) {
 	}
 	status, err := decodeStatusCustomization(raw.StatusCustomization)
 	if err != nil {
-		var passthroughErr *customization.PassthroughEnvError
+		var passthroughErr *statusline.PassthroughEnvError
 		if errors.As(err, &passthroughErr) {
 			return clientSettings{}, fmt.Errorf("parsing %s: %w", path, err)
 		}
 		return clientSettings{}, fmt.Errorf("parsing %s: invalid status_customization configuration", path)
 	}
-	title, err := decodeTerminalTitle(raw.TerminalTitle)
-	if err != nil {
-		return clientSettings{}, fmt.Errorf("parsing %s: terminal_title.template: %w", path, err)
-	}
-	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title}, nil
-}
-
-func decodeTerminalTitle(raw *terminalTitleSettingsYAML) (terminalTitleSettings, error) {
-	if raw == nil {
-		return shippedTerminalTitleSettings(), nil
-	}
-	out := shippedTerminalTitleSettings()
-	if raw.Enabled != nil {
-		out.Enabled = *raw.Enabled
-	}
-	if raw.Template != "" {
-		out.Template = raw.Template
-	}
-	if _, err := newTitleRenderer(out); err != nil {
-		return terminalTitleSettings{}, err
-	}
-	return out, nil
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status}, nil
 }
 
 func clientSettingsSchemaError(path string, err error) error {
@@ -208,16 +163,16 @@ func clientSettingsSchemaError(path string, err error) error {
 
 	diagnostic := yamldiag.Classify("parse client settings", err)
 	if diagnostic.HasLocation {
-		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type, including terminal_title; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
+		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
 	}
-	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type, including terminal_title; %s)", path, guidance)
+	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type; %s)", path, guidance)
 }
 func clientKeymapSyntaxError(path string, err error) error {
 	var documentError *yamldiag.DocumentError
 	if errors.As(err, &documentError) && documentError.Location.HasLocation {
-		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema, including terminal_title)", path, documentError.Location.Line, documentError.Location.Column)
+		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema)", path, documentError.Location.Line, documentError.Location.Column)
 	}
-	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema, including terminal_title)", path)
+	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema)", path)
 }
 
 // readClientKeymap reads the CLIENT-owned settings file
@@ -241,27 +196,27 @@ func readClientKeymap() (map[string][]string, bool, error) {
 func shippedStatusCustomization() statusCustomization { return statusCustomization{} }
 
 // newSource adapts validated settings into the source.
-func newSource(statusConfig statusCustomization) customization.Source {
-	if statusConfig.Command != nil {
+func newSource(customization statusCustomization) statusline.Source {
+	if customization.Command != nil {
 		launchDir, _ := os.Getwd()
-		return customization.NewCommandSource(customization.Command{
-			Path: statusConfig.Command.Path, Args: statusConfig.Command.Args, PassthroughEnv: statusConfig.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: statusConfig.Interval,
+		return statusline.NewCommandSource(statusline.Command{
+			Path: customization.Command.Path, Args: customization.Command.Args, PassthroughEnv: customization.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: customization.Interval,
 		})
 	}
-	if statusConfig.Templates == nil {
-		return customization.NewDefaultSource(statusConfig.Interval)
+	if customization.Templates == nil {
+		return statusline.NewDefaultSource(customization.Interval)
 	}
-	return customization.NewTemplateSource(customization.TemplateSet{
-		Header: toSurfaceTemplates(statusConfig.Templates.Header),
-		Footer: toSurfaceTemplates(statusConfig.Templates.Footer),
-	}, statusConfig.Interval)
+	return statusline.NewTemplateSource(statusline.TemplateSet{
+		Header: toSurfaceTemplates(customization.Templates.Header),
+		Footer: toSurfaceTemplates(customization.Templates.Footer),
+	}, customization.Interval)
 }
 
-func toSurfaceTemplates(value *statusSurfaceTemplates) customization.SurfaceTemplates {
+func toSurfaceTemplates(value *statusSurfaceTemplates) statusline.SurfaceTemplates {
 	if value == nil {
-		return customization.SurfaceTemplates{}
+		return statusline.SurfaceTemplates{}
 	}
-	return customization.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
+	return statusline.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
 }
 
 // readStatusCustomization reads only the strict mecatui client settings file.
@@ -288,7 +243,7 @@ func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomizati
 		return nil, errors.New("template source has no surface")
 	}
 	if raw.Command != nil {
-		command := customization.Command{
+		command := statusline.Command{
 			Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
 		}
 		if err := command.ValidatePassthroughEnv(); err != nil {
@@ -385,12 +340,15 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 //
 // The merged map then goes through keymap.Parse + keymap.Validate unchanged:
 // an invalid override still fails startup.
-func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
+func applyKeyOverridesToDeps(cfg config, deps *ui.Deps) error {
 	legacyMap, legacySet, err := readLegacyKeymap()
 	if err != nil {
 		return err
 	}
-	clientMap := splitKeymap(settings.Keymap)
+	clientMap, _, err := readClientKeymap()
+	if err != nil {
+		return err
+	}
 	cliMap := keyOverridesFromConfig(cfg)
 	merged := mergeKeymaps(mergeKeymaps(legacyMap, clientMap), cliMap)
 	if legacySet {

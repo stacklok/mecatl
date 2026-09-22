@@ -16,7 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
@@ -238,7 +238,7 @@ type Deps struct {
 
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
-	StatusSource customization.Source
+	StatusSource statusline.Source
 	// LocalSessionContext optionally resolves ADR 0296's privileged local root.
 	// The root is used only as a direct status-command CWD, never UI state.
 	LocalSessionContext client.LocalSessionContextGetter
@@ -314,9 +314,13 @@ type Deps struct {
 	// that strip OSC52 or users who prefer native selection.
 	NoMouse bool
 
-	// TerminalTitle receives the display-safe snapshot during View. Its implementation
-	// stages the title; Bubble Tea's configured output writer delivers it with the frame.
-	TerminalTitle func(customization.Input)
+	// NoWindowTitle suppresses the dynamic terminal window/tab title, leaving the
+	// title at the bare "mecatui" (no phase word, no session title). Default
+	// false (the title is dynamic: "<title> — <status word> mecatui"). Set true by
+	// --terminal-title=off / MECATUI_NO_TERMINAL_TITLE=1 — the escape hatch for
+	// terminals/multiplexers where a set title does more harm than good (or where
+	// the per-phase churn is unwanted).
+	NoWindowTitle bool
 
 	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,
 	// and DebugAsk remain narrow compatibility aliases for their original surfaces.
@@ -536,7 +540,7 @@ type Model struct {
 	titleRenameRequestToken uint64
 	titleFailedAttemptID    string
 	statusMsg               string
-	generatedStatusLine     customization.Result
+	generatedStatusLine     statusline.Result
 	fatalErr                string
 
 	compactPending      bool

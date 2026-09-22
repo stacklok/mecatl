@@ -8,13 +8,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 	launch, first, second := t.TempDir(), t.TempDir(), t.TempDir()
-	source := customization.NewCommandSource(customization.Command{
+	source := statusline.NewCommandSource(statusline.Command{
 		Path: "/bin/sh", Args: []string{"-c", `read input; printf '<status><footer><text>'; pwd -P; printf '</text></footer></status>'`}, LaunchDir: launch,
 	})
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
@@ -33,7 +33,7 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 
 	source.Submit(m.statusLineSnapshot())
 	input := m.statusLineSnapshot()
-	if got, want := input.Workspace, (customization.Workspace{Location: "local", Name: "active-workspace", Path: second}); got != want {
+	if got, want := input.Workspace, (statusline.Workspace{Location: "local", Name: "active-workspace", Path: second}); got != want {
 		t.Fatalf("status input = %#v, want only current local context path %#v", got, want)
 	}
 	waitStatusSourceChanged(t, source)
@@ -48,7 +48,7 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 
 func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 	root := t.TempDir()
-	source := customization.NewTemplateSource(customization.TemplateSet{Footer: customization.SurfaceTemplates{
+	source := statusline.NewTemplateSource(statusline.TemplateSet{Footer: statusline.SurfaceTemplates{
 		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
 	}}, 0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
@@ -72,7 +72,7 @@ func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 
 func TestADR_0296_StartupResumeReceivesEligibleLocalContext(t *testing.T) {
 	root := t.TempDir()
-	source := customization.NewTemplateSource(customization.TemplateSet{Footer: customization.SurfaceTemplates{
+	source := statusline.NewTemplateSource(statusline.TemplateSet{Footer: statusline.SurfaceTemplates{
 		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
 	}}, 0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
@@ -98,7 +98,7 @@ func TestADR_0296_StartupResumeReceivesEligibleLocalContext(t *testing.T) {
 
 func TestADR_0296_SessionsContinuationReceivesEligibleLocalContext(t *testing.T) {
 	root := t.TempDir()
-	source := customization.NewTemplateSource(customization.TemplateSet{Footer: customization.SurfaceTemplates{
+	source := statusline.NewTemplateSource(statusline.TemplateSet{Footer: statusline.SurfaceTemplates{
 		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
 	}}, 0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
@@ -123,7 +123,7 @@ func TestADR_0296_SessionsContinuationReceivesEligibleLocalContext(t *testing.T)
 	}
 }
 
-func waitStatusContextSurfaceText(t *testing.T, source customization.Source, want string) {
+func waitStatusContextSurfaceText(t *testing.T, source statusline.Source, want string) {
 	t.Helper()
 	for {
 		waitStatusSourceChanged(t, source)
@@ -135,7 +135,7 @@ func waitStatusContextSurfaceText(t *testing.T, source customization.Source, wan
 
 func TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath(t *testing.T) {
 	launch := t.TempDir()
-	source := customization.NewCommandSource(customization.Command{
+	source := statusline.NewCommandSource(statusline.Command{
 		Path: "/bin/sh", Args: []string{"-c", `read input; printf '<status><footer><text>'; pwd -P; printf '</text></footer></status>'`}, LaunchDir: launch,
 	})
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
@@ -182,7 +182,7 @@ func statusContextMessage(t *testing.T, cmd tea.Cmd) statusContextMsg {
 	return statusContextMsg{}
 }
 
-func statusContextSurfaceText(surface customization.Surface) string {
+func statusContextSurfaceText(surface statusline.Surface) string {
 	var text string
 	for _, span := range surface.Spans {
 		text += span.Text
@@ -190,7 +190,7 @@ func statusContextSurfaceText(surface customization.Surface) string {
 	return text
 }
 
-func waitStatusSourceChanged(t *testing.T, source customization.Source) {
+func waitStatusSourceChanged(t *testing.T, source statusline.Source) {
 	t.Helper()
 	select {
 	case <-source.Changed():

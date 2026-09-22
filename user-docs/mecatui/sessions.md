@@ -40,13 +40,6 @@ normal exit, `mecatui` also writes a machine-readable handoff to standard error:
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
 
-## Inspect the active session during a run
-
-Run `/session` after a session is bound to open its read-only details overlay,
-including while the agent is responding or waiting on a tool. Press `c` to copy
-the full session ID. Press `esc` to close the overlay and return focus to the
-conversation. Opening the overlay does not cancel, pause, or steer the run.
-
 ## Browse and maintain stored sessions
 
 Open the session inventory without creating a session:
@@ -152,8 +145,9 @@ mecatui debug 01JOPAQUESESSIONID \
 mecatui debug 01JOPAQUESESSIONID --debug-mcp github
 ```
 
-`TARGET` can be the full ID or the short displayed handle. The handle is sanitized for terminal display and copy/paste as a debug `TARGET`; it is not an alternate server identity. If it is ambiguous, open `/session`, copy the full ID, and try again.
-Use the embedded command for an embedded store and `connect ADDRESS` for the server that owns the
+`TARGET` can be the full ID or the displayed 12-column handle. If a handle is
+ambiguous, copy the full ID from `/session` and try again. Use the embedded
+command for an embedded store and `connect ADDRESS` for the server that owns the
 target. The optional `--prompt` value replaces the default diagnosis objective.
 
 When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI stating that the selected model will receive bounded target evidence. That evidence can contain prompts, model output, tool arguments and results, paths, and secrets. Invoking the command is the consent gesture; the default diagnostic prompt is then submitted automatically.

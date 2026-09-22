@@ -7,11 +7,11 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 )
 
 type statusLineChangedMsg struct {
-	line customization.Result
+	line statusline.Result
 }
 
 type statusContextMsg struct {
@@ -24,7 +24,7 @@ func (m Model) refreshStatusContextCmd() tea.Cmd {
 		return nil
 	}
 	id := m.sessionID
-	customization.ClearCommandCWD(m.deps.StatusSource)
+	statusline.ClearCommandCWD(m.deps.StatusSource)
 	if m.deps.LocalSessionContext == nil {
 		return nil
 	}
@@ -57,43 +57,43 @@ func (m Model) statusLineWaitCmd() tea.Cmd {
 	}
 }
 
-func usageAtom(raw int64) customization.UsageAtom {
-	return customization.UsageAtom{Raw: raw, Human: humanizeTokens(raw)}
+func usageAtom(raw int64) statusline.UsageAtom {
+	return statusline.UsageAtom{Raw: raw, Human: humanizeTokens(raw)}
 }
 
-func contextAtom(raw int64) customization.ContextAtom {
-	return customization.ContextAtom{Raw: raw, Human: humanizeTokens(raw)}
+func contextAtom(raw int64) statusline.ContextAtom {
+	return statusline.ContextAtom{Raw: raw, Human: humanizeTokens(raw)}
 }
 
-func delegationCountsFor(done bool, failed bool, stop string) customization.DelegationStateCounts {
+func delegationCountsFor(done bool, failed bool, stop string) statusline.DelegationStateCounts {
 	if !done {
-		return customization.DelegationStateCounts{Running: 1}
+		return statusline.DelegationStateCounts{Running: 1}
 	}
 	switch stop {
 	case teamStopReasonCancelled:
-		return customization.DelegationStateCounts{Cancelled: 1}
+		return statusline.DelegationStateCounts{Cancelled: 1}
 	case "error":
-		return customization.DelegationStateCounts{Failed: 1}
+		return statusline.DelegationStateCounts{Failed: 1}
 	case "stopped":
-		return customization.DelegationStateCounts{Stopped: 1}
+		return statusline.DelegationStateCounts{Stopped: 1}
 	}
 	if failed {
-		return customization.DelegationStateCounts{Failed: 1}
+		return statusline.DelegationStateCounts{Failed: 1}
 	}
-	return customization.DelegationStateCounts{Completed: 1}
+	return statusline.DelegationStateCounts{Completed: 1}
 }
-func addDelegationCounts(a, b customization.DelegationStateCounts) customization.DelegationStateCounts {
-	return customization.DelegationStateCounts{Running: a.Running + b.Running, AwaitingApproval: a.AwaitingApproval + b.AwaitingApproval, Completed: a.Completed + b.Completed, Failed: a.Failed + b.Failed, Cancelled: a.Cancelled + b.Cancelled, Stopped: a.Stopped + b.Stopped}
+func addDelegationCounts(a, b statusline.DelegationStateCounts) statusline.DelegationStateCounts {
+	return statusline.DelegationStateCounts{Running: a.Running + b.Running, AwaitingApproval: a.AwaitingApproval + b.AwaitingApproval, Completed: a.Completed + b.Completed, Failed: a.Failed + b.Failed, Cancelled: a.Cancelled + b.Cancelled, Stopped: a.Stopped + b.Stopped}
 }
-func delegationDisplay(counts customization.DelegationStateCounts) customization.DelegationSummary {
-	return customization.DelegationSummary{
+func delegationDisplay(counts statusline.DelegationStateCounts) statusline.DelegationSummary {
+	return statusline.DelegationSummary{
 		Running:  counts.Running + counts.AwaitingApproval,
 		Finished: counts.Completed + counts.Failed + counts.Cancelled + counts.Stopped,
 	}
 }
 
-func (m Model) statusDelegation() customization.Delegation {
-	var d customization.Delegation
+func (m Model) statusDelegation() statusline.Delegation {
+	var d statusline.Delegation
 	for _, lane := range m.conv.subagentFleet {
 		d.DirectSubagent = addDelegationCounts(d.DirectSubagent, delegationCountsFor(lane.done, false, lane.stop))
 	}
@@ -112,7 +112,7 @@ func (m Model) statusDelegation() customization.Delegation {
 	d.Parallel = delegationDisplay(d.ParallelBranch)
 	if team := m.conv.liveTeamBlock(); team != nil {
 		working, total := teamWorkingCounts(team.teamLanes)
-		d.Team = customization.LiveTeam{ID: team.teamID, Working: working, Total: total}
+		d.Team = statusline.LiveTeam{ID: team.teamID, Working: working, Total: total}
 	}
 	return d
 }
@@ -138,7 +138,7 @@ func (m Model) statusLineGeometry() statusLineGeometry {
 	}
 }
 
-func (m Model) statusLineSnapshot() customization.Input {
+func (m Model) statusLineSnapshot() statusline.Input {
 	return m.statusLineInput(time.Time{})
 }
 
@@ -148,7 +148,7 @@ func (m Model) submitStatusLine() {
 	}
 }
 
-func (m Model) statusLineInput(now time.Time) customization.Input {
+func (m Model) statusLineInput(now time.Time) statusline.Input {
 	geometry := m.statusLineGeometry()
 	window := m.resolvedSessionModel.ContextWindow
 	contextPercent := 0
@@ -159,7 +159,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 	if m.usage.InputTokens > 0 {
 		cachePercent = int(m.usage.CacheReadTokens * 100 / m.usage.InputTokens)
 	}
-	workspace := customization.Workspace{Location: unknownLabel}
+	workspace := statusline.Workspace{Location: unknownLabel}
 	if m.activePlacement.Kind != "" || m.activePlacement.Label != "" {
 		workspace.Location = "local"
 		if m.deps.ConnectionMode == connectCommand {
@@ -195,16 +195,16 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 	case phaseFatal:
 		state = "failed"
 	}
-	return customization.Input{
-		Version: customization.ProtocolVersion,
-		Server:  customization.ServerTarget{DisplayTarget: m.deps.Server, ConnectionMode: m.deps.ConnectionMode},
-		Session: customization.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
-		Model:   customization.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
-		Usage:   customization.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
-		Context: customization.Context{Used: contextAtom(m.contextTokens), Window: contextAtom(window), Percent: contextPercent}, Workspace: workspace,
-		MainAgent:  customization.MainAgent{State: state, Activity: activity, Approval: approval},
+	return statusline.Input{
+		Version: statusline.ProtocolVersion,
+		Server:  statusline.ServerTarget{DisplayTarget: m.deps.Server, ConnectionMode: m.deps.ConnectionMode},
+		Session: statusline.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
+		Model:   statusline.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
+		Usage:   statusline.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
+		Context: statusline.Context{Used: contextAtom(m.contextTokens), Window: contextAtom(window), Percent: contextPercent}, Workspace: workspace,
+		MainAgent:  statusline.MainAgent{State: state, Activity: activity, Approval: approval},
 		Delegation: m.statusDelegation(),
-		Clock:      customization.Clock{Now: now},
-		Terminal:   customization.Terminal{Rows: m.height, Cols: m.widthOr(), HeaderAvailCols: geometry.headerAvailable, FooterAvailCols: geometry.footerAvailable},
+		Clock:      statusline.Clock{Now: now},
+		Terminal:   statusline.Terminal{Rows: m.height, Cols: m.widthOr(), HeaderAvailCols: geometry.headerAvailable, FooterAvailCols: geometry.footerAvailable},
 	}
 }

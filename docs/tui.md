@@ -30,7 +30,7 @@ remote server: that server's operator owns its provider records.
 
 Mecatui reads `status_customization:` only from the client-owned
 `$XDG_CONFIG_HOME/mecatui/settings.yaml`. It composes a UI-agnostic
-`customization.Source`: the UI submits display-safe `Input` snapshots and listens for
+`statusline.Source`: the UI submits display-safe `Input` snapshots and listens for
 latest `Result` semantic spans, while the source owns template evaluation or the
 optional local direct executable, refresh, cancellation, and fallback. The source
 returns no terminal rendering; the UI applies the active theme, preserves its
@@ -83,31 +83,6 @@ verifies the path is a regular file; an oversized log is atomically retained to 
 recent 10 MiB tail, with the replacement and containing directory synced before
 append. Unsafe paths and failures before replacement preserve the prior log and
 use `io.Discard`, so diagnostics cannot corrupt the terminal.
-
-### Terminal titles
-
-Mecatui also owns the terminal title through the renderer's serialized output
-path. The client renders a plain-text title from the same display-safe status
-input used by status templates, except that the title-specific projection omits
-`Workspace.Path`. It emits OSC 0 only when that title changes. A
-clean exit clears the title after a non-empty title was emitted. The shipped
-default uses the session title and activity state, falls back to `mecatui`, and
-leaves the session handle out unless a custom template includes
-`.Session.Handle`.
-
-The user-global client settings file is
-`$XDG_CONFIG_HOME/mecatui/settings.yaml`. Its strict `terminal_title` section
-contains `enabled` and `template`; it is independent of `status_customization`,
-and command-backed status output cannot influence it. The shared `elide`
-function is width-aware, while title output remains plain text rather than
-StatusML. The client removes terminal controls, normalizes whitespace, and
-bounds the result before OSC 0 construction.
-
-`--terminal-title=off` and `MECATUI_NO_TERMINAL_TITLE=1` disable title writes.
-An explicit `--terminal-title=on` overrides settings disablement. Otherwise the
-settings `enabled` value applies. Terminals and multiplexers decide whether to
-present OSC 0, so the client cannot guarantee a tab or pane label. The complete
-settings schema and precedence are in [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md#customize-the-terminal-title).
 
 ## Build
 
@@ -209,7 +184,7 @@ server is authoritative.
 
 - **`mecatui debug TARGET [flags]`** — create a separate durable no-filesystem
   analysis session permanently bound to that stored target. `TARGET` may be an exact full opaque
-  ID, including the exact ID printed when mecatui exits, or the displayed 12-column short handle:
+  ID—including the exact ID printed when mecatui exits—or the displayed 12-column short handle:
   safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` becomes `%2D`; every other
   UTF-8 byte is uppercase `%HH`, and only complete atoms that fit are shown. The handle has no
   leading `#` marker. A syntactically valid short target consults the complete caller-visible
@@ -435,7 +410,8 @@ debug argument. A syntactically valid short target consults the complete caller-
 Exact full-ID equality wins; otherwise one unique projected match resolves. On ambiguity, open
 `/session`, copy the exact full ID, and pass it as `TARGET` through the same command. If inventory
 lookup fails or no projection matches, mecatui sends `TARGET` unchanged and reports the ordinary
-server exact-ID authorization/not-found result. These commands do not attach to or continue the target.
+server exact-ID authorization/not-found result. These commands do not attach to or continue the
+target.
 They authorize it, create a separate durable no-filesystem debug session, keep a visible privacy disclosure in the TUI, and submit one first genuine user turn. That turn is ordered as the diagnosis
 objective, the required status/transcript/pagination workflow, the expected report sections,
 and finally the same sanitized current-client/server report produced by bare `/diagnostics`.
@@ -469,8 +445,7 @@ factory, or an unavailable target fails closed. The ordinary padded header place
 `DEBUG target <handle>` immediately after `mecatui` in every phase. At narrow widths it
 sheds model/mode/server detail before that complete target identity rather than clipping it;
 `/session` displays the safely quoted exact target ID and copies it with `t`. The
-terminal title uses the configured/default template with a `DEBUG` prefix and no
-mandatory handle. The TUI hides `/clear`, `/sessions`, `/models`,
+`DEBUG <handle>` terminal title uses the same handle. The TUI hides `/clear`, `/sessions`, `/models`,
 `/effort`, and `/worktrees`, and blocks the mode/effort shortcuts because those controls
 can replace the launch binding. Schedule and learning controls remain available because
 changing those independent settings does not rebind the debug target; harmless inspection
@@ -557,7 +532,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--version` | – | print the build identity and exit before normal startup |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |
 | `--no-mouse` | off | keep the alt screen but disable mouse capture and in-app mouse gestures, preserving the terminal's **native** click-drag selection; keyboard prompt selection still works (or `MECATUI_NO_MOUSE=1`; see the selection section) |
-| `--terminal-title` | `on` | terminal title controller: `on` enables the configured/default plain-text OSC 0 title; `off` emits no title or cleanup sequence. Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
+| `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> <handle> — <status word> mecatui` (the title is the first prompt, the fixed handle identifies the session, and the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
 | `--no-banner` | off | disable the first-run welcome **splash** (mascot + gradient wordmark); the plain prompt hint + affordance list still show. Auto-forced on under `--quiet` or a non-interactive stdin |
 | `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`; openai-codex → first entitled live model). Overridden per session by the `/models` picker |
 | `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`, experimental `openai-codex`); overrides automatic preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
@@ -665,7 +640,7 @@ left owned after the bounded shutdown completes.
 |---|---|
 | `MECATUI_THEME` | theme name (same as `--theme`) |
 | `MECATUI_NO_MOUSE` | disable mouse capture and in-app mouse gestures (same as `--no-mouse`) while preserving native terminal selection; keyboard prompt selection still works |
-| `MECATUI_NO_TERMINAL_TITLE` | disable all OSC title writes (same as `--terminal-title=off`) |
+| `MECATUI_NO_TERMINAL_TITLE` | suppress the dynamic terminal window/tab title (same as `--terminal-title=off`) — collapse to the bare `mecatui` |
 | `MECATUI_DEBUG` | set to `1` to enable every client-side debug surface (same as `--debug` when that flag is omitted) |
 | `MECATUI_DEBUG_MOUSE` | legacy narrow alias: enable only the raw mouse-coordinate / click-mapping footer overlay |
 | `MECATUI_DEBUG_STEER` | legacy narrow alias: enable only steer acknowledgement/echo correlation in the status line |
@@ -674,11 +649,48 @@ left owned after the bounded shutdown completes.
 | `MECATUI_FORCE_EMOJI` / `MECATUI_NO_EMOJI` | force / suppress the emoji glyph for the YOLO posture badge (force-on, no-wins-over-force); default is conservative env-based detection (see the posture badge) |
 | `MECATUI_FORCE_KITTY` / `MECATUI_NO_KITTY` | force / suppress the Kitty-graphics mascot on the welcome splash (force-on, no-wins-over-force); default is conservative env-based detection, falling back to the always-correct half-block mascot |
 
-**Terminal title compatibility.** Terminal and multiplexer title policies can
-override OSC 0. By default tmux's `automatic-rename` overrides pane titles; to
-let `mecatui`'s configured title survive, set `set -g automatic-rename off` (or
-`set -g allow-set-title on`) in `~/.tmux.conf`. Use `--terminal-title=off` when
-the terminal environment owns title presentation.
+**Dynamic terminal window/tab title.** `mecatui` sets the terminal window/tab title
+to `<session title> <handle> — <status word> mecatui`, so you can tell sessions apart
+in a tab bar. The title is the **first genuine prompt** of the session (clamped to
+~40 runes); `<handle>` is the fixed terminal-safe session handle; the status word
+reflects the TUI phase:
+
+| Phase | Title |
+|---|---|
+| running | `<title> <handle> — Working mecatui` |
+| awaiting approval | `<title> <handle> — ⚠ mecatui` |
+| connecting | `<title> <handle> — Connecting mecatui` |
+| fatal | `<title> <handle> — ✗ mecatui` |
+| idle / replay (title known) | `<title> <handle> — mecatui` |
+| no title yet (session known) | `<handle> — mecatui` |
+| no session yet | `mecatui` |
+
+A session starts with its first genuine prompt as a fallback title; a generated or
+operator title can later replace it. Automatic title generation is opt-in through an
+explicit compatible `models.slots.title` binding, is server-owned and asynchronous,
+and never changes the conversation or main-run budget. Its durable `session_title`
+accounting is governed by [ADR 0307](adr/0307-canonical-durable-token-accounting.md).
+See [ADR 0308](adr/0308-session-title-generation-and-auxiliary-usage.md).
+
+The title leads because tab bars **truncate from the right**; the status is a
+**static word, never an animated spinner** (per-frame title churn trips OS
+attention heuristics — the dock bounces / the taskbar flashes on every change).
+The title self-heals across a session switch / fork / carryover (a refetch adopts
+the server's stored title when this client never saw the first prompt). A dedicated
+debugger instead always starts with `DEBUG <handle>`, followed by its static
+phase label; the persistent amber/bold `DEBUG target <handle>` segment in the ordinary
+padded header carries the same identity through every lifecycle and fatal state.
+
+The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
+can't embed an OSC title-injection), and newlines/tabs collapse to single spaces
+(a window title is one line).
+
+Pass `--terminal-title=off` (or `MECATUI_NO_TERMINAL_TITLE=1`) to suppress it and
+leave the title at the bare `mecatui` — the escape hatch for
+terminals/multiplexers where a set title does more harm than good. **tmux note:**
+by default tmux's `automatic-rename` overrides pane titles; to let `mecatui`'s
+title survive, set `set -g automatic-rename off` (or `set -g allow-set-title on`)
+in your `~/.tmux.conf`.
 
 **Skill discovery is ON by default**, via conventional discovery (the read-only
 `Skill` tool activates progressive-disclosure `<name>/SKILL.md` units from the
@@ -1739,7 +1751,8 @@ a team member row also identifies its member. The handle is the same fixed
 12-column escaped-prefix literal as the header (no `#`): safe `[A-Za-z0-9._-]`
 bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
 uppercase `%HH`, and only complete atoms that fit are retained. The full opaque ID remains
-what the client sends back to the server.
+what the client sends back to the
+server.
 
 Pressing `enter` follows server-authored capabilities. A public Chat is
 **Continue**: mecatui first loads the authoritative snapshot-derived

@@ -4,15 +4,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
-
-func TestViewLeavesWindowTitleEmpty(t *testing.T) {
-	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
-	if got := m.View().WindowTitle; got != "" {
-		t.Fatalf("View().WindowTitle = %q, want empty: title output belongs to the controller", got)
-	}
-}
 
 func TestTitleRevisionSnapshotRejectsDelayedLiveEvent(t *testing.T) {
 	m := titleModel(t, &titleRenamer{})

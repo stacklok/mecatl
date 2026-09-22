@@ -394,10 +394,10 @@ atoms that fit. It has no leading `#`. A syntactically valid short target consul
 caller-visible inventory: exact full-ID equality wins, otherwise one unique projected match
 resolves. Multiple projected matches stop before create and direct the operator to copy the exact
 ID from `/session` and pass it as `TARGET` through the same command. A zero match or inventory
-failure passes `TARGET` unchanged to the server's existing exact-ID authorization/not-found path. Width pressure removes
+failure passes `TARGET` unchanged to the server's existing exact-ID authorization/not-found path.
+Width pressure removes
 model/mode/server detail before that complete identity, `/session` shows and copies the
-safely quoted exact target ID, and the configured/default terminal title has a `DEBUG` prefix
-without a mandatory handle; a custom title template may include one. Binding-breaking
+safely quoted exact target ID, and the target-derived title uses the same handle. Binding-breaking
 controls stay disabled. Live target following, raw audit/tool-record inspection, packet capture,
 raw logs/pprof, and support bundles remain out of scope. See [ADR 0254](../adr/0254-session-debugger-admin-transport.md) and [ADR 0255](../adr/0255-sanitized-network-attempt-evidence.md).
 

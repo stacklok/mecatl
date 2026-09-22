@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 )
 
 // ServerInfoGetter reads safe identity and sanitized diagnostic display data for the
@@ -81,7 +81,7 @@ func (m Model) diagnosticsReport(serverBuild, serverImplementation, displayServe
 }
 
 func (m Model) statusCommandDiagnosticsReport() string {
-	source, ok := m.deps.StatusSource.(customization.CommandDiagnosticsSource)
+	source, ok := m.deps.StatusSource.(statusline.CommandDiagnosticsSource)
 	if !ok {
 		return ""
 	}
@@ -93,19 +93,19 @@ func (m Model) statusCommandDiagnosticsReport() string {
 
 func safeCommandSurfaceState(state string) string {
 	switch state {
-	case customization.CommandSurfaceDefault, customization.CommandSurfaceCustom, customization.CommandSurfaceStale:
+	case statusline.CommandSurfaceDefault, statusline.CommandSurfaceCustom, statusline.CommandSurfaceStale:
 		return state
 	default:
-		return customization.CommandSurfaceDefault
+		return statusline.CommandSurfaceDefault
 	}
 }
 
 func safeCommandErrorState(state string) string {
 	switch state {
-	case customization.CommandErrorNone, customization.CommandErrorUnsupported, customization.CommandErrorTimeout, customization.CommandErrorOutputLimit, customization.CommandErrorInvalidStatusML, customization.CommandErrorExit, customization.CommandErrorFailed:
+	case statusline.CommandErrorNone, statusline.CommandErrorUnsupported, statusline.CommandErrorTimeout, statusline.CommandErrorOutputLimit, statusline.CommandErrorInvalidStatusML, statusline.CommandErrorExit, statusline.CommandErrorFailed:
 		return state
 	default:
-		return customization.CommandErrorFailed
+		return statusline.CommandErrorFailed
 	}
 }
 

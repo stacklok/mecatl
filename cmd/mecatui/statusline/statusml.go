@@ -1,6 +1,6 @@
-// Package customization defines the display-only, dependency-leaf presentation customization protocol
-// shared by mecatui composition and UI status-line renderers.
-package customization
+// Package statusline defines the display-only, dependency-leaf protocol shared
+// by mecatui composition and UI status-line renderers.
+package statusline
 
 import (
 	"html"

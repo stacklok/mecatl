@@ -4,12 +4,12 @@
 **Work classification:** Architectural — replaces a third-party-owned terminal-output lifecycle and introduces a durable user-global title-template/configuration contract shared with the status-input surface.
 **Decision record:** [ADR 0344](../adr/0344-mecatui-terminal-title-controller.md)
 **Phase:** mecatui client presentation and session discoverability
-**Status:** landed, 2026-09-16. Implementation candidate completed from the approved Plan / Interface baseline; authoritative when its implementation PR merges.
+**Status:** proposed, 2026-09-15. Decisions recorded with the directing operator.
 **Delivery:** Split. The client configuration, terminal-control, compatibility, and live-run interaction contracts require separate human interface review before implementation.
 **Expected tasks:** deferred to orchestration after the Plan / Interface PR is approved.
 **Issue:** [stacklok/mecatl#1460](https://github.com/stacklok/mecatl/issues/1460); [stacklok/mecatl#1606](https://github.com/stacklok/mecatl/issues/1606).
-**Plan PR:** [#1616](https://github.com/stacklok/mecatl/pull/1616).
-**Approved baseline:** `2a0c9cb11bedc6ef88503f504bbd4f94a6d31690`.
+**Plan PR:** absent until opened.
+**Approved baseline:** absent until the Plan / Interface PR merges.
 
 Mecatui will replace Bubble Tea's `tea.View.WindowTitle` output with a UI-owned, renderer-serialized title controller. It renders one plain-text title from the same display-safe `statusline.Input` facts used by status templates, sends OSC 0 only when the rendered title changes, and clears OSC 0 on clean shutdown. This removes output-stream parsing while populating both historical title channels for terminals such as iTerm2.
 

@@ -86,9 +86,12 @@ type config struct {
 	// inline). Wired to ui.Deps.NoMouse.
 	noMouse bool
 
-	// terminalTitleOff suppresses the terminal-title controller's OSC writes.
-	// Off by default. Honoured from --terminal-title=off/false/0 or
-	// MECATUI_NO_TERMINAL_TITLE=1/true.
+	// terminalTitleOff suppresses the dynamic terminal window/tab title (leaving
+	// it at the bare "mecatui"). Off by default (the title is dynamic: "<title> —
+	// <status word> mecatui"). Honoured from --terminal-title=off/false/0 or
+	// MECATUI_NO_TERMINAL_TITLE=1/true. The escape hatch for terminals/
+	// multiplexers where a set title does more harm than good. Wired to
+	// ui.Deps.NoWindowTitle.
 	terminalTitle        string
 	terminalTitleOff     bool
 	terminalTitleFlagSet bool
@@ -398,9 +401,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.debug, "debug", false, "enable client diagnostics and debug-only commands")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
-	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
-	fs.BoolVar(&cfg.noBanner, "no-banner", false, "disable the welcome splash (mascot + gradient wordmark); the plain prompt hint and affordance list are still shown. Also forced on under --quiet or a non-interactive stdin")
-	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "terminal title controller: on enables the configured/default plain-text OSC 0 title; off emits no title or cleanup sequence. Accepts on/off/true/false/1/0. Or set MECATUI_NO_TERMINAL_TITLE=1")
+	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable in-app mouse handling and use the terminal's native text selection; keyboard scrolling remains available")
+	fs.BoolVar(&cfg.noBanner, "no-banner", false, "hide the welcome illustration; prompt hints remain visible")
+	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "update the terminal title with session status: on or off (also true/false/1/0)")
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)

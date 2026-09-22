@@ -1,4 +1,4 @@
-package customization
+package statusline
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func TestStatusLine_DefaultTemplatesExposeLegacyDisplayAtoms(t *testing.T) {
 		t.Fatal("source did not publish")
 	}
 	line := source.Latest()
-	if got, want := statusSurfaceText(line.Header), "mecatui · openai/GPT-5/azure · mode plan · server.example"; got != want {
+	if got, want := statusSurfaceText(line.Header), "mecatui · session deadbeef · openai/GPT-5/azure · mode plan · server.example"; got != want {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 	if got := statusSurfaceText(line.Footer); !strings.Contains(got, "⑂ parallel 1◐ 2✓") || !strings.Contains(got, "⛭ subagents 3◐ 4✓") || !strings.Contains(got, "⟳ team-abc · 1/2 working") || !strings.Contains(got, "ctx ▓▓▓▓▓▓░░ 70% · 7K/10K") || !strings.Contains(got, "↑4K ↓1K ⊕500 cache 75%") {

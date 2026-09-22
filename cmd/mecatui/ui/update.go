@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
@@ -736,7 +736,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case statusContextMsg:
 		if msg.sessionID == m.sessionID {
 			m.statusContextRoot = msg.root
-			customization.SetCommandCWD(m.deps.StatusSource, msg.root)
+			statusline.SetCommandCWD(m.deps.StatusSource, msg.root)
 			m.submitStatusLine()
 		}
 		return m, nil, true

@@ -1,4 +1,4 @@
-package customization
+package statusline
 
 import (
 	"bytes"
@@ -171,9 +171,8 @@ func validCommandPart(value string) bool {
 // to the generated status line.
 func NewCommandSource(command Command) Source {
 	command.cwd = &commandCWDState{}
-	defaults := defaultTemplateSet()
-	header := compileVariants(SurfaceTemplates{}, defaults.Header)
-	footer := compileVariants(SurfaceTemplates{}, defaults.Footer)
+	header := compileVariants(SurfaceTemplates{}, defaultHeaderTemplates())
+	footer := compileVariants(SurfaceTemplates{}, defaultFooterTemplates())
 	var ticks <-chan time.Time
 	var ticker *time.Ticker
 	if command.RefreshInterval >= time.Second {

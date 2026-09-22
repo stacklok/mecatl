@@ -1,4 +1,4 @@
-package customization
+package statusline
 
 import (
 	"context"

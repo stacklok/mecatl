@@ -38,8 +38,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
+	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
@@ -128,33 +128,19 @@ func validateRunConfig(cfg config) error {
 }
 
 // buildStatusSource constructs a source from already-validated customization.
-func buildStatusSource(statusConfig statusCustomization) customization.Source {
-	return newSource(statusConfig)
+func buildStatusSource(customization statusCustomization) statusline.Source {
+	return newSource(customization)
 }
 
-// buildClientPresentation constructs status and title rendering from one validated
-// client-settings snapshot. Both embedded and connect modes use this same path.
-func buildClientPresentation(cfg config, settings clientSettings, output io.Writer) (customization.Source, *terminalTitleController, error) {
-	statusConfig := shippedStatusCustomization()
-	if settings.StatusCustomization != nil {
-		statusConfig = *settings.StatusCustomization
+func prepareStatusSource(cfg config) (statusline.Source, error) {
+	if err := validateRunConfig(cfg); err != nil {
+		return nil, err
 	}
-	renderer, err := newTitleRenderer(settings.TerminalTitle)
+	customization, err := readStatusCustomization()
 	if err != nil {
-		return nil, nil, fmt.Errorf("terminal_title.template: %w", err)
+		return nil, err
 	}
-	controller := newTerminalTitleController(output, terminalTitleEnabled(cfg, settings.TerminalTitle), renderer)
-	controller.debug = cfg.debugTarget != ""
-	return buildStatusSource(statusConfig), controller, nil
-}
-
-func newMecatuiProgram(ctx context.Context, deps ui.Deps, title *terminalTitleController) *tea.Program {
-	deps.TerminalTitle = title.Set
-	return tea.NewProgram(ui.New(deps), tea.WithContext(ctx), tea.WithOutput(title))
-}
-
-func closeTerminalTitle(title *terminalTitleController) error {
-	return title.Close()
+	return buildStatusSource(customization), nil
 }
 
 func run(argv []string) error {
@@ -202,14 +188,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
 	}
-	if err := validateRunConfig(cfg); err != nil {
-		return err
-	}
-	settings, err := readClientSettings()
-	if err != nil {
-		return err
-	}
-	statusSource, title, err := buildClientPresentation(cfg, settings, os.Stdout)
+	statusSource, err := prepareStatusSource(cfg)
 	if err != nil {
 		return err
 	}
@@ -241,8 +220,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
 	keyboardProbe := resolveKeyboardProbe(stdoutIsTTY)
 	if options.recoveryOnly {
-		defer func() { _ = statusSource.Close(context.Background()) }()
-		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, title, options)
+		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
 	}
 
 	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
@@ -386,6 +364,9 @@ func runWithOptions(argv []string, options runOptions) error {
 		// Escape hatch: disable mouse capture so the terminal's native selection
 		// works (trades away in-app wheel scroll + drag-select). Default false.
 		NoMouse: cfg.noMouse,
+		// Dynamic terminal window/tab title: off collapses to bare "mecatui".
+		// Default false (dynamic: "<title> — <status word> mecatui").
+		NoWindowTitle: cfg.terminalTitleOff,
 		// Seed prompt from -p/--prompt + --prompt-file: joined at startup and
 		// auto-submitted once the first session is ready (interactive-seed, NOT a
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
@@ -401,18 +382,15 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.OpenURL = openBrowserURL
 
 	// Apply keymap overrides (CLI for now).
-	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
+	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
 		_ = cl.Close()
 		transCleanup()
 		return err
 	}
 
-	prog := newMecatuiProgram(ctx, deps, title)
+	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
 	finalModel, runErr := prog.Run()
 	interrupted := ctx.Err() != nil
-	if err := closeTerminalTitle(title); runErr == nil && err != nil {
-		runErr = err
-	}
 
 	runCleanup(forceExit, func() {
 		_ = cl.Close()
@@ -563,15 +541,10 @@ func resolveKeyboardProbe(stdoutIsTTY bool) bool {
 	return stdoutIsTTY
 }
 
-func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, title *terminalTitleController, options runOptions) error {
+func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
 	deps := ui.Deps{Ctx: ctx, Theme: th, ThemeAutoDetect: themeAutoDetect, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
-	prog := newMecatuiProgram(ctx, deps, title)
+	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
 	finalModel, runErr := prog.Run()
-	if runErr == nil && ctx.Err() == nil {
-		if err := title.Close(); err != nil {
-			runErr = err
-		}
-	}
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, options.connectTransport)
 	}
