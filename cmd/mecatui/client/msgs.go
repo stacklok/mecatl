@@ -203,6 +203,21 @@ const (
 	SubagentEnd SubagentKind = "end"
 )
 
+// RoutingDecision is bounded, UI-independent configured-router evidence carried
+// on delegation start messages. Nil confidence/threshold preserve wire absence.
+type RoutingDecision struct {
+	Backend           string
+	ClassifierModel   string
+	CandidateCategory string
+	CandidateModel    string
+	Confidence        *float64
+	MinimumConfidence *float64
+	Outcome           string
+	ConsecutiveMisses int
+	MissLimit         int
+	BreakerOpen       bool
+}
+
 // SubagentMsg is the BOUNDED projection of a Subagent tool's child run. It carries
 // ids, a goal label, child tool names/counts, usage, stop, and duration — plus the
 // BOUNDED content previews the server clamp-scrubs per ADR 0079 (InnerKind/Text/
@@ -228,7 +243,8 @@ type SubagentMsg struct {
 	// (subagent.start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
 	// bounded harness/composition gate or classifier-miss string. Bare metadata —
 	// never child content — so gauntlet #7 holds.
-	RoutingReason string
+	RoutingReason   string
+	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the child ACTUALLY ran on (subagent.start only),
 	// regardless of how it was chosen — inherited default, agent-def pin, per-call
 	// override, or the opt-in router (issue #112 / ADR 0035). When routed, Model ==
@@ -334,7 +350,8 @@ type TeamMemberSpec struct {
 	// (team.start roster only; issue #397 / ADR 0083): empty on a routed hit,
 	// otherwise a bounded harness/composition gate string. Bare metadata — never
 	// member content — so gauntlet #7 holds.
-	RoutingReason string
+	RoutingReason   string
+	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the member's engine ACTUALLY runs on (team.start
 	// roster only), regardless of how it was chosen (issue #112 / ADR 0035). When routed,
 	// Model == RoutedModel. Bare metadata, never member content, so gauntlet #7 holds.
@@ -451,7 +468,8 @@ type ParallelMsg struct {
 	// (branch_start only; issue #397 / ADR 0083): empty on a routed hit, otherwise a
 	// bounded harness/composition gate or classifier-miss string. Bare metadata —
 	// never branch content — so gauntlet #7 holds.
-	RoutingReason string
+	RoutingReason   string
+	RoutingDecision *RoutingDecision
 	// Model is the concrete model id the branch ACTUALLY ran on (branch_start only),
 	// regardless of how it was chosen (issue #112 / ADR 0035). When routed, Model ==
 	// RoutedModel. Bare metadata, never branch content, so gauntlet #7 holds.
@@ -918,30 +936,51 @@ func hookDecisionFrom(d mecatlv1.HookDecision) HookDecision {
 	}
 }
 
+func routingDecisionFrom(in *mecatlv1.RoutingDecision) *RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := &RoutingDecision{
+		Backend: in.GetBackend(), ClassifierModel: in.GetClassifierModel(), CandidateCategory: in.GetCandidateCategory(),
+		CandidateModel: in.GetCandidateModel(), Outcome: in.GetOutcome(), ConsecutiveMisses: int(in.GetConsecutiveMisses()),
+		MissLimit: int(in.GetMissLimit()), BreakerOpen: in.GetBreakerOpen(),
+	}
+	if in.Confidence != nil {
+		value := in.GetConfidence()
+		out.Confidence = &value
+	}
+	if in.MinimumConfidence != nil {
+		value := in.GetMinimumConfidence()
+		out.MinimumConfidence = &value
+	}
+	return out
+}
+
 // subagentMsg builds a SubagentMsg of the given kind from a proto Subagent
 // payload (nil-safe via the generated getters). It is the single translation
 // point for the three subagent.* event kinds.
 func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 	return SubagentMsg{
-		Kind:           kind,
-		ParentCallID:   s.GetParentCallId(),
-		ChildID:        s.GetChildId(),
-		Goal:           s.GetGoal(),
-		Background:     s.GetBackground(),
-		RoutedCategory: s.GetRoutedCategory(),
-		RoutedModel:    s.GetRoutedModel(),
-		RoutingReason:  s.GetRoutingReason(),
-		Model:          s.GetModel(),
-		ToolName:       s.GetToolName(),
-		IsError:        s.GetIsError(),
-		InnerKind:      s.GetInnerKind(),
-		Text:           s.GetText(),
-		Detail:         s.GetDetail(),
-		ToolCount:      int(s.GetToolCount()),
-		Usage:          usageFrom(s.GetUsage()),
-		Stop:           s.GetStop(),
-		Cause:          s.GetCause(),
-		DurationMs:     s.GetDurationMs(),
+		Kind:            kind,
+		ParentCallID:    s.GetParentCallId(),
+		ChildID:         s.GetChildId(),
+		Goal:            s.GetGoal(),
+		Background:      s.GetBackground(),
+		RoutedCategory:  s.GetRoutedCategory(),
+		RoutedModel:     s.GetRoutedModel(),
+		RoutingReason:   s.GetRoutingReason(),
+		RoutingDecision: routingDecisionFrom(s.GetRoutingDecision()),
+		Model:           s.GetModel(),
+		ToolName:        s.GetToolName(),
+		IsError:         s.GetIsError(),
+		InnerKind:       s.GetInnerKind(),
+		Text:            s.GetText(),
+		Detail:          s.GetDetail(),
+		ToolCount:       int(s.GetToolCount()),
+		Usage:           usageFrom(s.GetUsage()),
+		Stop:            s.GetStop(),
+		Cause:           s.GetCause(),
+		DurationMs:      s.GetDurationMs(),
 	}
 }
 
@@ -951,29 +990,30 @@ func subagentMsg(kind SubagentKind, s *mecatlv1.Subagent) SubagentMsg {
 // single translation point for the parallel.* event family.
 func parallelMsg(kind ParallelKind, p *mecatlv1.Parallel) ParallelMsg {
 	return ParallelMsg{
-		Kind:           kind,
-		ParentCallID:   p.GetParentCallId(),
-		Join:           p.GetJoin(),
-		BranchCount:    int(p.GetBranchCount()),
-		BranchIndex:    int(p.GetBranchIndex()),
-		ChildID:        p.GetChildId(),
-		BranchLabel:    p.GetBranchLabel(),
-		Goal:           p.GetGoal(),
-		RoutedCategory: p.GetRoutedCategory(),
-		RoutedModel:    p.GetRoutedModel(),
-		RoutingReason:  p.GetRoutingReason(),
-		Model:          p.GetModel(),
-		ToolName:       p.GetToolName(),
-		IsError:        p.GetIsError(),
-		InnerKind:      p.GetInnerKind(),
-		Text:           p.GetText(),
-		Detail:         p.GetDetail(),
-		ToolCount:      int(p.GetToolCount()),
-		Failed:         p.GetFailed(),
-		Stop:           p.GetStop(),
-		Usage:          usageFrom(p.GetUsage()),
-		DurationMs:     p.GetDurationMs(),
-		Winner:         int(p.GetWinner()),
+		Kind:            kind,
+		ParentCallID:    p.GetParentCallId(),
+		Join:            p.GetJoin(),
+		BranchCount:     int(p.GetBranchCount()),
+		BranchIndex:     int(p.GetBranchIndex()),
+		ChildID:         p.GetChildId(),
+		BranchLabel:     p.GetBranchLabel(),
+		Goal:            p.GetGoal(),
+		RoutedCategory:  p.GetRoutedCategory(),
+		RoutedModel:     p.GetRoutedModel(),
+		RoutingReason:   p.GetRoutingReason(),
+		RoutingDecision: routingDecisionFrom(p.GetRoutingDecision()),
+		Model:           p.GetModel(),
+		ToolName:        p.GetToolName(),
+		IsError:         p.GetIsError(),
+		InnerKind:       p.GetInnerKind(),
+		Text:            p.GetText(),
+		Detail:          p.GetDetail(),
+		ToolCount:       int(p.GetToolCount()),
+		Failed:          p.GetFailed(),
+		Stop:            p.GetStop(),
+		Usage:           usageFrom(p.GetUsage()),
+		DurationMs:      p.GetDurationMs(),
+		Winner:          int(p.GetWinner()),
 	}
 }
 
@@ -1016,14 +1056,15 @@ func teamMsg(kind TeamKind, t *mecatlv1.Team) TeamMsg {
 	}
 	for _, r := range t.GetRoster() {
 		msg.Roster = append(msg.Roster, TeamMemberSpec{
-			Name:           r.GetName(),
-			Role:           r.GetRole(),
-			Mutating:       r.GetMutating(),
-			Lead:           r.GetLead(),
-			RoutedCategory: r.GetRoutedCategory(),
-			RoutedModel:    r.GetRoutedModel(),
-			RoutingReason:  r.GetRoutingReason(),
-			Model:          r.GetModel(),
+			Name:            r.GetName(),
+			Role:            r.GetRole(),
+			Mutating:        r.GetMutating(),
+			Lead:            r.GetLead(),
+			RoutedCategory:  r.GetRoutedCategory(),
+			RoutedModel:     r.GetRoutedModel(),
+			RoutingReason:   r.GetRoutingReason(),
+			RoutingDecision: routingDecisionFrom(r.GetRoutingDecision()),
+			Model:           r.GetModel(),
 		})
 	}
 	for _, tk := range t.GetTasks() {

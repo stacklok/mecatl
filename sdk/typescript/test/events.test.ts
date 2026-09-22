@@ -5,7 +5,10 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import type {
   Event,
+  ParallelEventPayload,
+  RoutingDecisionEventPayload,
   SessionTitleEventPayload,
+  SubagentEventPayload,
   TeamEventPayload,
   ToolCallEventPayload,
 } from "../src/events.js";
@@ -89,6 +92,83 @@ describe("event unions", () => {
     if (result?.kind !== "result") throw new Error("expected result");
     expect(result.payload.stop).toBe("end_turn");
     await client.close();
+  });
+
+  it("preserves routing decision presence over gRPC and HTTP event decoding", async () => {
+    const decision = {
+      backend: "jev",
+      breakerOpen: false,
+      candidateCategory: "deep",
+      candidateModel: "capable",
+      classifierModel: "jev-1.13.0",
+      confidence: 0,
+      consecutiveMisses: 1,
+      minimumConfidence: 0,
+      missLimit: 3,
+      outcome: "fallback",
+    } satisfies RoutingDecisionEventPayload;
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: () => ({ sessionId: "routing-grpc" }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        converse: async function* () {
+          yield {
+            event: { runId: "r", subagent: { routingDecision: decision }, type: "subagent.start" },
+          };
+          yield terminal("r");
+        },
+      });
+    });
+    const grpc = connect({ transport });
+    const grpcSession = await grpc.sessions.create({});
+    const grpcEvents: Event[] = [];
+    for await (const event of await grpcSession.run("route")) grpcEvents.push(event);
+    const grpcStart = grpcEvents[0];
+    if (grpcStart?.kind !== "subagent.start") throw new Error("expected subagent.start");
+    expectTypeOf(grpcStart.payload).toEqualTypeOf<SubagentEventPayload>();
+    expect(grpcStart.payload.routingDecision).toMatchObject(decision);
+    await grpc.close();
+
+    const httpFetch: typeof globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/compatibility")
+        return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+      if (path === "/v1/sessions" && init?.method === "POST")
+        return Response.json({ session_id: "routing-http" }, { status: 201 });
+      if (path.endsWith("/prompt"))
+        return sseResponse([
+          {
+            parallel: {
+              kind: "branch_start",
+              routing_decision: {
+                backend: "jev",
+                breaker_open: false,
+                candidate_category: "deep",
+                candidate_model: "capable",
+                classifier_model: "jev-1.13.0",
+                confidence: 0,
+                consecutive_misses: 1,
+                minimum_confidence: 0,
+                miss_limit: 3,
+                outcome: "fallback",
+              },
+            },
+            run_id: "r",
+            type: "parallel.branch",
+          },
+          { result: { stop: "end_turn", text: "done" }, run_id: "r", type: "result" },
+        ]);
+      return Response.json({}, { status: 404 });
+    };
+    const http = connect({ baseUrl: "http://mecatl.test", fetch: httpFetch });
+    const httpSession = await http.sessions.create({});
+    const httpEvents: Event[] = [];
+    for await (const event of await httpSession.run("route")) httpEvents.push(event);
+    const httpStart = httpEvents[0];
+    if (httpStart?.kind !== "parallel.branch") throw new Error("expected parallel.branch");
+    expectTypeOf(httpStart.payload).toEqualTypeOf<ParallelEventPayload>();
+    expect(httpStart.payload.routingDecision).toMatchObject(decision);
+    await http.close();
   });
 
   it("unknown kinds preserve transport-native raw data", async () => {

@@ -828,8 +828,35 @@ func logModelRouterFacts(cfg Config) {
 		}
 		message = "subagent model router ACTIVE: Jev picks the child model per routable delegation from the operator taxonomy"
 	}
-	cfg.diag().Log(context.Background(), port.LevelInfo, message,
-		"categories", len(cfg.RouterCategories), "backend", backend, "classifier", classifier)
+	args := []any{"categories", len(cfg.RouterCategories), "backend", backend, "classifier", classifier,
+		"category_mappings", routerCategoryMappings(cfg.RouterCategories)}
+	if backend == routerBackendJev {
+		args = append(args, "minimum_confidence", cfg.RouterJevMinimumConfidence)
+	}
+	cfg.diag().Log(context.Background(), port.LevelInfo, message, args...)
+}
+
+func routerCategoryMappings(categories []permconfig.RouterCategory) []string {
+	const maxSummaryRunes = 2000
+	out := make([]string, 0, len(categories))
+	used := 0
+	for _, category := range categories {
+		mapping := boundedRouterFact(category.Name) + "=" + boundedRouterFact(category.Model)
+		if used+len([]rune(mapping)) > maxSummaryRunes {
+			break
+		}
+		out = append(out, mapping)
+		used += len([]rune(mapping))
+	}
+	return out
+}
+
+func boundedRouterFact(value string) string {
+	runes := []rune(strings.Join(strings.Fields(session.ToValidUTF8(value)), " "))
+	if len(runes) > 100 {
+		runes = runes[:100]
+	}
+	return string(runes)
 }
 
 // modeNeedsEngine returns the composition predicate wired into

@@ -3,6 +3,7 @@ package sessiondebug_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
@@ -35,6 +36,16 @@ func (s *observedStore) ReadSessionLineage(ctx context.Context, query port.Sessi
 		return port.SessionLineageResult{}, nil
 	}
 	return s.Store.ReadSessionLineage(ctx, query)
+}
+
+type failedEventLog struct{}
+
+func (failedEventLog) Append(context.Context, session.SessionID, session.Event) error {
+	return errors.New("injected append failure")
+}
+
+func (failedEventLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event, error] {
+	return func(func(session.Event, error) bool) {}
 }
 
 type observedLog struct {
@@ -267,6 +278,114 @@ func TestInspectSessionLineageIsolation_BackwardProofDepthBoundary(t *testing.T)
 		if depth == 9 && (!status.IsError || !strings.Contains(status.Content, "exceeds the maximum depth")) {
 			t.Fatalf("ninth hop was not rejected by the backward-proof bound: %+v", status)
 		}
+	}
+}
+
+func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
+	store := memstore.New()
+	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}
+	root := session.New("routing-root", session.ModeDefault, env, session.Limits{}, time.Unix(10, 0))
+	root.Owner = (&session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}).Clone()
+	sub, err := session.NewSubagent("routing-sub", session.ModeDefault, env, session.Limits{}, time.Unix(11, 0), root.ID, root.Incarnation(), "sub-call")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parallel, err := session.NewParallelBranch("routing-parallel", session.ModeDefault, env, session.Limits{}, time.Unix(12, 0), root.ID, root.Incarnation(), "parallel-call", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := session.NewTeamMember("routing-team-member", session.ModeDefault, env, session.Limits{}, time.Unix(13, 0), "team-1", "reviewer", root.ID, root.Incarnation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, current := range []*session.Session{root, sub, parallel, member} {
+		current.Owner = root.Owner.Clone()
+		if err := store.Save(t.Context(), current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	zero := 0.0
+	decision := &session.RoutingDecision{Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable", Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", MissLimit: 3}
+	log := memstore.NewEventLog()
+	for _, ev := range []session.Event{
+		{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "sub-call", ChildID: string(sub.ID), ChildIncarnation: sub.Incarnation(), Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision}},
+		{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{ParentCallID: "parallel-call", Kind: session.ParallelBranchStart, BranchIndex: 1, ChildID: string(parallel.ID), ChildIncarnation: parallel.Incarnation(), Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision}},
+		{Type: session.EvTeamStart, Team: &session.TeamPayload{ParentCallID: "team-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer", Model: "capable", RoutedCategory: "deep", RoutedModel: "capable", RoutingDecision: decision}}}},
+	} {
+		if err := log.Append(t.Context(), root.ID, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`)
+	body := evidence(t, result)
+	rows, ok := body["rows"].([]any)
+	if !ok || len(rows) != 3 {
+		t.Fatalf("routing rows = %#v", body["rows"])
+	}
+	for _, raw := range rows {
+		row := raw.(map[string]any)
+		if row["actual_model"] != "capable" || row["routed_category"] != "deep" || row["routed_model"] != "capable" {
+			t.Fatalf("final routing facts missing: %#v", row)
+		}
+		rd, ok := row["routing_decision"].(map[string]any)
+		if !ok || rd["backend"] != "jev" || rd["confidence"] != float64(0) || rd["minimum_confidence"] != float64(0) {
+			t.Fatalf("decision missing optional zero: %#v", row)
+		}
+	}
+
+	historicalLog := memstore.NewEventLog()
+	if err := historicalLog.Append(t.Context(), root.ID, session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "sub-call", ChildID: string(sub.ID), ChildIncarnation: sub.Incarnation()}}); err != nil {
+		t.Fatal(err)
+	}
+	historical := inspect(t, sessiondebug.New(root.ID, store, historicalLog), `{"view":"delegation"}`)
+	if strings.Contains(historical.Content, "routing_decision") {
+		t.Fatalf("historical event fabricated routing evidence: %s", historical.Content)
+	}
+	unavailable := inspect(t, sessiondebug.New(root.ID, store, nil), `{"view":"delegation"}`)
+	if !strings.Contains(unavailable.Content, "event log is not configured") || strings.Contains(unavailable.Content, "routing_decision") {
+		t.Fatalf("unavailable log changed debugger semantics or fabricated evidence: %s", unavailable.Content)
+	}
+	failed := failedEventLog{}
+	if err := failed.Append(t.Context(), root.ID, session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: decision}}); err == nil {
+		t.Fatal("injected append unexpectedly succeeded")
+	}
+	failedEvidence := inspect(t, sessiondebug.New(root.ID, store, failed), `{"view":"delegation"}`)
+	if strings.Contains(failedEvidence.Content, "routing_decision") || !strings.Contains(failedEvidence.Content, `"rows":[]`) {
+		t.Fatalf("failed append was inferred or fabricated: %s", failedEvidence.Content)
+	}
+
+	// A second retained incarnation with the same team/member key makes the roster
+	// join ambiguous; fail closed instead of selecting either child.
+	ambiguous, err := session.NewTeamMember("routing-team-member-2", session.ModeDefault, env, session.Limits{}, time.Unix(14, 0), "team-1", "reviewer", root.ID, root.Incarnation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous.Owner = root.Owner.Clone()
+	if err := store.Save(t.Context(), ambiguous); err != nil {
+		t.Fatal(err)
+	}
+	result = inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`)
+	rows = evidence(t, result)["rows"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("ambiguous team roster join did not fail closed: %#v", rows)
+	}
+	if err := store.Delete(t.Context(), member.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), ambiguous.ID); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := session.NewTeamMember("routing-team-member-foreign", session.ModeDefault, env, session.Limits{}, time.Unix(15, 0), "team-1", "reviewer", root.ID, root.Incarnation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign.Owner = &session.Principal{Issuer: "issuer", Subject: "other", GrantType: session.GrantTypeUser}
+	if err := store.Save(t.Context(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	rows = evidence(t, inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`))["rows"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("stale/cross-owner team lineage did not fail closed: %#v", rows)
 	}
 }
 

@@ -12,6 +12,31 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+func TestRoutingDecisionProjectionPreservesOptionalPresence(t *testing.T) {
+	zero := 0.0
+	pb := &mecatlv1.RoutingDecision{
+		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
+		Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", ConsecutiveMisses: 0, MissLimit: 3,
+	}
+	want := &RoutingDecision{
+		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
+		Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", ConsecutiveMisses: 0, MissLimit: 3,
+	}
+	if got := subagentMsg(SubagentStart, &mecatlv1.Subagent{RoutingDecision: pb}).RoutingDecision; !reflect.DeepEqual(got, want) {
+		t.Fatalf("subagent decision = %#v, want %#v", got, want)
+	}
+	if got := parallelMsg(ParallelBranchStart, &mecatlv1.Parallel{RoutingDecision: pb}).RoutingDecision; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parallel decision = %#v, want %#v", got, want)
+	}
+	gotTeam := teamMsg(TeamStart, &mecatlv1.Team{Roster: []*mecatlv1.TeamMemberSpec{{Name: "lead", RoutingDecision: pb}}})
+	if len(gotTeam.Roster) != 1 || !reflect.DeepEqual(gotTeam.Roster[0].RoutingDecision, want) {
+		t.Fatalf("team decision = %#v, want %#v", gotTeam.Roster, want)
+	}
+	if got := subagentMsg(SubagentStart, &mecatlv1.Subagent{}).RoutingDecision; got != nil {
+		t.Fatalf("historical absence became %#v", got)
+	}
+}
+
 // TestEventToMsg covers the mapper over every documented event type, asserting
 // both the msg variant and a representative carried field. This is the single
 // translation point between proto and the ui model, so it gets exhaustive

@@ -2,10 +2,14 @@ package sessiondebug
 
 import (
 	"context"
+	"math"
+	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+const delegationTeam = "team"
 
 type delegationEvidence struct {
 	View               string          `json:"view"`
@@ -22,30 +26,48 @@ type delegationEvidence struct {
 }
 
 type delegationRow struct {
-	Type              string                `json:"type"`
-	Event             session.EventType     `json:"event"`
-	CallID            string                `json:"call_id,omitempty"`
-	ScopeHandle       string                `json:"scope_handle,omitempty"`
-	Retention         string                `json:"retention,omitempty"`
-	Conclusion        string                `json:"parent_conclusion,omitempty"`
-	ParentResultError *bool                 `json:"parent_result_error,omitempty"`
-	Background        *bool                 `json:"background,omitempty"`
-	Collection        string                `json:"collection,omitempty"`
-	Stop              session.StopReason    `json:"stop,omitempty"`
-	Cause             string                `json:"cause,omitempty"`
-	Join              string                `json:"join,omitempty"`
-	BranchIndex       *int                  `json:"branch_index,omitempty"`
-	Winner            *int                  `json:"winner,omitempty"`
-	Role              string                `json:"role,omitempty"`
-	Member            string                `json:"member,omitempty"`
-	Disposition       string                `json:"disposition,omitempty"`
-	DispositionReason string                `json:"disposition_reason,omitempty"`
-	ErrorRounds       int                   `json:"error_rounds,omitempty"`
-	Tasks             []teamTaskEvidence    `json:"tasks,omitempty"`
-	Findings          []teamFindingEvidence `json:"findings,omitempty"`
-	ScheduleName      string                `json:"schedule_name,omitempty"`
-	ScheduleKind      string                `json:"schedule_kind,omitempty"`
+	Type              string                   `json:"type"`
+	Event             session.EventType        `json:"event"`
+	CallID            string                   `json:"call_id,omitempty"`
+	ScopeHandle       string                   `json:"scope_handle,omitempty"`
+	Retention         string                   `json:"retention,omitempty"`
+	Conclusion        string                   `json:"parent_conclusion,omitempty"`
+	ParentResultError *bool                    `json:"parent_result_error,omitempty"`
+	Background        *bool                    `json:"background,omitempty"`
+	Collection        string                   `json:"collection,omitempty"`
+	Stop              session.StopReason       `json:"stop,omitempty"`
+	Cause             string                   `json:"cause,omitempty"`
+	Join              string                   `json:"join,omitempty"`
+	BranchIndex       *int                     `json:"branch_index,omitempty"`
+	Winner            *int                     `json:"winner,omitempty"`
+	Role              string                   `json:"role,omitempty"`
+	Member            string                   `json:"member,omitempty"`
+	Disposition       string                   `json:"disposition,omitempty"`
+	DispositionReason string                   `json:"disposition_reason,omitempty"`
+	ErrorRounds       int                      `json:"error_rounds,omitempty"`
+	Tasks             []teamTaskEvidence       `json:"tasks,omitempty"`
+	Findings          []teamFindingEvidence    `json:"findings,omitempty"`
+	ActualModel       string                   `json:"actual_model,omitempty"`
+	RoutedCategory    string                   `json:"routed_category,omitempty"`
+	RoutedModel       string                   `json:"routed_model,omitempty"`
+	RoutingReason     string                   `json:"routing_reason,omitempty"`
+	RoutingDecision   *routingDecisionEvidence `json:"routing_decision,omitempty"`
+	ScheduleName      string                   `json:"schedule_name,omitempty"`
+	ScheduleKind      string                   `json:"schedule_kind,omitempty"`
 }
+type routingDecisionEvidence struct {
+	Backend           string   `json:"backend"`
+	ClassifierModel   string   `json:"classifier_model"`
+	CandidateCategory string   `json:"candidate_category"`
+	CandidateModel    string   `json:"candidate_model"`
+	Confidence        *float64 `json:"confidence,omitempty"`
+	MinimumConfidence *float64 `json:"minimum_confidence,omitempty"`
+	Outcome           string   `json:"outcome"`
+	ConsecutiveMisses int      `json:"consecutive_misses"`
+	MissLimit         int      `json:"miss_limit"`
+	BreakerOpen       bool     `json:"breaker_open"`
+}
+
 type teamTaskEvidence struct {
 	ID          string   `json:"id"`
 	Description string   `json:"description"`
@@ -159,6 +181,8 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 		if ev.Type == session.EvSubagentStart {
 			b := p.Background
 			r.Background = &b
+			r.ActualModel, r.RoutedCategory, r.RoutedModel = safeRoutingLine(p.Model), safeRoutingLine(p.RoutedCategory), safeRoutingLine(p.RoutedModel)
+			r.RoutingReason, r.RoutingDecision = safeRoutingReason(p.RoutingReason), projectRoutingDecision(p.RoutingDecision)
 			if b {
 				r.Collection = "not recorded durably"
 			}
@@ -172,6 +196,10 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 		}
 		c, e := conclusion(p.ParentCallID, results)
 		r := delegationRow{Type: "parallel", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Join: safeLine(p.Join), Stop: p.Stop}
+		if p.Kind == session.ParallelBranchStart {
+			r.ActualModel, r.RoutedCategory, r.RoutedModel = safeRoutingLine(p.Model), safeRoutingLine(p.RoutedCategory), safeRoutingLine(p.RoutedModel)
+			r.RoutingReason, r.RoutingDecision = safeRoutingReason(p.RoutingReason), projectRoutingDecision(p.RoutingDecision)
+		}
 		if ev.Type == session.EvParallelBranch {
 			i := p.BranchIndex
 			r.BranchIndex = &i
@@ -183,45 +211,100 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 		return []delegationRow{r}
 	}
 	if p := ev.Team; p != nil {
+		c, e := conclusion(p.ParentCallID, results)
+		if ev.Type == session.EvTeamStart {
+			rows := make([]delegationRow, 0, len(p.Roster))
+			for _, m := range p.Roster {
+				n, proven := teamRosterChild(p.TeamID, m.Name, nodes, root)
+				if !proven {
+					continue
+				}
+				rows = append(rows, delegationRow{
+					Type: delegationTeam, Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle,
+					Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(m.Name), Role: safeLine(m.Role),
+					ActualModel: safeRoutingLine(m.Model), RoutedCategory: safeRoutingLine(m.RoutedCategory),
+					RoutedModel: safeRoutingLine(m.RoutedModel), RoutingReason: safeRoutingReason(m.RoutingReason),
+					RoutingDecision: projectRoutingDecision(m.RoutingDecision),
+				})
+			}
+			return rows
+		}
 		n, proven := childFields(p.MemberSessionID, p.MemberIncarnation, nodes, root)
-		if !proven || ev.Type != session.EvTeamMember || n.Kind != session.SessionKindTeamMember || n.Edge != "team" || n.Relationship.TeamID != p.TeamID || n.Relationship.MemberName != p.Member {
+		if !proven || ev.Type != session.EvTeamMember || n.Kind != session.SessionKindTeamMember || n.Edge != delegationTeam || n.Relationship.TeamID != p.TeamID || n.Relationship.MemberName != p.Member {
 			return nil
 		}
-		c, e := conclusion(p.ParentCallID, results)
-		base := delegationRow{Type: "team", Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
+		base := delegationRow{Type: delegationTeam, Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
 		for _, task := range p.Tasks {
 			base.Tasks = append(base.Tasks, teamTaskEvidence{safeLine(task.ID), safeLine(task.Description), safeLine(task.State), safeLine(task.Assignee), safeLines(task.Deps)})
 		}
 		for _, finding := range p.Findings {
 			base.Findings = append(base.Findings, teamFindingEvidence{safeLine(finding.Member), safeLine(finding.Body)})
 		}
-		if ev.Type == session.EvTeamStart {
-			rows := make([]delegationRow, 0, len(p.Roster))
-			for _, m := range p.Roster {
-				r := base
-				r.Member = safeLine(m.Name)
-				r.Role = safeLine(m.Role)
-				rows = append(rows, r)
-			}
-			if len(rows) > 0 {
-				return rows
-			}
-		}
-		if ev.Type == session.EvTeamEnd && len(p.Dispositions) > 0 {
-			rows := make([]delegationRow, 0, len(p.Dispositions))
-			for _, d := range p.Dispositions {
-				r := base
-				r.Member = safeLine(d.Name)
-				r.Disposition = safeLine(d.Disposition)
-				r.DispositionReason = safeLine(d.Reason)
-				r.ErrorRounds = d.ErrorRounds
-				rows = append(rows, r)
-			}
-			return rows
-		}
 		return []delegationRow{base}
 	}
 	return nil
+}
+
+func teamRosterChild(teamID, member string, nodes map[string]lineageNode, root *session.Session) (lineageNode, bool) {
+	var match lineageNode
+	count := 0
+	for _, n := range nodes {
+		if n.Kind != session.SessionKindTeamMember || n.Edge != delegationTeam || n.Relationship.TeamID != teamID || n.Relationship.MemberName != member ||
+			n.State != string(port.SessionLineageRetained) || n.OwnerScope != session.PrincipalScopeHash(root.Owner) || n.Handle == "" || !session.IncarnationID(n.Incarnation).Valid() {
+			continue
+		}
+		match = n
+		count++
+	}
+	return match, count == 1
+}
+
+func projectRoutingDecision(in *session.RoutingDecision) *routingDecisionEvidence {
+	if in == nil {
+		return nil
+	}
+	out := &routingDecisionEvidence{
+		ClassifierModel: safeRoutingLine(in.ClassifierModel), CandidateCategory: safeRoutingLine(in.CandidateCategory),
+		CandidateModel: safeRoutingLine(in.CandidateModel), ConsecutiveMisses: in.ConsecutiveMisses,
+		MissLimit: in.MissLimit, BreakerOpen: in.BreakerOpen,
+	}
+	if in.Backend == "llm" || in.Backend == "jev" {
+		out.Backend = in.Backend
+	}
+	if in.Outcome == "routed" || in.Outcome == "fallback" || in.Outcome == "skipped" {
+		out.Outcome = in.Outcome
+	}
+	out.Confidence = safeProbability(in.Confidence)
+	out.MinimumConfidence = safeProbability(in.MinimumConfidence)
+	return out
+}
+
+func safeProbability(in *float64) *float64 {
+	if in == nil || math.IsNaN(*in) || math.IsInf(*in, 0) || *in < 0 || *in > 1 {
+		return nil
+	}
+	value := *in
+	return &value
+}
+
+func safeRoutingLine(in string) string {
+	runes := []rune(safeLine(in))
+	if len(runes) > 200 {
+		runes = runes[:200]
+	}
+	return string(runes)
+}
+
+func safeRoutingReason(in string) string {
+	clean := strings.TrimSpace(in)
+	switch clean {
+	case "", "pinned-model", "agent-def-pinned-model", "resume", "fork", "router-disabled", "route-target-unavailable", "breaker-open", "aborted",
+		"degenerate-input", "classifier-error", "cancelled", "bad-verdict", "unknown-category", "timeout", "low-confidence", "input-over-limit", "capacity-timeout",
+		"empty-model", "category-selector-empty", "category-target-unresolvable", "routing-miss":
+		return clean
+	default:
+		return "routing-miss"
+	}
 }
 
 func safeLines(in []string) []string {

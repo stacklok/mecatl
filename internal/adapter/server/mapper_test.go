@@ -3,9 +3,12 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -17,6 +20,84 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
 )
+
+func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
+	zero := 0.0
+	decision := &session.RoutingDecision{
+		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
+		Confidence: &zero, MinimumConfidence: &zero, Outcome: "fallback", ConsecutiveMisses: 2, MissLimit: 3, BreakerOpen: false,
+	}
+	for name, ev := range map[string]session.Event{
+		"subagent": {Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: decision}},
+		"parallel": {Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{RoutingDecision: decision}},
+		"team":     {Type: session.EvTeamStart, Team: &session.TeamPayload{Roster: []session.TeamMemberSpec{{Name: "reviewer", RoutingDecision: decision}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pb := toProto(ev)
+			wire, err := proto.Marshal(pb)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var round mecatlv1.Event
+			if err := proto.Unmarshal(wire, &round); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			jsonWire, err := protojson.Marshal(&round)
+			if err != nil {
+				t.Fatalf("protojson: %v", err)
+			}
+			text := string(jsonWire)
+			for _, want := range []string{`"routingDecision"`, `"confidence":0`, `"minimumConfidence":0`, `"outcome":"fallback"`} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("protobuf JSON %s missing %s", text, want)
+				}
+			}
+		})
+	}
+
+	bad := math.NaN()
+	hostile := &session.RoutingDecision{
+		Backend: "custom\x00", ClassifierModel: "model\xff", CandidateCategory: strings.Repeat("x", 1000),
+		CandidateModel: "candidate\nsecret", Confidence: &bad, MinimumConfidence: &bad, Outcome: "invented",
+	}
+	pb := toProto(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: hostile}})
+	if _, err := protojson.Marshal(pb); err != nil {
+		t.Fatalf("hostile custom routing evidence broke protobuf JSON: %v", err)
+	}
+	got := pb.GetSubagent().GetRoutingDecision()
+	if got.GetBackend() != "" || got.GetOutcome() != "" || got.Confidence != nil || got.MinimumConfidence != nil {
+		t.Fatalf("unsafe closed/numeric evidence survived: %+v", got)
+	}
+	if len([]rune(got.GetCandidateCategory())) > 200 || strings.ContainsAny(got.GetCandidateModel(), "\n\r\x00") {
+		t.Fatalf("unbounded/control-bearing candidate survived: %+v", got)
+	}
+	for name, invalid := range map[string]float64{"positive infinity": math.Inf(1), "negative infinity": math.Inf(-1), "below range": -0.01, "above range": 1.01} {
+		t.Run(name, func(t *testing.T) {
+			pb := toProto(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: &session.RoutingDecision{Confidence: &invalid, MinimumConfidence: &invalid}}})
+			if got := pb.GetSubagent().GetRoutingDecision(); got.Confidence != nil || got.MinimumConfidence != nil {
+				t.Fatalf("invalid score survived: %+v", got)
+			}
+			if _, err := protojson.Marshal(pb); err != nil {
+				t.Fatalf("invalid score broke protobuf JSON: %v", err)
+			}
+		})
+	}
+
+	historical := toProto(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{}})
+	if historical.GetSubagent().GetRoutingDecision() != nil {
+		t.Fatalf("historical absence became an empty decision: %+v", historical.GetSubagent())
+	}
+
+	failedLog := &countingEventLog{failCalls: map[int]bool{1: true}}
+	diag := &countingDiagnostics{}
+	recorder := NewRunEventRecorder(t.Context(), recorderService(failedLog, diag), "routing-session")
+	recorder.Observe(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{RoutingDecision: decision}})
+	recorder.Observe(session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+	recorder.Close()
+	if len(failedLog.attempts) != 2 || len(failedLog.recorded) != 1 || failedLog.recorded[0].Type != session.EvResult || diag.warnings != 1 {
+		t.Fatalf("append failure changed warn-and-continue behavior: attempts=%d recorded=%+v warnings=%d", len(failedLog.attempts), failedLog.recorded, diag.warnings)
+	}
+}
 
 func TestIncarnationsAreNotProjectedToNormalClients(t *testing.T) {
 	incarnation := session.NewIncarnationID()

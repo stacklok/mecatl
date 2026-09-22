@@ -77,6 +77,7 @@ export type {
   PermissionAskEventPayload,
   ResultEventPayload,
   RetryDisposition,
+  RoutingDecisionEventPayload,
   ScheduleEventPayload,
   SessionTitleEventPayload,
   SteerEventPayload,

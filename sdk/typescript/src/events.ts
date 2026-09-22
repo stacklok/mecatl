@@ -229,6 +229,20 @@ export interface ScheduleEventPayload {
   readonly stop: string;
 }
 
+/** Bounded configured-router evidence on delegation start events. @public */
+export interface RoutingDecisionEventPayload {
+  readonly backend: string;
+  readonly breakerOpen: boolean;
+  readonly candidateCategory: string;
+  readonly candidateModel: string;
+  readonly classifierModel: string;
+  readonly confidence?: number | undefined;
+  readonly consecutiveMisses: number;
+  readonly minimumConfidence?: number | undefined;
+  readonly missLimit: number;
+  readonly outcome: string;
+}
+
 /** The payload shared by `subagent.*` events. @public */
 export interface SubagentEventPayload {
   readonly background: boolean;
@@ -243,6 +257,7 @@ export interface SubagentEventPayload {
   readonly parentCallId: string;
   readonly routedCategory: string;
   readonly routedModel: string;
+  readonly routingDecision?: RoutingDecisionEventPayload | undefined;
   readonly routingReason: string;
   readonly stop: string;
   readonly text: string;
@@ -260,6 +275,7 @@ export interface TeamMemberSpecEventPayload {
   readonly role: string;
   readonly routedCategory: string;
   readonly routedModel: string;
+  readonly routingDecision?: RoutingDecisionEventPayload | undefined;
   readonly routingReason: string;
 }
 
@@ -327,6 +343,7 @@ export interface ParallelEventPayload {
   readonly parentCallId: string;
   readonly routedCategory: string;
   readonly routedModel: string;
+  readonly routingDecision?: RoutingDecisionEventPayload | undefined;
   readonly routingReason: string;
   readonly stop: string;
   readonly text: string;

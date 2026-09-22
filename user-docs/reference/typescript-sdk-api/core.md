@@ -129,6 +129,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`RequestOptions`](#api-requestoptions-typealias) | Type alias |
 | [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
 | [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
+| [`RoutingDecisionEventPayload`](#api-routingdecisioneventpayload-interface) | Interface |
 | [`Run`](#api-run-interface) | Interface |
 | [`RunAuthorizationRequiredError`](#api-runauthorizationrequirederror-class) | Class |
 | [`RunAuthorizationRequiredOutcome`](#api-runauthorizationrequiredoutcome-interface) | Interface |
@@ -3138,6 +3139,12 @@ readonly routedCategory: string;
 readonly routedModel: string;
 ```
 
+<Heading as="h4" id="api-paralleleventpayload-routingdecision-propertysignature"><code>ParallelEventPayload.routingDecision</code></Heading>
+
+```ts
+readonly routingDecision?: RoutingDecisionEventPayload | undefined;
+```
+
 <Heading as="h4" id="api-paralleleventpayload-routingreason-propertysignature"><code>ParallelEventPayload.routingReason</code></Heading>
 
 ```ts
@@ -3421,6 +3428,74 @@ readonly text: string;
 
 ```ts
 readonly usage?: EventUsage | undefined;
+```
+
+<Heading as="h3" id="api-routingdecisioneventpayload-interface"><code>RoutingDecisionEventPayload</code></Heading>
+
+Bounded configured-router evidence on delegation start events.
+
+```ts
+export interface RoutingDecisionEventPayload
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-backend-propertysignature"><code>RoutingDecisionEventPayload.backend</code></Heading>
+
+```ts
+readonly backend: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-breakeropen-propertysignature"><code>RoutingDecisionEventPayload.breakerOpen</code></Heading>
+
+```ts
+readonly breakerOpen: boolean;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-candidatecategory-propertysignature"><code>RoutingDecisionEventPayload.candidateCategory</code></Heading>
+
+```ts
+readonly candidateCategory: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-candidatemodel-propertysignature"><code>RoutingDecisionEventPayload.candidateModel</code></Heading>
+
+```ts
+readonly candidateModel: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-classifiermodel-propertysignature"><code>RoutingDecisionEventPayload.classifierModel</code></Heading>
+
+```ts
+readonly classifierModel: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-confidence-propertysignature"><code>RoutingDecisionEventPayload.confidence</code></Heading>
+
+```ts
+readonly confidence?: number | undefined;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-consecutivemisses-propertysignature"><code>RoutingDecisionEventPayload.consecutiveMisses</code></Heading>
+
+```ts
+readonly consecutiveMisses: number;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-minimumconfidence-propertysignature"><code>RoutingDecisionEventPayload.minimumConfidence</code></Heading>
+
+```ts
+readonly minimumConfidence?: number | undefined;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-misslimit-propertysignature"><code>RoutingDecisionEventPayload.missLimit</code></Heading>
+
+```ts
+readonly missLimit: number;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-outcome-propertysignature"><code>RoutingDecisionEventPayload.outcome</code></Heading>
+
+```ts
+readonly outcome: string;
 ```
 
 <Heading as="h3" id="api-run-interface"><code>Run</code></Heading>
@@ -5675,6 +5750,12 @@ readonly routedCategory: string;
 readonly routedModel: string;
 ```
 
+<Heading as="h4" id="api-subagenteventpayload-routingdecision-propertysignature"><code>SubagentEventPayload.routingDecision</code></Heading>
+
+```ts
+readonly routingDecision?: RoutingDecisionEventPayload | undefined;
+```
+
 <Heading as="h4" id="api-subagenteventpayload-routingreason-propertysignature"><code>SubagentEventPayload.routingReason</code></Heading>
 
 ```ts
@@ -6092,6 +6173,12 @@ readonly routedCategory: string;
 
 ```ts
 readonly routedModel: string;
+```
+
+<Heading as="h4" id="api-teammemberspeceventpayload-routingdecision-propertysignature"><code>TeamMemberSpecEventPayload.routingDecision</code></Heading>
+
+```ts
+readonly routingDecision?: RoutingDecisionEventPayload | undefined;
 ```
 
 <Heading as="h4" id="api-teammemberspeceventpayload-routingreason-propertysignature"><code>TeamMemberSpecEventPayload.routingReason</code></Heading>

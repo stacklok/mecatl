@@ -151,7 +151,7 @@ func relationEdge(parent session.SessionID, parentIncarnation session.Incarnatio
 	case session.SessionKindParallelBranch:
 		return "parallel", r.ParentSessionID == parent && r.ParentIncarnation == parentIncarnation
 	case session.SessionKindTeamMember:
-		return "team", r.ParentSessionID == parent && r.ParentIncarnation == parentIncarnation
+		return delegationTeam, r.ParentSessionID == parent && r.ParentIncarnation == parentIncarnation
 	case session.SessionKindScheduled:
 		return "schedule", r.OriginSessionID == parent && r.OriginIncarnation == parentIncarnation
 	default:

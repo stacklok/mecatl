@@ -368,6 +368,25 @@ func TestLogModelRouterFacts(t *testing.T) {
 			t.Fatalf("the DISABLED WARN must NOT fire when a taxonomy is present and not disabled; got:\n%s", log)
 		}
 	})
+	t.Run("Jev summary includes safe threshold and category mapping", func(t *testing.T) {
+		var buf bytes.Buffer
+		diag := slogdiag.New(&buf, false, port.LevelDebug)
+		cfg := Config{
+			Model: "session-model", Diagnostics: diag, RouterBackend: routerBackendJev,
+			RouterJevModel: "jev-1.13.0", RouterJevMinimumConfidence: 0,
+			RouterCategories: []permconfig.RouterCategory{{Name: "deep", Description: "PRIVATE DESCRIPTION", Model: "capable"}},
+		}
+		logModelRouterFacts(cfg)
+		log := buf.String()
+		for _, want := range []string{"backend=jev", "classifier=jev-1.13.0", "minimum_confidence=0", `category_mappings="[deep=capable]"`} {
+			if !strings.Contains(log, want) {
+				t.Fatalf("Jev startup summary missing %q: %s", want, log)
+			}
+		}
+		if strings.Contains(log, "PRIVATE DESCRIPTION") {
+			t.Fatalf("category description leaked into startup summary: %s", log)
+		}
+	})
 }
 
 // The `router` slot (or classifier-slot) actually changes which model the CLASSIFIER
