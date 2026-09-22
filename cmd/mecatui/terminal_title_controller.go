@@ -86,6 +86,24 @@ func (c *terminalTitleController) Write(p []byte) (int, error) {
 	return c.output.Write(p)
 }
 
+// Read and Fd preserve Bubble Tea's terminal-file detection while Write emits
+// an OSC 0 title immediately before the corresponding frame.
+func (c *terminalTitleController) Read(p []byte) (int, error) {
+	reader, ok := c.output.(io.Reader)
+	if !ok {
+		return 0, io.EOF
+	}
+	return reader.Read(p)
+}
+
+func (c *terminalTitleController) Fd() uintptr {
+	file, ok := c.output.(interface{ Fd() uintptr })
+	if !ok {
+		return 0
+	}
+	return file.Fd()
+}
+
 func (c *terminalTitleController) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

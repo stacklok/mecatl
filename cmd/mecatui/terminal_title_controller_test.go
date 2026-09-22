@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
@@ -79,6 +81,20 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.Buffer.String()
+}
+
+func TestTerminalTitleControllerPreservesTerminalFile(t *testing.T) {
+	output, err := os.CreateTemp(t.TempDir(), "terminal-output")
+	if err != nil {
+		t.Fatalf("create output: %v", err)
+	}
+	t.Cleanup(func() { _ = output.Close() })
+
+	controller := newTerminalTitleController(output, true, mustTitleRenderer(t, "mecatui"))
+	var _ term.File = controller
+	if got, want := controller.Fd(), output.Fd(); got != want {
+		t.Fatalf("terminal title controller fd = %d, want %d", got, want)
+	}
 }
 
 func TestADR_0344_Scenario1_DeduplicatesConditionalCleanupAndDisables(t *testing.T) {
