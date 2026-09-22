@@ -75,7 +75,7 @@ func TestMecatuiFunctionalConversationCards_Scenario2_PermanentErrorReplayMatche
 	r := newTestRenderer()
 	for _, expanded := range []bool{false, true} {
 		gotLive := stripANSIstr(r.renderBlock(0, &liveBlock, expanded))
-		r.blockCache = nil
+		r.blocks.rendered = nil
 		gotReplay := stripANSIstr(r.renderBlock(0, &replayBlock, expanded))
 		if gotReplay != gotLive {
 			t.Errorf("expanded=%v replay = %q, live = %q", expanded, gotReplay, gotLive)

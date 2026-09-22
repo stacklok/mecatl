@@ -16,7 +16,7 @@ type preparedToolCard struct {
 type preparedToolSection = blocks.StyledSectionInput
 
 func (p preparedToolCard) render() string {
-	return strings.Join(p.Lines, "\n")
+	return p.Text()
 }
 
 // prepareToolCard snapshots the mutable conversation block into the real

@@ -38,8 +38,7 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	r := newCacheRenderer()
 	base := r.blockRenderKey(&c.blocks[0], false)
 	if base.context != (renderContextKey{
-		width:   r.width,
-		dialect: r.renderDialect,
+		width: r.width,
 	}) {
 		t.Fatalf("render context key = %#v", base.context)
 	}
@@ -61,8 +60,6 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	assertChanged("width", r.blockRenderKey(&block, false))
 	r.width--
 	assertChanged("expanded state", r.blockRenderKey(&block, true))
-	r.renderDialect++
-	assertChanged("render dialect", r.blockRenderKey(&block, false))
 }
 
 func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructuralProvenance(t *testing.T) {

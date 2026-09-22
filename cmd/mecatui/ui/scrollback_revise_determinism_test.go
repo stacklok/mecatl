@@ -92,10 +92,10 @@ func TestScrollbackReviseOutputIndependentOfN(t *testing.T) {
 
 // TestScrollbackReviseBustsCacheEveryOp pins the "join still all-misses" invariant
 // the streaming bench relies on: each reviseAssistant + refreshView must re-render
-// the live block (a renderer.blockCache MISS, which bumps blockRenders), so the join
+// the live block (a renderer.blocks rendered-entry MISS, which bumps blockRenders), so the join
 // cache also misses and the whole scrollback re-joins — the worst-case streaming
 // floor the bench is meant to measure. The miss is driven by reviseAssistant's
-// currentAssistant() rev bump (blockCache keys on rev); the fixed-size byte-different
+// currentAssistant() rev bump (the rendered-entry key includes rev); the fixed-size byte-different
 // body additionally keeps the markdownAt src-cache missing, so the per-op render is
 // real, representative work. If a future cache change let a revise HIT (so the bench
 // measured ~nothing), blockRenders would stop advancing on some op and this FAILS.

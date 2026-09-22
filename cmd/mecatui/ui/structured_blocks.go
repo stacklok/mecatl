@@ -1,12 +1,6 @@
 package ui
 
-import (
-	"strings"
-
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
-)
-
-const structuredCardDialect = 1
+import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 
 func (r *renderer) plainBlockLayout(expand bool) blocks.PlainLayout {
 	return blocks.SnapshotPlainLayout(blocks.PlainLayoutInput{
@@ -54,8 +48,6 @@ func permanentErrorInputFromBlock(b *block) blocks.PermanentErrorInput {
 func deliveryInputFromBlock(b *block) blocks.DeliveryInput {
 	return blocks.DeliveryInput{ScheduleName: b.toolName, FireID: b.deliveryFireID, Text: b.raw}
 }
-
-func preparedText(prepared blocks.Prepared) string { return strings.Join(prepared.Lines, "\n") }
 
 // prepareStructuredBlock snapshots and prepares every migrated non-Markdown block
 // family. It is called only after renderBlock's cheap revision/layout admission

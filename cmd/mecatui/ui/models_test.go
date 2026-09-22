@@ -292,7 +292,7 @@ func TestModelsCarryoverKeepsVisibleProjection(t *testing.T) {
 	m.conv.startAssistant()
 	m.conv.appendAssistant("visible assistant")
 	m.refreshView()
-	if len(m.rend.blockCache) == 0 || len(m.rend.blockMD) == 0 {
+	if len(m.rend.blocks.rendered) == 0 || len(m.rend.blocks.markdown) == 0 {
 		t.Fatal("precondition: visible conversation should populate renderer caches")
 	}
 

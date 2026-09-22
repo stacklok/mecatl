@@ -56,11 +56,11 @@ func TestMecatuiFunctionalConversationCards_Scenario3_FrameProvenanceMatchesPrep
 		t.Fatalf("frame lines/provenance = %d/%d", len(frame.lines), len(frame.provenance))
 	}
 	for i := range c.blocks {
-		entry := r.blockCache[i]
+		entry := r.blocks.rendered[i]
 		if len(strings.Split(entry.out, "\n")) != len(entry.rows) {
 			t.Fatalf("block %d cached lines/rows are not lockstep", i)
 		}
-		if _, ok := r.blockFrameCache[i]; ok {
+		if _, ok := r.blocks.frameRows[i]; ok {
 			t.Fatalf("functional block %d grew a second frame-row cache", i)
 		}
 	}
@@ -142,8 +142,8 @@ func TestMecatuiFunctionalConversationCards_Scenario3_IncrementalCacheFastPath(t
 	if r.cardPrepares != prepares || r.blockRenders-renders != 1 {
 		t.Fatalf("tail update: card prepares=%d block renders=%d, want 0/1", r.cardPrepares-prepares, r.blockRenders-renders)
 	}
-	if r.joinPrefixN != len(c.blocks)-1 {
-		t.Fatalf("tail update prefix = %d, want %d", r.joinPrefixN, len(c.blocks)-1)
+	if r.blocks.prefixN != len(c.blocks)-1 {
+		t.Fatalf("tail update prefix = %d, want %d", r.blocks.prefixN, len(c.blocks)-1)
 	}
 
 	prepares, renders = r.cardPrepares, r.blockRenders

@@ -57,6 +57,9 @@ type Prepared struct {
 	Rows  []Row
 }
 
+// Text joins the prepared display lines for rendering.
+func (p Prepared) Text() string { return strings.Join(p.Lines, "\n") }
+
 func cloneStrings(values []string) []string {
 	cloned := make([]string, len(values))
 	for i, value := range values {

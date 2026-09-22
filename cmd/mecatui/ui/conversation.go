@@ -218,7 +218,7 @@ type block struct {
 	kind blockKind
 
 	// rev is the block's render revision: bumped on EVERY post-append mutation of a
-	// render-visible field. The renderer's per-block cache (renderer.blockCache)
+	// render-visible field. The renderer's per-block cache (renderer.blocks)
 	// keys on it, so a settled block (rev unchanged) joins the conversation string
 	// from cache while a mutated block re-renders fresh. Blocks must therefore be
 	// mutated only through conversation methods — the bump sites are exactly four

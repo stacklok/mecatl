@@ -233,7 +233,7 @@ func (m Model) markDirty() (Model, tea.Cmd) {
 // unchanged; only the per-token re-render churn is coalesced). refreshView clears
 // viewDirty, making "rendered ⟺ not dirty" an invariant.
 //
-// Within each 16ms flush, the per-BLOCK render cache (renderer.blockCache, keyed
+// Within each 16ms flush, the per-BLOCK render cache component (renderer.blocks,
 // on block.rev/width/expand) means only blocks whose rev, the wrap width, or the
 // expand toggle changed actually re-render — in practice just the live tail
 // block; every settled block joins the conversation string from cache. The

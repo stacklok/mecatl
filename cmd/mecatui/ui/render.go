@@ -18,7 +18,6 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 )
 
 // maxToolResultLines caps how many visible display rows of a tool result are
@@ -77,10 +76,8 @@ var resultProminentKeys = []string{
 }
 
 // renderer turns conversation blocks into the viewport string. It owns the
-// glamour TermRenderer cache (keyed by wrap width), the active theme, and two
-// per-block memo layers: blockCache (whole rendered blocks, keyed on the
-// composite blockRenderKey — see renderBlock) and blockMD (the assistant glamour step,
-// keyed on src/width — see markdownAt). glamour is NOT thread-safe, so renderer
+// glamour TermRenderer cache (keyed by wrap width), the active theme, and one
+// blockRenderCache component for all cross-frame conversation-block state. Glamour
 // is only ever touched from the Bubble Tea update goroutine — never from the
 // stream reader. The mutex guards the cache map against the (currently
 // single-goroutine) access defensively and documents the invariant; it does not
@@ -88,9 +85,6 @@ var resultProminentKeys = []string{
 type renderer struct {
 	th    theme.Theme
 	width int
-
-	// renderDialect is an explicitly retained render-cache compatibility axis.
-	renderDialect uint32
 
 	// traceWidth is the available width of a delegation-inspector card's body. A
 	// zero value preserves the transcript renderer's existing trace layout.
@@ -122,39 +116,11 @@ type renderer struct {
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
-	// blockMD memoizes the glamour render of each assistant block, keyed by the
-	// block's (stable, append-only) conversation index. It is the INNER of the two
-	// per-block memo layers: blockCache (below) memoizes the whole rendered block
-	// (any kind) with blockRenderKey, while blockMD memoizes only the
-	// glamour markdown step of an assistant block keyed on (src, width) — so an
-	// assistant block whose rev changed for a non-text reason (e.g. the turn-end
-	// endReasoningStream) misses the outer cache but still reuses its glamour
-	// render here. refreshView re-renders the WHOLE scrollback on every flushed
-	// frame (deltas are coalesced to frame cadence; see update.go's renderTickMsg).
-	// Without this, every prior assistant turn is re-parsed through glamour on
-	// every flushed frame of the live turn — O(turns × frames) glamour work that
-	// grows with session length. Memoising collapses each SETTLED block to one
-	// render: only the live (last) block, whose src grows each frame, misses and
-	// re-renders. markdown() is a pure function of (src, width, theme) and the
-	// theme is fixed for the renderer's life, so the cached entry is valid whenever
-	// its (src, width) still match — index is just the bucket that bounds memory to
-	// one entry per block and lets the live block overwrite in place. Touched only
-	// on the Bubble Tea update goroutine (same invariant as the glamour cache), so
-	// it needs no lock. Dropped (with blockCache) by resetBlockCaches when the
-	// conversation is rebuilt, since a fresh conversation reuses the same indices.
-	blockMD map[int]mdEntry
-
-	// blockCache memoizes the FULL rendered string of every block (all kinds, not
-	// just assistant markdown), keyed by the block's stable conversation index. An
-	// entry is valid while its one composite blockRenderKey matches: block.rev is
-	// bumped by conversation mutation gateways, and renderContextKey owns all
-	// presentation axes. On each flushed frame every SETTLED block joins the
-	// conversation string straight from cache and only mutated blocks (in practice
-	// the live tail) re-render through renderBlockFresh. Correctness rests on the
-	// same purity argument as blockMD plus the rev discipline documented on
-	// block.rev. Update-goroutine-only; dropped by resetBlockCaches when the
-	// conversation is rebuilt (index reuse).
-	blockCache map[int]blockEntry
+	// blocks owns every cross-frame conversation-block cache: whole rendered
+	// blocks, assistant markdown, fallback frame rows, and the incremental prefix.
+	// It is reset when a conversation is rebuilt because its buckets use conversation
+	// indices that a fresh conversation can reuse.
+	blocks blockRenderCache
 
 	// mdRenders counts REAL glamour invocations (cache misses) — incremented at the
 	// tr.Render call site in markdown(), not in markdownAt's hit path. It is the test
@@ -163,7 +129,7 @@ type renderer struct {
 	// one (the live block re-renders once). Touched only on the update goroutine.
 	mdRenders int
 
-	// blockRenders counts REAL whole-block renders (blockCache misses) — incremented
+	// blockRenders counts REAL whole-block renders (blockRenderCache misses) — incremented
 	// only when renderBlock has a cache miss, never on a cache hit. It is the test
 	// seam proving settled blocks join from cache: a flushed frame of a streaming turn bumps it by exactly one (the live block), regardless of how
 	// long the scrollback is. Touched only on the update goroutine.
@@ -180,7 +146,7 @@ type renderer struct {
 	toolCardPrepares int
 
 	// inputKey/inputView/inputValid memoize the rendered INPUT region (the bubbles
-	// textarea) — the input-side sibling of blockCache. textarea.View() re-wraps
+	// textarea) — the input-side sibling of blockRenderCache. textarea.View() re-wraps
 	// (and SHA-256-keys, even on its internal cache hits) every logical line on
 	// every call, and renderInput runs at least twice per reduced message (the
 	// relayout chokepoint's chrome() + View's assembleLayout), so an unchanged
@@ -205,7 +171,7 @@ type renderer struct {
 	renderedBlocksScratch []string
 
 	// vpViewCache/vpViewValid memoize the rendered VIEWPORT OUTPUT — the OUTERMOST
-	// render layer, above blockCache. View() calls vp.View() which runs
+	// render layer, above blockRenderCache. View() calls vp.View() which runs
 	// lipgloss's per-line grapheme-width pad on the full visible window (~40 lines at
 	// a time). On a spinner-only frame (no content/scroll/geometry change) this work
 	// is pure waste: the viewport output is identical to the previous frame. The memo
@@ -223,43 +189,10 @@ type renderer struct {
 	vpViewCache string
 	vpViewValid bool
 
-	// joinPrefixLines / joinPrefixN / joinPrefixKey cache the unchanged prefix for
-	// the incremental frame assembly. A live tail re-render only rebuilds the suffix.
-	//
-	// The canonical per-block segment framing is: block i contributes
-	// sep(i) + renderedBlocks[i] + "\n", where sep(0)="" and sep(i>0)="\n".
-	// The cached prefix plus its freshly built suffix is byte-identical output.
-	//
-	// joinPrefixLines holds the prefix ALREADY SPLIT into single (newline-free) lines,
-	// so renderConversationLines can hand it straight to vp.SetContentLines (no Split,
-	// no Builder copy of the settled scrollback) and only the suffix is built fresh
-	// each frame. joinPrefixN is the number of blocks the cached prefix covers;
-	// joinPrefixKey pins the (width, expand) it was built at (the prefix blocks did NOT
-	// re-render — that is precisely why they are in the prefix — so no per-block rev
-	// is needed; width/expand are the global axes that would change every block's
-	// render at once). A NON-TAIL mutation (resolveTool/subagentBlock/teamBlock bump a
-	// block BEHIND the tail) lowers firstChanged below joinPrefixN, which truncates the
-	// prefix before the changed index — never serving it stale.
-	joinPrefixLines []string
-	joinPrefixN     int
-	joinPrefixKey   joinPrefixState
-	// joinPrefixProvenance is the lockstep metadata sibling of joinPrefixLines.
-	// It contains no rendered text and is reset with the cached prefix.
-	joinPrefixProvenance []renderedRow
 	// frameProvenanceScratch assembles one frame's lockstep rows without a fresh
-	// full-scrollback allocation on every streaming tick.
+	// full-scrollback allocation on every streaming tick. It is current-frame
+	// allocation reuse, not cross-frame cache state.
 	frameProvenanceScratch []renderedRow
-	blockFrameCache        map[int]frameBlockEntry
-}
-
-// joinPrefixState is the validity key of the cached incremental-join prefix: the
-// width and expand toggle it was built under. (The prefix blocks did not re-render
-// this frame — they are in the prefix BECAUSE they were unchanged — so a per-block
-// rev is unnecessary; a width or expand change re-renders every block and must drop
-// the prefix.)
-type joinPrefixState struct {
-	width  int
-	expand bool
 }
 
 // inputRenderKey is the validity key of the memoized input render: the complete
@@ -317,14 +250,11 @@ const assistantBodyHang = 2
 // goldens stay byte-identical.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
-		th:              th,
-		marks:           hk,
-		indent:          defaultBlockIndent,
-		renderDialect:   structuredCardDialect,
-		cache:           map[int]*glamour.TermRenderer{},
-		blockMD:         map[int]mdEntry{},
-		blockCache:      map[int]blockEntry{},
-		blockFrameCache: map[int]frameBlockEntry{},
+		th:     th,
+		marks:  hk,
+		indent: defaultBlockIndent,
+		cache:  map[int]*glamour.TermRenderer{},
+		blocks: blockRenderCache{},
 	}
 }
 
@@ -343,7 +273,7 @@ func (r *renderer) contentWidth() int {
 // indentLines prefixes every line of a rendered block with `indent` spaces — the
 // uniform left margin that aligns the conversation history with the 1-col-padded
 // header/footer. It is called ONCE per block on the cache-miss path (renderBlock), so
-// the indented string is what blockCache stores and every steady-state frame joins the
+// the indented string is what blockRenderCache stores and every steady-state frame joins the
 // already-indented line straight from cache (no per-frame indent cost). The prefixed
 // spaces are REAL content cells, so the selection x-mapping stays identity (see the
 // `indent` field doc). indent 0 (a bare/width-0 renderer) returns s unchanged with no
@@ -372,15 +302,6 @@ func padLines(s string, n int) string {
 		b.WriteString(line)
 	}
 	return b.String()
-}
-
-// resetBlockRenderPrefix drops the incremental-join prefix when a rebuilt
-// conversation could otherwise reuse stale cached block renders by index.
-func (r *renderer) resetBlockRenderPrefix() {
-	r.joinPrefixLines = r.joinPrefixLines[:0]
-	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
-	r.joinPrefixN = 0
-	r.joinPrefixKey = joinPrefixState{}
 }
 
 // setWidth records the current wrap width. Width changes are handled by the
@@ -509,17 +430,11 @@ func (r *renderer) markdown(src string) string {
 // rests on markdown() being pure in (src, width, theme) with a fixed theme; the
 // cache therefore can never return a stale render. Update-goroutine-only.
 func (r *renderer) markdownAt(idx int, src string) string {
-	if e, ok := r.blockMD[idx]; ok && e.src == src && e.width == r.width {
-		return e.out
+	if out, ok := r.blocks.markdownBlock(idx, src, r.width); ok {
+		return out
 	}
 	out := r.markdown(src)
-	if r.blockMD == nil {
-		// Zero-value safety: a bare &renderer{th: th} (see the renderBlock comment)
-		// never went through newRenderer; lazy-init so an assistant block rendered
-		// through one stays safe.
-		r.blockMD = map[int]mdEntry{}
-	}
-	r.blockMD[idx] = mdEntry{src: src, width: r.width, out: out}
+	r.blocks.storeMarkdown(idx, mdEntry{src: src, width: r.width, out: out})
 	return out
 }
 
@@ -691,24 +606,25 @@ func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
 // line-split of segments [prefixN, n). prefixN = min(firstChanged, n): blocks below
 // firstChanged did NOT re-render, so they are byte-identical to last frame.
 //
-// Correctness invalidation (a stale prefix is worse than the perf cost): the cached
-// prefix is reused ONLY when it covers EXACTLY [0, prefixN) — i.e. joinPrefixN ==
-// prefixN — at the SAME (width, expand). The joinPrefixN == prefixN check is THE
-// load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a block
-// count shrink lowers prefixN, and a width/expand change re-renders EVERY block so
-// firstChanged drops to 0 (→ prefixN 0) — all three move prefixN away from the cached
-// joinPrefixN and joinPrefixKey must both match: the former catches changed
-// blocks or length, while the latter guards width- and expand-dependent framing.
+// Correctness invalidation (a stale prefix is worse than the perf cost):
+// blockRenderCache.prefix reuses the cached leading range ONLY when it covers
+// EXACTLY [0, prefixN) at the SAME (width, expand). Its prefix coverage check is
+// the load-bearing guard: a NON-TAIL mutation lowers firstChanged (→ prefixN), a
+// block-count shrink lowers prefixN, and a width/expand change re-renders EVERY
+// block so firstChanged drops to 0 (→ prefixN). Those paths make the requested
+// coverage or joinPrefixState differ; storeRendered independently clears a prefix
+// when a freshly rendered block was already covered by it.
 //
-// The returned slice is freshly allocated EACH call (prefix lines appended into a
-// new backing array, then suffix lines), so vp.SetContentLines — which retains and
-// may mutate the slice it is handed (slices.Insert on embedded newlines) — never
-// corrupts the cached joinPrefixLines. The slice safety rests on TWO facts: the
-// fresh backing array (SetContentLines mutates that array, not joinPrefixLines'),
-// and Go string immutability (the prefix STRINGS are shared by value but can never
-// be mutated in place). It does NOT rely on the prefix lines being newline-free —
-// they are split single lines, but SetContentLines is free to re-split them and the
-// fresh array still absorbs the result.
+// The returned slice is freshly allocated EACH call (cached prefix lines appended
+// into a new backing array, then suffix lines), so vp.SetContentLines — which
+// retains and may mutate the slice it is handed (slices.Insert on embedded
+// newlines) — never corrupts blockRenderCache's cached prefix. The slice safety
+// rests on TWO facts: the fresh backing array (SetContentLines mutates that array,
+// not the cache-owned prefix), and Go string immutability (the prefix STRINGS are
+// shared by value but can never be mutated in place). It does NOT rely on the
+// prefix lines being newline-free — they are split single lines, but
+// SetContentLines is free to re-split them and the fresh array still absorbs the
+// result.
 func (r *renderer) renderConversationLines(c *conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }
@@ -777,15 +693,15 @@ func blockBlankLinesAfter(conversationBlocks []block, i int) int {
 // can never be stale. Update-goroutine-only.
 func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	key := r.blockRenderKey(b, expand)
-	if e, ok := r.blockCache[idx]; ok && e.key == key {
-		return e.out
+	if entry, ok := r.blocks.renderedBlock(idx, key); ok {
+		return entry.out
 	}
 	var (
 		out  string
 		rows []renderedRow
 	)
 	if prepared, ok := r.prepareStructuredBlock(b, expand); ok {
-		out = preparedText(prepared)
+		out = prepared.Text()
 		rows = blockProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
 	} else {
 		out = r.renderBlockFresh(idx, b, expand)
@@ -795,42 +711,8 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	if b.kind != blockTool || r.width > r.indent {
 		out = r.indentLines(out)
 	}
-	if r.blockCache == nil {
-		// Zero-value safety: a bare &renderer{th: th} never calls newRenderer. Two
-		// production sites construct one — the width-0 team focus renderer
-		// (team.go, renderTeamFocus) and the fleet focus renderer (agents_overlay.go,
-		// renderSubagentFocus) — plus direct test construction. Those sites only call
-		// the trace/chip helpers today, but the safety must be uniform: markdown and
-		// markdownAt carry matching lazy-inits for their maps (r.cache / r.blockMD),
-		// so ANY render path on a bare renderer is safe, not just non-assistant
-		// blocks through here.
-		r.blockCache = map[int]blockEntry{}
-	}
-	r.blockCache[idx] = blockEntry{key: key, out: out, rows: rows}
+	r.blocks.storeRendered(idx, blockEntry{key: key, out: out, rows: rows})
 	r.blockRenders++
-	// CORRECTNESS CHOKEPOINT (shared by BOTH render paths): a fresh render of a block
-	// inside the cached incremental-join prefix invalidates that prefix. The prefix
-	// (joinPrefixLines, maintained by renderConversationLines) covers [0, joinPrefixN),
-	// but blockCache/blockRenders are mutated by renderConversation (the string path
-	// taken under selection/expand) TOO — so without this, a string-path frame could
-	// re-render a non-tail block (resolveTool/subagentBlock/teamBlock/an
-	// ex-tail assistant), update blockCache, and leave joinPrefixLines stale; the next
-	// lines-path frame would then HIT blockCache for that block (no blockRenders bump,
-	// firstChanged stays high, joinPrefixN matches) and serve the STALE prefix.
-	// Couple the invalidation to this single shared re-render point — not the
-	// lines-path walk — so either path drops the prefix the instant a covered block
-	// re-renders. Invalidate-to-0 (full rebuild next lines frame) is the simplest
-	// correct choice; the cost is paid only on the rare non-tail-mutation/path-switch
-	// frame, never on the streaming hot path (where the tail block is at index n-1 ≥
-	// joinPrefixN, so this never fires). INVARIANT: after any frame on either path,
-	// joinPrefixLines covers exactly [0, joinPrefixN) and no block in [0, joinPrefixN)
-	// has re-rendered since the prefix was built.
-	if idx < r.joinPrefixN {
-		r.joinPrefixLines = r.joinPrefixLines[:0]
-		r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
-		r.joinPrefixN = 0
-		r.joinPrefixKey = joinPrefixState{}
-	}
 	return out
 }
 
@@ -842,7 +724,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	switch b.kind {
 	case blockUser:
-		return preparedText(r.prepareUserBlock(b))
+		return r.prepareUserBlock(b).Text()
 	case blockAssistant:
 		// Assistant text is rendered through glamour, which neutralises escape
 		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
@@ -865,28 +747,22 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	case blockTool:
 		return r.renderTool(b, expand)
 	case blockNotice:
-		return preparedText(r.prepareNoticeBlock(b))
+		return r.prepareNoticeBlock(b).Text()
 	case blockHook:
-		return preparedText(r.prepareHookBlock(b))
+		return r.prepareHookBlock(b).Text()
 	case blockTurnStat:
-		return preparedText(r.prepareTurnStatBlock(b))
+		return r.prepareTurnStatBlock(b).Text()
 	case blockError:
 		if b.permanent {
-			return preparedText(r.preparePermanentErrorBlock(b, expand))
+			return r.preparePermanentErrorBlock(b, expand).Text()
 		}
-		return preparedText(r.prepareErrorBlock(b))
+		return r.prepareErrorBlock(b).Text()
 	case blockDelivery:
-		return preparedText(r.prepareDeliveryBlock(b))
+		return r.prepareDeliveryBlock(b).Text()
 	default:
 		return r.wrapStyled(terminaltext.Sanitize(b.raw), lipgloss.NewStyle())
 	}
 }
-
-// permanentErrorSummary is retained for focused compatibility tests; card
-// preparation owns the production transformation.
-func permanentErrorSummary(raw string) string { return blocks.PermanentErrorSummary(raw) }
-
-func collapseErrorSummary(raw string) string { return blocks.CollapseErrorSummary(raw) }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
 // reasoning. It signals the prose is a lossy summary, not the model's actual
@@ -954,18 +830,6 @@ func plural(n int, noun string) string {
 	return strconv.Itoa(n) + " " + noun + "s"
 }
 
-// deliveryBodyForDisplay strips the untrusted-fence markers and the
-// "[scheduled task … completed with stop reason: …]" provenance header from a
-// recorded delivery note, returning only the fire's outcome body for display.
-// The fence + header are machine markers (the trust boundary the model reads);
-// the delivery card already shows the provenance in its label, so echoing them
-// in the body is noise. A note that does not match the fenced shape is returned
-// VERBATIM (fail-soft — never drop content the transform can't prove is a
-// delivery note).
-func deliveryBodyForDisplay(raw string) string {
-	return blocks.DeliveryBodyForDisplay(raw)
-}
-
 // toolCardLayout returns the styled card, its outer width, and its usable body
 // width. renderTool uses the same body width to wrap and cap collapsed results,
 // keeping result-row accounting aligned with the final card layout.
@@ -1025,8 +889,17 @@ func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth i
 	return strings.Join(rows, "\n")
 }
 
+// toolCardTabWidth is the fixed displayed-code indentation width. Tool cards expand
+// literal tabs before wrapping so ansi.Hardwrap and Lip Gloss measure identical text.
+const toolCardTabWidth = 4
+
+func normalizeToolCardTabs(text string) string {
+	return strings.ReplaceAll(text, "\t", strings.Repeat(" ", toolCardTabWidth))
+}
+
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
+	text = normalizeToolCardTabs(text)
 	if text == "" || bodyWidth <= 0 {
 		return text
 	}
@@ -1095,7 +968,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 // prefix's alignment without letting either the prefix or style padding consume a
 // second layout pass.
 func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
-	text = strings.TrimRightFunc(terminaltext.Sanitize(text), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(normalizeToolCardTabs(text)), unicode.IsSpace)
 	if bodyWidth <= 0 {
 		return []string{prefix + text}
 	}
@@ -1129,6 +1002,7 @@ func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth i
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
 func wrapToolCardRegion(region string, bodyWidth int) string {
+	region = normalizeToolCardTabs(region)
 	if region == "" || bodyWidth <= 0 {
 		return region
 	}
@@ -1953,7 +1827,7 @@ func (r *renderer) resultBody(body string, expand bool) string {
 // the overflow count honest and prevents the final card wrap from growing the
 // collapsed body after its cap.
 func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) string {
-	body = terminaltext.Sanitize(strings.TrimRight(body, "\n"))
+	body = normalizeToolCardTabs(terminaltext.Sanitize(strings.TrimRight(body, "\n")))
 	if expand || body == "" {
 		return body
 	}
@@ -1986,7 +1860,8 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
-		if strings.TrimSpace(line.text) == "" {
+		text := normalizeToolCardTabs(line.text)
+		if strings.TrimSpace(text) == "" {
 			// Preserve an intentional blank source line as one display row, without
 			// retaining width-exceeding padding that could wrap into more rows.
 			wrapped = append(wrapped, toolResultLine{style: line.style})
@@ -1995,7 +1870,7 @@ func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultL
 		// Trailing whitespace is display padding, not result content: discard it
 		// before wrapping so it cannot become a blank continuation row. Leading
 		// indentation remains part of every meaningful source line.
-		text := strings.TrimRightFunc(line.text, unicode.IsSpace)
+		text = strings.TrimRightFunc(text, unicode.IsSpace)
 		if bodyWidth > 0 {
 			text = ansi.Hardwrap(text, bodyWidth, true)
 		}

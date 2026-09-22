@@ -69,7 +69,7 @@ type renderedRow struct {
 
 // renderedFrame keeps the renderer's existing lines and their lockstep row
 // metadata. It is not a second transcript: lines share the strings already held
-// by blockCache/joinPrefixLines and provenance is O(rows), not O(rendered bytes).
+// by blockRenderCache's rendered entries and prefix lines; provenance is O(rows), not O(rendered bytes).
 type renderedFrame struct {
 	lines      []string
 	provenance []renderedRow
@@ -162,17 +162,17 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 	renderedBlocks, firstChanged := r.walkBlocks(c, expand)
 	n := len(renderedBlocks)
 	prefixN := min(firstChanged, n)
-	wantKey := joinPrefixState{width: r.width, expand: expand}
-	if r.joinPrefixKey != wantKey || r.joinPrefixN != prefixN {
-		r.rebuildFramePrefix(c, renderedBlocks, prefixN, expand)
-		r.joinPrefixN = prefixN
-		r.joinPrefixKey = wantKey
+	key := joinPrefixState{width: r.width, expand: expand}
+	prefixLines, prefixProvenance, ok := r.blocks.prefix(key, prefixN)
+	if !ok {
+		prefixLines, prefixProvenance = r.rebuildFramePrefix(c, renderedBlocks, prefixN, expand)
+		r.blocks.replacePrefix(prefixLines, prefixProvenance, prefixN, key)
 	}
 
 	// Phase 2 — frame/provenance assembly: append cached prefix and changed suffix
 	// into lockstep line and provenance slices.
 	frame := renderedFrame{
-		lines: make([]string, 0, len(r.joinPrefixLines)+(n-prefixN)*2+1),
+		lines: make([]string, 0, len(prefixLines)+(n-prefixN)*2+1),
 		// The viewport never retains provenance, so the renderer can reuse this
 		// frame-local backing array after the caller projects the current frame.
 		provenance: r.frameProvenanceScratch[:0],
@@ -180,8 +180,8 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 	if expand && len(c.filesChanged) > 0 {
 		frame.appendixID = c.changedFilesAppendixID
 	}
-	frame.lines = append(frame.lines, r.joinPrefixLines...)
-	frame.provenance = append(frame.provenance, r.joinPrefixProvenance...)
+	frame.lines = append(frame.lines, prefixLines...)
+	frame.provenance = append(frame.provenance, prefixProvenance...)
 	for i := prefixN; i < n; i++ {
 		r.appendFrameSegment(&frame, c, renderedBlocks, i, expand)
 	}
@@ -192,14 +192,15 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 	return frame
 }
 
-func (r *renderer) rebuildFramePrefix(c *conversation, renderedBlocks []string, prefixN int, expand bool) {
-	r.joinPrefixLines = r.joinPrefixLines[:0]
-	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
+func (r *renderer) rebuildFramePrefix(c *conversation, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
+	lines := make([]string, 0, prefixN*2)
+	provenance := make([]renderedRow, 0, prefixN*2)
 	for i := 0; i < prefixN; i++ {
-		frame := renderedFrame{lines: r.joinPrefixLines, provenance: r.joinPrefixProvenance}
+		frame := renderedFrame{lines: lines, provenance: provenance}
 		r.appendFrameSegment(&frame, c, renderedBlocks, i, expand)
-		r.joinPrefixLines, r.joinPrefixProvenance = frame.lines, frame.provenance
+		lines, provenance = frame.lines, frame.provenance
 	}
+	return lines, provenance
 }
 
 func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, renderedBlocks []string, index int, expand bool) {
@@ -219,17 +220,14 @@ func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, ren
 
 func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand bool) []renderedRow {
 	key := r.blockRenderKey(b, expand)
-	if entry, ok := r.blockFrameCache[index]; ok && entry.key == key {
-		return entry.rows
+	if rows, ok := r.blocks.frameRowsFor(index, key); ok {
+		return rows
 	}
-	if entry, ok := r.blockCache[index]; ok && entry.key == key && len(entry.rows) > 0 {
+	if entry, ok := r.blocks.renderedBlock(index, key); ok && len(entry.rows) > 0 {
 		return entry.rows
 	}
 	rows := r.provenanceRows(b, rendered, expand)
-	if r.blockFrameCache == nil {
-		r.blockFrameCache = map[int]frameBlockEntry{}
-	}
-	r.blockFrameCache[index] = frameBlockEntry{key: key, rows: rows}
+	r.blocks.storeFrameRows(index, frameBlockEntry{key: key, rows: rows})
 	return rows
 }
 
