@@ -28,6 +28,16 @@ func TestSanitize(t *testing.T) {
 	}
 }
 
+func TestSanitizeSingleLine(t *testing.T) {
+	const input = "a\tb\nc\u2028d\u2029e\x00\x1b[2J\x7f\u009bf\u200bg"
+	if got, want := Sanitize(input), "a\tb\nc\u2028d\u2029e[2Jfg"; got != want {
+		t.Errorf("Sanitize(%q) = %q, want %q", input, got, want)
+	}
+	if got, want := SanitizeSingleLine(input), "abcde[2Jfg"; got != want {
+		t.Errorf("SanitizeSingleLine(%q) = %q, want %q", input, got, want)
+	}
+}
+
 func TestNormalizeWidth(t *testing.T) {
 	tests := []struct {
 		name string

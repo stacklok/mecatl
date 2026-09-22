@@ -6,7 +6,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // PlainLayoutInput is the caller-owned geometry used by non-Markdown cards.

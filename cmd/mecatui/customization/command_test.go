@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 func TestOnlyCommandSourcesExposeCommandDiagnostics(t *testing.T) {
@@ -91,7 +93,7 @@ func TestStatusCustomization_Scenario3_BoundsAndSanitizesCommandOutput(t *testin
 	source.Submit(Input{Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	waitStatusChange(t, source)
 	line := source.Latest()
-	if got := statusSurfaceText(line.Header) + statusSurfaceText(line.Footer); strings.ContainsFunc(got, terminalControl) || strings.Contains(got, "do-not-render") {
+	if got := statusSurfaceText(line.Header) + statusSurfaceText(line.Footer); got != terminaltext.SanitizeSingleLine(got) || strings.Contains(got, "do-not-render") {
 		t.Fatalf("unsafe command output reached status line: %q", got)
 	}
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
 )
 
@@ -40,13 +41,13 @@ func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 	}
 
 	mcpName, isMCP := mcpTitle(b.toolName)
-	headLabel := sanitizeTerminal(b.toolName)
+	headLabel := terminaltext.Sanitize(b.toolName)
 	if isMCP {
 		headLabel = mcpName
 	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), sanitizeTerminal(b.toolName), bodyWidth)
+		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(b.toolName), bodyWidth)
 	}
 
 	sections := []preparedToolSection{{Region: cards.RegionChrome, Text: head}}

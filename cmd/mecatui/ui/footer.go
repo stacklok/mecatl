@@ -1,17 +1,11 @@
 package ui
 
-// This file holds the PURE footer-segment builders for mecatui: token
-// humanisation, the cache-hit-rate computation, the context-meter string, and
-// the session usage facets. These are deliberately layout-free — the actual
-// footer assembly, right-alignment, and narrow-width tiering live in view.go's
-// renderFooter. Keeping the segment builders here makes them unit-testable in
-// isolation (no Model, no terminal) and keeps renderFooter readable.
-
 import (
 	"fmt"
 	"strings"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -331,7 +325,7 @@ func stopReasonLabel(stop string) (text, slot string) {
 	case stopError:
 		return "error", "errorText"
 	default:
-		return sanitizeTerminal(stop), slotMuted
+		return terminaltext.Sanitize(stop), slotMuted
 	}
 }
 
@@ -376,7 +370,7 @@ func teamWorkingCounts(lanes []teamLane) (working, total int) {
 // so the live team reads as active without animation. agentsMark is the LIVE Agents
 // chord (issue #457) so an override propagates to the footer affordance.
 func teamFooterFull(th theme.Theme, teamID string, working, total int, agentsMark string) string {
-	id := truncate(sanitizeTerminal(teamID), teamFooterIDLimit)
+	id := truncate(terminaltext.Sanitize(teamID), teamFooterIDLimit)
 	if id == "" {
 		return th.Style("spinner").Render(teamFooterMedium(teamID, working, total, agentsMark))
 	}

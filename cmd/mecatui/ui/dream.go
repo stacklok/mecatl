@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -214,7 +215,7 @@ func renderDreamOverlay(th theme.Theme, st dreamState, caps client.Capabilities,
 			}
 		}
 		if st.err != nil {
-			lines = append(lines, "", th.Style("errorText").Render(sanitizeTerminal(st.err.Error())))
+			lines = append(lines, "", th.Style("errorText").Render(terminaltext.Sanitize(st.err.Error())))
 		}
 	case dreamGenerating:
 		lines = append(lines, th.Style("muted").Render("generating plan…"))
@@ -307,7 +308,7 @@ func renderDreamParticipant(label string, p client.DreamParticipant, width int) 
 func framedDreamField(label, value string, width int) []string {
 	width = max(12, width)
 	var out []string
-	for _, physical := range strings.Split(sanitizeTerminal(value), "\n") {
+	for _, physical := range strings.Split(terminaltext.Sanitize(value), "\n") {
 		quoted := strconv.QuoteToGraphic(physical)
 		wrapped := strings.Split(wrapCardText(quoted, width), "\n")
 		if len(wrapped) == 0 {

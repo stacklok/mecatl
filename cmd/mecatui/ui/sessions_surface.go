@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -722,7 +723,7 @@ func (s *sessionsState) handleRenamed(msg client.SessionRenamedMsg) (tea.Cmd, bo
 	}
 	s.actionLoading = false
 	if msg.Err != nil {
-		s.intent = sessionsStatusNoticeIntent{text: "could not rename session: " + sanitizeTerminal(msg.Err.Error())}
+		s.intent = sessionsStatusNoticeIntent{text: "could not rename session: " + terminaltext.Sanitize(msg.Err.Error())}
 		return nil, true, false
 	}
 	for i := range s.sessions {
@@ -746,7 +747,7 @@ func (s *sessionsState) handleDeleted(msg client.SessionDeletedMsg) (tea.Cmd, bo
 	}
 	s.actionLoading = false
 	if msg.Err != nil {
-		s.intent = sessionsStatusNoticeIntent{text: "could not delete session: " + sanitizeTerminal(msg.Err.Error())}
+		s.intent = sessionsStatusNoticeIntent{text: "could not delete session: " + terminaltext.Sanitize(msg.Err.Error())}
 		return nil, true, false
 	}
 	kept := s.sessions[:0]
@@ -767,7 +768,7 @@ func (s *sessionsState) handleForked(msg sessionForkedMsg) {
 	}
 	s.actionLoading = false
 	if msg.err != nil {
-		s.intent = sessionsStatusNoticeIntent{text: "could not fork session: " + sanitizeTerminal(msg.err.Error())}
+		s.intent = sessionsStatusNoticeIntent{text: "could not fork session: " + terminaltext.Sanitize(msg.err.Error())}
 		return
 	}
 	s.selected = client.SessionListItem{
@@ -1377,11 +1378,11 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 			}
 			job := "none"
 			if h.ActiveJob != "" {
-				job = sanitizeTerminal(h.ActiveJob)
+				job = terminaltext.Sanitize(h.ActiveJob)
 			}
 			failure := "none"
 			if h.LastFailure != "" {
-				failure = sanitizeTerminal(h.LastFailure)
+				failure = terminaltext.Sanitize(h.LastFailure)
 			}
 			lines = append(lines,
 				"Stored: "+bytesText+"  Recoverable: "+reclaimable,
@@ -1421,7 +1422,7 @@ func renderMigrationPlan(th theme.Theme, plan client.SessionMigrationPlan, hk he
 }
 
 func renderMigrationJob(th theme.Theme, job client.SessionMigrationJob, hk helpKeys) string {
-	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + sanitizeTerminal(job.ID) + "  Status: " + sanitizeTerminal(job.State),
+	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + terminaltext.Sanitize(job.ID) + "  Status: " + terminaltext.Sanitize(job.State),
 		fmt.Sprintf("Processed: %d/%d  Updated: %d  Skipped: %d  Failed: %d", job.Processed, job.V1Families, job.Migrated, job.SkippedFamilies, job.Failed),
 		"Sessions are preserved; completed updates are kept."}
 	lines = append(lines, renderMigrationErrors(job.Errors)...)
@@ -1442,7 +1443,7 @@ func renderMigrationErrors(items []client.SessionMigrationItemError) []string {
 			lines = append(lines, fmt.Sprintf("… and %d more", len(items)-i))
 			break
 		}
-		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
+		lines = append(lines, "- "+terminaltext.Sanitize(item.ItemHandle)+" ["+terminaltext.Sanitize(item.ReasonCode)+"] "+terminaltext.Sanitize(item.Message))
 	}
 	return lines
 }
@@ -1473,7 +1474,7 @@ func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
 }
 
 func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string {
-	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + sanitizeTerminal(job.ID) + "  Status: " + sanitizeTerminal(job.State),
+	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + terminaltext.Sanitize(job.ID) + "  Status: " + terminaltext.Sanitize(job.State),
 		fmt.Sprintf("Checked: %d  Deleted: %d  Skipped: %d  Changed: %d  Failed: %d", job.Processed, job.Deleted, job.Skipped, job.Stale, job.Failed),
 		"Sessions changed since the preview are skipped. Review partial results, then create a new preview to retry."}
 	for i, item := range job.Errors {
@@ -1481,7 +1482,7 @@ func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string
 			lines = append(lines, fmt.Sprintf("… and %d more", len(job.Errors)-i))
 			break
 		}
-		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
+		lines = append(lines, "- "+terminaltext.Sanitize(item.ItemHandle)+" ["+terminaltext.Sanitize(item.ReasonCode)+"] "+terminaltext.Sanitize(item.Message))
 	}
 	if job.State == teamStopReasonCancelled {
 		lines = append(lines, "Cancellation stops remaining items; completed deletions cannot be undone.")
@@ -1555,12 +1556,12 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 		} else if label == "" {
 			label = "untitled"
 		}
-		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + sanitizeTerminal(label)
+		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + terminaltext.Sanitize(label)
 		if handle := st.handles[s.ID]; handle != "" {
 			line += "  " + handle
 		}
 		if s.ModelID != "" {
-			line += "  (" + sanitizeTerminal(s.ModelID) + ")"
+			line += "  (" + terminaltext.Sanitize(s.ModelID) + ")"
 		}
 		if s.Kind == client.SessionKindUnknown {
 			line += "  [Legacy session — inspect only]"
@@ -1569,7 +1570,7 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 			line += "  [current]"
 		}
 		if s.Kind == client.SessionKindTeamMember && s.Relationship.MemberName != "" {
-			line += "  [member " + sanitizeTerminal(s.Relationship.MemberName) + "]"
+			line += "  [member " + terminaltext.Sanitize(s.Relationship.MemberName) + "]"
 		}
 		style := th.Style("muted")
 		if i == st.cursor {
@@ -1623,7 +1624,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, _ string, vpCont
 	}
 	if st.loading {
 		b.WriteString(th.Style("title").Render("loading conversation") + "\n\n")
-		b.WriteString(th.Style("muted").Render("Loading " + sanitizeTerminal(label) + "…"))
+		b.WriteString(th.Style("muted").Render("Loading " + terminaltext.Sanitize(label) + "…"))
 		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": Back"))
 		return b.String()
 	}
@@ -1633,7 +1634,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, _ string, vpCont
 		b.WriteString("\n" + th.Style("muted").Render("r: Retry  "+hk.closeOnly+": Back"))
 		return b.String()
 	}
-	b.WriteString(th.Style("muted").Render("Inspecting "+sanitizeTerminal(label)+" · read-only") + "\n")
+	b.WriteString(th.Style("muted").Render("Inspecting "+terminaltext.Sanitize(label)+" · read-only") + "\n")
 	if st.transcript.isEmpty() {
 		b.WriteString(th.Style("muted").Render("(empty conversation)"))
 	} else {

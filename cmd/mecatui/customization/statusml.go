@@ -6,7 +6,8 @@ import (
 	"html"
 	"net/url"
 	"strings"
-	"unicode"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 const (
@@ -91,13 +92,13 @@ func resolveSpans(spans []Span, palette Palette) {
 	for i := range spans {
 		if spans[i].Href != "" {
 			if links, ok := palette.(LinkPalette); ok {
-				spans[i].Color = sanitizeTerminal(links.StatusLinkColor())
+				spans[i].Color = terminaltext.SanitizeSingleLine(links.StatusLinkColor())
 				spans[i].Underline = links.StatusLinkUnderline()
 				continue
 			}
 		}
 		if palette != nil {
-			spans[i].Color = sanitizeTerminal(palette.StatusColor(spans[i].Token))
+			spans[i].Color = terminaltext.SanitizeSingleLine(palette.StatusColor(spans[i].Token))
 		}
 	}
 }
@@ -153,7 +154,7 @@ func (s *parseState) text(raw string) bool {
 	if s.spans == nil {
 		return false
 	}
-	text := truncateRunes(sanitizeTerminal(html.UnescapeString(sanitizeTerminal(raw))), maxSpanRunes)
+	text := truncateRunes(terminaltext.SanitizeSingleLine(html.UnescapeString(terminaltext.SanitizeSingleLine(raw))), maxSpanRunes)
 	if text == "" {
 		return true
 	}
@@ -237,7 +238,7 @@ func openingElement(tag string) (element, bool) {
 }
 
 func validLink(href string) bool {
-	if href == "" || len(href) > maxLinkBytes || strings.ContainsFunc(href, terminalControl) {
+	if href == "" || len(href) > maxLinkBytes || href != terminaltext.SanitizeSingleLine(href) {
 		return false
 	}
 	u, err := url.ParseRequestURI(href)
@@ -276,7 +277,7 @@ func isToken(name string) bool {
 func literalDocument(markup string) Document {
 	return Document{Footer: Surface{
 		Present: true,
-		Spans:   []Span{{Text: truncateRunes(sanitizeTerminal(markup), maxSpanRunes), Token: TokenText}},
+		Spans:   []Span{{Text: truncateRunes(terminaltext.SanitizeSingleLine(markup), maxSpanRunes), Token: TokenText}},
 	}}
 }
 
@@ -292,31 +293,4 @@ func truncateRunes(s string, limit int) string {
 		count++
 	}
 	return s
-}
-
-func sanitizeTerminal(s string) string {
-	if !strings.ContainsFunc(s, terminalControl) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if !terminalControl(r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func terminalControl(r rune) bool {
-	switch {
-	case r == '\n' || r == '\t' || r == '\u2028' || r == '\u2029':
-		return true
-	case r < 0x20 || r == 0x7f:
-		return true
-	case r >= 0x80 && r <= 0x9f:
-		return true
-	default:
-		return unicode.Is(unicode.Cf, r)
-	}
 }

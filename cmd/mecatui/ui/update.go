@@ -15,6 +15,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
@@ -650,7 +651,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case inventorySessionIDCopiedMsg:
 		if msg.err != nil {
-			m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + sanitizeTerminal(msg.err.Error()))
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + terminaltext.Sanitize(msg.err.Error()))
 			return m, nil, true
 		}
 		m.statusMsg = m.deps.Theme.Style("success").Render("copied exact session ID " + safeSessionID(msg.id))
@@ -700,7 +701,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.phase = phaseIdle
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
-			"could not switch to effort " + effortLabel(msg.sel.ReasoningEffort) + ": " + sanitizeTerminal(msg.err.Error()))
+			"could not switch to effort " + effortLabel(msg.sel.ReasoningEffort) + ": " + terminaltext.Sanitize(msg.err.Error()))
 		focusCmd := m.prompt.Focus()
 		m.refreshView()
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
@@ -729,7 +730,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.phase = phaseIdle
 		m.pendingModelSwitchNote = ""
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
-			"could not switch to " + sanitizeTerminal(msg.model) + ": " + sanitizeTerminal(msg.err.Error()))
+			"could not switch to " + terminaltext.Sanitize(msg.model) + ": " + terminaltext.Sanitize(msg.err.Error()))
 		focusCmd := m.prompt.Focus()
 		m.refreshView()
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
@@ -757,7 +758,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.compactPending = false
 		if msg.Err != nil {
-			m.statusMsg = m.deps.Theme.Style("warning").Render("could not compact model history: " + sanitizeTerminal(msg.Err.Error()))
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not compact model history: " + terminaltext.Sanitize(msg.Err.Error()))
 			return m, nil, true
 		}
 		if msg.Compacted {
@@ -784,7 +785,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.phase = phaseIdle
-		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not switch worktree: " + sanitizeTerminal(msg.err.Error()) + "; relist and try again")
+		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not switch worktree: " + terminaltext.Sanitize(msg.err.Error()) + "; relist and try again")
 		focusCmd := m.prompt.Focus()
 		return m, focusCmd, true
 	case clearSessionReadyMsg:
@@ -822,7 +823,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if m.clearPending == nil || m.clearPending.sourceID != msg.sourceID || m.clearPending.token != msg.token || m.sessionID != msg.sourceID {
 			return m, nil, true
 		}
-		failure := "could not clear: " + sanitizeTerminal(msg.err.Error())
+		failure := "could not clear: " + terminaltext.Sanitize(msg.err.Error())
 		m.clearPending.failure = failure
 		activeSource := m.clearPending.sourcePhase == phaseRunning || m.clearPending.sourcePhase == phaseAwaitingApproval
 		if activeSource && !m.clearPending.sourceSettled {
@@ -850,14 +851,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = mm.(Model)
 		m.createModelSelection = client.ModelSelection{}
 		m.modelCatalog.active = client.ModelSelection{}
-		notice := "saved model " + sanitizeTerminal(modelSelLabel(msg.rejected)) +
-			" was rejected by the server (" + sanitizeTerminal(msg.err.Error()) +
+		notice := "saved model " + terminaltext.Sanitize(modelSelLabel(msg.rejected)) +
+			" was rejected by the server (" + terminaltext.Sanitize(msg.err.Error()) +
 			") — using the server default"
 		// Name the model the session actually fell back to, when known — mirroring
 		// the key-removed reconcile notice. The fallback create's response already
 		// carries it (applySessionReady set m.resolvedSessionModel from msg.ready).
 		if id := m.resolvedSessionModel.ModelID; id != "" {
-			notice += " — now running " + sanitizeTerminal(id)
+			notice += " — now running " + terminaltext.Sanitize(id)
 		}
 		m.statusMsg = m.deps.Theme.Style("warning").Render(notice)
 		return m, cmd, handled
@@ -882,8 +883,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.restartFailed = true
 		m.pendingModelSwitchNote = ""
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
-			"could not switch to " + sanitizeTerminal(msg.model) + ": " +
-				sanitizeTerminal(msg.err.Error()) + " — press " + firstKey(m.keys.Submit, "enter") + " to retry")
+			"could not switch to " + terminaltext.Sanitize(msg.model) + ": " +
+				terminaltext.Sanitize(msg.err.Error()) + " — press " + firstKey(m.keys.Submit, "enter") + " to retry")
 		_ = m.prompt.Focus()
 		m.refreshView()
 		return m, nil, true
@@ -929,7 +930,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.notifyHookFailed(streamErrReason(msg.Err))
 			m = m.endRun(stopError)
 			m.failedStepRetryRun = false
-			m.statusMsg = m.deps.Theme.Style("warning").Render("retry was not started: " + sanitizeTerminal(msg.Err.Error()) + " — resolve the condition and use /retry")
+			m.statusMsg = m.deps.Theme.Style("warning").Render("retry was not started: " + terminaltext.Sanitize(msg.Err.Error()) + " — resolve the condition and use /retry")
 			if len(m.queued) > 0 {
 				m.queuePaused = stopError
 			}
@@ -1113,7 +1114,7 @@ func (m Model) onRenderTick() (tea.Model, tea.Cmd) {
 }
 
 func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
-	displayName := oneLine(sanitizeTerminal(msg.DisplayName))
+	displayName := oneLine(terminaltext.Sanitize(msg.DisplayName))
 	target := ""
 	if displayName != "" {
 		target = " for " + displayName
@@ -1121,7 +1122,7 @@ func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
 	if msg.Status == mcpAuthorizationStatusPending {
 		return "MCP authorization required" + target + ". Open Browser or Copy Link to start automatic checking, or Cancel."
 	}
-	return fmt.Sprintf("MCP authorization%s: %s.", target, oneLine(sanitizeTerminal(msg.Status)))
+	return fmt.Sprintf("MCP authorization%s: %s.", target, oneLine(terminaltext.Sanitize(msg.Status)))
 }
 
 // updateStreamEvent reduces the per-event stream msgs into the conversation. It
@@ -4792,7 +4793,7 @@ func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool)
 	m = m.endRun(stopError)
 	if retry {
 		m.failedStepRetryRun = false
-		m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + sanitizeTerminal(err.Error()) + " — use /retry to try again")
+		m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + terminaltext.Sanitize(err.Error()) + " — use /retry to try again")
 	} else {
 		m.conv.addError("open run: " + friendlyWorkspaceEnrollmentRejection(err.Error()))
 	}

@@ -6,13 +6,14 @@ import (
 	"charm.land/lipgloss/v2"
 
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 func statusSpansText(spans []customization.Span) string {
 	var b strings.Builder
 	for _, span := range spans {
-		b.WriteString(sanitizeTerminal(span.Text))
+		b.WriteString(terminaltext.SanitizeSingleLine(span.Text))
 	}
 	return b.String()
 }
@@ -34,7 +35,7 @@ func renderStatusSurface(th theme.Theme, surface customization.Surface, width in
 func renderStatusSpans(th theme.Theme, spans []customization.Span) string {
 	var b strings.Builder
 	for _, span := range spans {
-		text := sanitizeTerminal(span.Text)
+		text := terminaltext.SanitizeSingleLine(span.Text)
 		if text == "" {
 			continue
 		}

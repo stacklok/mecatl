@@ -262,7 +262,7 @@ func TestSkillsHandleMsgFallThrough(t *testing.T) {
 	}
 }
 
-// TestSkillsPanelSanitizesNames locks the sanitizeTerminal wrapper against
+// TestSkillsPanelSanitizesNames locks the terminaltext.Sanitize wrapper against
 // deletion: open the panel with a skill whose NAME embeds ANSI/OSC escapes, feed
 // the inventory, render, and assert no raw ESC (0x1b) survives in the output
 // (mirrors sanitize_test.go's 0x1b guard). Per repo memory the literal is an
@@ -279,10 +279,10 @@ func TestSkillsPanelSanitizesNames(t *testing.T) {
 
 	// stripANSI removes the LEGITIMATE theme styling escapes; what remains must
 	// carry NO raw ESC — if any survives, it came from the server-derived skill
-	// name/description and sanitizeTerminal was not applied.
+	// name/description and terminaltext.Sanitize was not applied.
 	out := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the rendered panel; sanitizeTerminal not applied:\n%q", out)
+		t.Errorf("raw ESC (0x1b) leaked into the rendered panel; terminaltext.Sanitize not applied:\n%q", out)
 	}
 	// The sanitized name still renders as inert text (ESC stripped, body kept).
 	if !strings.Contains(out, "]0;pwnedevil") {

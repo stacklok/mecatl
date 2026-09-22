@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -198,7 +199,7 @@ func renderSoulPanel(th theme.Theme, st soulState, caps client.Capabilities, hk 
 	case st.loading:
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")
 	case st.err != nil:
-		line := "get soul: " + sanitizeTerminal(st.err.Error())
+		line := "get soul: " + terminaltext.Sanitize(st.err.Error())
 		if budget > 0 {
 			line = ansi.Wrap(line, budget, "")
 		}
@@ -241,17 +242,17 @@ func soulPanelFooter(s client.Soul, hk helpKeys) string {
 
 // renderSoulMeta renders the dim metadata line: trust label · N bytes · sha (short).
 // soulTrustLabel emits only hardcoded literals today, but the line is wrapped in
-// sanitizeTerminal defensively so the function's "EVERY server-derived string is
+// terminaltext.Sanitize defensively so the function's "EVERY server-derived string is
 // sanitized" contract still holds if someone later interpolates a server string into
 // the label.
 func renderSoulMeta(s client.Soul) string {
-	segs := []string{sanitizeTerminal(soulTrustLabel(s)), fmt.Sprintf("%d bytes", s.SizeBytes)}
+	segs := []string{terminaltext.Sanitize(soulTrustLabel(s)), fmt.Sprintf("%d bytes", s.SizeBytes)}
 	if s.SHA256 != "" {
 		short := s.SHA256
 		if len(short) > 12 {
 			short = short[:12]
 		}
-		segs = append(segs, "sha:"+sanitizeTerminal(short))
+		segs = append(segs, "sha:"+terminaltext.Sanitize(short))
 	}
 	return strings.Join(segs, " · ")
 }
@@ -267,7 +268,7 @@ func renderSoulBody(th theme.Theme, st soulState, budget int) string {
 	}
 	// Wrap each raw line to the budget so a long persona line cannot overflow the
 	// card; the scroll window then operates on the wrapped lines for honest paging.
-	raw := soulContentLines(sanitizeTerminal(st.soul.Content))
+	raw := soulContentLines(terminaltext.Sanitize(st.soul.Content))
 	var rendered []string
 	for _, ln := range raw {
 		if budget > 0 {

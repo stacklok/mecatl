@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
@@ -831,7 +832,7 @@ const maxParallelJoinModeLen = 24
 // parallelJoinMode bounds untrusted server metadata once at ingestion so every
 // roster, focus, essential, and compact projection reads the same safe value.
 func parallelJoinMode(join string) string {
-	return truncate(strings.Join(strings.Fields(sanitizeTerminal(join)), " "), maxParallelJoinModeLen)
+	return truncate(strings.Join(strings.Fields(terminaltext.Sanitize(join)), " "), maxParallelJoinModeLen)
 }
 
 type parallelGroup struct {

@@ -258,7 +258,7 @@ func TestAgentsInvPanelRendersBothEmptyStates(t *testing.T) {
 	}
 }
 
-// TestAgentsInvPanelSanitizes locks the sanitizeTerminal wrappers: a def whose
+// TestAgentsInvPanelSanitizes locks the terminaltext.Sanitize wrappers: a def whose
 // name/description/tools AND model/permission-mode (the CLAUDE.md-trust-class
 // metadata) embed ANSI/OSC escapes must render with no raw ESC. Per repo memory
 // the literal is an innocuous ANSI escape, never destructive.
@@ -275,14 +275,14 @@ func TestAgentsInvPanelSanitizes(t *testing.T) {
 	}}
 	out := stripANSIstr(renderAgentsInvPanel(th, st, client.Capabilities{Agents: true}, defaultHelpKeys(), 100))
 	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the rendered panel; sanitizeTerminal not applied:\n%q", out)
+		t.Errorf("raw ESC (0x1b) leaked into the rendered panel; terminaltext.Sanitize not applied:\n%q", out)
 	}
 	if !strings.Contains(out, "]0;pwnedevil") {
 		t.Errorf("sanitized def name not rendered as inert text, got:\n%q", out)
 	}
 	// The model + permission-mode metadata must also survive as inert text: the ESC
 	// byte is stripped, the remaining literal payload is kept (mirrors the name
-	// assertion above — sanitizeTerminal drops 0x1b but keeps the inert remainder).
+	// assertion above — terminaltext.Sanitize drops 0x1b but keeps the inert remainder).
 	if !strings.Contains(out, "model:[32mgpt[0m") {
 		t.Errorf("sanitized model not rendered as inert text, got:\n%q", out)
 	}

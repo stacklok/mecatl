@@ -129,7 +129,7 @@ func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructura
 func TestMecatuiFunctionalConversationCards_Scenario1_CardsPackageDependencyBoundary(t *testing.T) {
 	const (
 		cardsPackage        = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
-		terminaltextPackage = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/terminaltext"
+		terminaltextPackage = "github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	)
 	cmd := exec.Command("go", "list", "-deps", "-f={{.ImportPath}}", cardsPackage)
 	output, err := cmd.CombinedOutput()

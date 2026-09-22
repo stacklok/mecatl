@@ -510,7 +510,7 @@ func TestEscClosesSubagentOverlay(t *testing.T) {
 // the overlay must render them SANITIZED + TUI-capped — never raw, never unbounded.
 // It seeds a child whose goal, tool name, and PREVIEW fields carry a SENTINEL plus
 // control bytes, then asserts in BOTH the roster and the focused child's trace that:
-//   - the raw 0x1b ESC / 0x07 BEL never reach the rendered output (sanitizeTerminal), and
+//   - the raw 0x1b ESC / 0x07 BEL never reach the rendered output (terminaltext.Sanitize), and
 //   - the bounded-previews honesty note is present (the content is bounded, not hidden), and
 //   - the previews are truncated at the TUI's secondary cap (maxTraceDetailLen), and
 //   - the child content never enters the parent conversation surface — it renders only
@@ -541,7 +541,7 @@ func TestSubagentOverlayBoundsChildContent(t *testing.T) {
 	m = mm.(Model)
 	roster := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(roster, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the subagents roster; sanitizeTerminal not applied:\n%q", roster)
+		t.Errorf("raw ESC (0x1b) leaked into the subagents roster; terminaltext.Sanitize not applied:\n%q", roster)
 	}
 
 	// Focus pane: the trace renders the bounded preview sanitized + capped.
@@ -552,7 +552,7 @@ func TestSubagentOverlayBoundsChildContent(t *testing.T) {
 	}
 	focus := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(focus, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the subagent focus pane; sanitizeTerminal not applied:\n%q", focus)
+		t.Errorf("raw ESC (0x1b) leaked into the subagent focus pane; terminaltext.Sanitize not applied:\n%q", focus)
 	}
 	if strings.Contains(focus, "\x07") {
 		t.Errorf("raw BEL (0x07) leaked into the subagent focus pane:\n%q", focus)

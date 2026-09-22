@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -186,7 +187,7 @@ func (m Model) onSessionIDCopyResult(msg sessionIDCopyResultMsg) Model {
 		return m
 	}
 	if msg.err != nil {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": " + sanitizeTerminal(msg.err.Error()))
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": " + terminaltext.Sanitize(msg.err.Error()))
 		return m
 	}
 	m.statusMsg = m.deps.Theme.Style("success").Render("copied " + label)
@@ -205,7 +206,7 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 		if value == "" {
 			return unknownLabel
 		}
-		return sanitizeTerminal(value)
+		return terminaltext.Sanitize(value)
 	}
 	budget := cardTextWidth(width)
 	row := func(label, value string) string { return wrapCardText(label+unknown(value), budget) }
@@ -296,7 +297,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.closeModal()
 	m.browsingStartupSessions = false
 	m.phase = phaseIdle
-	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
+	m.statusMsg = "continuing chat " + terminaltext.Sanitize(row.Title) + " — type to add a turn"
 	cmd := m.prompt.Focus()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)

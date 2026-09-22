@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
 )
@@ -945,7 +946,7 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	case blockDelivery:
 		return preparedText(r.prepareDeliveryBlock(b))
 	default:
-		return r.wrapStyled(sanitizeTerminal(b.raw), lipgloss.NewStyle())
+		return r.wrapStyled(terminaltext.Sanitize(b.raw), lipgloss.NewStyle())
 	}
 }
 
@@ -977,7 +978,7 @@ func (r *renderer) renderReasoning(b *block, expand bool) string {
 		return ""
 	}
 	style := r.th.Style("reasoning")
-	text := sanitizeTerminal(strings.TrimRight(b.reasoning, "\n"))
+	text := terminaltext.Sanitize(strings.TrimRight(b.reasoning, "\n"))
 	n := lineCount(text)
 	expandMark := r.marks.expandTools
 	if !expand {
@@ -1074,7 +1075,7 @@ func renderToolHeader(glyph, glyphText, label string, nameStyle lipgloss.Style, 
 // renderToolCardText wraps plain card content before applying one region's
 // existing style, so ANSI styling cannot affect width accounting.
 func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
-	text = strings.TrimRightFunc(sanitizeTerminal(text), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(text), unicode.IsSpace)
 	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
 	for i, row := range rows {
 		rows[i] = style.Render(row)
@@ -1085,7 +1086,7 @@ func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string
 // renderDelegationToolCardText preserves delegation-source whitespace while
 // constraining every raw row before styles can add their own layout padding.
 func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
-	rows := strings.Split(wrapToolCardText(sanitizeTerminal(text), bodyWidth), "\n")
+	rows := strings.Split(wrapToolCardText(terminaltext.Sanitize(text), bodyWidth), "\n")
 	for i, row := range rows {
 		rows[i] = style.Render(row)
 	}
@@ -1111,7 +1112,7 @@ func renderCardChromeSegments(style lipgloss.Style, segments []string, width int
 				return ' '
 			}
 			return r
-		}, sanitizeTerminal(segment))
+		}, terminaltext.Sanitize(segment))
 		if segment != "" {
 			clean = append(clean, segment)
 		}
@@ -1144,7 +1145,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 				return ' '
 			}
 			return r
-		}, sanitizeTerminal(s))
+		}, terminaltext.Sanitize(s))
 	}
 	prefix, raw = oneLine(prefix), oneLine(raw)
 	if width <= 0 {
@@ -1162,7 +1163,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 // prefix's alignment without letting either the prefix or style padding consume a
 // second layout pass.
 func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
-	text = strings.TrimRightFunc(sanitizeTerminal(text), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(text), unicode.IsSpace)
 	if bodyWidth <= 0 {
 		return []string{prefix + text}
 	}
@@ -1299,7 +1300,7 @@ func (r *renderer) renderToolResultLines(b *block, expand bool) ([]toolResultLin
 	if summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, expand); ok {
 		return resultLines(summary, resultLineSummary), hiddenFields
 	}
-	body := sanitizeTerminal(strings.TrimRight(b.resultBody, "\n"))
+	body := terminaltext.Sanitize(strings.TrimRight(b.resultBody, "\n"))
 	if body == "" {
 		return nil, 0
 	}
@@ -1345,8 +1346,8 @@ func (r *renderer) renderToolResultLine(line toolResultLine) string {
 func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 	switch blk.Kind {
 	case client.ContentBlockResourceLink:
-		name := sanitizeTerminal(blk.Name)
-		uri := sanitizeTerminal(blk.URL)
+		name := terminaltext.Sanitize(blk.Name)
+		uri := terminaltext.Sanitize(blk.URL)
 		if name == "" {
 			if uri == "" {
 				return "", false
@@ -1358,7 +1359,7 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 		}
 		return "↗ " + name + " · " + uri, true
 	case client.ContentBlockImage:
-		mime := sanitizeTerminal(blk.MimeType)
+		mime := terminaltext.Sanitize(blk.MimeType)
 		if mime == "" {
 			return "[image]", true
 		}
@@ -1391,7 +1392,7 @@ func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 	muted := r.th.Style("muted")
 	var out strings.Builder
 	if b.subGoal != "" {
-		out.WriteString(renderDelegationToolCardText(muted, "↳ "+sanitizeTerminal(b.subGoal), bodyWidth))
+		out.WriteString(renderDelegationToolCardText(muted, "↳ "+terminaltext.Sanitize(b.subGoal), bodyWidth))
 		out.WriteString("\n")
 	}
 	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel); routed != "" {
@@ -1428,10 +1429,10 @@ func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 // — never child content — so gauntlet #7 holds. When routed, model == routedModel and
 // the reason is empty, so the routed cue is shown (not duplicated as a model: line).
 func subagentModelLabel(category, routedModel, routingReason, model string) string {
-	category = sanitizeTerminal(category)
-	routedModel = sanitizeTerminal(routedModel)
-	routingReason = sanitizeTerminal(routingReason)
-	model = sanitizeTerminal(model)
+	category = terminaltext.Sanitize(category)
+	routedModel = terminaltext.Sanitize(routedModel)
+	routingReason = terminaltext.Sanitize(routingReason)
+	model = terminaltext.Sanitize(model)
 	// Router fired: show the routed cue (category + the routed model).
 	if category != "" || routedModel != "" {
 		if routedModel == "" {
@@ -1467,7 +1468,7 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 func (r *renderer) subagentLiveLine(b *block) string {
 	current := "…"
 	if b.subCurrent != "" {
-		current = sanitizeTerminal(b.subCurrent)
+		current = terminaltext.Sanitize(b.subCurrent)
 	}
 	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace",
 		current,
@@ -1684,7 +1685,7 @@ func (r *renderer) teamHeader(b *block, expand bool) string {
 func teamNameWidth(lanes []teamLane, shown []int) int {
 	w := 0
 	for _, idx := range shown {
-		if n := len([]rune(truncate(sanitizeTerminal(lanes[idx].name), maxTeamNameWidth))); n > w {
+		if n := len([]rune(truncate(terminaltext.Sanitize(lanes[idx].name), maxTeamNameWidth))); n > w {
 			w = n
 		}
 	}
@@ -1697,7 +1698,7 @@ func teamNameWidth(lanes []teamLane, shown []int) int {
 // or a derived state label (with a "…" heartbeat while active) and running token
 // totals. No elapsed clock, so it updates only as events arrive.
 func teamLaneLine(ln *teamLane, nameW int, teamDone bool) string {
-	name := truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)
+	name := truncate(terminaltext.Sanitize(ln.name), maxTeamNameWidth)
 	if pad := nameW - len([]rune(name)); pad > 0 {
 		name += strings.Repeat(" ", pad)
 	}
@@ -1757,7 +1758,7 @@ func teamLaneState(ln *teamLane, teamDone bool) string {
 	}
 	label := "working"
 	if ln.current != "" {
-		label = truncate(sanitizeTerminal(ln.current), maxTraceToolNameLen)
+		label = truncate(terminaltext.Sanitize(ln.current), maxTraceToolNameLen)
 	}
 	return label + "…"
 }
@@ -1855,14 +1856,14 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 				glyph = "✗"
 				style = errStyle
 			}
-			name := truncate(sanitizeTerminal(t.name), maxTraceToolNameLen)
-			if detail := sanitizeTerminal(oneLine(t.detail)); detail != "" {
+			name := truncate(terminaltext.Sanitize(t.name), maxTraceToolNameLen)
+			if detail := terminaltext.Sanitize(oneLine(t.detail)); detail != "" {
 				writeToolLine(glyph, name, truncate(detail, maxTraceDetailLen), style)
 			} else {
 				chips = append(chips, glyph+" "+name)
 			}
 		case teamTraceMessage:
-			writeLine("  ", truncate(sanitizeTerminal(oneLine(t.text)), maxTraceMessageLen), muted)
+			writeLine("  ", truncate(terminaltext.Sanitize(oneLine(t.text)), maxTraceMessageLen), muted)
 		}
 	}
 	flush()
@@ -1986,7 +1987,7 @@ func subagentStopLabel(stop string) string {
 	case "no_progress":
 		return "no-progress"
 	default:
-		return sanitizeTerminal(stop)
+		return terminaltext.Sanitize(stop)
 	}
 }
 
@@ -2020,7 +2021,7 @@ func (r *renderer) resultBody(body string, expand bool) string {
 // the overflow count honest and prevents the final card wrap from growing the
 // collapsed body after its cap.
 func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) string {
-	body = sanitizeTerminal(strings.TrimRight(body, "\n"))
+	body = terminaltext.Sanitize(strings.TrimRight(body, "\n"))
 	if expand || body == "" {
 		return body
 	}
@@ -2092,7 +2093,7 @@ func (r *renderer) renderChangedFiles(paths []string) string {
 	b.WriteString(style.Render("✎ " + plural(len(paths), "file") + " changed this session"))
 	for _, p := range paths {
 		b.WriteString("\n")
-		b.WriteString(style.Render("  " + sanitizeTerminal(p)))
+		b.WriteString(style.Render("  " + terminaltext.Sanitize(p)))
 	}
 	return b.String()
 }
@@ -2176,7 +2177,7 @@ func (r *renderer) renderEditDiff(rawArgs string, expand bool, bodyWidth int) (s
 		header += " (replace all)"
 	}
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(sanitizeTerminal(header), bodyWidth)))
+	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	b.WriteString("\n")
 	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand, bodyWidth))
 	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand, bodyWidth))
@@ -2206,7 +2207,7 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 	}
 	header := fmt.Sprintf("%s · %s (overwrites if it exists)", args.Path, plural(lineCount(args.Content), "line"))
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(sanitizeTerminal(header), bodyWidth)))
+	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
 	if args.Content != "" {
 		b.WriteString("\n")
 		b.WriteString(r.diffSide(args.Content, "+", "diffAdd", expand, bodyWidth))
@@ -2218,7 +2219,7 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 // text gets the prefix and the themed style, line-capped unless expanded. An
 // empty side renders nothing. The text is sanitized (these go through lipgloss).
 func (r *renderer) diffSide(text, prefix, slot string, expand bool, bodyWidth int) string {
-	text = sanitizeTerminal(strings.TrimRight(text, "\n"))
+	text = terminaltext.Sanitize(strings.TrimRight(text, "\n"))
 	if text == "" {
 		return ""
 	}
@@ -2256,9 +2257,9 @@ func prettyJSON(raw string) string {
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, []byte(raw), "", "  "); err != nil {
-		return sanitizeTerminal(raw)
+		return terminaltext.Sanitize(raw)
 	}
-	return sanitizeTerminal(buf.String())
+	return terminaltext.Sanitize(buf.String())
 }
 
 // summarizeArgs turns a JSON-object args string into a compact, scannable block
@@ -2270,7 +2271,7 @@ func prettyJSON(raw string) string {
 // Keys are ordered deterministically (argPriorityKeys first, then the rest
 // alphabetical) — map iteration is random, so this is what makes the collapsed
 // card golden-stable. At most maxSummaryRows rows render. EVERY rendered value
-// passes through sanitizeTerminal (the summary is plain lipgloss, never glamour —
+// passes through terminaltext.Sanitize (the summary is plain lipgloss, never glamour —
 // see the CWE-150 invariant in sanitize.go). Keys are styled "muted", values
 // "toolArgs".
 //
@@ -2308,7 +2309,7 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 		}
 		text, collapsed := summarizeValueCollapsed(obj[k])
 		valueCollapsed = valueCollapsed || collapsed
-		b.WriteString(muted.Render(sanitizeTerminal(k) + ":"))
+		b.WriteString(muted.Render(terminaltext.Sanitize(k) + ":"))
 		b.WriteString(" ")
 		b.WriteString(valStyle.Render(text))
 	}
@@ -2387,7 +2388,7 @@ func summarizeValue(raw json.RawMessage) string {
 //     false), else "N items" (collapsed=true).
 //   - object: "N keys" (collapsed=true).
 //
-// All branches sanitizeTerminal their output, since the summary is plain
+// All branches terminaltext.Sanitize their output, since the summary is plain
 // lipgloss (never glamour).
 func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 	trimmed := strings.TrimSpace(string(raw))
@@ -2398,7 +2399,7 @@ func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 	case '"':
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return sanitizeTerminal(trimmed), false
+			return terminaltext.Sanitize(trimmed), false
 		}
 		text := summarizeStringValue(s)
 		// A long/multiline string collapses to the size+preview form; the inline
@@ -2410,12 +2411,12 @@ func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 	case '{':
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &obj); err != nil {
-			return sanitizeTerminal(trimmed), false
+			return terminaltext.Sanitize(trimmed), false
 		}
 		return plural(len(obj), "key"), true
 	default:
 		// number / bool / null — render the verbatim JSON token.
-		return sanitizeTerminal(trimmed), false
+		return terminaltext.Sanitize(trimmed), false
 	}
 }
 
@@ -2426,14 +2427,14 @@ func summarizeValueCollapsed(raw json.RawMessage) (string, bool) {
 func summarizeStringValue(s string) string {
 	lines := lineCount(s)
 	if lines <= 1 && len([]rune(s)) <= inlinePreviewLen {
-		return sanitizeTerminal(strconv.Quote(s))
+		return terminaltext.Sanitize(strconv.Quote(s))
 	}
 	first := firstLine(s)
 	preview := truncate(first, argPreviewLen)
 	if lines > 1 && !strings.HasSuffix(preview, "…") {
 		preview += "…"
 	}
-	preview = sanitizeTerminal(preview)
+	preview = terminaltext.Sanitize(preview)
 	return fmt.Sprintf("%s / %s · %q", humanizeBytes(int64(len(s))), plural(lines, "line"), preview)
 }
 
@@ -2443,7 +2444,7 @@ func summarizeStringValue(s string) string {
 func summarizeArrayValue(raw json.RawMessage) (string, bool) {
 	var elems []json.RawMessage
 	if err := json.Unmarshal(raw, &elems); err != nil {
-		return sanitizeTerminal(strings.TrimSpace(string(raw))), false
+		return terminaltext.Sanitize(strings.TrimSpace(string(raw))), false
 	}
 	if len(elems) == 0 {
 		return "[]", false
@@ -2453,7 +2454,7 @@ func summarizeArrayValue(raw json.RawMessage) (string, bool) {
 		for i, e := range elems {
 			parts[i] = scalarText(e)
 		}
-		return sanitizeTerminal("[" + strings.Join(parts, ", ") + "]"), false
+		return terminaltext.Sanitize("[" + strings.Join(parts, ", ") + "]"), false
 	}
 	return plural(len(elems), "item"), true
 }
@@ -2561,7 +2562,7 @@ func mcpTitle(name string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return sanitizeTerminal(humanizeMCPServer(server) + " · " + humanizeMCPTool(tool)), true
+	return terminaltext.Sanitize(humanizeMCPServer(server) + " · " + humanizeMCPTool(tool)), true
 }
 
 // maxTitleCaseServer is the rune budget above which a server token is shown raw
@@ -2644,7 +2645,7 @@ func summarizeResultDetail(body string) (string, int, bool) {
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(sanitizeTerminal(k) + ":")
+			b.WriteString(terminaltext.Sanitize(k) + ":")
 			b.WriteString(" ")
 			b.WriteString(summarizeValue(raw))
 		}
@@ -2707,7 +2708,7 @@ func (r *renderer) collapseMarker(n int) string {
 // expand chord explicitly so non-renderer callers (the MCP resource preview, which
 // has no *renderer) can thread the LIVE ExpandTools marking through (issue #457).
 func truncateLinesTailMark(s string, maxLines int, tail, expandMark string) string {
-	s = sanitizeTerminal(strings.TrimRight(s, "\n"))
+	s = terminaltext.Sanitize(strings.TrimRight(s, "\n"))
 	if s == "" {
 		return ""
 	}

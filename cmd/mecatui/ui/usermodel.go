@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -192,7 +193,7 @@ func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabil
 	case st.loading:
 		lines = []string{th.Style("muted").Render("loading…")}
 	case st.err != nil:
-		line := "get user model: " + sanitizeTerminal(st.err.Error())
+		line := "get user model: " + terminaltext.Sanitize(st.err.Error())
 		if budget > 0 {
 			line = ansi.Wrap(line, budget, "")
 		}
@@ -209,9 +210,9 @@ func renderUserModelPanel(th theme.Theme, st userModelState, caps client.Capabil
 			if i == st.cursor {
 				marker = "› "
 			}
-			lines = append(lines, renderToolCardText(th.Style("toolName"), marker+sanitizeTerminal(e.Key), budget))
+			lines = append(lines, renderToolCardText(th.Style("toolName"), marker+terminaltext.Sanitize(e.Key), budget))
 			if e.Description != "" {
-				lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(e.Description), budget)), "\n")...)
+				lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(terminaltext.Sanitize(e.Description), budget)), "\n")...)
 			}
 		}
 	}
@@ -248,20 +249,20 @@ func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width
 		lines = append(lines, strings.Split(th.Style("errorText").Render(wrap(st.err.Error())), "\n")...)
 	} else if st.detail != nil {
 		rev := st.detail.Current
-		lines = append(lines, renderToolCardText(th.Style("toolName"), sanitizeTerminal(rev.Key), budget))
+		lines = append(lines, renderToolCardText(th.Style("toolName"), terminaltext.Sanitize(rev.Key), budget))
 		for _, row := range []struct{ label, value string }{{"status", rev.Status}, {"version", rev.Version}, {"saved by", rev.Writer}, {"source", rev.Origin}, {"session", rev.SourceSessionID}, {"proposal", rev.SourceProposalID}} {
 			if row.value != "" {
 				lines = append(lines, th.Style("muted").Render(row.label+": ")+wrap(row.value))
 			}
 		}
 		if !rev.UpdatedAt.IsZero() {
-			lines = append(lines, th.Style("muted").Render("updated: ")+sanitizeTerminal(rev.UpdatedAt.UTC().Format("2006-01-02 15:04:05Z")))
+			lines = append(lines, th.Style("muted").Render("updated: ")+terminaltext.Sanitize(rev.UpdatedAt.UTC().Format("2006-01-02 15:04:05Z")))
 		}
 		if rev.Description != "" {
 			lines = append(lines, th.Style("muted").Render("description: ")+wrap(rev.Description))
 		}
 		lines = append(lines, "")
-		lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(rev.Value), cardTextWidth(width))), "\n")...)
+		lines = append(lines, strings.Split(th.Style("toolArgs").Render(indentWrap(terminaltext.Sanitize(rev.Value), cardTextWidth(width))), "\n")...)
 		lines = append(lines, "")
 		if !st.detail.HistoryAvailable {
 			lines = append(lines, th.Style("muted").Render("Earlier versions are unavailable on this server."))
@@ -269,7 +270,7 @@ func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width
 			lines = append(lines, th.Style("muted").Render(fmt.Sprintf("Earlier versions: %d", len(st.detail.History))))
 			for _, prior := range st.detail.History {
 				line := fmt.Sprintf("%s · %s · %s", prior.Version, prior.Status, prior.UpdatedAt.UTC().Format("2006-01-02"))
-				lines = append(lines, th.Style("toolArgs").Render(sanitizeTerminal(line)))
+				lines = append(lines, th.Style("toolArgs").Render(terminaltext.Sanitize(line)))
 			}
 		}
 	}
@@ -290,7 +291,7 @@ func renderUserModelMeta(um client.UserModel) string {
 		if len(short) > 12 {
 			short = short[:12]
 		}
-		segs = append(segs, "sha:"+sanitizeTerminal(short))
+		segs = append(segs, "sha:"+terminaltext.Sanitize(short))
 	}
 	return strings.Join(segs, " · ")
 }

@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 const mcpAuthorizationStatusPending = "pending"
@@ -120,7 +121,7 @@ func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model,
 	polling := m.authorization.authorizationID == msg.AuthorizationID && m.authorization.polling
 	m.authorization = mcpAuthorizationState{
 		authorizationID: msg.AuthorizationID,
-		displayName:     oneLine(sanitizeTerminal(msg.DisplayName)),
+		displayName:     oneLine(terminaltext.Sanitize(msg.DisplayName)),
 		callID:          msg.CallID,
 		controlGen:      m.authorization.controlGen + 1,
 		polling:         polling,
@@ -310,7 +311,7 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 		}
 		m.authorization.controlStream = nil
 		m.authorization.pollBusy = false
-		m.authorization.errorText = oneLine(sanitizeTerminal(msg.err.Error()))
+		m.authorization.errorText = oneLine(terminaltext.Sanitize(msg.err.Error()))
 		if m.phase == phaseAuthorizing && m.authorization.polling {
 			return m, mcpAuthorizationPollTickCmd(msg.sessionID, msg.authorizationID, msg.gen), true
 		}
@@ -323,7 +324,7 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 				m.authorization.presentationCancel = nil
 			}
 			m.authorization.polling = true
-			m.statusMsg = sanitizeTerminal(msg.text)
+			m.statusMsg = terminaltext.Sanitize(msg.text)
 			return m, mcpAuthorizationPollTickCmd(msg.sessionID, msg.authorizationID, msg.gen), true
 		}
 		return m, nil, true
@@ -358,7 +359,7 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 	// run events, which must never be bounded by this timeout.
 	m.authorization.stopFirstEventTimer()
 	if streamErr, ok := msg.msg.(client.StreamErrMsg); ok {
-		errText := oneLine(sanitizeTerminal(streamErr.Err.Error()))
+		errText := oneLine(terminaltext.Sanitize(streamErr.Err.Error()))
 		m.authorizationEvents = nil
 		if m.authorization.controlCancel != nil {
 			m.authorization.controlCancel()
@@ -457,7 +458,7 @@ func (m Model) renderMCPAuthorization() string {
 	}
 	body += "\n\nOpen or copy the link, then browser consent is checked automatically.\n\n[" + open + "] Complete connection   [" + copyLink + "] Copy Link   [" + cancel + "] Cancel"
 	if errText := strings.TrimSpace(m.authorization.errorText); errText != "" {
-		body += "\n\nError: " + sanitizeTerminal(errText)
+		body += "\n\nError: " + terminaltext.Sanitize(errText)
 	}
 	return centerCard(m.deps.Theme, body, m.width, m.vp.Height())
 }

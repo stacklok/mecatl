@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // Source produces the latest semantic status-line surfaces from raw display
@@ -379,7 +381,7 @@ func normalizeSpans(spans []Span) []Span {
 	}
 	out := make([]Span, 0, len(spans))
 	for _, span := range spans {
-		span.Text, span.Color, span.Underline = sanitizeTerminal(span.Text), "", false
+		span.Text, span.Color, span.Underline = terminaltext.SanitizeSingleLine(span.Text), "", false
 		if !validLink(span.Href) {
 			span.Href = ""
 		}

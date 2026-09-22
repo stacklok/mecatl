@@ -218,7 +218,7 @@ func TestSubagentFailureLineCollapsesEveryWhitespaceKind(t *testing.T) {
 // U+FEFF (BOM) and U+202E (right-to-left override) are Unicode Cf, so the collapse leaves
 // them in place. A provider cause or child summary carrying an RTL override can therefore
 // present a failure line that READS as something other than what it says (CWE-1007), on a
-// pane whose whole job is telling the operator what went wrong. sanitizeTerminal now strips
+// pane whose whole job is telling the operator what went wrong. terminaltext.Sanitize now strips
 // Cf alongside C0/C1/ESC/DEL.
 //
 // The vectors are \u escapes deliberately: an invisible character in source is

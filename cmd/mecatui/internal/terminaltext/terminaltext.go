@@ -1,4 +1,5 @@
-// Package terminaltext provides terminal-safe plain-text rendering helpers.
+// Package terminaltext provides terminal-safe plain-text rendering helpers for
+// mecatui UI and status-line renderers.
 package terminaltext
 
 import (
@@ -37,6 +38,24 @@ func isControl(r rune) bool {
 	default:
 		return false
 	}
+}
+
+// SanitizeSingleLine removes terminal controls from a single-line display
+// value. Unlike Sanitize, it removes layout newlines, tabs, U+2028, and U+2029.
+func SanitizeSingleLine(s string) string {
+	if !strings.ContainsFunc(s, isSingleLineControl) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if isSingleLineControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func isSingleLineControl(r rune) bool {
+	return r == '\n' || r == '\t' || r == '\u2028' || r == '\u2029' || isControl(r)
 }
 
 // NormalizeWidth rewrites text so Lip Gloss's WcWidth and GraphemeWidth agree

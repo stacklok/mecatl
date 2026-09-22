@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 func TestStatusCustomization_Scenario1_StatusInputExcludesSensitiveContent(t *testing.T) {
@@ -193,7 +195,7 @@ func TestStatusLine_Scenario2_StatusMLUsesThemeAndSanitizesTerminal(t *testing.T
 	}
 	for _, surface := range []Surface{doc.Header, doc.Footer} {
 		for _, span := range surface.Spans {
-			if strings.ContainsFunc(span.Text+span.Color, terminalControl) {
+			if got := span.Text + span.Color; got != terminaltext.SanitizeSingleLine(got) {
 				t.Fatalf("terminal control reached output span %#v", span)
 			}
 		}

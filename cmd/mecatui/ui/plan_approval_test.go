@@ -310,13 +310,13 @@ func TestPlanAskPlanArgsSanitized(t *testing.T) {
 	}
 	setPlanArgs(t, &m, string(args))
 	// Strip the theme/lipgloss chrome (legitimate ESC) so the assertion targets
-	// the plan text: sanitizeTerminal must have removed the model-injected ESC
+	// the plan text: terminaltext.Sanitize must have removed the model-injected ESC
 	// (0x1b control byte), leaving the inert "[31m"/"[0m" fragments + the plan
 	// text. No raw ESC remains anywhere in a rendered line.
 	got := stripANSIstr(m.View().Content)
 	for _, line := range strings.Split(got, "\n") {
 		if strings.Contains(line, "\x1b") {
-			t.Errorf("raw ESC leaked into a rendered line (sanitizeTerminal not applied): %q", line)
+			t.Errorf("raw ESC leaked into a rendered line (terminaltext.Sanitize not applied): %q", line)
 		}
 	}
 	// The ESC was stripped; the inert "[31m"/"[0m" fragments + text remain.

@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -229,7 +230,7 @@ func (m Model) cancelTeamLane(b *block, ln *teamLane) (tea.Model, tea.Cmd) {
 	if ln == nil || b == nil || b.teamDone || ln.stopped {
 		return m, nil
 	}
-	return m.cancelChildByID(ln.sessionID, "member "+sanitizeTerminal(ln.name))
+	return m.cancelChildByID(ln.sessionID, "member "+terminaltext.Sanitize(ln.name))
 }
 
 // clampCursor clamps a candidate cursor index to [0, n-1] (and to 0 when the
@@ -353,7 +354,7 @@ func renderTeamRosterRow(style lipgloss.Style, prefix string, ln *teamLane, name
 }
 
 func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
-	name := truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)
+	name := truncate(terminaltext.Sanitize(ln.name), maxTeamNameWidth)
 	if pad := nameW - len([]rune(name)); pad > 0 {
 		name += strings.Repeat(" ", pad)
 	}
@@ -366,7 +367,7 @@ func teamRosterTitle(ln *teamLane, nameW int, teamDone bool) string {
 func teamRosterWork(ln *teamLane, teamDone bool) string {
 	parts := []string{teamLaneState(ln, teamDone)}
 	if ln.role != "" {
-		parts = append(parts, truncate(sanitizeTerminal(ln.role), maxTeamRoleLen))
+		parts = append(parts, truncate(terminaltext.Sanitize(ln.role), maxTeamRoleLen))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -449,13 +450,13 @@ func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk 
 	ln := teamFindLane(b, member)
 	if ln == nil {
 		body := renderDynamicCardChromeLine(th.Style("askTitle"), "", "agents", bodyWidth) + "\n\n" +
-			renderDynamicCardChromeLine(muted, "", "member "+sanitizeTerminal(member)+" is no longer in the roster", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "member "+terminaltext.Sanitize(member)+" is no longer in the roster", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 		return func(int) string { return body }
 	}
 
 	var out strings.Builder
-	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("agent · "+truncate(sanitizeTerminal(ln.name), maxTeamNameWidth), bodyWidth)))
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("agent · "+truncate(terminaltext.Sanitize(ln.name), maxTeamNameWidth), bodyWidth)))
 	out.WriteString("\n")
 	// The member's own lane line (reusing the inline vocabulary) as a sub-header so
 	// the focus pane is self-describing: glyph, mutating cue, name, [lead], state,
@@ -472,7 +473,7 @@ func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk 
 	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
 	// The trace is ALREADY rendered (carries ANSI; its text was sanitized at the
 	// source in renderTrace). It must NOT go through truncateLines, which
-	// sanitizeTerminal-strips ESC bytes and would mangle the styling — cap it by
+	// terminaltext.Sanitize-strips ESC bytes and would mangle the styling — cap it by
 	// line count ANSI-safely instead, to the rows that fit the terminal height.
 	var traceLines []string
 	if trace := r.renderTrace(ln.trace); trace != "" {
@@ -528,7 +529,7 @@ func teamFailureLineAtWidth(ln *teamLane, bodyWidth int) string {
 	if !ln.stopped || ln.stopReason != teamStopReasonError || ln.cause == "" {
 		return ""
 	}
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
+	return indentWrap("failed: "+truncate(terminaltext.Sanitize(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
 }
 
 // teamFindLane returns the lane named member off the team block, or nil. Names
@@ -684,23 +685,23 @@ const maxTaskDescLen = 40
 func taskRow(t teamTask, byID map[string]string) string {
 	assignee := "—"
 	if t.assignee != "" {
-		assignee = sanitizeTerminal(t.assignee)
+		assignee = terminaltext.Sanitize(t.assignee)
 	}
 	deps := "—"
 	if len(t.deps) > 0 {
 		sane := make([]string, 0, len(t.deps))
 		for _, d := range t.deps {
-			sane = append(sane, sanitizeTerminal(d))
+			sane = append(sane, terminaltext.Sanitize(d))
 		}
 		deps = strings.Join(sane, ",")
 	}
 	glyph := taskGlyph(t.state, taskBlocked(t, byID))
-	id := sanitizeTerminal(t.id)
-	state := sanitizeTerminal(t.state)
+	id := terminaltext.Sanitize(t.id)
+	state := terminaltext.Sanitize(t.state)
 	if t.desc == "" {
 		return fmt.Sprintf("%s %s · %s · %s · deps:%s", glyph, id, state, assignee, deps)
 	}
-	desc := truncate(sanitizeTerminal(t.desc), maxTaskDescLen)
+	desc := truncate(terminaltext.Sanitize(t.desc), maxTaskDescLen)
 	return fmt.Sprintf("%s %s · %s · %s · %s · deps:%s", glyph, id, desc, state, assignee, deps)
 }
 
@@ -800,8 +801,8 @@ func prepareTeamFindingsAt(th theme.Theme, b *block, scroll int, hk helpKeys, bo
 // clampPreview); newlines in the body are collapsed so a multi-line finding stays on
 // one scannable row.
 func findingRow(f teamFinding) string {
-	body := sanitizeTerminal(strings.ReplaceAll(f.body, "\n", " "))
-	return fmt.Sprintf("%s · %s", sanitizeTerminal(f.member), body)
+	body := terminaltext.Sanitize(strings.ReplaceAll(f.body, "\n", " "))
+	return fmt.Sprintf("%s · %s", terminaltext.Sanitize(f.member), body)
 }
 
 // teamFindingsSummary renders the one-line ledger roll-up: "N finding(s) from M

@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -321,7 +322,7 @@ func renderMention(th theme.Theme, st mentionState, width int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("muted").Render("files") + "\n")
 	for i := start; i < end; i++ {
-		row := sanitizeTerminal("@" + st.matches[i])
+		row := terminaltext.Sanitize("@" + st.matches[i])
 		if i == st.cursor {
 			b.WriteString(th.Style("askButtonActive").Render("› "+row) + "\n")
 		} else {

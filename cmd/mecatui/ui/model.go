@@ -17,6 +17,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
@@ -1132,7 +1133,7 @@ func New(deps Deps) Model {
 		m.conv = conversationFromTranscript(resume.Transcript.Messages)
 		m.startupAdopted = true
 		m.restartedThisRun = true
-		m.statusMsg = "continuing chat " + sanitizeTerminal(resume.Row.Title) + " — type to add a turn"
+		m.statusMsg = "continuing chat " + terminaltext.Sanitize(resume.Row.Title) + " — type to add a turn"
 		m.refreshView()
 	}
 	return m

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // TestADR_0247_SourcePublicAPI pins the concise source boundary consumed by
@@ -70,7 +72,7 @@ func TestADR_0247_SourceSnapshotsAreIndependentAndTerminalSafe(t *testing.T) {
 		t.Fatal("no publication")
 	}
 	first := s.Latest()
-	if strings.ContainsFunc(first.Header.Spans[0].Text+first.Header.Spans[0].Href, terminalControl) {
+	if got := first.Header.Spans[0].Text + first.Header.Spans[0].Href; got != terminaltext.SanitizeSingleLine(got) {
 		t.Fatal("terminal control escaped source")
 	}
 	first.Header.Spans[0].Text = "mutated"
@@ -109,7 +111,7 @@ func TestStatusLine_CloneNormalizedSurfaceIsIdempotent(t *testing.T) {
 	if !reflect.DeepEqual(twice, once) {
 		t.Fatalf("repeated normalization changed surface: once=%#v twice=%#v", once, twice)
 	}
-	if got := once.Spans[0]; got.Color != "" || got.Underline || got.Href != "" || got.Token != TokenText || strings.ContainsFunc(got.Text, terminalControl) {
+	if got := once.Spans[0]; got.Color != "" || got.Underline || got.Href != "" || got.Token != TokenText || got.Text != terminaltext.SanitizeSingleLine(got.Text) {
 		t.Fatalf("normalization left unsafe span: %#v", got)
 	}
 }
@@ -124,7 +126,7 @@ func TestStatusLine_Scenario2_TemplateEscapesValues(t *testing.T) {
 		t.Fatal("no publication")
 	}
 	for _, span := range s.Latest().Header.Spans {
-		if span.Token == TokenError || strings.ContainsFunc(span.Text, terminalControl) {
+		if span.Token == TokenError || span.Text != terminaltext.SanitizeSingleLine(span.Text) {
 			t.Fatalf("forged span %#v", span)
 		}
 	}

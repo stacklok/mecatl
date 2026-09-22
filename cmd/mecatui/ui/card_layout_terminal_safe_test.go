@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // TestMecatuiCardLayout_Scenario4_DynamicCardTextIsTerminalSafe verifies AC4.3:
@@ -27,7 +28,7 @@ func TestMecatuiCardLayout_Scenario4_DynamicCardTextIsTerminalSafe(t *testing.T)
 			}
 		}
 		plain := stripANSIstr(out)
-		if got := sanitizeTerminal(plain); got != plain {
+		if got := terminaltext.Sanitize(plain); got != plain {
 			t.Fatalf("%s retained terminal control or format rune in %q", name, plain)
 		}
 		if !strings.Contains(plain, "visible") || !strings.Contains(plain, "column") || !strings.Contains(plain, "next-row") {
@@ -40,7 +41,7 @@ func TestMecatuiCardLayout_Scenario4_DynamicCardTextIsTerminalSafe(t *testing.T)
 		}
 	}
 
-	if got, want := sanitizeTerminal(value), marker+"]0;spoof9;title[2J trailing"; got != want {
+	if got, want := terminaltext.Sanitize(value), marker+"]0;spoof9;title[2J trailing"; got != want {
 		t.Fatalf("plain card sanitizer = %q, want %q; layout tab/newline must survive", got, want)
 	}
 

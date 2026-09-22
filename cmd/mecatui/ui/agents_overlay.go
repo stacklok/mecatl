@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -700,7 +701,7 @@ func essentialTeamBody(th theme.Theme, st teamState, b *block, hk helpKeys, line
 	case teamFocus:
 		body.footer = line(th.Style("muted"), "", focusBackHint(hk))
 		if lane := teamFindLane(b, st.member); lane != nil {
-			body.title = line(th.Style("askTitle"), "", "agent · "+truncate(sanitizeTerminal(lane.name), maxTeamNameWidth))
+			body.title = line(th.Style("askTitle"), "", "agent · "+truncate(terminaltext.Sanitize(lane.name), maxTeamNameWidth))
 			body.selected = line(th.Style("muted"), "", teamLaneLine(lane, 0, b.teamDone))
 			if len(lane.trace) > 0 {
 				body.extra = append(body.extra, line(th.Style("muted"), "  ", fmt.Sprintf("… +%d more lines", len(lane.trace))))
@@ -759,7 +760,7 @@ func renderCompactAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState
 	case tabParallel:
 		label, focus = "Parallel", par.view == parallelGroupView
 		if focus && par.group != "" {
-			label = "parallel " + sanitizeTerminal(par.group)
+			label = "parallel " + terminaltext.Sanitize(par.group)
 		}
 	case tabTeams:
 		label, focus = "Teams", team.view != teamRoster
@@ -777,7 +778,7 @@ func renderCompactAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState
 			label = "subagent " + shortChildID(sub.child)
 		}
 		if tab == tabTeams && team.member != "" {
-			label = "agent " + sanitizeTerminal(team.member)
+			label = "agent " + terminaltext.Sanitize(team.member)
 		}
 		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "▶ "+label+" · "+focusBackHint(hk), width)
 	}
@@ -1083,7 +1084,7 @@ func renderSubagentRosterTitle(style lipgloss.Style, prefix string, ln *subagent
 }
 
 func renderEssentialSubagentFocus(style lipgloss.Style, ln *subagentLane, bodyWidth int) string {
-	goal := sanitizeTerminal(ln.goal)
+	goal := terminaltext.Sanitize(ln.goal)
 	if goal == "" {
 		goal = "subagent"
 	}
@@ -1106,7 +1107,7 @@ func subagentRosterTitle(ln *subagentLane, bodyWidth, titlePrefixWidth int) stri
 		marker = " " + subagentBackgroundMarker
 	}
 	suffix := " #" + shortChildID(ln.childID) + marker
-	goal := sanitizeTerminal(ln.goal)
+	goal := terminaltext.Sanitize(ln.goal)
 	if goal == "" {
 		goal = "subagent"
 	}
@@ -1190,7 +1191,7 @@ func subagentFailureLineAtWidth(ln *subagentLane, bodyWidth int) string {
 	// i.e. it would no longer provide the bound this comment claims. strings.Fields splits
 	// on every unicode.IsSpace, which is what "one logical line" has to mean for an
 	// untrusted peer string.
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
+	return indentWrap("failed: "+truncate(terminaltext.Sanitize(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
 }
 
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its
@@ -1227,7 +1228,7 @@ func subagentLaneState(ln *subagentLane) string {
 		return subagentStopLabel(ln.stop)
 	}
 	if ln.current != "" {
-		return truncate(sanitizeTerminal(ln.current), maxTraceToolNameLen) + "…"
+		return truncate(terminaltext.Sanitize(ln.current), maxTraceToolNameLen) + "…"
 	}
 	return "working…"
 }
@@ -1237,7 +1238,7 @@ func subagentLaneState(ln *subagentLane) string {
 // It takes the LAST up-to-childIDHashLen runes of the id (the id's tail carries the
 // per-call discriminator, e.g. "explorer-<callID>"), sanitized.
 func shortChildID(id string) string {
-	id = sanitizeTerminal(id)
+	id = terminaltext.Sanitize(id)
 	r := []rune(id)
 	if len(r) <= childIDHashLen {
 		return id
@@ -1275,7 +1276,7 @@ func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, 
 	}
 
 	var out strings.Builder
-	goal := truncate(sanitizeTerminal(ln.goal), maxTeamNameWidth*2)
+	goal := truncate(terminaltext.Sanitize(ln.goal), maxTeamNameWidth*2)
 	if goal == "" {
 		goal = "subagent"
 	}
@@ -1460,7 +1461,7 @@ func parallelWinnerLabel(g *parallelGroup) string {
 func branchHumanLabel(g *parallelGroup, index int) string {
 	for i := range g.branches {
 		if g.branches[i].index == index && g.branches[i].label != "" {
-			return truncate(sanitizeTerminal(g.branches[i].label), maxParallelBranchLabelLen)
+			return truncate(terminaltext.Sanitize(g.branches[i].label), maxParallelBranchLabelLen)
 		}
 	}
 	return fmt.Sprintf("branch-%d", index+1)
@@ -1570,8 +1571,8 @@ func parallelBranchTitle(br *parallelBranch, bodyWidth, titlePrefixWidth int) st
 	if label == "" {
 		label = fmt.Sprintf("branch-%d", br.index+1)
 	}
-	title := parallelBranchGlyph(br) + " " + sanitizeTerminal(label)
-	if goal := sanitizeTerminal(br.goal); goal != "" {
+	title := parallelBranchGlyph(br) + " " + terminaltext.Sanitize(label)
+	if goal := terminaltext.Sanitize(br.goal); goal != "" {
 		title += " · " + goal
 	}
 	if bodyWidth > 0 {
@@ -1608,7 +1609,7 @@ func parallelBranchState(br *parallelBranch) string {
 		return state
 	}
 	if br.current != "" {
-		return truncate(sanitizeTerminal(br.current), maxTraceToolNameLen) + "…"
+		return truncate(terminaltext.Sanitize(br.current), maxTraceToolNameLen) + "…"
 	}
 	return "working…"
 }
@@ -1634,8 +1635,8 @@ func parallelBranchLine(br *parallelBranch) string {
 	if label == "" {
 		label = fmt.Sprintf("branch-%d", br.index+1)
 	}
-	label = truncate(sanitizeTerminal(label), maxParallelBranchLabelLen)
-	goal := truncate(sanitizeTerminal(br.goal), maxSubagentGoalLen)
+	label = truncate(terminaltext.Sanitize(label), maxParallelBranchLabelLen)
+	goal := truncate(terminaltext.Sanitize(br.goal), maxSubagentGoalLen)
 	state := "working…"
 	if br.done {
 		state = parallelBranchStopLabel(br)
@@ -1643,14 +1644,14 @@ func parallelBranchLine(br *parallelBranch) string {
 			state += " · " + humanizeDuration(br.durationMs)
 		}
 	} else if br.current != "" {
-		state = truncate(sanitizeTerminal(br.current), maxTraceToolNameLen) + "…"
+		state = truncate(terminaltext.Sanitize(br.current), maxTraceToolNameLen) + "…"
 	}
 	routed := ""
 	if r := subagentModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model); r != "" {
 		routed = " · " + r
 	}
 	return fmt.Sprintf("%s %s · %s%s · %s · %s · ↑%s ↓%s",
-		glyph, sanitizeTerminal(label), goal, routed, state,
+		glyph, terminaltext.Sanitize(label), goal, routed, state,
 		plural(br.toolCount, "tool"),
 		humanizeTokens(br.usage.InputTokens),
 		humanizeTokens(br.usage.OutputTokens))

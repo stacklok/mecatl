@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
@@ -533,14 +534,14 @@ func (m Model) zeroStateGatewayNote() string {
 		return ""
 	}
 	return m.deps.Theme.Style("muted").Render(
-		"  " + sanitizeTerminal(row.ProviderID) + " gateway detected (no API key needed) — /models")
+		"  " + terminaltext.Sanitize(row.ProviderID) + " gateway detected (no API key needed) — /models")
 }
 
 // zeroStateModelName picks the model id shown on the splash: the picker's active
 // selection once set, else the launch-time --model display (mirrors the header).
 func (m Model) zeroStateModelName() string {
 	if name := m.createModelSelection.ModelID; name != "" {
-		return sanitizeTerminal(name)
+		return terminaltext.Sanitize(name)
 	}
 	return m.deps.Model
 }

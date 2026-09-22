@@ -112,6 +112,17 @@ func TestStatusLine_RenderStatusSpansUsesLinkThemeStyle(t *testing.T) {
 		t.Fatalf("link output %q", got)
 	}
 }
+
+func TestStatusLine_RenderStatusSpansUsesSingleLineSanitization(t *testing.T) {
+	spans := []statusline.Span{{Text: "header\twith\nlayout\u2028controls\u2029"}}
+	if got, want := statusSpansText(spans), "headerwithlayoutcontrols"; got != want {
+		t.Fatalf("status text = %q, want %q", got, want)
+	}
+	if got, want := stripANSIstr(renderStatusSpans(theme.New("aztec", theme.AztecPalette()), spans)), "headerwithlayoutcontrols"; got != want {
+		t.Fatalf("rendered status = %q, want %q", got, want)
+	}
+}
+
 func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 	s := customization.NewDefaultSource(0)
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
