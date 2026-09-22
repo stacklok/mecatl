@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/term"
+
 	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
