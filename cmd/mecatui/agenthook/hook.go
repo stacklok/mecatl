@@ -51,6 +51,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
 // EventType is a `hook_event_name` value in the shared agent-hook schema. These
@@ -94,6 +97,8 @@ type Notifier struct {
 	mu      sync.Mutex
 	running bool          // dedupe: busy signal once per turn, terminal once per turn
 	queue   chan dispatch // ordered single-worker delivery; lazily started
+	done    chan struct{} // closed by the worker when it has drained and exited
+	closed  bool          // Close called: never start another worker (see Close)
 }
 
 // dispatch is one queued hook invocation. Ordering matters (the busy signal must
@@ -206,39 +211,97 @@ func (n *Notifier) PermissionRequest(_ context.Context, sessionID, message strin
 // context would abort the hook before it could deliver the completion — the same
 // cancel-detached rationale as the server's durable event append. The timeout
 // still guarantees a wedged hook command cannot wedge the worker forever.
+// The send happens UNDER n.mu, which is what makes Close safe: Close closes the
+// queue while holding the same lock, so a send can never race (or panic)
+// against it. Holding the lock across the send is sound precisely because every
+// arm below is non-blocking — the worker never takes n.mu, so it keeps draining
+// throughout and this can never wait on delivery.
 func (n *Notifier) enqueue(ev EventType, sessionID, message string) {
 	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed {
+		// Past the shutdown boundary: drop rather than resurrect a worker whose
+		// delivery could cross into a successor notifier's run (see Close).
+		return
+	}
 	if n.queue == nil {
 		n.queue = make(chan dispatch, queueDepth)
+		n.done = make(chan struct{})
 		//nolint:contextcheck // deliberate: see the doc comment above — a
 		// lifecycle notification must outlive the run context that triggered it.
-		go n.worker(n.queue)
+		go n.worker(n.queue, n.done)
 	}
-	q := n.queue
-	n.mu.Unlock()
 
 	d := dispatch{ev: ev, sessionID: sessionID, message: message}
 	for {
 		select {
-		case q <- d:
+		case n.queue <- d:
 			return
 		default:
 			// Buffer full: drop the oldest, then retry. Best-effort delivery.
 			select {
-			case <-q:
+			case <-n.queue:
 			default:
 			}
 		}
 	}
 }
 
-// worker delivers queued events in arrival order, one at a time.
-func (n *Notifier) worker(q chan dispatch) {
+// worker delivers queued events in arrival order, one at a time. It exits when
+// Close closes the queue, signalling that by closing done.
+func (n *Notifier) worker(q chan dispatch, done chan struct{}) {
+	defer close(done)
 	for d := range q {
 		payload := buildPayload(d.ev, d.sessionID, d.message)
 		ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
 		n.run(ctx, n.script, n.extraEnv, payload)
 		cancel()
+	}
+}
+
+// Close settles this notifier: it stops accepting events, then waits — bounded
+// by ctx — for the worker to drain what is already queued and exit.
+//
+// This is the GENERATION BOUNDARY, and it is why delivery being "best-effort"
+// is not on its own enough. mecatui can restart its whole run in-process (a
+// /connect restart re-enters runWithOptions), which builds a FRESH notifier.
+// Without an owned shutdown the previous generation's worker keeps running, so
+// a slow hook command could deliver generation N's queued Stop AFTER generation
+// N+1's UserPromptSubmit — marking the host idle during a live run. Dropping a
+// late event is acceptable; delivering it out of order across generations is
+// not, so Close bounds the wait and then abandons rather than blocking exit.
+//
+// Close is idempotent and safe on a nil *Notifier or one that never enqueued.
+// After it returns, every method is a no-op.
+func (n *Notifier) Close(ctx context.Context) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		return
+	}
+	n.closed = true
+	q, done := n.queue, n.done
+	n.queue = nil
+	// Closed UNDER the lock, so it cannot interleave with an enqueue's send
+	// (which also holds the lock); closing is itself non-blocking.
+	if q != nil {
+		close(q)
+	}
+	n.mu.Unlock()
+
+	if q == nil {
+		return // no worker was ever started
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		// Bounded abandon: a wedged hook command must not hold up the restart
+		// or process exit. The closed flag already stops any NEW delivery, so
+		// at worst one in-flight invocation outlives us — it can no longer be
+		// followed by another event from this generation.
 	}
 }
 
@@ -249,14 +312,27 @@ func (n *Notifier) worker(q chan dispatch) {
 // It inherits the process environment so the host's own terminal markers remain
 // visible to the hook, plus whatever host-specific entries the host requires.
 // Output is discarded and any error is swallowed — best-effort.
+//
+// On timeout, exec kills only the script itself, not helpers it spawned (a hook
+// that backgrounds a curl, or shells a `sleep`), so repeated deliveries could
+// accumulate orphans that outlive the bound this package advertises.
+// procgroup.Configure kills the whole process group on POSIX and the nonzero
+// WaitDelay bounds the wait everywhere as a backstop — the same containment
+// convention as internal/adapter/hookexec and cmd/mecatui/statusline.
 func defaultRunner(ctx context.Context, script string, extraEnv []string, payload string) {
 	cmd := exec.CommandContext(ctx, script)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdin = strings.NewReader(payload)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	procgroup.Configure(cmd)
+	cmd.WaitDelay = killGrace
 	_ = cmd.Run()
 }
+
+// killGrace bounds (*Cmd).Wait after the context fires, so a descendant holding
+// an inherited handle cannot stall the delivery worker past the timeout.
+const killGrace = 2 * time.Second
 
 // notifyPayload is the shared agent-hook input shape: `hook_event_name` plus the
 // schema's common fields. The event name is ALWAYS present (a host drops an
@@ -297,10 +373,8 @@ func clip(s string, limit int) string {
 		return s
 	}
 	cut := limit
-	for cut > 0 && !utf8Start(s[cut]) {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut]
 }
-
-func utf8Start(b byte) bool { return b&0xC0 != 0x80 }

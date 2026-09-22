@@ -961,6 +961,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// RPC response arrives. Tear it down without draining queues, retrying steps,
 		// reopening live delivery, or otherwise continuing the source.
 		if m.clearPending != nil {
+			// A genuine terminal for the hook: the source run is over (no result
+			// will arrive). Without this the notifier stays running=true and the
+			// NEXT run's Start is silently deduped, so the host never goes busy
+			// again. Clear still owns the UI handoff; only the hook settles here.
+			m.notifyHookFailed(streamClosedReason)
 			m = m.endRun("closed")
 			m.clearPending.sourceSettled = true
 			m.phase = phaseConnecting
@@ -974,6 +979,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// finalise it; otherwise it's the expected post-result close (no-op).
 		if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
 			m.recoverPrompt(false)
+			// Genuine terminal: the stream ended while the run was still active,
+			// so the host gets a failed terminal rather than being left busy.
+			m.notifyHookFailed(streamClosedReason)
 			m = m.endRun("closed")
 			modeCmd := m.retryPendingModeCmd()
 			liveCmd := m.armLiveFeed()
@@ -1577,6 +1585,13 @@ func (m Model) notifyHookStop(msg client.ResultMsg) {
 	failed := msg.Stop == stopError
 	m.deps.AgentHook.Stop(m.deps.Ctx, m.sessionID, failed, msg.Error)
 }
+
+// Terminal previews for hook notifications that carry no error value of their
+// own: a stream that closed mid-run, and an auth recovery that cancelled one.
+const (
+	streamClosedReason = "stream closed before the run finished"
+	authRecoveryReason = "authentication needs attention"
+)
 
 // streamErrReason renders a transport error for the hook's notification preview,
 // tolerating a nil error (some stream-death branches carry the fact without an
@@ -3625,6 +3640,11 @@ func (m Model) reduceLiveAuthRecovery(reason client.AuthReason) (tea.Model, tea.
 	// particular, an active Converse run is cancelled and its generation is
 	// invalidated; auth recovery is not a completed run.
 	if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
+		// Genuine terminal: auth recovery cancels the active run and hands the
+		// user to the connect surface, so the hook must settle. (Distinct from
+		// the phaseAuthorizing park in StreamClosedMsg, where the run is only
+		// suspended and its own terminal still arrives — that stays silent.)
+		m.notifyHookFailed(authRecoveryReason)
 		m = m.endRun("")
 	}
 	m.disarmLiveFeed()
