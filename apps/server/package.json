@@ -10,6 +10,7 @@
     "generate:openapi": "tsx scripts/generate-openapi.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

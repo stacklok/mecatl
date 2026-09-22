@@ -128,12 +128,13 @@ done
 assert_if user-docs has "needs.changes.outputs.site_relevant == 'true'"
 assert_if user-docs hasnot "docs_only"
 
-# The Mecatl Studio job gates on studio_relevant (plus the docs_only guard — an
-# apps/README.md-only change is docs-only and needs no Node run). Studio consumes
-# the PUBLISHED SDK, so it must NOT be tied to go or sdk relevance.
-assert_if studio has "needs.changes.outputs.studio_relevant == 'true'"
+# The Mecatl Studio job gates on studio_relevant OR go_relevant (plus the
+# docs_only guard — an apps/README.md-only change is docs-only and needs no Node
+# run): its integration suite drives the BFF against the current bin/mecated,
+# so a daemon change can break it. Studio consumes the PUBLISHED SDK, so it must
+# NOT be tied to sdk relevance.
+assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
 assert_if studio has "needs.changes.outputs.docs_only != 'true'"
-assert_if studio hasnot "go_relevant"
 assert_if studio hasnot "sdk_relevant"
 
 # Drift guard: pin the number of job-level `if:` gates carrying go_relevant so
@@ -142,12 +143,13 @@ assert_if studio hasnot "sdk_relevant"
 # sibling test counts), Linux Go jobs share `runs-on: ubuntu-24.04` with
 # legitimately-ungated jobs (changes, docs, domain-model, the always() aggregators,
 # sdk, user-docs), so there is no runner marker to count — this pins the gate set
-# instead. Expected 15 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs.
+# instead. Expected 16 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs
+# + the studio job (go||studio).
 # The residual this cannot catch is a NEW Go job shipped with NO gate at all; the
 # job lists above are the record for that.
 go_gate_count="$(grep -cF "needs.changes.outputs.go_relevant == 'true'" "$workflow" || true)"
-if [[ "$go_gate_count" -ne 15 ]]; then
-  fail "expected 15 job if: gates on go_relevant (11 go-family + 4 go||sdk), found $go_gate_count — update the job lists in this test when gating/ungating a job"
+if [[ "$go_gate_count" -ne 16 ]]; then
+  fail "expected 16 job if: gates on go_relevant (11 go-family + 4 go||sdk + studio), found $go_gate_count — update the job lists in this test when gating/ungating a job"
 fi
 
 # --- required-check aggregators tolerate the new skips -------------------------

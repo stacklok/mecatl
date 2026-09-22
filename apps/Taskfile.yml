@@ -46,6 +46,17 @@ tasks:
     cmds:
       - pnpm run test
 
+  test:integration:
+    desc: |
+      Drive the real BFF over the real SDK against a spawned `mecated --mock`.
+      Builds the daemon first (repo `task build`), so a Go toolchain is required;
+      the offline `test` task never needs one.
+    deps: [install]
+    cmds:
+      - task --dir .. build
+      # The daemon was just built, so a missing binary is a failure, not a skip.
+      - STUDIO_REQUIRE_MECATED=1 pnpm --filter @mecatl-studio/server run test:integration
+
   generate:
     desc: Regenerate contracts/openapi.json and contracts/src/generated from the Hono routes
     deps: [install]

@@ -516,12 +516,15 @@ jobs:
   studio:
     name: Mecatl Studio (apps/)
     needs: changes
-    # Pure Node, no Go toolchain: Studio is a self-contained pnpm workspace on
-    # the PUBLISHED @stacklok-oss/mecatl-sdk (ADR 0351), so it is gated on its
-    # own studio_relevant flag (apps/ + the CI-control files) — never on go or
-    # sdk relevance. The image build is push: false — the same apps/Dockerfile
-    # the `publish-studio` release job pushes, here only proven to build.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.studio_relevant == 'true'
+    # Studio is a self-contained pnpm workspace on the PUBLISHED
+    # @stacklok-oss/mecatl-sdk (ADR 0351); its offline gates are pure Node. The
+    # integration suite at the end builds bin/mecated and drives the BFF against
+    # it, so a daemon change can break Studio too: the job runs when either its
+    # own studio_relevant flag (apps/ + the CI-control files) or go_relevant is
+    # set, never on sdk relevance alone. The image build is push: false — the
+    # same apps/Dockerfile the `publish-studio` release job pushes, here only
+    # proven to build.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -562,6 +565,21 @@ jobs:
 
       - name: Verify committed contracts artifacts are fresh
         run: task studio:generated-check
+
+      # The integration suite boots the BFF over the REAL SDK against a spawned
+      # `mecated --mock`, so it needs the Go toolchain to build bin/mecated —
+      # the same shape as the Slack bot example job. The task requires the
+      # binary it just built, so a build that produced none fails here.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - name: Integration-test Studio against a spawned mecated --mock
+        run: task studio:test:integration
 
       - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
 
