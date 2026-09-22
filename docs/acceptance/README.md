@@ -175,7 +175,8 @@ PR after verification. There is no cleanup or status-only PR.
 - [Jev delegated-model router](jev-model-router.md) — proposes an explicitly selected,
   bounded Jev decision backend behind the existing delegated-routing callback while
   preserving taxonomy mapping, same-provider child construction, fallback, and usage flow.
-  Status: draft.
+  Status: in-progress under direct operator approval and the explicit stacked merge waiver; Plan /
+  Interface PR #1735 retains its human merge gate.
 - [Scalable reflection evidence](scalable-reflection-evidence.md) — one versioned,
   deterministic bounded-evidence materializer for automatic and explicit reflection,
   replacing raw retained-size rejection while preserving coordinator and promotion safety.
