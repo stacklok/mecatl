@@ -35,10 +35,10 @@ The presentation boundary must be functional rather than receive mutable `block`
 **Acceptance:**
 - AC1.1: A UI-internal conversation-card package defines immutable per-family input values, an explicit layout containing every render-relevant geometry, appearance/frame, hint, and rendering-dialect snapshot, and prepared output containing final card-local decorated lines plus an equal-length structural-row slice. The row slice carries every field needed to construct a `renderedRow` without parsing styled output or retaining semantic source text.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructuralProvenance`
-- AC1.2: Card preparation and cache-identity derivation from an input snapshot and layout are deterministic and neither retain nor observe subsequent mutation of caller-owned input, nested slices/maps, callbacks, conversation, renderer, viewport, terminal, clock, or process environment state.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_PrepareAndKeyOwnImmutableSnapshots`
-- AC1.3: Each card family derives one opaque 32-byte cache identity from a canonical explicit encoding of every render-relevant input and layout value, including width, expansion, visible hints, concrete appearance/frame data, and rendering-format version. A changed render-relevant value produces a different identity and re-prepared output; unchanged snapshots are byte-identical. Digest equality is the accepted identity for this local, non-persistent, non-adversarial in-memory cache.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_CacheKeyTracksRenderInputs`
+- AC1.2: Card preparation from an input snapshot and layout is deterministic and neither retains nor observes subsequent mutation of caller-owned input, nested slices/maps, callbacks, conversation, renderer, viewport, terminal, clock, or process environment state.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_PrepareOwnsImmutableSnapshots`
+- AC1.3: Each render-visible block mutation advances that block's conversation-owned content revision through one mutation gateway. The renderer compares that revision with one explicit shared render-context key containing width, expanded state, theme/palette generation, visible-hint/keymap generation, and rendering dialect; a changed content or context member re-prepares output, while a settled matching entry performs no snapshot, preparation, or hash work.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksContentAndContext`
 - AC1.4: The card-preparation package owns neither cache storage/lifetime nor transcript/block identity, selection, viewport, or Bubble Tea state; it imports only the mecatui UI/theme/client dependency closure and no engine, host `internal`, or protobuf package.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario1_CardsPackageDependencyBoundary`
 
@@ -63,8 +63,8 @@ The main conversation's structured non-Markdown presentations migrate to the sha
 The existing renderer and rendered frame remain the adapters between prepared cards and the viewport. ADR 0301 requires frame lines and row provenance to remain lockstep, retains cached settled blocks and prefix reuse, and prohibits introducing a second full transcript or a virtualization redesign ([ADR 0301](../adr/0301-logical-conversation-anchors.md#2-render-line-provenance-with-the-existing-frame)).
 
 **Acceptance:**
-- AC3.1: `block.rev` remains the renderer-owned cheap generation/admission guard. Only on a changed generation or cache miss does the renderer snapshot a card input, derive its canonical 32-byte cache identity, and prepare output; the stored identity is the prepared-output identity rather than a second set of parallel cache dimensions.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardRehash`
+- AC3.1: The renderer caches each block by one composite key: the conversation-owned content revision plus the shared render-context key. It snapshots and prepares a card only on a changed content revision or context key/cache miss; settled matching entries reuse cached output without snapshotting, preparing, or hashing.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardPreparation`
 - AC3.2: The renderer adapts `Prepared.Rows` atomically into rendered-frame provenance without parsing decorated output or retaining a second semantic-text copy; every cached frame has line/provenance lockstep.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario3_FrameProvenanceMatchesPreparedRows`
 - AC3.3: Selection in a prepared tool argument or result retains its exact visible text and endpoint context after an unrelated append and width reflow; it clears when the selected source changes or collapse hides the selected row. Expand/collapse, a late tool result, and terminal-width changes preserve the ADR 0301 logical reading position.
