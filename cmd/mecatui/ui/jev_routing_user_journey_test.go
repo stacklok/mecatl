@@ -27,18 +27,34 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 		MissLimit:         3,
 	}
 
+	zero := 0.0
+	accepted := &client.RoutingDecision{
+		Backend:           "jev",
+		ClassifierModel:   "jev-1.13.0",
+		CandidateCategory: "small",
+		CandidateModel:    "gpt-5.6-mini",
+		Confidence:        &zero,
+		MinimumConfidence: &zero,
+		Outcome:           "routed",
+		MissLimit:         3,
+	}
+
 	m := newMCPModel(t, aztec(), nil)
 	m = applyAll(m,
 		client.ToolCallMsg{ID: "sub-call", Name: "Subagent", Args: `{"prompt":"inspect routing"}`},
 		client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub-call", ChildID: "sub-child", Goal: "inspect routing", Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision},
 		client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "sub-call", ChildID: "sub-child", InnerKind: "tool.call", ToolName: "Read", ToolCount: 1},
 		client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "sub-call", ChildID: "sub-child", Stop: "end_turn"},
+		client.ToolCallMsg{ID: "accepted-call", Name: "Subagent", Args: `{"prompt":"implement routing"}`},
+		client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "accepted-call", ChildID: "accepted-child", Goal: "implement routing", Model: "gpt-6-astra", RoutingDecision: accepted},
+		client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "accepted-call", ChildID: "accepted-child", Stop: "end_turn"},
 		client.ParallelMsg{Kind: client.ParallelStart, ParentCallID: "parallel-call", Join: "all", BranchCount: 1},
 		client.ParallelMsg{Kind: client.ParallelBranchStart, ParentCallID: "parallel-call", BranchIndex: 0, ChildID: "parallel-child", BranchLabel: "branch-1", Goal: "inspect routing", Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision},
 		client.ParallelMsg{Kind: client.ParallelBranchTool, ParentCallID: "parallel-call", BranchIndex: 0, InnerKind: "tool.call", ToolName: "Grep", ToolCount: 1},
 		client.ToolCallMsg{ID: "team-call", Name: "Team", Args: `{}`},
 		client.TeamMsg{Kind: client.TeamStart, ParentCallID: "team-call", TeamID: "team-1", Roster: []client.TeamMemberSpec{{Name: "lead", Lead: true, Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision}}},
 		client.TeamMsg{Kind: client.TeamMember, ParentCallID: "team-call", TeamID: "team-1", Member: "lead", InnerKind: "tool.call", ToolName: "Read"},
+		client.TeamMsg{Kind: client.TeamEnd, ParentCallID: "team-call", TeamID: "team-1", Rounds: 1, Stop: "end_turn"},
 	)
 
 	// The event owns an immutable decision snapshot. Later caller mutation must not
@@ -74,6 +90,18 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	if got := strings.Count(expanded, "candidate: medium"); got != 1 {
 		t.Errorf("expanded fallback duplicated compact candidate cue %d times:\n%s", got, expanded)
 	}
+	var acceptedBlock *block
+	for i := range m.conv.blocks {
+		if m.conv.blocks[i].toolID == "accepted-call" {
+			acceptedBlock = &m.conv.blocks[i]
+			break
+		}
+	}
+	if acceptedBlock == nil {
+		t.Fatal("accepted Subagent tool block was not created")
+	}
+	acceptedExpanded := stripANSIstr(r.renderBlock(0, acceptedBlock, true))
+	assertAcceptedRoutingDetail(t, "expanded accepted Subagent card", acceptedExpanded)
 	var teamBlock *block
 	for i := range m.conv.blocks {
 		if m.conv.blocks[i].toolID == "team-call" {
@@ -84,16 +112,30 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	if teamBlock == nil {
 		t.Fatal("Team tool block was not created")
 	}
-	assertRoutingDetail(t, "expanded Team card", stripANSIstr(r.renderBlock(0, teamBlock, true)))
+	completedTeamExpanded := stripANSIstr(r.renderBlock(0, teamBlock, true))
+	assertRoutingDetail(t, "expanded completed Team card", completedTeamExpanded)
+
+	// Historic team.end events carried no per-member routing decision. Their compact
+	// terminal summary remains exactly the pre-router one-line fallback.
+	historicalTeam := &block{team: true, teamDone: true, teamRounds: 1, teamStop: "end_turn"}
+	if got, want := stripANSIstr(r.renderTeam(historicalTeam, false, 0)), "team · 1 round · ↑0 ↓0 · stop:done"; got != want {
+		t.Errorf("historical compact completed Team = %q, want %q", got, want)
+	}
 
 	views := map[string]string{}
-	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 70})
 	m = mm.(Model)
-	mm, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 70})
+	conversationView := stripANSIstr(m.View().Content)
+	if !strings.Contains(conversationView, "model: gpt-6-astra") {
+		t.Errorf("conversation View omitted the accepted Subagent actual model:\n%s", conversationView)
+	}
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 	m.agentsTab = tabSubagents
 	m.subagents = subagentState{view: subagentFocus, child: "sub-child"}
 	views["Subagent focus"] = stripANSIstr(m.View().Content)
+	m.subagents = subagentState{view: subagentFocus, child: "accepted-child"}
+	views["accepted Subagent focus"] = stripANSIstr(m.View().Content)
 
 	m.agentsTab = tabParallel
 	m.parallel = parallelState{view: parallelGroupView, group: "parallel-call"}
@@ -103,8 +145,9 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	m.team = teamState{view: teamFocus, member: "lead"}
 	views["Team focus"] = stripANSIstr(m.View().Content)
 
-	for name, out := range views {
-		t.Run(name, func(t *testing.T) { assertRoutingDetail(t, name, out) })
+	assertAcceptedRoutingDetail(t, "accepted Subagent focus", views["accepted Subagent focus"])
+	for _, name := range []string{"Subagent focus", "Parallel focus", "Team focus"} {
+		t.Run(name, func(t *testing.T) { assertRoutingDetail(t, name, views[name]) })
 	}
 
 	// Width zero must remain renderable, and a narrow terminal must retain the
@@ -119,6 +162,12 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 			if !strings.Contains(out, "backend: jev") {
 				t.Errorf("routing detail disappeared at width %d:\n%s", width, out)
 			}
+			cardRenderer := newTestRenderer()
+			cardRenderer.width = width
+			completedTeam := stripANSIstr(cardRenderer.renderBlock(0, teamBlock, true))
+			if strings.TrimSpace(completedTeam) == "" || !strings.Contains(completedTeam, "backend: jev") {
+				t.Errorf("completed Team expanded routing detail disappeared at width %d:\n%s", width, completedTeam)
+			}
 			if width > 0 {
 				for row, line := range strings.Split(out, "\n") {
 					if got := maxLineWidth(line); got > width {
@@ -131,7 +180,6 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 
 	// Optional presence is visible: known zero is a real value, while nil LLM
 	// confidence is unavailable. Historical nil retains the exact old label.
-	zero := 0.0
 	zeroDecision := &client.RoutingDecision{Backend: "jev", ClassifierModel: "jev-1.13.0", Confidence: &zero, MinimumConfidence: &zero, Outcome: "routed", MissLimit: 3}
 	zeroDetail := routingDecisionDetail(zeroDecision, "gpt-6-astra", "")
 	if !strings.Contains(zeroDetail, "confidence: 0.00") || !strings.Contains(zeroDetail, "threshold: disabled (0.00)") || !strings.Contains(zeroDetail, "reason: accepted") || strings.Contains(zeroDetail, "no final reason") {
@@ -161,6 +209,19 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	}
 
 	compareGolden(t, "jev_routing_user_journey.golden", []byte(expanded+"\n\n"+views["Subagent focus"]+"\n"))
+}
+
+func assertAcceptedRoutingDetail(t *testing.T, surface, out string) {
+	t.Helper()
+	for _, want := range []string{
+		"backend: jev · classifier: jev-1.13.0 · outcome: routed",
+		"candidate: small → gpt-5.6-mini · confidence: 0.00 · threshold: disabled (0.00)",
+		"actual model: gpt-6-astra · reason: accepted",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%s missing %q:\n%s", surface, want, out)
+		}
+	}
 }
 
 func assertRoutingDetail(t *testing.T, surface, out string) {

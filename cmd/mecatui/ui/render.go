@@ -1963,9 +1963,11 @@ func teamLaneOrder(lanes []teamLane) []int {
 //   - EXPANDED (ctrl+t, same toggle): per member, the capped lane trace — message
 //     lines (clamped) and tool chips (✓/✗ name) with their bounded arg/result
 //     preview — separated by a blank line between members so boundaries are clear.
-//   - RESOLVED (team ended): a muted stat line
-//     "team · <rounds> rounds · ↑<in> ↓<out> · stop:<reason>". The Team tool's
-//     joined summary renders below via the normal result body path.
+//   - RESOLVED compact (team ended): a muted stat line
+//     "team · <rounds> rounds · ↑<in> ↓<out> · stop:<reason>". Expanded resolved
+//     cards retain that terminal summary and show the same bounded per-member detail
+//     as a live expanded card. The Team tool's joined summary renders below via the
+//     normal result body path.
 //
 // All member-derived text (names, message lines, tool names, previews) is
 // terminal-sanitized before it reaches lipgloss.
@@ -1975,10 +1977,12 @@ func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
 
 	if b.teamDone {
 		out.WriteString(renderDelegationToolCardText(muted, teamResolvedLine(b), bodyWidth))
-		return out.String()
+		if !expand {
+			return out.String()
+		}
+	} else {
+		out.WriteString(renderDelegationToolCardText(muted, r.teamHeader(b, expand), bodyWidth))
 	}
-
-	out.WriteString(renderDelegationToolCardText(muted, r.teamHeader(b, expand), bodyWidth))
 
 	order := teamLaneOrder(b.teamLanes)
 	shown := order
