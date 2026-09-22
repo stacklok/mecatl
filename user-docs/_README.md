@@ -3,8 +3,7 @@
 This directory contains the public documentation for [Mecatl](../README.md). It
 helps developers use `mecatui`, helps operators deploy Mecatl, and helps
 builders integrate Mecatl into applications. The Docusaurus site renders this
-directory; keep site
-infrastructure in `website/`. For Docusaurus mechanics, see
+directory; keep site infrastructure in `website/`. For Docusaurus mechanics, see
 [`website/AGENTS.md`](../website/AGENTS.md).
 
 Before drafting or substantively editing a page, use the repository's
@@ -158,10 +157,10 @@ Generated reference pages are exceptions to direct editing:
 
 - For `reference/configuration.md`, change the configuration schema or
   generator, then run `task docs:configref`.
-- For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change the
-  TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then run
-  `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed output
-  is current without changing it.
+- For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change
+  the TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then
+  run `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed
+  output is current without changing it.
 
 Confirm availability and defaults against the shipped public surface: flags or
 configuration, composition, capability advertisement, handlers, and deployed

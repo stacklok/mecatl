@@ -113,8 +113,8 @@ session creation.
 
 - [Work with sessions and runs](./sessions-and-runs.md) to consume callback-tool
   events and terminal results.
-- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) to configure
-  server-side tool decisions.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  to configure server-side tool decisions.
 
 ## Related information
 

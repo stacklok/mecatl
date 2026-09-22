@@ -175,8 +175,8 @@ mecated serve \
 A remote skill source replaces local discovery and is loaded at startup. A
 remote soul source fills the user soul slot. A remote command source works
 alongside local commands and is queried when used. Configure driver TLS and
-authentication as described in the
-[settings guide](/operating/settings.md); use only drivers you trust.
+authentication as described in the [settings guide](/operating/settings.md); use
+only drivers you trust.
 
 The legacy `SkillDraft`/`mecated skills promote` path is a quarantine workflow,
 not automatic publishing. A drafted skill is not active in the writing session.

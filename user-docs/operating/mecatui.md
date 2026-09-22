@@ -14,10 +14,10 @@ and `linux/arm64`:
 ghcr.io/stacklok/mecatl/mecatui:<VERSION>
 ```
 
-The image also includes a
-[brood-box](https://github.com/stacklok/brood-box) agent manifest, so you can
-import it without writing a Dockerfile or wrapper. Use a release version for a
-repeatable deployment; `latest` tracks the latest release.
+The image also includes a [brood-box](https://github.com/stacklok/brood-box)
+agent manifest, so you can import it without writing a Dockerfile or wrapper.
+Use a release version for a repeatable deployment; `latest` tracks the latest
+release.
 
 It is signed with keyless cosign, includes an SPDX SBOM attestation, and carries
 SLSA build provenance. See
@@ -54,9 +54,9 @@ credential or allow egress to `chatgpt.com`. To enable it:
 1. Pass `--api-key-file` and `--default-provider openai-codex`.
 1. Allow HTTPS egress to `chatgpt.com`.
 
-This provider uses an undocumented private backend rather than public OpenAI
-API credit. It has no token refresh flow, so relaunch the container after
-replacing the token. Read the
+This provider uses an undocumented private backend rather than public OpenAI API
+credit. It has no token refresh flow, so relaunch the container after replacing
+the token. Read the
 [operator setup and same-UID plaintext boundary](./settings.md#configure-provider-credentials)
 before adding the mount.
 
@@ -87,6 +87,7 @@ without a version uses embedded VCS metadata when available, or `dev` otherwise.
 
 - [Run mecated standalone](mecated.md) to connect `mecatui` to a separate
   server.
-- [Connect with gRPC or HTTP](/building/grpc-http.md) to understand the client transport.
-- [Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md) to
-  configure posture and workspace trust.
+- [Connect with gRPC or HTTP](/building/grpc-http.md) to understand the client
+  transport.
+- [Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md)
+  to configure posture and workspace trust.

@@ -1,8 +1,7 @@
 ---
 title: Inspect a server before creating a session
 description:
-  Check Mecatl compatibility and safe server identity before creating a
-  session.
+  Check Mecatl compatibility and safe server identity before creating a session.
 sidebar_position: 8
 ---
 
@@ -22,13 +21,12 @@ const compatibility = await client.server.compatibility({
 });
 ```
 
-Each explicit call starts a fresh compatibility request. The newest request
-also becomes the compatibility check shared by subsequent ordinary SDK
-operations. Ordinary operations reuse that request until it fails or another
-explicit call refreshes it.
+Each explicit call starts a fresh compatibility request. The newest request also
+becomes the compatibility check shared by subsequent ordinary SDK operations.
+Ordinary operations reuse that request until it fails or another explicit call
+refreshes it.
 
-Interpret the result according to the question your application needs to
-answer:
+Interpret the result according to the question your application needs to answer:
 
 |Field|Use it for|
 |-|-|
@@ -65,8 +63,8 @@ provider from a session, model, or server default.
 `info.buildId` identifies the composed server build, and
 `info.serverImplementation` identifies its composition family. The optional
 `info.llmProviderDisplayEndpoint` is sanitized diagnostic text. Display or log
-that endpoint for troubleshooting; use your application's configured Mecatl
-URL to create connections.
+that endpoint for troubleshooting; use your application's configured Mecatl URL
+to create connections.
 
 ## Handle discovery failures
 

@@ -21,8 +21,8 @@ private Mecatl server in the same process.
   `mecak8s` server. The server controls the workspace, model credentials,
   storage, and permissions.
 - Run `mecatui sessions` to browse stored sessions before opening one.
-- Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer.
-  This is separate from local provider configuration and credentials.
+- Run `mecatui login ADDRESS` to enroll with a remote server's OIDC issuer. This
+  is separate from local provider configuration and credentials.
 
 Configure providers for an embedded local server with the `providers` command:
 
@@ -34,9 +34,9 @@ mecatui providers
 `setup` configures an embedded server; `add NAME` defines a custom provider, and
 `login`, `logout`, and `set-default` manage it. For credential sources, secret
 safety, and provider selection, see
-[Choose models and providers](/features/sessions/choose-models.md). The [standalone
-deployment guide](/operating/mecated.md#configure-providers) owns the
-operator `providers` and `credential_store` schema.
+[Choose models and providers](/features/sessions/choose-models.md). The
+[standalone deployment guide](/operating/mecated.md#configure-providers) owns
+the operator `providers` and `credential_store` schema.
 
 `mecatui login ADDRESS` authenticates this client to a remote server; it does
 not configure that server's providers. ToolHive is external and owns its LLM
@@ -60,5 +60,4 @@ server out of your local process.
 - [Troubleshooting](./troubleshooting.md)
 
 To deploy or operate the server, see the guides for
-[`mecated`](/operating/mecated.md) and
-[`mecak8s`](/operating/mecak8s.md).
+[`mecated`](/operating/mecated.md) and [`mecak8s`](/operating/mecak8s.md).

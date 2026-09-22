@@ -193,7 +193,7 @@ The provider supplies run-wide ownership, transactional references, controlled
 replacement and retirement, durable grant revocation, and reloadable TLS and
 signing material. Production isolation requires a CNI that enforces NetworkPolicy
 and a RuntimeClass that supplies the isolation promised by your platform. See
-[Native Kubernetes lifecycle and retention](/features/execution-environments.md#native-kubernetes-lifecycle-and-retention)
+[Native Kubernetes lifecycle and retention](/features/security-and-execution/execution-environments.md#native-kubernetes-lifecycle-and-retention)
 for restart recovery, fencing, and placement-capacity behavior.
 
 Before installation, provide these values through your trusted image and Secret
@@ -602,7 +602,7 @@ that created the environments it may administer, as in the values example above.
 An absent or empty list permits only self-administration. Keep
 `mayAttestOwner: false` for an operations-only identity; administrative scope
 confers no filesystem, Shell, attach, run, or reference access. See the
-[scope constraints](../../features/execution-environments.md#production-security-material).
+[scope constraints](/features/security-and-execution/execution-environments.md#production-security-material).
 
 Before first publishing `administratorFor`, quiesce client traffic and upgrade
 all provider replicas to a version that understands the field. Older strict

@@ -12,9 +12,9 @@ Mecatl protects the exported API of its importable Go engine with committed API
 snapshots, a standalone module build, and architecture tests. These checks make
 surface changes visible before they reach an embedding application.
 
-The engine ships as the separate Go module
-`github.com/stacklok/mecatl/engine`. Importing it does not pull in provider SDKs,
-gRPC, the terminal UI, or Kubernetes dependencies.
+The engine ships as the separate Go module `github.com/stacklok/mecatl/engine`.
+Importing it does not pull in provider SDKs, gRPC, the terminal UI, or
+Kubernetes dependencies.
 
 ## The stable surface
 
@@ -172,9 +172,8 @@ caller must supply this data through `eventsource.SessionMeta`.
 `EvUserPrompt` carries client prompts and harness-generated continuations, so a
 fold can reconstruct the conversation in stream order. Its `synthetic` field is
 server-authored origin metadata for replay clients only — `true` identifies a
-harness continuation, absent/false means genuine or legacy-unknown — and a
-fold does not consult it: the reconstructed conversation is the same either
-way.
+harness continuation, absent/false means genuine or legacy-unknown — and a fold
+does not consult it: the reconstructed conversation is the same either way.
 
 ### Replay-fidelity limitation
 

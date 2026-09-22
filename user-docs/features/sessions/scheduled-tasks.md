@@ -28,18 +28,18 @@ durable schedules.
 
 ## Storage and delivery
 
-The schedule store is authoritative. Each schedule contains an immutable
-prompt, trigger, model selection, workspace, permission mode, limits, mutation
-setting, and timezone, plus mutable fire state.
+The schedule store is authoritative. Each schedule contains an immutable prompt,
+trigger, model selection, workspace, permission mode, limits, mutation setting,
+and timezone, plus mutable fire state.
 
-Mecatl claims and advances a due slot before starting its run. This prevents
-two replicas from firing the same slot. A leader lease limits polling to one
+Mecatl claims and advances a due slot before starting its run. This prevents two
+replicas from firing the same slot. A leader lease limits polling to one
 replica, while the atomic claim remains the duplicate-execution safeguard.
 
 A crash after a claim can skip that slot. Recurring schedules continue at the
 next slot. A one-shot schedule can be lost, so use an external job system when
-the work requires stronger delivery guarantees. Each successful claim creates
-a fresh session whose record preserves the conversation, tool calls, usage,
+the work requires stronger delivery guarantees. Each successful claim creates a
+fresh session whose record preserves the conversation, tool calls, usage,
 terminal state, and fire result.
 
 Embeddings can provide `port.ScheduleStore`. Implementations must make claims

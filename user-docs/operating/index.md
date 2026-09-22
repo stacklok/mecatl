@@ -1,8 +1,7 @@
 ---
 sidebar_position: 1
 title: Deploy and operate Mecatl
-description:
-  Deploy Mecatl as a service, Kubernetes workload, or single CI task.
+description: Deploy Mecatl as a service, Kubernetes workload, or single CI task.
 ---
 
 # Deploy and operate Mecatl
@@ -11,9 +10,8 @@ Use this section when you own the Mecatl service, its state, credentials,
 security policy, and execution environment. You can run a standalone daemon,
 deploy disposable Kubernetes replicas, or run a single task in CI.
 
-Start with
-[Choose how to run Mecatl](./choose-deployment.md) if you
-have not chosen one yet.
+Start with [Choose how to run Mecatl](./choose-deployment.md) if you have not
+chosen one yet.
 
 ## Choose a deployment
 

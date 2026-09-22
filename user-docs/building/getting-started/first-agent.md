@@ -151,12 +151,12 @@ Pin the engine and provider module versions together, and review
 
 ## Next steps
 
-- [Explore the engine and session model](/building/embed-engine.md)
-  to understand `Engine`, `Session`, `Run`, and `Environment`.
+- [Explore the engine and session model](/building/embed-engine.md) to
+  understand `Engine`, `Session`, `Run`, and `Environment`.
 - [Implement the tool catalog](/building/extension-points/tool-catalog.md) to
   register local tools or connect MCP tools.
-- [Embed the engine directly](/building/embed-engine.md) to plan a
-  production host around the engine.
+- [Embed the engine directly](/building/embed-engine.md) to plan a production
+  host around the engine.
 
 ## Related information
 

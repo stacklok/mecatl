@@ -88,11 +88,10 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
 
 When durable-follower admission is full, the watch route retains its HTTP 200
-response and emits a terminal `event: error` frame with code
-`watch_capacity`. Resume from the last processed cursor with the same
-`run_id` filter and bounded backoff. `watch_lagging` uses the same resumable
-framing for a client that does not consume the bounded delivery buffer quickly
-enough.
+response and emits a terminal `event: error` frame with code `watch_capacity`.
+Resume from the last processed cursor with the same `run_id` filter and bounded
+backoff. `watch_lagging` uses the same resumable framing for a client that does
+not consume the bounded delivery buffer quickly enough.
 
 `WorkspaceEnrollment` contains only `enrollment_id`, `status`,
 `required_services`, and the ephemeral `presentation_url` when a new enrollment
