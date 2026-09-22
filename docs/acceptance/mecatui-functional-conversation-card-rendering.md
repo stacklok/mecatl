@@ -4,7 +4,7 @@
 **Work classification:** Bounded — restructures the client-local conversation presentation pipeline and its cache contract without changing public APIs, persistence, authority, or deployment behavior.
 **Decision record:** None — the mecatui-internal rendering boundary and its migration rationale are local to `cmd/mecatui/ui`.
 **Phase:** conversation-card rendering convergence after the landed card-layout correction
-**Status:** in-progress, 2026-09-21. Plan / Interface PR [#1739](https://github.com/stacklok/mecatl/pull/1739) merged at `183bd78f02a0021c1eecb22368cf257e26950249`; the operator authorized the targeted permanent-error replay parity amendment on this implementation branch.
+**Status:** landed, 2026-09-21. Implementation candidate; authoritative when its implementation PR merges. Plan / Interface PR [#1739](https://github.com/stacklok/mecatl/pull/1739) merged at `183bd78f02a0021c1eecb22368cf257e26950249`; the operator authorized the targeted permanent-error replay parity amendment on this implementation branch.
 **Delivery:** Split. The internal intra-UI API, card-family migration boundary, deterministic cache-key contract, and preserved scrollback invariants require interface review before implementation.
 **Expected tasks:** deferred to orchestration after the Plan / Interface review.
 
