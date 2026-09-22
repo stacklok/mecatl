@@ -6,26 +6,26 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 )
 
 func TestMecatuiFunctionalConversationCards_Scenario1_PrepareOwnsImmutableSnapshots(t *testing.T) {
-	input := cards.UserInput{Text: "immutable prompt", Media: []string{"image/png (inline)"}}
-	layoutInput := cards.PlainLayoutInput{Width: 42, ExpandMark: "ctrl+t"}
-	inputSnapshot := cards.SnapshotUser(input)
-	layoutSnapshot := cards.SnapshotPlainLayout(layoutInput)
-	appearance := cards.UserAppearance{
-		Label: testTheme().Style("userLabel"),
-		Body:  testTheme().Style("userBlock"),
-		Muted: testTheme().Style("muted"),
+	input := blocks.UserInput{Text: "immutable prompt", Media: []string{"image/png (inline)"}}
+	layoutInput := blocks.PlainLayoutInput{Width: 42, ExpandMark: "ctrl+t"}
+	inputSnapshot := blocks.SnapshotUser(input)
+	layoutSnapshot := blocks.SnapshotPlainLayout(layoutInput)
+	theme := blocks.Theme{
+		UserLabel: testTheme().Style("userLabel"),
+		UserBody:  testTheme().Style("userBlock"),
+		Muted:     testTheme().Style("muted"),
 	}
-	before := cards.PrepareUser(inputSnapshot, layoutSnapshot, appearance)
+	before := blocks.PrepareUser(inputSnapshot, layoutSnapshot, theme)
 
 	input.Text = "mutated prompt"
 	input.Media[0] = "mutated media"
 	layoutInput.Width = 8
 	layoutInput.ExpandMark = "changed"
-	after := cards.PrepareUser(inputSnapshot, layoutSnapshot, appearance)
+	after := blocks.PrepareUser(inputSnapshot, layoutSnapshot, theme)
 
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("preparation changed after caller-owned inputs mutated:\nbefore: %#v\nafter:  %#v", before, after)
@@ -38,10 +38,8 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	r := newCacheRenderer()
 	base := r.blockRenderKey(&c.blocks[0], false)
 	if base.context != (renderContextKey{
-		width:             r.width,
-		paletteGeneration: r.paletteGeneration,
-		hintGeneration:    r.hintGeneration,
-		dialect:           r.renderDialect,
+		width:   r.width,
+		dialect: r.renderDialect,
 	}) {
 		t.Fatalf("render context key = %#v", base.context)
 	}
@@ -63,12 +61,6 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	assertChanged("width", r.blockRenderKey(&block, false))
 	r.width--
 	assertChanged("expanded state", r.blockRenderKey(&block, true))
-	r.paletteGeneration++
-	assertChanged("palette generation", r.blockRenderKey(&block, false))
-	r.paletteGeneration--
-	r.hintGeneration++
-	assertChanged("visible-hint generation", r.blockRenderKey(&block, false))
-	r.hintGeneration--
 	r.renderDialect++
 	assertChanged("render dialect", r.blockRenderKey(&block, false))
 }
@@ -91,14 +83,14 @@ func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructura
 	}
 
 	_, _, bodyWidth := r.toolCardLayout()
-	seen := map[cards.Region]bool{}
-	nextOffset := map[cards.Region]int{}
+	seen := map[blocks.Region]bool{}
+	nextOffset := map[blocks.Region]int{}
 	for i, row := range prepared.Rows {
 		if row.FallbackRow != i {
 			t.Errorf("row %d fallback = %d, want final-line index", i, row.FallbackRow)
 		}
 		plain := stripANSIstr(prepared.Lines[i])
-		if row.Region == cards.RegionChrome {
+		if row.Region == blocks.RegionChrome {
 			if row.Text || row.SourceOffset != 0 || row.LeadingColumn != 0 || row.GraphemeSpan != 0 {
 				t.Errorf("chrome row %d carries text provenance: %#v", i, row)
 			}
@@ -119,29 +111,29 @@ func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructura
 		}
 		nextOffset[row.Region] += row.GraphemeSpan
 	}
-	for _, region := range []cards.Region{cards.RegionArguments, cards.RegionResult} {
+	for _, region := range []blocks.Region{blocks.RegionArguments, blocks.RegionResult} {
 		if !seen[region] {
 			t.Errorf("StyledTool prepared no %v provenance rows: %q", region, prepared.Lines)
 		}
 	}
 }
 
-func TestMecatuiFunctionalConversationCards_Scenario1_CardsPackageDependencyBoundary(t *testing.T) {
+func TestMecatuiFunctionalConversationCards_Scenario1_BlocksPackageDependencyBoundary(t *testing.T) {
 	const (
-		cardsPackage        = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+		blocksPackage       = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 		terminaltextPackage = "github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	)
-	cmd := exec.Command("go", "list", "-deps", "-f={{.ImportPath}}", cardsPackage)
+	cmd := exec.Command("go", "list", "-deps", "-f={{.ImportPath}}", blocksPackage)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("list %s dependencies: %v\n%s", cardsPackage, err, output)
+		t.Fatalf("list %s dependencies: %v\n%s", blocksPackage, err, output)
 	}
 	for _, dependency := range strings.Fields(string(output)) {
-		if strings.HasPrefix(dependency, "github.com/stacklok/mecatl/") && dependency != cardsPackage && dependency != terminaltextPackage {
-			t.Errorf("cards package imports project dependency %q; preparation must remain outside ui state, engine, host adapters, and contracts", dependency)
+		if strings.HasPrefix(dependency, "github.com/stacklok/mecatl/") && dependency != blocksPackage && dependency != terminaltextPackage {
+			t.Errorf("blocks package imports project dependency %q; preparation must remain outside ui state, engine, host adapters, and contracts", dependency)
 		}
 		if strings.HasPrefix(dependency, "google.golang.org/protobuf") || strings.HasPrefix(dependency, "github.com/stacklok/mecatl/contracts/") {
-			t.Errorf("cards package imports protobuf dependency %q", dependency)
+			t.Errorf("blocks package imports protobuf dependency %q", dependency)
 		}
 	}
 }

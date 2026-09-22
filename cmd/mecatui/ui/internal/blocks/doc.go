@@ -1,10 +1,10 @@
-// Package cards prepares the structured, non-Markdown cards in mecatui's
+// Package blocks prepares the structured, non-Markdown conversation blocks in mecatui's
 // conversation view.
 //
 // It is an internal package, but its boundary is intentionally stable enough
-// for other UI components and contributors to use. Cards is a pure presentation
+// for other UI components and contributors to use. Blocks is a pure presentation
 // layer: callers provide immutable snapshots and resolved presentation inputs;
-// preparation returns final card-local lines plus lockstep structural rows. It
+// preparation returns final block-local lines plus lockstep structural rows. It
 // does not know about conversations, session events, viewports, Bubble Tea
 // models, block identity, or cache lifetime.
 //
@@ -24,8 +24,7 @@
 //
 // The parent ui package owns the rest of the rendering pipeline. Conversation
 // mutation advances each block's content revision; the renderer combines that
-// revision with shared view context (width, expansion, theme/keymap generation,
-// and rendering dialect) to decide cache reuse. After a cache miss, it adapts
+// revision with shared view context (width, expansion, and rendering dialect) to decide cache reuse. After a cache miss, it adapts
 // Prepared.Rows into its document-local frame by attaching block identity,
 // indentation, kind, and inter-block separators.
-package cards
+package blocks

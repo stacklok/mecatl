@@ -1,10 +1,6 @@
-package cards
+package blocks
 
-import (
-	"strings"
-
-	"charm.land/lipgloss/v2"
-)
+import "strings"
 
 // UserInput is caller-owned user-prompt content.
 type UserInput struct {
@@ -18,19 +14,16 @@ type UserSnapshot struct {
 	media []string
 }
 
-// UserAppearance contains resolved user-prompt styles.
-type UserAppearance struct{ Label, Body, Muted lipgloss.Style }
-
 // SnapshotUser owns a user-prompt input.
 func SnapshotUser(in UserInput) UserSnapshot {
 	return UserSnapshot{text: strings.Clone(in.Text), media: cloneStrings(in.Media)}
 }
 
-// PrepareUser prepares a user-prompt card.
-func PrepareUser(in UserSnapshot, layout PlainLayout, a UserAppearance) Prepared {
-	lines := []string{a.Label.Render("▌ you"), wrapStyled(SanitizePlain(in.text), a.Body, layout.width)}
+// PrepareUser prepares a user-prompt block.
+func PrepareUser(in UserSnapshot, layout PlainLayout, theme Theme) Prepared {
+	lines := []string{theme.UserLabel.Render("▌ you"), wrapStyled(SanitizePlain(in.text), theme.UserBody, layout.width)}
 	for _, media := range in.media {
-		lines = append(lines, wrapPrefixed("📎 ", SanitizePlain(media), a.Muted, layout.width))
+		lines = append(lines, wrapPrefixed("📎 ", SanitizePlain(media), theme.Muted, layout.width))
 	}
 	return preparePlain(lines, 1)
 }
@@ -47,20 +40,17 @@ type NoticeSnapshot struct {
 	recovery bool
 }
 
-// NoticeAppearance contains resolved notice styles.
-type NoticeAppearance struct{ Muted, Warning lipgloss.Style }
-
 // SnapshotNotice owns a notice input.
 func SnapshotNotice(in NoticeInput) NoticeSnapshot {
 	return NoticeSnapshot{text: strings.Clone(in.Text), recovery: in.Recovery}
 }
 
 // PrepareNotice prepares an ordinary or recovery notice.
-func PrepareNotice(in NoticeSnapshot, layout PlainLayout, a NoticeAppearance) Prepared {
+func PrepareNotice(in NoticeSnapshot, layout PlainLayout, theme Theme) Prepared {
 	if in.recovery {
-		return preparePlain([]string{wrapPrefixed("⚠ ", SanitizePlain(in.text), a.Warning, layout.width)}, 0)
+		return preparePlain([]string{wrapPrefixed("⚠ ", SanitizePlain(in.text), theme.Warning, layout.width)}, 0)
 	}
-	return preparePlain([]string{wrapPrefixed("• ", SanitizePlain(in.text), a.Muted, layout.width)}, 0)
+	return preparePlain([]string{wrapPrefixed("• ", SanitizePlain(in.text), theme.Muted, layout.width)}, 0)
 }
 
 // HookInput is caller-owned structured hook content.
@@ -69,16 +59,13 @@ type HookInput struct{ Text, Phase, Tool, Decision string }
 // HookSnapshot is an immutable hook snapshot.
 type HookSnapshot struct{ text, phase, tool, decision string }
 
-// HookAppearance contains resolved decision-specific hook styles.
-type HookAppearance struct{ Muted, Error, Modified, Advisory lipgloss.Style }
-
 // SnapshotHook owns a structured hook input.
 func SnapshotHook(in HookInput) HookSnapshot {
 	return HookSnapshot{strings.Clone(in.Text), strings.Clone(in.Phase), strings.Clone(in.Tool), strings.Clone(in.Decision)}
 }
 
 // PrepareHook prepares a decision-specific hook notice.
-func PrepareHook(in HookSnapshot, layout PlainLayout, a HookAppearance) Prepared {
+func PrepareHook(in HookSnapshot, layout PlainLayout, theme Theme) Prepared {
 	label := "hook"
 	if in.phase != "" {
 		label = "hook " + SanitizePlain(in.phase)
@@ -89,16 +76,16 @@ func PrepareHook(in HookSnapshot, layout PlainLayout, a HookAppearance) Prepared
 	var line string
 	switch in.decision {
 	case "blocked":
-		line = wrapPrefixed("✗ ", label+": blocked"+hookReason(in.text, in.phase), a.Error, layout.width)
+		line = wrapPrefixed("✗ ", label+": blocked"+hookReason(in.text, in.phase), theme.Error, layout.width)
 	case "modified":
-		line = wrapPrefixed("✎ ", label+": modified"+hookReason(in.text, in.phase), a.Modified, layout.width)
+		line = wrapPrefixed("✎ ", label+": modified"+hookReason(in.text, in.phase), theme.HookModified, layout.width)
 	case "advisory":
-		line = wrapPrefixed("⚠ ", label+": advisory"+hookReason(in.text, in.phase), a.Advisory, layout.width)
+		line = wrapPrefixed("⚠ ", label+": advisory"+hookReason(in.text, in.phase), theme.HookAdvisory, layout.width)
 	default:
 		if in.text != "" {
 			label += ": " + SanitizePlain(in.text)
 		}
-		line = wrapPrefixed("• ", label, a.Muted, layout.width)
+		line = wrapPrefixed("• ", label, theme.Muted, layout.width)
 	}
 	return preparePlain([]string{line}, 0)
 }
@@ -133,21 +120,18 @@ type DeliveryInput struct{ ScheduleName, FireID, Text string }
 // DeliverySnapshot is an immutable delivery snapshot.
 type DeliverySnapshot struct{ scheduleName, fireID, text string }
 
-// DeliveryAppearance contains resolved delivery styles.
-type DeliveryAppearance struct{ Header, Body lipgloss.Style }
-
 // SnapshotDelivery owns a scheduled-delivery input.
 func SnapshotDelivery(in DeliveryInput) DeliverySnapshot {
 	return DeliverySnapshot{strings.Clone(in.ScheduleName), strings.Clone(in.FireID), strings.Clone(in.Text)}
 }
 
 // PrepareDelivery prepares a scheduled-delivery card.
-func PrepareDelivery(in DeliverySnapshot, layout PlainLayout, a DeliveryAppearance) Prepared {
+func PrepareDelivery(in DeliverySnapshot, layout PlainLayout, theme Theme) Prepared {
 	label := "⏰ scheduled task " + SanitizePlain(in.scheduleName) + " — delivery"
 	if in.fireID != "" {
 		label += " · fire " + SanitizePlain(in.fireID)
 	}
-	lines := []string{wrapPrefixed("", label, a.Header, layout.width), wrapPrefixed("│ ", SanitizePlain(DeliveryBodyForDisplay(in.text)), a.Body, layout.width)}
+	lines := []string{wrapPrefixed("", label, theme.DeliveryHead, layout.width), wrapPrefixed("│ ", SanitizePlain(DeliveryBodyForDisplay(in.text)), theme.Muted, layout.width)}
 	return preparePlain(lines, 0)
 }
 
@@ -174,15 +158,12 @@ type TurnStatInput struct{ Text string }
 // TurnStatSnapshot is an immutable turn-stat snapshot.
 type TurnStatSnapshot struct{ text string }
 
-// TurnStatAppearance contains the resolved turn-stat style.
-type TurnStatAppearance struct{ Muted lipgloss.Style }
-
 // SnapshotTurnStat owns a turn-stat input.
 func SnapshotTurnStat(in TurnStatInput) TurnStatSnapshot {
 	return TurnStatSnapshot{text: strings.Clone(in.Text)}
 }
 
 // PrepareTurnStat prepares a turn-stat line.
-func PrepareTurnStat(in TurnStatSnapshot, layout PlainLayout, a TurnStatAppearance) Prepared {
-	return preparePlain([]string{wrapStyled(SanitizePlain(in.text), a.Muted, layout.width)}, 0)
+func PrepareTurnStat(in TurnStatSnapshot, layout PlainLayout, theme Theme) Prepared {
+	return preparePlain([]string{wrapStyled(SanitizePlain(in.text), theme.Muted, layout.width)}, 0)
 }

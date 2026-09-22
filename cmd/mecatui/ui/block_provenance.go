@@ -1,8 +1,8 @@
 package ui
 
-import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 
-func functionalCardProvenanceRows(prepared cards.Prepared, blockID uint64, kind blockKind, indent, width int) []renderedRow {
+func blockProvenanceRows(prepared blocks.Prepared, blockID uint64, kind blockKind, indent, width int) []renderedRow {
 	if width <= indent {
 		indent = 0
 	}
@@ -10,11 +10,11 @@ func functionalCardProvenanceRows(prepared cards.Prepared, blockID uint64, kind 
 	for i, source := range prepared.Rows {
 		region := conversationRegionChrome
 		switch source.Region {
-		case cards.RegionBody:
+		case blocks.RegionBody:
 			region = conversationRegionBody
-		case cards.RegionArguments:
+		case blocks.RegionArguments:
 			region = conversationRegionArguments
-		case cards.RegionResult:
+		case blocks.RegionResult:
 			region = conversationRegionResult
 		}
 		rows[i] = renderedRow{

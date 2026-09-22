@@ -1,9 +1,8 @@
-package cards
+package blocks
 
 import (
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -36,45 +35,28 @@ func SnapshotStyledTool(input StyledToolInput) StyledToolSnapshot {
 	return StyledToolSnapshot{sections: sections}
 }
 
-// StyledLayoutInput contains the concrete card style and every non-content fact
-// observed by the real tool-card compiler.
-type StyledLayoutInput struct {
-	Card lipgloss.Style
-}
-
-// StyledLayout is an immutable copy of StyledLayoutInput.
-type StyledLayout struct {
-	card lipgloss.Style
-}
-
-// SnapshotStyledLayout copies the concrete card appearance. lipgloss.Style is a
-// value whose mutators return a new value.
-func SnapshotStyledLayout(input StyledLayoutInput) StyledLayout {
-	return StyledLayout{card: input.Card}
-}
-
-// PrepareStyledTool produces the actual main-conversation card lines and their
+// PrepareStyledTool produces the actual main-conversation block lines and their
 // structural provenance in one stateless operation.
-func PrepareStyledTool(input StyledToolSnapshot, layout StyledLayout) Prepared {
+func PrepareStyledTool(input StyledToolSnapshot, theme Theme) Prepared {
 	parts := make([]string, 0, len(input.sections))
 	for _, section := range input.sections {
 		if section.Text != "" {
 			parts = append(parts, section.Text)
 		}
 	}
-	lines := strings.Split(layout.card.Render(strings.Join(parts, "\n")), "\n")
-	if layout.card.GetWidth() > 0 && layout.card.GetHorizontalFrameSize() == 0 {
+	lines := strings.Split(theme.ToolCard.Render(strings.Join(parts, "\n")), "\n")
+	if theme.ToolCard.GetWidth() > 0 && theme.ToolCard.GetHorizontalFrameSize() == 0 {
 		for i, line := range lines {
-			if ansi.StringWidth(line) > layout.card.GetWidth() {
-				lines[i] = ansi.Truncate(line, layout.card.GetWidth(), "")
+			if ansi.StringWidth(line) > theme.ToolCard.GetWidth() {
+				lines[i] = ansi.Truncate(line, theme.ToolCard.GetWidth(), "")
 			}
 		}
 	}
-	rows := styledRows(input.sections, layout.card)
+	rows := styledRows(input.sections, theme.ToolCard)
 	if len(rows) != len(lines) {
 		// The semantic sections are width-bounded before decoration, so this is a
 		// fail-safe for an unexpected lipgloss layout rule rather than a reflow path.
-		rows = fallbackStyledRows(input.sections, lines, layout.card)
+		rows = fallbackStyledRows(input.sections, lines, theme.ToolCard)
 	}
 	return Prepared{Lines: lines, Rows: rows}
 }

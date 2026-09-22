@@ -1,10 +1,8 @@
-package cards
+package blocks
 
 import (
 	"encoding/json"
 	"strings"
-
-	"charm.land/lipgloss/v2"
 )
 
 // ErrorInput is caller-owned transient-error content.
@@ -13,15 +11,12 @@ type ErrorInput struct{ Text string }
 // ErrorSnapshot is an immutable transient-error snapshot.
 type ErrorSnapshot struct{ text string }
 
-// ErrorAppearance contains the resolved transient-error style.
-type ErrorAppearance struct{ Error lipgloss.Style }
-
 // SnapshotError owns a transient-error input.
 func SnapshotError(in ErrorInput) ErrorSnapshot { return ErrorSnapshot{text: strings.Clone(in.Text)} }
 
 // PrepareError prepares a transient error.
-func PrepareError(in ErrorSnapshot, layout PlainLayout, a ErrorAppearance) Prepared {
-	return preparePlain([]string{wrapPrefixed("✗ ", SanitizePlain(in.text), a.Error, layout.width)}, 0)
+func PrepareError(in ErrorSnapshot, layout PlainLayout, theme Theme) Prepared {
+	return preparePlain([]string{wrapPrefixed("✗ ", SanitizePlain(in.text), theme.Error, layout.width)}, 0)
 }
 
 // PermanentErrorInput is caller-owned permanent-error content.
@@ -30,22 +25,19 @@ type PermanentErrorInput struct{ Text string }
 // PermanentErrorSnapshot is an immutable permanent-error snapshot.
 type PermanentErrorSnapshot struct{ text string }
 
-// PermanentErrorAppearance contains resolved permanent-error styles.
-type PermanentErrorAppearance struct{ Error, Muted lipgloss.Style }
-
 // SnapshotPermanentError owns a permanent-error input.
 func SnapshotPermanentError(in PermanentErrorInput) PermanentErrorSnapshot {
 	return PermanentErrorSnapshot{text: strings.Clone(in.Text)}
 }
 
 // PreparePermanentError prepares collapsed or expanded permanent-error content.
-func PreparePermanentError(in PermanentErrorSnapshot, layout PlainLayout, a PermanentErrorAppearance) Prepared {
+func PreparePermanentError(in PermanentErrorSnapshot, layout PlainLayout, theme Theme) Prepared {
 	summary := PermanentErrorSummary(in.text)
-	lines := []string{wrapPrefixed("✗ ", summary, a.Error, layout.width)}
+	lines := []string{wrapPrefixed("✗ ", summary, theme.Error, layout.width)}
 	if layout.expanded {
-		lines = append(lines, a.Muted.Render("raw payload:"), wrapStyled(SanitizePlain(in.text), a.Muted, layout.width))
+		lines = append(lines, theme.Muted.Render("raw payload:"), wrapStyled(SanitizePlain(in.text), theme.Muted, layout.width))
 	} else {
-		lines = append(lines, a.Muted.Render("  "+layout.expandMark+" shows details"))
+		lines = append(lines, theme.Muted.Render("  "+layout.expandMark+" shows details"))
 	}
 	return preparePlain(lines, 0)
 }

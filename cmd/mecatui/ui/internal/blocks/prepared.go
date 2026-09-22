@@ -1,17 +1,32 @@
-// Package cards prepares stateless, structured conversation-card snapshots.
+// Package blocks prepares stateless, structured conversation-block snapshots.
 //
 // It deliberately has no knowledge of the conversation, renderer cache, viewport, or
 // Bubble Tea model. The parent ui package attaches document-local identity and frame
 // ownership when it adapts a Prepared value into its rendered frame.
-package cards
+package blocks
 
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Region identifies a card-local semantic area. It has no document identity.
+// Theme contains the resolved semantic styles required to prepare conversation blocks.
+// The UI maps its stylesheet roles to this value at the package boundary.
+type Theme struct {
+	UserLabel    lipgloss.Style
+	UserBody     lipgloss.Style
+	Muted        lipgloss.Style
+	Warning      lipgloss.Style
+	Error        lipgloss.Style
+	HookModified lipgloss.Style
+	HookAdvisory lipgloss.Style
+	DeliveryHead lipgloss.Style
+	ToolCard     lipgloss.Style
+}
+
+// Region identifies a block-local semantic area. It has no document identity.
 type Region uint8
 
 const (

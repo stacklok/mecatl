@@ -3,28 +3,69 @@ package ui
 import (
 	"strings"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 )
 
 const structuredCardDialect = 1
 
-func (r *renderer) plainCardLayout(expand bool) cards.PlainLayout {
-	return cards.SnapshotPlainLayout(cards.PlainLayoutInput{
+func (r *renderer) plainBlockLayout(expand bool) blocks.PlainLayout {
+	return blocks.SnapshotPlainLayout(blocks.PlainLayoutInput{
 		Width: r.contentWidth(), Expanded: expand, ExpandMark: r.marks.expandTools,
 	})
 }
 
-func preparedText(prepared cards.Prepared) string { return strings.Join(prepared.Lines, "\n") }
+// blockTheme maps UI stylesheet roles to the concrete semantic styles used by
+// structured block preparation.
+func (r *renderer) blockTheme() blocks.Theme {
+	toolCard, _, _ := r.toolCardLayout()
+	return blocks.Theme{
+		UserLabel:    r.th.Style("userLabel"),
+		UserBody:     r.th.Style("userBlock"),
+		Muted:        r.th.Style("muted"),
+		Warning:      r.th.Style("warning"),
+		Error:        r.th.Style("errorText"),
+		HookModified: r.th.Style("hookModified"),
+		HookAdvisory: r.th.Style("hookAdvisory"),
+		DeliveryHead: r.th.Style("hookModified"),
+		ToolCard:     toolCard,
+	}
+}
 
-// prepareStructuredBlock snapshots and prepares every migrated non-Markdown card
+func userInputFromBlock(b *block) blocks.UserInput {
+	return blocks.UserInput{Text: b.raw, Media: b.media}
+}
+
+func noticeInputFromBlock(b *block) blocks.NoticeInput {
+	return blocks.NoticeInput{Text: b.raw, Recovery: b.recover}
+}
+
+func hookInputFromBlock(b *block) blocks.HookInput {
+	return blocks.HookInput{Text: b.raw, Phase: b.hookPhase, Tool: b.hookTool, Decision: b.hookDecision}
+}
+
+func turnStatInputFromBlock(b *block) blocks.TurnStatInput { return blocks.TurnStatInput{Text: b.raw} }
+
+func errorInputFromBlock(b *block) blocks.ErrorInput { return blocks.ErrorInput{Text: b.raw} }
+
+func permanentErrorInputFromBlock(b *block) blocks.PermanentErrorInput {
+	return blocks.PermanentErrorInput{Text: b.raw}
+}
+
+func deliveryInputFromBlock(b *block) blocks.DeliveryInput {
+	return blocks.DeliveryInput{ScheduleName: b.toolName, FireID: b.deliveryFireID, Text: b.raw}
+}
+
+func preparedText(prepared blocks.Prepared) string { return strings.Join(prepared.Lines, "\n") }
+
+// prepareStructuredBlock snapshots and prepares every migrated non-Markdown block
 // family. It is called only after renderBlock's cheap revision/layout admission
 // guard misses; settled cache hits therefore do no snapshot or preparation.
-func (r *renderer) prepareStructuredBlock(b *block, expand bool) (cards.Prepared, bool) {
+func (r *renderer) prepareStructuredBlock(b *block, expand bool) (blocks.Prepared, bool) {
 	switch b.kind {
 	case blockTool, blockUser, blockNotice, blockHook, blockTurnStat, blockError, blockDelivery:
 		r.cardPrepares++
 	default:
-		return cards.Prepared{}, false
+		return blocks.Prepared{}, false
 	}
 	switch b.kind {
 	case blockTool:
@@ -45,44 +86,34 @@ func (r *renderer) prepareStructuredBlock(b *block, expand bool) (cards.Prepared
 	case blockDelivery:
 		return r.prepareDeliveryBlock(b), true
 	default:
-		return cards.Prepared{}, false
+		return blocks.Prepared{}, false
 	}
 }
 
-func (r *renderer) prepareUserBlock(b *block) cards.Prepared {
-	return cards.PrepareUser(cards.SnapshotUser(cards.UserInput{Text: b.raw, Media: b.media}), r.plainCardLayout(false), cards.UserAppearance{
-		Label: r.th.Style("userLabel"), Body: r.th.Style("userBlock"), Muted: r.th.Style("muted"),
-	})
+func (r *renderer) prepareUserBlock(b *block) blocks.Prepared {
+	return blocks.PrepareUser(blocks.SnapshotUser(userInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
 }
 
-func (r *renderer) prepareNoticeBlock(b *block) cards.Prepared {
-	return cards.PrepareNotice(cards.SnapshotNotice(cards.NoticeInput{Text: b.raw, Recovery: b.recover}), r.plainCardLayout(false), cards.NoticeAppearance{
-		Muted: r.th.Style("muted"), Warning: r.th.Style("warning"),
-	})
+func (r *renderer) prepareNoticeBlock(b *block) blocks.Prepared {
+	return blocks.PrepareNotice(blocks.SnapshotNotice(noticeInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
 }
 
-func (r *renderer) prepareHookBlock(b *block) cards.Prepared {
-	return cards.PrepareHook(cards.SnapshotHook(cards.HookInput{Text: b.raw, Phase: b.hookPhase, Tool: b.hookTool, Decision: b.hookDecision}), r.plainCardLayout(false), cards.HookAppearance{
-		Muted: r.th.Style("muted"), Error: r.th.Style("errorText"), Modified: r.th.Style("hookModified"), Advisory: r.th.Style("hookAdvisory"),
-	})
+func (r *renderer) prepareHookBlock(b *block) blocks.Prepared {
+	return blocks.PrepareHook(blocks.SnapshotHook(hookInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
 }
 
-func (r *renderer) prepareTurnStatBlock(b *block) cards.Prepared {
-	return cards.PrepareTurnStat(cards.SnapshotTurnStat(cards.TurnStatInput{Text: b.raw}), r.plainCardLayout(false), cards.TurnStatAppearance{Muted: r.th.Style("muted")})
+func (r *renderer) prepareTurnStatBlock(b *block) blocks.Prepared {
+	return blocks.PrepareTurnStat(blocks.SnapshotTurnStat(turnStatInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
 }
 
-func (r *renderer) prepareErrorBlock(b *block) cards.Prepared {
-	return cards.PrepareError(cards.SnapshotError(cards.ErrorInput{Text: b.raw}), r.plainCardLayout(false), cards.ErrorAppearance{Error: r.th.Style("errorText")})
+func (r *renderer) prepareErrorBlock(b *block) blocks.Prepared {
+	return blocks.PrepareError(blocks.SnapshotError(errorInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
 }
 
-func (r *renderer) preparePermanentErrorBlock(b *block, expand bool) cards.Prepared {
-	return cards.PreparePermanentError(cards.SnapshotPermanentError(cards.PermanentErrorInput{Text: b.raw}), r.plainCardLayout(expand), cards.PermanentErrorAppearance{
-		Error: r.th.Style("errorText"), Muted: r.th.Style("muted"),
-	})
+func (r *renderer) preparePermanentErrorBlock(b *block, expand bool) blocks.Prepared {
+	return blocks.PreparePermanentError(blocks.SnapshotPermanentError(permanentErrorInputFromBlock(b)), r.plainBlockLayout(expand), r.blockTheme())
 }
 
-func (r *renderer) prepareDeliveryBlock(b *block) cards.Prepared {
-	return cards.PrepareDelivery(cards.SnapshotDelivery(cards.DeliveryInput{ScheduleName: b.toolName, FireID: b.deliveryFireID, Text: b.raw}), r.plainCardLayout(false), cards.DeliveryAppearance{
-		Header: r.th.Style("hookModified"), Body: r.th.Style("muted"),
-	})
+func (r *renderer) prepareDeliveryBlock(b *block) blocks.Prepared {
+	return blocks.PrepareDelivery(blocks.SnapshotDelivery(deliveryInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
 }

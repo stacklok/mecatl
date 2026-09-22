@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 )
 
 // maxToolResultLines caps how many visible display rows of a tool result are
@@ -89,12 +89,8 @@ type renderer struct {
 	th    theme.Theme
 	width int
 
-	// Presentation generations make renderer-reset axes explicit in the shared
-	// block render key. Production replaces the renderer when theme or key
-	// markings change; tests can advance either generation to prove invalidation.
-	paletteGeneration uint64
-	hintGeneration    uint64
-	renderDialect     uint32
+	// renderDialect is an explicitly retained render-cache compatibility axis.
+	renderDialect uint32
 
 	// traceWidth is the available width of a delegation-inspector card's body. A
 	// zero value preserves the transcript renderer's existing trace layout.
@@ -297,40 +293,6 @@ type inputRenderKey struct {
 	placeholder                        string
 }
 
-// mdEntry is one memoized assistant-block render: the source text and wrap width
-// it was produced from (the validity key) plus the rendered ANSI output.
-type mdEntry struct {
-	src   string
-	width int
-	out   string
-}
-
-// renderContextKey is the shared comparable presentation identity for every
-// whole-block render. Keep all view/presentation cache axes here so cache
-// admission remains one comparison rather than a collection of partial guards.
-type renderContextKey struct {
-	width             int
-	expanded          bool
-	paletteGeneration uint64
-	hintGeneration    uint64
-	dialect           uint32
-}
-
-// blockRenderKey combines conversation-owned content identity with the shared
-// presentation identity.
-type blockRenderKey struct {
-	revision int
-	context  renderContextKey
-}
-
-// blockEntry is one memoized whole-block render and its structural provenance.
-// Prepared inputs and semantic strings are discarded after producing both outputs.
-type blockEntry struct {
-	key  blockRenderKey
-	out  string
-	rows []renderedRow
-}
-
 // defaultBlockIndent is the left margin (cells) every conversation block is indented
 // by, so the history aligns with the 1-col-padded header/footer chrome (which use
 // Padding(0,1)) instead of sitting flush at column 0. One column matches the chrome
@@ -355,16 +317,14 @@ const assistantBodyHang = 2
 // goldens stay byte-identical.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
-		th:                th,
-		marks:             hk,
-		indent:            defaultBlockIndent,
-		paletteGeneration: 1,
-		hintGeneration:    1,
-		renderDialect:     structuredCardDialect,
-		cache:             map[int]*glamour.TermRenderer{},
-		blockMD:           map[int]mdEntry{},
-		blockCache:        map[int]blockEntry{},
-		blockFrameCache:   map[int]frameBlockEntry{},
+		th:              th,
+		marks:           hk,
+		indent:          defaultBlockIndent,
+		renderDialect:   structuredCardDialect,
+		cache:           map[int]*glamour.TermRenderer{},
+		blockMD:         map[int]mdEntry{},
+		blockCache:      map[int]blockEntry{},
+		blockFrameCache: map[int]frameBlockEntry{},
 	}
 }
 
@@ -414,46 +374,18 @@ func padLines(s string, n int) string {
 	return b.String()
 }
 
-// resetBlockCaches drops BOTH per-block memo layers (blockCache and blockMD).
-// It MUST be called whenever the conversation is rebuilt from scratch (/clear,
-// the /models restart-now handoff — see Model.resetSession): both caches key on
-// the block's conversation INDEX, and a fresh conversation reuses indices 0..n
-// for entirely different blocks whose rev/src could coincidentally match a stale
-// entry, which would alias an old block's render onto a new one.
-func (r *renderer) resetBlockCaches() {
-	r.blockCache = map[int]blockEntry{}
-	r.blockMD = map[int]mdEntry{}
-	r.blockFrameCache = map[int]frameBlockEntry{}
-	// Drop the incremental-join prefix too: a rebuilt conversation reusing those
-	// indices would otherwise serve stale cached block renders.
+// resetBlockRenderPrefix drops the incremental-join prefix when a rebuilt
+// conversation could otherwise reuse stale cached block renders by index.
+func (r *renderer) resetBlockRenderPrefix() {
 	r.joinPrefixLines = r.joinPrefixLines[:0]
 	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
 	r.joinPrefixN = 0
 	r.joinPrefixKey = joinPrefixState{}
-	// Drop the viewport-output memo too (defense-in-depth): every CURRENT resetSession
-	// caller calls refreshView() afterwards (which invalidateVPView()s), but clearing it
-	// here makes that ordering non-load-bearing — a future caller that forgets refreshView
-	// can never serve a stale vpView against a reset/empty conversation.
-	r.vpViewValid = false
 }
 
 // setWidth records the current wrap width. Width changes are handled by the
 // cache key, so no explicit invalidation is needed.
 func (r *renderer) setWidth(w int) { r.width = w }
-
-func (r *renderer) renderContext(expanded bool) renderContextKey {
-	return renderContextKey{
-		width:             r.width,
-		expanded:          expanded,
-		paletteGeneration: r.paletteGeneration,
-		hintGeneration:    r.hintGeneration,
-		dialect:           r.renderDialect,
-	}
-}
-
-func (r *renderer) blockRenderKey(b *block, expanded bool) blockRenderKey {
-	return blockRenderKey{revision: b.rev, context: r.renderContext(expanded)}
-}
 
 // invalidateVPView marks the vpView cache as stale. Call at every site that
 // changes viewport content, scroll offset, or geometry.
@@ -805,14 +737,14 @@ const (
 
 // blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
 // before block i+1).
-func blockSepAfter(blocks []block, i int) string {
-	switch blocks[i].kind {
+func blockSepAfter(conversationBlocks []block, i int) string {
+	switch conversationBlocks[i].kind {
 	case blockTool:
 		return interBlockSepNone
 	case blockTurnStat:
 		return interBlockSepCompact
 	case blockAssistant:
-		if i+1 < len(blocks) && blocks[i+1].kind == blockTurnStat {
+		if i+1 < len(conversationBlocks) && conversationBlocks[i+1].kind == blockTurnStat {
 			return interBlockSepNone
 		}
 	}
@@ -821,14 +753,14 @@ func blockSepAfter(blocks []block, i int) string {
 
 // blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
 // number of blank "" lines to insert before block i (i.e. after block i-1).
-func blockBlankLinesAfter(blocks []block, i int) int {
-	switch blocks[i-1].kind {
+func blockBlankLinesAfter(conversationBlocks []block, i int) int {
+	switch conversationBlocks[i-1].kind {
 	case blockTool:
 		return interBlockBlankLinesNone
 	case blockTurnStat:
 		return interBlockBlankLinesCompact
 	case blockAssistant:
-		if i < len(blocks) && blocks[i].kind == blockTurnStat {
+		if i < len(conversationBlocks) && conversationBlocks[i].kind == blockTurnStat {
 			return interBlockBlankLinesNone
 		}
 	}
@@ -854,7 +786,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	)
 	if prepared, ok := r.prepareStructuredBlock(b, expand); ok {
 		out = preparedText(prepared)
-		rows = functionalCardProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
+		rows = blockProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
 	} else {
 		out = r.renderBlockFresh(idx, b, expand)
 	}
@@ -952,9 +884,9 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 
 // permanentErrorSummary is retained for focused compatibility tests; card
 // preparation owns the production transformation.
-func permanentErrorSummary(raw string) string { return cards.PermanentErrorSummary(raw) }
+func permanentErrorSummary(raw string) string { return blocks.PermanentErrorSummary(raw) }
 
-func collapseErrorSummary(raw string) string { return cards.CollapseErrorSummary(raw) }
+func collapseErrorSummary(raw string) string { return blocks.CollapseErrorSummary(raw) }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
 // reasoning. It signals the prose is a lossy summary, not the model's actual
@@ -1031,7 +963,7 @@ func plural(n int, noun string) string {
 // VERBATIM (fail-soft — never drop content the transform can't prove is a
 // delivery note).
 func deliveryBodyForDisplay(raw string) string {
-	return cards.DeliveryBodyForDisplay(raw)
+	return blocks.DeliveryBodyForDisplay(raw)
 }
 
 // toolCardLayout returns the styled card, its outer width, and its usable body

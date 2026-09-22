@@ -1,4 +1,4 @@
-package cards
+package blocks
 
 import (
 	"strings"

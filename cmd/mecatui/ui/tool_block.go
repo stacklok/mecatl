@@ -4,28 +4,29 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 )
 
 // preparedToolCard remains a package-local ephemeral adapter for regression
 // checks that ensure prepared semantic content is never retained by the cache.
 type preparedToolCard struct {
-	cards.Prepared
+	blocks.Prepared
 }
 
-type preparedToolSection = cards.StyledSectionInput
+type preparedToolSection = blocks.StyledSectionInput
 
 func (p preparedToolCard) render() string {
 	return strings.Join(p.Lines, "\n")
 }
 
 // prepareToolCard snapshots the mutable conversation block into the real
-// stateless cards package. Dynamic rows are already bounded to bodyWidth before
-// their styles are applied; the cards package owns only final decoration and
+// stateless blocks package. Dynamic rows are already bounded to bodyWidth before
+// their styles are applied; the blocks package owns only final decoration and
 // lockstep structural provenance.
 func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 	r.toolCardPrepares++
-	card, _, bodyWidth := r.toolCardLayout()
+	_, _, bodyWidth := r.toolCardLayout()
+	theme := r.blockTheme()
 
 	var glyph, glyphText string
 	switch {
@@ -50,23 +51,22 @@ func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(b.toolName), bodyWidth)
 	}
 
-	sections := []preparedToolSection{{Region: cards.RegionChrome, Text: head}}
+	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
 	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
-		sections = append(sections, preparedToolSection{Region: cards.RegionArguments, Text: args})
+		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
 	}
 	if b.resolved {
 		if result := r.renderToolResult(b, expand, bodyWidth); result != "" {
 			sections = append(sections, preparedToolSection{
-				Region:   cards.RegionResult,
+				Region:   blocks.RegionResult,
 				Text:     result,
 				Trailing: len(b.resultBody) - len(strings.TrimRight(b.resultBody, " ")),
 			})
 		}
 	}
 
-	input := cards.SnapshotStyledTool(cards.StyledToolInput{Sections: sections})
-	layout := cards.SnapshotStyledLayout(cards.StyledLayoutInput{Card: card})
-	return preparedToolCard{Prepared: cards.PrepareStyledTool(input, layout)}
+	input := blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections})
+	return preparedToolCard{Prepared: blocks.PrepareStyledTool(input, theme)}
 }
 
 func (r *renderer) renderTool(b *block, expand bool) string {
