@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v1
 **Phase:** command-tool identity and POSIX compatibility
-**Status:** landed, 2026-09-09, with the legacy `--no-bash` alias retired by the directing user's approved alpha compatibility cleanup on 2026-09-21. The canonical `--no-shell` switch remains; the obsolete alias is now rejected.
+**Status:** landed, 2026-09-09.
 **Delivery:** Split. This changes model-facing tool schemas, compatibility behavior, operator configuration, durable awaiting-call handling, and an engine-module dependency; those interfaces require a Plan / Interface checkpoint before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1109](https://github.com/stacklok/mecatl/issues/1109).

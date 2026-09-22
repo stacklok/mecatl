@@ -1,14 +1,9 @@
 # ADR 0239 - Semantic stream retry and failed-step retry transport
 
-- Status: Accepted (compatibility projection partially superseded)
+- Status: Accepted
 - Date: 2026-08-27
 - Scope: provider stream semantics, retry classification, durable failure metadata, failed-step retry APIs, and mecatui recovery
-- Supersedes: ADR 0203 for retry classification and client retry behavior; its compatibility fields were retained by this decision
-- Superseded by: [PR 1725](https://github.com/stacklok/mecatl/pull/1725) removes the pre-release permanence boolean, aggregate permanence methods, and legacy snapshot projection; typed retry disposition and stream progress remain the current contract
-
-> **Partial supersession:** The decision text below is frozen historical rationale. References to
-> retaining the legacy permanence projection describe the pre-PR-1725 compatibility posture, not
-> the current API or snapshot format.
+- Supersedes: ADR 0203 for retry classification and client retry behavior
 
 ## Context
 

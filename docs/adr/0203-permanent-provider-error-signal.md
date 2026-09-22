@@ -3,7 +3,7 @@
 - Status: Superseded
 - Date: 2026-08-05
 - Scope: `engine/port.PermanentError` interface → `session.ResultPayload.Permanent` → `EvRecoverNotice` advisory
-- Superseded by: [ADR 0239](./0239-semantic-stream-retry.md) for typed retry semantics; [PR 1725](https://github.com/stacklok/mecatl/pull/1725) removes the temporary permanence compatibility projection
+- Superseded by: [ADR 0239](./0239-semantic-stream-retry.md) for typed retry semantics
 
 ## Context
 

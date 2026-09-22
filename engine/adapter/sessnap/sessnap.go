@@ -96,10 +96,11 @@ type Snapshot struct {
 	TitleGeneration    session.TitleGenerationState `json:"title_generation,omitempty"`
 	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
 	TitleAttempts      []session.TitleAttempt       `json:"title_attempts,omitempty"`
-	// TokenUsage is the canonical durable usage ledger and is mandatory in current snapshots.
+	// TokenUsage is the canonical durable usage ledger. The writer always emits it;
+	// an omitted empty ledger decodes to the zero value.
 	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage"`
 	// RetryDisposition and StreamProgress are the typed terminal facts for a failed
-	// model stream. Missing legacy fields decode conservatively to unknown.
+	// model stream. Missing fields decode conservatively to unknown.
 	RetryDisposition session.RetryDisposition `json:"retry_disposition,omitempty"`
 	StreamProgress   session.StreamProgress   `json:"stream_progress,omitempty"`
 	// RetryPending persists the consumed failed-step retry intent across the crash window
@@ -145,30 +146,6 @@ type Snapshot struct {
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
 	// Placement is safe display-only metadata and is never used for reattachment.
 	Placement session.PlacementMetadata `json:"placement,omitempty"`
-}
-
-// UnmarshalJSON accepts only the current snapshot usage and retry projections.
-func (s *Snapshot) UnmarshalJSON(data []byte) error {
-	type snapshotAlias Snapshot
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	if _, ok := fields["usage"]; ok {
-		return errors.New("sessnap: legacy usage projection is unsupported")
-	}
-	if _, ok := fields["permanent"]; ok {
-		return errors.New("sessnap: legacy permanent projection is unsupported")
-	}
-	if _, ok := fields["token_usage"]; !ok {
-		return errors.New("sessnap: missing canonical token_usage")
-	}
-	var decoded snapshotAlias
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*s = Snapshot(decoded)
-	return nil
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -413,9 +390,6 @@ func (s Snapshot) Restore() (*session.Session, error) {
 		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
 	}
 
-	if s.TokenUsage == nil {
-		return nil, errors.New("sessnap: missing canonical token_usage")
-	}
 	pendingAuthorization := fromPendingAuthorizationDTO(s.PendingAuthorization)
 	data := RestoreData{
 		State:                s.State,
@@ -489,9 +463,6 @@ type RestoreData struct {
 //
 //nolint:gocyclo // The switch mirrors the complete session lifecycle state machine.
 func RestoreState(s *session.Session, data RestoreData) error {
-	if data.TokenUsage == nil {
-		return errors.New("sessnap: missing canonical token usage")
-	}
 	if err := validateRestorePendingState(s, data.State, data.Pending, data.PendingAuthorization); err != nil {
 		return err
 	}
@@ -601,15 +572,6 @@ func Marshal(s *session.Session) ([]byte, error) {
 
 // Unmarshal decodes a JSON snapshot line and restores it into a Session.
 func Unmarshal(line []byte) (*session.Session, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(line, &fields); err != nil {
-		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
-	}
-	for _, legacy := range []string{"workspace", "adoption_source_id", "adoption_request_digest"} {
-		if _, ok := fields[legacy]; ok {
-			return nil, fmt.Errorf("sessnap: unsupported legacy duplicate placement field %q", legacy)
-		}
-	}
 	var wire struct {
 		Authority json.RawMessage `json:"authority"`
 	}

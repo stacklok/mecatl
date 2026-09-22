@@ -232,7 +232,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Session debugger lineage lock](session-debug-lineage-lock.md) — root debug
   inspection avoids global lineage traversal while related and descendant-scoped
   evidence keeps its existing bounded, fail-closed revalidation. Status: draft.
-- [Session storage continuity](session-storage-continuity.md) — historical storage plan whose legacy migration, promotion, adoption, and maintenance APIs and proofs were retired by the approved alpha compatibility cleanup; retained for context only. Status: superseded historical record.
+- [Session storage continuity](session-storage-continuity.md) — superseded historical storage plan. Status: superseded.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
@@ -337,7 +337,7 @@ PR after verification. There is no cleanup or status-only PR.
   ordinary ask resolution, cancellation, strict multimodal steering, and pending-steer
   retraction over gRPC and HTTP through `session.controls(runId)`, with request options,
   bounded correlated acknowledgements, and mandatory stale-run guards. Status: proposed.
-- [TypeScript SDK MCP authorization lifecycle](sdk-mcp-authorization-lifecycle.md) — historical proposal for a specialized session-bound MCP authorization lifecycle, retired by the approved alpha compatibility cleanup before release. Status: superseded.
+- [TypeScript SDK MCP authorization lifecycle](sdk-mcp-authorization-lifecycle.md) — superseded proposal. Status: superseded.
 - [TypeScript SDK HTTP well-known-type JSON compatibility](sdk-http-wkt-json-compatibility.md) —
   descriptor-guided Timestamp and Duration decoding for daemon stdlib-JSON responses across unary
   HTTP and SSE, preserving ProtoJSON strings, typed failures, and the registered raw response.

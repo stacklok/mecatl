@@ -246,10 +246,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Canonical session accounting, retry metadata, and snapshot restore** — adds
   `session.RetryMetadata` and `Session.UsageFor`, changes failure/retry-pending APIs
   to pass that value object instead of positional tuples, and changes
-  `sessnap.RestoreState` to accept adapter-owned `sessnap.RestoreData`. Current
-  snapshots require `token_usage` and reject the legacy `usage` and `permanent`
-  projections rather than silently attributing them to `unknown`. Changed/breaking
-  (pre-v1 minor).
+  `sessnap.RestoreState` to accept adapter-owned `sessnap.RestoreData`. Snapshot
+  decoding validates canonical fields, ignores unknown fields, and treats an omitted
+  empty token ledger as its zero value. Changed/breaking (pre-v1 minor).
 
 - **Go compatibility floor** - the engine module requires Go 1.27. The root,
   provider, and authentication modules use the same floor. Changed (breaking,

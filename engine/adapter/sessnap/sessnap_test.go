@@ -511,14 +511,17 @@ func TestZeroUsageEmitsCanonicalLedger(t *testing.T) {
 	}
 }
 
-// TestLoadSnapshotMissingCanonicalUsageRejects ensures current restore never
-// silently attributes legacy aggregate usage to an unknown model.
-func TestLoadSnapshotMissingCanonicalUsageRejects(t *testing.T) {
-	legacy := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
+func TestLoadSnapshotWithOmittedEmptyTokenUsage(t *testing.T) {
+	wire := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
+		`"usage":"ignored even when malformed","workspace":{"misleading":true},` +
 		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +
 		`"messages":[{"role":"user","text":"hello there"}]}`
-	if _, err := sessnap.Unmarshal([]byte(legacy)); err == nil {
-		t.Fatal("Unmarshal accepted snapshot without canonical token_usage")
+	got, err := sessnap.Unmarshal([]byte(wire))
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if usage := got.UsageFor(session.UsageKindMain); usage != (session.Usage{}) {
+		t.Fatalf("usage = %+v, want zero value", usage)
 	}
 }
 

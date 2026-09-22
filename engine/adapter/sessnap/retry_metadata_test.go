@@ -115,20 +115,44 @@ func TestSnapshotRecordsPermanentRetryDisposition(t *testing.T) {
 	}
 }
 
-func TestSnapshotRejectsLegacyRetryAndUsageProjections(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		wire string
-	}{
-		{name: "permanent", wire: `{"token_usage":{},"permanent":true}`},
-		{name: "usage", wire: `{"token_usage":{},"usage":{"InputTokens":1}}`},
-		{name: "missing token usage", wire: `{}`},
+func TestSnapshotIgnoresUnknownFields(t *testing.T) {
+	wire := []byte(`{
+		"token_usage":{"main":{"Total":{"InputTokens":5}}},
+		"retry_disposition":1,
+		"usage":"not an aggregate",
+		"permanent":{"misleading":true},
+		"future_payload":{"token_usage":"malformed","retry_disposition":"invalid"}
+	}`)
+	var snap Snapshot
+	if err := json.Unmarshal(wire, &snap); err != nil {
+		t.Fatalf("Unmarshal with unknown fields: %v", err)
+	}
+	if got := snap.TokenUsage[session.UsageKindMain].Total.InputTokens; got != 5 {
+		t.Fatalf("canonical token usage = %d, want 5", got)
+	}
+	if snap.RetryDisposition != session.RetryDispositionRetryable {
+		t.Fatalf("canonical retry disposition = %v, want retryable", snap.RetryDisposition)
+	}
+}
+
+func TestSnapshotAcceptsOmittedEmptyTokenUsage(t *testing.T) {
+	var snap Snapshot
+	if err := json.Unmarshal([]byte(`{"unrecognized":["anything"]}`), &snap); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(snap.TokenUsage) != 0 {
+		t.Fatalf("token usage = %#v, want zero value", snap.TokenUsage)
+	}
+}
+
+func TestSnapshotRejectsMalformedCanonicalData(t *testing.T) {
+	for _, wire := range []string{
+		`{"token_usage":"invalid"}`,
+		`{"token_usage":{},"retry_disposition":"invalid"}`,
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var snap Snapshot
-			if err := json.Unmarshal([]byte(tc.wire), &snap); err == nil {
-				t.Fatal("legacy snapshot projection accepted")
-			}
-		})
+		var snap Snapshot
+		if err := json.Unmarshal([]byte(wire), &snap); err == nil {
+			t.Fatalf("malformed canonical snapshot accepted: %s", wire)
+		}
 	}
 }

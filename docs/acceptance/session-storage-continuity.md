@@ -1,11 +1,7 @@
 # Session storage continuity — acceptance plan
 
-> **Historical only — not an active acceptance contract.** PR 1725 retired the legacy migration,
-> promotion, adoption, and maintenance behavior described below. Current-only storage semantics
-> and their current tests are authoritative.
-
-**Phase:** Large historical stores, migration, cleanup, and writable legacy continuity.
-**Status:** superseded historical record, 2026-09-21. The directing user's approved alpha compatibility cleanup retired legacy storage migration, promotion, adoption, and maintenance APIs plus their proofs; current-only namespace behavior is authoritative and this record has no current traceability claims.
+**Phase:** Historical storage continuity.
+**Status:** superseded.
 **Issue:** [stacklok/mecatl#583](https://github.com/stacklok/mecatl/issues/583), with sub-issues [#586](https://github.com/stacklok/mecatl/issues/586)–[#596](https://github.com/stacklok/mecatl/issues/596).
 **ADR:** [ADR-0226](../adr/0226-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
 **Accumulator branch:** `acc/session-storage-continuity` (off `main`).
