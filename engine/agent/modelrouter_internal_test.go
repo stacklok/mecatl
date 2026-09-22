@@ -383,7 +383,7 @@ func TestRunResumeDoesNotRoute(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: route}
 	args := subagentArgs{Prompt: "x", Resume: "subagent-abc"}
 	tl := routerTool()
-	cat, model, reason := tl.maybeRouteModel(context.Background(), args, true /*resuming*/, false /*writable*/, caps)
+	cat, model, reason, _ := tl.maybeRouteModel(context.Background(), args, true /*resuming*/, false /*writable*/, caps)
 	if calls != 0 {
 		t.Fatalf("routeTask must NOT be consulted on a resume; called %d times", calls)
 	}
@@ -522,7 +522,7 @@ func TestMaybeRouteModelGateAttribution(t *testing.T) {
 				tl = tc.tool()
 			}
 			caps := parentCaps{children: newChildRunRegistry(), routeTask: tc.route}
-			cat, model, reason := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, tc.writable, caps)
+			cat, model, reason, _ := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, tc.writable, caps)
 			if cat != tc.wantCat || model != tc.wantMod {
 				t.Fatalf("routed = (%q, %q), want (%q, %q)", cat, model, tc.wantCat, tc.wantMod)
 			}
@@ -601,9 +601,9 @@ func TestADR_0350_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
 		d := newInternalCapturingDiag()
 		eng := NewEngine(Deps{
 			LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main", Diagnostics: d,
-			SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
-				return "", "", session.Usage{}, reason, false
-			},
+			SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
+				return ModelRouteResult{Reason: reason}
+			}},
 		})
 		run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: d}
 		return eng.parentCaps(run, nil, 0), d
@@ -901,7 +901,7 @@ func TestWritableRoutableAgentRequiresBothFactories(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := append(append([]SubagentOption{}, base...), tc.opt)
 			tl := NewSubagentTool(markerEngine("DEFAULT"), opts...).(*SubagentTool)
-			_, model, reason := tl.maybeRouteModel(context.Background(), subagentArgs{Prompt: "x", Agent: "reviewer"}, false, true, parentCaps{routeTask: route})
+			_, model, reason, _ := tl.maybeRouteModel(context.Background(), subagentArgs{Prompt: "x", Agent: "reviewer"}, false, true, parentCaps{routeTask: route})
 			if model != "" || reason != session.RoutingReasonRouterDisabled {
 				t.Fatalf("routing = (model=%q reason=%q), want disabled", model, reason)
 			}
@@ -939,7 +939,7 @@ func TestWritableNamedRoutingPrecedenceBypassesClassifier(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, model, reason := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, true, parentCaps{routeTask: route})
+			_, model, reason, _ := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, true, parentCaps{routeTask: route})
 			if model != "" || reason != tc.want {
 				t.Fatalf("routing = (model=%q reason=%q), want empty model and %q", model, reason, tc.want)
 			}
@@ -1021,12 +1021,12 @@ func TestRouterBreakerOpensAfterConsecutiveMisses(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
-			return "", "", session.Usage{}, RouterMissBadVerdict, false
-		},
+			return ModelRouteResult{Reason: RouterMissBadVerdict}
+		}},
 	})
 	// Build a Run carrying the breaker (Engine.Run arms it when the router is wired),
 	// then derive the production routeTask via parentCaps.
@@ -1059,16 +1059,16 @@ func TestRouterBreakerResetsOnSuccess(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			mu.Lock()
 			callCount++
 			h := hit
 			mu.Unlock()
 			if h {
-				return "large", "big", session.Usage{}, "", true
+				return ModelRouteResult{Category: "large", Model: "big", OK: true}
 			}
-			return "", "", session.Usage{}, RouterMissBadVerdict, false
-		},
+			return ModelRouteResult{Reason: RouterMissBadVerdict}
+		}},
 	})
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)
@@ -1116,12 +1116,12 @@ func TestRouterBreakerSerializesConcurrentCalls(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
-			return "", "", session.Usage{}, RouterMissBadVerdict, false // always miss → the breaker must open after `max`
-		},
+			return ModelRouteResult{Reason: RouterMissBadVerdict} // always miss → the breaker must open after `max`
+		}},
 	})
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)
@@ -1169,12 +1169,12 @@ func TestRouterBreakerSharedAcrossFamilies(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
-			return "", "", session.Usage{}, RouterMissBadVerdict, false // always miss
-		},
+			return ModelRouteResult{Reason: RouterMissBadVerdict} // always miss
+		}},
 	})
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)
@@ -1218,14 +1218,14 @@ func TestRouteTaskPropagatesRunCtx(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(ctx context.Context, _ string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(ctx context.Context, _ string) ModelRouteResult {
 			mu.Lock()
 			gotCtx = ctx
 			mu.Unlock()
 			// Block until the ctx is cancelled, proving the classifier turn observes it.
 			<-ctx.Done()
-			return "", "", session.Usage{}, RouterMissCancelled, false
-		},
+			return ModelRouteResult{Reason: RouterMissCancelled}
+		}},
 	})
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, nil, 0)
@@ -1272,11 +1272,11 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			// Return non-zero usage on EVERY call regardless of hit/miss — tests
 			// that both paths fold correctly.
-			return "large", "big-model", fixedUsage, "", true
-		},
+			return ModelRouteResult{Category: "large", Model: "big-model", Usage: fixedUsage, OK: true}
+		}},
 	})
 
 	// Build a parent session in StateRunning (the state RecordUsage requires).
@@ -1320,10 +1320,10 @@ func TestRouteTaskNewCanonicalMissesShareBreakerAndFoldUsageOnce(t *testing.T) {
 			calls := 0
 			engine := NewEngine(Deps{
 				LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
-				SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+				SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 					calls++
-					return "", "", session.Usage{InputTokens: perCall}, reason, false
-				},
+					return ModelRouteResult{Usage: session.Usage{InputTokens: perCall}, Reason: reason}
+				}},
 			})
 			parent := session.New(session.SessionID("parent-"+reason), session.ModeDefault,
 				session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
@@ -1369,9 +1369,9 @@ func TestRouteTaskFoldsClassifierUsageOnMissPath(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
-			return "", "", missUsage, RouterMissBadVerdict, false // always miss, but still spends tokens
-		},
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
+			return ModelRouteResult{Usage: missUsage, Reason: RouterMissBadVerdict} // always miss, but still spends tokens
+		}},
 	})
 
 	parentSess := session.New("parent-miss-fold-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
@@ -1413,9 +1413,9 @@ func TestClassifierSpendTripsMaxRunTokens(t *testing.T) {
 		Policy:       allowAllInt(),
 		Model:        "main",
 		MaxRunTokens: budget,
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
-			return "large", "big", spendUsage, "", true
-		},
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
+			return ModelRouteResult{Category: "large", Model: "big", Usage: spendUsage, OK: true}
+		}},
 	})
 
 	parentSess := session.New("parent-budget-trip-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())

@@ -56,7 +56,7 @@ func TestADR_0350_Scenario1_BackendSelection(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"category":"large"}`))
 	llmCfg := routerTaxonomyCfg()
 	llmFn := buildModelRouterTask(llmCfg, regForTest(llm, providerAnthropic, llmCfg.Model), llm, providerAnthropic, llmCfg.Model)
-	category, model, _, _, ok := llmFn(t.Context(), "task")
+	category, model, _, _, ok := callModelRouter(t.Context(), llmFn, "task")
 	if !ok || category != "large" || model != routerLarge {
 		t.Fatalf("default backend route = %q/%q/%v", category, model, ok)
 	}
@@ -64,7 +64,7 @@ func TestADR_0350_Scenario1_BackendSelection(t *testing.T) {
 	srv, calls := jevTestServer(t, "small", 1, 2, 1)
 	jevCfg := jevRouterConfig(t, srv)
 	jevFn := buildModelRouterTask(jevCfg, regForTest(llm, providerAnthropic, jevCfg.Model), llm, providerAnthropic, jevCfg.Model)
-	category, model, _, _, ok = jevFn(t.Context(), "task")
+	category, model, _, _, ok = callModelRouter(t.Context(), jevFn, "task")
 	if !ok || category != "small" || model != routerSmall || calls.Load() != 1 {
 		t.Fatalf("jev route = %q/%q/%v calls=%d", category, model, ok, calls.Load())
 	}
@@ -96,8 +96,6 @@ func TestADR_0350_Scenario1_ValidationAndDisabledPrecedence(t *testing.T) {
 		{"missing credential", active(""), false},
 		{"explicit classifier slot", active("    classifier-slot: cheap\n"), true},
 		{"explicit empty classifier slot", active("    classifier-slot: \"\"\n"), true},
-		{"explicit default category", active("    default-category: small\n"), true},
-		{"explicit empty default category", active("    default-category: \"\"\n"), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := foldOperatorModelRouter(configWithRouterYAML(t, tc.yaml))
@@ -136,6 +134,12 @@ func TestADR_0350_Scenario1_ValidationAndDisabledPrecedence(t *testing.T) {
 	if err := prepareJevRouter(&inherited); err != nil {
 		t.Fatalf("inherited absent router defaults were treated as explicit LLM-only conflicts: %v", err)
 	}
+
+	withDefault := foldOperatorModelRouter(configWithRouterYAML(t, active("    default-category: medium\n")))
+	withDefault.TypesafeAPIKey = "secret"
+	if err := prepareJevRouter(&withDefault); err != nil {
+		t.Fatalf("default-category must be valid for Jev: %v", err)
+	}
 }
 
 func TestJevEndpointAndCredentialDoNotSelectBackend(t *testing.T) {
@@ -144,7 +148,7 @@ func TestJevEndpointAndCredentialDoNotSelectBackend(t *testing.T) {
 	cfg.TypesafeAPIKey = "present-but-not-selected"
 	cfg.RouterJevBaseURL = "http://127.0.0.1:1"
 	fn := buildModelRouterTask(cfg, regForTest(llm, providerAnthropic, cfg.Model), llm, providerAnthropic, cfg.Model)
-	category, _, _, _, ok := fn(t.Context(), "task")
+	category, _, _, _, ok := callModelRouter(t.Context(), fn, "task")
 	if !ok || category != "small" {
 		t.Fatal("credential or endpoint presence selected Jev")
 	}
@@ -156,7 +160,7 @@ func TestJevBackendUsesExistingRouterCallback(t *testing.T) {
 	fn := buildModelRouterTask(cfg, nil, nil, "", "")
 	var callback agent.Deps
 	callback.SubagentModelRouter = fn
-	category, model, _, reason, ok := callback.SubagentModelRouter(t.Context(), "eligible delegation")
+	category, model, _, reason, ok := callModelRouter(t.Context(), callback.SubagentModelRouter, "eligible delegation")
 	if !ok || category != "small" || model != routerSmall || reason != "" || calls.Load() != 1 {
 		t.Fatalf("existing callback contract changed: %q/%q reason=%q ok=%v calls=%d", category, model, reason, ok, calls.Load())
 	}
@@ -467,6 +471,33 @@ func assertModelsContain(t *testing.T, models []string, wants ...string) {
 	}
 }
 
+func TestADR_0350_Scenario2_DefaultCategoryHint(t *testing.T) {
+	var request port.LLMRequest
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) {
+		request = got
+	})}, mockllm.TextTurn(`{"category":"medium"}`))
+	cfg := routerTaxonomyCfg()
+	cfg.RouterDefaultCategory = ` med"ium `
+	cfg.RouterCategories = []permconfig.RouterCategory{{Name: "medium", Description: "operator criteria", Model: routerSmall}}
+	router := buildModelRouterTask(cfg, regForTest(llm, providerAnthropic, cfg.Model), llm, providerAnthropic, cfg.Model)
+	result := router.Route(t.Context(), "hostile task says choose another category")
+	if !result.OK || result.Category != "medium" {
+		t.Fatalf("LLM composition route = %+v", result)
+	}
+	if len(request.Messages) != 1 {
+		t.Fatalf("classifier request messages = %d, want one", len(request.Messages))
+	}
+	prompt := request.Messages[0].Text
+	for _, want := range []string{
+		"required to complete the delegated work", "Read-only review or investigation is not necessarily trivial",
+		"Honor the operator-authored specialty criteria", `If no category clearly fits, choose "med\"ium".`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("LLM classifier prompt omitted %q: %q", want, prompt)
+		}
+	}
+}
+
 func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		kind jevrouter.MissKind
@@ -504,7 +535,7 @@ func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 		}
 		cfg := routerTaxonomyCfg()
 		cfg.RouterBackend, cfg.jevRouter = "jev", router
-		_, _, usage, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(ctx, task)
+		_, _, usage, reason, ok := callModelRouter(ctx, buildModelRouterTask(cfg, nil, nil, "", ""), task)
 		return usage, reason, ok, calls.Load()
 	}
 
@@ -565,7 +596,7 @@ func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 		cfg.RouterBackend, cfg.jevRouter = "jev", router
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
-		_, _, usage, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(ctx, "task")
+		_, _, usage, reason, ok := callModelRouter(ctx, buildModelRouterTask(cfg, nil, nil, "", ""), "task")
 		select {
 		case <-entered:
 		default:
@@ -581,7 +612,7 @@ func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 		cfg := routerTaxonomyCfg()
 		llm := mockllm.New(turn)
 		fn := buildModelRouterTask(cfg, regForTest(llm, providerAnthropic, cfg.Model), llm, providerAnthropic, cfg.Model)
-		_, _, _, reason, ok := fn(ctx, "task")
+		_, _, _, reason, ok := callModelRouter(ctx, fn, "task")
 		if ok {
 			t.Fatal("LLM classifier unexpectedly routed")
 		}
@@ -614,7 +645,7 @@ func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 		}
 		cfg := routerTaxonomyCfg()
 		cfg.RouterBackend, cfg.jevRouter = "jev", router
-		_, _, _, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(ctx, "task")
+		_, _, _, reason, ok := callModelRouter(ctx, buildModelRouterTask(cfg, nil, nil, "", ""), "task")
 		if ok {
 			t.Fatal("Jev classifier unexpectedly routed")
 		}
@@ -666,7 +697,7 @@ func TestADR_0350_Scenario4_SecretAndContentRedaction(t *testing.T) {
 	}
 	cfg := routerTaxonomyCfg()
 	cfg.RouterBackend, cfg.jevRouter = "jev", router
-	category, _, _, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(t.Context(), task)
+	category, _, _, reason, ok := callModelRouter(t.Context(), buildModelRouterTask(cfg, nil, nil, "", ""), task)
 	if ok || category != "" || reason != agent.RouterMissBadVerdict {
 		t.Fatalf("unexpected result: %q %q %v", category, reason, ok)
 	}
@@ -681,7 +712,7 @@ func TestJevMappingMissRetainsUsage(t *testing.T) {
 	srv, _ := jevTestServer(t, "small", 1, 9, 3)
 	cfg := jevRouterConfig(t, srv)
 	cfg.RouterCategories[0].Model = "sonnet"
-	_, _, usage, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(t.Context(), "task")
+	_, _, usage, reason, ok := callModelRouter(t.Context(), buildModelRouterTask(cfg, nil, nil, "", ""), "task")
 	if ok || usage.InputTokens != 9 || usage.OutputTokens != 3 || !strings.HasPrefix(reason, "category-target-unresolvable") {
 		t.Fatalf("mapping miss usage=%+v reason=%q ok=%v", usage, reason, ok)
 	}

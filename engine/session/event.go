@@ -795,6 +795,23 @@ type TurnEndPayload struct {
 // ChildActivity extraction — it is a helper, not a value-object migration — and the
 // 4th-family bar stands.
 
+// RoutingDecision is the bounded evidence snapshot for one configured delegated-model
+// routing decision. Model and accepted-route facts remain authoritative on the enclosing
+// delegation payload; this value records only classifier configuration, candidate evidence,
+// outcome, and the post-decision breaker state.
+type RoutingDecision struct {
+	Backend           string
+	ClassifierModel   string
+	CandidateCategory string
+	CandidateModel    string
+	Confidence        *float64
+	MinimumConfidence *float64
+	Outcome           string
+	ConsecutiveMisses int
+	MissLimit         int
+	BreakerOpen       bool
+}
+
 // SubagentPayload is the REDACTED observability projection carried by the three
 // subagent.* events (EvSubagentStart / EvSubagentTool / EvSubagentEnd). It is the
 // ONLY information about a Subagent tool's child run that surfaces to clients.
@@ -859,6 +876,9 @@ type SubagentPayload struct {
 	// or the classifier's reasoning — so it is gauntlet-#7 safe (no child content, no
 	// model-influenced free text crosses). Clamped at the emit site.
 	RoutingReason string
+	// RoutingDecision is the optional configured-router evidence captured on
+	// EvSubagentStart. Historical events and deployments without a router leave it nil.
+	RoutingDecision *RoutingDecision
 	// Model is the concrete MODEL id the child ACTUALLY ran on (EvSubagentStart only),
 	// set unconditionally — inherited default, agent-def pin, per-call `model` override,
 	// or the opt-in router — independent of whether the router fired. It is BARE METADATA
@@ -1007,6 +1027,9 @@ type ParallelPayload struct {
 	// reasoning — so it is gauntlet-#7 safe (no branch content crosses). Clamped at the
 	// emit site.
 	RoutingReason string
+	// RoutingDecision is the optional configured-router evidence captured on a
+	// branch_start event. Historical events and deployments without a router leave it nil.
+	RoutingDecision *RoutingDecision
 	// Model is the concrete MODEL id the branch ACTUALLY ran on (branch_start kind only),
 	// set unconditionally — inherited default branch model or the opt-in router —
 	// independent of whether the router fired. It is BARE METADATA — a model id, never
@@ -1135,6 +1158,9 @@ type TeamMemberSpec struct {
 	// member's role/prompt or classifier reasoning — so it is gauntlet-#7 safe (no member
 	// content crosses). Clamped at the emit site.
 	RoutingReason string
+	// RoutingDecision is the optional configured-router evidence captured in the
+	// team.start roster. Historical events and deployments without a router leave it nil.
+	RoutingDecision *RoutingDecision
 	// Model is the concrete MODEL id the member's engine ACTUALLY runs on (EvTeamStart
 	// roster entry only), set unconditionally — inherited default member model, agent-def
 	// pin, or the opt-in router — independent of whether the router fired. It is BARE

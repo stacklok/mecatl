@@ -334,42 +334,23 @@ type Deps struct {
 	// per-call override may only TIGHTEN it.
 	MaxRunTokens int
 
-	// SubagentModelRouter, when non-nil, is the OPT-IN semantic model router (ADR
-	// 0031, the Phase 5 headline feature): given a Subagent call's (model-authored,
-	// untrusted) task prompt it returns the ALREADY-RESOLVED concrete model id to mint
-	// the child on, plus the category label it classified into, plus the classifier's
-	// session.Usage (which the dispatch-path routeTask closure folds into the parent
-	// sess.Usage so classifier spend counts against --max-run-tokens — the #92 fix).
-	// It is a composition closure — the engine layer is model-string-only (the layering
-	// rule): composition owns the classifier engine, the category taxonomy, and the
-	// category→model mapping (aliases/slots/the allowlist cap), and hands the engine
-	// only func(ctx, string)(string, string, session.Usage, string, bool) (the trailing
-	// string is the miss REASON — issue #287, logged VERBATIM at the dispatch chokepoint
-	// on a miss; empty on a hit). The reason is OPERATOR-DIAGNOSTIC detail: it also rides
-	// the delegation-start event's RoutingReason field, but ONLY after the engine's
-	// event-safe allowlist (routingReasonPayload) confines it to the harness/composition
-	// metadata constants — an external composition returning a provider error body,
-	// classifier output, or a task excerpt sees it substituted with a generic label on the
-	// wire (gauntlet #7), while the verbatim text stays in the diagnostics channel. It is consulted by
-	// the Subagent run() hook ONLY for a plain default delegation (no per-call model,
-	// no agent, no fork, no resume) and is FAIL-SOFT throughout: ok=false (any
-	// classifier failure, an unknown category, the breaker open) → the call falls
-	// through to the inherited default explorer model, byte-identically to a deployment
-	// with no router. DEFAULT nil: no router, the long-standing behaviour. Set on the
-	// MAIN engine only (a child has no Subagent tool, so structurally no router);
-	// childEngineDepsForProvider forces it nil (the no-nesting recursion guard). Like
-	// ChildAskReviewer, the router is built into the per-call parentCaps.routeTask
-	// closure in Engine.parentCaps, never called directly by the loop, so it is NOT a
-	// port.LLMRequest field and never reaches a request.
+	// SubagentModelRouter, when non-nil, is the OPT-IN semantic delegated-model
+	// router. Its configured backend, classifier model, and optional threshold remain
+	// available when pin/fork/resume/family gates skip Route. Route returns a typed
+	// backend-neutral result: Category and Model are validated candidates, OK says
+	// whether the route was accepted, Confidence is optional backend-native evidence,
+	// and Usage is folded into the parent session on every classifier call.
 	//
-	// The ctx is the RUN's ctx (threaded down via parentCaps.routeTask), NOT
-	// context.Background(): a Run.Cancel between the breaker's hardAbort check and the
-	// classifier call must propagate into RunModelRouter so the classifier turn dies
-	// with the run instead of running out its 30s clock (issue #94 — the
-	// cancellation-propagation gap the hardAbort TOCTOU otherwise leaves). Fail-soft
-	// holds regardless: a cancelled ctx yields StopCancelled → ok=false → inherit the
-	// default model, exactly the existing miss path.
-	SubagentModelRouter func(ctx context.Context, taskPrompt string) (category, model string, usage session.Usage, missReason string, ok bool)
+	// Composition owns the classifier, taxonomy, category-to-model mapping, and
+	// same-provider target construction. The engine owns routing eligibility, the
+	// per-run three-miss breaker, bounded delegation-start evidence, and fail-soft
+	// fallback. Candidate fields never assert which model actually ran; the enclosing
+	// delegation payload's Model and accepted-route fields remain authoritative.
+	// DEFAULT nil means no configured router and produces no RoutingDecision. Child
+	// engines force it nil (the no-nesting recursion guard). The callback receives the
+	// run context so cancellation bounds classification; it is never a port.LLMRequest
+	// field.
+	SubagentModelRouter *SubagentModelRouter
 
 	// ProgressiveTools, when true, enables progressive tool disclosure
 	// (pattern 9): the per-turn request advertises lightweight specs for tools

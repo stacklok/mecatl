@@ -166,7 +166,11 @@ type parentCaps struct {
 	//
 	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
 	// (issue #94); see SubagentModelRouter.
-	routeTask func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
+	routeTask     func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
+	routeDecision func(ctx context.Context, taskPrompt string) modelRoutingResult
+	// skipRoute snapshots configured router metadata and current breaker state for a
+	// delegation gate that intentionally bypasses classification.
+	skipRoute func(reason string) *session.RoutingDecision
 	// owner is the PARENT session's verified owner (ADR 0204 decision 4), handed
 	// down so every child session (subagent-/parallel-/team-) is attributed to the
 	// same principal as the session that spawned it. It is read off the parent
@@ -195,6 +199,17 @@ type parentCaps struct {
 	// call-id-only id, unaffected outside real dispatch.
 	parentSessionID   session.SessionID
 	parentIncarnation session.IncarnationID
+}
+
+func (c parentCaps) routeConfigured(ctx context.Context, prompt string) modelRoutingResult {
+	if c.routeDecision != nil {
+		return c.routeDecision(ctx, prompt)
+	}
+	if c.routeTask != nil {
+		category, model, reason, ok := c.routeTask(ctx, prompt)
+		return modelRoutingResult{category: category, model: model, reason: reason, ok: ok}
+	}
+	return modelRoutingResult{reason: session.RoutingReasonRouterDisabled}
 }
 
 // inheritOwner stamps the parent session's owner onto a freshly-minted child
@@ -2108,7 +2123,13 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 // It is a method (not a free func) to read t.writableEngineFactory / t.agentModelFactory /
 // t.routableAgents. The ctx is the run's ctx, threaded to routeTask so a Run.Cancel
 // propagates into the classifier turn (issue #94).
-func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string) {
+func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string, decision *session.RoutingDecision) {
+	skipped := func(reason string) (string, string, string, *session.RoutingDecision) {
+		if caps.skipRoute == nil {
+			return "", "", reason, nil
+		}
+		return "", "", reason, caps.skipRoute(reason)
+	}
 	// PRECEDENCE (issue #397): the explicit CHOICE gates (resume / fork / per-call model /
 	// agent def) attribute BEFORE the router-absent gate, so a delegation that pinned its
 	// model is never mislabeled "router-disabled" when no router is wired. The choice
@@ -2116,42 +2137,37 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 	// accurate why.
 	switch {
 	case resuming:
-		return "", "", session.RoutingReasonResume
+		return skipped(session.RoutingReasonResume)
 	case args.Fork:
-		return "", "", session.RoutingReasonFork
+		return skipped(session.RoutingReasonFork)
 	case strings.TrimSpace(args.Model) != "":
-		return "", "", session.RoutingReasonPinnedModel
+		return skipped(session.RoutingReasonPinnedModel)
 	}
 	if wantAgent := strings.TrimSpace(args.Agent); wantAgent != "" {
-		// A NAMED agent: a def that expressed model intent attributes to its own gate. A
-		// ROUTABLE def needs the applicable routed factory plus its ordinary writable
-		// fallback when writable; an incomplete factory set cannot consume a pick.
 		if _, pinned := t.pinnedAgents[wantAgent]; pinned {
-			return "", "", session.RoutingReasonAgentDefPinned
+			return skipped(session.RoutingReasonAgentDefPinned)
 		}
 		if _, routable := t.routableAgents[wantAgent]; !routable {
-			return "", "", session.RoutingReasonRouterDisabled
+			return skipped(session.RoutingReasonRouterDisabled)
 		}
 		if writable {
 			if t.agentWritableFactory == nil || t.agentWritableModelFactory == nil {
-				return "", "", session.RoutingReasonRouterDisabled
+				return skipped(session.RoutingReasonRouterDisabled)
 			}
 		} else if t.agentModelFactory == nil {
-			return "", "", session.RoutingReasonRouterDisabled
+			return skipped(session.RoutingReasonRouterDisabled)
 		}
 	} else if writable && t.writableEngineFactory == nil {
-		// A plain WRITABLE delegation whose writable engine factory is unwired would DISCARD
-		// the pick (issue #285) — router-disabled (as good as absent).
-		return "", "", session.RoutingReasonRouterDisabled
+		return skipped(session.RoutingReasonRouterDisabled)
 	}
-	if caps.routeTask == nil {
-		return "", "", session.RoutingReasonRouterDisabled
+	if caps.routeTask == nil && caps.routeDecision == nil {
+		return skipped(session.RoutingReasonRouterDisabled)
 	}
-	cat, m, missReason, ok := caps.routeTask(ctx, args.Prompt)
-	if ok {
-		return cat, strings.TrimSpace(m), ""
+	routed := caps.routeConfigured(ctx, args.Prompt)
+	if routed.ok {
+		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
 	}
-	return "", "", missReason
+	return "", "", routed.reason, routed.decision
 }
 
 // reconcileRoutedModel makes delegation-start metadata agree with the engine that will
@@ -2160,11 +2176,15 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 // routed category/model must be cleared so consumers do not report a model that never ran,
 // and the static reason records the fallback. The factory-acceptance bit handles every
 // path (plain, writable, named specialist, and Parallel) without guessing from model ids.
-func reconcileRoutedModel(category, routedModel, reason string, accepted bool) (string, string, string) {
+func reconcileRoutedModel(category, routedModel, reason string, accepted bool, decision *session.RoutingDecision) (string, string, string, *session.RoutingDecision) {
 	if strings.TrimSpace(routedModel) != "" && !accepted {
-		return "", "", session.RoutingReasonTargetUnavailable
+		decision = cloneRoutingDecision(decision)
+		if decision != nil {
+			decision.Outcome = "fallback"
+		}
+		return "", "", session.RoutingReasonTargetUnavailable, decision
 	}
-	return category, routedModel, reason
+	return category, routedModel, reason, decision
 }
 
 // resolveEngineAndLimits resolves one Subagent call's child engine and base
@@ -2356,7 +2376,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// default explorer. routingReason names WHY the router did not classify (empty on a
 	// hit) and rides the subagent.start event (issue #397). The run's ctx threads down so
 	// a Run.Cancel propagates into the classifier turn (issue #94).
-	routedCategory, routedModel, routingReason := t.maybeRouteModel(ctx, args, resuming, writable, caps)
+	routedCategory, routedModel, routingReason, routingDecision := t.maybeRouteModel(ctx, args, resuming, writable, caps)
 
 	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
 	if !ok {
@@ -2365,8 +2385,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if errResult, ok := t.authorizeResumeLookup(ctx, call.ID, session.SessionID(args.Resume), resuming); !ok {
 		return errResult, nil
 	}
-	routedCategory, routedModel, routingReason = reconcileRoutedModel(
-		routedCategory, routedModel, routingReason, routedAccepted)
+	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routedAccepted, routingDecision)
 
 	// Background requires the parent run's child registry: it is where the started
 	// child's rendered result lands for SubagentStatus collection and what the
@@ -2437,7 +2457,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			engine: engine, limits: limits, resuming: resuming, childID: childID, authority: delegatedAuthority,
 			forkHistory:    forkHistory,
 			routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
-			timeoutCtx: timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
+			routingDecision: routingDecision,
+			timeoutCtx:      timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
 		}), nil
 	}
 
@@ -2536,6 +2557,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			RoutedCategory:   routedCategory,
 			RoutedModel:      routedModel,
 			RoutingReason:    routingReasonPayload(routingReason),
+			RoutingDecision:  cloneRoutingDecision(routingDecision),
 			Model:            engine.Model(),
 		}})
 	}
@@ -2719,11 +2741,12 @@ type backgroundChild struct {
 	// child was not routed (no router, or a fail-soft miss). The engine field already
 	// carries the routed engine — these are the LABELS only. routingReason is the
 	// bare-metadata why-not (issue #397), captured with them (empty on a routed hit).
-	routedCategory string
-	routedModel    string
-	routingReason  string
-	childID        session.SessionID
-	authority      session.Authority
+	routedCategory  string
+	routedModel     string
+	routingReason   string
+	routingDecision *session.RoutingDecision
+	childID         session.SessionID
+	authority       session.Authority
 	// timeoutCtx is non-nil iff a per-call timeout_ms deadline applies (the
 	// DeadlineExceeded disambiguation read, same as the foreground path).
 	timeoutCtx    context.Context //nolint:containedctx // deadline-disambiguation handle, mirrors run()'s timeoutCtx local
@@ -2785,14 +2808,15 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 	// subagent.start always precedes the started-result on the stream.
 	if b.emit != nil {
 		b.emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:   string(b.call.ID),
-			ChildID:        string(b.childID),
-			Goal:           subagentGoal(b.args),
-			Background:     true,
-			RoutedCategory: b.routedCategory,
-			RoutedModel:    b.routedModel,
-			RoutingReason:  routingReasonPayload(b.routingReason),
-			Model:          b.engine.Model(),
+			ParentCallID:    string(b.call.ID),
+			ChildID:         string(b.childID),
+			Goal:            subagentGoal(b.args),
+			Background:      true,
+			RoutedCategory:  b.routedCategory,
+			RoutedModel:     b.routedModel,
+			RoutingReason:   routingReasonPayload(b.routingReason),
+			RoutingDecision: cloneRoutingDecision(b.routingDecision),
+			Model:           b.engine.Model(),
 		}})
 	}
 	go t.driveBackground(ctx, b)

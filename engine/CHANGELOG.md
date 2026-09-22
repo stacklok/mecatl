@@ -13,6 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
+  `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
+  snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).
+
 - **Backend-neutral router outcomes** — adds `agent.RouterMissTimeout`,
   `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and
   `RouterMissCapacityTimeout` to the engine-owned closed classifier-outcome taxonomy.
@@ -236,6 +240,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Delegated-model router callback** — changes `agent.Deps.SubagentModelRouter`
+  from the callback tuple to `*agent.SubagentModelRouter`, preserving configured
+  classifier metadata on skipped decisions and candidate evidence on rejected
+  decisions. Changed (breaking, pre-v1 minor).
 
 - **Model-router deadline outcome** — `agent.RunModelRouter` now reports an observed
   caller or operation deadline as `RouterMissTimeout` instead of conflating it with

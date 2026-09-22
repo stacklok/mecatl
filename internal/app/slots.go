@@ -15,6 +15,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+const (
+	routerBackendLLM = "llm"
+	routerBackendJev = "jev"
+)
+
 // slots.go is the COMPOSITION-LAYER per-slot model resolver (ADR 0030, Phase 1+2):
 // the "aliases as the spine" layer plus the `models.slots` map that binds named
 // pipeline functions to aliases. It is a pure composition concern — engine/agent
@@ -641,10 +646,9 @@ func foldOperatorModelRouter(cfg Config) Config {
 	router := policy.Router
 	cfg.RouterBackend = strings.TrimSpace(router.Backend)
 	if cfg.RouterBackend == "" {
-		cfg.RouterBackend = "llm"
+		cfg.RouterBackend = routerBackendLLM
 	}
 	cfg.routerClassifierSlotAuthored = router.ClassifierSlotAuthored()
-	cfg.routerDefaultCategoryAuthored = router.DefaultCategoryAuthored()
 	cfg.routerJevBlockAuthored = router.Jev != nil
 	if router.Jev != nil {
 		cfg.RouterJevModel = strings.TrimSpace(router.Jev.Model)
@@ -683,18 +687,18 @@ func prepareJevRouter(cfg *Config) error {
 	}
 	backend := strings.TrimSpace(cfg.RouterBackend)
 	if backend == "" {
-		backend = "llm"
+		backend = routerBackendLLM
 		cfg.RouterBackend = backend
 	}
 	switch backend {
-	case "llm":
+	case routerBackendLLM:
 		if cfg.routerJevBlockAuthored {
 			return fmt.Errorf("models.router.jev is valid only with backend: jev")
 		}
 		return nil
-	case "jev":
-		if cfg.routerClassifierSlotAuthored || cfg.routerDefaultCategoryAuthored {
-			return fmt.Errorf("models.router backend jev conflicts with explicitly configured classifier-slot or default-category")
+	case routerBackendJev:
+		if cfg.routerClassifierSlotAuthored {
+			return fmt.Errorf("models.router backend jev conflicts with explicitly configured classifier-slot")
 		}
 		if strings.TrimSpace(cfg.TypesafeAPIKey) == "" {
 			return fmt.Errorf("models.router backend jev requires TYPESAFE_API_KEY")
@@ -704,7 +708,8 @@ func prepareJevRouter(cfg *Config) error {
 		}
 		router, err := jevrouter.New(jevrouter.Options{
 			APIKey: cfg.TypesafeAPIKey, Model: cfg.RouterJevModel,
-			BaseURL: cfg.RouterJevBaseURL, MinimumConfidence: cfg.RouterJevMinimumConfidence,
+			BaseURL: cfg.RouterJevBaseURL, DefaultCategory: cfg.RouterDefaultCategory,
+			MinimumConfidence: cfg.RouterJevMinimumConfidence,
 		})
 		if err != nil {
 			return fmt.Errorf("configure Jev model router: %w", err)
@@ -812,11 +817,11 @@ func logModelRouterFacts(cfg Config) {
 	}
 	backend := cfg.RouterBackend
 	if backend == "" {
-		backend = "llm"
+		backend = routerBackendLLM
 	}
 	classifier := resolveRouterClassifierModel(cfg, cfg.Model)
 	message := "subagent model router ACTIVE: a tiny classifier picks the child model per routable delegation from the operator taxonomy, adding one extra classifier LLM call"
-	if backend == "jev" {
+	if backend == routerBackendJev {
 		classifier = cfg.RouterJevModel
 		if classifier == "" {
 			classifier = "jev-1.13.0"

@@ -384,12 +384,12 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
-			return "", "", session.Usage{}, RouterMissBadVerdict, false // always miss → breaker opens after `max`
-		},
+			return ModelRouteResult{Reason: RouterMissBadVerdict} // always miss → breaker opens after `max`
+		}},
 	})
 	// A parent session so the classifier-usage fold path runs under the breaker mutex.
 	sess := session.New("p-sess", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())

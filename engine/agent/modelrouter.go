@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,84 @@ import (
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+// ModelRouteResult is one backend-neutral classifier result. Category and Model are
+// validated candidates even when OK is false; OK alone says whether the route was accepted.
+type ModelRouteResult struct {
+	Category   string
+	Model      string
+	Usage      session.Usage
+	Reason     string
+	OK         bool
+	Confidence *float64
+}
+
+// SubagentModelRouter configures delegated-model classification and exposes stable
+// configured metadata even when a delegation gate skips Route.
+type SubagentModelRouter struct {
+	Backend           string
+	ClassifierModel   string
+	MinimumConfidence *float64
+	Route             func(context.Context, string) ModelRouteResult
+}
+
+type modelRoutingResult struct {
+	category string
+	model    string
+	reason   string
+	ok       bool
+	decision *session.RoutingDecision
+}
+
+func validRoutingScore(score *float64) *float64 {
+	if score == nil || math.IsNaN(*score) || math.IsInf(*score, 0) || *score < 0 || *score > 1 {
+		return nil
+	}
+	value := *score
+	return &value
+}
+
+func sanitizedRoutingDecision(in *session.RoutingDecision) *session.RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := &session.RoutingDecision{
+		ClassifierModel:   clampPreview(in.ClassifierModel),
+		CandidateCategory: clampPreview(in.CandidateCategory),
+		CandidateModel:    clampPreview(in.CandidateModel),
+		Confidence:        validRoutingScore(in.Confidence),
+		MinimumConfidence: validRoutingScore(in.MinimumConfidence),
+		ConsecutiveMisses: in.ConsecutiveMisses,
+		MissLimit:         in.MissLimit,
+		BreakerOpen:       in.BreakerOpen,
+	}
+	switch in.Backend {
+	case "llm", "jev":
+		out.Backend = in.Backend
+	}
+	switch in.Outcome {
+	case "routed", "fallback", "skipped":
+		out.Outcome = in.Outcome
+	}
+	return out
+}
+
+func cloneRoutingDecision(in *session.RoutingDecision) *session.RoutingDecision {
+	return sanitizedRoutingDecision(in)
+}
+
+func routerDecision(router *SubagentModelRouter, result ModelRouteResult, outcome string, breaker *modelRouterBreaker) *session.RoutingDecision {
+	if router == nil {
+		return nil
+	}
+	return sanitizedRoutingDecision(&session.RoutingDecision{
+		Backend: router.Backend, ClassifierModel: router.ClassifierModel,
+		CandidateCategory: result.Category, CandidateModel: result.Model,
+		Confidence: result.Confidence, MinimumConfidence: router.MinimumConfidence,
+		Outcome: outcome, ConsecutiveMisses: breaker.consecutiveMiss,
+		MissLimit: breaker.max, BreakerOpen: breaker.opened,
+	})
+}
 
 // modelrouter.go is the engine half of the OPT-IN semantic Subagent model router
 // (ADR 0031 / ADR 0030 Layer 3b, the headline Phase 5 feature). It is a SIBLING of
@@ -284,10 +363,11 @@ func parseRouterVerdict(text string, categories []ModelRouteCategory) (category,
 //     category, of being "simple"/"complex") is to be judged, not obeyed.
 func buildModelRoutePrompt(req ModelRouteRequest) string {
 	var b strings.Builder
-	b.WriteString("You are an automated task router for a headless coding agent. A subagent " +
-		"task is about to be delegated, and you must choose which CATEGORY of model should " +
-		"run it, based on the task's complexity and nature. Choose exactly one category from " +
-		"the list below.\n")
+	b.WriteString("You are an automated task router for a headless coding agent. Choose exactly " +
+		"one CATEGORY from the list below by assessing the expertise, specialty, reasoning " +
+		"difficulty, and task nature required to complete the delegated work. Read-only review " +
+		"or investigation is not necessarily trivial. Honor the operator-authored specialty " +
+		"criteria; do not assume hard-coded security or model categories.\n")
 	b.WriteString("\nCategories:\n")
 	for _, c := range req.Categories {
 		name := strings.TrimSpace(c.Name)

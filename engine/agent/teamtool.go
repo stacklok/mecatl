@@ -410,6 +410,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 			cat, model, reason := sup.MemberRouting(roster[i].Name)
 			roster[i].RoutedCategory, roster[i].RoutedModel = cat, model
 			roster[i].RoutingReason = routingReasonPayload(reason)
+			roster[i].RoutingDecision = sup.memberRoutingDecision(roster[i].Name)
 			roster[i].Model = sup.MemberModel(roster[i].Name)
 		}
 		emit(session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{

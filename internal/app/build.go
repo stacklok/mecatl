@@ -734,11 +734,10 @@ type Config struct {
 	// RouterJevMinimumConfidence makes lower-confidence choices abstain when non-zero.
 	RouterJevMinimumConfidence float64
 	// TypesafeAPIKey is the host-provided TYPESAFE_API_KEY credential.
-	TypesafeAPIKey                string
-	routerClassifierSlotAuthored  bool
-	routerDefaultCategoryAuthored bool
-	routerJevBlockAuthored        bool
-	jevRouter                     *jevrouter.Router
+	TypesafeAPIKey               string
+	routerClassifierSlotAuthored bool
+	routerJevBlockAuthored       bool
+	jevRouter                    *jevrouter.Router
 	// RouterCategories is the operator-defined routing taxonomy (name + description +
 	// model selector per category), folded from the operator-tier `models.router:`
 	// subtree by foldOperatorModelRouter. Empty ⇒ no router. Each entry's Model selector
@@ -7146,94 +7145,81 @@ func attachAskAdjudicator(deps agent.Deps, cfg Config, provReg *providerRegistry
 // provider-fixed-per-session hazard the rest of this file avoids. The per-session
 // closure already closes over the right (provider, parentModel), so each call re-derives
 // the contamination-safe deps for the classifier model.
-func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) func(ctx context.Context, taskPrompt string) (category, model string, usage session.Usage, missReason string, ok bool) {
+func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) *agent.SubagentModelRouter {
 	if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
-		return nil // OFF: no taxonomy or kill-switched (ADR 0042); byte-identical.
+		return nil
 	}
-	// Resolve the CLASSIFIER model once per closure build (per session) via the SHARED
-	// resolveRouterClassifierModel — the SAME resolution logModelRouterFacts narrates, so
-	// the logged classifier model matches what this session classifies on.
 	classifierModel := resolveRouterClassifierModel(cfg, parentModel)
-	// Project the operator taxonomy into the engine-layer category value (name +
-	// description only — the engine never sees the per-category model selector; that
-	// mapping is composition's, below). Also index name→selector for the post-verdict map.
 	cats := make([]agent.ModelRouteCategory, 0, len(cfg.RouterCategories))
 	selectorByName := make(map[string]string, len(cfg.RouterCategories))
 	for _, c := range cfg.RouterCategories {
 		cats = append(cats, agent.ModelRouteCategory{Name: c.Name, Description: c.Description})
 		selectorByName[c.Name] = c.Model
 	}
-	defaultCat := cfg.RouterDefaultCategory
-	if cfg.RouterBackend == "jev" {
-		router := cfg.jevRouter
-		return func(ctx context.Context, taskPrompt string) (string, string, session.Usage, string, bool) {
-			if router == nil {
-				return "", "", session.Usage{}, agent.RouterMissClassifierError, false
-			}
-			jevCategories := make([]jevrouter.Category, 0, len(cfg.RouterCategories))
-			for _, category := range cfg.RouterCategories {
-				jevCategories = append(jevCategories, jevrouter.Category{Name: category.Name, Description: category.Description})
-			}
-			category, reportedUsage, missKind, ok := router.Route(ctx, taskPrompt, jevCategories)
-			if !ok {
-				return "", "", reportedUsage, jevRouterMissReason(missKind), false
-			}
-			sel := strings.TrimSpace(selectorByName[category])
-			if sel == "" {
-				return "", "", reportedUsage, fmt.Sprintf("category-selector-empty (category=%s)", category), false
-			}
-			id, known := lookupModelAlias(cfg, sel)
-			if !known || id == "" {
-				return "", "", reportedUsage, fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
-			}
-			return category, id, reportedUsage, "", true
+	resolveCandidate := func(category string, usage session.Usage, reason string, ok bool, confidence *float64) agent.ModelRouteResult {
+		if ok {
+			reason = ""
 		}
-	}
-	return func(ctx context.Context, taskPrompt string) (string, string, session.Usage, string, bool) {
-		// Build a fresh tool-less classifier engine (the askAdjudicatorDeps recipe): it
-		// compacts/counts/prompts on ITS model, fires no hooks, and carries no nested
-		// caps (childEngineDepsForProvider forces ChildAskReviewer + SubagentModelRouter
-		// nil — the no-nesting recursion guard).
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
-		deps := childEngineDepsForProvider(cfg, "model-router", provider, classifierModel, windowFn,
-			tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
-		deps.MaxNoProgressNudges = -1
-		eng := agent.NewEngine(deps)
-
-		// Forward the run's ctx (NOT context.Background()) so a Run.Cancel propagates into
-		// RunModelRouter and the classifier turn dies with the run instead of running out
-		// its 30s clock (issue #94). Fail-soft holds: a cancelled ctx → StopCancelled →
-		// ok=false → inherit the default model.
-		//
-		// Usage is returned on ALL paths (including misses) so the dispatch-path
-		// routeTask can fold it into the parent session's cumulative Usage (#92 fix).
-		category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
-			TaskPrompt: taskPrompt,
-			Categories: cats,
-			Default:    defaultCat,
-		})
-		if !ok {
-			// classifier miss: pass the engine-side reason (issue #287) through UNCHANGED
-			// so the dispatch chokepoint logs WHY; still return spent usage.
-			return "", "", classifierUsage, missReason, false
+		result := agent.ModelRouteResult{Category: category, Usage: usage, Reason: reason, OK: ok, Confidence: confidence}
+		if category == "" {
+			return result
 		}
 		sel := strings.TrimSpace(selectorByName[category])
 		if sel == "" {
-			// The classifier chose a category whose taxonomy Model selector is empty — a
-			// composition-side (mapping) miss. Name the category (operator-authored, safe).
-			return "", "", classifierUsage, fmt.Sprintf("category-selector-empty (category=%s)", category), false
+			result.Reason, result.OK = fmt.Sprintf("category-selector-empty (category=%s)", category), false
+			return result
 		}
-		// Operator taxonomy targets are UNCAPPED: resolve through the operator-merged
-		// alias map with no allowlist membership test (the operator is authoritative — a
-		// category mapping is the operator's own binding, like models.default).
 		id, known := lookupModelAlias(cfg, sel)
 		if !known || id == "" {
-			// The category's selector does not resolve to a concrete id — a composition-side
-			// (mapping) miss. Category name + selector are operator-authored metadata (safe).
-			return "", "", classifierUsage, fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
+			result.Reason, result.OK = fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
+			return result
 		}
-		return category, id, classifierUsage, "", true
+		result.Model = id
+		return result
 	}
+	if cfg.RouterBackend == routerBackendJev {
+		minimum := cfg.RouterJevMinimumConfidence
+		configuredModel := strings.TrimSpace(cfg.RouterJevModel)
+		if configuredModel == "" {
+			configuredModel = jevrouter.DefaultModel
+		}
+		router := &agent.SubagentModelRouter{
+			Backend: routerBackendJev, ClassifierModel: configuredModel, MinimumConfidence: &minimum,
+		}
+		if cfg.jevRouter != nil {
+			router.ClassifierModel = cfg.jevRouter.Model()
+		}
+		router.Route = func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
+			if cfg.jevRouter == nil {
+				return agent.ModelRouteResult{Reason: agent.RouterMissClassifierError}
+			}
+			out := cfg.jevRouter.Route(ctx, taskPrompt, toJevCategories(cfg.RouterCategories))
+			return resolveCandidate(out.Category, out.Usage, jevRouterMissReason(out.Miss), out.OK, out.Confidence)
+		}
+		return router
+	}
+	return &agent.SubagentModelRouter{
+		Backend: routerBackendLLM, ClassifierModel: classifierModel,
+		Route: func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
+			windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
+			deps := childEngineDepsForProvider(cfg, "model-router", provider, classifierModel, windowFn,
+				tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
+			deps.MaxNoProgressNudges = -1
+			eng := agent.NewEngine(deps)
+			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
+				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,
+			})
+			return resolveCandidate(category, classifierUsage, missReason, ok, nil)
+		},
+	}
+}
+
+func toJevCategories(categories []permconfig.RouterCategory) []jevrouter.Category {
+	out := make([]jevrouter.Category, 0, len(categories))
+	for _, category := range categories {
+		out = append(out, jevrouter.Category{Name: category.Name, Description: category.Description})
+	}
+	return out
 }
 
 func jevRouterMissReason(kind jevrouter.MissKind) string {

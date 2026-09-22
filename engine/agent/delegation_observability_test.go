@@ -322,7 +322,10 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 		// miss string), EMPTY on a routed hit — never the task prompt or classifier
 		// output. Same gauntlet-#7 footing as RoutedCategory/Model.
 		"RoutingReason": true,
-		"ToolName":      true, "IsError": true, "ToolCount": true,
+		// RoutingDecision (ADR 0350) is sanitized bounded classifier metadata only;
+		// it contains no task, criteria, response body, or dynamic error text.
+		"RoutingDecision": true,
+		"ToolName":        true, "IsError": true, "ToolCount": true,
 		"Usage": true, "Stop": true, "DurationMs": true,
 		// Text / Detail / InnerKind (ADR 0079) are the BOUNDED PREVIEW fields, fed
 		// ONLY through clampPreview at the single drainChildObserved chokepoint;

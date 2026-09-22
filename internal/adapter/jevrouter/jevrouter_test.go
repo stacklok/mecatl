@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 const testQuestionID = "delegated-model-category"
@@ -46,6 +48,15 @@ func testCategories() []Category {
 	return []Category{{Name: "fast", Description: "small task"}, {Name: "deep", Description: "complex task"}}
 }
 
+func routeTuple(ctx context.Context, router *Router, task string, categories []Category) (string, session.Usage, MissKind, bool) {
+	result := router.Route(ctx, task, categories)
+	category := result.Category
+	if !result.OK {
+		category = ""
+	}
+	return category, result.Usage, result.Miss, result.OK
+}
+
 func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	tests := []struct {
 		name, response string
@@ -60,7 +71,7 @@ func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.response)) }, 0)
-			category, _, reason, ok := r.Route(t.Context(), "private task", testCategories())
+			category, _, reason, ok := routeTuple(t.Context(), r, "private task", testCategories())
 			if ok || category != "" || reason != tc.wantReason {
 				t.Fatalf("Route = (%q, reason=%q, ok=%v), want empty %q false", category, reason, ok, tc.wantReason)
 			}
@@ -68,7 +79,7 @@ func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	}
 
 	r, calls := newTestRouter(t, func(http.ResponseWriter, *http.Request) { t.Fatal("over-limit request performed I/O") }, 0)
-	category, _, reason, ok := r.Route(t.Context(), strings.Repeat("x", maxTextBytes+1), testCategories())
+	category, _, reason, ok := routeTuple(t.Context(), r, strings.Repeat("x", maxTextBytes+1), testCategories())
 	if ok || category != "" || reason != MissInputOverLimit || calls.Load() != 0 {
 		t.Fatalf("over-limit Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 	}
@@ -78,7 +89,7 @@ func TestADR_0350_Scenario2_LowConfidenceAbstains(t *testing.T) {
 	r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(validResponse("fast", 0.49, 3, 4)))
 	}, 0.5)
-	category, usage, reason, ok := r.Route(t.Context(), "task", testCategories())
+	category, usage, reason, ok := routeTuple(t.Context(), r, "task", testCategories())
 	if ok || category != "" || reason != MissLowConfidence {
 		t.Fatalf("Route = (%q, reason=%q, ok=%v), want low-confidence miss", category, reason, ok)
 	}
@@ -91,7 +102,7 @@ func TestADR_0350_Scenario3_HitUsage(t *testing.T) {
 	r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(validResponse("deep", 0.9, 11, 7)))
 	}, 0)
-	category, usage, reason, ok := r.Route(t.Context(), "task", testCategories())
+	category, usage, reason, ok := routeTuple(t.Context(), r, "task", testCategories())
 	if !ok || category != "deep" || reason != missNone {
 		t.Fatalf("Route = (%q, reason=%q, ok=%v), want deep hit", category, reason, ok)
 	}
@@ -111,7 +122,7 @@ func TestADR_0350_Scenario3_ErrorUsage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.response)) }, 0)
-			category, usage, reason, ok := r.Route(t.Context(), "task", testCategories())
+			category, usage, reason, ok := routeTuple(t.Context(), r, "task", testCategories())
 			if ok || category != "" || reason != MissBadVerdict {
 				t.Fatalf("Route = (%q, reason=%q, ok=%v), want protocol miss", category, reason, ok)
 			}
@@ -130,7 +141,7 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(validResponse("fast", 1, 1, 1)))
 	}, 0)
-	if _, _, _, ok := r.Route(t.Context(), "task", testCategories()); !ok {
+	if _, _, _, ok := routeTuple(t.Context(), r, "task", testCategories()); !ok {
 		t.Fatal("bounded request should route")
 	}
 	if calls.Load() != 1 {
@@ -147,7 +158,7 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 	if !ok {
 		t.Fatalf("question %q = %#v", testQuestionID, questions[testQuestionID])
 	}
-	if question["type"] != "choice" || question["instructions"] != classifierInstructions {
+	if question["type"] != "choice" || question["instructions"] != classifierInstructions("") {
 		t.Fatalf("question shape = %#v", question)
 	}
 	criteria, ok := question["criteria"].(map[string]any)
@@ -164,17 +175,17 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = Category{Name: fmt.Sprintf("c%d", i), Description: "d"}
 	}
-	_, _, reason, ok := r.Route(t.Context(), "task", tooMany)
+	_, _, reason, ok := routeTuple(t.Context(), r, "task", tooMany)
 	if ok || reason != MissInputOverLimit || calls.Load() != 1 {
 		t.Fatalf("category cap reason=%q ok=%v calls=%d", reason, ok, calls.Load())
 	}
 
-	fixed := len(classifierInstructions) + len(defaultModel) + len(questionID)
+	fixed := len(classifierInstructions("")) + len(DefaultModel) + len(questionID)
 	boundaryTask := strings.Repeat("x", maxTextBytes-fixed-len("fast")-len("small task")-len("deep")-len("complex task"))
-	if _, _, reason, ok := r.Route(t.Context(), boundaryTask, testCategories()); !ok {
+	if _, _, reason, ok := routeTuple(t.Context(), r, boundaryTask, testCategories()); !ok {
 		t.Fatalf("exact limit rejected: %q", reason)
 	}
-	if _, _, reason, ok := r.Route(t.Context(), boundaryTask+"x", testCategories()); ok || reason != MissInputOverLimit {
+	if _, _, reason, ok := routeTuple(t.Context(), r, boundaryTask+"x", testCategories()); ok || reason != MissInputOverLimit {
 		t.Fatalf("over limit accepted: %q", reason)
 	}
 }
@@ -229,7 +240,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _ = retryRouter.Route(t.Context(), "task", testCategories())
+	_, _, _, _ = routeTuple(t.Context(), retryRouter, "task", testCategories())
 	if retryCalls.Load() != 1 {
 		t.Fatalf("SDK retries = %d calls, want one attempt", retryCalls.Load())
 	}
@@ -246,7 +257,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _ = redirectRouter.Route(t.Context(), "task", testCategories())
+	_, _, _, _ = routeTuple(t.Context(), redirectRouter, "task", testCategories())
 	if redirectedCalls.Load() != 0 {
 		t.Fatal("redirect target received the classified task")
 	}
@@ -264,7 +275,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 		r.semaphore <- struct{}{}
-		category, _, reason, ok := r.Route(t.Context(), "queued", testCategories())
+		category, _, reason, ok := routeTuple(t.Context(), r, "queued", testCategories())
 		if ok || category != "" || reason != MissCapacityTimeout || calls.Load() != 0 {
 			t.Fatalf("saturated Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
@@ -291,12 +302,12 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		r.semaphore <- struct{}{}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		category, _, reason, ok := r.Route(ctx, "cancelled", testCategories())
+		category, _, reason, ok := routeTuple(ctx, r, "cancelled", testCategories())
 		if ok || category != "" || reason != MissCancelled || calls.Load() != 0 {
 			t.Fatalf("cancelled Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
 		<-r.semaphore
-		category, _, reason, ok = r.Route(t.Context(), "after cancellation", testCategories())
+		category, _, reason, ok = routeTuple(t.Context(), r, "after cancellation", testCategories())
 		if !ok || category != "fast" || reason != missNone || calls.Load() != 1 {
 			t.Fatalf("post-cancellation Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
@@ -323,7 +334,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		category, _, reason, ok := r.Route(t.Context(), "first", testCategories())
+		category, _, reason, ok := routeTuple(t.Context(), r, "first", testCategories())
 		if ok || category != "" || reason != MissTimeout {
 			t.Fatalf("timed-out Route = (%q, reason=%v, ok=%v)", category, reason, ok)
 		}
@@ -332,7 +343,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		default:
 			t.Fatal("request deadline did not cancel the in-flight transport")
 		}
-		category, _, reason, ok = r.Route(t.Context(), "second", testCategories())
+		category, _, reason, ok = routeTuple(t.Context(), r, "second", testCategories())
 		if !ok || category != "fast" || reason != missNone || calls.Load() != 2 {
 			t.Fatalf("post-timeout Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
@@ -369,7 +380,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 			ok       bool
 		}, 1)
 		go func() {
-			category, _, reason, ok := r.Route(ctx, "first", testCategories())
+			category, _, reason, ok := routeTuple(ctx, r, "first", testCategories())
 			result <- struct {
 				category string
 				reason   MissKind
@@ -395,7 +406,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("cancelled Route did not return promptly")
 		}
-		category, _, reason, ok := r.Route(t.Context(), "second", testCategories())
+		category, _, reason, ok := routeTuple(t.Context(), r, "second", testCategories())
 		if !ok || category != "fast" || reason != missNone || calls.Load() != 2 {
 			t.Fatalf("post-cancellation Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
@@ -410,7 +421,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, reason, ok := r.Route(t.Context(), "task", testCategories()); ok || reason != MissTimeout {
+		if _, _, reason, ok := routeTuple(t.Context(), r, "task", testCategories()); ok || reason != MissTimeout {
 			t.Fatalf("wrapped deadline reason=%v ok=%v", reason, ok)
 		}
 	})
@@ -430,7 +441,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		category, usage, reason, ok := r.Route(ctx, "task", testCategories())
+		category, usage, reason, ok := routeTuple(ctx, r, "task", testCategories())
 		if !ok || category != "fast" || reason != missNone || usage.InputTokens != 6 || usage.OutputTokens != 2 {
 			t.Fatalf("late-cancel response = category=%q usage=%+v reason=%v ok=%v", category, usage, reason, ok)
 		}
@@ -455,7 +466,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, usage, reason, ok := r.Route(ctx, "task", testCategories())
+		_, usage, reason, ok := routeTuple(ctx, r, "task", testCategories())
 		if ok || reason != MissCancelled || usage.InputTokens != 5 || usage.OutputTokens != 2 {
 			t.Fatalf("protocol override = usage=%+v reason=%v ok=%v", usage, reason, ok)
 		}
@@ -464,7 +475,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 	large, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", int(responseLimit)+1)))
 	}, 0)
-	if _, _, reason, ok := large.Route(t.Context(), "task", testCategories()); ok || reason != MissClassifierError {
+	if _, _, reason, ok := routeTuple(t.Context(), large, "task", testCategories()); ok || reason != MissClassifierError {
 		t.Fatalf("oversized response reason=%q ok=%v", reason, ok)
 	}
 }
@@ -478,11 +489,11 @@ func TestJevReasonAndCredentialRedaction(t *testing.T) {
 		_, _ = w.Write([]byte(hostile))
 	}))
 	t.Cleanup(srv.Close)
-	r, err := New(Options{APIKey: secret, Model: defaultModel, BaseURL: srv.URL, HTTPClient: srv.Client()})
+	r, err := New(Options{APIKey: secret, Model: DefaultModel, BaseURL: srv.URL, HTTPClient: srv.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	category, _, reason, ok := r.Route(t.Context(), task, testCategories())
+	category, _, reason, ok := routeTuple(t.Context(), r, task, testCategories())
 	if ok || category != "" || reason != MissBadVerdict {
 		t.Fatalf("unexpected result: %q %q %v", category, reason, ok)
 	}

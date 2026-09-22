@@ -466,9 +466,10 @@ type memberRT struct {
 	// a routed hit. They are BARE METADATA the Team tool reads back (MemberRouting) to
 	// project onto the EvTeamStart roster — never member content. Written once in
 	// AddMember (single goroutine, before any round), read after AddMember.
-	routedCategory string
-	routedModel    string
-	routingReason  string
+	routedCategory  string
+	routedModel     string
+	routingReason   string
+	routingDecision *session.RoutingDecision
 }
 
 // SupervisorOption configures a Supervisor.
@@ -775,7 +776,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel, routingReason := s.maybeRouteMember(ctx, spec)
+	routedCategory, routedModel, routingReason, routingDecision := s.maybeRouteMember(ctx, spec)
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
@@ -905,7 +906,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, env: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
-		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason}
+		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
+		routingDecision: cloneRoutingDecision(routingDecision)}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -947,22 +949,25 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string) {
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string, decision *session.RoutingDecision) {
 	if strings.TrimSpace(spec.AgentType) != "" {
-		return "", "", session.RoutingReasonAgentDefPinned
+		if s.caps.skipRoute != nil {
+			decision = s.caps.skipRoute(session.RoutingReasonAgentDefPinned)
+		}
+		return "", "", session.RoutingReasonAgentDefPinned, decision
 	}
-	if s.caps.routeTask == nil {
-		return "", "", session.RoutingReasonRouterDisabled
+	if s.caps.routeTask == nil && s.caps.routeDecision == nil {
+		return "", "", session.RoutingReasonRouterDisabled, nil
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
 		artifact = spec.Name
 	}
-	cat, m, missReason, ok := s.caps.routeTask(ctx, artifact)
-	if ok {
-		return cat, strings.TrimSpace(m), ""
+	routed := s.caps.routeConfigured(ctx, artifact)
+	if routed.ok {
+		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
 	}
-	return "", "", missReason
+	return "", "", routed.reason, routed.decision
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
@@ -976,6 +981,13 @@ func (s *Supervisor) MemberRouting(name string) (category, model, reason string)
 		return m.routedCategory, m.routedModel, m.routingReason
 	}
 	return "", "", ""
+}
+
+func (s *Supervisor) memberRoutingDecision(name string) *session.RoutingDecision {
+	if m, ok := s.members[name]; ok {
+		return cloneRoutingDecision(m.routingDecision)
+	}
+	return nil
 }
 
 // MemberModel returns the concrete MODEL id the named member's engine actually runs
