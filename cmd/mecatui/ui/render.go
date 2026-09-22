@@ -810,9 +810,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	if b.kind == blockTool {
 		prepared := r.prepareToolCard(b, expand)
 		out = prepared.render()
-		// Derive structural selection provenance while the semantic card exists.
-		// The cache retains rows, never the prepared semantic sections.
-		rows = prepared.provenanceRows(b.id, r.indent, r.width)
+		rows = functionalToolProvenanceRows(prepared.Prepared, b.id, r.indent, r.width)
 		for i := range rows {
 			rows[i].kind = b.kind
 			rows[i].indent = r.indent

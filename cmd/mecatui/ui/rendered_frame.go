@@ -243,7 +243,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool, toolCa
 			prepared := r.prepareToolCard(b, expand)
 			toolCard = &prepared
 		}
-		rows := toolCard.provenanceRows(b.id, r.indent, r.width)
+		rows := functionalToolProvenanceRows(toolCard.Prepared, b.id, r.indent, r.width)
 		for i := range rows {
 			rows[i].kind = b.kind
 			rows[i].indent = r.indent
