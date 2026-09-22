@@ -1,7 +1,6 @@
 package cards
 
 import (
-	"crypto/sha256"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -40,32 +39,18 @@ func SnapshotStyledTool(input StyledToolInput) StyledToolSnapshot {
 // StyledLayoutInput contains the concrete card style and every non-content fact
 // observed by the real tool-card compiler.
 type StyledLayoutInput struct {
-	Card         lipgloss.Style
-	Width        int
-	Expanded     bool
-	VisibleHints []string
-	Dialect      uint32
+	Card lipgloss.Style
 }
 
 // StyledLayout is an immutable copy of StyledLayoutInput.
 type StyledLayout struct {
-	card         lipgloss.Style
-	width        int
-	expanded     bool
-	visibleHints []string
-	dialect      uint32
+	card lipgloss.Style
 }
 
-// SnapshotStyledLayout owns mutable layout collections. lipgloss.Style is a
-// value whose mutators return a new value, so copying it snapshots appearance.
+// SnapshotStyledLayout copies the concrete card appearance. lipgloss.Style is a
+// value whose mutators return a new value.
 func SnapshotStyledLayout(input StyledLayoutInput) StyledLayout {
-	return StyledLayout{
-		card:         input.Card,
-		width:        input.Width,
-		expanded:     input.Expanded,
-		visibleHints: cloneStrings(input.VisibleHints),
-		dialect:      input.Dialect,
-	}
+	return StyledLayout{card: input.Card}
 }
 
 // PrepareStyledTool produces the actual main-conversation card lines and their
@@ -91,24 +76,5 @@ func PrepareStyledTool(input StyledToolSnapshot, layout StyledLayout) Prepared {
 		// fail-safe for an unexpected lipgloss layout rule rather than a reflow path.
 		rows = fallbackStyledRows(input.sections, lines, layout.card)
 	}
-	return Prepared{Key: styledToolKey(input, layout), Lines: lines, Rows: rows}
-}
-
-func styledToolKey(input StyledToolSnapshot, layout StyledLayout) [sha256.Size]byte {
-	var encoded canonicalEncoder
-	encoded.string("mecatui.cards.styled-tool/v1")
-	encoded.length(len(input.sections))
-	for _, section := range input.sections {
-		encoded.uint32(uint32(section.Region))
-		encoded.string(section.Text)
-		encoded.int(section.Trailing)
-	}
-	encoded.int(layout.width)
-	encoded.bool(layout.expanded)
-	encoded.strings(layout.visibleHints)
-	encoded.uint32(layout.dialect)
-	encoded.int(layout.card.GetWidth())
-	encoded.int(layout.card.GetHorizontalFrameSize())
-	encoded.string(layout.card.Render("mecatui-card-appearance"))
-	return sha256.Sum256(encoded.bytes)
+	return Prepared{Lines: lines, Rows: rows}
 }

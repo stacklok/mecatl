@@ -21,37 +21,30 @@ func scenario3Conversation() *conversation {
 	return c
 }
 
-func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardRehash(t *testing.T) {
+func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardPreparation(t *testing.T) {
 	c := scenario3Conversation()
 	r := newCacheRenderer()
 	r.renderConversationFrame(c, false)
 	prepares := r.cardPrepares
-	keys := make([][32]byte, len(c.blocks))
-	for i := range c.blocks {
-		keys[i] = r.blockCache[i].cardKey
-		if keys[i] == ([32]byte{}) {
-			t.Fatalf("block %d did not retain its canonical prepared identity", i)
-		}
-	}
+	renders := r.blockRenders
 
 	r.renderConversationFrame(c, false)
 	if r.cardPrepares != prepares {
 		t.Fatalf("settled frame prepared cards: %d → %d", prepares, r.cardPrepares)
 	}
-	for i, key := range keys {
-		if got := r.blockCache[i].cardKey; got != key {
-			t.Fatalf("settled block %d identity changed", i)
-		}
+	if r.blockRenders != renders {
+		t.Fatalf("settled frame rendered blocks: %d → %d", renders, r.blockRenders)
 	}
 
-	c.blocks[1].raw = "changed notice"
-	c.blocks[1].rev++ // model a conversation mutation gateway for this focused cache test.
+	c.addTool("changed-call", "Read", `{"path":"changed.txt"}`)
+	r.renderConversationFrame(c, false)
+	prepares = r.cardPrepares
+	if !c.resolveTool("changed-call", "changed result", false) {
+		t.Fatal("resolve changed tool")
+	}
 	r.renderConversationFrame(c, false)
 	if got := r.cardPrepares; got != prepares+1 {
-		t.Fatalf("one changed generation prepared %d cards, want one", got-prepares)
-	}
-	if r.blockCache[1].cardKey == keys[1] {
-		t.Fatal("changed card retained its old prepared identity")
+		t.Fatalf("one content revision prepared %d cards, want one", got-prepares)
 	}
 }
 

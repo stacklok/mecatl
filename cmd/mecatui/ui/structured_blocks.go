@@ -10,7 +10,7 @@ const structuredCardDialect = 1
 
 func (r *renderer) plainCardLayout(expand bool) cards.PlainLayout {
 	return cards.SnapshotPlainLayout(cards.PlainLayoutInput{
-		Width: r.contentWidth(), Expanded: expand, ExpandMark: r.marks.expandTools, Dialect: structuredCardDialect,
+		Width: r.contentWidth(), Expanded: expand, ExpandMark: r.marks.expandTools,
 	})
 }
 
@@ -18,7 +18,7 @@ func preparedText(prepared cards.Prepared) string { return strings.Join(prepared
 
 // prepareStructuredBlock snapshots and prepares every migrated non-Markdown card
 // family. It is called only after renderBlock's cheap revision/layout admission
-// guard misses; settled cache hits therefore do no snapshot, hashing, or preparation.
+// guard misses; settled cache hits therefore do no snapshot or preparation.
 func (r *renderer) prepareStructuredBlock(b *block, expand bool) (cards.Prepared, bool) {
 	switch b.kind {
 	case blockTool, blockUser, blockNotice, blockHook, blockTurnStat, blockError, blockDelivery:

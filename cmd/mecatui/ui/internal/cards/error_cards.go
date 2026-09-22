@@ -21,7 +21,7 @@ func SnapshotError(in ErrorInput) ErrorSnapshot { return ErrorSnapshot{text: str
 
 // PrepareError prepares a transient error.
 func PrepareError(in ErrorSnapshot, layout PlainLayout, a ErrorAppearance) Prepared {
-	return preparePlain("error", layout, []string{wrapPrefixed("✗ ", SanitizePlain(in.text), a.Error, layout.width)}, []string{in.text}, 0)
+	return preparePlain([]string{wrapPrefixed("✗ ", SanitizePlain(in.text), a.Error, layout.width)}, 0)
 }
 
 // PermanentErrorInput is caller-owned permanent-error content.
@@ -47,7 +47,7 @@ func PreparePermanentError(in PermanentErrorSnapshot, layout PlainLayout, a Perm
 	} else {
 		lines = append(lines, a.Muted.Render("  "+layout.expandMark+" shows details"))
 	}
-	return preparePlain("permanent-error", layout, lines, []string{in.text}, 0)
+	return preparePlain(lines, 0)
 }
 
 // PermanentErrorSummary preserves compatibility with legacy SDK-shaped errors.

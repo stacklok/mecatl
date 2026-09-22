@@ -6,9 +6,6 @@
 package cards
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -39,51 +36,10 @@ type Row struct {
 	GraphemeSpan  int
 }
 
-// Prepared is the complete output of one stateless preparation. Key is a local
-// cache discriminator, not a persistent or adversarial identity.
+// Prepared is the complete output of one stateless preparation.
 type Prepared struct {
-	Key   [sha256.Size]byte
 	Lines []string
 	Rows  []Row
-}
-
-type canonicalEncoder struct {
-	bytes []byte
-}
-
-func (e *canonicalEncoder) uint32(value uint32) {
-	var data [4]byte
-	binary.BigEndian.PutUint32(data[:], value)
-	e.bytes = append(e.bytes, data[:]...)
-}
-
-func (e *canonicalEncoder) int(value int) {
-	e.string(strconv.Itoa(value))
-}
-
-func (e *canonicalEncoder) length(value int) {
-	e.bytes = strconv.AppendInt(e.bytes, int64(value), 10)
-	e.bytes = append(e.bytes, ':')
-}
-
-func (e *canonicalEncoder) bool(value bool) {
-	if value {
-		e.bytes = append(e.bytes, 1)
-		return
-	}
-	e.bytes = append(e.bytes, 0)
-}
-
-func (e *canonicalEncoder) string(value string) {
-	e.length(len(value))
-	e.bytes = append(e.bytes, value...)
-}
-
-func (e *canonicalEncoder) strings(values []string) {
-	e.length(len(values))
-	for _, value := range values {
-		e.string(value)
-	}
 }
 
 func cloneStrings(values []string) []string {

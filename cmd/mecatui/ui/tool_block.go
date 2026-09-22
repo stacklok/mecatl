@@ -64,12 +64,7 @@ func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 	}
 
 	input := cards.SnapshotStyledTool(cards.StyledToolInput{Sections: sections})
-	layout := cards.SnapshotStyledLayout(cards.StyledLayoutInput{
-		Card:     card,
-		Width:    r.width,
-		Expanded: expand,
-		Dialect:  1,
-	})
+	layout := cards.SnapshotStyledLayout(cards.StyledLayoutInput{Card: card})
 	return preparedToolCard{Prepared: cards.PrepareStyledTool(input, layout)}
 }
 

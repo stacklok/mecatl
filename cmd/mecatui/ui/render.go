@@ -77,8 +77,8 @@ var resultProminentKeys = []string{
 
 // renderer turns conversation blocks into the viewport string. It owns the
 // glamour TermRenderer cache (keyed by wrap width), the active theme, and two
-// per-block memo layers: blockCache (whole rendered blocks, keyed on
-// rev/width/expand — see renderBlock) and blockMD (the assistant glamour step,
+// per-block memo layers: blockCache (whole rendered blocks, keyed on the
+// composite blockRenderKey — see renderBlock) and blockMD (the assistant glamour step,
 // keyed on src/width — see markdownAt). glamour is NOT thread-safe, so renderer
 // is only ever touched from the Bubble Tea update goroutine — never from the
 // stream reader. The mutex guards the cache map against the (currently
@@ -87,6 +87,13 @@ var resultProminentKeys = []string{
 type renderer struct {
 	th    theme.Theme
 	width int
+
+	// Presentation generations make renderer-reset axes explicit in the shared
+	// block render key. Production replaces the renderer when theme or key
+	// markings change; tests can advance either generation to prove invalidation.
+	paletteGeneration uint64
+	hintGeneration    uint64
+	renderDialect     uint32
 
 	// traceWidth is the available width of a delegation-inspector card's body. A
 	// zero value preserves the transcript renderer's existing trace layout.
@@ -121,7 +128,7 @@ type renderer struct {
 	// blockMD memoizes the glamour render of each assistant block, keyed by the
 	// block's (stable, append-only) conversation index. It is the INNER of the two
 	// per-block memo layers: blockCache (below) memoizes the whole rendered block
-	// (any kind) keyed on (rev, width, expand), while blockMD memoizes only the
+	// (any kind) with blockRenderKey, while blockMD memoizes only the
 	// glamour markdown step of an assistant block keyed on (src, width) — so an
 	// assistant block whose rev changed for a non-text reason (e.g. the turn-end
 	// endReasoningStream) misses the outer cache but still reuses its glamour
@@ -142,15 +149,14 @@ type renderer struct {
 
 	// blockCache memoizes the FULL rendered string of every block (all kinds, not
 	// just assistant markdown), keyed by the block's stable conversation index. An
-	// entry is valid while the block's render revision (block.rev — bumped by the
-	// conversation's mutation gateways), the wrap width, and the global expand
-	// toggle all match, so on each flushed frame every SETTLED block joins the
+	// entry is valid while its one composite blockRenderKey matches: block.rev is
+	// bumped by conversation mutation gateways, and renderContextKey owns all
+	// presentation axes. On each flushed frame every SETTLED block joins the
 	// conversation string straight from cache and only mutated blocks (in practice
 	// the live tail) re-render through renderBlockFresh. Correctness rests on the
-	// same purity argument as blockMD — a block's render is a pure function of
-	// (block fields, width, expand, theme) with the theme fixed per process — plus
-	// the rev discipline documented on block.rev. Update-goroutine-only; dropped by
-	// resetBlockCaches when the conversation is rebuilt (index reuse).
+	// same purity argument as blockMD plus the rev discipline documented on
+	// block.rev. Update-goroutine-only; dropped by resetBlockCaches when the
+	// conversation is rebuilt (index reuse).
 	blockCache map[int]blockEntry
 
 	// mdRenders counts REAL glamour invocations (cache misses) — incremented at the
@@ -167,8 +173,8 @@ type renderer struct {
 	blockRenders int
 
 	// cardPrepares counts all migrated functional-card preparations. The counter is
-	// deliberately below renderBlock's revision/layout guard so tests can prove a
-	// settled frame performs no snapshot, canonical hashing, or preparation.
+	// deliberately below renderBlock's composite-key guard so tests can prove a
+	// settled frame performs no snapshot or preparation.
 	cardPrepares int
 
 	// toolCardPrepares counts tool-card preparations. A fresh tool block prepares
@@ -298,21 +304,30 @@ type mdEntry struct {
 	out   string
 }
 
-// blockEntry is one memoized whole-block render: the block revision, wrap width,
-// and expand state it was produced under (the cheap admission guard), the
-// functional card's canonical prepared-output identity when applicable, and the
-// rendered ANSI output. Card entries retain only per-row structural provenance;
-// prepared inputs and semantic strings are discarded after producing both outputs.
+// renderContextKey is the shared comparable presentation identity for every
+// whole-block render. Keep all view/presentation cache axes here so cache
+// admission remains one comparison rather than a collection of partial guards.
+type renderContextKey struct {
+	width             int
+	expanded          bool
+	paletteGeneration uint64
+	hintGeneration    uint64
+	dialect           uint32
+}
+
+// blockRenderKey combines conversation-owned content identity with the shared
+// presentation identity.
+type blockRenderKey struct {
+	revision int
+	context  renderContextKey
+}
+
+// blockEntry is one memoized whole-block render and its structural provenance.
+// Prepared inputs and semantic strings are discarded after producing both outputs.
 type blockEntry struct {
-	rev    int
-	width  int
-	expand bool
-	out    string
-	// cardKey is the canonical prepared-output identity for functional cards.
-	// rev/width/expand are only the cheap admission guard; no input snapshot or
-	// parallel semantic cache key survives preparation.
-	cardKey [32]byte
-	rows    []renderedRow
+	key  blockRenderKey
+	out  string
+	rows []renderedRow
 }
 
 // defaultBlockIndent is the left margin (cells) every conversation block is indented
@@ -339,13 +354,16 @@ const assistantBodyHang = 2
 // goldens stay byte-identical.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
-		th:              th,
-		marks:           hk,
-		indent:          defaultBlockIndent,
-		cache:           map[int]*glamour.TermRenderer{},
-		blockMD:         map[int]mdEntry{},
-		blockCache:      map[int]blockEntry{},
-		blockFrameCache: map[int]frameBlockEntry{},
+		th:                th,
+		marks:             hk,
+		indent:            defaultBlockIndent,
+		paletteGeneration: 1,
+		hintGeneration:    1,
+		renderDialect:     structuredCardDialect,
+		cache:             map[int]*glamour.TermRenderer{},
+		blockMD:           map[int]mdEntry{},
+		blockCache:        map[int]blockEntry{},
+		blockFrameCache:   map[int]frameBlockEntry{},
 	}
 }
 
@@ -421,6 +439,20 @@ func (r *renderer) resetBlockCaches() {
 // setWidth records the current wrap width. Width changes are handled by the
 // cache key, so no explicit invalidation is needed.
 func (r *renderer) setWidth(w int) { r.width = w }
+
+func (r *renderer) renderContext(expanded bool) renderContextKey {
+	return renderContextKey{
+		width:             r.width,
+		expanded:          expanded,
+		paletteGeneration: r.paletteGeneration,
+		hintGeneration:    r.hintGeneration,
+		dialect:           r.renderDialect,
+	}
+}
+
+func (r *renderer) blockRenderKey(b *block, expanded bool) blockRenderKey {
+	return blockRenderKey{revision: b.rev, context: r.renderContext(expanded)}
+}
 
 // invalidateVPView marks the vpView cache as stale. Call at every site that
 // changes viewport content, scroll offset, or geometry.
@@ -811,18 +843,17 @@ func blockBlankLinesAfter(blocks []block, i int) int {
 // render-visible field bumps rev through a conversation gateway, so a cache hit
 // can never be stale. Update-goroutine-only.
 func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
-	if e, ok := r.blockCache[idx]; ok && e.rev == b.rev && e.width == r.width && e.expand == expand {
+	key := r.blockRenderKey(b, expand)
+	if e, ok := r.blockCache[idx]; ok && e.key == key {
 		return e.out
 	}
 	var (
-		out     string
-		rows    []renderedRow
-		cardKey [32]byte
+		out  string
+		rows []renderedRow
 	)
 	if prepared, ok := r.prepareStructuredBlock(b, expand); ok {
 		out = preparedText(prepared)
 		rows = functionalCardProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
-		cardKey = prepared.Key
 	} else {
 		out = r.renderBlockFresh(idx, b, expand)
 	}
@@ -842,10 +873,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 		// blocks through here.
 		r.blockCache = map[int]blockEntry{}
 	}
-	r.blockCache[idx] = blockEntry{
-		rev: b.rev, width: r.width, expand: expand, out: out,
-		cardKey: cardKey, rows: rows,
-	}
+	r.blockCache[idx] = blockEntry{key: key, out: out, rows: rows}
 	r.blockRenders++
 	// CORRECTNESS CHOKEPOINT (shared by BOTH render paths): a fresh render of a block
 	// inside the cached incremental-join prefix invalidates that prefix. The prefix

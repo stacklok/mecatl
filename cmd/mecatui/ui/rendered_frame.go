@@ -79,10 +79,8 @@ type renderedFrame struct {
 }
 
 type frameBlockEntry struct {
-	rev    int
-	width  int
-	expand bool
-	rows   []renderedRow
+	key  blockRenderKey
+	rows []renderedRow
 }
 
 func (f renderedFrame) hasRegion(blockID uint64, region regionKind) bool {
@@ -220,17 +218,18 @@ func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, ren
 }
 
 func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand bool) []renderedRow {
-	if entry, ok := r.blockFrameCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
+	key := r.blockRenderKey(b, expand)
+	if entry, ok := r.blockFrameCache[index]; ok && entry.key == key {
 		return entry.rows
 	}
-	if entry, ok := r.blockCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand && len(entry.rows) > 0 {
+	if entry, ok := r.blockCache[index]; ok && entry.key == key && len(entry.rows) > 0 {
 		return entry.rows
 	}
 	rows := r.provenanceRows(b, rendered, expand)
 	if r.blockFrameCache == nil {
 		r.blockFrameCache = map[int]frameBlockEntry{}
 	}
-	r.blockFrameCache[index] = frameBlockEntry{rev: b.rev, width: r.width, expand: expand, rows: rows}
+	r.blockFrameCache[index] = frameBlockEntry{key: key, rows: rows}
 	return rows
 }
 

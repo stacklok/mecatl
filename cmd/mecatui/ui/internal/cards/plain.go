@@ -1,7 +1,6 @@
 package cards
 
 import (
-	"crypto/sha256"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -15,7 +14,6 @@ type PlainLayoutInput struct {
 	Width      int
 	Expanded   bool
 	ExpandMark string
-	Dialect    uint32
 }
 
 // PlainLayout is an immutable geometry snapshot.
@@ -23,12 +21,11 @@ type PlainLayout struct {
 	width      int
 	expanded   bool
 	expandMark string
-	dialect    uint32
 }
 
 // SnapshotPlainLayout detaches plain-card preparation from renderer state.
 func SnapshotPlainLayout(in PlainLayoutInput) PlainLayout {
-	return PlainLayout{width: in.Width, expanded: in.Expanded, expandMark: strings.Clone(in.ExpandMark), dialect: in.Dialect}
+	return PlainLayout{width: in.Width, expanded: in.Expanded, expandMark: strings.Clone(in.ExpandMark)}
 }
 
 // SanitizePlain removes terminal controls from plain card text while preserving
@@ -113,7 +110,7 @@ func normalizePlainWidth(src string) string {
 	return out.String()
 }
 
-func preparePlain(family string, layout PlainLayout, chunks, keyValues []string, firstTextRow int) Prepared {
+func preparePlain(chunks []string, firstTextRow int) Prepared {
 	lines := strings.Split(strings.Join(chunks, "\n"), "\n")
 	rows := make([]Row, len(lines))
 	offset := 0
@@ -129,15 +126,5 @@ func preparePlain(family string, layout PlainLayout, chunks, keyValues []string,
 		}
 		offset += span
 	}
-	var encoded canonicalEncoder
-	encoded.string("mecatui.cards.plain/" + family + "/v1")
-	encoded.int(layout.width)
-	encoded.bool(layout.expanded)
-	encoded.string(layout.expandMark)
-	encoded.uint32(layout.dialect)
-	encoded.strings(keyValues)
-	for _, chunk := range chunks {
-		encoded.string(chunk)
-	}
-	return Prepared{Key: sha256.Sum256(encoded.bytes), Lines: lines, Rows: rows}
+	return Prepared{Lines: lines, Rows: rows}
 }
