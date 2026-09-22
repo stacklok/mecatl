@@ -12,7 +12,7 @@ tools, model, limits, hooks, MCP servers, and memory. The Subagent tool and
 agent teams use the same definitions.
 
 To configure and use named specialists, see
-[Named agents](/features/named-agents.md). This page covers the source interface
+[Named agents](/features/agent-behavior/named-agents.md). This page covers the source interface
 and custom integrations.
 
 Implement `tool.AgentDefSource` to load definitions from a database, registry,
@@ -214,6 +214,6 @@ it does not enforce trust by itself.
 
 ## Next steps
 
-- [Use subagents and teams](/features/subagents-and-teams.md).
+- [Use subagents and teams](/features/agent-behavior/subagents-and-teams.md).
 - [Provide skills through SkillSource](tool-catalog.md#provide-skills).
-- [Configure project trust](/features/permissions-and-posture.md).
+- [Configure project trust](/features/security-and-execution/permissions-and-posture.md).

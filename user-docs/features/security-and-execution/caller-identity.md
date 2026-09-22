@@ -1,4 +1,5 @@
 ---
+slug: /features/caller-identity
 sidebar_position: 310
 title: Caller identity and OIDC
 description:
@@ -234,6 +235,6 @@ see
 
 ## Next steps
 
-- [MCP OAuth and credentials](./mcp-oauth-and-credentials.md)
-- [Session continuity](./session-continuity.md)
+- [MCP OAuth and credentials](/features/security-and-execution/mcp-oauth-and-credentials.md)
+- [Session continuity](/features/sessions/session-continuity.md)
 - [Drive via gRPC / HTTP](/building/grpc-http.md)

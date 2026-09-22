@@ -1,4 +1,5 @@
 ---
+slug: /features/mcp-oauth-and-credentials
 sidebar_position: 320
 title: MCP OAuth and credentials
 description: Configure MCP OAuth profiles and protect the credentials they use.
@@ -9,7 +10,7 @@ description: Configure MCP OAuth profiles and protect the credentials they use.
 Authenticate configured MCP servers without placing credentials in URLs or
 model-visible tool arguments. This page covers authentication profiles, OAuth
 login, credential storage, and rotation. For tool behavior, see the
-[MCP client guide](/features/mcp-client.md).
+[MCP client guide](/features/security-and-execution/mcp-client.md).
 
 The available profile modes are `none`, `static_bearer`, and `oauth`.
 
@@ -414,12 +415,12 @@ environment-variable name.
   roots owner-only and use your deployment's secret manager for rotation.
 
 For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
-and prompts, see [MCP client](/features/mcp-client.md). For the
+and prompts, see [MCP client](/features/security-and-execution/mcp-client.md). For the
 complete operator profile rules, see the
 [configuration reference](/reference/configuration.md#mcp).
 
 ## Next steps
 
-- [Caller identity and OIDC](./caller-identity.md)
+- [Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
 - [Mecatl deployment choices](/operating/choose-deployment.md)
-- [MCP client](/features/mcp-client.md)
+- [MCP client](/features/security-and-execution/mcp-client.md)

@@ -69,7 +69,7 @@ For exact methods and types, see the
 5. Read the final result. If the configured store supports durable sessions,
    you can later resume the session or replay its events.
 
-See [Session continuity](/features/session-continuity.md) for durable storage,
+See [Session continuity](/features/sessions/session-continuity.md) for durable storage,
 event logs, recovery, and retention behavior.
 
 Use the detailed references below for exact fields, response codes, event
@@ -134,5 +134,5 @@ does not receive the server bearer token.
 - [Run mecated standalone](/operating/mecated.md) to operate a long-running server.
 - [Connect an application](/building/typescript-sdk/connect.md) with the
   TypeScript SDK.
-- [Start and resume sessions](/features/start-and-resume-sessions.md) through
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md) through
   either transport.

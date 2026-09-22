@@ -147,10 +147,10 @@ charges.
   application.
 - [Choose how to run Mecatl](/operating/choose-deployment.md) to select a deployment
   topology.
-- [Explore the agent loop](/features/agent-loop.md) to understand
+- [Explore the agent loop](/features/sessions/agent-loop.md) to understand
   the events and control flow shown by the demo.
 
 ## Related information
 
-- [Subagents, teams, and parallel work](/features/subagents-and-teams.md)
+- [Subagents, teams, and parallel work](/features/agent-behavior/subagents-and-teams.md)
 - [`mecademo` source](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go)

@@ -127,7 +127,7 @@ controls, mutations, or owned runs automatically.
 
 - [Handle permissions and plans](./permissions-and-plans.md) to resolve ordinary
   asks on an exact run and keep plan resolution separate.
-- [Session continuity](/features/session-continuity.md) for the server-side
+- [Session continuity](/features/sessions/session-continuity.md) for the server-side
   persistence model.
 
 ## Related information

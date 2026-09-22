@@ -1,4 +1,5 @@
 ---
+slug: /features/project-instructions-and-rules
 sidebar_position: 220
 title: Project instructions and rules
 description: Apply trusted project instructions and rules to Mecatl runs.
@@ -156,10 +157,10 @@ never automatically permits a tool that the policy denies.
   namespaces when callers must not see one another's files.
 
 For the full trust precedence, drift behavior, posture matrix, and deployment
-examples, see [Workspace trust](/features/permissions-and-posture.md).
+examples, see [Workspace trust](/features/security-and-execution/permissions-and-posture.md).
 
 ## Next steps
 
-- [Define named agents](./named-agents.md)
-- [Skills, commands, and soul](./skills-commands-and-soul.md)
-- [Permissions and posture](./permissions-and-posture.md)
+- [Define named agents](/features/agent-behavior/named-agents.md)
+- [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)

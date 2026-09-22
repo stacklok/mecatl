@@ -31,7 +31,7 @@ parts of [the configuration reference](references/config-format.md):
 Do not require reading the entire reference at activation. Repository background
 is in `user-docs/reference/configuration.md`,
 `user-docs/building/deployment/settings.md`, and
-`user-docs/features/learning.md`; cite those paths as prose, not links.
+`user-docs/features/agent-behavior/learning.md`; cite those paths as prose, not links.
 
 ## Safety contract
 

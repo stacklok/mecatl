@@ -19,7 +19,7 @@ workflow provides this integration for GitHub repositories.
 It reads the same global MCP profiles as `mecated`, but cannot launch an OAuth
 browser. Authorize credentials before the job, or inject a provisioned
 environment credential. See
-[MCP client](/features/mcp-client.md).
+[MCP client](/features/security-and-execution/mcp-client.md).
 
 ## What mecatequi produces
 
@@ -304,7 +304,7 @@ calls while retaining child prompt-injection defenses. Reserve `yolo` for a
 disposable, isolated, single-tenant environment.
 
 For shared posture behavior, project trust, and permission-rule precedence, see
-[Permissions and posture](/features/permissions-and-posture.md).
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md).
 
 ## What mecatequi does not support
 
@@ -332,5 +332,5 @@ exits 2.
   for other deployment options.
 - [Run mecated standalone](/operating/mecated.md) for interactive
   clients and durable sessions.
-- [Configure permissions and posture](/features/permissions-and-posture.md) for
+- [Configure permissions and posture](/features/security-and-execution/permissions-and-posture.md) for
   autonomous runs.

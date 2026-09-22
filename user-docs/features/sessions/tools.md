@@ -1,4 +1,5 @@
 ---
+slug: /features/tools
 sidebar_position: 160
 title: Core tools
 description:
@@ -125,7 +126,7 @@ A session created with `profile: "no-fs"` removes
 from the catalog. `WebFetch`, `WebSearch`, memory, and MCP tools remain.
 Children inherit the file-less catalog. Clients choose the profile when creating
 the session; the model cannot change it. See
-[Execution environments](/features/execution-environments.md) for filesystem
+[Execution environments](/features/security-and-execution/execution-environments.md) for filesystem
 and no-filesystem placement.
 
 ---
@@ -136,8 +137,8 @@ Configured memory stores add project and user-memory tools. Delegation adds
 `Subagent`, `Parallel`, and `Team`. These tools use the same catalog and
 permission path as the core tools.
 
-See [Memory and user model](./memory.md) for memory lifecycle operations and
-[Subagents, teams, and parallel work](./subagents-and-teams.md) for delegation
+See [Memory and user model](/features/agent-behavior/memory.md) for memory lifecycle operations and
+[Subagents, teams, and parallel work](/features/agent-behavior/subagents-and-teams.md) for delegation
 behavior.
 
 ---
@@ -157,14 +158,14 @@ Tools that implement `tool.Disclosable` remain hidden until `ToolSearch` loads
 them. Other tools always appear in the model's catalog.
 
 The `Skill` tool loads instruction bundles on demand. See
-[Skills, commands, and soul](./skills-commands-and-soul.md) for discovery,
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for discovery,
 activation, and slash-command behavior.
 
 ---
 
 ## Next steps
 
-- [MCP client](./mcp-client.md) to connect external MCP servers. Their catalog
+- [MCP client](/features/security-and-execution/mcp-client.md) to connect external MCP servers. Their catalog
   names use the `mcp__<server>__<tool>` format.
 - [Tool catalog extension point](/building/extension-points/tool-catalog.md) to
   add custom tools, configure skills, and control what the model can see.

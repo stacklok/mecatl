@@ -1,4 +1,5 @@
 ---
+slug: /features/scheduled-tasks
 sidebar_position: 150
 title: Scheduled tasks
 description:
@@ -125,6 +126,6 @@ session lifecycle.
 
 ## Next steps
 
-- [Session continuity](./session-continuity.md)
+- [Session continuity](/features/sessions/session-continuity.md)
 - [Mecatl deployment choices](/operating/choose-deployment.md)
 - [Scheduled task API reference](/reference/grpc-api.md)

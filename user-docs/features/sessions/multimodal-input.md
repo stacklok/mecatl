@@ -1,4 +1,5 @@
 ---
+slug: /features/multimodal-input
 sidebar_position: 120
 title: Multimodal input
 description:
@@ -131,6 +132,6 @@ capability requirements, see
 
 ## Next steps
 
-- [Choose models and providers](./choose-models.md)
-- [Context windows](./context-windows.md)
+- [Choose models and providers](/features/sessions/choose-models.md)
+- [Context windows](/features/sessions/context-windows.md)
 - [Drive via gRPC / HTTP](/building/grpc-http.md)

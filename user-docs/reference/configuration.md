@@ -369,10 +369,10 @@ for the full flag tables. The pointers below are the starting points:
 
 | Feature | How it is configured | See |
 | --- | --- | --- |
-| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
-| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/memory.md) |
-| Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/memory.md) |
-| Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
+| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) |
+| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/agent-behavior/memory.md) |
+| Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/agent-behavior/memory.md) |
+| Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) |
 | Session leasing | `--session-lease-*` | [Run mecated standalone](/operating/mecated.md#multi-replica) |
 
 The model slots / aliases above also have CLI twins (`--model-slot` /

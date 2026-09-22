@@ -6,11 +6,34 @@ description:
   observability.
 ---
 
+import ReleaseArchivesAndSource from '../_partials/release-archives-and-source.mdx';
+
 # Run mecated standalone
 
 `mecated` runs Mecatl as a standalone service over gRPC and HTTP/SSE. It
 provides the operator controls needed for authentication, TLS/mTLS, rate
 limiting, observability, persistence, and graceful shutdown.
+
+## Install mecated
+
+Homebrew installs the `mecatui` client and the `mecated` server:
+
+```sh
+brew install stacklok/tap/mecatl
+mecated --version
+```
+
+If you manage your environment with Conda, install the
+[Mecatl package on Conda-forge](https://anaconda.org/conda-forge/mecatl) with
+your preferred package manager:
+
+|Package manager|Command|
+|-|-|
+|Conda|`conda install -c conda-forge mecatl`|
+|Mamba|`mamba install -c conda-forge mecatl`|
+|Pixi|`pixi add mecatl`|
+
+<ReleaseArchivesAndSource />
 
 ## Configure providers
 
@@ -88,9 +111,7 @@ for no-PVC pod deployments, with Redis-backed state when you configure
 
 ---
 
-## Quick start
-
-Install with `brew install stacklok/tap/mecatl`. Then start the server:
+## Start the server
 
 ```sh
 mecated serve
@@ -106,7 +127,7 @@ no authentication.
 Authorize a global MCP OAuth profile before serving with
 `mecated mcp login SERVER [--no-browser]`. The daemon restores and refreshes the
 encrypted credential but never opens a browser. See
-[MCP client](/features/mcp-client.md).
+[MCP client](/features/security-and-execution/mcp-client.md).
 
 Default addresses:
 
@@ -144,7 +165,7 @@ default or the `no-fs` profile, but cannot submit a path. `ListWorktrees`
 returns short-lived selectors for `ClearSession` and `ForkSession`; selectors
 expire when the server restarts. Mecatl stores the exact placement privately and
 reattaches it before each run. See
-[Execution environments](/features/execution-environments.md) for the shared
+[Execution environments](/features/security-and-execution/execution-environments.md) for the shared
 placement and reattachment model. For the underlying design, see
 [ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
 
@@ -212,7 +233,7 @@ With `--rate-limit`, rejected tokens use a separate bucket keyed by the direct
 peer IP and return 429 when exhausted. Mecatl does not trust forwarded-IP
 headers for this check. Authentication logs omit credentials, tokens, claims,
 and caller identifiers. See
-[Caller identity and OIDC](/features/caller-identity.md) for the full behavior.
+[Caller identity and OIDC](/features/security-and-execution/caller-identity.md) for the full behavior.
 
 #### Daemon config file (`daemon.yaml`)
 
@@ -254,7 +275,7 @@ secrets nor file contents.
 |`--schedule-store-url`|`""`|gRPC driver for the schedule registry, independent of the session store. Not supported with OIDC ownership|
 |`--learning-store-url`|`""`|Trusted single-tenant gRPC driver for distributed learning. Not supported with OIDC ownership|
 
-See [Scheduled tasks](/features/scheduled-tasks.md) for the in-chat
+See [Scheduled tasks](/features/sessions/scheduled-tasks.md) for the in-chat
 `Schedule` tool and the gRPC/REST management APIs.
 
 ### LLM resilience
@@ -349,7 +370,7 @@ when credentials are missing. Direct mode does not honor `tls_skip_verify`.
 
 For provider selection, protocol paths, independent catalog status, and
 model-routing troubleshooting, see
-[Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
+[Choose models and providers](/features/sessions/choose-models.md#set-up-a-local-provider).
 
 ### Posture
 
@@ -365,10 +386,10 @@ Explicit `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust
 admits BOTH repo steering and the read-only child shell. Without a trust source,
 `--posture auto` keeps its approvals but gets neither because `.git` is not
 vouched. See
-[Permissions and posture](/features/permissions-and-posture.md#project-trust)
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md#project-trust)
 for the trust sources and headless behavior.
 
-See [Permissions & guardrails](/features/permissions-and-posture.md) for the
+See [Permissions & guardrails](/features/security-and-execution/permissions-and-posture.md) for the
 full rule engine. Posture is read from the operator-global `settings.yaml`
 (`posture:` key) and out-ranked by the CLI flag when both are set.
 
@@ -395,7 +416,7 @@ WARN because a checked-in file cannot weaken an operator security check.
 
 `--mcp-server` uses streaming HTTP. ToolHive can proxy stdio backends. For OAuth
 profiles, resources, debugging, and transport constraints, see
-[MCP client](/features/mcp-client.md).
+[MCP client](/features/security-and-execution/mcp-client.md).
 
 ### Skills
 
@@ -407,7 +428,7 @@ profiles, resources, debugging, and transport constraints, see
 
 Mecatl loads skill instructions and assets on demand. Assets do not become
 workspace files or executable scripts. See
-[Skills, commands, and soul](/features/skills-commands-and-soul.md).
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md).
 
 ### Observability
 
@@ -593,7 +614,7 @@ changing the base file.
 `skills promote` is a deprecated compatibility path for model-authored files in
 `--skills-draft-dir`; it does not activate skill-lifecycle repository records.
 Manage schedules through the `Schedule` tool or the gRPC/REST API. See
-[Scheduled tasks](/features/scheduled-tasks.md).
+[Scheduled tasks](/features/sessions/scheduled-tasks.md).
 
 ---
 
@@ -709,7 +730,7 @@ bearer token on the server and enforce Origin and CSRF policy there.
 - [Choose how to run Mecatl](/operating/choose-deployment.md)
   for trade-offs between `mecated`, `mecak8s`, `mecatequi`, and engine
   embedding.
-- [Permissions and guardrails](/features/permissions-and-posture.md) for the
+- [Permissions and guardrails](/features/security-and-execution/permissions-and-posture.md) for the
   rule engine, posture ladder, and guardrail checker.
 - [Cloud-native Kubernetes with mecak8s](/operating/mecak8s.md) for a
   no-PVC deployment with Redis and Kubernetes Leases.

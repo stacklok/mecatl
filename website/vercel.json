@@ -2,6 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "redirects": [
     {
+      "source": "/docs/install",
+      "destination": "/docs/mecatui/installation",
+      "permanent": true
+    },
+    {
       "source": "/docs/intro",
       "destination": "/docs",
       "permanent": true

@@ -1,4 +1,5 @@
 ---
+slug: /features/ask-about-mecatl
 sidebar_position: 20
 title: Ask Mecatl about itself
 description:
@@ -25,7 +26,7 @@ comes from the server that builds the session rather than from a client feature 
 an operator setting, so a session with no filesystem answers these questions the
 same way a local `mecatui` session does.
 
-Subagents and [analysis sessions](../mecatui/sessions.md#diagnose-a-stored-session)
+Subagents and [analysis sessions](/mecatui/sessions.md#diagnose-a-stored-session)
 are the exception. A delegated task worker is scoped to its own job, and an
 analysis session opened with `mecatui debug` is scoped to reading another
 session's evidence; neither carries the account, so ask the session directly
@@ -38,7 +39,7 @@ component is, that permission modes and operator postures are separate controls
 with separate value sets, that guardrails are a third and independent control,
 and how this documentation is organized. That is enough to frame a question
 correctly and to keep the two permission controls apart, which is the distinction
-most worth getting right. [Permissions and posture](./permissions-and-posture.md)
+most worth getting right. [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
 owns the full treatment of both controls, and the agent points you there.
 
 A question the account already covers gets answered from it, with no tool call
@@ -70,6 +71,6 @@ agent searches it like any other codebase.
 
 ## Related information
 
-- [Permissions and posture](./permissions-and-posture.md)
-- [Capability and deployment matrix](./capability-matrix.md)
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+- [Capability and deployment matrix](/features/get-oriented/capability-matrix.md)
 - [Configuration reference](/reference/configuration.md)

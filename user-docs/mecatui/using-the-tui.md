@@ -77,7 +77,7 @@ Press `ctrl+v` to paste an image from the clipboard. If the clipboard does not
 contain an image, `ctrl+v` pastes its text. Large text pastes appear as compact
 placeholders in the editor and expand when you send the prompt.
 
-See [Multimodal input](/features/multimodal-input.md) for model capability and
+See [Multimodal input](/features/sessions/multimodal-input.md) for model capability and
 validation behavior.
 
 ## When a model stream fails
@@ -139,15 +139,15 @@ commands supported by the connected server.
 
 |Task|Open in `mecatui`|More information|
 |-|-|-|
-|Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/features/mcp-client.md)|
-|Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
-|Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
-|Inspect the user model|`/usermodel`|[Memory](/features/memory.md)|
-|Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/scheduled-tasks.md)|
+|Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/features/security-and-execution/mcp-client.md)|
+|Inspect named agent definitions|`/agents`|[Named agents](/features/agent-behavior/named-agents.md)|
+|Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md)|
+|Inspect the user model|`/usermodel`|[Memory](/features/agent-behavior/memory.md)|
+|Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/sessions/scheduled-tasks.md)|
 |Review learning and maintain memory|`/learning`, `/reflections`, `/reflect`, and `/dream`|[Use learning and memory commands](./commands-and-memory.md)|
 
 The palette also includes workspace-defined slash commands. See
-[Skills, commands, and soul](/features/skills-commands-and-soul.md) for how the
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md) for how the
 server discovers and expands them.
 
 ## Monitor delegated work
@@ -158,13 +158,13 @@ the overlay to inspect bounded activity previews; `/team` opens the same overlay
 on the Teams tab.
 
 See
-[Subagents, teams, and parallel](/features/subagents-and-teams.md#watch-a-delegation-in-mecatui)
+[Subagents, teams, and parallel](/features/agent-behavior/subagents-and-teams.md#watch-a-delegation-in-mecatui)
 for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings
 
 Press `shift+tab` to switch the active permission mode. See
-[Choose a permission mode](/features/permissions-and-posture.md#choose-a-permission-mode)
+[Choose a permission mode](/features/security-and-execution/permissions-and-posture.md#choose-a-permission-mode)
 for the available modes and their behavior.
 
 |Command|Result|
@@ -174,7 +174,7 @@ for the available modes and their behavior.
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
-|`/posture`|Shows the server's operator posture and active defenses. See [Permissions and posture](/features/permissions-and-posture.md).|
+|`/posture`|Shows the server's operator posture and active defenses. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
 
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait

@@ -1,4 +1,5 @@
 ---
+slug: /features/memory
 sidebar_position: 225
 title: Memory and user model
 description:
@@ -16,7 +17,7 @@ each at the right scope.
 |User model|All workspaces for one operator|Retain operator facts and preferences|Yes|
 
 The read-only agent persona is configured separately. See
-[Skills, commands, and soul](./skills-commands-and-soul.md).
+[Skills, commands, and soul](/features/agent-behavior/skills-commands-and-soul.md).
 
 ## Project memory
 
@@ -72,7 +73,7 @@ whole plan. Applying a plan can partially succeed because each operation is
 independent. Plans expire and do not survive a restart.
 
 For availability, review safeguards, and recovery behavior, see
-[Dreaming and memory consolidation](/features/dreaming.md).
+[Dreaming and memory consolidation](/features/agent-behavior/dreaming.md).
 
 ## User model
 
@@ -94,7 +95,7 @@ memory tools and their permission rules.
 Set `--no-user-model` to disable the user model.
 
 Completed-trajectory learning is separate from explicit memory tools and dream
-consolidation. See [Learning](./learning.md) for its review and activation
+consolidation. See [Learning](/features/agent-behavior/learning.md) for its review and activation
 policy.
 
 ## Defaults

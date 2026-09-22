@@ -1,4 +1,5 @@
 ---
+slug: /features/skills-commands-and-soul
 sidebar_position: 210
 title: Skills, commands, and soul
 description:
@@ -185,6 +186,6 @@ and separate from active skill directories.
 
 ## Next steps
 
-- [Project instructions and rules](./project-instructions-and-rules.md)
-- [Named agents](./named-agents.md)
-- [Permissions and posture](./permissions-and-posture.md)
+- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md)
+- [Named agents](/features/agent-behavior/named-agents.md)
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)

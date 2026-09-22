@@ -1,4 +1,5 @@
 ---
+slug: /features/permissions-and-posture
 sidebar_position: 300
 title: Permissions and posture
 description:
@@ -269,7 +270,7 @@ content is not silently accepted.
 
 - [PermissionPolicy](/building/extension-points/permission-policy.md) to replace
   the supplied permission policy in an embedding.
-- [Project instructions and rules](./project-instructions-and-rules.md) for
+- [Project instructions and rules](/features/agent-behavior/project-instructions-and-rules.md) for
   project-ingestion behavior.
-- [Execution environments](./execution-environments.md) for workspace and shell
+- [Execution environments](/features/security-and-execution/execution-environments.md) for workspace and shell
   isolation.

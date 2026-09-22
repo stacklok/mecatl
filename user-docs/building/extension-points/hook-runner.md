@@ -180,6 +180,6 @@ outbound calls in `PreToolUse` and replaces unsafe inbound results in
 
 ## Next steps
 
-- [Configure hooks](/features/hooks.md).
+- [Configure hooks](/features/security-and-execution/hooks.md).
 - [Implement a permission policy](permission-policy.md).
 - [Add a custom tool](tool-catalog.md#add-a-custom-tool).

@@ -185,6 +185,6 @@ direct engine embedding must configure any required resilience and timeouts.
 
 ## Next steps
 
-- [Understand the agent loop](/features/agent-loop.md).
+- [Understand the agent loop](/features/sessions/agent-loop.md).
 - [Implement session storage](session-store.md).
 - [Add tools to the catalog](tool-catalog.md).

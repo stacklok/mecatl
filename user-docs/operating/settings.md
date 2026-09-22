@@ -57,7 +57,7 @@ A trusted project can contribute project-tier settings from
 `.mecatl/settings.yaml` or `.mecatl/settings.local.yaml`. Operator-only settings
 remain user-global. Permission sources have their own ordered scopes, including
 explicit `--permission-config` files. See
-[Permissions and posture](/features/permissions-and-posture.md) for the
+[Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for the
 trust and precedence rules.
 
 An applicable explicit CLI value overrides the corresponding file setting.
@@ -167,11 +167,11 @@ details.
 
 ## Next steps
 
-- [Choose models and providers](/features/choose-models.md) covers provider,
+- [Choose models and providers](/features/sessions/choose-models.md) covers provider,
   model, and endpoint selection.
-- [Permissions and posture](/features/permissions-and-posture.md) covers
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) covers
   permission files, project trust, guardrails, and automation posture.
-- [MCP client](/features/mcp-client.md) covers streaming-HTTP MCP
+- [MCP client](/features/security-and-execution/mcp-client.md) covers streaming-HTTP MCP
   servers and their authentication profiles.
 - [Connect to a server](/mecatui/remote-servers.md) covers remote transport,
   TLS, and client authentication.

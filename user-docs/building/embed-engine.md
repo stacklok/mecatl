@@ -154,7 +154,7 @@ func main() {
 
 `eng.Run` returns immediately while the loop runs in the background. Consume
 `run.Events()` until the channel closes. See
-[The agent loop](/features/agent-loop.md) for the full event
+[The agent loop](/features/sessions/agent-loop.md) for the full event
 taxonomy and permission flow.
 
 ## Ports and configuration
@@ -266,8 +266,8 @@ tagged release or use a `replace` directive in `go.mod` during development.
 
 ## Next steps
 
-- [Understand the agent loop](/features/agent-loop.md) and its event
+- [Understand the agent loop](/features/sessions/agent-loop.md) and its event
   lifecycle.
-- [Configure permissions and posture](/features/permissions-and-posture.md).
+- [Configure permissions and posture](/features/security-and-execution/permissions-and-posture.md).
 - [Review API stability](/building/api-stability.md) before depending on the
   exported engine surface.

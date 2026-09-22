@@ -1,4 +1,5 @@
 ---
+slug: /features/capability-matrix
 sidebar_position: 10
 title: Capability and deployment matrix
 description:
@@ -77,7 +78,7 @@ location.
 Filesystem tools and Shell operate in the namespace where the harness runs. In
 `mecak8s`, that normally means the pod’s workspace and command environment, not
 the client’s machine. A remote client does not upload or share its local
-checkout. See [Execution environments](./execution-environments.md) for the
+checkout. See [Execution environments](/features/security-and-execution/execution-environments.md) for the
 workspace, runner, no-FS, child-environment, and reattachment model.
 
 ## ACP editor integration
@@ -97,5 +98,5 @@ support it.
 ## Related information
 
 - [Deployment decision](/operating/choose-deployment.md)
-- [Permissions and posture](./permissions-and-posture.md)
-- [Execution environments](./execution-environments.md)
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+- [Execution environments](/features/security-and-execution/execution-environments.md)

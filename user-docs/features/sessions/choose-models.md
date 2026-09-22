@@ -1,4 +1,5 @@
 ---
+slug: /features/choose-models
 sidebar_position: 110
 title: Choose models and providers
 description:
@@ -515,8 +516,8 @@ session as authoritative.
 ## Next steps
 
 - [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
-- [Start and resume sessions](./start-and-resume-sessions.md) for session
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md) for session
   creation and continuation.
-- [Context windows](./context-windows.md) for context limits and fallback.
-- [Capability and deployment matrix](./capability-matrix.md) for deployment
+- [Context windows](/features/sessions/context-windows.md) for context limits and fallback.
+- [Capability and deployment matrix](/features/get-oriented/capability-matrix.md) for deployment
   availability.

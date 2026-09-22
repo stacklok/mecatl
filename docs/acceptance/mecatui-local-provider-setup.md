@@ -106,7 +106,7 @@ not ADR 0332's superseded Linux/lock design.
 1. Plan checker, checker regressions, and `task docs` pass for this amendment; no runtime changes in the plan PR.
 2. Implementation completes every new named proof through real command/factory paths; old prototype test names or prior review verdicts are not evidence for this contract.
 3. `task lint`, `task test`, `task docs`, `task api:check`, `task ac-trace-strict`, and the offline demo pass for implementation; Linux and macOS writer execution requires real platform coverage, not compile-only claims.
-4. Update the existing canonical provider/setup guidance in `user-docs/features/choose-models.md` and owning Mecatui pages; preserve current formatting and run `task site:build`.
+4. Update the existing canonical provider/setup guidance in `user-docs/features/sessions/choose-models.md` and owning Mecatui pages; preserve current formatting and run `task site:build`.
 5. Independent review and PR CI have no untriaged blockers. Record exact proposed/merged baseline honestly; both existing PR identities and human merge gates remain intact.
 
 ## Deferred decisions and known risks

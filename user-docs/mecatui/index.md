@@ -34,7 +34,7 @@ mecatui providers
 `setup` configures an embedded server; `add NAME` defines a custom provider, and
 `login`, `logout`, and `set-default` manage it. For credential sources, secret
 safety, and provider selection, see
-[Choose models and providers](/features/choose-models.md). The [standalone
+[Choose models and providers](/features/sessions/choose-models.md). The [standalone
 deployment guide](/operating/mecated.md#configure-providers) owns the
 operator `providers` and `credential_store` schema.
 
@@ -48,6 +48,7 @@ server out of your local process.
 ## Guides
 
 - [Run your first local session](./getting-started.md)
+- [Install `mecatui`](./installation.md)
 - [Connect to a server](./remote-servers.md)
 - [Manage sessions](./sessions.md)
 - [Use the TUI](./using-the-tui.md)

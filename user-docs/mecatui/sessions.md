@@ -30,7 +30,7 @@ still return an error. You can combine either resume option with `--prompt` to
 send a task after the transcript loads.
 
 A resumed chat is the stored chat, not a copy. It keeps its model and exact
-server-owned placement. See [Session continuity](/features/session-continuity.md)
+server-owned placement. See [Session continuity](/features/sessions/session-continuity.md)
 for the storage and recovery behavior behind resume.
 
 To get the active session ID, run `/session` and press `c` to copy it. On a
@@ -121,7 +121,7 @@ keeping the session and visible scrollback. The command creates no chat turn,
 but a cascade summary can use model tokens.
 
 The command appears only when the server supports manual compaction.
-See [Context windows](/features/context-windows.md) for automatic compaction,
+See [Context windows](/features/sessions/context-windows.md) for automatic compaction,
 window resolution, and operator configuration.
 
 ## Move a chat to a worktree

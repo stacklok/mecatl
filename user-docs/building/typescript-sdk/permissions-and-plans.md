@@ -70,7 +70,7 @@ state check during construction:
 Use this workflow only for `authorization.required` handoffs from
 session-scoped ToolHive broker tools. It does not configure direct or global
 MCP profiles or manage their credentials. For those host-local profiles, use
-[`mecated mcp add` or `mecated mcp login`](/features/mcp-oauth-and-credentials.md).
+[`mecated mcp add` or `mecated mcp login`](/features/security-and-execution/mcp-oauth-and-credentials.md).
 
 ```ts
 const outcome = await run.outcome();
@@ -218,12 +218,12 @@ needs the durable timeline across both run IDs.
   authorization-parked runs.
 - [Resume durable activity](./durable-activity.md) to observe approved plans
   across both runs.
-- [Permissions and posture](/features/permissions-and-posture.md) for the
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) for the
   server-side permission model.
 
 ## Related information
 
 - [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for
   responder, error, and plan-resolution types.
-- [Permissions and posture](/features/permissions-and-posture.md)
-- [Start and resume sessions](/features/start-and-resume-sessions.md)
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+- [Start and resume sessions](/features/sessions/start-and-resume-sessions.md)
