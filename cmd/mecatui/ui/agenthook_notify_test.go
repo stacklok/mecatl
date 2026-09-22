@@ -298,6 +298,55 @@ func TestAgentHookTerminalOnAuthRecovery(t *testing.T) {
 	wantStartFailedStopStart(t, kinds, stop, "auth recovery")
 }
 
+// TestAgentHookTerminalOnClearResponseBeforeStreamTerminal covers the OTHER
+// clear ordering. TestAgentHookTerminalOnClearHandoff has the source stream
+// settling first, where the StreamClosedMsg branch settles the hook. Here the
+// Clear RPC response wins instead: it arrives while the source stream is still
+// live, tears the run down itself, and invalidates the queued old-stream
+// messages — so that StreamClosedMsg branch never runs. The two arrive on
+// INDEPENDENT commands, so server-side completion does not fix their reducer
+// order and neither path may be the only one that settles.
+func TestAgentHookTerminalOnClearResponseBeforeStreamTerminal(t *testing.T) {
+	m, fake := runningModelWithNotifier(t)
+
+	const token = uint64(7)
+	m.clearPending = &clearHandoff{sourceID: m.sessionID, token: token, sourcePhase: m.phase}
+	response := clearSessionReadyMsg{
+		ready: client.SessionReadyMsg{SessionID: "sess-test-0002"},
+		oldID: m.sessionID,
+		token: token,
+	}
+
+	m = applyAll(m, response)
+	applyAll(m, client.TurnStartMsg{Turn: 1})
+
+	wantStartFailedStopStart(t, fake.kinds(), lastStop(t, fake), "clear response before stream terminal")
+}
+
+// TestAgentHookTerminalOnAuthorizationControlStreamError covers the MCP
+// authorization continuation: once a granted authorization's control stream
+// owns the ACTIVE run, that stream dying is a genuine transport terminal — no
+// ResultMsg will follow. Left unsettled the notifier stays running and the
+// next run's busy signal is silently deduped away.
+func TestAgentHookTerminalOnAuthorizationControlStreamError(t *testing.T) {
+	m, fake := runningModelWithNotifier(t)
+
+	const gen = uint64(3)
+	m.authorization.authorizationID = "auth-1"
+	m.authorization.controlGen = gen
+	m.authorization.runningControlGen = gen // the continuation owns the live run
+
+	m = applyAll(m, mcpAuthorizationEventMsg{
+		sessionID:       m.sessionID,
+		authorizationID: "auth-1",
+		gen:             gen,
+		msg:             client.StreamErrMsg{Err: errors.New("control stream reset")},
+	})
+	applyAll(m, client.TurnStartMsg{Turn: 1})
+
+	wantStartFailedStopStart(t, fake.kinds(), lastStop(t, fake), "authorization control stream error")
+}
+
 // TestAgentHookNoTerminalOnAutomaticRetry pins the deliberate NON-terminal
 // exception: a retry-eligible failure starts another run by itself, so the run
 // never returned to idle and the host must not be told it finished. The whole

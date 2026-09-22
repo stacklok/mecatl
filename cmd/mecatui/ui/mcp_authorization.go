@@ -376,6 +376,11 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 			m.authorization.runningControlGen = 0
 		}
 		if ownsRun && (m.phase == phaseAwaitingApproval || m.phase == phaseRunning) {
+			// The authorization control stream owned the ACTIVE run, so its
+			// death is a genuine transport terminal: no ResultMsg will arrive.
+			// Settle the hook before ending the run, or the notifier stays
+			// running=true and dedupes the next run's busy signal away.
+			m.notifyHookFailed(errText)
 			m = m.endRun("")
 			m.statusMsg = m.deps.Theme.Style("errorText").Render("authorization control stream error: " + errText)
 			m.refreshView()

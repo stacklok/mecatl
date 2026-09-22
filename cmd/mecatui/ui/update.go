@@ -795,6 +795,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// any locally queued old-stream messages before binding the successor.
 		m.clearPending = nil
 		if m.stream != nil || m.streamCh != nil || m.cancelRun != nil {
+			// The source run is over and its stream terminal will now never be
+			// processed, so this is the LAST chance to settle the hook. The RPC
+			// response and the stream terminal arrive on independent commands,
+			// so server-side completion does not establish their reducer order:
+			// when the response wins the race, the terminal below never runs.
+			// Leaving it unsettled keeps Notifier.running true and silently
+			// dedupes the successor's busy signal.
+			m.notifyHookFailed(streamClosedReason)
 			m = m.endRun("")
 		}
 		m = m.resetSession()

@@ -98,6 +98,7 @@ type Notifier struct {
 	running bool          // dedupe: busy signal once per turn, terminal once per turn
 	queue   chan dispatch // ordered single-worker delivery; lazily started
 	done    chan struct{} // closed by the worker when it has drained and exited
+	abandon chan struct{} // closed by Close to REVOKE this generation (see Close)
 	closed  bool          // Close called: never start another worker (see Close)
 }
 
@@ -227,9 +228,10 @@ func (n *Notifier) enqueue(ev EventType, sessionID, message string) {
 	if n.queue == nil {
 		n.queue = make(chan dispatch, queueDepth)
 		n.done = make(chan struct{})
+		n.abandon = make(chan struct{})
 		//nolint:contextcheck // deliberate: see the doc comment above — a
 		// lifecycle notification must outlive the run context that triggered it.
-		go n.worker(n.queue, n.done)
+		go n.worker(n.queue, n.done, n.abandon)
 	}
 
 	d := dispatch{ev: ev, sessionID: sessionID, message: message}
@@ -249,18 +251,45 @@ func (n *Notifier) enqueue(ev EventType, sessionID, message string) {
 
 // worker delivers queued events in arrival order, one at a time. It exits when
 // Close closes the queue, signalling that by closing done.
-func (n *Notifier) worker(q chan dispatch, done chan struct{}) {
+//
+// abandon is the REVOCATION signal, and it is what makes the generation
+// boundary real. Closing the queue alone only stops new enqueues: `range` still
+// hands over every event already buffered, each with a FRESH full timeout, so a
+// timed-out Close would otherwise return while this worker went on delivering a
+// retired generation's backlog into the successor's run. Once abandon fires the
+// delivery in flight is cancelled and everything still queued is DISCARDED.
+func (n *Notifier) worker(q chan dispatch, done, abandon chan struct{}) {
 	defer close(done)
+
+	// Every delivery descends from base, so revoking it cancels the invocation
+	// in flight as well as gating the ones behind it.
+	base, revoke := context.WithCancel(context.Background())
+	defer revoke()
+	go func() {
+		select {
+		case <-abandon:
+			revoke()
+		case <-done: // drained normally; nothing to revoke
+		}
+	}()
+
 	for d := range q {
+		if base.Err() != nil {
+			// Revoked: keep draining so `range` still terminates, but deliver
+			// nothing. A predecessor's terminal landing after the successor's
+			// busy signal would mark the host idle during a live run.
+			continue
+		}
 		payload := buildPayload(d.ev, d.sessionID, d.message)
-		ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+		ctx, cancel := context.WithTimeout(base, n.timeout)
 		n.run(ctx, n.script, n.extraEnv, payload)
 		cancel()
 	}
 }
 
 // Close settles this notifier: it stops accepting events, then waits — bounded
-// by ctx — for the worker to drain what is already queued and exit.
+// by ctx — for the worker to drain what is already queued and exit. If that
+// bound expires it REVOKES the generation instead of merely walking away.
 //
 // This is the GENERATION BOUNDARY, and it is why delivery being "best-effort"
 // is not on its own enough. mecatui can restart its whole run in-process (a
@@ -269,7 +298,19 @@ func (n *Notifier) worker(q chan dispatch, done chan struct{}) {
 // a slow hook command could deliver generation N's queued Stop AFTER generation
 // N+1's UserPromptSubmit — marking the host idle during a live run. Dropping a
 // late event is acceptable; delivering it out of order across generations is
-// not, so Close bounds the wait and then abandons rather than blocking exit.
+// not.
+//
+// Note that setting closed and closing the queue is NOT sufficient for that:
+// it stops new enqueues, while the worker's `range` goes on delivering the
+// whole existing backlog, each event with a fresh full timeout. So a timed-out
+// Close additionally revokes (see worker), which cancels the delivery in flight
+// and discards everything still queued, and only then joins.
+//
+// The guarantee this gives, stated exactly: once Close returns, no delivery
+// from this generation can START. The clean path also leaves nothing running;
+// on the revoked path the only residual is the single invocation that was
+// already in flight and has been cancelled, which the bounded join normally
+// collects too.
 //
 // Close is idempotent and safe on a nil *Notifier or one that never enqueued.
 // After it returns, every method is a no-op.
@@ -283,7 +324,7 @@ func (n *Notifier) Close(ctx context.Context) {
 		return
 	}
 	n.closed = true
-	q, done := n.queue, n.done
+	q, done, abandon := n.queue, n.done, n.abandon
 	n.queue = nil
 	// Closed UNDER the lock, so it cannot interleave with an enqueue's send
 	// (which also holds the lock); closing is itself non-blocking.
@@ -297,13 +338,32 @@ func (n *Notifier) Close(ctx context.Context) {
 	}
 	select {
 	case <-done:
+		return // drained cleanly: everything already accepted was delivered
 	case <-ctx.Done():
-		// Bounded abandon: a wedged hook command must not hold up the restart
-		// or process exit. The closed flag already stops any NEW delivery, so
-		// at worst one in-flight invocation outlives us — it can no longer be
-		// followed by another event from this generation.
+	}
+
+	// The drain deadline expired. Closing the queue stopped new enqueues but
+	// NOT the backlog: without revoking, the worker would keep delivering every
+	// buffered event — each with a fresh full timeout — after this returns and
+	// the successor generation has already gone busy. Revoke, which cancels the
+	// invocation in flight and discards the rest, then JOIN so the retired
+	// worker is actually gone before a successor can exist.
+	close(abandon)
+	select {
+	case <-done:
+	case <-time.After(abandonGrace):
+		// A runner that ignores its cancelled context. Nothing further can be
+		// DELIVERED (the worker discards past revocation), so the residual is
+		// one already-cancelled invocation — never a queued one — and holding
+		// up restart or process exit any longer would cost more than it buys.
 	}
 }
+
+// abandonGrace bounds the post-revocation join. A revoked delivery is
+// ctx-cancelled, so defaultRunner kills its whole process group and waits at
+// most killGrace before returning; the headroom over killGrace means the worker
+// has normally exited well inside this bound.
+const abandonGrace = killGrace + time.Second
 
 // defaultRunner shells the host's hook command with the JSON payload on STDIN —
 // the delivery the shared schema specifies for a command hook in both Claude
