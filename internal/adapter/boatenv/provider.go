@@ -1,5 +1,5 @@
-// Package boxenv adapts ASCII Box VMs to mecatl execution environments.
-package boxenv
+// Package boatenv adapts boat.dev sandboxes to mecatl execution environments.
+package boatenv
 
 import (
 	"context"
@@ -20,42 +20,42 @@ import (
 )
 
 const (
-	// Kind is the open EnvironmentKind label minted by the Box adapter.
-	Kind session.EnvironmentKind = "box"
+	// Kind is the open EnvironmentKind label minted by the Boat adapter.
+	Kind session.EnvironmentKind = "boat"
 
 	defaultTTLSeconds = 3600
 	noFSID            = "no-fs"
 	noFSRevision      = "nofs-v1"
 )
 
-// Config configures a Box placement provider. APIKey is secret-shaped and must
-// never be persisted or logged. Every Box is created/resumed with noEnv=true,
+// Config configures a Boat placement provider. APIKey is secret-shaped and must
+// never be persisted or logged. Every sandbox is created/resumed with noEnv=true,
 // so account-level model/GitHub/SSH secrets never enter the guest.
 type Config struct {
 	APIKey string
-	// BaseURL is primarily a test seam. Empty uses the public Box v1 endpoint.
+	// BaseURL is primarily a test seam. Empty uses the public boat.dev v1 endpoint.
 	BaseURL string
 	// Scope is the trusted server-owned placement authorization scope.
 	Scope server.PlacementScope
-	// BoxType is passed to Box create when non-empty (for example "small").
-	BoxType string
+	// MachineType is passed to Boat create when non-empty (for example "small").
+	MachineType string
 	// TTLSeconds bounds idle leaked resources. Zero selects one hour.
 	TTLSeconds int
-	// Workdir is the relative Box working directory shared by Workspace and Shell.
-	// Empty selects the Box working directory root (".").
+	// Workdir is the relative sandbox working directory shared by Workspace and Shell.
+	// Empty selects the sandbox working directory root (".").
 	Workdir string
 	// ReadyTimeout bounds create/resume readiness polling. Zero selects two minutes.
 	ReadyTimeout time.Duration
 	HTTPClient   *http.Client
 }
 
-// Provider is an exact, server-scoped Box placement provider. It supports the
+// Provider is an exact, server-scoped Boat placement provider. It supports the
 // deployment default and the ordinary no-FS attenuation. Worktree selectors are
-// deliberately unsupported; Box-native forks belong on EnvironmentForker.
+// deliberately unsupported; Boat-native forks belong on EnvironmentForker.
 type Provider struct {
 	client       *apiClient
 	scope        server.PlacementScope
-	boxType      string
+	machineType  string
 	ttlSeconds   int
 	workdir      string
 	readyTimeout time.Duration
@@ -67,11 +67,11 @@ var (
 	_ server.PlacementReattacher = (*Provider)(nil)
 )
 
-// New constructs a Box placement provider. The API key remains only in the
+// New constructs a Boat placement provider. The API key remains only in the
 // private HTTP client and never enters EnvironmentRef or placement metadata.
 func New(cfg Config) (*Provider, error) {
 	if cfg.Scope == "" {
-		return nil, errors.New("boxenv: placement scope is required")
+		return nil, errors.New("boatenv: placement scope is required")
 	}
 	client, err := newAPIClient(cfg.APIKey, cfg.BaseURL, cfg.HTTPClient)
 	if err != nil {
@@ -81,7 +81,7 @@ func New(cfg Config) (*Provider, error) {
 		cfg.TTLSeconds = defaultTTLSeconds
 	}
 	if cfg.TTLSeconds < 1 || cfg.TTLSeconds > 2_592_000 {
-		return nil, errors.New("boxenv: ttlSeconds must be between 1 and 2592000")
+		return nil, errors.New("boatenv: ttlSeconds must be between 1 and 2592000")
 	}
 	workdir, err := cleanWorkdir(cfg.Workdir)
 	if err != nil {
@@ -91,16 +91,16 @@ func New(cfg Config) (*Provider, error) {
 		cfg.ReadyTimeout = 2 * time.Minute
 	}
 	if cfg.ReadyTimeout < time.Second {
-		return nil, errors.New("boxenv: ready timeout must be at least one second")
+		return nil, errors.New("boatenv: ready timeout must be at least one second")
 	}
 	return &Provider{
 		client:       client,
 		scope:        cfg.Scope,
-		boxType:      cfg.BoxType,
+		machineType:  cfg.MachineType,
 		ttlSeconds:   cfg.TTLSeconds,
 		workdir:      workdir,
 		readyTimeout: cfg.ReadyTimeout,
-		revision:     providerRevision(client.baseURL, cfg.BoxType, cfg.TTLSeconds, workdir),
+		revision:     providerRevision(client.baseURL, cfg.MachineType, cfg.TTLSeconds, workdir),
 	}, nil
 }
 
@@ -110,26 +110,26 @@ func cleanWorkdir(value string) (string, error) {
 		return ".", nil
 	}
 	if strings.HasPrefix(value, "/") {
-		return "", errors.New("boxenv: workdir must be relative")
+		return "", errors.New("boatenv: workdir must be relative")
 	}
 	clean := pathpkg.Clean(value)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", errors.New("boxenv: workdir escapes the Box workspace")
+		return "", errors.New("boatenv: workdir escapes the Boat workspace")
 	}
 	return clean, nil
 }
 
-func providerRevision(baseURL, boxType string, ttlSeconds int, workdir string) string {
+func providerRevision(baseURL, machineType string, ttlSeconds int, workdir string) string {
 	// Do not fold the credential into durable identity. Reattachment semantics are
 	// pinned to the endpoint and non-secret construction contract only.
-	material := fmt.Sprintf("boxenv/v1\n%s\n%s\n%d\n%s\nnoenv=true", baseURL, boxType, ttlSeconds, workdir)
+	material := fmt.Sprintf("boatenv/v1\n%s\n%s\n%d\n%s\nnoenv=true", baseURL, machineType, ttlSeconds, workdir)
 	sum := sha256.Sum256([]byte(material))
-	return "box-v1-" + hex.EncodeToString(sum[:8])
+	return "boat-v1-" + hex.EncodeToString(sum[:8])
 }
 
 // Bind atomically resolves one server-owned placement choice. Default creates a
-// fresh Box. The returned Close archives that provisional live VM; persisted
-// EnvironmentRef remains resumable and Reattach brings the exact Box back.
+// fresh sandbox. The returned Close archives that provisional live VM; persisted
+// EnvironmentRef remains resumable and Reattach brings the exact sandbox back.
 func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
 	if p == nil || p.client == nil || req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
@@ -144,8 +144,8 @@ func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (s
 	}
 }
 
-// Reattach resolves only the exact persisted Box identity. It never follows the
-// current default or fabricates a replacement when the box is gone/stale.
+// Reattach resolves only the exact persisted sandbox identity. It never follows the
+// current default or fabricates a replacement when the sandbox is gone/stale.
 func (p *Provider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	if p == nil || p.client == nil || req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
@@ -172,7 +172,7 @@ func (p *Provider) Reattach(ctx context.Context, req server.PlacementReattachReq
 }
 
 func (p *Provider) create(ctx context.Context) (server.PlacementBinding, error) {
-	created, err := p.client.createBox(ctx, p.boxType, p.ttlSeconds)
+	created, err := p.client.createSandbox(ctx, p.machineType, p.ttlSeconds)
 	if err != nil {
 		return server.PlacementBinding{}, fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
 	}
@@ -182,7 +182,7 @@ func (p *Provider) create(ctx context.Context) (server.PlacementBinding, error) 
 	if err := p.client.ensureReady(readyCtx, created.ID); err != nil {
 		// Best-effort cleanup of a partially provisioned resource.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_ = p.client.stopBox(cleanupCtx, created.ID)
+		_ = p.client.stopSandbox(cleanupCtx, created.ID)
 		cleanupCancel()
 		return server.PlacementBinding{}, fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
 	}
@@ -190,21 +190,21 @@ func (p *Provider) create(ctx context.Context) (server.PlacementBinding, error) 
 	binding.Close = func() error {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		return p.client.stopBox(closeCtx, ref.ID)
+		return p.client.stopSandbox(closeCtx, ref.ID)
 	}
 	return binding, nil
 }
 
 func (p *Provider) binding(ref session.EnvironmentRef) server.PlacementBinding {
-	ws := &workspace{client: p.client, boxID: ref.ID, workdir: p.workdir}
-	runner := &runner{client: p.client, boxID: ref.ID, workdir: p.workdir, root: ws.Root()}
+	ws := &workspace{client: p.client, sandboxID: ref.ID, workdir: p.workdir}
+	runner := &runner{client: p.client, sandboxID: ref.ID, workdir: p.workdir, root: ws.Root()}
 	env := tool.MustEnvironment(ref, ws, memledger.New(), runner)
 	return server.PlacementBinding{
 		Environment: env,
 		Ref:         ref,
 		Metadata: server.PlacementMetadata{
 			Kind:     string(Kind),
-			Label:    "Box remote environment",
+			Label:    "Boat remote environment",
 			Revision: ref.Revision,
 		},
 	}

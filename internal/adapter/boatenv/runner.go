@@ -1,4 +1,4 @@
-package boxenv
+package boatenv
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 )
 
 type runner struct {
-	client  *apiClient
-	boxID   string
-	workdir string
-	root    string
+	client    *apiClient
+	sandboxID string
+	workdir   string
+	root      string
 }
 
 var _ tool.CommandRunner = (*runner)(nil)
@@ -23,9 +23,9 @@ func (r *runner) BoundWorkspaceRoot() string { return r.root }
 
 func (r *runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
 	if strings.TrimSpace(command) == "" {
-		return tool.CommandResult{}, errors.New("boxenv: empty command")
+		return tool.CommandResult{}, errors.New("boatenv: empty command")
 	}
-	out, err := r.client.runCommand(ctx, r.boxID, r.workdir, command)
+	out, err := r.client.runCommand(ctx, r.sandboxID, r.workdir, command)
 	result := tool.CommandResult{Stdout: out.Stdout, Stderr: out.Stderr, ExitCode: out.ExitCode}
 	if err != nil {
 		return result, err

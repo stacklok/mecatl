@@ -1,10 +1,8 @@
-package boxenv
+package boatenv
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,9 +15,9 @@ import (
 )
 
 type workspace struct {
-	client  *apiClient
-	boxID   string
-	workdir string
+	client    *apiClient
+	sandboxID string
+	workdir   string
 }
 
 var (
@@ -27,7 +25,7 @@ var (
 	_ tool.WorkspaceNamespace = (*workspace)(nil)
 )
 
-func (w *workspace) Root() string { return "box:" + w.boxID + ":" + w.workdir }
+func (w *workspace) Root() string { return "boat:" + w.sandboxID + ":" + w.workdir }
 
 func (w *workspace) Read(ctx context.Context, p string) ([]byte, error) {
 	clean, err := cleanPath(p, false)
@@ -40,7 +38,7 @@ func (w *workspace) Read(ctx context.Context, p string) ([]byte, error) {
 	}
 	data, err := base64.StdEncoding.DecodeString(out.Content)
 	if err != nil {
-		return nil, errors.New("boxenv: helper returned invalid file content")
+		return nil, errors.New("boatenv: helper returned invalid file content")
 	}
 	return data, nil
 }
@@ -56,7 +54,7 @@ func (w *workspace) ReadVersion(ctx context.Context, p string) ([]byte, tool.Fil
 	}
 	data, err := base64.StdEncoding.DecodeString(out.Content)
 	if err != nil || out.Version == "" {
-		return nil, tool.FileVersion{}, errors.New("boxenv: helper returned invalid versioned content")
+		return nil, tool.FileVersion{}, errors.New("boatenv: helper returned invalid versioned content")
 	}
 	return data, tool.NewFileVersion(out.Version), nil
 }
@@ -71,7 +69,7 @@ func (w *workspace) Stat(ctx context.Context, p string) (tool.FileInfo, error) {
 		return tool.FileInfo{}, classifyHelperError("stat", clean, out, err)
 	}
 	if out.Info == nil {
-		return tool.FileInfo{}, errors.New("boxenv: helper omitted file metadata")
+		return tool.FileInfo{}, errors.New("boatenv: helper omitted file metadata")
 	}
 	return out.Info.toolFileInfo(), nil
 }
@@ -86,7 +84,7 @@ func (w *workspace) CreateFile(ctx context.Context, p string, data []byte) (tool
 		return tool.FileVersion{}, classifyHelperError("create", clean, out, err)
 	}
 	if out.Version == "" {
-		return tool.FileVersion{}, errors.New("boxenv: helper omitted created file version")
+		return tool.FileVersion{}, errors.New("boatenv: helper omitted created file version")
 	}
 	return tool.NewFileVersion(out.Version), nil
 }
@@ -105,7 +103,7 @@ func (w *workspace) ReplaceFile(ctx context.Context, p string, old tool.FileVers
 		return tool.FileVersion{}, classifyHelperError("replace", clean, out, err)
 	}
 	if out.Version == "" {
-		return tool.FileVersion{}, errors.New("boxenv: helper omitted replacement file version")
+		return tool.FileVersion{}, errors.New("boatenv: helper omitted replacement file version")
 	}
 	return tool.NewFileVersion(out.Version), nil
 }
@@ -196,38 +194,38 @@ func (w *workspace) CopyFile(ctx context.Context, source, destination string) (t
 		return tool.FileVersion{}, classifyHelperError("copy", src, out, err)
 	}
 	if out.Version == "" {
-		return tool.FileVersion{}, errors.New("boxenv: helper omitted copied file version")
+		return tool.FileVersion{}, errors.New("boatenv: helper omitted copied file version")
 	}
 	return tool.NewFileVersion(out.Version), nil
 }
 
 func cleanPath(value string, allowRoot bool) (string, error) {
 	if strings.ContainsRune(value, '\x00') || strings.HasPrefix(value, "/") {
-		return "", errors.New("boxenv: path must stay relative to the Box workspace")
+		return "", errors.New("boatenv: path must stay relative to the Boat workspace")
 	}
 	clean := pathpkg.Clean(value)
 	if value == "" {
 		clean = "."
 	}
 	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", errors.New("boxenv: path escapes the Box workspace")
+		return "", errors.New("boatenv: path escapes the Boat workspace")
 	}
 	if clean == "." && !allowRoot {
-		return "", errors.New("boxenv: operation requires a file path")
+		return "", errors.New("boatenv: operation requires a file path")
 	}
 	return clean, nil
 }
 
 func cleanPattern(pattern string) (string, error) {
 	if pattern == "" {
-		return "", errors.New("boxenv: glob pattern is required")
+		return "", errors.New("boatenv: glob pattern is required")
 	}
 	if strings.ContainsRune(pattern, '\x00') || strings.HasPrefix(pattern, "/") {
-		return "", errors.New("boxenv: glob pattern must stay relative to the Box workspace")
+		return "", errors.New("boatenv: glob pattern must stay relative to the Boat workspace")
 	}
 	for _, part := range strings.Split(pattern, "/") {
 		if part == ".." {
-			return "", errors.New("boxenv: glob pattern escapes the Box workspace")
+			return "", errors.New("boatenv: glob pattern escapes the Boat workspace")
 		}
 	}
 	return pattern, nil
@@ -235,7 +233,7 @@ func cleanPattern(pattern string) (string, error) {
 
 func compilePatternGuard(pattern string) (string, error) {
 	if strings.ContainsRune(pattern, '\x00') {
-		return "", errors.New("boxenv: grep pattern contains NUL")
+		return "", errors.New("boatenv: grep pattern contains NUL")
 	}
 	return pattern, nil
 }
@@ -287,21 +285,21 @@ type helperMatch struct {
 func (w *workspace) helper(ctx context.Context, req helperRequest) (helperResponse, error) {
 	payload, err := json.Marshal(req)
 	if err != nil {
-		return helperResponse{}, fmt.Errorf("boxenv: encode helper request: %w", err)
+		return helperResponse{}, fmt.Errorf("boatenv: encode helper request: %w", err)
 	}
 	program := base64.StdEncoding.EncodeToString([]byte(pythonHelper))
 	input := base64.StdEncoding.EncodeToString(payload)
 	command := "python3 -c 'import base64;exec(base64.b64decode(\"" + program + "\"))' '" + input + "'"
-	result, err := w.client.runCommand(ctx, w.boxID, w.workdir, command)
+	result, err := w.client.runCommand(ctx, w.sandboxID, w.workdir, command)
 	if err != nil {
 		return helperResponse{}, err
 	}
 	if result.ExitCode != 0 {
-		return helperResponse{}, fmt.Errorf("boxenv: filesystem helper failed with exit code %d", result.ExitCode)
+		return helperResponse{}, fmt.Errorf("boatenv: filesystem helper failed with exit code %d", result.ExitCode)
 	}
 	var out helperResponse
 	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Stdout)), &out); err != nil {
-		return helperResponse{}, errors.New("boxenv: filesystem helper returned invalid JSON")
+		return helperResponse{}, errors.New("boatenv: filesystem helper returned invalid JSON")
 	}
 	if !out.OK {
 		return out, helperSemanticError{code: out.Code}
@@ -312,7 +310,7 @@ func (w *workspace) helper(ctx context.Context, req helperRequest) (helperRespon
 type helperSemanticError struct{ code string }
 
 func (e helperSemanticError) Error() string {
-	return "boxenv: filesystem helper rejected operation: " + e.code
+	return "boatenv: filesystem helper rejected operation: " + e.code
 }
 
 func classifyHelperError(op, p string, out helperResponse, err error) error {
@@ -325,23 +323,18 @@ func classifyHelperError(op, p string, out helperResponse, err error) error {
 	}
 	switch out.Code {
 	case "not_found":
-		return fmt.Errorf("boxenv: %s %q: %w", op, p, fs.ErrNotExist)
+		return fmt.Errorf("boatenv: %s %q: %w", op, p, fs.ErrNotExist)
 	case "exists":
-		return fmt.Errorf("boxenv: %s %q: %w", op, p, fs.ErrExist)
+		return fmt.Errorf("boatenv: %s %q: %w", op, p, fs.ErrExist)
 	case "version_mismatch":
 		return &tool.VersionMismatchError{Path: p}
 	case "not_empty":
-		return fmt.Errorf("boxenv: %s %q: %w", op, p, tool.ErrDirectoryNotEmpty)
+		return fmt.Errorf("boatenv: %s %q: %w", op, p, tool.ErrDirectoryNotEmpty)
 	case "unsupported":
-		return fmt.Errorf("boxenv: %s %q: %w", op, p, tool.ErrFileOperationUnsupported)
+		return fmt.Errorf("boatenv: %s %q: %w", op, p, tool.ErrFileOperationUnsupported)
 	default:
-		return fmt.Errorf("boxenv: %s %q rejected by remote workspace", op, p)
+		return fmt.Errorf("boatenv: %s %q rejected by remote workspace", op, p)
 	}
-}
-
-func versionOf(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }
 
 const pythonHelper = `
@@ -385,7 +378,7 @@ def info(path, name=None):
 
 def locked():
     key = hashlib.sha256(root_s.encode()).hexdigest()
-    f = open("/tmp/mecatl-box-" + key + ".lock", "a+b")
+    f = open("/tmp/mecatl-boat-" + key + ".lock", "a+b")
     fcntl.flock(f.fileno(), fcntl.LOCK_EX)
     return f
 

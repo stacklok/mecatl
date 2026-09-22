@@ -1,4 +1,4 @@
-package boxenv
+package boatenv
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 
 func TestProviderLifecycleAndWorkspace(t *testing.T) {
 	requireLocalHelper(t)
-	fake := newFakeBoxAPI(t)
+	fake := newFakeBoatAPI(t)
 	provider, err := New(Config{
 		APIKey:       "test-key",
 		BaseURL:      fake.server.URL,
@@ -50,7 +50,7 @@ func TestProviderLifecycleAndWorkspace(t *testing.T) {
 		t.Fatalf("ref = %+v", binding.Ref)
 	}
 	if got := fake.lastCreateNoEnv(); !got {
-		t.Fatal("Box create did not force noEnv=true")
+		t.Fatal("Boat create did not force noEnv=true")
 	}
 
 	ws := binding.Environment.Workspace()
@@ -99,7 +99,7 @@ func TestProviderLifecycleAndWorkspace(t *testing.T) {
 
 	ns, ok := ws.(tool.WorkspaceNamespace)
 	if !ok {
-		t.Fatal("Box workspace does not expose namespace operations")
+		t.Fatal("Boat workspace does not expose namespace operations")
 	}
 	if _, err := ns.CopyFile(ctx, "dir/a.txt", "dir/b.txt"); err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestProviderLifecycleAndWorkspace(t *testing.T) {
 
 func TestConcurrentReplaceHasOneWinner(t *testing.T) {
 	requireLocalHelper(t)
-	fake := newFakeBoxAPI(t)
+	fake := newFakeBoatAPI(t)
 	provider, err := New(Config{APIKey: "test-key", BaseURL: fake.server.URL, HTTPClient: fake.server.Client(), Scope: "test", TTLSeconds: 60, ReadyTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestConcurrentReplaceHasOneWinner(t *testing.T) {
 }
 
 func TestNoFSAndConfigurationGuards(t *testing.T) {
-	fake := newFakeBoxAPI(t)
+	fake := newFakeBoatAPI(t)
 	provider, err := New(Config{APIKey: "test-key", BaseURL: fake.server.URL, HTTPClient: fake.server.Client(), Scope: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestNoFSAndConfigurationGuards(t *testing.T) {
 		t.Fatalf("no-fs binding=%+v err=%v", binding.Ref, err)
 	}
 	if fake.createCount() != 0 {
-		t.Fatal("no-fs binding provisioned a Box")
+		t.Fatal("no-fs binding provisioned a sandbox")
 	}
 
 	if _, err := New(Config{Scope: "test"}); err == nil {
@@ -232,42 +232,42 @@ func TestNoFSAndConfigurationGuards(t *testing.T) {
 func requireLocalHelper(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("local Box helper contract fixture requires a POSIX host")
+		t.Skip("local Boat helper contract fixture requires a POSIX host")
 	}
 	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 is required to exercise the same helper used inside Box")
+		t.Skip("python3 is required to exercise the same helper used inside a Boat sandbox")
 	}
 }
 
-type fakeBoxAPI struct {
-	t       *testing.T
-	server  *httptest.Server
-	mu      sync.Mutex
-	next    int
-	boxes   map[string]*fakeBox
-	creates []createBoxRequest
+type fakeBoatAPI struct {
+	t         *testing.T
+	server    *httptest.Server
+	mu        sync.Mutex
+	next      int
+	sandboxes map[string]*fakeSandbox
+	creates   []createSandboxRequest
 }
 
-type fakeBox struct {
+type fakeSandbox struct {
 	state string
 	root  string
 }
 
-func newFakeBoxAPI(t *testing.T) *fakeBoxAPI {
+func newFakeBoatAPI(t *testing.T) *fakeBoatAPI {
 	t.Helper()
-	f := &fakeBoxAPI{t: t, boxes: map[string]*fakeBox{}}
+	f := &fakeBoatAPI{t: t, sandboxes: map[string]*fakeSandbox{}}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(f.server.Close)
 	return f
 }
 
-func (f *fakeBoxAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
+func (f *fakeBoatAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer test-key" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if r.URL.Path == "/boxes" && r.Method == http.MethodPost {
-		var req createBoxRequest
+	if r.URL.Path == "/sandboxes" && r.Method == http.MethodPost {
+		var req createSandboxRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -275,31 +275,31 @@ func (f *fakeBoxAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		root := f.t.TempDir()
 		f.mu.Lock()
 		f.next++
-		id := fmt.Sprintf("box-%d", f.next)
-		f.boxes[id] = &fakeBox{state: "idle", root: root}
+		id := fmt.Sprintf("sbx-%d", f.next)
+		f.sandboxes[id] = &fakeSandbox{state: "idle", root: root}
 		f.creates = append(f.creates, req)
 		f.mu.Unlock()
-		writeJSON(w, http.StatusAccepted, boxEnvelope{Box: boxState{ID: id, State: "idle"}})
+		writeJSON(w, http.StatusAccepted, sandboxEnvelope{Sandbox: sandboxState{ID: id, State: "idle"}})
 		return
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] != "boxes" {
+	if len(parts) < 2 || parts[0] != "sandboxes" {
 		http.NotFound(w, r)
 		return
 	}
 	id := parts[1]
 	f.mu.Lock()
-	box := f.boxes[id]
+	sandbox := f.sandboxes[id]
 	f.mu.Unlock()
-	if box == nil {
+	if sandbox == nil {
 		http.NotFound(w, r)
 		return
 	}
 	if len(parts) == 2 && r.Method == http.MethodGet {
 		f.mu.Lock()
-		state := box.state
+		state := sandbox.state
 		f.mu.Unlock()
-		writeJSON(w, http.StatusOK, boxEnvelope{Box: boxState{ID: id, State: state}})
+		writeJSON(w, http.StatusOK, sandboxEnvelope{Sandbox: sandboxState{ID: id, State: state}})
 		return
 	}
 	if len(parts) != 3 || r.Method != http.MethodPost {
@@ -309,17 +309,17 @@ func (f *fakeBoxAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	switch parts[2] {
 	case "stop":
 		f.mu.Lock()
-		box.state = "archived"
+		sandbox.state = "archived"
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 	case "resume":
-		var req resumeBoxRequest
+		var req resumeSandboxRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.NoEnv {
 			http.Error(w, "resume must preserve noEnv", http.StatusBadRequest)
 			return
 		}
 		f.mu.Lock()
-		box.state = "idle"
+		sandbox.state = "idle"
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 	case "commands":
@@ -328,9 +328,9 @@ func (f *fakeBoxAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad command", http.StatusBadRequest)
 			return
 		}
-		cwd := box.root
+		cwd := sandbox.root
 		if req.CWD != "" && req.CWD != "." {
-			cwd = filepath.Join(box.root, filepath.FromSlash(req.CWD))
+			cwd = filepath.Join(sandbox.root, filepath.FromSlash(req.CWD))
 		}
 		if err := os.MkdirAll(cwd, 0o755); err != nil {
 			http.Error(w, "mkdir", http.StatusInternalServerError)
@@ -362,23 +362,23 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func (f *fakeBoxAPI) lastCreateNoEnv() bool {
+func (f *fakeBoatAPI) lastCreateNoEnv() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.creates) > 0 && f.creates[len(f.creates)-1].NoEnv
 }
 
-func (f *fakeBoxAPI) createCount() int {
+func (f *fakeBoatAPI) createCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.creates)
 }
 
-func (f *fakeBoxAPI) state(id string) string {
+func (f *fakeBoatAPI) state(id string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if box := f.boxes[id]; box != nil {
-		return box.state
+	if sandbox := f.sandboxes[id]; sandbox != nil {
+		return sandbox.state
 	}
 	return ""
 }
