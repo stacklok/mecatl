@@ -180,12 +180,14 @@ navigation, not a second maintained package inventory.
 
 ## Verification gates
 
-Use focused package tests while iterating. Workers finish with `task test`, which runs the
-complete offline suite and standalone module proofs without the race detector. After work is
-integrated, run `task test:race` before any implementation PR is ready for review, including
-Routine and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
-the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and sharded
-race coverage on ready PRs and main.
+Use focused package tests while iterating. After an integrated change set, run
+`task test` once to exercise the complete offline suite and standalone module proofs
+without the race detector. Do not run it after every edit or worker attempt. Before
+any implementation PR is ready for review, run `task test:race`, including for Routine
+and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
+the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and
+sharded race coverage on ready PRs and main. CI independently verifies the submitted
+branch; it does not replace focused local verification or the final gates.
 
 | Gate | What it pins |
 |---|---|

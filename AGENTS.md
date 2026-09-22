@@ -40,11 +40,15 @@ boundaries. For a focused engine test:
 cd engine && go test ./agent/ -run TestFullCycle
 ```
 
-Use `task test` during iteration and for worker completion. Before a PR is ready,
+During iteration, run the smallest focused test that exercises the changed behavior,
+including its direct integration boundary. Run `task test` once after an integrated
+change set, not after every edit or worker attempt. Before a PR is ready,
 `task lint && task test:race` must pass and the offline demo must show tool call,
-permission ask/approval, and result. Start timeout-bound full gates with 600
-seconds. `task e2e` uses live providers and costs money; it is not an offline gate.
-See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and other tasks.
+permission ask/approval, and result. CI independently verifies the submitted branch;
+it does not replace focused local verification or these final gates. Start timeout-bound
+full gates with 600 seconds. `task e2e` uses live providers and costs money; it is not
+an offline gate. See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and
+other tasks.
 
 Tests are offline and isolated from operator state. Prefer `mockllm`, `memfs`,
 `memstore`, and existing conformance suites; real-adapter tests need explicit
