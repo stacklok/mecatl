@@ -174,10 +174,10 @@ PR after verification. There is no cleanup or status-only PR.
   Status: draft.
 - [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
   bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
-  existing delegation event, mecatui, and session-debugger paths. Status: in-progress under
-  direct operator approval and the continuing explicit stacked waiver; Plan / Interface PR
-  [#1735](https://github.com/stacklok/mecatl/pull/1735) remains open and retains its human
-  merge gate, with no claim that it merged.
+  existing delegation event, mecatui, and session-debugger paths. Status: landed implementation
+  candidate under direct operator approval and the continuing explicit stacked waiver;
+  Plan / Interface PR [#1735](https://github.com/stacklok/mecatl/pull/1735) and its stacked
+  implementation retain human merge gates.
 - [Scalable reflection evidence](scalable-reflection-evidence.md) — one versioned,
   deterministic bounded-evidence materializer for automatic and explicit reflection,
   replacing raw retained-size rejection while preserving coordinator and promotion safety.

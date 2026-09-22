@@ -4,10 +4,10 @@
 **Work classification:** Architectural - selecting an external decision service and exposing durable routing-decision evidence change the operator configuration, exported engine API, wire, persistence, credential, data-egress, and adapter boundaries of delegated-model routing.
 **Decision record:** [ADR 0350](../adr/0350-jev-delegated-model-router.md)
 **Phase:** delegated-model router backend
-**Status:** in-progress, 2026-09-22 — implementation is proceeding under direct operator approval and the continuing explicit stacked waiver. Plan / Interface PR [#1735](https://github.com/stacklok/mecatl/pull/1735) remains open and retains its human merge gate; this does not claim that it merged.
+**Status:** landed, 2026-09-22 — implementation candidate; this transition becomes authoritative only after human merge. Direct operator approval and the continuing explicit stacked waiver cover the amended contract. Plan / Interface PR [#1735](https://github.com/stacklok/mecatl/pull/1735) and its stacked implementation retain human merge gates.
 **Delivery:** Split. The external decision boundary and exact operator, engine, wire, and evidence contracts are directly approved for this stacked implementation under the continuing waiver.
 **Expected tasks:** deferred to orchestration
-**Approved baseline:** `3cb18c618ce87e9c5ee7aef5c9200f2422f3e78b`, approved directly by the operator for stacked implementation. Latest amended plan commit: `3cb18c618ce87e9c5ee7aef5c9200f2422f3e78b`. Original/prior plan provenance: `299801397112cf9a2cc5a1221e180b6acb5c7e1d` / `14923277ec157b299913a66e2be6304671b0be2c`.
+**Approved baseline:** `5a2874fc987d3e08ae98d75cf7f9040534850010`, the latest amended plan implementing the directly approved routing-debugging contract and its exact-lifetime privacy requirement under the stacked waiver. Prior usability baseline: `3cb18c618ce87e9c5ee7aef5c9200f2422f3e78b`. Original/prior plan provenance: `299801397112cf9a2cc5a1221e180b6acb5c7e1d` / `14923277ec157b299913a66e2be6304671b0be2c`.
 
 This plan adds Jev as an explicitly selected classifier backend for the existing semantic model router and makes each routing decision explainable through the existing delegation lifecycle. It preserves the current taxonomy, category-to-model mapping, same-provider child construction, precedence, fallback, and per-run breaker described in [ADR 0031](../adr/0031-subagent-model-router.md) and [ADR 0042](../adr/0042-taxonomy-gated-model-router.md).
 
