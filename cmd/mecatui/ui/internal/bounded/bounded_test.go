@@ -28,7 +28,7 @@ func TestBoundedScrollCursorRespectsWidthAndHeight(t *testing.T) {
 func TestListSetItemsOwnsStorageAndPreservesAnchors(t *testing.T) {
 	items := []ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1\nb2"}, {ID: "c", Text: "c0"}}
 	list := new(List)
-	list.SetGeometry(20, 2, 2, Clip)
+	list.SetGeometry(20, 2, 1, Clip)
 	list.SetItems(items)
 	list.SetCursor(1)
 	items[1] = ListItem{ID: "changed", Text: "changed"}
@@ -49,9 +49,21 @@ func TestListSetItemsOwnsStorageAndPreservesAnchors(t *testing.T) {
 	}
 }
 
+func TestListStatusCellsAreBoundedAndCopied(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(20, 2, 3, Clip)
+	items := []ListItem{{ID: "a", Text: "row", StatusCells: [2]string{"★", "too wide"}}}
+	list.SetItems(items)
+	items[0].StatusCells[0] = "!"
+	row := list.View().Rows[0]
+	if row.GutterCells != 3 || row.StatusCells != [2]string{"★", ""} {
+		t.Fatalf("status metadata = %#v, want one valid marker in a three-cell gutter", row)
+	}
+}
+
 func TestListIndicatorAdjustedPagingUsesVisibleHeight(t *testing.T) {
 	list := new(List)
-	list.SetGeometry(20, 4, 2, Clip)
+	list.SetGeometry(20, 4, 1, Clip)
 	list.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}, {ID: "d", Text: "d"}, {ID: "e", Text: "e"}})
 	list.Scroll(LineDown)
 	list.ViewWithIndicators(4, false)

@@ -15,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // startPar / branchStartPar / branchToolPar / branchEndPar / endPar build the parallel.*
@@ -43,6 +44,25 @@ func endPar(parent, join string, count, winner int, _ string, stop string) clien
 	return client.ParallelMsg{
 		Kind: client.ParallelEnd, ParentCallID: parent, Join: join, BranchCount: count,
 		Winner: winner, Stop: stop,
+	}
+}
+
+func TestParallelBranchWinnerUsesStatusCellSelectedAndUnselected(t *testing.T) {
+	group := &parallelGroup{winner: 1, branches: []parallelBranch{{index: 0, label: "first"}, {index: 1, label: "winner"}}}
+	for _, tc := range []struct {
+		name, want string
+		cursor     int
+	}{
+		{name: "winner unselected", cursor: 0, want: " ★ ◐ winner"},
+		{name: "winner selected", cursor: 1, want: "▶★ ◐ winner"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := parallelState{branchCursor: tc.cursor, branches: new(bounded.List)}
+			got := stripANSIstr(parallelBranchSelectableList(aztec(), state, group, defaultHelpKeys(), 80).render(aztec(), 20))
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("winner gutter = %q, want output containing %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -270,7 +290,7 @@ func TestParallelBranchRowSeparatesSummaryAndActivity(t *testing.T) {
 	group := []parallelGroup{{parentCallID: "group", winner: -1, branches: []parallelBranch{*br, other}}}
 	selected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group"}, group, defaultHelpKeys(), 80, 0))
 	unselected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group", branchCursor: 1}, group, defaultHelpKeys(), 80, 0))
-	if !strings.Contains(selected, "▶ ✓ branch-1") || !strings.Contains(unselected, "  ✓ branch-1") {
+	if !strings.Contains(selected, "▶  ✓ branch-1") || !strings.Contains(unselected, "   ✓ branch-1") {
 		t.Fatalf("bounded branch selection markers changed: %q / %q", selected, unselected)
 	}
 	if !strings.Contains(selected, "\n    ") || !strings.Contains(selected, "gpt-5-mini") {

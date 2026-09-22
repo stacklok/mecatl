@@ -65,6 +65,57 @@ func TestModelCapSegmentsDescribeImageInput(t *testing.T) {
 	}
 }
 
+func TestModelsBoundedItemsExposeCurrentAndDefaultStatusCells(t *testing.T) {
+	models := []client.ModelInfo{
+		{ProviderID: "p", ID: "neither"},
+		{ProviderID: "p", ID: "current"},
+		{ProviderID: "p", ID: "default"},
+		{ProviderID: "p", ID: "both"},
+	}
+	catalog := modelCatalog{
+		active:        client.ModelSelection{ProviderID: "p", ModelID: "current"},
+		globalDefault: client.ModelSelection{ProviderID: "p", ModelID: "default"},
+	}
+	items := modelsBoundedItems(catalog, models)
+	catalog.active, catalog.globalDefault = client.ModelSelection{ProviderID: "p", ModelID: "both"}, client.ModelSelection{ProviderID: "p", ModelID: "both"}
+	items = append(items, modelsBoundedItems(catalog, models[3:])...)
+	want := [][2]string{{}, {"●", ""}, {"", "★"}, {}, {"●", "★"}}
+	for i := range items {
+		if items[i].StatusCells != want[i] {
+			t.Errorf("item %d status cells = %q, want %q", i, items[i].StatusCells, want[i])
+		}
+		if strings.HasPrefix(items[i].Text, "●") || strings.HasPrefix(items[i].Text, "★") {
+			t.Errorf("item %d embeds status marker in text: %q", i, items[i].Text)
+		}
+	}
+}
+
+func TestModelsSurfaceRendersCurrentAndDefaultStatusCellsWithSelection(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	for _, tc := range []struct {
+		name             string
+		active, default_ client.ModelSelection
+		want             string
+	}{
+		{name: "current", active: client.ModelSelection{ProviderID: "p", ModelID: "model"}, want: "▶●  p · model"},
+		{name: "default", default_: client.ModelSelection{ProviderID: "p", ModelID: "model"}, want: "▶ ★ p · model"},
+		{name: "both", active: client.ModelSelection{ProviderID: "p", ModelID: "model"}, default_: client.ModelSelection{ProviderID: "p", ModelID: "model"}, want: "▶●★ p · model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := client.ModelInfo{ProviderID: "p", ID: "model"}
+			picker := modelsState{
+				catalog:  modelCatalog{models: []client.ModelInfo{model}, active: tc.active, globalDefault: tc.default_},
+				filtered: []client.ModelInfo{model}, filter: textinput.New(), list: new(bounded.List),
+				deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: defaultHelpKeys()},
+			}
+			out, _ := picker.Render(80, 20)
+			if plain := stripANSIstr(out); !strings.Contains(plain, tc.want) {
+				t.Fatalf("status cells =\n%s\nwant %q", plain, tc.want)
+			}
+		})
+	}
+}
+
 func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
 	models := make([]client.ModelInfo, 40)
 	for i := range models {

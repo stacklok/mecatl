@@ -9,11 +9,11 @@
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
 ┃  ↑ 26 lines                                                                                         ┃
-┃       prov · model-026                                                                              ┃
-┃       prov · model-027                                                                              ┃
-┃       prov · model-028                                                                              ┃
-┃  ▶    prov · wrapped model label wrapped model label wrapped model label wrapped model label wr     ┃
-┃    apped model label wrapped model label wrapped model label wrapped model label                    ┃
+┃      prov · model-026                                                                               ┃
+┃      prov · model-027                                                                               ┃
+┃      prov · model-028                                                                               ┃
+┃  ▶   prov · wrapped model label wrapped model label wrapped model label wrapped model label wra     ┃
+┃      pped model label wrapped model label wrapped model label wrapped model label                   ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃

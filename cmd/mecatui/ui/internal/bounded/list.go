@@ -1,16 +1,28 @@
 package bounded
 
-import "strings"
+import (
+	"strings"
+	"unicode"
 
-// ListItem is an entry rendered by a List.
-type ListItem struct{ ID, Text string }
+	"github.com/charmbracelet/x/ansi"
+)
 
-// ListRow is one rendered line in a ListView.
+// ListItem is an entry rendered by a List. StatusCells are optional one-display-cell
+// markers for the two cells after the selection cell; invalid markers are omitted.
+type ListItem struct {
+	ID, Text    string
+	StatusCells [2]string
+}
+
+// ListRow is one rendered line in a ListView. StatusCells and GutterCells are
+// presentation metadata: the caller renders their cells. GutterCells is always
+// in [1, 3], and StatusCells contain only valid one-display-cell markers.
 type ListRow struct {
 	Text, ID               string
 	ItemIndex, ItemLine    int
 	Selected, CursorMarker bool
-	Gutter                 string
+	StatusCells            [2]string
+	GutterCells            int
 }
 
 // ListView is the bounded portion of a list and its scroll indicators.
@@ -34,9 +46,11 @@ type listLayout struct {
 	starts, ends []int
 }
 
-// SetGeometry configures the list viewport dimensions and fitting policy.
-func (l *List) SetGeometry(width, height, gutter int, policy Policy) {
-	l.viewport.SetGeometry(width, height, gutter, policy)
+// SetGeometry configures the list viewport dimensions, gutter-cell count, and fitting
+// policy. Every list has one selection cell and zero to two status cells; a trailing
+// padding cell separates that gutter from content.
+func (l *List) SetGeometry(width, height, gutterCells int, policy Policy) {
+	l.viewport.SetGeometry(width, height, listGutterCells(gutterCells)+1, policy)
 	l.clamp(l.layout())
 }
 
@@ -67,6 +81,11 @@ func (l *List) SetItems(items []ListItem) {
 		topID, topLine, haveTop = old.rows[oldOffset].ID, old.rows[oldOffset].ItemLine, true
 	}
 	l.items = append([]ListItem(nil), items...)
+	for i := range l.items {
+		for cell := range l.items[i].StatusCells {
+			l.items[i].StatusCells[cell] = statusCell(l.items[i].StatusCells[cell])
+		}
+	}
 	layout := l.layout()
 	if len(l.items) == 0 {
 		l.cursor, l.cursorID, l.cursorLine, l.viewport.offset = 0, "", 0, 0
@@ -259,12 +278,16 @@ func (l *List) layout() listLayout {
 	if !l.viewport.Valid() {
 		return layout
 	}
-	gutter := strings.Repeat(" ", l.viewport.gutter)
 	for i, item := range l.items {
 		layout.starts[i] = len(layout.rows)
 		for _, source := range strings.Split(item.Text, "\n") {
 			for _, text := range widthLines(source, l.viewport.contentWidth(), l.viewport.policy) {
-				layout.rows = append(layout.rows, ListRow{Text: text, ID: item.ID, ItemIndex: i, ItemLine: len(layout.rows) - layout.starts[i], Gutter: gutter})
+				itemLine := len(layout.rows) - layout.starts[i]
+				status := [2]string{}
+				if itemLine == 0 {
+					status = item.StatusCells
+				}
+				layout.rows = append(layout.rows, ListRow{Text: text, ID: item.ID, ItemIndex: i, ItemLine: itemLine, StatusCells: status, GutterCells: l.viewport.gutter - 1})
 			}
 		}
 		layout.ends[i] = len(layout.rows)
@@ -329,4 +352,18 @@ func clampBounded(v, n int) int {
 		return 0
 	}
 	return min(v, n-1)
+}
+
+func listGutterCells(cells int) int { return min(3, max(1, cells)) }
+
+func statusCell(cell string) string {
+	if ansi.StringWidth(cell) != 1 {
+		return ""
+	}
+	for _, r := range cell {
+		if unicode.IsControl(r) {
+			return ""
+		}
+	}
+	return cell
 }

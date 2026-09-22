@@ -10,10 +10,10 @@
   ┃    bounded previews — branch content is clamped + scrubbed, never in the parent              ┃
   ┃    conversation                                                                              ┃
   ┃                                                                                              ┃
-  ┃  ▶ ✓ branch-1 · refactor with a map                                                          ┃
-  ┃      done · 900ms · 2 tools · ↑12K ↓3K                                                       ┃
-  ┃      │   ✓ Edit                                                                              ┃
-  ┃    ★ ✓ branch-2 · refactor with a slice                                                      ┃
+  ┃  ▶  ✓ branch-1 · refactor with a map                                                         ┃
+  ┃       done · 900ms · 2 tools · ↑12K ↓3K                                                      ┃
+  ┃       │   ✓ Edit                                                                             ┃
+  ┃   ★ ✓ branch-2 · refactor with a slice                                                       ┃
   ┃    · +1 branches below                                                                       ┃
   ┃                                                                                              ┃
   ┃  esc back · ↑/↓ select · pgup/pgdn page · home/end first/last                                ┃

@@ -6,7 +6,10 @@
 // in terminal display cells and invalid geometry produces an empty view. Item IDs
 // must be unique and stable across refreshes: refreshes preserve the selected ID
 // and top-visible semantic anchor; a missing selection adopts its clamped
-// replacement and does not snap back. Callers own selected styling and hit regions.
+// replacement and does not snap back. Lists configure one selection cell plus zero
+// to two status cells. ListItem status cells are opaque one-display-cell markers;
+// invalid, multi-cell, or multiline values are omitted before ListRow projects them.
+// Callers own selected styling and hit regions.
 // Controls are stateful and pointer-owned; they have no Bubble Tea, theme, or
 // Mecatl domain dependency.
 package bounded

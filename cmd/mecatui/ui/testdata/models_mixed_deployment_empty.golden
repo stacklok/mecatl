@@ -8,10 +8,10 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ▶ ●  openai · GPT-5  image input reason 200K                                                       ┃
-┃       openai · GPT-5 mini  reason 128K                                                              ┃
-┃       openai · text-embed                                                                           ┃
-┃       openrouter · Claude  image input reason 1M                                                    ┃
+┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
+┃      openai · GPT-5 mini  reason 128K                                                               ┃
+┃      openai · text-embed                                                                            ┃
+┃      openrouter · Claude  image input reason 1M                                                     ┃
 ┃                                                                                                     ┃
 ┃  toolhive: credential lists no models — ask your platform admin or re-run `thv llm setup`           ┃
 ┃                                                                                                     ┃

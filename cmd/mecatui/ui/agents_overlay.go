@@ -1067,6 +1067,8 @@ type agentsSelectableList struct {
 	header, footer string
 	rows           []string
 	ids            []string
+	statusCells    [][2]string
+	gutterCells    int
 	cursor         int
 	muted          lipgloss.Style
 	noun           string
@@ -1088,7 +1090,11 @@ func (l agentsSelectableList) configuredControl(th theme.Theme, height int) (*bo
 		if i < len(l.ids) && l.ids[i] != "" {
 			id = l.ids[i]
 		}
-		items[i] = bounded.ListItem{ID: id, Text: strings.ReplaceAll(l.rows[i], "\n    ", "\n  ")}
+		status := [2]string{}
+		if i < len(l.statusCells) {
+			status = l.statusCells[i]
+		}
+		items[i] = bounded.ListItem{ID: id, Text: strings.ReplaceAll(l.rows[i], "\n    ", "\n  "), StatusCells: status}
 	}
 	if l.control == nil {
 		l.control = new(bounded.List)
@@ -1098,7 +1104,7 @@ func (l agentsSelectableList) configuredControl(th theme.Theme, height int) (*bo
 	if width <= 0 {
 		width = 1 << 20
 	}
-	l.control.SetGeometry(width, max(0, capacity), 2, bounded.Wrap)
+	l.control.SetGeometry(width, max(0, capacity), max(1, l.gutterCells), bounded.Wrap)
 	l.control.SetItems(items)
 	reveal := !hadCursor || l.control.RevealPending()
 	if !hadCursor {
@@ -1604,22 +1610,23 @@ func parallelBranchSelectableList(th theme.Theme, st parallelState, g *parallelG
 	ordered := branchesByIndex(g.branches)
 	cursor := clampBounded(st.branchCursor, len(ordered))
 	cancellable := false
-	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches", bodyWidth: bodyWidth, control: st.branches}
-	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter)-2)}
+	list := agentsSelectableList{header: header, cursor: cursor, muted: muted, noun: "branches", bodyWidth: bodyWidth, control: st.branches, gutterCells: 2}
+	r := &renderer{th: th, marks: hk, traceWidth: max(1, bodyWidth-lipgloss.Width(parallelBranchTraceGutter)-3)}
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
 			cancellable = true
 		}
-		winner := ""
-		if br.index == g.winner {
-			winner = "★ "
-		}
-		row := winner + parallelBranchText(br, bodyWidth, 2+lipgloss.Width(winner))
+		row := parallelBranchText(br, bodyWidth, 3)
 		if trace := r.renderTrace(br.trace); trace != "" {
 			row += "\n" + indentParallelBranchTrace(trace, bodyWidth)
 		}
 		list.ids = append(list.ids, fmt.Sprintf("branch-%d", br.index))
+		marker := [2]string{}
+		if br.index == g.winner {
+			marker[0] = "★"
+		}
+		list.statusCells = append(list.statusCells, marker)
 		list.rows = append(list.rows, row)
 	}
 	list.footer = focusBackHint(hk) + " · " + hk.navUp + "/" + hk.navDown + " select · " + hk.scroll + " page · " + hk.jumpTop + "/" + hk.jumpEnd + " first/last"

@@ -1494,7 +1494,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *t
 	assertRows("team", renderTeamRoster(th, teamState{}, &block{teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}}, hk, 0, 120), "◆ · selected", "◆ · unselected")
 
 	branches := []parallelBranch{{index: 0, label: "selected"}, {index: 1, label: "unselected"}}
-	assertRows("parallel branch", renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "group"}, []parallelGroup{{parentCallID: "group", winner: -1, branches: branches}}, hk, 120, 0), "◐ selected", "◐ unselected")
+	assertRows("parallel branch", renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "group"}, []parallelGroup{{parentCallID: "group", winner: -1, branches: branches}}, hk, 120, 0), " ◐ selected", " ◐ unselected")
 
 	accentOpen, _, _ := strings.Cut(th.Style("spinner").Render("x"), "x")
 	finalViews := []struct {
@@ -1517,7 +1517,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *t
 			m.parallel = parallelState{view: parallelGroupView, group: "one"}
 			m.conv.parallelGroups = []parallelGroup{{parentCallID: "one", winner: -1, branches: branches}}
 			return m
-		}, "▶ ◐ selected"},
+		}, "▶  ◐ selected"},
 		{"team", func(m Model) Model {
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
 			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}})
@@ -1551,7 +1551,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWrappedRowHasNoButtonChrome(t
 	m.parallel = parallelState{view: parallelGroupView, group: "wrapped"}
 	m.conv.parallelGroups = []parallelGroup{{parentCallID: "wrapped", winner: -1, branches: []parallelBranch{*branch}}}
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "▶ ◐ long label") {
+	if !strings.Contains(out, "▶  ◐ long label") {
 		t.Fatalf("wrapped selected branch did not retain its selection in final View:\n%s", out)
 	}
 }
@@ -1560,7 +1560,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWinnerRetainsBothMarkers(t *t
 	th := aztec()
 	branch := &parallelBranch{index: 1, label: "winner"}
 	out := stripANSIstr(renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "winner"}, []parallelGroup{{parentCallID: "winner", winner: 1, branches: []parallelBranch{*branch}}}, defaultHelpKeys(), 120, 0))
-	if !strings.Contains(out, "▶ ★ ") {
+	if !strings.Contains(out, "▶★ ") {
 		t.Fatalf("selected winning branch markers = %q, want both ▶ and ★", out)
 	}
 	bar := stripANSIstr(agentsTabBar(th, tabParallel))

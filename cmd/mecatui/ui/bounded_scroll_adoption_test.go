@@ -106,7 +106,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plain := stripANSIstr(tc.out)
-			if !strings.Contains(plain, "▶ ") || !strings.Contains(plain, tc.want) {
+			if !strings.Contains(plain, "▶") || !strings.Contains(plain, tc.want) {
 				t.Fatalf("selected multiline item is not visible:\n%s", plain)
 			}
 		})
@@ -204,7 +204,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 				assertRenderedFits(t, out, size.width, size.height)
 			}
 			for _, row := range s.list.View().Rows {
-				if got := maxLineWidth(row.Gutter + row.Text); got > size.width {
+				if got := maxLineWidth(strings.Repeat(" ", row.GutterCells+1) + row.Text); got > size.width {
 					t.Fatalf("list row width %d exceeds offered %d: %q", got, size.width, row.Text)
 				}
 			}
@@ -244,12 +244,12 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 		models.catalog.active = client.ModelSelection{ProviderID: "provider", ModelID: "model-00"}
 		models.catalog.globalDefault = client.ModelSelection{ProviderID: "provider", ModelID: "model-00"}
 		modelOut, _ := models.Render(80, 24)
-		if want := strings.TrimSuffix(th.Style("spinner").Render("▶ "), "\x1b[m") + "●★ provider"; !strings.Contains(modelOut, want) {
+		if want := strings.TrimSuffix(th.Style("spinner").Render("▶"), "\x1b[m") + "●★ provider"; !strings.Contains(modelOut, want) {
 			t.Fatalf("Models selected row does not apply spinner style: want fragment %q in %q", want, modelOut)
 		}
 
 		agentsOut := renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{cursor: 0}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24)
-		if want := strings.TrimSuffix(th.Style("spinner").Render("▶ "), "\x1b[m"); !strings.Contains(agentsOut, want) {
+		if want := strings.TrimSuffix(th.Style("spinner").Render("▶"), "\x1b[m"); !strings.Contains(agentsOut, want) {
 			t.Fatalf("Agents selected row does not apply spinner style: want fragment %q in %q", want, agentsOut)
 		}
 	})
@@ -260,7 +260,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 	s.catalog.globalDefault = client.ModelSelection{ProviderID: "provider", ModelID: "model-00"}
 	out, _ := s.Render(80, 24)
 	plain := stripANSIstr(out)
-	if !strings.Contains(plain, "▶ ●★ provider") {
+	if !strings.Contains(plain, "▶●★ provider") {
 		t.Fatalf("cursor obscured model status markers:\n%s", plain)
 	}
 	selectedStyle := th.Style("spinner")
@@ -268,12 +268,12 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 		t.Fatalf("selected-row style is not unbordered accent: frame=%d foreground=%v accent=%v", selectedStyle.GetHorizontalFrameSize(), selectedStyle.GetForeground(), th.Color("accent"))
 	}
 	agents := stripANSIstr(renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{cursor: 0}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24))
-	if !strings.Contains(agents, "▸ Parallel") || !strings.Contains(agents, "▶ ") || !strings.Contains(agents, "winner") {
+	if !strings.Contains(agents, "▸ Parallel") || !strings.Contains(agents, "▶") || !strings.Contains(agents, "winner") {
 		t.Fatalf("agents cursor, active tab, and winner markers are not independent:\n%s", agents)
 	}
 
 	list := new(bounded.List)
-	list.SetGeometry(20, 2, 2, bounded.Clip)
+	list.SetGeometry(20, 2, 1, bounded.Clip)
 	list.SetItems([]bounded.ListItem{{ID: "one", Text: "custom"}})
 	row := list.View().Rows[0]
 	custom := th.Style("warning").Render(map[bool]string{true: "!! "}[row.CursorMarker] + row.Text)

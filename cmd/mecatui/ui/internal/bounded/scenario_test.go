@@ -62,7 +62,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RespectsWidthAndHeight(t *testing.
 
 func TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets(t *testing.T) {
 	list := new(List)
-	list.SetGeometry(20, 3, 2, Clip)
+	list.SetGeometry(20, 3, 1, Clip)
 	list.SetItems([]ListItem{{ID: "zero", Text: "zero-a\nzero-b"}, {ID: "one", Text: "one-a\none-b"}, {ID: "two", Text: "two"}, {ID: "three", Text: "three-a\nthree-b"}})
 
 	list.Move(PageDown)
@@ -93,7 +93,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_MultilinePagingTargets(t *testing.
 
 func TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable(t *testing.T) {
 	list := new(List)
-	list.SetGeometry(5, 2, 2, Wrap)
+	list.SetGeometry(5, 2, 1, Wrap)
 	list.SetItems([]ListItem{{ID: "large", Text: "\x1b[31mabcdefghijklmnopqr\x1b[0m"}, {ID: "next", Text: "next"}})
 
 	for page, want := range []string{"abcdef", "ghijkl", "mnopqr"} {
@@ -103,7 +103,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_OversizedCursorItemReachable(t *te
 		}
 		var content strings.Builder
 		for rowIndex, row := range view.Rows {
-			if !row.Selected || row.ID != "large" || row.Gutter != "  " || row.CursorMarker != (rowIndex == 0) {
+			if !row.Selected || row.ID != "large" || row.GutterCells != 1 || row.StatusCells != [2]string{} || row.CursorMarker != (rowIndex == 0) {
 				t.Errorf("forward page %d row %d metadata = %#v", page, rowIndex, row)
 			}
 			if !strings.Contains(row.Text, "\x1b[31m") || !strings.HasSuffix(row.Text, "\x1b[0m") {
@@ -150,7 +150,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	}
 
 	list := new(List)
-	list.SetGeometry(12, 2, 2, Clip)
+	list.SetGeometry(12, 2, 1, Clip)
 	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}, {ID: "c", Text: "c"}})
 	list.SetCursor(1)
 	cursor, id := list.Cursor(), list.CursorID()
@@ -164,14 +164,14 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	}
 
 	for _, bounds := range [][2]int{{2, 2}, {0, 2}, {-1, 2}, {12, 0}, {12, -1}} {
-		list.SetGeometry(bounds[0], bounds[1], 2, Wrap)
+		list.SetGeometry(bounds[0], bounds[1], 1, Wrap)
 		if view := list.View(); len(view.Rows) != 0 || view.Above != 0 || view.Below != 0 {
 			t.Errorf("bounds %v rendered %#v, want empty", bounds, view)
 		}
 	}
 
 	indicators := new(List)
-	indicators.SetGeometry(12, 2, 2, Clip)
+	indicators.SetGeometry(12, 2, 1, Clip)
 	indicators.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}})
 	indicators.Scroll(LineDown)
 	view := indicators.ViewWithIndicators(2, false)
@@ -192,7 +192,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 
 func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t *testing.T) {
 	list := new(List)
-	list.SetGeometry(20, 2, 2, Clip)
+	list.SetGeometry(20, 2, 1, Clip)
 	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1\nb2"}, {ID: "c", Text: "c0"}})
 	list.SetCursor(1)
 	list.Move(PageDown)
@@ -211,7 +211,7 @@ func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t 
 	// Losing only the top semantic anchor preserves the selected ID while falling
 	// back to the old physical offset, clamped against the refreshed layout.
 	list = new(List)
-	list.SetGeometry(20, 2, 2, Clip)
+	list.SetGeometry(20, 2, 1, Clip)
 	list.SetItems([]ListItem{{ID: "a", Text: "a0\na1"}, {ID: "b", Text: "b0\nb1"}, {ID: "c", Text: "c0\nc1"}})
 	list.SetCursor(1)
 	list.Scroll(LineDown)

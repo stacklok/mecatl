@@ -9,10 +9,10 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ▶ ●  openai · GPT-5  image input reason 200K                                                       ┃
-┃       openai · GPT-5 mini  reason 128K                                                              ┃
-┃       openai · text-embed                                                                           ┃
-┃     ★ openrouter · Claude  image input reason 1M                                                    ┃
+┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
+┃      openai · GPT-5 mini  reason 128K                                                               ┃
+┃      openai · text-embed                                                                            ┃
+┃    ★ openrouter · Claude  image input reason 1M                                                     ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃

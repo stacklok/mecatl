@@ -237,7 +237,7 @@ func (s *modelsState) syncFilter() {
 func (s *modelsState) syncList(width, height int) bool {
 	list := s.listControl()
 	hadCursor := list.CursorID() != ""
-	list.SetGeometry(width, height, 2, bounded.Wrap)
+	list.SetGeometry(width, height, 3, bounded.Wrap)
 	list.SetItems(modelsBoundedItems(s.catalog, s.filtered))
 	reveal := len(s.filtered) > 0 && !hadCursor
 	if !hadCursor {
@@ -275,8 +275,9 @@ func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bound
 	items := make([]bounded.ListItem, 0, len(models))
 	for _, model := range models {
 		items = append(items, bounded.ListItem{
-			ID:   model.ProviderID + "\x00" + model.ID,
-			Text: modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, model),
+			ID:          model.ProviderID + "\x00" + model.ID,
+			Text:        modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, model),
+			StatusCells: modelStatusCells(catalog.active, catalog.globalDefault, model),
 		})
 	}
 	return items
@@ -409,20 +410,23 @@ func renderProviderStatusLines(statuses []client.ProviderStatus, inventoryEmpty 
 	return lines
 }
 
-func modelRowText(active, globalDefault client.ModelSelection, configProvenanceProviderIDs map[string]bool, mi client.ModelInfo) string {
-	activeMark := " "
+func modelStatusCells(active, globalDefault client.ModelSelection, mi client.ModelInfo) [2]string {
+	cells := [2]string{}
 	if active.Matches(mi) {
-		activeMark = "●"
+		cells[0] = "●"
 	}
-	defMark := " "
 	if !globalDefault.IsZero() && globalDefault.Matches(mi) {
-		defMark = "★"
+		cells[1] = "★"
 	}
+	return cells
+}
+
+func modelRowText(_ client.ModelSelection, _ client.ModelSelection, configProvenanceProviderIDs map[string]bool, mi client.ModelInfo) string {
 	segs := modelCapSegments(mi)
 	if configProvenanceProviderIDs != nil && configProvenanceProviderIDs[mi.ProviderID] {
 		segs = append([]string{"org"}, segs...)
 	}
-	line := activeMark + defMark + " " + terminaltext.Sanitize(mi.ProviderID) + " · " + terminaltext.Sanitize(modelLabel(mi))
+	line := terminaltext.Sanitize(mi.ProviderID) + " · " + terminaltext.Sanitize(modelLabel(mi))
 	if len(segs) > 0 {
 		line += "  " + strings.Join(segs, " ")
 	}
