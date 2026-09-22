@@ -576,7 +576,12 @@ seconds, run with a 10-second request deadline and no SDK retries, carry at most
 64 KiB of measured text and 255 categories, and accept at most 1 MiB of response
 data. HTTPS is required except for loopback HTTP endpoints, and redirects are
 disabled. These transport bounds do not bound arbitrary CPU time in SDK JSON
-processing. Every failure remains fail-soft with a static miss reason; reported
+processing. Every failure remains fail-soft. The adapter returns only a small
+adapter-local typed status; composition maps it to the engine-owned common outcomes
+`classifier-error`, `bad-verdict`, `unknown-category`, `low-confidence`,
+`input-over-limit`, `capacity-timeout`, `cancelled`, or `timeout` before invoking the
+unchanged callback. Caller cancellation is distinct from caller, request, and typed SDK
+deadlines, and arbitrary SDK error text is never classified. Reported
 input and output usage survives hits, low-confidence misses, mapping misses, and
 protocol errors that contain validated usage.
 
@@ -638,9 +643,8 @@ deployments (it is orthogonal to the ask-review path).
 gauntlet-#7 safe) when routed; a per-classification INFO rides the existing child
 diagnostic chokepoint and a Build-once "router ACTIVE" fact narrates the config. Every
 MISS logs an INFO naming the reason (`degenerate-input`/`classifier-error`/`cancelled`/
-`bad-verdict`/`unknown-category`/`jev-error`/`jev-invalid-response`/
-`jev-low-confidence`/`jev-over-limit`/`jev-queue-timeout`/
-`category-selector-empty`/`category-target-unresolvable`/
+`timeout`/`bad-verdict`/`unknown-category`/`low-confidence`/`input-over-limit`/
+`capacity-timeout`/`category-selector-empty`/`category-target-unresolvable`/
 `empty-model` — metadata only, issue #287); the breaker-open INFO is unchanged. The
 routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through

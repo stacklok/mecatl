@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Backend-neutral router outcomes** — adds `agent.RouterMissTimeout`,
+  `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and
+  `RouterMissCapacityTimeout` to the engine-owned closed classifier-outcome taxonomy.
+  Added (minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
@@ -231,6 +236,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Model-router deadline outcome** — `agent.RunModelRouter` now reports an observed
+  caller or operation deadline as `RouterMissTimeout` instead of conflating it with
+  `RouterMissCancelled`; cancellation remains `RouterMissCancelled`. Changed
+  (observable behavior, pre-v1 minor).
 
 - **Go compatibility floor** - the engine module requires Go 1.27. The root,
   provider, and authentication modules use the same floor. Changed (breaking,

@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 // TestADR_0350_Scenario2_ExistingRoutingSemantics pins that selecting a different
 // composition backend does not alter any consumer of the existing routeTask callback.
@@ -17,4 +21,17 @@ func TestADR_0350_Scenario2_ExistingRoutingSemantics(t *testing.T) {
 	t.Run("team member retained across rounds", TestMemberRoutesOncePerRun)
 	t.Run("Parallel branch", TestParallelRoutesBranchOnClassifiedModel)
 	t.Run("Parallel branch routes once", TestParallelRoutesEachBranchExactlyOnce)
+}
+
+func TestRunModelRouterOperationDeadlineIsTimeout(t *testing.T) {
+	_, _, reason, ok := runModelRouter(context.Background(), markerEngine("classifier"), ModelRouteRequest{
+		TaskPrompt: "task",
+		Categories: []ModelRouteCategory{{Name: "small", Description: "small task"}},
+	}, 0)
+	if ok || reason != RouterMissTimeout {
+		t.Fatalf("operation deadline reason=%q ok=%v", reason, ok)
+	}
+	if modelRouterTimeout != 30*time.Second {
+		t.Fatalf("production router timeout = %v", modelRouterTimeout)
+	}
 }

@@ -1550,6 +1550,14 @@ slot defaults.
 `internal/adapter/jevrouter` owns one Typesafe v0.1.0 client and one eight-slot semaphore
 per Build. `buildModelRouterTask` selects that client only for Jev and keeps the existing
 callback, category-to-model alias mapping, routing eligibility, breaker, and usage fold.
+The adapter returns an adapter-local `MissKind` mechanism value, never a backend-prefixed
+machine string and never an engine import. Composition exhaustively translates its eight
+failure values to the engine-owned common taxonomy; an unknown local value fails closed to
+`classifier-error`. Failed calls classify observed caller state before request/typed error
+state, while a completed validated response wins over a late cancellation. Independently
+validated `ProtocolError.Usage` is retained before that classification. The LLM backend uses
+the same `cancelled` versus `timeout` distinction from observed context state without parsing
+provider error prose. All misses still feed the existing three-miss per-run breaker.
 The adapter sends one fixed Choice question, validates the exact offered choice, and
 returns only static miss codes. It enforces a 10-second queue wait, a 10-second request
 deadline, no retries or redirects, a 1 MiB response limit, HTTPS except loopback HTTP,

@@ -3,6 +3,7 @@ package jevrouter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,13 +48,14 @@ func testCategories() []Category {
 
 func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	tests := []struct {
-		name, response, wantReason string
+		name, response string
+		wantReason     MissKind
 	}{
-		{"unknown choice", validResponse("other", 0.9, 1, 2), MissInvalidResponse},
-		{"malformed response", `{`, MissInvalidResponse},
-		{"non-finite probability", `{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":"fast","probabilities":{"fast":1e999,"deep":0},"confidence":1}},"usage":{"input_tokens":1,"output_tokens":2}}`, MissInvalidResponse},
-		{"confidence below zero", validResponse("fast", -0.1, 1, 2), MissInvalidResponse},
-		{"confidence above one", validResponse("fast", 1.1, 1, 2), MissInvalidResponse},
+		{"unknown choice", validResponse("other", 0.9, 1, 2), MissUnknownCategory},
+		{"malformed response", `{`, MissBadVerdict},
+		{"non-finite probability", `{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":"fast","probabilities":{"fast":1e999,"deep":0},"confidence":1}},"usage":{"input_tokens":1,"output_tokens":2}}`, MissBadVerdict},
+		{"confidence below zero", validResponse("fast", -0.1, 1, 2), MissBadVerdict},
+		{"confidence above one", validResponse("fast", 1.1, 1, 2), MissBadVerdict},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,7 +69,7 @@ func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 
 	r, calls := newTestRouter(t, func(http.ResponseWriter, *http.Request) { t.Fatal("over-limit request performed I/O") }, 0)
 	category, _, reason, ok := r.Route(t.Context(), strings.Repeat("x", maxTextBytes+1), testCategories())
-	if ok || category != "" || reason != MissOverLimit || calls.Load() != 0 {
+	if ok || category != "" || reason != MissInputOverLimit || calls.Load() != 0 {
 		t.Fatalf("over-limit Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 	}
 }
@@ -90,7 +92,7 @@ func TestADR_0350_Scenario3_HitUsage(t *testing.T) {
 		_, _ = w.Write([]byte(validResponse("deep", 0.9, 11, 7)))
 	}, 0)
 	category, usage, reason, ok := r.Route(t.Context(), "task", testCategories())
-	if !ok || category != "deep" || reason != "" {
+	if !ok || category != "deep" || reason != missNone {
 		t.Fatalf("Route = (%q, reason=%q, ok=%v), want deep hit", category, reason, ok)
 	}
 	if usage.InputTokens != 11 || usage.OutputTokens != 7 {
@@ -110,7 +112,7 @@ func TestADR_0350_Scenario3_ErrorUsage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.response)) }, 0)
 			category, usage, reason, ok := r.Route(t.Context(), "task", testCategories())
-			if ok || category != "" || reason != MissInvalidResponse {
+			if ok || category != "" || reason != MissBadVerdict {
 				t.Fatalf("Route = (%q, reason=%q, ok=%v), want protocol miss", category, reason, ok)
 			}
 			if usage.InputTokens != tc.wantInput || usage.OutputTokens != tc.wantOutput {
@@ -163,7 +165,7 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 		tooMany[i] = Category{Name: fmt.Sprintf("c%d", i), Description: "d"}
 	}
 	_, _, reason, ok := r.Route(t.Context(), "task", tooMany)
-	if ok || reason != MissOverLimit || calls.Load() != 1 {
+	if ok || reason != MissInputOverLimit || calls.Load() != 1 {
 		t.Fatalf("category cap reason=%q ok=%v calls=%d", reason, ok, calls.Load())
 	}
 
@@ -172,7 +174,7 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 	if _, _, reason, ok := r.Route(t.Context(), boundaryTask, testCategories()); !ok {
 		t.Fatalf("exact limit rejected: %q", reason)
 	}
-	if _, _, reason, ok := r.Route(t.Context(), boundaryTask+"x", testCategories()); ok || reason != MissOverLimit {
+	if _, _, reason, ok := r.Route(t.Context(), boundaryTask+"x", testCategories()); ok || reason != MissInputOverLimit {
 		t.Fatalf("over limit accepted: %q", reason)
 	}
 }
@@ -180,6 +182,22 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+type cancelOnEOFBody struct {
+	reader *strings.Reader
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnEOFBody) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	if errors.Is(err, io.EOF) && b.cancel != nil {
+		b.cancel()
+		b.cancel = nil
+	}
+	return n, err
+}
+
+func (*cancelOnEOFBody) Close() error { return nil }
 
 func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 	bounds := defaultBounds()
@@ -247,7 +265,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		}
 		r.semaphore <- struct{}{}
 		category, _, reason, ok := r.Route(t.Context(), "queued", testCategories())
-		if ok || category != "" || reason != MissQueueTimeout || calls.Load() != 0 {
+		if ok || category != "" || reason != MissCapacityTimeout || calls.Load() != 0 {
 			t.Fatalf("saturated Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
 		<-r.semaphore
@@ -274,12 +292,12 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		category, _, reason, ok := r.Route(ctx, "cancelled", testCategories())
-		if ok || category != "" || reason != MissError || calls.Load() != 0 {
+		if ok || category != "" || reason != MissCancelled || calls.Load() != 0 {
 			t.Fatalf("cancelled Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
 		<-r.semaphore
 		category, _, reason, ok = r.Route(t.Context(), "after cancellation", testCategories())
-		if !ok || category != "fast" || reason != "" || calls.Load() != 1 {
+		if !ok || category != "fast" || reason != missNone || calls.Load() != 1 {
 			t.Fatalf("post-cancellation Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
 	})
@@ -306,8 +324,8 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 		category, _, reason, ok := r.Route(t.Context(), "first", testCategories())
-		if ok || category != "" || reason != MissError {
-			t.Fatalf("timed-out Route = (%q, reason=%q, ok=%v)", category, reason, ok)
+		if ok || category != "" || reason != MissTimeout {
+			t.Fatalf("timed-out Route = (%q, reason=%v, ok=%v)", category, reason, ok)
 		}
 		select {
 		case <-cancelled:
@@ -315,7 +333,7 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 			t.Fatal("request deadline did not cancel the in-flight transport")
 		}
 		category, _, reason, ok = r.Route(t.Context(), "second", testCategories())
-		if !ok || category != "fast" || reason != "" || calls.Load() != 2 {
+		if !ok || category != "fast" || reason != missNone || calls.Load() != 2 {
 			t.Fatalf("post-timeout Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 		}
 	})
@@ -346,14 +364,16 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		t.Cleanup(cancel)
 		result := make(chan struct {
-			category, reason string
-			ok               bool
+			category string
+			reason   MissKind
+			ok       bool
 		}, 1)
 		go func() {
 			category, _, reason, ok := r.Route(ctx, "first", testCategories())
 			result <- struct {
-				category, reason string
-				ok               bool
+				category string
+				reason   MissKind
+				ok       bool
 			}{category, reason, ok}
 		}()
 		select {
@@ -369,22 +389,82 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		}
 		select {
 		case got := <-result:
-			if got.ok || got.category != "" || got.reason != MissError {
+			if got.ok || got.category != "" || got.reason != MissCancelled {
 				t.Fatalf("cancelled Route = (%q, reason=%q, ok=%v)", got.category, got.reason, got.ok)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("cancelled Route did not return promptly")
 		}
 		category, _, reason, ok := r.Route(t.Context(), "second", testCategories())
-		if !ok || category != "fast" || reason != "" || calls.Load() != 2 {
+		if !ok || category != "fast" || reason != missNone || calls.Load() != 2 {
 			t.Fatalf("post-cancellation Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
+		}
+	})
+
+	t.Run("wrapped typed deadline is timeout without parsing text", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("opaque failure: %w", context.DeadlineExceeded)
+		})}
+		r, err := newRouter(Options{APIKey: "test", BaseURL: "https://example.com", HTTPClient: client},
+			transportBounds{maxConcurrent: 1, queueTimeout: time.Second, requestTimeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, reason, ok := r.Route(t.Context(), "task", testCategories()); ok || reason != MissTimeout {
+			t.Fatalf("wrapped deadline reason=%v ok=%v", reason, ok)
+		}
+	})
+
+	t.Run("completed response wins over late cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       &cancelOnEOFBody{reader: strings.NewReader(validResponse("fast", 1, 6, 2)), cancel: cancel},
+				Request:    req,
+			}, nil
+		})}
+		r, err := newRouter(Options{APIKey: "test", BaseURL: "https://example.com", HTTPClient: client},
+			transportBounds{maxConcurrent: 1, queueTimeout: time.Second, requestTimeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		category, usage, reason, ok := r.Route(ctx, "task", testCategories())
+		if !ok || category != "fast" || reason != missNone || usage.InputTokens != 6 || usage.OutputTokens != 2 {
+			t.Fatalf("late-cancel response = category=%q usage=%+v reason=%v ok=%v", category, usage, reason, ok)
+		}
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatal("test did not establish late caller cancellation")
+		}
+	})
+
+	t.Run("protocol usage survives caller-state override", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		body := `{"model":"jev-1.13.0","answers":{},"usage":{"input_tokens":5,"output_tokens":2}}`
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       &cancelOnEOFBody{reader: strings.NewReader(body), cancel: cancel},
+				Request:    req,
+			}, nil
+		})}
+		r, err := newRouter(Options{APIKey: "test", BaseURL: "https://example.com", HTTPClient: client},
+			transportBounds{maxConcurrent: 1, queueTimeout: time.Second, requestTimeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, usage, reason, ok := r.Route(ctx, "task", testCategories())
+		if ok || reason != MissCancelled || usage.InputTokens != 5 || usage.OutputTokens != 2 {
+			t.Fatalf("protocol override = usage=%+v reason=%v ok=%v", usage, reason, ok)
 		}
 	})
 
 	large, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", int(responseLimit)+1)))
 	}, 0)
-	if _, _, reason, ok := large.Route(t.Context(), "task", testCategories()); ok || reason != MissError {
+	if _, _, reason, ok := large.Route(t.Context(), "task", testCategories()); ok || reason != MissClassifierError {
 		t.Fatalf("oversized response reason=%q ok=%v", reason, ok)
 	}
 }
@@ -403,11 +483,11 @@ func TestJevReasonAndCredentialRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	category, _, reason, ok := r.Route(t.Context(), task, testCategories())
-	if ok || category != "" || reason != MissInvalidResponse {
+	if ok || category != "" || reason != MissBadVerdict {
 		t.Fatalf("unexpected result: %q %q %v", category, reason, ok)
 	}
 	for _, forbidden := range []string{secret, task, hostile} {
-		if strings.Contains(reason, forbidden) {
+		if strings.Contains(fmt.Sprint(reason), forbidden) {
 			t.Fatalf("reason leaked %q: %q", forbidden, reason)
 		}
 	}

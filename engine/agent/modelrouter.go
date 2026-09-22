@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -26,10 +27,10 @@ import (
 // returns ok=false and the caller (the Subagent run() hook) falls through to the
 // inherited default explorer model — byte-identically to a deployment with no router.
 
-// Router miss-reason constants (issue #287): the SPECIFIC reason a classification did NOT
-// yield a routed model. They enumerate the CLOSED set RunModelRouter itself returns (its
-// `missReason` output); the dispatch-path chokepoint logs WHY a delegation fell through to
-// the inherited default model. Empty ("") is the success sentinel.
+// Router miss-reason constants (issue #287): the SPECIFIC common outcome a
+// classifier backend observed when it did NOT yield a routed model. They enumerate the
+// CLOSED set owned by the engine; composition maps backend-local mechanisms into these
+// values before invoking the callback. Empty ("") is the success sentinel.
 //
 // NOTE: the Deps.SubagentModelRouter closure (the COMPOSITION half) may return ADDITIONAL,
 // OPEN-SET free-form reasons for its own category-mapping misses (e.g.
@@ -49,9 +50,16 @@ const (
 	// RouterMissClassifierError: the classifier run ended StopError (the provider/run
 	// failed) — fail-soft inherit.
 	RouterMissClassifierError = "classifier-error"
-	// RouterMissCancelled: the classifier run ended StopCancelled — the caller's ctx was
-	// cancelled (including the 30s modelRouterTimeout firing) — fail-soft inherit.
+	// RouterMissCancelled means the caller's context was observed cancelled.
 	RouterMissCancelled = "cancelled"
+	// RouterMissTimeout means a caller, operation, or typed classifier deadline was observed.
+	RouterMissTimeout = "timeout"
+	// RouterMissLowConfidence means a valid classifier result was below a configured threshold.
+	RouterMissLowConfidence = "low-confidence"
+	// RouterMissInputOverLimit means a local classifier input bound rejected the request.
+	RouterMissInputOverLimit = "input-over-limit"
+	// RouterMissCapacityTimeout means bounded classifier queue capacity expired while the caller remained active.
+	RouterMissCapacityTimeout = "capacity-timeout"
 	// RouterMissBadVerdict: the classifier's output was not a single JSON object, was
 	// unparseable JSON, or named an empty category — the whole-output-single-object parse
 	// rejected it (fail-soft, defeats a forged verdict echoed inside the fenced prompt).
@@ -172,10 +180,15 @@ type routerVerdict struct {
 // empty category list, or a blank task prompt is a fail-soft miss (ok=false), never a
 // panic — it is a leaf helper on the fast path.
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool) {
+	return runModelRouter(ctx, engine, req, modelRouterTimeout)
+}
+
+func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, timeout time.Duration) (category string, usage session.Usage, missReason string, ok bool) {
 	if engine == nil || len(req.Categories) == 0 || strings.TrimSpace(req.TaskPrompt) == "" {
 		return "", session.Usage{}, RouterMissDegenerateInput, false
 	}
-	ctx, cancel := context.WithTimeout(ctx, modelRouterTimeout)
+	callerCtx := ctx
+	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	sess := session.New(
@@ -188,20 +201,34 @@ func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) 
 	// A tool-less in-memory session under the zero (headless) child posture: the
 	// classifier scores text and calls no tools, so judgeWorkspace{} keeps it
 	// isolated and its own (non-existent) asks auto-deny — no nesting, no surfacing.
-	run := engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
+	run := engine.Run(operationCtx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
 	final, stop := drainChild(run, childPosture{role: "model-router"})
 	switch stop {
 	case session.StopError:
-		// Run did not complete: fail-soft, inherit the default model. Return whatever
-		// was spent so far (the fail-soft path may have still consumed tokens before
-		// the failure).
+		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
+			return "", sess.Usage, reason, false
+		}
 		return "", sess.Usage, RouterMissClassifierError, false
 	case session.StopCancelled:
-		// Cancelled (incl. the 30s modelRouterTimeout): fail-soft, inherit; return spend.
+		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
+			return "", sess.Usage, reason, false
+		}
 		return "", sess.Usage, RouterMissCancelled, false
 	}
 	cat, reason, catOK := parseRouterVerdict(final, req.Categories)
 	return cat, sess.Usage, reason, catOK
+}
+
+func modelRouterContextMiss(callerCtx, operationCtx context.Context) string {
+	for _, err := range []error{callerCtx.Err(), operationCtx.Err()} {
+		switch {
+		case errors.Is(err, context.Canceled):
+			return RouterMissCancelled
+		case errors.Is(err, context.DeadlineExceeded):
+			return RouterMissTimeout
+		}
+	}
+	return ""
 }
 
 // parseRouterVerdict requires the classifier's WHOLE trimmed output to be a single JSON

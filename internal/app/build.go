@@ -7168,15 +7168,15 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 		router := cfg.jevRouter
 		return func(ctx context.Context, taskPrompt string) (string, string, session.Usage, string, bool) {
 			if router == nil {
-				return "", "", session.Usage{}, jevrouter.MissError, false
+				return "", "", session.Usage{}, agent.RouterMissClassifierError, false
 			}
 			jevCategories := make([]jevrouter.Category, 0, len(cfg.RouterCategories))
 			for _, category := range cfg.RouterCategories {
 				jevCategories = append(jevCategories, jevrouter.Category{Name: category.Name, Description: category.Description})
 			}
-			category, reportedUsage, missReason, ok := router.Route(ctx, taskPrompt, jevCategories)
+			category, reportedUsage, missKind, ok := router.Route(ctx, taskPrompt, jevCategories)
 			if !ok {
-				return "", "", reportedUsage, missReason, false
+				return "", "", reportedUsage, jevRouterMissReason(missKind), false
 			}
 			sel := strings.TrimSpace(selectorByName[category])
 			if sel == "" {
@@ -7233,6 +7233,29 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 			return "", "", classifierUsage, fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
 		}
 		return category, id, classifierUsage, "", true
+	}
+}
+
+func jevRouterMissReason(kind jevrouter.MissKind) string {
+	switch kind {
+	case jevrouter.MissBadVerdict:
+		return agent.RouterMissBadVerdict
+	case jevrouter.MissUnknownCategory:
+		return agent.RouterMissUnknownCategory
+	case jevrouter.MissLowConfidence:
+		return agent.RouterMissLowConfidence
+	case jevrouter.MissInputOverLimit:
+		return agent.RouterMissInputOverLimit
+	case jevrouter.MissCapacityTimeout:
+		return agent.RouterMissCapacityTimeout
+	case jevrouter.MissCancelled:
+		return agent.RouterMissCancelled
+	case jevrouter.MissTimeout:
+		return agent.RouterMissTimeout
+	case jevrouter.MissClassifierError:
+		return agent.RouterMissClassifierError
+	default:
+		return agent.RouterMissClassifierError
 	}
 }
 

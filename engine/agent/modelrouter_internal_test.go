@@ -573,6 +573,85 @@ func TestRoutingReasonPayloadEventSafeAllowlist(t *testing.T) {
 	}
 }
 
+func TestADR_0350_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
+	canonical := []string{
+		RouterMissDegenerateInput,
+		RouterMissClassifierError,
+		RouterMissCancelled,
+		RouterMissTimeout,
+		RouterMissBadVerdict,
+		RouterMissUnknownCategory,
+		RouterMissLowConfidence,
+		RouterMissInputOverLimit,
+		RouterMissCapacityTimeout,
+	}
+	for _, reason := range canonical {
+		if got := routingReasonPayload(reason); got != reason {
+			t.Fatalf("canonical reason %q projected as %q", reason, got)
+		}
+	}
+	for _, unknown := range []string{"jev-error", "provider timeout: secret request body", strings.Repeat("x", maxRoutingReasonPreview+1)} {
+		if got := routingReasonPayload(unknown); got != routingReasonGeneric {
+			t.Fatalf("unknown external reason projected as %q", got)
+		}
+	}
+
+	diag := newInternalCapturingDiag()
+	current := ""
+	eng := NewEngine(Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
+		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+			return "", "", session.Usage{}, current, false
+		},
+	})
+	run := &Run{router: &modelRouterBreaker{max: len(canonical) + 1}, children: newChildRunRegistry(), diag: diag}
+	caps := eng.parentCaps(run, nil, 0)
+	for _, current = range canonical {
+		caps.routeTask(context.Background(), "sensitive task")
+	}
+	records := diag.snapshot()
+	for _, reason := range canonical {
+		found := false
+		for _, record := range records {
+			if record.attrs["reason"] == reason {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("callback diagnostic omitted canonical reason %q", reason)
+		}
+	}
+
+	var subagentStart *session.SubagentPayload
+	tl := routerTool()
+	_, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("canonical", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
+		memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvSubagentStart {
+				subagentStart = ev.Subagent
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+			return "", "", RouterMissTimeout, false
+		}})
+	if err != nil || subagentStart == nil || subagentStart.RoutingReason != RouterMissTimeout {
+		t.Fatalf("Subagent canonical projection = %+v, err=%v", subagentStart, err)
+	}
+
+	var parallelStart *session.ParallelPayload
+	emitter := branchEmitter{parentCallID: "canonical", emit: func(ev session.Event) { parallelStart = ev.Parallel }}
+	emitter.branchStart(0, "incarnation", "goal", "", "", RouterMissLowConfidence, "model")
+	if parallelStart == nil || parallelStart.RoutingReason != RouterMissLowConfidence {
+		t.Fatalf("Parallel canonical projection = %+v", parallelStart)
+	}
+
+	teamRoster := []session.TeamMemberSpec{{Name: "worker", RoutingReason: routingReasonPayload(RouterMissInputOverLimit)}}
+	teamStart := session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{Roster: teamRoster}}
+	if teamStart.Team.Roster[0].RoutingReason != RouterMissInputOverLimit {
+		t.Fatalf("Team canonical projection = %+v", teamStart.Team.Roster[0])
+	}
+}
+
 // FAIL-SOFT: a routeTask MISS (ok=false) falls through to the DEFAULT explorer engine —
 // the delegation still completes, never errors.
 func TestRunRouteTaskMissInheritsDefault(t *testing.T) {

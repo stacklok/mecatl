@@ -25,17 +25,30 @@ const (
 	defaultQueueTimeout          = 10 * time.Second
 	defaultRequestTimeout        = 10 * time.Second
 	responseLimit          int64 = 1 << 20
+)
 
-	// MissError is the static miss reason for transport, SDK, timeout, or cancellation failures.
-	MissError = "jev-error"
-	// MissInvalidResponse is the static miss reason for malformed or semantically invalid responses.
-	MissInvalidResponse = "jev-invalid-response"
-	// MissLowConfidence is the static miss reason for a choice below the configured threshold.
-	MissLowConfidence = "jev-low-confidence"
-	// MissOverLimit is the static miss reason for a locally rejected request size.
-	MissOverLimit = "jev-over-limit"
-	// MissQueueTimeout is the static miss reason for exhausting the bounded queue wait.
-	MissQueueTimeout = "jev-queue-timeout"
+// MissKind is the adapter-local mechanism result for a failed classification.
+// Composition translates every nonzero value to the engine's common router outcome taxonomy.
+type MissKind uint8
+
+const (
+	missNone MissKind = iota
+	// MissClassifierError identifies an unclassified transport or SDK failure.
+	MissClassifierError
+	// MissBadVerdict identifies an invalid response protocol.
+	MissBadVerdict
+	// MissUnknownCategory identifies a structured offered-set violation.
+	MissUnknownCategory
+	// MissLowConfidence identifies a valid choice below the configured threshold.
+	MissLowConfidence
+	// MissInputOverLimit identifies a locally rejected input bound.
+	MissInputOverLimit
+	// MissCapacityTimeout identifies an expired queue wait while the caller remained active.
+	MissCapacityTimeout
+	// MissCancelled identifies observed caller cancellation.
+	MissCancelled
+	// MissTimeout identifies an observed caller, request, or SDK deadline.
+	MissTimeout
 )
 
 // Category is one trusted operator-authored classification choice.
@@ -118,10 +131,10 @@ func newRouter(opts Options, bounds transportBounds) (*Router, error) {
 	}, nil
 }
 
-// Route makes exactly one bounded classification attempt and returns only static miss reasons.
-func (r *Router) Route(ctx context.Context, task string, categories []Category) (string, session.Usage, string, bool) {
+// Route makes exactly one bounded classification attempt and returns an adapter-local miss kind.
+func (r *Router) Route(ctx context.Context, task string, categories []Category) (string, session.Usage, MissKind, bool) {
 	if len(categories) > maxCategories || requestBytes(task, r.model, categories) > maxTextBytes {
-		return "", session.Usage{}, MissOverLimit, false
+		return "", session.Usage{}, MissInputOverLimit, false
 	}
 	criteria := make(map[string]typesafe.Content, len(categories))
 	for _, category := range categories {
@@ -133,10 +146,10 @@ func (r *Router) Route(ctx context.Context, task string, categories []Category) 
 	case r.semaphore <- struct{}{}:
 		defer func() { <-r.semaphore }()
 	case <-queueCtx.Done():
-		if ctx.Err() != nil {
-			return "", session.Usage{}, MissError, false
+		if kind := contextMiss(ctx.Err()); kind != missNone {
+			return "", session.Usage{}, kind, false
 		}
-		return "", session.Usage{}, MissQueueTimeout, false
+		return "", session.Usage{}, MissCapacityTimeout, false
 	}
 	requestCtx, cancelRequest := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancelRequest()
@@ -148,24 +161,60 @@ func (r *Router) Route(ctx context.Context, task string, categories []Category) 
 		},
 	})
 	if err != nil {
-		var protocolErr *typesafe.ProtocolError
-		if errors.As(err, &protocolErr) {
-			return "", usageFrom(protocolErr.Usage), MissInvalidResponse, false
-		}
-		return "", session.Usage{}, MissError, false
+		failureUsage, kind := classifyFailure(ctx, requestCtx, err)
+		return "", failureUsage, kind, false
 	}
 	usage := usageFrom(&response.Usage)
 	answer, ok := response.Answers[questionID].(typesafe.ChoiceAnswer)
 	if !ok {
-		return "", usage, MissInvalidResponse, false
+		return "", usage, MissBadVerdict, false
 	}
 	if _, offered := criteria[answer.Choice]; !offered {
-		return "", usage, MissInvalidResponse, false
+		return "", usage, MissUnknownCategory, false
 	}
 	if r.minimumConfidence > 0 && answer.Confidence < r.minimumConfidence {
 		return "", usage, MissLowConfidence, false
 	}
-	return answer.Choice, usage, "", true
+	return answer.Choice, usage, missNone, true
+}
+
+func classifyFailure(callerCtx, operationCtx context.Context, err error) (session.Usage, MissKind) {
+	var protocolErr *typesafe.ProtocolError
+	isProtocol := errors.As(err, &protocolErr)
+	usage := session.Usage{}
+	if isProtocol {
+		usage = usageFrom(protocolErr.Usage)
+	}
+	if kind := contextMiss(callerCtx.Err()); kind != missNone {
+		return usage, kind
+	}
+	if kind := contextMiss(operationCtx.Err()); kind != missNone {
+		return usage, kind
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, typesafe.ErrAttemptTimeout) {
+		return usage, MissTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return usage, MissCancelled
+	}
+	if isProtocol {
+		if protocolErr.Field == "answers" && protocolErr.Reason == "out-of-set choice" {
+			return usage, MissUnknownCategory
+		}
+		return usage, MissBadVerdict
+	}
+	return usage, MissClassifierError
+}
+
+func contextMiss(err error) MissKind {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return MissCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return MissTimeout
+	default:
+		return missNone
+	}
 }
 
 func requestBytes(task, model string, categories []Category) int {

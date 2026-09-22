@@ -251,7 +251,11 @@ valid choice; a higher value from `0` through `1` makes a lower-confidence
 choice fall back to the inherited model. The optional `base-url` must use HTTPS,
 except for loopback HTTP development endpoints. Jev routing accepts up to 255
 categories and 64 KiB of measured request text. It does not truncate an
-over-limit task or taxonomy.
+over-limit task or taxonomy. Router observability uses the same backend-neutral
+outcomes for both classifiers: `classifier-error`, `bad-verdict`, `unknown-category`,
+`low-confidence`, `input-over-limit`, `capacity-timeout`, `cancelled`, and `timeout`.
+In particular, a deadline is reported as `timeout`; `cancelled` means caller cancellation.
+All remain fail-soft and count toward the existing three-miss per-run breaker.
 
 These mechanisms are independent:
 

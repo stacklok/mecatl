@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"net/http"
@@ -465,6 +466,91 @@ func assertModelsContain(t *testing.T, models []string, wants ...string) {
 	}
 }
 
+func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		kind jevrouter.MissKind
+		want string
+	}{
+		{jevrouter.MissClassifierError, agent.RouterMissClassifierError},
+		{jevrouter.MissBadVerdict, agent.RouterMissBadVerdict},
+		{jevrouter.MissUnknownCategory, agent.RouterMissUnknownCategory},
+		{jevrouter.MissLowConfidence, agent.RouterMissLowConfidence},
+		{jevrouter.MissInputOverLimit, agent.RouterMissInputOverLimit},
+		{jevrouter.MissCapacityTimeout, agent.RouterMissCapacityTimeout},
+		{jevrouter.MissCancelled, agent.RouterMissCancelled},
+		{jevrouter.MissTimeout, agent.RouterMissTimeout},
+		{jevrouter.MissKind(0), agent.RouterMissClassifierError},
+		{jevrouter.MissKind(255), agent.RouterMissClassifierError},
+	} {
+		if got := jevRouterMissReason(tc.kind); got != tc.want {
+			t.Fatalf("Jev miss kind %d maps to %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+
+	llmReason := func(ctx context.Context, turn mockllm.Turn) string {
+		t.Helper()
+		cfg := routerTaxonomyCfg()
+		llm := mockllm.New(turn)
+		fn := buildModelRouterTask(cfg, regForTest(llm, providerAnthropic, cfg.Model), llm, providerAnthropic, cfg.Model)
+		_, _, _, reason, ok := fn(ctx, "task")
+		if ok {
+			t.Fatal("LLM classifier unexpectedly routed")
+		}
+		return reason
+	}
+	if got := llmReason(t.Context(), mockllm.TextTurn("malformed")); got != agent.RouterMissBadVerdict {
+		t.Fatalf("LLM malformed reason = %q", got)
+	}
+	if got := llmReason(t.Context(), mockllm.ErrorTurn(errors.New("opaque provider failure: deadline text is not evidence"))); got != agent.RouterMissClassifierError {
+		t.Fatalf("LLM provider failure reason = %q", got)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got := llmReason(cancelled, mockllm.TextTurn(`{"category":"small"}`)); got != agent.RouterMissCancelled {
+		t.Fatalf("LLM cancellation reason = %q", got)
+	}
+	deadline, cancelDeadline := context.WithTimeout(t.Context(), 0)
+	defer cancelDeadline()
+	if got := llmReason(deadline, mockllm.TextTurn(`{"category":"small"}`)); got != agent.RouterMissTimeout {
+		t.Fatalf("LLM deadline reason = %q", got)
+	}
+
+	jevReason := func(ctx context.Context, handler http.HandlerFunc) string {
+		t.Helper()
+		srv := httptest.NewServer(handler)
+		t.Cleanup(srv.Close)
+		router, err := jevrouter.New(jevrouter.Options{APIKey: "secret", BaseURL: srv.URL, HTTPClient: srv.Client()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := routerTaxonomyCfg()
+		cfg.RouterBackend, cfg.jevRouter = "jev", router
+		_, _, _, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(ctx, "task")
+		if ok {
+			t.Fatal("Jev classifier unexpectedly routed")
+		}
+		return reason
+	}
+	if got := jevReason(t.Context(), func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("malformed")) }); got != agent.RouterMissBadVerdict {
+		t.Fatalf("Jev malformed reason = %q", got)
+	}
+	if got := jevReason(t.Context(), func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "deadline words are not evidence", http.StatusBadGateway)
+	}); got != agent.RouterMissClassifierError {
+		t.Fatalf("Jev transport reason = %q", got)
+	}
+	jevCancelled, jevCancel := context.WithCancel(t.Context())
+	jevCancel()
+	if got := jevReason(jevCancelled, func(http.ResponseWriter, *http.Request) { t.Fatal("cancelled Jev request performed I/O") }); got != agent.RouterMissCancelled {
+		t.Fatalf("Jev cancellation reason = %q", got)
+	}
+	jevDeadline, jevDeadlineCancel := context.WithTimeout(t.Context(), 0)
+	defer jevDeadlineCancel()
+	if got := jevReason(jevDeadline, func(http.ResponseWriter, *http.Request) { t.Fatal("expired Jev request performed I/O") }); got != agent.RouterMissTimeout {
+		t.Fatalf("Jev deadline reason = %q", got)
+	}
+}
+
 func TestADR_0350_Scenario4_SecretAndContentRedaction(t *testing.T) {
 	if _, ok := envscrub.DenyExact["TYPESAFE_API_KEY"]; !ok {
 		t.Fatal("TYPESAFE_API_KEY missing from exact scrub set")
@@ -492,7 +578,7 @@ func TestADR_0350_Scenario4_SecretAndContentRedaction(t *testing.T) {
 	cfg := routerTaxonomyCfg()
 	cfg.RouterBackend, cfg.jevRouter = "jev", router
 	category, _, _, reason, ok := buildModelRouterTask(cfg, nil, nil, "", "")(t.Context(), task)
-	if ok || category != "" || reason != jevrouter.MissInvalidResponse {
+	if ok || category != "" || reason != agent.RouterMissBadVerdict {
 		t.Fatalf("unexpected result: %q %q %v", category, reason, ok)
 	}
 	for _, forbidden := range []string{secret, task, hostile} {
