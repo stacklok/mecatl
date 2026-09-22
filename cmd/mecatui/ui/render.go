@@ -17,6 +17,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
 )
 
 // maxToolResultLines caps how many visible display rows of a tool result are
@@ -870,23 +871,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	switch b.kind {
 	case blockUser:
-		// The user block is the gold left rail + the "▌ you" label over the plain
-		// viewport surface — NO background tint (the faint panel tint belongs only to the
-		// input box, never the conversation history). The body wraps through the normal
-		// wrapStyled path, which owns the width-guard (no per-call Width needed now that
-		// there is no background to fill out to the column).
-		label := r.th.Style("userLabel").Render("▌ you")
-		body := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("userBlock"))
-		out := label + "\n" + body
-		// Render one muted placeholder line per attached media part, so a multimodal
-		// prompt is never silently shown as text-only. Media is attached via the
-		// @-mention menu (type "@" then a path; an image/audio file becomes a part),
-		// gated on the server's advertised image/audio caps — see mention.go and
-		// client.ExpandMentions.
-		for _, m := range b.media {
-			out += "\n" + r.wrapPrefixed("📎 ", sanitizeTerminal(m), r.th.Style("muted"))
-		}
-		return out
+		return preparedText(r.prepareUserBlock(b))
 	case blockAssistant:
 		// Assistant text is rendered through glamour, which neutralises escape
 		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
@@ -909,141 +894,28 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 	case blockTool:
 		return r.renderTool(b, expand)
 	case blockNotice:
-		if b.recover {
-			// A recover-notice is an actionable WARNING, not a muted compaction
-			// bullet: render it with the warning style + ⚠ so it stands out.
-			return r.wrapPrefixed("⚠ ", sanitizeTerminal(b.raw), r.th.Style("warning"))
-		}
-		return r.wrapPrefixed("• ", sanitizeTerminal(b.raw), r.th.Style("muted"))
+		return preparedText(r.prepareNoticeBlock(b))
 	case blockHook:
-		return r.renderHook(b)
+		return preparedText(r.prepareHookBlock(b))
 	case blockTurnStat:
-		return r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
+		return preparedText(r.prepareTurnStatBlock(b))
 	case blockError:
 		if b.permanent {
-			return r.renderPermanentError(b, expand)
+			return preparedText(r.preparePermanentErrorBlock(b, expand))
 		}
-		return r.wrapPrefixed("✗ ", sanitizeTerminal(b.raw), r.th.Style("errorText"))
+		return preparedText(r.prepareErrorBlock(b))
 	case blockDelivery:
-		return r.renderDelivery(b)
+		return preparedText(r.prepareDeliveryBlock(b))
 	default:
 		return r.wrapStyled(sanitizeTerminal(b.raw), lipgloss.NewStyle())
 	}
 }
 
-// renderPermanentError renders a PERMANENT error block: a one-line human summary
-// derived from the provider error, with the full safe terminal error available on
-// expand.
-func (r *renderer) renderPermanentError(b *block, expand bool) string {
-	summary := permanentErrorSummary(b.raw)
-	errStyle := r.th.Style("errorText")
-	line := r.wrapPrefixed("✗ ", summary, errStyle)
-	if !expand {
-		return line + "\n" + r.th.Style("muted").Render("  "+r.marks.expandTools+" shows details")
-	}
-	// Expanded: the summary line + the raw error under a dim header.
-	raw := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
-	return line + "\n" + r.th.Style("muted").Render("raw payload:") + "\n" + raw
-}
+// permanentErrorSummary is retained for focused compatibility tests; card
+// preparation owns the production transformation.
+func permanentErrorSummary(raw string) string { return cards.PermanentErrorSummary(raw) }
 
-// permanentErrorSummary derives a one-line human-readable summary from a provider
-// error string. The current adapters project structured HTTP rejections into safe
-// type/code, message, target, and request-ID text before the result reaches this layer.
-// collapseErrorSummary retains compatibility with older servers or custom providers that
-// still forward an SDK transport-shaped error. The summary is TERMINAL-SANITIZED
-// (control/ANSI sequences scrubbed) so a hostile provider/gateway can't inject escapes
-// into the scrollback — the blockError path already sanitizes via sanitizeTerminal, and
-// the permanent path must too. Falls back to a generic message when the error is
-// unparseable or blank.
-//
-// The extraction lives in the TUI as compatibility handling, not as an adapter-error
-// contract. It keeps legacy transport-shaped text from becoming a truncated JSON wall
-// without changing the safe error supplied by current adapters.
-func permanentErrorSummary(raw string) string {
-	// Collapse the SDK transport shape (POST "…" + trailing JSON) into a clean
-	// token on the FULL raw string BEFORE first-line truncation: a single-line
-	// SDK error like 'POST "<url>": 400 Bad Request {"error":{…json…}}' would
-	// otherwise be truncated mid-JSON by firstLineCap, leaving a fragment
-	// extractJSONMessage cannot parse. Collapsing first yields a clean first
-	// line that firstLineCap then caps sanely.
-	first := firstLineCap(collapseErrorSummary(raw), 120)
-	if first == "" {
-		return "permanent provider error — retrying won't help; the request is rejected. Start a new session."
-	}
-	return sanitizeTerminal(first) + " — retrying won't help; the request is rejected. Start a new session."
-}
-
-// collapseErrorSummary rewrites a provider/SDK error first-line into a cleaner
-// human-readable token. It strips a leading 'POST "<url>"' SDK-transport prefix and
-// a trailing JSON object ('{"error":{…}}'), so a legacy SDK transport error like
-// 'POST "https://api.openai.com/v1/responses": 400 Bad Request {"error":{"message":"…"}}'
-// collapses to '400 Bad Request' plus any extracted message. A plain 'code: message'
-// (anthropic / the translated event error) is returned unchanged.
-func collapseErrorSummary(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	// Strip a leading SDK transport prefix: 'POST "<url>": ' (or any
-	// '<METHOD> "<url>": ' shape the openai-go SDK emits). Keep everything after it.
-	if i := strings.Index(s, `": `); i >= 0 && strings.HasPrefix(s, `POST "`) {
-		s = strings.TrimSpace(s[i+len(`": `):])
-	}
-	// A trailing JSON object ('{"error":{…}}' or bare '{…}') is opaque in a one-line
-	// summary — replace it with its embedded "message" field if present, else drop it.
-	if i := strings.IndexByte(s, '{'); i >= 0 {
-		head := strings.TrimRight(s[:i], " :")
-		tail := s[i:]
-		if msg := extractJSONMessage(tail); msg != "" {
-			if head != "" {
-				return head + ": " + msg
-			}
-			return msg
-		}
-		return head
-	}
-	return s
-}
-
-// extractJSONMessage best-effort extracts the "message" string field from a leading
-// JSON object (an OpenAI error envelope like {"error":{"code":"…","message":"…"}}).
-// It returns "" if the JSON cannot be parsed or carries no string "message" field.
-func extractJSONMessage(s string) string {
-	var env map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(s), &env); err != nil {
-		return ""
-	}
-	// An OpenAI envelope nests {"error": {...}}; unwrap one level.
-	if raw, ok := env["error"]; ok {
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return ""
-		}
-	}
-	if raw, ok := env["message"]; ok {
-		var msg string
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			return strings.TrimSpace(msg)
-		}
-	}
-	return ""
-}
-
-// firstLineCap returns the first line of s (up to a newline or maxRunes runes,
-// whichever is shorter). Returns "" for an empty/blank string.
-func firstLineCap(s string, maxRunes int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if first, _, ok := strings.Cut(s, "\n"); ok {
-		s = first
-	}
-	// Rune-safe truncation: keep at most maxRunes runes.
-	if rs := []rune(s); len(rs) > maxRunes {
-		s = string(rs[:maxRunes])
-	}
-	return s
-}
+func collapseErrorSummary(raw string) string { return cards.CollapseErrorSummary(raw) }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
 // reasoning. It signals the prose is a lossy summary, not the model's actual
@@ -1102,32 +974,6 @@ func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	return st.Render(ansi.Wrap(normalizeEmojiWidth(s), cw-frame, ""))
 }
 
-// wrapPrefixed word-wraps body to the live width while reserving columns for a
-// leading marker (e.g. "• "/"✗ ") that is CONTENT, not style frame: the marker
-// sits on the first line and continuation lines hang-indent under the text so a
-// wrapped multi-line notice/error reads as one bulleted item. width at or below
-// the marker width means no wrap. Renders through st.
-func (r *renderer) wrapPrefixed(prefix, body string, st lipgloss.Style) string {
-	pw := lipgloss.Width(prefix)
-	cw := r.contentWidth()
-	if cw <= pw+1 {
-		return st.Render(prefix + body)
-	}
-	// Normalise the body's emoji presentation before ansi.Wrap (see wrapStyled);
-	// the marker prefix is a fixed literal, so its width is taken as-is. Wrap against
-	// the content width so the bullet+body fits after the renderBlock indent.
-	wrapped := ansi.Wrap(normalizeEmojiWidth(body), cw-pw, "")
-	lines := strings.Split(wrapped, "\n")
-	for i, ln := range lines {
-		if i == 0 {
-			lines[i] = prefix + ln
-		} else {
-			lines[i] = strings.Repeat(" ", pw) + ln
-		}
-	}
-	return st.Render(strings.Join(lines, "\n"))
-}
-
 // plural formats a count with a noun, pluralising with a trailing "s" for any
 // count other than 1 (e.g. 0 lines, 1 line, 3 lines).
 func plural(n int, noun string) string {
@@ -1135,121 +981,6 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
-}
-
-// renderHook renders a structured hook notice as a distinct one-liner: a hook
-// glyph + the lifecycle phase (and the related tool, for per-tool phases) + the
-// hook's message, with the OUTCOME driving colour and a leading severity glyph.
-// A blocked hook (which can abort a run) renders in the error style with a "✗"
-// so it is visually distinct from a benign informational/modified notice (a dim
-// "•" hook glyph) — never indistinguishable from a compaction notice. All text
-// is server-derived, so it is sanitized before reaching lipgloss.
-func (r *renderer) renderHook(b *block) string {
-	// Lead label: a phase tag, falling back to a generic "hook" when no phase.
-	// Every server-derived field (phase, tool, message) is sanitized before it
-	// reaches lipgloss — see the file's CWE-150 invariant.
-	label := "hook"
-	if b.hookPhase != "" {
-		label = "hook " + sanitizeTerminal(b.hookPhase)
-	}
-	if b.hookTool != "" {
-		label += " · " + sanitizeTerminal(b.hookTool)
-	}
-
-	switch b.hookDecision {
-	case string(client.HookBlocked):
-		// Blocked: error style + "✗", matching the error-block severity cue so an
-		// aborting hook can't be mistaken for a benign notice. The decision VERB is
-		// owned client-side ("blocked"), and the server Text rides as the trailing
-		// reason only — a redundant leading phase/verb echo is stripped so the phase
-		// appears exactly once (on the label).
-		return r.wrapPrefixed("✗ ", label+": blocked"+hookReason(b.raw, b.hookPhase), r.th.Style("errorText"))
-	case string(client.HookModified):
-		// Modified: info-coloured "✎" — an action was rewritten, notable but benign.
-		return r.wrapPrefixed("✎ ", label+": modified"+hookReason(b.raw, b.hookPhase), r.th.Style("hookModified"))
-	case string(client.HookAdvisory):
-		// Advisory: warning-coloured "⚠" — a guardrail flagged content but did not
-		// alter the call/result (client-visible, model-invisible). Reads as a
-		// warning notice, distinct from the benign info/modified and the error block.
-		return r.wrapPrefixed("⚠ ", label+": advisory"+hookReason(b.raw, b.hookPhase), r.th.Style("hookAdvisory"))
-	default:
-		// Info (the baseline): dim "•" hook notice — the server Text is the body.
-		line := label
-		if b.raw != "" {
-			line += ": " + sanitizeTerminal(b.raw)
-		}
-		return r.wrapPrefixed("• ", line, r.th.Style("muted"))
-	}
-}
-
-// hookReason normalises a hook's server Text into a trailing " — <reason>" tail
-// for the client-owned verb (blocked/modified), stripping a redundant leading
-// phase/verb echo so the phase is never doubled. It drops boilerplate that adds
-// nothing beyond the label+verb (e.g. "blocked by PreToolUse hook",
-// "PreToolUse hook rewrote …") and otherwise appends the sanitized text as the
-// reason. An empty/fully-redundant Text yields "" (label + verb stand alone).
-func hookReason(raw, phase string) string {
-	reason := strings.TrimSpace(stripPhaseEcho(raw, phase))
-	if reason == "" {
-		return ""
-	}
-	return " — " + sanitizeTerminal(reason)
-}
-
-// stripPhaseEcho removes a leading phase/verb echo from a hook message so the
-// phase isn't repeated once on the label and again in the body. It folds away
-// the loop's own boilerplate forms:
-//
-//	"blocked by <Phase> hook"            → ""        (pure echo)
-//	"<Phase> hook rewrote tool arguments…" → "rewrote tool arguments…"
-//	"<Phase> hook returned a malformed…"   → "returned a malformed…"
-//
-// A leading "<Phase> hook " or "<Phase> " prefix is trimmed; anything else is
-// returned unchanged. Phase-free messages pass through verbatim.
-func stripPhaseEcho(raw, phase string) string {
-	s := strings.TrimSpace(raw)
-	if phase == "" {
-		return s
-	}
-	// The "blocked by <Phase> hook" form is a pure echo of label+verb → drop it.
-	if strings.EqualFold(s, "blocked by "+phase+" hook") {
-		return ""
-	}
-	// Trim a leading "<Phase> hook " or "<Phase> " prefix (case-insensitive).
-	for _, prefix := range []string{phase + " hook ", phase + " "} {
-		if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
-			return strings.TrimSpace(s[len(prefix):])
-		}
-	}
-	return s
-}
-
-// renderDelivery renders a fire-result delivery note block: a scheduled-task
-// affordance (⏰) + the schedule name + the fire id + the outcome body. It is
-// visually distinct from a user prompt (gold rail + "▌ you"), the model's text
-// (● mecatl), and a muted notice (•). The schedule name + fire id sit on a
-// leading label line (dim colour); the outcome body renders below it with a
-// muted prefix, keeping the delivery card compact but recognisable.
-//
-// The recorded note is fenced-untrusted (renderFireDelivery) with a provenance
-// header — both are MACHINE markers for the model, not content for the
-// operator. The card already carries the provenance in its label, so the
-// renderer strips the fence markers + the redundant header line and shows only
-// the fire's outcome body. The operator-facing transcript and the model's
-// history legitimately differ here: the model needs the fence (trust boundary),
-// the operator needs the readable result.
-func (r *renderer) renderDelivery(b *block) string {
-	// Leading label: ⏰ scheduled task <name> — delivery · fire <id>
-	label := "⏰ scheduled task " + sanitizeTerminal(b.toolName) + " — delivery"
-	if b.deliveryFireID != "" {
-		label += " · fire " + sanitizeTerminal(b.deliveryFireID)
-	}
-	header := r.wrapPrefixed("", label, r.th.Style("hookModified")) // model-adapted emerald, same as modified hook
-	// Body: strip the fence markers + the redundant provenance header, keeping
-	// only the fire's outcome text; the "│" prefix keeps it subordinate to the
-	// header.
-	body := r.wrapPrefixed("│ ", sanitizeTerminal(deliveryBodyForDisplay(b.raw)), r.th.Style("muted"))
-	return header + "\n" + body
 }
 
 // deliveryBodyForDisplay strips the untrusted-fence markers and the
@@ -1261,25 +992,7 @@ func (r *renderer) renderDelivery(b *block) string {
 // VERBATIM (fail-soft — never drop content the transform can't prove is a
 // delivery note).
 func deliveryBodyForDisplay(raw string) string {
-	const fence = "<<<UNTRUSTED"
-	// Require the fence opener; a non-fenced note is not a delivery note we
-	// recognise, so return it untouched.
-	s, ok := strings.CutPrefix(raw, fence)
-	if !ok {
-		return raw
-	}
-	s = strings.TrimPrefix(s, "\n")
-	// Strip the trailing fence closer (the last fence marker on its own line).
-	if idx := strings.LastIndex(s, "\n"+fence); idx >= 0 {
-		s = s[:idx]
-	}
-	// Strip the redundant provenance header line (the first line, which the
-	// label already carries). Only strip when it IS the provenance header —
-	// otherwise this is a fenced note with no header and the body is line 1.
-	if nl := strings.IndexByte(s, '\n'); nl >= 0 && strings.HasPrefix(s, "[scheduled task ") {
-		s = s[nl+1:]
-	}
-	return s
+	return cards.DeliveryBodyForDisplay(raw)
 }
 
 // toolCardLayout returns the styled card, its outer width, and its usable body

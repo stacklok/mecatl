@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"strings"
 	"unicode"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
 )
 
 // sanitizeTerminal strips terminal control bytes from server-derived strings
@@ -19,18 +20,7 @@ import (
 // (which neutralises escapes itself) and must NOT be passed through here —
 // only the plain-lipgloss server strings are.
 func sanitizeTerminal(s string) string {
-	if !strings.ContainsFunc(s, isControl) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if isControl(r) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
+	return cards.SanitizePlain(s)
 }
 
 // isControl reports whether r is a control byte we strip (C0 / ESC / DEL / C1 / Cf),

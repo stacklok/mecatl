@@ -304,7 +304,11 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
-			c.addError(msg.Error)
+			if msg.Permanent {
+				c.addPermanentError(msg.Error)
+			} else {
+				c.addError(msg.Error)
+			}
 		}
 	default:
 		s.applyReplayEventSecondary(msg)
