@@ -128,34 +128,26 @@ func TestStoreConcurrentCASHasSingleWinnerAcrossHandles(t *testing.T) {
 	}
 }
 
-func TestStoreIgnoresUnversionedLegacyDocument(t *testing.T) {
+func TestStoreRejectsIncompatibleDocumentWithoutMutation(t *testing.T) {
 	dir := t.TempDir()
-	oldPath := filepath.Join(dir, "memory.json")
-	old := []byte(`{"entries":{"profile/editor":{"value":"vim","updated_at":"2026-01-01T00:00:00Z"}}}`)
-	if err := os.WriteFile(oldPath, old, 0o600); err != nil {
+	path := filepath.Join(dir, "memory.json")
+	original := []byte(`{"entries":{"profile/editor":{"value":"vim","updated_at":"2026-01-01T00:00:00Z"}}}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store, err := New(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := store.Recall(context.Background(), "profile/editor"); err != nil || found {
-		t.Fatalf("legacy memory became visible: found=%v err=%v", found, err)
+	if _, _, err := store.Recall(context.Background(), "profile/editor"); err == nil {
+		t.Fatal("Recall accepted an incompatible current document")
 	}
-	if _, err := store.Remember(context.Background(), tool.MemoryEntry{Key: "profile/editor", Value: "helix"}, tool.MemoryCurrent{}); err != nil {
-		t.Fatalf("create current memory: %v", err)
+	if _, err := store.Remember(context.Background(), tool.MemoryEntry{Key: "profile/editor", Value: "helix"}, tool.MemoryCurrent{}); err == nil {
+		t.Fatal("Remember overwrote an incompatible current document")
 	}
-	got, err := os.ReadFile(oldPath)
-	if err != nil || string(got) != string(old) {
-		t.Fatalf("old memory changed: bytes=%q err=%v", got, err)
-	}
-	reopened, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, found, err := reopened.Recall(context.Background(), "profile/editor")
-	if err != nil || !found || entry.Value != "helix" {
-		t.Fatalf("current memory after reopen = (%+v, %v, %v)", entry, found, err)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("incompatible current document changed: bytes=%q err=%v", got, err)
 	}
 }
 

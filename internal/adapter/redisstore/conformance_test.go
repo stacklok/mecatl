@@ -180,7 +180,7 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 	}
 	first.ToolCall(id, session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a"}`)), session.NewToolResult("call-1", "ok"), 0, 0)
 
-	sessionKey := "mecatl:store:v2:session:" + string(id)
+	sessionKey := "mecatl:session:" + string(id)
 	fields := []string{"blob", "mtime", "metadata_entry", "metadata_owner"}
 	beforeFields := make(map[string]string, len(fields))
 	for _, field := range fields {
@@ -188,11 +188,11 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 	}
 	// The events sidecar is a STREAM since the ADR 0250 LIST -> Stream
 	// migration; the tools sidecar below is still a LIST.
-	beforeEvents, err := mr.Stream("mecatl:store:v2:events:" + string(id))
+	beforeEvents, err := mr.Stream("mecatl:events:" + string(id))
 	if err != nil {
 		t.Fatalf("Stream(events): %v", err)
 	}
-	beforeTools, err := mr.List("mecatl:store:v2:tools:" + string(id))
+	beforeTools, err := mr.List("mecatl:tools:" + string(id))
 	if err != nil {
 		t.Fatalf("List(tools): %v", err)
 	}
@@ -206,11 +206,11 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 			t.Errorf("field %s changed: got %q; want %q", field, got, want)
 		}
 	}
-	afterEvents, err := mr.Stream("mecatl:store:v2:events:" + string(id))
+	afterEvents, err := mr.Stream("mecatl:events:" + string(id))
 	if err != nil || !reflect.DeepEqual(afterEvents, beforeEvents) {
 		t.Errorf("events changed: got %v, %v; want %v", afterEvents, err, beforeEvents)
 	}
-	afterTools, err := mr.List("mecatl:store:v2:tools:" + string(id))
+	afterTools, err := mr.List("mecatl:tools:" + string(id))
 	if err != nil || !reflect.DeepEqual(afterTools, beforeTools) {
 		t.Errorf("tools changed: got %v, %v; want %v", afterTools, err, beforeTools)
 	}
@@ -250,7 +250,7 @@ func TestToolCallRecordIsDurableAndShaped(t *testing.T) {
 	rec.ToolCall(id, call, result, 5*time.Millisecond, 12*time.Millisecond)
 
 	// Inspect the Redis tools list directly (no port read API).
-	vals, err := mr.List("mecatl:store:v2:tools:" + string(id))
+	vals, err := mr.List("mecatl:tools:" + string(id))
 	if err != nil {
 		t.Fatalf("miniredis List tools: %v", err)
 	}

@@ -354,122 +354,6 @@ func TestCurrentSessionWithoutMetadataMarkerFailsConstructor(t *testing.T) {
 	}
 }
 
-func TestOldStoreNamespaceIsIgnoredUntouchedWhileCurrentSameIDRestarts(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(mr.Close)
-	const id session.SessionID = "legacy"
-	const (
-		oldSessionKey  = "mecatl:session:legacy"
-		oldEventsKey   = "mecatl:events:legacy"
-		oldToolsKey    = "mecatl:tools:legacy"
-		oldLedgerKey   = "mecatl:ledger:legacy"
-		oldMetadataKey = "mecatl:session-metadata:state"
-		oldLineageKey  = "mecatl:session-lineage:v1"
-		oldLineageMark = "mecatl:session-lineage:state"
-	)
-	mr.HSet(oldSessionKey, fieldBlob, `{"poison":"old-session"}`, fieldMtime, "1")
-	mr.RPush(oldEventsKey, "poison-old-event")
-	mr.RPush(oldToolsKey, "poison-old-tool")
-	mr.HSet(oldLedgerKey, "path", "poison-old-ledger")
-	mr.Set(oldMetadataKey, "poison-old-metadata-marker")
-	mr.HSet(oldLineageKey, "poison", "poison-old-lineage")
-	mr.Set(oldLineageMark, "poison-old-lineage-marker")
-
-	spy := &redisCommandSpy{}
-	mr.Server().SetPreHook(spy.hook)
-	st, err := New(mr.Addr())
-	if err != nil {
-		t.Fatalf("New with old namespace: %v", err)
-	}
-	current := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/current", Revision: "current"}, session.Limits{}, time.Now().UTC())
-	if err := st.Create(t.Context(), current); err != nil {
-		t.Fatalf("Create same id in current namespace: %v", err)
-	}
-	listed, err := st.List(t.Context())
-	if err != nil || len(listed) != 1 || listed[0].ID != id {
-		t.Fatalf("List current namespace = (%+v, %v), want only %q", listed, err, id)
-	}
-	loaded, err := st.Load(t.Context(), id)
-	if err != nil || loaded.EnvironmentRef != current.EnvironmentRef {
-		t.Fatalf("Load current same-id session = (%+v, %v)", loaded, err)
-	}
-	if err := st.Close(); err != nil {
-		t.Fatalf("Close before restart: %v", err)
-	}
-	restarted, err := New(mr.Addr())
-	if err != nil {
-		t.Fatalf("New after restart: %v", err)
-	}
-	t.Cleanup(func() { _ = restarted.Close() })
-	loaded, err = restarted.Load(t.Context(), id)
-	if err != nil || loaded.EnvironmentRef != current.EnvironmentRef {
-		t.Fatalf("Load after restart = (%+v, %v)", loaded, err)
-	}
-	page, err := restarted.PageSessionMetadata(t.Context(), port.SessionMetadataPageRequest{Limit: 10})
-	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != id {
-		t.Fatalf("current metadata page after restart = (%+v, %v)", page, err)
-	}
-
-	if got := mr.HGet(oldSessionKey, fieldBlob); got != `{"poison":"old-session"}` {
-		t.Fatalf("old session changed: %q", got)
-	}
-	if got, listErr := mr.List(oldEventsKey); listErr != nil || !slices.Equal(got, []string{"poison-old-event"}) {
-		t.Fatalf("old events changed: %q, %v", got, listErr)
-	}
-	if got, listErr := mr.List(oldToolsKey); listErr != nil || !slices.Equal(got, []string{"poison-old-tool"}) {
-		t.Fatalf("old tools changed: %q, %v", got, listErr)
-	}
-	if got := mr.HGet(oldLedgerKey, "path"); got != "poison-old-ledger" {
-		t.Fatalf("old ledger changed: %q", got)
-	}
-	if got, _ := mr.Get(oldMetadataKey); got != "poison-old-metadata-marker" {
-		t.Fatalf("old metadata marker changed: %q", got)
-	}
-	if got := mr.HGet(oldLineageKey, "poison"); got != "poison-old-lineage" {
-		t.Fatalf("old lineage changed: %q", got)
-	}
-	if got, _ := mr.Get(oldLineageMark); got != "poison-old-lineage-marker" {
-		t.Fatalf("old lineage marker changed: %q", got)
-	}
-	assertOnlyCurrentNamespaceScans(t, spy.snapshot())
-}
-
-func TestCurrentNamespaceScanRequiresMatch(t *testing.T) {
-	command := redisCommand{name: "SCAN", args: []string{"0"}}
-	if scanMatchesCurrentNamespace(command) {
-		t.Fatalf("bare SCAN accepted as current-namespace bounded: %#v", command)
-	}
-}
-
-func assertOnlyCurrentNamespaceScans(t *testing.T, commands []redisCommand) {
-	t.Helper()
-	seen := 0
-	for _, command := range commands {
-		if command.name != "SCAN" {
-			continue
-		}
-		seen++
-		if !scanMatchesCurrentNamespace(command) {
-			t.Fatalf("SCAN is not bounded to the current namespace: %#v", command)
-		}
-	}
-	if seen == 0 {
-		t.Fatal("test observed no SCAN command")
-	}
-}
-
-func scanMatchesCurrentNamespace(command redisCommand) bool {
-	for i, arg := range command.args {
-		if strings.EqualFold(arg, "MATCH") {
-			return i+1 < len(command.args) && strings.HasPrefix(command.args[i+1], storeKeyPrefix)
-		}
-	}
-	return false
-}
-
 func assertOwnerPage(t *testing.T, page port.SessionMetadataPage, owner *session.Principal, wantTotal, wantRows int) {
 	t.Helper()
 	if page.TotalCount != wantTotal || len(page.Sessions) != wantRows {
@@ -529,11 +413,11 @@ func assertPageRedisWork(t *testing.T, commands []redisCommand, limit int) {
 				t.Fatalf("metadata page performed snapshot hash read: %#v", command)
 			}
 		case "ZCARD":
-			if len(command.args) != 1 || !strings.HasPrefix(command.args[0], storeKeyPrefix+"session-metadata:index:") {
+			if len(command.args) != 1 || !strings.HasPrefix(command.args[0], "mecatl:session-metadata:index:") {
 				t.Fatalf("unexpected metadata count operation: %#v", command)
 			}
 		case "ZRANGEBYLEX":
-			if len(command.args) != 6 || !strings.HasPrefix(command.args[0], storeKeyPrefix+"session-metadata:index:") ||
+			if len(command.args) != 6 || !strings.HasPrefix(command.args[0], "mecatl:session-metadata:index:") ||
 				command.args[2] != "+" || strings.ToUpper(command.args[3]) != "LIMIT" ||
 				command.args[4] != "0" || command.args[5] != strconv.Itoa(limit+1) {
 				t.Fatalf("unbounded or unexpected metadata range: %#v", command)

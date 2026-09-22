@@ -179,8 +179,8 @@ The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0250
   - verify: `TestADR_0250_TamperedCursorRejected`, `TestADR_0250_CursorIsSessionScoped`, `TestADR_0250_EncodeFailureIsFailClosed`
 - AC6.5: A watcher in a second process observes durable appends made by the first — the cross-process obligation, proved over Redis and JSONL. (JSONL in `06a`; Redis in `06b`, which completes the AC.)
   - verify: `TestADR_0250_CrossProcessWatchObservesAppends`
-- AC6.6: Retired by the approved alpha compatibility cleanup: legacy Redis LIST migration is no longer a current acceptance claim, and old namespaces are ignored rather than migrated.
-  - verify: none — retired compatibility path; current-only namespace behavior is covered by `TestOldSnapshotNamespacesAreIgnoredUntouched`
+- AC6.6: Retired by the approved alpha compatibility cleanup: Redis LIST migration is no longer a current acceptance claim. A LIST at the canonical event key is rejected without mutation.
+  - verify: `TestCurrentRedisListLogIsRejectedUntouched`; distinct JSONL root artifacts remain undiscovered under `TestNonCurrentSnapshotArtifactsAreIgnoredUntouched`
 - AC6.7: A gap marker occupies an append position and advances cursors, is surfaced by `ReadAfter`, and is **skipped** by the legacy `EventLog.Read`.
   - verify: `TestADR_0250_GapMarkerIsEnvelopeNotEvent`
 - AC6.8: `session.Event` and the proto `Event` message gain no gap-related field; the event kind-parity surface is unchanged.

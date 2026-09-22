@@ -624,8 +624,8 @@ tools (`InspectSubagent`/`InspectMember`/`SubagentStatus`) carry the same floor-
 
 The mandatory `tool.MemoryStore` contract carries exact lifecycle/CAS semantics through the
 portable `engine/adapter/memorytools/memorytools.go` implementation. The flocked local adapter
-stores revision history in the atomically-renamed current `memory-v2.json` namespace. Old
-`memory.json` files are ignored and untouched; malformed records in `memory-v2.json` fail closed.
+stores revision history in the atomically-renamed `memory.json` document under the
+stable `memory.lock`. Incompatible records at that path fail closed without being overwritten.
 The six model-facing memory tools retain their existing permission posture.
 
 
@@ -4289,11 +4289,10 @@ The unchanged `tool.MemoryStore` base remains the six ordinary operations. The o
 `tool.MemoryStore` is the indivisible lifecycle/CAS contract: compare-current Remember,
 exact Inspect, Recall/List/Index/Search reads, tombstone Forget, and compensating Undo. Portable
 bodies live in `engine/adapter/memorytools`; project and user families register through the
-same catalog path. The local adapter stores only the current `memory-v2.json` namespace with
-revision history. `internal/adapter/memory/store.go` holds the in-process mutex and
-stable-sentinel flock across load→mutate→atomic-save. Old `memory.json` artifacts are not
-scanned, migrated, adopted, rejected globally, or removed; malformed records in the selected
-current namespace fail closed.
+same catalog path. The local adapter stores the current lifecycle document in `memory.json`
+with revision history. `internal/adapter/memory/store.go` holds the in-process mutex and
+stable-sentinel flock across load→mutate→atomic-save. Incompatible records at the addressed
+path fail closed without being overwritten, and no migration or adoption scan runs.
 
 The user-scoped store also satisfies `prompt.OperatorProfileSource`. Standard composition sets
 `agent.Deps.OperatorProfileSource`; `engine/agent/loop.go` (`refreshOperatorProfile`) reloads it
@@ -6813,10 +6812,9 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
 - **The jsonlstore adapter (the local reference).**
   `internal/adapter/store/jsonlstore/jsonlstore.go` (`Store`) is the one instance
   that serves `SessionStore`, `ToolCallRecorder`, and `EventLog`. Each family uses
-  one bounded injective stem under the owner-only `sid-v2` directory: a current
+  one bounded injective stem under the owner-only `sid-v1` directory: a current
   `.session.json` snapshot plus cumulative `.tools.jsonl` and `.events.jsonl`
-  sidecars. Older root-level and `sid-v1` artifacts are invisible and left
-  untouched. Save writes an owner-only same-directory temporary, syncs it,
+  sidecars. Distinct root-level artifacts are invisible and left untouched. Save writes an owner-only same-directory temporary, syncs it,
   atomically renames it over the current snapshot, and syncs the directory.
   Every snapshot family has a stable owner-only `.family.lock` flock sentinel.
   Save holds that cross-process lock from inactive-temp cleanup through file sync,
@@ -6845,7 +6843,7 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single
   physical-name authority. Its bounded hash-suffixed token maps the complete
   opaque valid-UTF-8 ID, while the logical ID is read from snapshot data and never
-  inferred from a filename. Reads inspect only `sid-v2`; a malformed current
+  inferred from a filename. Reads inspect only `sid-v1`; a malformed current
   artifact fails loudly. There is no legacy fallback, promotion, adoption, or
   migration path.
 
@@ -6863,11 +6861,11 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   mixed and foreign-owner rows never enter page formation or `TotalCount`.
   `MetaList` may consume the complete global derivative projection for its
   all-rows contract. Ready calls validate an O(1) source stamp from the
-  authoritative `sid-v2` snapshot directory and the durable marker advanced by
+  authoritative `sid-v1` snapshot directory and the durable marker advanced by
   current Save/Delete mutations under the family lock. Catalog files live in a
   private child directory, so their atomic replacement does not perturb
   that stamp. Missing, malformed, semantically invalid, or fingerprint-stale
-  catalogs rebuild from the current v2 envelope's top-level `metadata`
+  catalogs rebuild from the current envelope's top-level `metadata`
   projection. Fingerprinting before and after rebuild rejects a view changed
   concurrently by another `Store`; every later read revalidates the shared
   directory rather than trusting an unchecked process-local cache. Catalog
@@ -7831,15 +7829,11 @@ grew without bound. Split mechanism from policy:
   graceful degradation without a recurring WARN, verified by test on both sides. The
   harness client maps a Delete NOT_FOUND to success.
 - **Adapters.** memstore: `savedAt` map + injectable `WithNow` clock. jsonlstore:
-  List/MetaList scan canonical snapshots under `sid-v1/` plus legacy snapshots at the
-  root, decode opaque logical ids from each latest line, sort bytewise, deduplicate
-  canonical/legacy coexistence, and prefer canonical metadata/mtime; filenames are never
-  the identity source. Delete removes canonical tools/events before the snapshot, then
-  removes a legacy family in the same order only after its latest snapshot proves exact
-  id ownership. A mismatch is idempotent success and leaves the colliding legacy family
-  byte-exact; deleting both matching families prevents legacy resurrection. A
-  pre-existing sidecar with no ownership-proving snapshot remains unreachable and is
-  never claimed. grpcdriver client+server wrapper round trip the seam;
+  List/MetaList enumerate current snapshots under `sid-v1/`, decode opaque logical ids
+  from snapshot data rather than filenames, and sort bytewise. Sidecars are never
+  inventory authority. Delete removes the addressed current family's tool/event
+  sidecars before its snapshot; unrelated root artifacts are neither discovered nor
+  removed. grpcdriver client+server wrapper round trip the seam;
   the wrapper type-asserts its backend (UNIMPLEMENTED for plain stores). Conformance:
   `storeconformance.RunPrunable` (mechanism only — including ModifiedAt STABILITY
   across reads, killing a stamp-Now()-at-List adapter that would neuter the age pass),

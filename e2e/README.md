@@ -103,8 +103,8 @@ package would need its own suite bootstrap and its own server):
    vacuous); the subagent-series assertion is gated on the subagents spec
    having observed real child activity, to avoid double-reporting.
 8. **user memory** — `RememberUser` event + the fact lands in
-   `<user-model-dir>/memory-v2.json` (file check is local-target only).
-9. **project memory** — `Remember` + `<memory-dir>/memory-v2.json`.
+   `<user-model-dir>/memory.json` (file check is local-target only).
+9. **project memory** — `Remember` + `<memory-dir>/memory.json`.
 10. **compaction (task survives a real compaction)** — spawns its own mecated
     with `--context-window-override 2000` (env: `MECATL_E2E_COMPACTION_WINDOW`) and
     drives several turns on one session. The first user turn records a distinctive

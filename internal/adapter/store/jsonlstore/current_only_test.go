@@ -13,18 +13,14 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestOldSnapshotNamespacesAreIgnoredUntouched(t *testing.T) {
+func TestNonCurrentSnapshotArtifactsAreIgnoredUntouched(t *testing.T) {
 	dir := t.TempDir()
-	oldDir := filepath.Join(dir, "sid-v1")
-	if err := os.MkdirAll(oldDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	id := session.SessionID("poison")
 	oldFiles := map[string][]byte{
-		filepath.Join(dir, "legacy.session.json"):                    []byte("old-root"),
-		filepath.Join(oldDir, "sid-v1-poison.session.json"):          []byte("old-snapshot"),
-		filepath.Join(oldDir, "sid-v1-poison.events.jsonl"):          []byte("old-events"),
-		filepath.Join(oldDir, "sid-v1-poison.tools.jsonl"):           []byte("old-tools"),
-		filepath.Join(oldDir, ".session-inventory", "manifest.json"): []byte("old-index"),
+		filepath.Join(dir, "legacy.session.json"):                                      []byte("old-root-snapshot"),
+		filepath.Join(dir, "legacy.events.jsonl"):                                      []byte("old-root-events"),
+		filepath.Join(dir, "legacy.tools.jsonl"):                                       []byte("old-root-tools"),
+		filepath.Join(dir, canonicalDirName, encodeSessionToken(id)+sessionFileSuffix): []byte("old-canonical-snapshot"),
 	}
 	for path, contents := range oldFiles {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -39,7 +35,6 @@ func TestOldSnapshotNamespacesAreIgnoredUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New with old artifacts: %v", err)
 	}
-	id := session.SessionID("poison")
 	if _, err := st.Load(context.Background(), id); !errors.Is(err, port.ErrSessionNotFound) {
 		t.Fatalf("Load old-only id = %v, want not found", err)
 	}

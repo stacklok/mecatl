@@ -555,7 +555,7 @@ func (f *crashOwnershipFixture) assertRedisSidecarsSurvivedReload(t *testing.T) 
 	if !foundEvent {
 		t.Fatalf("successor Redis reload did not see event sidecar %q", crashSidecarText)
 	}
-	tools, err := f.redis.List("mecatl:store:v2:tools:" + string(f.sessionID))
+	tools, err := f.redis.List("mecatl:tools:" + string(f.sessionID))
 	if err != nil {
 		t.Fatalf("read Redis tool sidecar: %v", err)
 	}

@@ -40,7 +40,7 @@ func newStore(t *testing.T) (*jsonlstore.Store, string) {
 // wrong both were). Keep it hand-written, and if it ever disagrees with the
 // package, decide which one is right rather than deleting this.
 //
-// The scheme: "sid-v2-" + up to 40 sanitized chars of the id (anything outside
+// The scheme: "sid-v1-" + up to 40 sanitized chars of the id (anything outside
 // [A-Za-z0-9-_] becomes '_', "id" when nothing survives) + "-" + 32 hex chars
 // of SHA-256 over the whole id.
 func canonicalFamilyPath(dir string, id session.SessionID, suffix string) string {
@@ -62,8 +62,8 @@ func canonicalFamilyPath(dir string, id session.SessionID, suffix string) string
 		prefix = "id"
 	}
 	sum := sha256.Sum256([]byte(id))
-	token := "sid-v2-" + prefix + "-" + hex.EncodeToString(sum[:16])
-	return filepath.Join(dir, "sid-v2", token+suffix)
+	token := "sid-v1-" + prefix + "-" + hex.EncodeToString(sum[:16])
+	return filepath.Join(dir, "sid-v1", token+suffix)
 }
 
 func canonicalSnapshotPath(dir string, id session.SessionID) string {
@@ -138,7 +138,7 @@ func TestNewCreatesDirAt0700(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o700 {
 		t.Errorf("store dir mode = %o, want 0700 (owner-only; the store holds plaintext transcripts)", perm)
 	}
-	canonicalInfo, err := os.Stat(filepath.Join(dir, "sid-v2"))
+	canonicalInfo, err := os.Stat(filepath.Join(dir, "sid-v1"))
 	if err != nil {
 		t.Fatalf("Stat canonical dir: %v", err)
 	}

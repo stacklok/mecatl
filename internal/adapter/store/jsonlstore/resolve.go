@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	canonicalDirName      = "sid-v2"
-	sessionTokenPrefix    = "sid-v2-"
+	canonicalDirName      = "sid-v1"
+	sessionTokenPrefix    = "sid-v1-"
 	currentSnapshotSuffix = ".session.json"
 	currentSnapshotFormat = "sessnap-current-json/2"
 )
@@ -36,9 +36,9 @@ const maxTokenPrefix = 40
 // encodeSessionToken maps an opaque session id to a filename-safe stem that is
 // BOUNDED and injective, but deliberately NOT reversible:
 //
-//	sid-v2-<up to 40 sanitized chars>-<32 hex chars of SHA-256>
+//	sid-v1-<up to 40 sanitized chars>-<32 hex chars of SHA-256>
 //
-// so the longest filename is 7 + 40 + 1 + 32 + len(".session.jsonl") = 94 bytes
+// so the longest current filename is 7 + 40 + 1 + 32 + len(".events.jsonl") = 93 bytes
 // for an id of ANY length. That constant bound is the point. The previous
 // encoding was Raw URL-base64 of the whole id, which inflates 4/3 with no cap
 // and so imposed a 175-byte ceiling on session ids (down from 241 under the old
@@ -47,7 +47,6 @@ const maxTokenPrefix = 40
 // permanently unwritable after an upgrade and a long provider-supplied child id
 // was silently never persisted at all.
 //
-// Reversibility bought nothing. Its only consumer was a cross-check in
 // Current inventory reads the logical id from the snapshot envelope and verifies
 // the forward-encoded family token.
 // The operator workflow in user-docs/mecatui/sessions.md already recovers ids

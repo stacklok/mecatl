@@ -155,10 +155,10 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   > decision).
 - **SessionStore** — `memstore` (default, in-memory), `jsonlstore`
   (one atomically replaced current snapshot at
-  `<dir>/sid-v2/<versioned-token>.session.json`, with append-only `.tools.jsonl`
-  and `.events.jsonl` sidecars in that same namespace), and
-  `grpcdriver.SessionStore` (a **remote store driver** — see below). Older
-  root-level and `sid-v1` artifacts are invisible and left untouched. The current
+  `<dir>/sid-v1/<versioned-token>.session.json`, with append-only `.tools.jsonl`
+  and `.events.jsonl` sidecars in that same family), and
+  `grpcdriver.SessionStore` (a **remote store driver** — see below). Distinct
+  root-level artifacts are invisible and left untouched. The current
   envelope contains bounded inventory metadata ahead
   of the complete `sessnap` payload plus logical modification time. Jsonlstore also
   maintains an adapter-private, atomically replaced metadata catalog containing only
@@ -206,9 +206,9 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   token itself is issued and validated only by the pager. A stale, mismatched, or
   foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart
   rather than mixing generations or owner scopes. Ready-state inventory checks an
-  O(1) source stamp from the authoritative `sid-v2` snapshot directory before reading the
+  O(1) source stamp from the authoritative `sid-v1` snapshot directory before reading the
   catalog; the catalog's private child directory keeps its own replacements out of
-  that stamp. Missing, corrupt, or stale catalogs rebuild from current v2 metadata
+  that stamp. Missing, corrupt, or stale catalogs rebuild from current metadata
   headers; a fresh directory fingerprint
   before and after rebuild detects concurrent and other-`Store` family changes instead
   of trusting process-local state. Catalog rebuild/publication uses a dedicated
@@ -223,9 +223,10 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   exclusive-cursor range read of at most the limit plus one lookahead and never loads
   snapshot blobs. Save and Delete atomically update the snapshot, index membership,
   owner-scoped generations, and existing event/tool sidecar lifecycle. Redisstore
-  reads and writes only the versioned `mecatl:store:v2:` namespace. Older key
-  namespaces are invisible and untouched; there is no inventory scan, adoption job,
-  or migration path.
+  uses the canonical `mecatl:session:`, `mecatl:events:`, `mecatl:events-gen:`,
+  `mecatl:tools:`, metadata, lineage, and ledger keys. Incompatible values at
+  those keys fail validation; there is no inventory scan, adoption job, or
+  migration path.
   For jsonlstore, Save, Delete,
   EventLog.Append, and ToolCall all take the same stable per-family flock identity;
   sidecar-first/snapshot-last deletion therefore cannot race a same-family append,
@@ -266,11 +267,10 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   opened through validated no-follow descriptors at `0600`. Failures before rename
   preserve the prior snapshot; a failure after rename is loud while the new
   snapshot remains authoritative. The logical session id is an opaque valid-UTF-8
-  string stored inside each snapshot; the bounded hash-suffixed `sid-v2-` filename
-  token is not an operator API. The owner-only `sid-v2/` directory keeps current
-  names disjoint from older namespaces. Reads and discovery inspect only `sid-v2`;
-  malformed current artifacts fail closed, while older artifacts remain untouched
-  and cannot block creating the same logical ID in the current namespace.
+  string stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename
+  token is not an operator API. Reads and discovery inspect only the owner-only
+  `sid-v1/` directory; malformed current artifacts fail closed. Distinct
+  root-level artifacts remain untouched and cannot poison current inventory.
   All serialize via **`sessnap`** (`engine/adapter/sessnap`): a `Snapshot` DTO
   that round-trips a `Session` by driving the public state machine on restore
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It

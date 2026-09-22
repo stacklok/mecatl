@@ -451,10 +451,10 @@ mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
 The store writes current snapshots, tool-call audit, events, inventory, and
-lineage beneath `sid-v2`. Older root-level and `sid-v1` artifacts are left
-untouched and are not listed or loaded; a session ID may be created afresh in
-the current namespace. Files are plaintext and owner-only; do not edit or share
-them. See
+lineage beneath `sid-v1`. Files at the addressed current paths must use the
+current format; malformed or incompatible content fails validation without
+being overwritten. Distinct root-level artifacts are not listed or loaded.
+Files are plaintext and owner-only; do not edit or share them. See
 [Session store](/building/extension-points/session-store.md) for the layout and
 durability guarantees.
 

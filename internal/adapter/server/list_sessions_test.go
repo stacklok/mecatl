@@ -63,7 +63,7 @@ func listSessionsService(t *testing.T, store port.SessionStore) *server.Service 
 // filename codec is private to jsonlstore.
 func setSessionMtime(t *testing.T, dir string, id session.SessionID, mtime time.Time) {
 	t.Helper()
-	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v2")} {
+	for _, scanDir := range []string{dir, filepath.Join(dir, "sid-v1")} {
 		entries, err := os.ReadDir(scanDir)
 		if err != nil {
 			t.Fatalf("ReadDir: %v", err)

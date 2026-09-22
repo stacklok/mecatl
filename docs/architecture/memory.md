@@ -89,9 +89,9 @@ version is create-only; updates require the exact current version. Forget and Un
 also require the exact current version: copy the opaque token verbatim from an
 exact Recall result, Inspect result, or mutation receipt in the same scope. Never
 guess or interpret it. Forget appends a tombstone, and Undo appends compensation.
-The local adapter stores current state plus history in `memory-v2.json` under the
-same `memory-v2.lock` flock and atomic rename (no sidecar transaction). Older
-`memory.json` documents are left untouched and invisible. Both reference stores
+The local adapter stores current state plus history in `memory.json` under the
+same `memory.lock` flock and atomic rename (no sidecar transaction). An
+incompatible document at `memory.json` fails validation and remains unchanged. Both reference stores
 retain 64 revisions per key. The local store also bounds fields to 64 KiB and caps
 the store at 4096 keys / 8 MiB. Retention records when the oldest predecessor was
 truncated, so Undo stops without mutation at that boundary instead of mistaking

@@ -4,11 +4,11 @@
 // untouched. ToolCall and Append retain their cumulative JSONL audit semantics.
 //
 // SESSION-FAMILY NAMING. Each session's files share a bounded, injective family
-// stem under the owner-only `sid-v2` subdirectory:
+// stem under the owner-only `sid-v1` subdirectory:
 //
-//	<dir>/sid-v2/sid-v2-<token>.session.json
-//	<dir>/sid-v2/sid-v2-<token>.tools.jsonl
-//	<dir>/sid-v2/sid-v2-<token>.events.jsonl
+//	<dir>/sid-v1/sid-v1-<token>.session.json
+//	<dir>/sid-v1/sid-v1-<token>.tools.jsonl
+//	<dir>/sid-v1/sid-v1-<token>.events.jsonl
 //
 // The .events.jsonl log is PARALLEL to (not a superset of) .tools.jsonl: the
 // tool log is the structured per-tool AUDIT seam (args, queue/exec timing), the

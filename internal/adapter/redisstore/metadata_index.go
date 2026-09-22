@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	metadataIndexStateKey  = storeKeyPrefix + "session-metadata:state"
+	metadataIndexStateKey  = "mecatl:session-metadata:state"
 	metadataIndexReady     = "redis-metadata-index/1"
-	metadataGlobalIndexKey = storeKeyPrefix + "session-metadata:index:all"
+	metadataGlobalIndexKey = "mecatl:session-metadata:index:all"
 	// metadataOwnerIndexBase is concatenated with an owner scope inside each
 	// mutating Lua script below.
 	// That is fine for a single-node/Sentinel redis.Client (the only client
@@ -32,10 +32,10 @@ const (
 	// cluster. Adding Cluster support later is NOT a client-swap — each of
 	// these four scripts needs hash-tagged keys or KEYS-array key building
 	// first.
-	metadataOwnerIndexBase = storeKeyPrefix + "session-metadata:index:owner:"
-	metadataGenerationKey  = storeKeyPrefix + "session-metadata:generations"
+	metadataOwnerIndexBase = "mecatl:session-metadata:index:owner:"
+	metadataGenerationKey  = "mecatl:session-metadata:generations"
 	// metadataRebuildGenerationKey is advanced by every metadata index mutator.
-	metadataRebuildGenerationKey = storeKeyPrefix + "session-metadata:rebuild-generation"
+	metadataRebuildGenerationKey = "mecatl:session-metadata:rebuild-generation"
 	metadataGlobalScope          = "redis-v1:all"
 	metadataOwnerScopeBase       = "redis-v1:owner:"
 	metadataNilOwnerScope        = "redis-v1:owner:none"

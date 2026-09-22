@@ -40,7 +40,7 @@ const (
 	// basis in the same atomic step (see deleteMetadataScript's KEYS list) —
 	// otherwise a deleted-and-recreated log would inherit the old generation and
 	// a cursor from the previous log would resolve silently against the new one.
-	eventsGenerationKeyPrefix = storeKeyPrefix + "events-gen:"
+	eventsGenerationKeyPrefix = "mecatl:events-gen:"
 
 	// EventLogGapFormat tags a gap marker: a position where an append is KNOWN
 	// to have failed.

@@ -14,8 +14,8 @@ import (
 )
 
 // memorySpecs covers scenarios 8 + 9: the cross-project user model
-// (RememberUser → <user-model-dir>/memory-v2.json) and the per-project memory
-// (Remember → <memory-dir>/memory-v2.json). Both tools are floor-scoped Allows, so
+// (RememberUser → <user-model-dir>/memory.json) and the per-project memory
+// (Remember → <memory-dir>/memory.json). Both tools are floor-scoped Allows, so
 // no ask round-trip is involved. The file-level side-effect assertion is
 // local-target only (Skip on remote).
 func memorySpecs() {
@@ -40,7 +40,7 @@ func memorySpecs() {
 			if stateDir == "" {
 				ginkgo.Skip("remote target: cannot read the server-side store file")
 			}
-			path := filepath.Join(stateDir, "memory-v2.json")
+			path := filepath.Join(stateDir, "memory.json")
 			gomega.Eventually(func() string {
 				data, _ := os.ReadFile(path)
 				return string(data)

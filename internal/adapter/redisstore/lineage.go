@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	lineageIndexStateKey   = storeKeyPrefix + "session-lineage:state"
+	lineageIndexStateKey   = "mecatl:session-lineage:state"
 	lineageIndexReady      = "redis-lineage-index/2"
-	lineageRecordKeyPrefix = storeKeyPrefix + "session-lineage:records:"
-	lineageEdgeKeyPrefix   = storeKeyPrefix + "session-lineage:edges:"
+	lineageRecordKeyPrefix = "mecatl:session-lineage:v2:records:"
+	lineageEdgeKeyPrefix   = "mecatl:session-lineage:v2:edges:"
 )
 
 func redisLineageRecord(s *session.Session) port.SessionLineageRecord {

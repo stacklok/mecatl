@@ -17,7 +17,7 @@ import (
 // always produce two distinct Redis keys (concatenating a fixed prefix with
 // the WHOLE remainder is injective — no sanitization is needed, the same
 // discipline the session/event/tool-call keys already apply).
-const ledgerKeyPrefix = storeKeyPrefix + "ledger:"
+const ledgerKeyPrefix = "mecatl:ledger:"
 
 // ledgerFormat is the per-entry format tag written on every ledger hash
 // field's value. It versions the encoding so a future incompatible format (or

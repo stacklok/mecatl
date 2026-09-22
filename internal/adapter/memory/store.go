@@ -33,11 +33,10 @@ import (
 )
 
 const (
-	// memoryFileName is the current lifecycle JSON document. The versioned name
-	// keeps pre-lifecycle memory.json data invisible and untouched.
-	memoryFileName = "memory-v2.json"
-	// lockFileName is the current namespace's stable lock sentinel.
-	lockFileName = "memory-v2.lock"
+	// memoryFileName is the JSON document that stores current memory state.
+	memoryFileName = "memory.json"
+	// lockFileName is the stable lock sentinel; it is never replaced with the data file.
+	lockFileName = "memory.lock"
 	// lockRetryDelay is how often TryLock(Context)/TryRLock(Context) re-probes a
 	// contended lock while waiting. Small enough to feel instant under light
 	// contention.
@@ -57,7 +56,7 @@ const (
 )
 
 // Store is a file-backed, cross-process-safe tool.MemoryStore. It persists
-// entries as a single JSON document at <dir>/memory-v2.json and commits every write
+// entries as a single JSON document at <dir>/memory.json and commits every write
 // atomically (temp file + rename) so a crash mid-write cannot corrupt or truncate
 // the on-disk file. A fresh Store opened over the same dir sees previously written
 // entries, giving durability across process restarts.
@@ -70,8 +69,8 @@ const (
 //     that protects the flock handle, which is NOT goroutine-safe when shared
 //     across goroutines on one fd.
 //   - Cross-process (several mecated/mecatui instances, agent-team / subagent runs
-//     sharing one memory-v2.json): a gofrs/flock advisory lock on the STABLE sentinel
-//     <dir>/memory-v2.lock guards the read-modify-write. Writes (Remember,
+//     sharing one memory.json): a gofrs/flock advisory lock on the STABLE sentinel
+//     <dir>/memory.lock guards the read-modify-write. Writes (Remember,
 //     Remember, Forget) take an EXCLUSIVE lock; reads (Recall, List, Index) take a
 //     SHARED lock. The lock spans the whole load→mutate→save sequence, so two
 //     processes can no longer interleave read-modify-write and clobber each other
@@ -102,8 +101,8 @@ type Store struct {
 var _ tool.MemoryStore = (*Store)(nil)
 
 // New constructs a file-backed Store rooted at dir, creating dir (and parents)
-// if it does not exist. The store is scoped to dir: it owns <dir>/memory-v2.json and
-// the cross-process lock sentinel <dir>/memory-v2.lock. Pass a per-project directory
+// if it does not exist. The store is scoped to dir: it owns <dir>/memory.json and
+// the cross-process lock sentinel <dir>/memory.lock. Pass a per-project directory
 // so memory is isolated per project.
 //
 // Construct AT MOST ONE *Store per dir per process. Because the cross-process lock
@@ -727,7 +726,7 @@ func (s *Store) save(data persisted) error {
 		return fmt.Errorf("memory: encode: %w", err)
 	}
 	dir := filepath.Dir(s.path)
-	tmp, err := os.CreateTemp(dir, ".memory-v2-*.json.tmp")
+	tmp, err := os.CreateTemp(dir, ".memory-*.json.tmp")
 	if err != nil {
 		return fmt.Errorf("memory: create temp: %w", err)
 	}

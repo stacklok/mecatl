@@ -55,14 +55,13 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// Key layout under one versioned Redis namespace. The session id is the raw
-// string after each entity prefix (Redis keys are arbitrary strings, so no
-// sanitization is needed — unlike jsonlstore's filename-safe token).
+// Key layout. The session id is the raw string after each entity prefix
+// (Redis keys are arbitrary strings, so no sanitization is needed — unlike
+// jsonlstore's filename-safe token).
 const (
-	storeKeyPrefix   = "mecatl:store:v2:"
-	sessionKeyPrefix = storeKeyPrefix + "session:"
-	eventsKeyPrefix  = storeKeyPrefix + "events:"
-	toolsKeyPrefix   = storeKeyPrefix + "tools:"
+	sessionKeyPrefix = "mecatl:session:"
+	eventsKeyPrefix  = "mecatl:events:"
+	toolsKeyPrefix   = "mecatl:tools:"
 
 	// hash fields on the session key.
 	fieldBlob          = "blob"

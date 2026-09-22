@@ -322,7 +322,7 @@ func TestReadRejectsUnknownFormatTag(t *testing.T) {
 	const id session.SessionID = "redis-bad-tag"
 	// Inject a record with a bogus format tag directly into the event list,
 	// bypassing Append (which always stamps the correct tag).
-	mr.RPush("mecatl:store:v2:events:"+string(id), `{"v":"bogus-format/9","ev":{}}`)
+	mr.RPush("mecatl:events:"+string(id), `{"v":"bogus-format/9","ev":{}}`)
 
 	log := port.EventLog(st)
 	var sawEvent bool

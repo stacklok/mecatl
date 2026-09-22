@@ -221,8 +221,7 @@ your platform's backup tooling while the service is stopped.
    record requires operator recovery; only an interrupted final record can be
    treated as a torn tail.
 1. **Back up the complete state directory.** Include current snapshots under
-   `sid-v2`, event and tool sidecars, catalog data, lock sentinels, and any older
-   artifacts. Preserve ownership, permissions, timestamps, and filesystem boundaries. Record the Mecatl version,
+   `sid-v1`, event and tool sidecars, catalog data, and lock sentinels. Preserve ownership, permissions, timestamps, and filesystem boundaries. Record the Mecatl version,
    configuration, effective retention policy, and backup checksum. Keep
    directories mode `0700` and files mode `0600`.
 1. **Validate a restore.** Restore the backup to a new directory with owner-only

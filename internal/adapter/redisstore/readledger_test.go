@@ -276,7 +276,7 @@ func TestPersistentReadLedgers_Scenario2_RedisFailureClassification(t *testing.T
 
 		// Inject a malformed value directly into the ledger hash, bypassing
 		// RecordRead (which always writes valid JSON under the correct tag).
-		mr.HSet("mecatl:store:v2:ledger:"+string(id), "bad.txt", "not-json-at-all")
+		mr.HSet("mecatl:ledger:"+string(id), "bad.txt", "not-json-at-all")
 		_, ok, err := ledger.RecordedVersion(ctx, "bad.txt")
 		if err == nil {
 			t.Fatal("RecordedVersion(corrupt record) err = nil, want a non-nil error")
@@ -291,7 +291,7 @@ func TestPersistentReadLedgers_Scenario2_RedisFailureClassification(t *testing.T
 		// Also cover a well-formed JSON value carrying an unrecognized format
 		// tag — the forward-incompatibility case the EventLogFormat precedent
 		// guards against.
-		mr.HSet("mecatl:store:v2:ledger:"+string(id), "future.txt", `{"v":"redisstore-ledger/99","t":"x"}`)
+		mr.HSet("mecatl:ledger:"+string(id), "future.txt", `{"v":"redisstore-ledger/99","t":"x"}`)
 		_, ok, err = ledger.RecordedVersion(ctx, "future.txt")
 		if err == nil {
 			t.Fatal("RecordedVersion(unknown format tag) err = nil, want a non-nil error")
@@ -329,7 +329,7 @@ func TestPersistentReadLedgers_RedisCorruptStateFailsClosed(t *testing.T) {
 		"unknown-format":   `{"v":"redisstore-ledger/99","t":"token"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			mr.HSet("mecatl:store:v2:ledger:"+string(id), name, raw)
+			mr.HSet("mecatl:ledger:"+string(id), name, raw)
 			got, ok, err := ledger.RecordedVersion(ctx, name)
 			if err == nil || !errors.Is(err, tool.ErrLedgerUnavailable) {
 				t.Fatalf("RecordedVersion = (%v, %v, %v), want zero, false, ErrLedgerUnavailable", got, ok, err)
