@@ -145,8 +145,10 @@ type MCPAuthorizationMsg struct {
 }
 
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
-// echoed back in ResumeApproval — never inferred from the tool name.
+// echoed back in ResumeApproval. RunID is the opaque exact-run identity used by
+// out-of-band run controls.
 type PermissionAskMsg struct {
+	RunID  string
 	AskID  string
 	Tool   string
 	Args   string // raw JSON
@@ -1116,7 +1118,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
 		a := ev.GetAsk()
-		return PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+		return PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
 	case "permission.retract":
 		// The retraction payload rides the same ask field, carrying the AskID only
 		// (server-authored; no tool/args/reason).

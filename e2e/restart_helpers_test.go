@@ -44,7 +44,7 @@ import (
 const haikuLane = "anthropic/claude-haiku-4.5"
 
 // driveToWriteAsk drains the stream msgs channel until the FIRST Write permission
-// ask, returning that ask's id AND the Write tool.call id. The tool.call id
+// ask, returning that ask's exact run id, ask id, and the Write tool.call id. The tool.call id
 // arrives BEFORE the ask (card-before-the-gate: the EvToolCall is emitted before
 // authorize), so a single drain captures both. It does NOT answer the ask — the
 // caller decides the verdict (approve-after-kill leaves it parked; verdict-replay
@@ -54,7 +54,7 @@ const haikuLane = "anthropic/claude-haiku-4.5"
 //
 // Shared by approve-after-kill (Phase 2) and verdict-replay (Phase 3): both must
 // drive a real model to a real Write ask before they diverge on the verdict.
-func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (askID, writeCallID string, err error) {
+func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (runID, askID, writeCallID string, err error) {
 	ginkgo.GinkgoHelper()
 	msgs := make(chan tea.Msg, 256)
 	go stream.ReadLoop(ctx, msgs)
@@ -64,12 +64,12 @@ func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline tim
 	for {
 		select {
 		case <-ctx.Done():
-			return askID, writeCallID, fmt.Errorf("waiting for Write permission ask: %w", ctx.Err())
+			return runID, askID, writeCallID, fmt.Errorf("waiting for Write permission ask: %w", ctx.Err())
 		case <-timer.C:
-			return askID, writeCallID, fmt.Errorf("waiting for Write permission ask: deadline exceeded after %s", deadline)
+			return runID, askID, writeCallID, fmt.Errorf("waiting for Write permission ask: deadline exceeded after %s", deadline)
 		case m, ok := <-msgs:
 			if !ok {
-				return askID, writeCallID, errors.New("waiting for Write permission ask: stream closed prematurely")
+				return runID, askID, writeCallID, errors.New("waiting for Write permission ask: stream closed prematurely")
 			}
 			switch v := m.(type) {
 			case client.ToolCallMsg:
@@ -78,12 +78,12 @@ func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline tim
 				}
 			case client.PermissionAskMsg:
 				if v.Tool == "Write" {
-					return v.AskID, writeCallID, nil
+					return v.RunID, v.AskID, writeCallID, nil
 				}
 			case client.StreamErrMsg:
-				return askID, writeCallID, fmt.Errorf("waiting for Write permission ask: stream error: %w", v.Err)
+				return runID, askID, writeCallID, fmt.Errorf("waiting for Write permission ask: stream error: %w", v.Err)
 			case client.StreamClosedMsg:
-				return askID, writeCallID, errors.New("waiting for Write permission ask: stream closed prematurely")
+				return runID, askID, writeCallID, errors.New("waiting for Write permission ask: stream closed prematurely")
 			}
 		}
 	}

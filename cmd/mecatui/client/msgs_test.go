@@ -76,8 +76,8 @@ func TestEventToMsg(t *testing.T) {
 		},
 		{
 			"permission.ask",
-			&mecatlv1.Event{Type: "permission.ask", Ask: &mecatlv1.PermissionAsk{AskId: "a1", Tool: "Write", Args: "{}", Reason: "why"}},
-			PermissionAskMsg{AskID: "a1", Tool: "Write", Args: "{}", Reason: "why"},
+			&mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "a1", Tool: "Write", Args: "{}", Reason: "why"}},
+			PermissionAskMsg{RunID: "run-1", AskID: "a1", Tool: "Write", Args: "{}", Reason: "why"},
 		},
 		{
 			"permission.retract",
