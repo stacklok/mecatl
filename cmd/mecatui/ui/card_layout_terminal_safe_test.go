@@ -27,10 +27,8 @@ func TestMecatuiCardLayout_Scenario4_DynamicCardTextIsTerminalSafe(t *testing.T)
 			}
 		}
 		plain := stripANSIstr(out)
-		for _, r := range plain {
-			if isControl(r) {
-				t.Fatalf("%s retained terminal control or bidi-format rune %U in %q", name, r, plain)
-			}
+		if got := sanitizeTerminal(plain); got != plain {
+			t.Fatalf("%s retained terminal control or format rune in %q", name, plain)
 		}
 		if !strings.Contains(plain, "visible") || !strings.Contains(plain, "column") || !strings.Contains(plain, "next-row") {
 			t.Errorf("%s lost permitted layout content: %q", name, plain)

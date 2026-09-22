@@ -127,14 +127,17 @@ func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructura
 }
 
 func TestMecatuiFunctionalConversationCards_Scenario1_CardsPackageDependencyBoundary(t *testing.T) {
-	const cardsPackage = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+	const (
+		cardsPackage        = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/cards"
+		terminaltextPackage = "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/terminaltext"
+	)
 	cmd := exec.Command("go", "list", "-deps", "-f={{.ImportPath}}", cardsPackage)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("list %s dependencies: %v\n%s", cardsPackage, err, output)
 	}
 	for _, dependency := range strings.Fields(string(output)) {
-		if strings.HasPrefix(dependency, "github.com/stacklok/mecatl/") && dependency != cardsPackage {
+		if strings.HasPrefix(dependency, "github.com/stacklok/mecatl/") && dependency != cardsPackage && dependency != terminaltextPackage {
 			t.Errorf("cards package imports project dependency %q; preparation must remain outside ui state, engine, host adapters, and contracts", dependency)
 		}
 		if strings.HasPrefix(dependency, "google.golang.org/protobuf") || strings.HasPrefix(dependency, "github.com/stacklok/mecatl/contracts/") {
