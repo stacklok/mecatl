@@ -22,6 +22,58 @@ checker refuses to start and names every fix; with one it starts, reports both h
 token on one startup line, and adjudicates headless subagent substitution asks instead of
 denying them.
 
+## The vocabulary at a glance
+
+What each value does. Deny rules and any deliberately configured ask still win at every value,
+including `yolo`.
+
+|Value|Project instructions and rules|Edits|Shell and other mutations|Command substitution in subagents|
+|-|-|-|-|-|
+|`plan`|not loaded|denied|denied|n/a, read-only|
+|`default`|not loaded|asks|asks|asks|
+|`accept-edits`|not loaded|auto-accepted|asks|asks|
+|`trusted`|loaded|asks|asks|asks|
+|`trusted-accept-edits`|loaded|auto-accepted|asks|asks|
+|`auto`|loaded|allowed|allowed|adjudicated by reviewer|
+|`yolo`|loaded|allowed|allowed|allowed|
+
+What each value sets, and the lifetime of each half. The posture half is fixed when the
+process starts; the session half is only a starting point a session may later change.
+
+|Value|`cfg.Posture` (process-wide)|`server.Config.DefaultMode` (session start)|
+|-|-|-|
+|`plan`|strict|plan|
+|`default`|strict|default|
+|`accept-edits`|strict|accept-edits|
+|`trusted`|trusted|default|
+|`trusted-accept-edits`|trusted|accept-edits|
+|`auto`|auto|default|
+|`yolo`|yolo|default|
+
+What is reachable at runtime. Only the three session values are cyclable, exactly as today; the
+four carrying a posture half need a restart. This is a known gap against the originating
+requirement and is recorded as a resolved decision below rather than left implicit.
+
+|Value|Cyclable in the TUI|Needs a restart|
+|-|-|-|
+|`plan`|yes|no|
+|`default`|yes|no|
+|`accept-edits`|yes|no|
+|`trusted`|no|yes|
+|`trusted-accept-edits`|no|yes|
+|`auto`|no|yes|
+|`yolo`|no|yes|
+
+Defaults: `default` on every root except `mecak8s`, which keeps `auto` to reproduce its current
+behaviour. The same values are accepted by the operator-tier `permissionMode:` key.
+
+Two values can refuse to start. `auto` and `yolo` refuse when no guardrails checker is
+configured and the kill-switch was not passed. `trusted` and `trusted-accept-edits` refuse on a
+headless root with no trust source, while `auto` and `yolo` warn and start there.
+
+Deliberately absent: an accept-edits variant of `auto` or `yolo`, because allow-all already
+permits edits and the token would name a distinction the evaluator does not make.
+
 ## Human decisions
 
 - [x] Whether one setting can replace posture and permission mode without bending either mechanism - Decision: yes, and it was verified rather than assumed. `server.Config.DefaultMode` is documented as applied when a CreateSession request leaves mode unspecified, which is exactly the session half; `cfg.Posture` set from a flag is what `--posture` already does. The flag is a parse plus a table lookup writing two existing fields, so no interface is used for a purpose it was not designed for.
@@ -31,6 +83,7 @@ denying them.
 - [x] What the checker requirement means at the gate-free tier, where a configured checker is demoted to advisory - Decision: still require it, and state plainly in both the refusal and the startup line that it is observability-only there. Verified in code that the demotion costs the pre-tool veto, the approve-once human ask, and fail-closed on checker failure, so a checker outage there is indistinguishable from a clean result. Removing the demotion was rejected as a separate architectural question.
 - [x] What a headless root does when a token names project trust it cannot be granted - Decision: refuse after the trust fold, so any legitimate trust source satisfies it, for the two trust-naming tokens only. `auto` and `yolo` warn and start, because headless allow-all without trust is the production state ADR 0095 exists to protect.
 - [x] Whether the headless subagent ask reviewer becomes default-on - Decision: yes, for headless allow-all tokens, resolving through the existing ask-reviewer slot with its parent-model fallback. This is an authority decision, not a convenience: it grants an autonomous approval capability by default and spends tokens per adjudication, so it is opt-out by an explicit flag value and stated in the startup line. It is confined to the case where the alternative is a silent denial, which is the friction that pushes operators toward the gate-free tier and its silent checker demotion.
+- [x] Whether all seven tokens are selectable from the TUI at runtime, which the originating requirement asked for - Decision: no, and the gap is accepted knowingly rather than deferred silently. Only the three session tokens stay cyclable, exactly as today; the four carrying a posture half need a restart. The reason is structural: project ingestion happens once before any session exists, and allow-all and the substitution loosenings are compiled into a permission evaluator built once per process and shared, so a runtime control for those four would be wired to nothing. Closing it properly needs per-session policy construction and per-session ingestion, which is larger than the whole of this plan and belongs in its own. Restarting the embedded server on change was rejected: it works only when mecatui hosts its own server, not when connected to a remote one, and it presents a process restart as a mode toggle. The mitigation is honesty, not a workaround: the help overlay carries all seven with the exact invocation, and the header shows the active posture, so the operator can always see what they are running under and what to type to change it.
 - [x] How the existing surface is retired - Decision: `--permission-mode` replaces `--posture`, `--yolo`, and the mecatui `--mode`, which keep working as deprecated aliases for one release with a WARN naming the replacement. The operator-tier `posture:` key behaves the same way. `--trust-project` is NOT deprecated: it stays a first-class trust source and is what the headless refusal points at.
 
 ## Interface contract
@@ -158,7 +211,7 @@ Compatibility is the condition for shipping: `mecak8s` defaults to `--posture au
 |-|-|-|
 |Removing `--posture`, `--yolo`, `--mode`, and the `posture:` key|A later release|Classified separately as Cleanup once the operator has chosen the breaking-state treatment|
 |Making the composition-bearing tiers session-selectable|Later, if asked|They have no channel read after a session exists, so it needs per-session policy construction; keeping them operator-only also preserves ADR 0022 decision 1|
-|Switching a live session to autonomous from the TUI|Not planned|The same per-session rebuild. Named here as an explicit non-goal so no surface implies it is possible|
+|Runtime TUI selection of the four tokens carrying a posture half|Its own plan|Needs per-session policy construction and per-session ingestion; larger than this whole plan. An explicit non-goal, recorded in Human decisions because it is a known gap against the originating requirement, so no surface may imply it works|
 |Removing the gate-free tier's advisory demotion of the checker|Later, if asked|Would supersede ADR 0062 sub-decision B and make the gate-free tier no longer gate-free; a separate architectural question|
 |Changing the guardrails checker, its rules, modes, or failure handling|Not planned|ADR 0021 and ADR 0046 are untouched; this plan only gates on whether a checker is configured|
 |Adding token rows for redundant products such as an accept-edits variant of `auto`|Not planned|Allow-all already covers Edit and Write, so the token would name a distinction the evaluator does not make|
