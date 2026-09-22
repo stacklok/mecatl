@@ -1,74 +1,133 @@
-# ADR 0350 — Jev as an explicit delegated-model router backend
+# ADR 0350 - Jev as an explicit delegated-model router backend
 
-- Status: Accepted
-- Date: 2026-09-21
-- Scope: the operator-tier `models.router` configuration, root composition, a new internal Typesafe/Jev adapter, and the shared engine router-miss taxonomy; no provider-registry, wire, tool, or persistence boundary changes
-- Extends: [ADR 0031](./0031-subagent-model-router.md) with an explicitly selected non-LLM classifier backend and a backend-neutral refinement of router outcomes
-- Supersedes: ADR 0031 only for its requirement that the router classifier is a composition-built one-turn LLM engine when the operator explicitly selects the Jev backend; it also supersedes ADR 0031's former deadline-as-`cancelled` interpretation with the shared `timeout` outcome. Its callback, taxonomy mapping, routing precedence, fallback, breaker, and observability decisions otherwise remain in force
+- Status: Accepted by direct operator approval under the continuing explicit stacked waiver; this does not claim that Plan / Interface PR #1735 merged
+- Date: 2026-09-22
+- Scope: operator-tier `models.router` configuration, root composition, a new internal Typesafe/Jev adapter, the shared engine router result and miss taxonomy, and bounded routing-decision evidence on the existing delegation event, client, and debugger paths
+- Extends: [ADR 0031](./0031-subagent-model-router.md) with an explicitly selected non-LLM classifier backend, a backend-neutral result, and shared decision evidence
+- Supersedes: ADR 0031 only where it requires a composition-built one-turn LLM classifier, uses the callback tuple replaced below, or treats an observed deadline as `cancelled`; ADR 0031's taxonomy mapping, routing precedence, fallback, same-provider construction, and breaker policy otherwise remain in force
 - Superseded by: none
 
 ## Context
 
 The semantic model router currently spends one tool-less LLM turn to choose an operator-defined category for eligible delegated work. Composition maps that category to a same-provider model and passes it through the existing child-engine factories. [ADR 0042](./0042-taxonomy-gated-model-router.md) makes the operator taxonomy the enable decision and retains an explicit kill-switch.
 
-Jev is a narrower decision service. The verified `typesafe-go` v0.1.0 API accepts untrusted state plus a trusted `Choice` criterion map and returns one exact choice, probabilities, confidence, model identity, request identity, and token usage. It is not a chat or generative provider, and treating it as `port.LLMProvider` would add a false provider identity and expose unrelated provider behavior.
+Jev is a narrower decision service. The verified `typesafe-go` v0.1.0 API accepts untrusted state plus a trusted `Choice` criterion map and returns one exact choice, probabilities, confidence, model identity, request identity, and token usage. It is not a chat or generative provider. Treating it as `port.LLMProvider` would add a false provider identity and expose unrelated provider behavior.
 
-Selecting Jev also creates a new external-data and credential boundary. Delegated task text leaves the Mecatl deployment, `TYPESAFE_API_KEY` becomes a harness credential, and a shared client plus concurrency limiter outlive one classification call. These are operator and system-boundary decisions, not adapter-local implementation details.
+The existing callback tuple reports only accepted routes and a final miss reason. That is enough to run the child, but not enough to explain a low-confidence candidate, identify which configured classifier was used, distinguish absence from a real zero threshold, or show the breaker state that caused a skip. ADR 0083 exposes final routing reasons on the three existing delegation-start families, but it deliberately does not carry the common decision evidence needed by a live UI or a later debugger read.
+
+Selecting Jev also creates a new external-data and credential boundary. Delegated task text leaves the Mecatl deployment, `TYPESAFE_API_KEY` becomes a harness credential, and a shared client plus concurrency limiter outlive one classification call. These are operator and system-boundary decisions.
 
 ## Decision
 
-Allow exactly two delegated-router backends: `llm` and `jev`. Keep `llm` as the default so existing configurations retain current behavior. Select Jev only through the operator-tier `models.router.backend: jev`; the presence of an endpoint, model, or `TYPESAFE_API_KEY` never selects or enables it. Taxonomy presence and `disabled: true` retain the [ADR 0042](./0042-taxonomy-gated-model-router.md) enable and kill-switch semantics.
+Allow exactly two delegated-router backends: `llm` and `jev`. Keep `llm` as the default. Select Jev only through operator-tier `models.router.backend: jev`; endpoint, model, and credential presence never selects or enables it. Taxonomy presence and `disabled: true` retain ADR 0042's enable and kill-switch semantics.
 
-Keep the callback signature unchanged. Both backends produce the existing `agent.Deps.SubagentModelRouter` result, and composition continues to own category-to-model resolution through `lookupModelAlias`. Routing eligibility, precedence, same-provider child construction, no-FS behavior, routing events, and the three-consecutive-miss breaker do not vary by backend. The engine owns a closed common classifier-outcome taxonomy: the existing `degenerate-input`, `classifier-error`, `cancelled`, `bad-verdict`, and `unknown-category`, plus additive `timeout`, `low-confidence`, `input-over-limit`, and `capacity-timeout` constants. These are classifier outcomes; `session.RoutingReason*` remains the distinct bounded event-projection gate, and category-selector-empty/target-unresolvable remain independent composition mapping errors. The existing decide-once rules remain authoritative: [ADR 0034](./0034-team-parallel-model-routing.md) routes a member once at `AddMember` for that member's lifetime and each Parallel branch once, while [ADR 0066](./0066-route-unpinned-and-writable-delegations.md) routes eligible unpinned named specialists and writable explorers but treats any explicit definition model — including `model: inherit` — as pinned. A low-confidence Jev result, when confidence filtering is configured, is a miss and ordinary model inheritance. It does not force the LLM backend's advisory `default-category`. Every nonhit, including abstention, local caps, cancellation, and timeout, continues to count against the existing three-miss per-run router breaker; it is not a backend-health circuit breaker.
+Both backends classify the delegated task by the expertise, specialty, and reasoning difficulty required to complete it. The common prompt states that read-only review or investigation is not necessarily trivial, honors explicit operator specialty criteria without hard-coded security or model category names, and treats task text as classification data rather than routing instructions. Jev applies the same principles in its API-specific trusted instructions while sending the task only as untrusted state. The optional common `default-category` policy is available to both backends: a non-empty trimmed value appends `If no category clearly fits, choose %q.` to trusted instructions. It neither widens the offered set nor becomes an automatic runtime fallback. The fully rendered instructions, including quote expansion, count toward the 64 KiB local bound.
 
-Implement Jev as a root internal adapter, not an engine adapter or provider module. The adapter issues one `SystemOne` request whose `State` is the delegated task and whose single, fixed-identifier `Choice` question maps category names to operator descriptions. Fixed classifier instructions and model/question defaults keep its shape predictable. It accepts only an exact offered choice and fully valid response. It returns no partial category on validation or protocol error. The adapter returns a small adapter-local typed miss status, never `jev-*` machine strings, and does not import `engine/agent`. Composition exhaustively maps that status to the common taxonomy before the unchanged callback: transport/SDK error → `classifier-error`; invalid protocol → `bad-verdict`; a structured observed unknown category → `unknown-category`; low confidence → `low-confidence`; local cap → `input-over-limit`; an expired queue while the caller remains active → `capacity-timeout`; caller cancellation → `cancelled`; and caller, request, or SDK attempt deadline → `timeout`. An unknown local status maps safely to `classifier-error`; arbitrary error text is never parsed to invent a reason. The existing LLM classifier makes the same caller-cancellation versus deadline distinction without changing timeout durations or call count, and without guessing `timeout` where no signal exists. No new generic classifier framework is introduced.
+Replace the callback tuple with the minimum typed engine contract:
 
-Failure precedence is based on observed terminal state, not a wall-clock race. A successfully obtained and validated result is processed normally as a hit, `low-confidence`, or local mapping miss and retains its usage; late unrelated cancellation never relabels it. For a failed classification, retain independently validated SDK `ProtocolError.Usage` first, then classify an observed caller `ctx.Err()` (`context.Canceled` → `cancelled`, `context.DeadlineExceeded` → `timeout`); then an observed request/operation-context deadline, typed `errors.Is(err, context.DeadlineExceeded)`, or typesafe `ErrAttemptTimeout` → `timeout`; then `errors.Is(err, context.Canceled)` → `cancelled`; then structured invalid protocol → `bad-verdict`; otherwise → `classifier-error`. Queue expiry is `capacity-timeout` only while the caller context remains active; caller cancellation/deadline has the precedence above. The runtime `Context.Err` first-terminal rule resolves cancellation/deadline races, and tests pin the observed state rather than require a deterministic wall-clock winner. The LLM reference classifier uses its observed operation context and structured terminal signals only: a `StopError` without structured timeout evidence remains `classifier-error`, with no raw-provider string parsing or guessed timeout. Negative cases cover an already-done caller and wrapped SDK deadline errors without exposing another test API.
+```go
+type ModelRouteResult struct {
+    Category   string
+    Model      string
+    Usage      session.Usage
+    Reason     string
+    OK         bool
+    Confidence *float64
+}
 
-Extend the strict router configuration with this proposed shape:
-
-```yaml
-models:
-  router:
-    backend: jev # llm (default) or jev
-    jev:
-      model: jev-1.13.0
-      # base-url is normally omitted; override only with the intended service endpoint
-      # base-url: https://api.typesafe.ai
-      minimum-confidence: 0 # zero disables confidence filtering
+type SubagentModelRouter struct {
+    Backend           string
+    ClassifierModel   string
+    MinimumConfidence *float64
+    Route             func(context.Context, string) ModelRouteResult
+}
 ```
 
-`jev.model` defaults to the pinned `jev-1.13.0`; `jev.base-url` is optional and otherwise leaves endpoint selection to the pinned SDK; and `jev.minimum-confidence` defaults to zero and must always be finite in `[0,1]`, with zero disabling the threshold. `TYPESAFE_API_KEY` is the only credential source and is not configurable in YAML. Strict YAML/schema validation always applies, including when routing is disabled or has no taxonomy: reject unknown keys, wrong shapes, an unknown backend enum, and invalid confidence values. Only inactive-backend checks are skipped when `disabled: true` or the taxonomy is empty: do not require credentials or endpoint connectivity, construct a client, or enforce LLM/Jev selection conflicts. For an active router, reject Jev without the credential, reject a `jev` block under `backend: llm`, and reject explicitly authored `classifier-slot` or `default-category` under `backend: jev`; those fields control only the LLM classifier. Do not reject implicit slot defaults.
+`Deps.SubagentModelRouter` becomes `*SubagentModelRouter`. `Category` and `Model` are the locally validated candidate, including a candidate rejected by confidence; they are not proof that a child used that model. `Confidence` is present only for a validated backend-native signal. The LLM backend leaves it nil and never invents a score. `MinimumConfidence` preserves configured presence: Jev's explicit/defaulted zero is a non-nil pointer, while LLM uses nil. The wrapper's backend, configured/defaulted classifier model, and threshold remain available when a gate skips `Route`. A nil `Route` is a safe skip. This is an intentional Changed pre-v1 engine API update with no old/new callback bridge, generic classifier port, or classifier registry.
 
-The callback signature remains unchanged, but the importable engine gains exactly four additive exported common-outcome constants: `RouterMissTimeout`, `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and `RouterMissCapacityTimeout`. Update its API snapshot and `engine/CHANGELOG.md` under `engine/COMPATIBILITY.md`; document that the existing LLM classifier's observed deadline outcome changes from the former conflated `cancelled` to `timeout`. This is not a new port, result framework, or backend field. Host wiring does grow concrete internal Go surfaces: `internal/app.Config` gains `RouterBackend`, `RouterJevModel`, `RouterJevBaseURL`, `RouterJevMinimumConfidence`, and `TypesafeAPIKey`; `internal/adapter/permconfig.RouterSection` gains `Backend` and `Jev *JevRouterSection`, whose fields are `Model`, `BaseURL`, and `MinimumConfidence` (plus private presence tracking where selection-conflict validation requires it). Those identifiers are exported for composition and tests inside the repository, but Go's `internal` boundary means they are not a public library API.
+Keep category-to-model resolution in composition through `lookupModelAlias`. Routing eligibility, precedence, same-provider child construction, no-FS behavior, and the three-consecutive-miss per-run breaker do not vary by backend. The common classifier-outcome taxonomy is the existing `degenerate-input`, `classifier-error`, `cancelled`, `bad-verdict`, and `unknown-category`, plus `timeout`, `low-confidence`, `input-over-limit`, and `capacity-timeout`. `session.RoutingReason*` remains the separate final event-reason gate. Every nonhit continues to count against the existing breaker. No confidence default or breaker policy changes.
 
-Pin the client dependency `github.com/stacklok/typesafe-go` to SDK version v0.1.0, separately from pinning the service request's Jev model default to `jev-1.13.0`; neither pin follows a moving alias. Configure its client explicitly with `WithAPIKey`, `WithHTTPClient`, `WithDefaultModel`, the optional `WithBaseURL`, a 10-second `WithAttemptTimeout`, a zero-retry `WithRetryPolicy`, and a 1 MiB `WithResponseLimit`. Disable HTTP redirects. Allow HTTPS endpoints and loopback HTTP only. Use one client and one eight-slot semaphore per `app.Build`, with a 10-second queue wait and a 10-second request deadline. Caller cancellation while queued must release/no-leak capacity and must not send a request; cancellation in flight cancels the sole request and releases capacity. An active-caller queue expiry is `capacity-timeout`; caller cancellation is `cancelled`; caller, request, and SDK attempt deadline are `timeout`. These are fail-soft misses with no duplicate call. When a valid response arrives in a context-classification race, retain its validated usage; never silently discard `ProtocolError.Usage`.
+Implement Jev as a root internal adapter, not an engine adapter or provider module. It issues one `SystemOne` request whose untrusted `State` is the delegated task and whose fixed-identifier `Choice` maps category names to trusted operator descriptions. It accepts only an exact offered choice and a fully valid response. It returns a small adapter-local typed status and does not import `engine/agent`. Composition exhaustively maps transport/SDK error to `classifier-error`, invalid protocol to `bad-verdict`, structured offered-set violation to `unknown-category`, low confidence to `low-confidence`, local cap to `input-over-limit`, active-caller queue expiry to `capacity-timeout`, caller cancellation to `cancelled`, and caller/request/SDK deadline to `timeout`. Unknown local status maps to `classifier-error`; arbitrary error text is never parsed. The LLM classifier makes the same cancellation/deadline distinction without changing timeout duration or call count.
 
-Before SDK marshalling, compute one exact local text-input measure: sum the UTF-8 byte lengths of the task, fixed classifier instructions, selected model, fixed question identifier, and every category name and description. Reject a sum above 64 KiB or a taxonomy above 255 categories as `input-over-limit`, without I/O; never truncate the task or taxonomy. The request payload is limited to those adapter-controlled strings and maps and uses no user-defined `MarshalJSON`. This proposed 64 KiB guard is not Jev tokenization and does not claim to detect every service token/context overflow. A server-side size/context rejection is a structured SDK/API outcome when available, otherwise `classifier-error`, and ordinary fallback. The 255-category bound follows current reviewed service guidance; neither proposed bound is claimed to be a calibrated service default. The 1 MiB response cap bounds returned data, while request deadlines bound transport waiting; they do not create a hard end-to-end wall-clock guarantee over arbitrary CPU work in SDK JSON processing.
+Failure precedence is based on observed terminal state. A successfully validated result is processed as a hit, low-confidence candidate, or local mapping miss and retains usage; late unrelated cancellation does not relabel it. For a failed classification, preserve independently validated `ProtocolError.Usage`, then inspect caller context, request/operation deadline signals, typed SDK attempt timeout, typed cancellation, structured protocol failure, and finally generic classifier failure in that order. Queue expiry is `capacity-timeout` only while the caller remains active.
 
-Preserve all independently validated reported usage exactly once through the existing callback fold. Map Jev input/output tokens to the existing `session.Usage` on hits and misses, including an otherwise valid response rejected for low confidence or failure of local category-to-model mapping. If a `ProtocolError` carries non-nil valid usage, return it with the miss, including reported zero. Nil or absent usage maps to the callback's existing zero value as "not reported," not as proof of zero spend. Never estimate missing usage or add an unknown-usage wire field. This reuses the existing unconditional usage fold in `engine/agent/dispatch.go` (`routeTaskBody`) and introduces no new accounting mechanism or token-accounting hardening.
+Add a domain value that describes one bounded configured-router decision:
 
-Treat task state and the entire service response as sensitive, producer-influenced data. Diagnostics and events may contain only existing routing metadata and shared canonical miss reasons; they never contain the task, raw answer, probabilities, request ID, transport body, or credential. The closed event projection recognizes the common reasons for Subagent, Team, and Parallel, and unknown provider strings fall back to its bounded generic value. Callback diagnostics and event payloads must agree on each canonical reason. Backend identity remains an existing operator/backend build fact, not a new wire or backend field. Add `TYPESAFE_API_KEY` to the exact environment deny and non-overridable sets in `internal/adapter/envscrub/envscrub.go`; suffix matching remains defense in depth. User documentation must state that selecting Jev sends delegated task text to Typesafe.
+```go
+type RoutingDecision struct {
+    Backend           string
+    ClassifierModel   string
+    CandidateCategory string
+    CandidateModel    string
+    Confidence        *float64
+    MinimumConfidence *float64
+    Outcome           string
+    ConsecutiveMisses int
+    MissLimit         int
+    BreakerOpen       bool
+}
+```
 
-Inventory the shared client and semaphore as Build-owned process resources when implementation lands. They carry no durable session state and need no rehydration. Do not introduce a cache.
+`Backend` is the configured closed origin `llm|jev`. `ClassifierModel` is the configured/defaulted classifier model, not a claim about an SDK-returned service version. `Outcome` is `routed`, `fallback`, or `skipped`. Optional pointers distinguish absence from zero. Add `*RoutingDecision` to `session.SubagentPayload`, `session.ParallelPayload`, and `session.TeamMemberSpec`; each event gets an independent immutable copy.
 
-The linked acceptance plan records every material decision as directly approved by the user. The plan document's `proposed` version is a review artifact; this ADR is accepted by that direct user approval. Plan / Interface PR #1735 retains its human merge gate, and the user explicitly waived the merged-plan prerequisite for this stacked implementation.
+Validate the candidate and resolve its model locally before projection, including below-threshold responses. Mapping failure retains the candidate category and leaves candidate model empty. A target-factory rejection retains both candidates, records `fallback`, and uses existing final reason `route-target-unavailable`; the existing payload `model` remains the inherited model actually used. Existing `routed_category` and `routed_model` remain accepted-route-only. Do not duplicate final facts in the new value.
+
+Capture breaker state after the classifier decision. A hit resets misses to zero, a miss increments them, and a breaker skip reports its latched state. Pin, fork, resume, unavailable family, and nil-`Route` skips do not increment it. A classifier hit followed by factory rejection retains the post-hit snapshot and does not create an extra miss. A configured router emits skip metadata without invoking the classifier. No configured router, old events, and historical payloads without the field remain nil; no consumer reconstructs backend, outcome, confidence, or threshold.
+
+Add one optional nested protobuf message with exact fields:
+
+```proto
+message RoutingDecision {
+  string backend = 1;
+  string classifier_model = 2;
+  string candidate_category = 3;
+  string candidate_model = 4;
+  optional double confidence = 5;
+  optional double minimum_confidence = 6;
+  string outcome = 7;
+  int32 consecutive_misses = 8;
+  int32 miss_limit = 9;
+  bool breaker_open = 10;
+}
+```
+
+Use the verified next free fields: `Subagent.routing_decision = 19`, `TeamMemberSpec.routing_decision = 9`, and `Parallel.routing_decision = 26`. Preserve all existing fields and meanings. Generate Go and TypeScript contracts and map the nested value through handwritten TypeScript event interfaces. Protobuf JSON remains generated camel case.
+
+Persist this value through the existing event relay and stores. Extend the existing target-bound `InspectSession` `delegation` row with `actual_model`, `routed_category`, `routed_model`, `routing_reason`, and optional `routing_decision` in snake-case JSON. It reads typed persisted start events and never caches raw session state or infers historical evidence. The currently unreachable Team start projection may join a roster member only to a unique same-owner retained lineage record keyed by `(team_id, member_name)`; zero, ambiguous, stale, or foreign matches fail closed. This creates no fourth lifecycle family.
+
+Project only bounded, control-scrubbed, UTF-8-valid metadata. Validate confidence and threshold as finite values in `[0,1]`; omit invalid custom-callback numbers so JSON and protobuf remain valid. Never project task text, category descriptions, raw responses, probability vectors, request IDs, endpoints, keys, errors, or raw SDK-returned model identity. Existing payload `model` and `routing_reason` remain authoritative for actual execution and final reason. Diagnostics use the same bounded facts through existing owners, plus one build-time effective backend/classifier/threshold/category-mapping summary. They do not add per-turn duplicate lines or claim an unknown service version.
+
+Mecatui keeps its compact model status. On fallback it may add a candidate/confidence-below-threshold cue. Existing expanded cards and F6 details show configured backend/classifier, candidate, actual model, final reason, threshold, and breaker snapshot. Missing LLM confidence displays as unavailable in detailed views, never as zero; historical nil keeps the prior label. The existing session debugger supplies durable evidence after the run. Public guidance leads operators from the card to F6 and then to `mecatui debug` / `InspectSession delegation`, distinguishes effective configuration from runtime decision, and states that confidence is not accuracy. Threshold calibration requires a representative labeled workload; this decision introduces no evaluation command or universal threshold.
+
+Extend strict configuration with `backend` and `jev.{model,base-url,minimum-confidence}`. Jev model defaults to `jev-1.13.0`; confidence defaults to explicit zero and must be finite in `[0,1]`; `TYPESAFE_API_KEY` is the only credential and is not representable in YAML. Strict shape validation always applies. Disabled or taxonomy-free routing skips client construction, credential/connectivity checks, and active-backend conflicts. Active Jev rejects a missing credential and an explicitly authored LLM-only `classifier-slot`; implicit slot defaults do not conflict. Active LLM rejects a Jev block. `default-category` is valid for both backends. No new CLI flag or prompt-config schema is added.
+
+Pin `github.com/stacklok/typesafe-go` v0.1.0 separately from service model `jev-1.13.0`. Configure one client and one eight-slot semaphore per `app.Build`, a 10-second queue wait, a 10-second request deadline, zero SDK retries, disabled redirects, HTTPS or loopback HTTP, and a 1 MiB response limit. Before SDK marshalling, measure UTF-8 bytes of the actual rendered instructions, task, selected model, fixed question identifier, and category names/descriptions. Reject more than 64 KiB or 255 categories without I/O and never truncate. These are local safety bounds, not service-token or wall-clock guarantees.
+
+Preserve independently validated usage exactly once through the existing parent fold, including low-confidence and local mapping misses and valid `ProtocolError.Usage`. Nil usage remains "not reported" rather than proof of zero. Add no latency/cost field or new accounting path.
+
+Treat task state and the service response as sensitive producer-influenced data. Add `TYPESAFE_API_KEY` to exact environment deny and non-overridable sets. Selecting Jev is operator consent to delegated-task egress, which user documentation must state. Add the Build-owned client and semaphore to the cloud-native resource inventory; neither has durable session state. Do not add a cache, backend-health breaker, new storage backend, or live Jev test.
+
+The linked acceptance plan records direct conversational approval of this correction and scope. This ADR is accepted by that direct approval under the continuing explicit stacked waiver; Plan / Interface PR #1735 remains open and retains its human merge gate. This does not claim that the PR merged.
 
 ## Consequences
 
-Operators can use a purpose-built decision model without presenting it as a chat provider or changing delegation tools and engine APIs. Existing installations remain on the current LLM classifier unless they explicitly select Jev. The same composition builder serves shared and per-session engines, preventing routing drift.
+Operators can select a purpose-built decision model without presenting it as a chat provider. Existing installations remain on LLM classification unless they select Jev. Both backends provide one common, bounded explanation of candidate, outcome, final model, and breaker state across live events and durable debugger evidence.
 
-Jev adds one external dependency, credential, egress path, and bounded shared resource. Classification remains fail-soft, so an outage preserves delegation availability but loses routing quality. A low-confidence threshold can reduce forced choices, but no default above zero is claimed to be calibrated.
+The engine API change is intentionally breaking before v1. The wire change is additive and optional; older and historical events remain valid and render without fabricated decision data. Existing actual-model and final-reason fields retain authority, avoiding conflicting truth between old and new clients.
 
-No result cache means repeated eligible tasks make repeated calls. Fixed concurrency, local input/response bounds, and transport deadlines bound the controlled request path without claiming a hard wall-clock bound over arbitrary SDK CPU work. Changing those proposed constants later requires review against deployment behavior. Jev's reported usage can be retained without making unrelated token-accounting hardening a condition of adoption.
+Jev adds one dependency, credential, egress path, and bounded shared resource. Classification remains fail-soft, so an outage preserves delegation availability but loses routing quality. Confidence is observable but is not an accuracy metric; operators must calibrate a threshold against their own labeled workload.
+
+No result cache means repeated eligible tasks make repeated calls. Fixed concurrency and request/response limits bound the controlled path without claiming a hard SDK CPU bound. Changing these proposed constants later requires ordinary review.
 
 ## See also
 
 - [Jev delegated-model router acceptance plan](../acceptance/jev-model-router.md)
-- [ADR 0031](./0031-subagent-model-router.md) for the existing callback, precedence, fallback, and breaker
-- [ADR 0034](./0034-team-parallel-model-routing.md) for route-once team-member lifetime and per-branch Parallel routing
-- [ADR 0066](./0066-route-unpinned-and-writable-delegations.md) for unpinned/writable routing and explicit `model: inherit` pinning
-- [ADR 0042](./0042-taxonomy-gated-model-router.md) for taxonomy-based enablement and the kill-switch
-- [Provider architecture](../architecture/providers.md#the-semantic-model-router-phase-5) for current router behavior
+- [ADR 0031](./0031-subagent-model-router.md) for routing precedence, fallback, and breaker behavior
+- [ADR 0034](./0034-team-parallel-model-routing.md) for route-once member and branch behavior
+- [ADR 0035](./0035-per-delegation-model-surface.md) for the authoritative actual-model field
+- [ADR 0042](./0042-taxonomy-gated-model-router.md) for taxonomy enablement and the kill-switch
+- [ADR 0066](./0066-route-unpinned-and-writable-delegations.md) for unpinned/writable routing and explicit pins
+- [ADR 0083](./0083-routing-reason-on-delegation-start.md) for the authoritative final routing reason
+- [Provider architecture](../architecture/providers.md#the-semantic-model-router-phase-5) for current routing behavior
+- [Session debugger](../architecture.md) for the durable `InspectSession` boundary
 - [ADR 0027](./0027-cloud-native.md) for the resource-inventory convention
-- [ADR 0002](./0002-documentation-lifecycle.md) for the decision-record lifecycle
