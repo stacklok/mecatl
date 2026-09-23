@@ -257910,6 +257910,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790149692729,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0cf03a423df907e07269e085105fda2dc81ea47",
+          "message": "refactor: remove obsolete alpha compatibility paths (#1725)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T10:53:53+03:00",
+          "tree_id": "05fb4868543c3e5f87a6de39d8980f2d5b661de7",
+          "url": "https://github.com/stacklok/mecatl/commit/b0cf03a423df907e07269e085105fda2dc81ea47"
+        },
+        "date": 1790150720834,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -338204,6 +338243,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790150717787,
+  "lastUpdate": 1790150721591,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
