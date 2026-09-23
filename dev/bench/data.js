@@ -255341,6 +255341,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790092633828,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3aebbb5eeb0450a501a6292f16c6e89c402f2c2f",
+          "message": "refactor(mecatui): prepare conversation cards functionally (#1744)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-22T17:39:19-07:00",
+          "tree_id": "045b79f0972e824af457971e6a6bff382db75a48",
+          "url": "https://github.com/stacklok/mecatl/commit/3aebbb5eeb0450a501a6292f16c6e89c402f2c2f"
+        },
+        "date": 1790124606324,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3279,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1152,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -334837,6 +334876,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790124603561,
+  "lastUpdate": 1790124607281,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
