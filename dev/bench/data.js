@@ -234834,6 +234834,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790171890633,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23380eec1a52dcb6c2118e6d817810eb918ec5c5",
+          "message": "build: remove brittle aggregate task wiring check (#1806)\n\nCo-authored-by: Mecatl <mecatl@users.noreply.github.com>",
+          "timestamp": "2026-09-23T17:03:26+03:00",
+          "tree_id": "fc5bcc6cdf3ae405b20b70d0af1b16c9abc88025",
+          "url": "https://github.com/stacklok/mecatl/commit/23380eec1a52dcb6c2118e6d817810eb918ec5c5"
+        },
+        "date": 1790172891559,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -341056,6 +341090,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790172888290,
+  "lastUpdate": 1790172892695,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
