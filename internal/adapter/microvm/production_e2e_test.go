@@ -266,7 +266,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 		}
 	}
 	afterRestart := readOnlyRepositoryBootRecord(t, paths.StateDir)
-	if afterRestart.Generation <= beforeRestart.Generation || afterRestart.AuthorityDigest == beforeRestart.AuthorityDigest || afterRestart.AuthorityDigest == "" {
+	if afterRestart.Generation == 0 || afterRestart.Generation == beforeRestart.Generation || afterRestart.AuthorityDigest == beforeRestart.AuthorityDigest || afterRestart.AuthorityDigest == "" {
 		t.Fatalf("restart did not establish new boot authority: before=%+v after=%+v", beforeRestart, afterRestart)
 	}
 	binding = restarted

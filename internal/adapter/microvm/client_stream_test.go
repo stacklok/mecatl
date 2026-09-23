@@ -91,7 +91,7 @@ func TestRunnerCancellationWithoutDeadlineClosesRequestAndPreservesOutput(t *tes
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	outputSeen := make(chan struct{})
+	outputSeen := make(chan struct{}, 1)
 	resultCh := make(chan struct {
 		result string
 		err    error
