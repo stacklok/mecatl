@@ -7,10 +7,8 @@ description: >
   `Conversation` that a `Run` drives turn by turn against a `Provider`, invoking
   `Tools` under a permission model, emitting a stream of `Events`, and optionally
   delegating to `Subagents` and `Teams`. Invariants and scenarios describe the
-  domain contracts. `ModelMetadata`, `ProviderDiscovery`, and the discovery
-  consolidation invariants and scenarios marked Proposed are an unimplemented
-  model proposal for human review, not an accepted interface or implementation
-  plan. For the prose walkthrough see the [architecture guide](../architecture.md).
+  domain contracts. For the prose walkthrough see the
+  [architecture guide](../architecture.md).
 
 glossary:
   Principal: >
@@ -426,15 +424,14 @@ entities:
 
   ModelMetadata:
     definition: >
-      Proposed, unimplemented vocabulary: an immutable observation value object
+      An immutable observation value object
       describing one exact `Model`'s properties, including context window, input
       capabilities, and reasoning support. Each field carries explicit knowledge
       (known or unknown) and provenance (configuration, live discovery, or
       catalog). A known capability can be supported or explicitly unsupported.
       Observation records the evidence; host resolution policy chooses effective
       values from that evidence and configuration. A policy fallback is a resolved
-      value, not an observation. This concept requires neither metadata
-      persistence nor every property to be known before every run.
+      value, not an observation.
     relationships:
       - entity: Model
         cardinality: "n:1"
@@ -444,24 +441,22 @@ entities:
     invariants:
       - id: metadata-knowledge-explicit
         statement: >
-          Proposed: an absent property remains unknown, not false or unsupported.
+          An absent property remains unknown, not false or unsupported.
           Resolution preserves the distinction between an observed value and a
           policy-permitted fallback, including their provenance.
 
   ProviderDiscovery:
     definition: >
-      Proposed, unimplemented provider-scoped knowledge and attempt lifecycle,
+      Provider-scoped knowledge and attempt lifecycle,
       shared by sessions within one host deployment instance. One composition-owned
       discovery coordinator owns this lifecycle for each provider and is the
       authoritative publisher of accepted live observations. It is neither a
       per-session owner nor a singleton shared across replicas. Attempt states
       are unattempted, in-flight, succeeded (returned model entries), empty
       (completed with no entries), and failed. The latest attempt outcome is
-      distinct from the last successful metadata observations. Whether those
-      observations remain usable after failure, and any maximum age or reuse
-      policy, are undecided. Concurrency, network access, authentication, timeouts,
-      and locks remain composition/application responsibilities; this model does
-      not move provider adapters into the engine or domain.
+      distinct from the last successful metadata observations. Host resolution
+      policy determines whether those observations remain usable after failure.
+      The host coordinates discovery requests and publishes their results.
     relationships:
       - entity: Provider
         cardinality: "n:1"
@@ -483,18 +478,17 @@ entities:
     invariants:
       - id: discovery-provider-local
         statement: >
-          Proposed: only a provider's own attempts establish its discovery state.
+          Only a provider's own attempts establish its discovery state.
           Another provider settling proves nothing about this provider's metadata;
           unattempted is distinct from failed. Native providers remain demand-driven
           without adding authenticated startup discovery.
       - id: discovery-outcome-separate-from-observations
         statement: >
-          Proposed: a failed refresh records the latest attempt outcome without
+          A failed refresh records the latest attempt outcome without
           turning last successful observations into a failed or empty observation.
-          Keeping that distinction does not decide whether old metadata is usable.
       - id: discovery-publication-ordered
         statement: >
-          Proposed: an obsolete attempt cannot overwrite newer accepted
+          An obsolete attempt cannot overwrite newer accepted
           observations. Publication follows the coordinator's ordering of attempts,
           not the order in which network requests finish.
 
@@ -1033,7 +1027,7 @@ scenarios:
   - name: Cold resume discovers metadata on the first explicit prompt
     actors: [Principal, Client, Operator]
     steps:
-      - "Proposed contract scenario for planned discovery consolidation, not shipped behavior: the host restores a transcript for an explicitly selected native provider/model without authenticated native startup discovery. That provider is healthy but its `ProviderDiscovery` is unattempted and the context window is unknown."
+      - "The host restores a transcript for an explicitly selected native provider/model without authenticated native startup discovery. That provider is healthy but its `ProviderDiscovery` is unattempted and the context window is unknown."
       - "The first explicit prompt initiates or joins that provider's discovery through the deployment's coordinator. No earlier rejected prompt or model-picker request is required."
       - "Discovery succeeds and publishes `ModelMetadata` for the exact target. Admission resolves the context window before context-dependent execution, including compaction and inference."
       - "Execution and client projections use coherent resolution for that target and evidence/configuration basis; opening the picker is not a prerequisite."
@@ -1043,7 +1037,7 @@ scenarios:
   - name: Providers settle independently and listings can omit passthrough models
     actors: [Principal, Operator]
     steps:
-      - "Proposed contract scenario for planned discovery consolidation, not shipped behavior: provider A settles successfully while provider B remains unattempted. Sessions targeting B share B's lifecycle, not A's completion."
+      - "Provider A settles successfully while provider B remains unattempted. Sessions targeting B share B's lifecycle, not A's completion."
       - "A prompt targeting B initiates or joins B's attempt rather than treating B as already failed. B returns a healthy listing that omits the requested passthrough `Model`."
       - "The omission alone invalidates neither that exact target nor the existing healthy-omission fallback. Host policy can establish a permitted context-window fallback before execution, keeping it distinct from observed metadata. Listing membership is not an allowlist."
     invariants_touched:
@@ -1052,16 +1046,16 @@ scenarios:
   - name: Failed refresh and obsolete completion preserve distinct knowledge
     actors: [Operator]
     steps:
-      - "Proposed contract scenario for planned discovery consolidation, not shipped behavior: a provider has accepted successful observations. An older refresh remains in flight when a newer attempt publishes updated observations."
+      - "A provider has accepted successful observations. An older refresh remains in flight when a newer attempt publishes updated observations."
       - "The older request completes late with different values; its obsolete result cannot regress the newer accepted knowledge."
-      - "A subsequent refresh fails. `ProviderDiscovery` distinguishes this latest outcome from the last successful `ModelMetadata`; neither continued usability nor a maximum age for those observations is decided here."
+      - "A subsequent refresh fails. `ProviderDiscovery` distinguishes this latest outcome from the last successful `ModelMetadata`; host resolution policy governs whether those observations remain usable."
     invariants_touched:
       [discovery-publication-ordered, discovery-outcome-separate-from-observations]
 
   - name: Missing properties are not unsupported capabilities
     actors: [Client, Operator]
     steps:
-      - "Proposed contract scenario for planned discovery consolidation, not shipped behavior: live `ModelMetadata` reports a context window but omits reasoning support and an input capability. Those fields are unknown."
+      - "Live `ModelMetadata` reports a context window but omits reasoning support and an input capability. Those fields are unknown."
       - "An observation explicitly reporting no reasoning support is distinct from the omitted field. Host policy resolves required properties from available evidence and configuration without presenting a fallback as an observation."
       - "For the same exact target and evidence/configuration basis, execution and client projections agree on resolved facts and knowledge distinctions; the client does not independently reinterpret unknown as unsupported."
     invariants_touched:
@@ -1096,7 +1090,7 @@ scenarios:
 invariants:
   - id: model-resolution-coherent
     statement: >
-      Proposed: for the same exact provider/model target and evidence/configuration
+      For the same exact provider/model target and evidence/configuration
       basis, execution and client projections use coherent host resolution of
       context, capabilities, and reasoning. Metadata-dependent session facts and
       provider/model-dependent collaborators use that basis; clients project the
@@ -1104,7 +1098,7 @@ invariants:
       require instantaneous atomic updates across network boundaries.
   - id: metadata-before-context-dependent-execution
     statement: >
-      Proposed: admission resolves the metadata needed for context-dependent
+      Admission resolves the metadata needed for context-dependent
       execution, or establishes a policy-permitted fallback, before compaction or
       inference. Otherwise execution remains unadmitted. It need not await every
       property, require picker activity, or add native-provider startup

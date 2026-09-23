@@ -2,7 +2,7 @@
 
 # mecatl — Agentic Coding Harness
 
-The domain of mecatl: a headless agentic coding harness. A `Session` carries a `Conversation` that a `Run` drives turn by turn against a `Provider`, invoking `Tools` under a permission model, emitting a stream of `Events`, and optionally delegating to `Subagents` and `Teams`. Invariants and scenarios describe the domain contracts. `ModelMetadata`, `ProviderDiscovery`, and the discovery consolidation invariants and scenarios marked Proposed are an unimplemented model proposal for human review, not an accepted interface or implementation plan. For the prose walkthrough see the [architecture guide](../architecture.md).
+The domain of mecatl: a headless agentic coding harness. A `Session` carries a `Conversation` that a `Run` drives turn by turn against a `Provider`, invoking `Tools` under a permission model, emitting a stream of `Events`, and optionally delegating to `Subagents` and `Teams`. Invariants and scenarios describe the domain contracts. For the prose walkthrough see the [architecture guide](../architecture.md).
 
 ## Glossary
 
@@ -168,7 +168,7 @@ A specific model identified by the exact provider/model pair. Discovery changes 
 
 ### `ModelMetadata`
 
-Proposed, unimplemented vocabulary: an immutable observation value object describing one exact `Model`'s properties, including context window, input capabilities, and reasoning support. Each field carries explicit knowledge (known or unknown) and provenance (configuration, live discovery, or catalog). A known capability can be supported or explicitly unsupported. Observation records the evidence; host resolution policy chooses effective values from that evidence and configuration. A policy fallback is a resolved value, not an observation. This concept requires neither metadata persistence nor every property to be known before every run.
+An immutable observation value object describing one exact `Model`'s properties, including context window, input capabilities, and reasoning support. Each field carries explicit knowledge (known or unknown) and provenance (configuration, live discovery, or catalog). A known capability can be supported or explicitly unsupported. Observation records the evidence; host resolution policy chooses effective values from that evidence and configuration. A policy fallback is a resolved value, not an observation.
 
 **Relationships**
 
@@ -176,7 +176,7 @@ Proposed, unimplemented vocabulary: an immutable observation value object descri
 
 **Invariants**
 
-- **metadata-knowledge-explicit** — Proposed: an absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
+- **metadata-knowledge-explicit** — An absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
 
 
 ### `PermissionAsk`
@@ -265,7 +265,7 @@ An LLM backend behind a provider-agnostic port — OpenAI Responses, the native 
 
 ### `ProviderDiscovery`
 
-Proposed, unimplemented provider-scoped knowledge and attempt lifecycle, shared by sessions within one host deployment instance. One composition-owned discovery coordinator owns this lifecycle for each provider and is the authoritative publisher of accepted live observations. It is neither a per-session owner nor a singleton shared across replicas. Attempt states are unattempted, in-flight, succeeded (returned model entries), empty (completed with no entries), and failed. The latest attempt outcome is distinct from the last successful metadata observations. Whether those observations remain usable after failure, and any maximum age or reuse policy, are undecided. Concurrency, network access, authentication, timeouts, and locks remain composition/application responsibilities; this model does not move provider adapters into the engine or domain.
+Provider-scoped knowledge and attempt lifecycle, shared by sessions within one host deployment instance. One composition-owned discovery coordinator owns this lifecycle for each provider and is the authoritative publisher of accepted live observations. It is neither a per-session owner nor a singleton shared across replicas. Attempt states are unattempted, in-flight, succeeded (returned model entries), empty (completed with no entries), and failed. The latest attempt outcome is distinct from the last successful metadata observations. Host resolution policy determines whether those observations remain usable after failure. The host coordinates discovery requests and publishes their results.
 
 **Relationships**
 
@@ -276,11 +276,11 @@ Proposed, unimplemented provider-scoped knowledge and attempt lifecycle, shared 
 
 **Invariants**
 
-- **discovery-provider-local** — Proposed: only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
+- **discovery-provider-local** — Only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
 
-- **discovery-outcome-separate-from-observations** — Proposed: a failed refresh records the latest attempt outcome without turning last successful observations into a failed or empty observation. Keeping that distinction does not decide whether old metadata is usable.
+- **discovery-outcome-separate-from-observations** — A failed refresh records the latest attempt outcome without turning last successful observations into a failed or empty observation.
 
-- **discovery-publication-ordered** — Proposed: an obsolete attempt cannot overwrite newer accepted observations. Publication follows the coordinator's ordering of attempts, not the order in which network requests finish.
+- **discovery-publication-ordered** — An obsolete attempt cannot overwrite newer accepted observations. Publication follows the coordinator's ordering of attempts, not the order in which network requests finish.
 
 
 ### `ReadLedger`
@@ -577,9 +577,9 @@ erDiagram
 
 ## Invariants
 
-- **model-resolution-coherent** — Proposed: for the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
+- **model-resolution-coherent** — For the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
 
-- **metadata-before-context-dependent-execution** — Proposed: admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
+- **metadata-before-context-dependent-execution** — Admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
 
 - **budget-enforced-at-turn-boundary** — The token budget is checked at a `Turn` boundary: an in-flight `Turn` always completes, and the budget then stops the next `Turn` cleanly.
 
@@ -974,18 +974,18 @@ erDiagram
 
 **Steps**
 
-1. Proposed contract scenario for planned discovery consolidation, not shipped behavior: the host restores a transcript for an explicitly selected native provider/model without authenticated native startup discovery. That provider is healthy but its `ProviderDiscovery` is unattempted and the context window is unknown.
+1. The host restores a transcript for an explicitly selected native provider/model without authenticated native startup discovery. That provider is healthy but its `ProviderDiscovery` is unattempted and the context window is unknown.
 2. The first explicit prompt initiates or joins that provider's discovery through the deployment's coordinator. No earlier rejected prompt or model-picker request is required.
 3. Discovery succeeds and publishes `ModelMetadata` for the exact target. Admission resolves the context window before context-dependent execution, including compaction and inference.
 4. Execution and client projections use coherent resolution for that target and evidence/configuration basis; opening the picker is not a prerequisite.
 
 **Invariants touched**
 
-- **discovery-provider-local** — Proposed: only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
+- **discovery-provider-local** — Only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
 
-- **metadata-before-context-dependent-execution** — Proposed: admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
+- **metadata-before-context-dependent-execution** — Admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
 
-- **model-resolution-coherent** — Proposed: for the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
+- **model-resolution-coherent** — For the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
 
 
 ### Providers settle independently and listings can omit passthrough models
@@ -994,17 +994,17 @@ erDiagram
 
 **Steps**
 
-1. Proposed contract scenario for planned discovery consolidation, not shipped behavior: provider A settles successfully while provider B remains unattempted. Sessions targeting B share B's lifecycle, not A's completion.
+1. Provider A settles successfully while provider B remains unattempted. Sessions targeting B share B's lifecycle, not A's completion.
 2. A prompt targeting B initiates or joins B's attempt rather than treating B as already failed. B returns a healthy listing that omits the requested passthrough `Model`.
 3. The omission alone invalidates neither that exact target nor the existing healthy-omission fallback. Host policy can establish a permitted context-window fallback before execution, keeping it distinct from observed metadata. Listing membership is not an allowlist.
 
 **Invariants touched**
 
-- **discovery-provider-local** — Proposed: only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
+- **discovery-provider-local** — Only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
 
-- **metadata-knowledge-explicit** — Proposed: an absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
+- **metadata-knowledge-explicit** — An absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
 
-- **metadata-before-context-dependent-execution** — Proposed: admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
+- **metadata-before-context-dependent-execution** — Admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
 
 
 ### Failed refresh and obsolete completion preserve distinct knowledge
@@ -1013,15 +1013,15 @@ erDiagram
 
 **Steps**
 
-1. Proposed contract scenario for planned discovery consolidation, not shipped behavior: a provider has accepted successful observations. An older refresh remains in flight when a newer attempt publishes updated observations.
+1. A provider has accepted successful observations. An older refresh remains in flight when a newer attempt publishes updated observations.
 2. The older request completes late with different values; its obsolete result cannot regress the newer accepted knowledge.
-3. A subsequent refresh fails. `ProviderDiscovery` distinguishes this latest outcome from the last successful `ModelMetadata`; neither continued usability nor a maximum age for those observations is decided here.
+3. A subsequent refresh fails. `ProviderDiscovery` distinguishes this latest outcome from the last successful `ModelMetadata`; host resolution policy governs whether those observations remain usable.
 
 **Invariants touched**
 
-- **discovery-publication-ordered** — Proposed: an obsolete attempt cannot overwrite newer accepted observations. Publication follows the coordinator's ordering of attempts, not the order in which network requests finish.
+- **discovery-publication-ordered** — An obsolete attempt cannot overwrite newer accepted observations. Publication follows the coordinator's ordering of attempts, not the order in which network requests finish.
 
-- **discovery-outcome-separate-from-observations** — Proposed: a failed refresh records the latest attempt outcome without turning last successful observations into a failed or empty observation. Keeping that distinction does not decide whether old metadata is usable.
+- **discovery-outcome-separate-from-observations** — A failed refresh records the latest attempt outcome without turning last successful observations into a failed or empty observation.
 
 
 ### Missing properties are not unsupported capabilities
@@ -1030,15 +1030,15 @@ erDiagram
 
 **Steps**
 
-1. Proposed contract scenario for planned discovery consolidation, not shipped behavior: live `ModelMetadata` reports a context window but omits reasoning support and an input capability. Those fields are unknown.
+1. Live `ModelMetadata` reports a context window but omits reasoning support and an input capability. Those fields are unknown.
 2. An observation explicitly reporting no reasoning support is distinct from the omitted field. Host policy resolves required properties from available evidence and configuration without presenting a fallback as an observation.
 3. For the same exact target and evidence/configuration basis, execution and client projections agree on resolved facts and knowledge distinctions; the client does not independently reinterpret unknown as unsupported.
 
 **Invariants touched**
 
-- **metadata-knowledge-explicit** — Proposed: an absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
+- **metadata-knowledge-explicit** — An absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
 
-- **model-resolution-coherent** — Proposed: for the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
+- **model-resolution-coherent** — For the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
 
 
 ### The agent remembers a fact and recalls it later
