@@ -259378,6 +259378,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790168680252,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "773c6c4220c6cc8afa9e80976eb2e739efdce367",
+          "message": "test(studio): integration suite over the real SDK against mecated --mock (#1767)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-23T15:14:42+02:00",
+          "tree_id": "6f0e30be5579928e85f3c23b8abb7832ac553c1d",
+          "url": "https://github.com/stacklok/mecatl/commit/773c6c4220c6cc8afa9e80976eb2e739efdce367"
+        },
+        "date": 1790169980243,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -340128,6 +340167,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790169977461,
+  "lastUpdate": 1790169980885,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
