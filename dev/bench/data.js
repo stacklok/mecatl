@@ -239426,6 +239426,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790199337633,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33bee74457e4acf4694515a4d108d189bbb929de",
+          "message": "chore(website): prepare for TypeScript 7 and tune Renovate (#1829)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-23T17:34:43-04:00",
+          "tree_id": "0294d5d5b33889733ec0a323fe68e535f0ef5117",
+          "url": "https://github.com/stacklok/mecatl/commit/33bee74457e4acf4694515a4d108d189bbb929de"
+        },
+        "date": 1790200042891,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -347790,6 +347824,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790200040035,
+  "lastUpdate": 1790200044359,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
