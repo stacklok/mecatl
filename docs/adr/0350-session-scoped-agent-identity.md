@@ -123,6 +123,22 @@ value, mirroring `resolved_model`.
 `AgentDefSource` exactly as the three existing ones do, filesystem or remote driver
 alike.
 
+**The tool-scope ceiling must survive every engine-rebuild path, not just the initial
+build — enforced in v1 by failing closed, not by re-deriving the def's catalog.** A
+per-session engine is rebuilt at several points that have nothing to do with
+`agent_id`: a `SetMode` (plan/default/acceptEdits) switch, a process restart
+(`rehydrateSession`), and a client MCP resume (`LoadSessionWithMCP`). None of those
+rebuild paths read `AgentID` today — they read only `ProviderID`/`ModelID`/`Profile` and
+rebuild through the same generic per-session catalog assembly every other session uses.
+Left alone, an `agent_id`-bound session that survives any of these would silently regain
+the full default catalog. v1 closes this the cheap way: `SetMode` is rejected outright
+for an `agent_id`-bound session (`InvalidArgument`), and restart rehydration / MCP-resume
+for such a session **fails closed** (refuses to resume) instead of rebuilding on the
+default catalog. This costs session continuity across a restart — an acceptable v1
+trade for a Slack-bot identity, not a real fix. The real fix (persisting the def's
+authority so every rebuild path can only narrow it, never re-derive it wider) is tracked
+in [issue #1796](https://github.com/stacklok/mecatl/issues/1796).
+
 ## Consequences
 
 - **Closes a real gap, elegantly.** Per-agent tool restriction — what #1053 needs — is
@@ -140,6 +156,8 @@ alike.
   - No per-caller authorization on identity selection.
   - No child-shaped-behavior toggle — always ordinary main-session behavior.
   - No change to operator-tier posture or how it's selected.
+  - No real authority-persistence across restart/MCP-resume — v1 fails closed on those
+    paths instead; the full fix is [issue #1796](https://github.com/stacklok/mecatl/issues/1796).
 
 ## See also
 
@@ -155,5 +173,8 @@ alike.
   operator-tier permission-mode vocabulary; posture stays non-session-selectable.
 - [Issue #1784](https://github.com/stacklok/mecatl/issues/1784) — open question: should
   posture itself ever become session-configurable.
+- [Issue #1796](https://github.com/stacklok/mecatl/issues/1796) — the deferred follow-up:
+  persist the def's authority so every engine-rebuild path (restart, `SetMode`,
+  MCP-resume) can only narrow it, never re-derive it wider than v1's fail-closed guard.
 - [ADR 0037 — Engine stability contract](./0037-engine-stability-contract.md) — engine
   API stability gate.
