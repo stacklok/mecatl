@@ -82,11 +82,28 @@ authority** each begin `None — <rationale>`.
 review value. A workflow-only meta-change may treat process documents and skills as the
 interface reviewed in the same PR. Combined preparation opens no separate plan PR.
 
-Material contract drift stops orchestration with `blocked-contract-drift`; the orchestrator
-cannot create, commit, push, or open an amendment. A separate, explicitly authorized
-`/to-acceptance-plan` amendment invocation uses the Split Plan / Interface PR flow and must
-pass checker/docs verification, human review and merge, and return to `approved`. The
-orchestrator records the amendment PR and full merged commit before resuming.
+A contract amendment starts with `blocked-contract-drift`; the orchestrator cannot
+create, commit, push, or open one without explicit human authorization. The agent
+recommends a direct, Split, or superseding-ADR route and explains the risks. The
+directing human may explicitly authorize one or more identified amendments and override
+that recommendation. Each authorization identifies the affected plan or ADR, exact
+change, scope, and source.
+
+For an authorized direct amendment, quarantine all unintegrated attempts. Record the
+verbatim authorization, source, recommendation, and override decision, if any, in
+`run.md`; apply and separately commit the plan, ADR, and affected living/task doc changes
+as authorized; run the checker and `task docs`; then regenerate briefs/decomposition and
+dispatch fresh attempts. Revalidate integrated work before resuming. The authorization
+does not cover unrelated later deviations.
+
+The default for a material or uncertain plan amendment is a separate, explicitly
+authorized `/to-acceptance-plan` amendment invocation and the Split Plan / Interface PR
+flow. The merged amendment commit must become an ancestor of the accumulator, without
+rewriting integrated commits. Quarantine all unintegrated attempts, regenerate briefs
+and decomposition, and revalidate integrated work before resuming. The default for an
+ADR decision or rationale change is a
+new or superseding ADR. The directing human may explicitly authorize a different route,
+including an in-place ADR update; record that override and its rationale in `run.md`.
 
 ## Status lifecycle
 

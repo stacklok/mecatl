@@ -97,8 +97,10 @@ and test-owned `UserModelDir` even when user-model features are disabled.
 Classify work with [the development process](docs/development-process.md).
 Routine/Cleanup proceed directly; Bounded/Architectural use the acceptance spine.
 Only a human authorizes a Spike or waives the spine. Plan-PR merge is approval;
-contract drift stops implementation. Cleanup does not authorize new design or
-unresolved data destruction, and Spike work does not ship as-is.
+contract drift stops implementation until the directing human explicitly authorizes the
+identified amendments under the development process. The agent explains the recommended
+route and risks; the operator may override that recommendation. Cleanup does not
+authorize new design or unresolved data destruction, and Spike work does not ship as-is.
 
 | Change | Required follow-through |
 | --- | --- |

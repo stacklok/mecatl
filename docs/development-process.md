@@ -90,9 +90,10 @@ requires a rationale. Material public decisions cannot be postponed until code e
 3. **Implement — `/plan-orchestrate`.** Confirm the approved plan is merged (by git ancestry;
    correct a lagging `proposed` label to `approved` on entry), record its PR and commit under
    `.scratch/orchestrate/<slug>/`, decompose run-locally, and dispatch
-   isolated `tdd-worker` attempts. A worker that discovers a missing human decision reports
-   contract drift instead of making it; any material drift stops the run for a
-   human-reviewed plan amendment.
+   isolated `tdd-worker` attempts. A worker that discovers a needed amendment to the
+   approved contract reports contract drift instead of making it. An unapproved amendment,
+   or one broader than the directing human explicitly authorized, stops the run under
+   [contract amendments](#contract-amendments).
 4. **Gate and review — automatic.** On the assembled implementation branch run `task lint`,
    `task test:race`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
    The implementation PR links the approved baseline and reports interface conformance or
@@ -112,17 +113,29 @@ Combined PR. Human merge remains mandatory.
 
 ## Contract amendments
 
-Material drift stops dispatch with `blocked-contract-drift`; the orchestrator cannot draft,
-commit, push, or open an amendment. A separately and explicitly authorized
-`/to-acceptance-plan` amendment mode uses the Split Plan / Interface PR flow, including
-checker and docs verification, human review/merge. Merging is the approval event; no separate
-status edit is required. Orchestration proves approval by git ancestry and may correct a lagging
-`proposed` label to `approved` on entry. If no attempt has integrated, the accumulator may
-fast-forward or rebase onto the newly merged amendment baseline. Once any attempt has integrated,
-merge the amendment commit into the accumulator; never rebase or rewrite integrated commits. In either case the amendment commit
-must be an ancestor afterward. Record the amendment PR and full merged commit in `run.md`,
-invalidate and regenerate pending briefs/decomposition, and revalidate integrated work
-against every amended AC and interface clause.
+A needed amendment stops dispatch with `blocked-contract-drift`. The agent assesses the
+change, recommends a direct, Split, or superseding-ADR route, and explains the risks.
+The directing human may explicitly authorize one or more identified amendments and
+override that recommendation. Each authorization identifies the affected plan or ADR,
+exact change, scope, and source. It does not cover unrelated later deviations.
+
+For an authorized direct amendment, quarantine all unintegrated attempts. Record the
+verbatim authorization, source, recommendation, and override decision, if any, in
+`run.md`; update the plan, ADR, and affected living/task docs on the accumulator as
+authorized; run the acceptance checker and `task docs`; and commit the amendment
+separately. Regenerate briefs/decomposition and dispatch fresh attempts. Revalidate every
+integrated attempt against every amended acceptance criterion and interface clause before
+resuming.
+
+The default for a material or uncertain plan amendment is the Split Plan / Interface PR
+flow through a separately and explicitly authorized `/to-acceptance-plan` amendment-mode
+invocation. The merged amendment commit must become an ancestor of the accumulator:
+fast-forward or rebase only before integration; otherwise merge it without rewriting
+integrated commits. Quarantine all unintegrated attempts, invalidate and regenerate
+pending briefs/decomposition, and revalidate integrated work before resuming. The
+default for an ADR decision or rationale change is a new or
+superseding ADR. The directing human may explicitly authorize a different route,
+including an in-place ADR update; record that override and its rationale in `run.md`.
 
 ## Operational state and cleanup
 

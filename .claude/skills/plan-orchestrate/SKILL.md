@@ -130,23 +130,31 @@ Exact approved interface clauses this task implements: <verbatim text>
 The worker uses strict red-green-refactor TDD, applicable Taskfile gates, offline fakes,
 and no push. It reports branch, worktree, commits, AC proof, and interface conformance.
 
-If a worker discovers that a human judgment needed to implement the approved contract was
-not resolved and recorded, or that the contract is otherwise materially wrong or incomplete,
-it must stop as `contract-drift`; it never makes the missing decision or repairs around it.
-Stop all dispatch and return
-`blocked-contract-drift`. Orchestration must not draft, open, commit, or push an amendment,
-and the blocked run cannot authorize one. Resumption requires a separately and explicitly
-authorized `/to-acceptance-plan` amendment-mode invocation using the **Split** Plan /
-Interface PR flow, including checker and task-doc verification, human review and merge. Merging is
-the approval event; no separate status edit is required. Orchestration proves approval by git
-ancestry and may correct a lagging `proposed` label to `approved` on entry. Before resuming,
-record that amendment PR and its full merged commit
-in `run.md`. If no attempt has integrated, the accumulator may fast-forward or rebase onto
-the newly merged amendment baseline. Once any attempt has integrated, merge the amendment
-commit into the accumulator; never rebase or rewrite integrated commits. In either
-case, the amendment commit must be an ancestor afterward. Invalidate and regenerate all
-pending briefs and decomposition, and revalidate already integrated work against every
-amended acceptance criterion and interface clause before dispatch continues.
+If a worker discovers that the approved contract needs an amendment, it reports
+`contract-drift`; it never makes the change or repairs around it. Stop all dispatch and
+return `blocked-contract-drift`. The agent assesses the amendment, recommends a direct,
+Split, or superseding-ADR route, and explains the risks. The directing human may
+explicitly authorize one or more identified amendments and override that recommendation.
+Each authorization identifies the affected plan or ADR, exact change, scope, and source;
+it does not cover unrelated later deviations.
+
+For an authorized direct amendment, quarantine all unintegrated attempts. Record the
+verbatim authorization, source, recommendation, and override decision, if any, in
+`run.md`; update the plan, ADR, and affected living/task docs on the accumulator as
+authorized; run the acceptance checker and `task docs`; and commit the amendment
+separately. Regenerate pending briefs/decomposition, dispatch fresh attempts, and
+revalidate integrated work against every amended acceptance criterion and interface
+clause before resuming.
+
+The default for a material or uncertain plan amendment is the Split Plan / Interface PR
+flow through a separately and explicitly authorized `/to-acceptance-plan` amendment-mode
+invocation. Its merged commit must become an ancestor of the accumulator: fast-forward
+or rebase only before integration; otherwise merge it without rewriting integrated
+commits. Quarantine all unintegrated attempts, invalidate and regenerate pending briefs
+and decomposition, and revalidate integrated work before dispatch resumes. The default
+for an ADR decision or rationale change is a new or superseding ADR.
+The directing human may explicitly authorize a different route, including an in-place ADR
+update; record that override and its rationale in `run.md`.
 
 ## Integrate and retry
 
@@ -200,7 +208,8 @@ The body must state:
 - Plan / Interface PR and full approved commit baseline (Split), or the Combined rationale;
 - ACs completed and gate/panel results;
 - **Interfaces match approved contract: Yes**, or link every human-approved amendment;
-- any non-material implementation deviations; and
+- confirmation that no implementation deviation required an amendment, or links to every
+  human-authorized amendment; and
 - issue reference semantics.
 
 Use `Closes #N`/`Fixes #N` only when this PR fully completes the issue. Otherwise use
