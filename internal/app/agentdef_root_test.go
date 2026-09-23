@@ -4,16 +4,16 @@ import (
 	"context"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 )
 
 // TestBuildAgentDefRootEngineScopesToDefTools is a direct construction test of
-// buildAgentDefRootEngine (ADR 0350 — not yet wired to any session-creation path).
+// buildAgentDefRootEngine (ADR 0352 — not yet wired to any session-creation path).
 // It asserts the resulting engine's tool surface is EXACTLY the def's scoped allowlist
 // (never the ordinary root's full default catalog) and that the engine is otherwise a
 // usable, ordinary-shaped engine (per Deps.Model). Deps internals are not inspectable
