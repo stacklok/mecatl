@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	launchOwnerHelperEnv     = "GO_TEST_LAUNCH_OWNER_HELPER"
-	launchOwnerTestParentEnv = "GO_TEST_LAUNCH_OWNER_PARENT_PID"
-	launchOwnerTestReadyEnv  = "GO_TEST_LAUNCH_OWNER_READY"
+	launchOwnerHelperEnv       = "GO_TEST_LAUNCH_OWNER_HELPER"
+	launchOwnerTestParentEnv   = "GO_TEST_LAUNCH_OWNER_PARENT_PID"
+	launchOwnerTestReadyEnv    = "GO_TEST_LAUNCH_OWNER_READY"
+	launchOwnerTestLifetimeEnv = "GO_TEST_LAUNCH_OWNER_LIFETIME"
 )
 
 func TestMain(m *testing.M) {
@@ -37,6 +38,10 @@ func TestMain(m *testing.M) {
 	}
 	if mode := os.Getenv(launchOwnerHelperEnv); (mode == "runner" || mode == "ignore-term" || mode == "exit-7" || mode == "signal-term") && len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "{") {
 		if err := watchDarwinTestParent(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(92)
+		}
+		if err := watchDarwinTestLifetime(); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(92)
 		}
@@ -86,6 +91,29 @@ func watchDarwinTestParent() error {
 	return nil
 }
 
+func watchDarwinTestLifetime() error {
+	path := os.Getenv(launchOwnerTestLifetimeEnv)
+	if !filepath.IsAbs(path) {
+		return errors.New("runner started without absolute test lifetime path")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("invalid test lifetime sentinel: %v", err)
+	}
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+				os.Exit(0)
+			} else if err != nil {
+				os.Exit(94)
+			}
+		}
+	}()
+	return nil
+}
+
 func newDarwinTestLaunchOwnership(t *testing.T) *LaunchOwnership {
 	t.Helper()
 	executable, err := os.Executable()
@@ -103,68 +131,100 @@ func newDarwinTestLaunchOwnership(t *testing.T) *LaunchOwnership {
 	return ownership
 }
 
-func darwinTestRunnerConfig(t *testing.T) runner.Config {
+type darwinRunnerFixtureConfig struct {
+	runner.Config
+	lifetimePath string
+}
+
+func newDarwinTestLifetime(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "lifetime")
+	if err := os.WriteFile(path, []byte("alive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func darwinTestRunnerConfig(t *testing.T) darwinRunnerFixtureConfig {
 	return darwinTestRunnerConfigMode(t, "runner")
 }
 
-func darwinTestRunnerConfigMode(t *testing.T, mode string) runner.Config {
+func darwinTestRunnerConfigMode(t *testing.T, mode string) darwinRunnerFixtureConfig {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	lifetimePath := newDarwinTestLifetime(t)
 	t.Setenv(launchOwnerHelperEnv, mode)
 	t.Setenv(launchOwnerTestParentEnv, strconv.Itoa(os.Getpid()))
-	return runner.Config{RunnerPath: executable, VMLogPath: filepath.Join(t.TempDir(), "runner.log")}
+	t.Setenv(launchOwnerTestLifetimeEnv, lifetimePath)
+	return darwinRunnerFixtureConfig{
+		Config:       runner.Config{RunnerPath: executable, VMLogPath: filepath.Join(t.TempDir(), "runner.log")},
+		lifetimePath: lifetimePath,
+	}
 }
 
-func darwinTestProcessEnv(mode, ready string) []string {
-	env := []string{launchOwnerHelperEnv + "=" + mode, launchOwnerTestParentEnv + "=" + strconv.Itoa(os.Getpid()), "GORACE=atexit_sleep_ms=0"}
+func darwinTestProcessEnv(mode, ready, lifetimePath string) []string {
+	env := []string{
+		launchOwnerHelperEnv + "=" + mode,
+		launchOwnerTestParentEnv + "=" + strconv.Itoa(os.Getpid()),
+		launchOwnerTestLifetimeEnv + "=" + lifetimePath,
+		"GORACE=atexit_sleep_ms=0",
+	}
 	if ready != "" {
 		env = append(env, launchOwnerTestReadyEnv+"="+ready)
 	}
 	return env
 }
 
-func spawnDarwinTestRunner(t *testing.T, ownership *LaunchOwnership, environmentID string, cfg runner.Config) *ownedRunnerProcess {
+type darwinTestRunner struct {
+	*ownedRunnerProcess
+	lifetimePath string
+}
+
+func spawnDarwinTestRunner(t *testing.T, ownership *LaunchOwnership, environmentID string, testConfig darwinRunnerFixtureConfig) *darwinTestRunner {
 	t.Helper()
-	handle, err := ownership.spawn(t.Context(), environmentID, cfg)
+	handle, err := ownership.spawn(t.Context(), environmentID, testConfig.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	process := handle.(*ownedRunnerProcess)
-	t.Cleanup(func() {
-		if !process.IsAlive() {
-			return
-		}
-		if err := stopDarwinTestRunner(process); err != nil {
-			t.Errorf("stop test-owned Darwin runner: %v", err)
-		}
-	})
+	process := &darwinTestRunner{ownedRunnerProcess: handle.(*ownedRunnerProcess), lifetimePath: testConfig.lifetimePath}
+	t.Cleanup(func() { process.cleanup(t) })
 	return process
 }
 
-func stopDarwinTestRunner(process *ownedRunnerProcess) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	stopErr := process.Stop(ctx)
-	if !process.IsAlive() {
-		return nil
+func requestDarwinTestExit(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	startTime, err := platformProcessStartIdentity(ctx, process.pid)
-	if err != nil || startTime != process.startTime {
-		return fmt.Errorf("refuse fallback signal after Stop error %v: runner identity = %q, %v", stopErr, startTime, err)
+	return nil
+}
+
+func (p *darwinTestRunner) cleanup(t *testing.T) {
+	t.Helper()
+	if err := requestDarwinTestExit(p.lifetimePath); err != nil {
+		t.Errorf("request test-owned Darwin runner exit: %v", err)
+		return
 	}
-	if err := unix.Kill(process.pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
-		return fmt.Errorf("fallback SIGKILL after Stop error %v: %w", stopErr, err)
-	}
-	for process.IsAlive() {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("wait for fallback SIGKILL after Stop error %v: %w", stopErr, err)
+	deadline := time.Now().Add(3 * time.Second)
+	for p.IsAlive() {
+		if time.Now().After(deadline) {
+			t.Errorf("test-owned Darwin runner did not exit after lifetime closed")
+			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return nil
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		t.Errorf("test-owned Darwin supervisor was not reaped after lifetime closed")
+		return
+	}
+	select {
+	case <-p.done:
+	case <-time.After(remaining):
+		t.Errorf("test-owned Darwin supervisor was not reaped after lifetime closed")
+	}
 }
 
 func TestDarwinLaunchOwnerSupervisorStopsDirectRunner(t *testing.T) {
@@ -221,17 +281,21 @@ func TestDarwinLaunchOwnerSupervisorEscalatedStopSucceeds(t *testing.T) {
 }
 
 type darwinTestCommand struct {
-	cmd   *exec.Cmd
-	taken bool
+	cmd          *exec.Cmd
+	lifetimePath string
+	taken        bool
 }
 
-func startDarwinTestCommand(t *testing.T, cmd *exec.Cmd) *darwinTestCommand {
+func startDarwinTestCommand(t *testing.T, cmd *exec.Cmd, lifetimePath string) *darwinTestCommand {
 	t.Helper()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	owned := &darwinTestCommand{cmd: cmd}
+	owned := &darwinTestCommand{cmd: cmd, lifetimePath: lifetimePath}
 	t.Cleanup(func() {
+		if err := requestDarwinTestExit(owned.lifetimePath); err != nil {
+			t.Errorf("request test-owned Darwin helper exit: %v", err)
+		}
 		if owned.taken {
 			return
 		}
@@ -250,9 +314,10 @@ func (c *darwinTestCommand) take() *exec.Cmd {
 
 func TestDarwinDirectChildStopEscalatesAfterIgnoredTERM(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
+	lifetimePath := newDarwinTestLifetime(t)
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = darwinTestProcessEnv("ignore-term", ready)
-	owned := startDarwinTestCommand(t, cmd)
+	cmd.Env = darwinTestProcessEnv("ignore-term", ready, lifetimePath)
+	owned := startDarwinTestCommand(t, cmd, lifetimePath)
 	waitForTestFile(t, ready)
 	started := time.Now()
 	result, err := ownDirectChild(owned.take(), nil, 50*time.Millisecond, time.Second, true)
@@ -285,9 +350,10 @@ func waitForTestFile(t *testing.T, path string) {
 
 func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
+	lifetimePath := newDarwinTestLifetime(t)
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = darwinTestProcessEnv("runner", ready)
-	owned := startDarwinTestCommand(t, cmd)
+	cmd.Env = darwinTestProcessEnv("runner", ready, lifetimePath)
+	owned := startDarwinTestCommand(t, cmd, lifetimePath)
 	waitForTestFile(t, ready)
 	eof := make(chan struct{})
 	close(eof)
@@ -304,9 +370,10 @@ func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
 }
 
 func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
+	lifetimePath := newDarwinTestLifetime(t)
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = darwinTestProcessEnv("exit-7", "")
-	owned := startDarwinTestCommand(t, cmd)
+	cmd.Env = darwinTestProcessEnv("exit-7", "", lifetimePath)
+	owned := startDarwinTestCommand(t, cmd, lifetimePath)
 	result, err := ownDirectChild(owned.take(), nil, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
@@ -323,9 +390,10 @@ func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
 }
 
 func TestDarwinDirectChildNaturalSignalIsPreserved(t *testing.T) {
+	lifetimePath := newDarwinTestLifetime(t)
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = darwinTestProcessEnv("signal-term", "")
-	owned := startDarwinTestCommand(t, cmd)
+	cmd.Env = darwinTestProcessEnv("signal-term", "", lifetimePath)
+	owned := startDarwinTestCommand(t, cmd, lifetimePath)
 	result, err := ownDirectChild(owned.take(), nil, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
@@ -367,9 +435,7 @@ func TestDarwinKilledSupervisorLeavesRunnerLockHeld(t *testing.T) {
 	if _, err := ownership.Reconcile(t.Context(), process.environmentID); !errors.Is(err, ErrLaunchOwnershipUncertain) {
 		t.Fatalf("Reconcile() error = %v, want ownership uncertainty", err)
 	}
-	if err := stopDarwinTestRunner(process); err != nil {
-		t.Fatal(err)
-	}
+	process.cleanup(t)
 	deadline := time.Now().Add(2 * time.Second)
 	for darwinAttemptLockHeld(t, ownership, process.environmentID, process.launchID) {
 		if time.Now().After(deadline) {
@@ -429,18 +495,15 @@ func TestDarwinReceiptPublicationFailureStopsRunnerAndReleasesLock(t *testing.T)
 		files.close()
 		t.Fatal(err)
 	}
+	lifetimePath := newDarwinTestLifetime(t)
 	cmd := exec.Command(executable, internalLaunchOwnerArg)
 	cmd.ExtraFiles = []*os.File{files.dir, files.lock, files.receipt, files.intent, controlReader}
-	cmd.Env = darwinTestProcessEnv("runner", "")
-	if err := cmd.Start(); err != nil {
-		files.close()
-		_ = controlReader.Close()
-		_ = controlWriter.Close()
-		t.Fatal(err)
-	}
+	cmd.Env = darwinTestProcessEnv("runner", "", lifetimePath)
+	owned := startDarwinTestCommand(t, cmd, lifetimePath)
 	files.close()
 	_ = controlReader.Close()
 	wait := make(chan error, 1)
+	cmd = owned.take()
 	go func() { wait <- cmd.Wait() }()
 	select {
 	case err := <-wait:
