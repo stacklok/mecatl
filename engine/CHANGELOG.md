@@ -73,6 +73,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   execute, learn permission rules, arm hook waivers, or transition plan mode. Changed
   (breaking, pre-v1 minor).
 
+- **Durable workspace-enrollment broker authority provenance** — adds
+  `session.Session.WorkspaceEnrollmentBrokerKeys` and
+  `session.Session.RestoreWorkspaceEnrollmentBrokerKeys` for exact bounded broker
+  registration-key provenance across snapshot/event-source restoration and
+  authority-carrying successors. Restore is write-once per aggregate. Added (minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
@@ -326,6 +332,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `sessnap.RestoreState` to accept adapter-owned `sessnap.RestoreData`. Snapshot
   decoding validates canonical fields, ignores unknown fields, and treats an omitted
   empty token ledger as its zero value. Changed/breaking (pre-v1 minor).
+
+- **Workspace-enrollment authority replacement** —
+  `session.New` starts with legacy-absent broker provenance, and
+  `session.Session.CompleteWorkspaceEnrollment` now replaces only the prior
+  recorded broker bundle while retaining excluded broker keys in its ledger
+  across omitted refreshes, and refuses legacy-absent provenance. Changed (breaking,
+  pre-v1 minor).
 
 - **Go compatibility floor** - the engine module requires Go 1.27. The root,
   provider, and authentication modules use the same floor. Changed (breaking,

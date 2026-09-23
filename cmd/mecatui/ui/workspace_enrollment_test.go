@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -344,6 +346,58 @@ func TestWorkspaceEnrollmentFailedDoesNotPollOrRetry(t *testing.T) {
 	if control.connectCalls != 0 {
 		t.Fatalf("failed enrollment rechecked %d times", control.connectCalls)
 	}
+	terminal, _, guidance := terminalWorkspaceEnrollmentNotice(client.WorkspaceEnrollmentFailed)
+	if !terminal || !strings.Contains(guidance, "failed") || !strings.Contains(guidance, "/tools-connect") || strings.Contains(guidance, "bundle-1") {
+		t.Fatalf("terminal conflict copy = terminal:%t %q; want safe retry guidance", terminal, guidance)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario3_TerminalConflictUX(t *testing.T) {
+	collision := status.Error(codes.FailedPrecondition, `workspace tool "mcp__prior__tool" conflicts with an existing registration; correct the broker configuration and retry`)
+	control := &workspaceEnrollmentControlFake{connectErr: collision}
+	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.deps.WorkspaceEnrollment = control
+	m.pendingInitialPrompt = "list my open pull requests"
+
+	mm, connect := m.runToolsConnect()
+	m = mm.(Model)
+	if connect == nil {
+		t.Fatal("/tools-connect returned no command")
+	}
+	m = applyAll(m, connect())
+	if m.enrollment.Status != client.WorkspaceEnrollmentFailed || !strings.Contains(m.statusMsg, "failed") || !strings.Contains(m.statusMsg, "/tools-connect") {
+		t.Fatalf("collision did not show terminal failure and retry: enrollment=%+v status=%q", m.enrollment, m.statusMsg)
+	}
+	if m.pendingInitialPrompt != "list my open pull requests" || len(promptTexts(send)) != 0 {
+		t.Fatalf("terminal collision sent retained prompt: pending=%q sent=%v", m.pendingInitialPrompt, promptTexts(send))
+	}
+	if mm, retry := m.runToolsConnect(); retry == nil {
+		t.Fatalf("terminal collision did not offer explicit /tools-connect retry: model=%#v", mm)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_EmptyKeyConflictUsesSafeRetryUX(t *testing.T) {
+	collision := status.Error(codes.FailedPrecondition, "workspace enrollment registration collision; correct the broker configuration and retry")
+	control := &workspaceEnrollmentControlFake{connectErr: collision}
+	m, _ := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.deps.WorkspaceEnrollment = control
+
+	mm, connect := m.runToolsConnect()
+	m = mm.(Model)
+	if connect == nil {
+		t.Fatal("/tools-connect returned no command")
+	}
+	m = applyAll(m, connect())
+
+	if m.enrollment.Status != client.WorkspaceEnrollmentFailed {
+		t.Fatalf("empty-key collision enrollment = %+v, want failed", m.enrollment)
+	}
+	if !strings.Contains(m.statusMsg, "failed") || !strings.Contains(m.statusMsg, "/tools-connect") {
+		t.Fatalf("empty-key collision did not show safe retry guidance: %q", m.statusMsg)
+	}
+	if strings.Contains(m.statusMsg, "registration collision") {
+		t.Fatalf("empty-key collision leaked raw RPC detail: %q", m.statusMsg)
+	}
 }
 
 // TestWorkspaceEnrollmentExpiredResetsInsteadOfPollingForever pins the bug
@@ -446,13 +500,14 @@ func TestWorkspaceEnrollmentQueuedPresentationIsCancelledBeforeOpen(t *testing.T
 
 type workspaceEnrollmentControlFake struct {
 	connect      client.WorkspaceEnrollment
+	connectErr   error
 	connectCalls int
 	cancelCalls  int
 }
 
 func (f *workspaceEnrollmentControlFake) ConnectWorkspaceServices(context.Context, string) (client.WorkspaceEnrollment, error) {
 	f.connectCalls++
-	return f.connect, nil
+	return f.connect, f.connectErr
 }
 
 func (*workspaceEnrollmentControlFake) RetryWorkspaceEnrollment(context.Context, string, string) (client.WorkspaceEnrollment, error) {

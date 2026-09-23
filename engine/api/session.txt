@@ -57,6 +57,7 @@
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
     method func (*Session).RestoreTitleMetadata(title string, provenance TitleProvenance, revision uint64, generation TitleGenerationState, sources []string, attempts []TitleAttempt)
     method func (*Session).RestoreTokenUsage(usage map[UsageKind]TokenUsage)
+    method func (*Session).RestoreWorkspaceEnrollmentBrokerKeys(keys []string, present bool) error
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).RunID() string
     method func (*Session).SeedHistory(messages []Message) error
@@ -72,6 +73,7 @@
     method func (*Session).TokenUsageSnapshot() map[UsageKind]TokenUsage
     method func (*Session).UsageFor(kind UsageKind) Usage
     method func (*Session).ValidateAuthorizationState() error
+    method func (*Session).WorkspaceEnrollmentBrokerKeys() ([]string, bool)
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
     method func (AuthorizationPayload).Valid() bool

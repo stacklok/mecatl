@@ -23,6 +23,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
@@ -191,8 +192,11 @@ type catalogSession struct {
 	// share one principal-scoped catalog selection.
 	skillPartitions []learning.SkillPartition
 	// sessionTools are explicit wrappers owned by one host attachment. They are
-	// never recovered from context values or a global MCP manager.
-	sessionTools []tool.Tool
+	// never recovered from context values or a global MCP manager. sessionToolKeys,
+	// when supplied, are the broker's already-frozen registration keys paired by
+	// index with sessionTools.
+	sessionTools    []tool.Tool
+	sessionToolKeys []string
 }
 
 // assembleCatalog registers every tool family into a fresh catalog, in the
@@ -217,7 +221,7 @@ type catalogSession struct {
 // into the returned catalog (see the clientToolNames comment inline below for
 // why it must come from the catalog itself rather than a second manager
 // read) -- nil whenever s.clientMgr is nil, i.e. every build-time/shared call.
-func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error, []string) {
+func assembleCatalogDetailed(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error, []string, []string, []string, error) {
 	if profile, ok := a.userModelStore.(prompt.OperatorProfileSource); ok {
 		cfg.operatorProfileSource = profile
 	}
@@ -226,16 +230,6 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	classified.captureEach(coreToolClassification, func() {
 		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
 	})
-	for _, sessionTool := range s.sessionTools {
-		// A direct global manager retains ownership of its existing query wrapper.
-		// The attachment-bound variant is for broker-only session catalogues.
-		if sessionTool.Spec().Name == "CallMcpWithQuery" && a.globalMgr != nil {
-			continue
-		}
-		classified.mustRegister(sessionTool, classification(server.KindDerived,
-			"session-bound wrapper supplied explicitly by the host attachment"))
-	}
-
 	for _, extra := range cfg.extraCoreTools {
 		entry, ok := cfg.extraCoreToolClassifications[extra.Spec().Name]
 		if !ok {
@@ -322,6 +316,22 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		registerSkillFamily(ctx, cfg, cat, *a, s)
 	})
 
+	brokerRegistrationKeys, err := registerSessionTools(classified, s.sessionTools, s.sessionToolKeys, clientClose, subagentClose)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+
+	brokerSet := make(map[string]struct{}, len(brokerRegistrationKeys))
+	for _, name := range brokerRegistrationKeys {
+		brokerSet[name] = struct{}{}
+	}
+	nonBrokerRegistrationKeys := make([]string, 0, len(cat.Names())-len(brokerRegistrationKeys))
+	for _, name := range cat.Names() {
+		if _, broker := brokerSet[name]; !broker {
+			nonBrokerRegistrationKeys = append(nonBrokerRegistrationKeys, name)
+		}
+	}
+
 	if cfg.catalogClassificationObserver != nil {
 		cfg.catalogClassificationObserver(classified.snapshot())
 	}
@@ -329,6 +339,90 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	closeFn := composeCloseErr(subagentClose, clientClose)
 	if closeFn == nil {
 		closeFn = func() error { return nil }
+	}
+	return cat, closeFn, clientToolNames, brokerRegistrationKeys, nonBrokerRegistrationKeys, nil
+}
+
+func registerSessionTools(classified *classifiedCatalog, sessionTools []tool.Tool, sessionToolKeys []string, clientClose, subagentClose func() error) ([]string, error) {
+	cleanup := func() {
+		if clientClose != nil {
+			_ = clientClose()
+		}
+		if subagentClose != nil {
+			_ = subagentClose()
+		}
+	}
+	frozenKeys := sessionToolKeys != nil
+	if frozenKeys {
+		if len(sessionToolKeys) != len(sessionTools) {
+			cleanup()
+			return nil, fmt.Errorf("session tool registration keys do not match tools")
+		}
+		for _, key := range sessionToolKeys {
+			if _, exists := classified.catalog.Lookup(key); exists {
+				cleanup()
+				return nil, &server.WorkspaceEnrollmentCollisionError{Key: key}
+			}
+		}
+	}
+
+	brokerKeys := make([]string, 0, len(sessionTools))
+	initialNames := classified.catalog.Names()
+	runningNames := make(map[string]struct{}, len(initialNames))
+	for _, name := range initialNames {
+		runningNames[name] = struct{}{}
+	}
+	for i, sessionTool := range sessionTools {
+		registeredKey := ""
+		if frozenKeys {
+			registeredKey = sessionToolKeys[i]
+			if _, exists := runningNames[registeredKey]; exists {
+				cleanup()
+				return nil, &server.WorkspaceEnrollmentCollisionError{Key: registeredKey}
+			}
+		}
+		if err := classified.catalog.Register(sessionTool); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("register session tool: %w", err)
+		}
+		if frozenKeys {
+			if _, exists := classified.catalog.Lookup(registeredKey); !exists {
+				cleanup()
+				return nil, fmt.Errorf("session tool registered key %q does not match frozen key", registeredKey)
+			}
+			runningNames[registeredKey] = struct{}{}
+			brokerKeys = append(brokerKeys, registeredKey)
+			classified.entries[registeredKey] = server.ClassificationEntry{Kind: server.KindDerived,
+				Rationale: "session-bound wrapper supplied explicitly by the host attachment"}
+		}
+	}
+	if frozenKeys {
+		return brokerKeys, nil
+	}
+
+	for _, name := range classified.catalog.Names() {
+		if _, existed := runningNames[name]; existed {
+			continue
+		}
+		runningNames[name] = struct{}{}
+		brokerKeys = append(brokerKeys, name)
+		classified.entries[name] = server.ClassificationEntry{Kind: server.KindDerived,
+			Rationale: "session-bound wrapper supplied explicitly by the host attachment"}
+	}
+	if len(brokerKeys) != len(sessionTools) {
+		cleanup()
+		return nil, fmt.Errorf("session tool registered unexpected key count")
+	}
+	return brokerKeys, nil
+}
+
+// assembleCatalog is the static-registration convenience used by build-time and
+// test callers. Dynamic host tool registration uses assembleCatalogDetailed so
+// duplicate registration is an ordinary candidate-build failure, never a panic.
+func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, store port.SessionStore, hooks port.HookRunner, a *catalogAssets, s catalogSession) (*tool.Catalog, func() error, []string) {
+	cat, closeFn, clientToolNames, _, _, err := assembleCatalogDetailed(ctx, cfg, reg, store, hooks, a, s)
+	if err != nil {
+		panic(err)
 	}
 	return cat, closeFn, clientToolNames
 }

@@ -24,8 +24,7 @@ func newClassifiedCatalog() *classifiedCatalog {
 }
 
 func (c *classifiedCatalog) classifyAdded(before map[string]struct{}, entry server.ClassificationEntry) {
-	for _, registered := range c.catalog.Tools() {
-		name := registered.Spec().Name
+	for _, name := range c.catalog.Names() {
 		if _, existed := before[name]; !existed {
 			c.entries[name] = entry
 		}
@@ -41,11 +40,11 @@ func (c *classifiedCatalog) capture(entry server.ClassificationEntry, register f
 func (c *classifiedCatalog) captureEach(classify func(tool.Tool) (server.ClassificationEntry, bool), register func()) {
 	before := c.names()
 	register()
-	for _, registered := range c.catalog.Tools() {
-		name := registered.Spec().Name
+	for _, name := range c.catalog.Names() {
 		if _, existed := before[name]; existed {
 			continue
 		}
+		registered, _ := c.catalog.Lookup(name)
 		if entry, ok := classify(registered); ok {
 			c.entries[name] = entry
 		}
@@ -69,9 +68,9 @@ func (c *classifiedCatalog) mustRegister(t tool.Tool, entry *server.Classificati
 }
 
 func (c *classifiedCatalog) names() map[string]struct{} {
-	names := make(map[string]struct{}, len(c.catalog.Tools()))
-	for _, registered := range c.catalog.Tools() {
-		names[registered.Spec().Name] = struct{}{}
+	names := make(map[string]struct{}, len(c.catalog.Names()))
+	for _, name := range c.catalog.Names() {
+		names[name] = struct{}{}
 	}
 	return names
 }
@@ -85,12 +84,7 @@ func (c *classifiedCatalog) snapshot() map[string]server.ClassificationEntry {
 }
 
 func (c *classifiedCatalog) validate(surface string) error {
-	tools := c.catalog.Tools()
-	names := make([]string, 0, len(tools))
-	for _, registered := range tools {
-		names = append(names, registered.Spec().Name)
-	}
-	if errs := server.ValidateClassifiedNames(surface, c.entries, names); len(errs) > 0 {
+	if errs := server.ValidateClassifiedNames(surface, c.entries, c.catalog.Names()); len(errs) > 0 {
 		return fmt.Errorf("caller-separation tool classification: %w", errors.Join(errs...))
 	}
 	return nil

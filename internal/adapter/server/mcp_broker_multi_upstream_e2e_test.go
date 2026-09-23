@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -262,7 +263,7 @@ func newMultiUpstreamFixture(t *testing.T, rejectB bool, contexts ...context.Con
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__backend-a__whoami", "mcp__backend-b__whoami"}}, Provenance: "adr-0298-test"}
 		},
-		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, keys []string) (SessionEngineResult, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.catalogueBuilds = append(f.catalogueBuilds, append([]tool.Tool(nil), tools...))
@@ -270,7 +271,11 @@ func newMultiUpstreamFixture(t *testing.T, rejectB bool, contexts ...context.Con
 				f.failBuilds--
 				return SessionEngineResult{}, errors.New("injected engine replacement failure")
 			}
-			return brokerEngineResult(), nil
+			return SessionEngineResult{
+				Engine:                    brokerEngineResult().Engine,
+				BrokerRegistrationKeys:    append([]string(nil), keys...),
+				NonBrokerRegistrationKeys: []string{"Read"},
+			}, nil
 		},
 	})
 	if err != nil {
@@ -290,6 +295,15 @@ func newMultiUpstreamFixture(t *testing.T, rejectB bool, contexts ...context.Con
 		t.Fatalf("load created session %q: %v", f.session.ID, loadErr)
 	}
 	return f
+}
+
+func toolNames(tools []tool.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, registered := range tools {
+		names = append(names, registered.Spec().Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (f *multiUpstreamFixture) start() WorkspaceEnrollmentProjection {

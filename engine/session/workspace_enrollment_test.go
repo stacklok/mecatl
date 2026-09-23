@@ -248,6 +248,9 @@ func sessionWithEnrollmentAuthority(t *testing.T) (*Session, PendingWorkspaceEnr
 	if err := s.BindAuthority(enrollmentAuthority("Read", "stale")); err != nil {
 		t.Fatalf("BindAuthority: %v", err)
 	}
+	if err := s.RestoreWorkspaceEnrollmentBrokerKeys([]string{"Read", "stale"}, true); err != nil {
+		t.Fatalf("RestoreWorkspaceEnrollmentBrokerKeys: %v", err)
+	}
 	pending := testWorkspaceEnrollment()
 	if err := s.BeginWorkspaceEnrollment(pending); err != nil {
 		t.Fatalf("BeginWorkspaceEnrollment: %v", err)

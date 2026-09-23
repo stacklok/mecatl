@@ -129,6 +129,10 @@ type SessionMeta struct {
 	// metadata. Nil is a documented pre-feature legacy record; a present payload
 	// is validated and bound before reconstruction proceeds.
 	Authority *session.Authority
+	// WorkspaceEnrollmentBrokerKeys and its presence bit must come from the same
+	// committed authority revision. They are not reconstructed from events.
+	WorkspaceEnrollmentBrokerKeys        []string
+	WorkspaceEnrollmentBrokerKeysPresent bool
 	// ExternalBinding is the opaque composition-issued process-external
 	// identity (e.g. an MCP broker attachment binding). Not event-carried:
 	// safe to omit for a pure fold UNLESS the host requires exact external-
@@ -191,6 +195,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 	if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreWorkspaceEnrollmentBrokerKeys(meta.WorkspaceEnrollmentBrokerKeys, meta.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
+		return nil, fmt.Errorf("%w: restore workspace enrollment broker keys: %w", ErrReconstruct, err)
 	}
 	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)

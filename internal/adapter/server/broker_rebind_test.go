@@ -32,7 +32,7 @@ func TestWorkspaceEnrollmentRebindsAfterBrokerRestart(t *testing.T) {
 			RootAuthority: func(session.SessionKind) session.Authority {
 				return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 			},
-			SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+			SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 				return brokerEngineResult(), nil
 			},
 		})

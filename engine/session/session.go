@@ -416,6 +416,12 @@ type Session struct {
 	// A zero Authority with this marker is impossible: BindAuthority validates the
 	// payload before setting either field.
 	authorityBound bool
+	// workspaceEnrollmentBrokerKeys records exactly the broker registration keys
+	// installed by the last completed workspace enrollment. Presence distinguishes
+	// a fully restored empty ledger from unrepaired legacy state.
+	workspaceEnrollmentBrokerKeys         []string
+	workspaceEnrollmentBrokerKeysPresent  bool
+	workspaceEnrollmentBrokerKeysRestored bool
 	// pending is set iff State == StateAwaiting.
 	pending *PendingAsk
 	// pendingAuthorization is set iff State == StateAuthorizing.

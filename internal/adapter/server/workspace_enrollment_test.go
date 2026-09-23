@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -19,7 +21,10 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -119,13 +124,19 @@ func (b *enrollmentBroker) AttachSession(ctx context.Context, id session.Session
 	return b.attachment, outcome, nil
 }
 
-type enrollmentTool struct{ name string }
+type enrollmentTool struct {
+	name     string
+	executed *atomic.Int32
+}
 
 func (t enrollmentTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: t.name, Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (enrollmentTool) ReadOnly() bool { return true }
-func (enrollmentTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
+func (t enrollmentTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
+	if t.executed != nil {
+		t.executed.Add(1)
+	}
 	return session.NewToolResult("call", "ok"), nil
 }
 
@@ -147,8 +158,8 @@ func newWorkspaceEnrollmentServiceWithStore(t *testing.T, ownershipEnforced bool
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResult(), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
 		},
 	})
 	if err != nil {
@@ -216,11 +227,11 @@ func newDestructiveReplacementFixtureWithStore(t *testing.T, store port.SessionS
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 			if f.failEngineBuild.Load() {
 				return SessionEngineResult{}, errFixtureEngineBuildFailed
 			}
-			return brokerEngineResultWithStore(store), nil
+			return brokerEngineResultWithStoreAndTools(store, tools), nil
 		},
 	})
 	if err != nil {
@@ -256,6 +267,169 @@ func newDestructiveReplacementFixtureWithStore(t *testing.T, store port.SessionS
 	svc.FinishRun(created.ID, run)
 
 	return f
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario1_CreationRecordsBrokerKeys(t *testing.T) {
+	store := memstore.New()
+	runtime := testBrokerRuntime(t)
+	t.Cleanup(func() { _ = runtime.Close() })
+	broker := &enrollmentBroker{Service: runtime}
+	svc, err := NewService(Config{
+		Engine:            brokerEngineResult().Engine,
+		Store:             store,
+		PlacementProvider: brokerPlacementProvider{},
+		PlacementScope:    "test",
+		NewID:             func() session.SessionID { return "creation-records-broker-keys" },
+		MCPBroker:         broker,
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}}, Provenance: "test"}
+		},
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+
+	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys, present := stored.WorkspaceEnrollmentBrokerKeys(); !present || !slices.Equal(keys, []string{"mcp__calendar__list"}) {
+		t.Fatalf("created broker ledger = (%q, %t), want ([mcp__calendar__list], true)", keys, present)
+	}
+
+	started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogue, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{enrollmentTool{name: "mcp__slack__post"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: catalogue}
+	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, bound := stored.BoundAuthority()
+	if !bound || !slices.Equal(authority.CapabilitySet.Tools, []string{"Read", "mcp__slack__post"}) {
+		t.Fatalf("authority after enrollment = (%q, %t), want ([Read mcp__slack__post], true)", authority.CapabilitySet.Tools, bound)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario2_CarryoverCopiesProvenance(t *testing.T) {
+	store := memstore.New()
+	runtime := testBrokerRuntime(t)
+	t.Cleanup(func() { _ = runtime.Close() })
+	broker := &enrollmentBroker{Service: runtime}
+	var next int
+	svc, err := NewService(Config{
+		Engine:            brokerEngineResult().Engine,
+		Store:             store,
+		PlacementProvider: brokerPlacementProvider{},
+		PlacementScope:    "test",
+		NewID: func() session.SessionID {
+			next++
+			return session.SessionID(fmt.Sprintf("carryover-%d", next))
+		},
+		MCPBroker: broker,
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}}, Provenance: "test"}
+		},
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+
+	makeSource := func(t *testing.T, id session.SessionID, keys []string, present bool) *session.Session {
+		t.Helper()
+		source := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
+		if err := source.BindAuthority(session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read", "mcp__calendar__list"}}, Provenance: "test"}); err != nil {
+			t.Fatal(err)
+		}
+		if present {
+			if err := source.RestoreWorkspaceEnrollmentBrokerKeys(keys, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := store.Create(t.Context(), source); err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+
+	t.Run("present", func(t *testing.T) {
+		source := makeSource(t, "carryover-present", []string{"mcp__calendar__list"}, true)
+		created, err := svc.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, ProviderSelector{}, ProfileDefault, WithSourceSession(source.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if keys, present := stored.WorkspaceEnrollmentBrokerKeys(); !present || !slices.Equal(keys, []string{"mcp__calendar__list"}) {
+			t.Fatalf("carried broker ledger = (%q, %t), want ([mcp__calendar__list], true)", keys, present)
+		}
+	})
+
+	t.Run("absent legacy is retained and enrollment is refused", func(t *testing.T) {
+		source := makeSource(t, "carryover-absent", nil, false)
+		created, err := svc.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, ProviderSelector{}, ProfileDefault, WithSourceSession(source.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if keys, present := stored.WorkspaceEnrollmentBrokerKeys(); present || len(keys) != 0 {
+			t.Fatalf("legacy carried broker ledger = (%q, %t), want ([], false)", keys, present)
+		}
+		if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); !errors.Is(err, ErrFailedPrecondition) {
+			t.Fatalf("enrollment error = %v, want ErrFailedPrecondition", err)
+		}
+	})
+}
+
+func replacePersistedBrokerLedger(t *testing.T, svc *Service, created *session.Session, keys []string, present bool) {
+	t.Helper()
+	legacy := session.New(created.ID, created.Mode, created.EnvironmentRef, created.Limits, created.CreatedAt)
+	legacy.ExternalBinding = created.ExternalBinding
+	authority, bound := created.BoundAuthority()
+	if bound && present {
+		for _, key := range keys {
+			if !slices.Contains(authority.CapabilitySet.Tools, key) {
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, key)
+			}
+		}
+		slices.Sort(authority.CapabilitySet.Tools)
+	}
+	if err := legacy.RestoreLabels(created.Owner, authority); err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		if err := legacy.RestoreWorkspaceEnrollmentBrokerKeys(keys, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.cfg.Store.Save(t.Context(), legacy); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (f *destructiveReplacementFixture) authorityTools(t *testing.T) []string {
@@ -301,8 +475,8 @@ func TestIdleSessionBrokerRefresh_Scenario1_ExistingConversationControls(t *test
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResultWithStore(store), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithStoreAndTools(store, tools), nil
 		},
 	})
 	if err != nil {
@@ -383,12 +557,12 @@ func TestIdleSessionBrokerRefresh_Scenario1_ExistingConversationControls(t *test
 // AC1.2/AC1.3: starting a refresh removes the active broker wrappers and
 // invalidates the completed catalogue before the replacement begins, and a
 // failure at any of the named boundaries (broker reset, engine build,
-// attachment commit, snapshot persistence) — or a terminal denial — leaves no
+// attachment commit, durable persistence) — or a terminal denial — leaves no
 // stale or partial broker wrapper executable, without restoring the old
 // bundle, retaining a partial replacement, or auto-retrying. Each subtest
 // injects the fault at a different boundary and then proves a subsequent
 // explicit retry succeeds cleanly.
-func TestIdleSessionBrokerRefresh_Scenario1_DestructiveCatalogueReplacement(t *testing.T) {
+func TestWorkspaceEnrollmentAuthority_Scenario2_FailureIsAtomic(t *testing.T) {
 	t.Run("BrokerResetFailureLeavesCurrentEnrollmentUndisturbed", func(t *testing.T) {
 		// The only failure branch inside the real Attachment.ResetWorkspaceEnrollment
 		// (engine/adapter/mcpbroker) returns BEFORE any mutation, so a reset
@@ -499,7 +673,7 @@ func TestIdleSessionBrokerRefresh_Scenario1_DestructiveCatalogueReplacement(t *t
 		}
 	})
 
-	t.Run("SnapshotPersistenceFailureLeavesNoPartialAuthority", func(t *testing.T) {
+	t.Run("DurablePersistenceFailureLeavesNoPartialAuthority", func(t *testing.T) {
 		inner := memstore.New()
 		failing := &failNextAuthorizationSaveStore{SessionStore: inner}
 		f := newDestructiveReplacementFixtureWithStore(t, failing)
@@ -509,6 +683,13 @@ func TestIdleSessionBrokerRefresh_Scenario1_DestructiveCatalogueReplacement(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
+		beforeSession, err := inner.Load(t.Context(), f.created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeAuthority, beforeBound := beforeSession.BoundAuthority()
+		beforeKeys, beforeKeysPresent := beforeSession.WorkspaceEnrollmentBrokerKeys()
+		beforePending, beforePendingPresent := beforeSession.PendingWorkspaceEnrollment()
 		t1, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{enrollmentTool{name: "mcp__slack__post"}})
 		if err != nil {
 			t.Fatal(err)
@@ -516,7 +697,27 @@ func TestIdleSessionBrokerRefresh_Scenario1_DestructiveCatalogueReplacement(t *t
 		f.broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: t1}
 		failing.failures.Store(1)
 		if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.created.ID); !errors.Is(err, ErrInternal) {
-			t.Fatalf("completion despite a failed snapshot save = %v, want ErrInternal", err)
+			t.Fatalf("completion despite a failed durable save = %v, want ErrInternal", err)
+		}
+		afterFailure, err := inner.Load(t.Context(), f.created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		afterAuthority, afterBound := afterFailure.BoundAuthority()
+		afterKeys, afterKeysPresent := afterFailure.WorkspaceEnrollmentBrokerKeys()
+		afterPending, afterPendingPresent := afterFailure.PendingWorkspaceEnrollment()
+		if afterBound != beforeBound || !reflect.DeepEqual(afterAuthority, beforeAuthority) ||
+			afterKeysPresent != beforeKeysPresent || !slices.Equal(afterKeys, beforeKeys) ||
+			afterPendingPresent != beforePendingPresent || afterPending != beforePending {
+			t.Fatalf("AC2.5 durable state after failed completion = authority:%#v bound:%t keys:%q present:%t pending:%#v pendingPresent:%t; want authority:%#v bound:%t keys:%q present:%t pending:%#v pendingPresent:%t",
+				afterAuthority, afterBound, afterKeys, afterKeysPresent, afterPending, afterPendingPresent,
+				beforeAuthority, beforeBound, beforeKeys, beforeKeysPresent, beforePending, beforePendingPresent)
+		}
+		f.svc.mu.Lock()
+		candidatePublished := f.svc.sessionEngines[f.created.ID] != nil
+		f.svc.mu.Unlock()
+		if candidatePublished {
+			t.Fatal("AC2.5 save failure left the candidate runtime published")
 		}
 		if pending, ok := f.pendingID(t); !ok || pending != started.Ref.ID {
 			t.Fatalf("pending after a save failure = (%v, %v), want unchanged", pending, ok)
@@ -604,7 +805,7 @@ func TestInvariant_idle_session_broker_refresh_serialization(t *testing.T) {
 // live broker tools and without mecatl ever attaching on its own; the owner's
 // explicit refresh is the only path that creates a fresh attachment and
 // installs the exact new admitted names.
-func TestIdleSessionBrokerRefresh_Scenario2_RestartAndExplicitRecovery(t *testing.T) {
+func TestWorkspaceEnrollmentAuthority_Scenario2_RestartDoesNotResurrectBrokerRuntime(t *testing.T) {
 	store := memstore.New()
 	sessionID := session.SessionID("restart-recovery-session")
 
@@ -625,8 +826,8 @@ func TestIdleSessionBrokerRefresh_Scenario2_RestartAndExplicitRecovery(t *testin
 		SessionEngine: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
 			return brokerEngineResultWithStore(store), nil
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResultWithStore(store), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithStoreAndTools(store, tools), nil
 		},
 	})
 	if err != nil {
@@ -684,8 +885,8 @@ func TestIdleSessionBrokerRefresh_Scenario2_RestartAndExplicitRecovery(t *testin
 		SessionEngine: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
 			return brokerEngineResultWithStore(store), nil
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResultWithStore(store), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithStoreAndTools(store, tools), nil
 		},
 	})
 	if err != nil {
@@ -775,8 +976,8 @@ func TestInvariant_idle_session_broker_refresh_preserves_toolhive_custody(t *tes
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResult(), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
 		},
 	})
 	if err != nil {
@@ -808,8 +1009,8 @@ func TestInvariant_idle_session_broker_refresh_preserves_toolhive_custody(t *tes
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResult(), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
 		},
 	})
 	if err != nil {
@@ -1178,8 +1379,8 @@ func TestWorkspaceEnrollmentAcquiresLeaseBeforePersisting(t *testing.T) {
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResult(), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
 		},
 	})
 	if err != nil {
@@ -1216,6 +1417,177 @@ func TestWorkspaceEnrollmentAcquiresLeaseBeforePersisting(t *testing.T) {
 // structural guarantee, which is what actually pins the AC1.4 requirement
 // ("Retry keeps the session's run-entry/lease serialization continuously ...
 // so a prompt cannot enter between them").
+func TestWorkspaceEnrollmentAuthority_Scenario1_PreservesSupportedRestrictions(t *testing.T) {
+	const brokerTool = "mcp__calendar__list"
+	var executed atomic.Int32
+	store := memstore.New()
+	svc, broker, created := newWorkspaceEnrollmentServiceWithStore(t, false, store)
+	svc.cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+		catalog := tool.NewCatalog()
+		for _, candidate := range tools {
+			if err := catalog.Register(candidate); err != nil {
+				return SessionEngineResult{}, err
+			}
+		}
+		return SessionEngineResult{
+			Engine: agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(session.ToolCall{ID: "broker-call", Name: brokerTool, Args: json.RawMessage(`{}`)}), mockllm.TextTurn("done")),
+				Catalog: catalog,
+				Policy:  permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: brokerTool, Effect: governance.Deny}}, nil),
+				Store:   store,
+			}),
+			BrokerRegistrationKeys:    toolNames(tools),
+			NonBrokerRegistrationKeys: []string{"Read"},
+			Close:                     func() error { return nil },
+		}, nil
+	}
+	started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogue, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{enrollmentTool{name: brokerTool, executed: &executed}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: catalogue}
+	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
+		t.Fatalf("complete enrollment: %v", err)
+	}
+	run, err := svc.StartRun(t.Context(), created.ID, "use the calendar")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	var denied bool
+	for event := range run.Events() {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.IsError {
+			denied = true
+		}
+	}
+	if got := executed.Load(); got != 0 || !denied {
+		t.Fatalf("configured deny after enrollment: executed=%d denied=%t", got, denied)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario3_ConflictPresentationAndOwnership(t *testing.T) {
+	configureCollision := func(svc *Service) {
+		svc.cfg.SessionEngineWithTools = func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
+			return SessionEngineResult{
+				Engine:                    brokerEngineResult().Engine,
+				BrokerRegistrationKeys:    []string{"mcp__prior__tool"},
+				NonBrokerRegistrationKeys: []string{"mcp__prior__tool"},
+				Close:                     func() error { return nil },
+			}, nil
+		}
+	}
+	t.Run("owner receives only the safe collision", func(t *testing.T) {
+		svc, broker, created := newWorkspaceEnrollmentHTTPService(t, true)
+		replacePersistedBrokerLedger(t, svc, created, []string{"mcp__prior__tool"}, true)
+		configureCollision(svc)
+		started, err := svc.ConnectWorkspaceServices(session.WithPrincipal(t.Context(), created.Owner), created.ID)
+		if err != nil {
+			t.Fatalf("begin enrollment: %v", err)
+		}
+		catalogue, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{enrollmentTool{name: "mcp__prior__tool"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: catalogue}
+
+		_, err = svc.ConnectWorkspaceServices(session.WithPrincipal(t.Context(), created.Owner), created.ID)
+		if !errors.Is(err, ErrFailedPrecondition) {
+			t.Fatalf("owner collision = %v, want failed precondition", err)
+		}
+		for _, want := range []string{"mcp__prior__tool", "correct the broker configuration", "retry"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("owner collision = %q, want %q", err, want)
+			}
+		}
+		for _, forbidden := range []string{"https://", "endpoint", "callback", "credential", "token", "oauth"} {
+			if strings.Contains(strings.ToLower(err.Error()), forbidden) {
+				t.Fatalf("owner collision leaked %q: %q", forbidden, err)
+			}
+		}
+	})
+	t.Run("foreign caller is concealed and cannot mutate", func(t *testing.T) {
+		svc, _, created := newWorkspaceEnrollmentHTTPService(t, true)
+		replacePersistedBrokerLedger(t, svc, created, []string{"mcp__prior__tool"}, true)
+		configureCollision(svc)
+		before, err := svc.cfg.Store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foreign := &session.Principal{Issuer: created.Owner.Issuer, Subject: "foreign", GrantType: session.GrantTypeUser}
+		_, err = svc.ConnectWorkspaceServices(session.WithPrincipal(t.Context(), foreign), created.ID)
+		if !errors.Is(err, ErrNotFound) || strings.Contains(err.Error(), "mcp__prior__tool") {
+			t.Fatalf("foreign collision = %v, want concealed not-found failure", err)
+		}
+		after, err := svc.cfg.Store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(after, before) {
+			t.Fatalf("foreign collision mutated stored session: before=%#v after=%#v", before, after)
+		}
+	})
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario2_LegacySnapshotIsNotRepaired(t *testing.T) {
+	t.Run("idle legacy session remains untouched", func(t *testing.T) {
+		svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
+		replacePersistedBrokerLedger(t, svc, created, nil, false)
+		before, err := svc.cfg.Store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = svc.ConnectWorkspaceServices(t.Context(), created.ID)
+		if !errors.Is(err, ErrFailedPrecondition) {
+			t.Fatalf("ConnectWorkspaceServices error = %v, want failed precondition", err)
+		}
+		after, err := svc.cfg.Store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(after, before) {
+			t.Fatalf("legacy refusal rewrote stored session: before=%#v after=%#v", before, after)
+		}
+		if broker.attachment != nil {
+			begin, _, _ := enrollmentCallCounts(broker.attachment)
+			if begin != 0 {
+				t.Fatalf("legacy provenance began %d broker enrollments", begin)
+			}
+		}
+	})
+	t.Run("completed legacy session is not reopened or saved", func(t *testing.T) {
+		svc, _, created := newWorkspaceEnrollmentHTTPService(t, false)
+		legacy := session.New(created.ID, created.Mode, created.EnvironmentRef, created.Limits, created.CreatedAt)
+		legacy.ExternalBinding = created.ExternalBinding
+		authority, _ := created.BoundAuthority()
+		if err := legacy.BindAuthority(authority); err != nil {
+			t.Fatal(err)
+		}
+		if err := legacy.Complete(); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.cfg.Store.Save(t.Context(), legacy); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); !errors.Is(err, ErrFailedPrecondition) {
+			t.Fatalf("ConnectWorkspaceServices error = %v, want failed precondition", err)
+		}
+		reloaded, err := svc.cfg.Store.Load(t.Context(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.State != session.StateCompleted {
+			t.Fatalf("legacy completed session was reopened: state=%q", reloaded.State)
+		}
+		if keys, present := reloaded.WorkspaceEnrollmentBrokerKeys(); present || len(keys) != 0 {
+			t.Fatalf("legacy completed session was repaired: ledger=(%q,%t)", keys, present)
+		}
+	})
+}
+
 func TestRetryWorkspaceEnrollmentHoldsRunEntryContinuously(t *testing.T) {
 	svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
 
@@ -1329,8 +1701,8 @@ func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResult(), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
 		},
 	})
 	if err != nil {
@@ -1390,8 +1762,8 @@ func TestWorkspaceEnrollmentCancelHealsAlreadyGoneBrokerTransaction(t *testing.T
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
-			return brokerEngineResult(), nil
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
+			return brokerEngineResultWithTools(tools), nil
 		},
 	})
 	if err != nil {
@@ -1444,13 +1816,16 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
-		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 			names := make([]string, len(tools))
 			for i, candidate := range tools {
 				names[i] = candidate.Spec().Name
 			}
 			catalogues = append(catalogues, names)
-			return brokerEngineResult(), nil
+			result := brokerEngineResult()
+			result.BrokerRegistrationKeys = names
+			result.NonBrokerRegistrationKeys = []string{"Read"}
+			return result, nil
 		},
 	})
 	if err != nil {
@@ -1532,5 +1907,189 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 	authority, ok := loaded.BoundAuthority()
 	if !ok || len(authority.CapabilitySet.Tools) != 2 || authority.CapabilitySet.Tools[1] != "mcp__github__review" {
 		t.Fatalf("authority = %#v, %v", authority, ok)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario2_RestartCollisionFailsPrecondition(t *testing.T) {
+	svc, _, created := newWorkspaceEnrollmentHTTPService(t, false)
+	replacePersistedBrokerLedger(t, svc, created, []string{"mcp__prior__tool"}, true)
+	svc.withdrawBrokerEngine(created.ID)
+
+	var closed bool
+	svc.cfg.SessionEngine = func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
+		return SessionEngineResult{}, nil
+	}
+	svc.cfg.SessionEngineWithTools = func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
+		return SessionEngineResult{
+			Engine:                    brokerEngineResult().Engine,
+			NonBrokerRegistrationKeys: []string{"mcp__prior__tool"},
+			Close:                     func() error { closed = true; return nil },
+		}, nil
+	}
+	loaded, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.rehydrateSession(t.Context(), loaded)
+	var collision *WorkspaceEnrollmentCollisionError
+	if !errors.As(err, &collision) || collision.Key != "mcp__prior__tool" || !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("rehydration collision = %v, want safe failed-precondition prior registration key", err)
+	}
+	if !closed {
+		t.Fatal("rehydration left the unpublished conflicting candidate open")
+	}
+	svc.mu.Lock()
+	published := svc.sessionEngines[created.ID]
+	svc.mu.Unlock()
+	if published != nil {
+		t.Fatal("rehydration published a non-broker implementation under a prior broker key")
+	}
+
+	t.Run("excluded ledger key does not block rehydration", func(t *testing.T) {
+		excluded := session.New(created.ID, created.Mode, created.EnvironmentRef, created.Limits, created.CreatedAt)
+		excluded.ExternalBinding = created.ExternalBinding
+		if err := excluded.BindAuthority(session.Authority{Provenance: "test"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := excluded.RestoreWorkspaceEnrollmentBrokerKeys([]string{"mcp__prior__tool"}, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.cfg.Store.Save(t.Context(), excluded); err != nil {
+			t.Fatal(err)
+		}
+		svc.withdrawBrokerEngine(created.ID)
+		if _, err := svc.rehydrateSession(t.Context(), excluded); err != nil {
+			t.Fatalf("rehydration with excluded ledger key = %v, want success", err)
+		}
+	})
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario3_ConflictFailsWholeEnrollment(t *testing.T) {
+	svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
+	replacePersistedBrokerLedger(t, svc, created, []string{"mcp__prior__tool"}, true)
+	before, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeAuthority, _ := before.BoundAuthority()
+	beforeKeys, beforePresent := before.WorkspaceEnrollmentBrokerKeys()
+
+	svc.cfg.SessionEngineWithTools = func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
+		return SessionEngineResult{
+			Engine:                    brokerEngineResult().Engine,
+			BrokerRegistrationKeys:    []string{"mcp__replacement__tool"},
+			NonBrokerRegistrationKeys: []string{"mcp__prior__tool"},
+			Close:                     func() error { return nil },
+		}, nil
+	}
+	started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil || started.Status != brokercontract.WorkspaceEnrollmentPending {
+		t.Fatalf("begin enrollment = (%+v, %v)", started, err)
+	}
+	catalogue, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{enrollmentTool{name: "mcp__replacement__tool"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: catalogue}
+
+	_, err = svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	var collision *WorkspaceEnrollmentCollisionError
+	if !errors.As(err, &collision) || collision.Key != "mcp__prior__tool" || !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("connected collision = %v, want presentation-safe failed-precondition collision", err)
+	}
+	stored, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := stored.PendingWorkspaceEnrollment(); pending {
+		t.Fatal("collision left enrollment pending in durable session")
+	}
+	afterAuthority, _ := stored.BoundAuthority()
+	afterKeys, afterPresent := stored.WorkspaceEnrollmentBrokerKeys()
+	if !reflect.DeepEqual(afterAuthority, beforeAuthority) || afterPresent != beforePresent || !slices.Equal(afterKeys, beforeKeys) {
+		t.Fatalf("collision changed durable authority or provenance: authority=%#v keys=%q present=%t", afterAuthority, afterKeys, afterPresent)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario1_CompletionLedgerOverflowClearsPending(t *testing.T) {
+	svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
+	original, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	excluded := make([]string, 256)
+	for i := range excluded {
+		excluded[i] = fmt.Sprintf("broker-excluded-%03d", i)
+	}
+	persisted := session.New(created.ID, created.Mode, created.EnvironmentRef, created.Limits, created.CreatedAt)
+	persisted.ExternalBinding = original.ExternalBinding
+	if err := persisted.BindAuthority(session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}}, Provenance: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := persisted.RestoreWorkspaceEnrollmentBrokerKeys(excluded, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.cfg.Store.Save(t.Context(), persisted); err != nil {
+		t.Fatal(err)
+	}
+
+	started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil || started.Status != brokercontract.WorkspaceEnrollmentPending {
+		t.Fatalf("begin enrollment = (%+v, %v)", started, err)
+	}
+	catalogue, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{enrollmentTool{name: "broker-new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: catalogue}
+	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("completion overflow = %v, want ErrFailedPrecondition", err)
+	}
+	stored, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := stored.PendingWorkspaceEnrollment(); pending {
+		t.Fatal("completion overflow left enrollment pending in durable session")
+	}
+	keys, present := stored.WorkspaceEnrollmentBrokerKeys()
+	if !present || !slices.Equal(keys, excluded) {
+		t.Fatalf("completion overflow changed durable provenance: keys=%q present=%t", keys, present)
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario1_DirectRefreshRefusesBrokerSession(t *testing.T) {
+	svc, _, created := newWorkspaceEnrollmentHTTPService(t, false)
+	if created.ExternalBinding == "" {
+		t.Fatal("fixture session is not broker-bound")
+	}
+	replacePersistedBrokerLedger(t, svc, created, []string{"mcp__prior__tool"}, true)
+	before, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeAuthority, _ := before.BoundAuthority()
+	beforeKeys, beforePresent := before.WorkspaceEnrollmentBrokerKeys()
+
+	var reconciled int
+	svc.cfg.MCPRefresh = func(context.Context) (MCPRefreshSnapshot, error) {
+		reconciled++
+		return MCPRefreshSnapshot{Revision: 1, Changed: true, ToolNames: []string{"mcp__direct__tool"}}, nil
+	}
+	_, err = svc.RefreshMcpSources(t.Context(), created.ID)
+	if !errors.Is(err, ErrFailedPrecondition) || !strings.Contains(err.Error(), "broker-bound sessions use workspace enrollment") {
+		t.Fatalf("direct refresh on broker session = %v, want broker-bound failed precondition", err)
+	}
+	if reconciled != 0 {
+		t.Fatalf("direct refresh reconciled %d times for a broker-bound session", reconciled)
+	}
+	after, err := svc.cfg.Store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterAuthority, _ := after.BoundAuthority()
+	afterKeys, afterPresent := after.WorkspaceEnrollmentBrokerKeys()
+	if !reflect.DeepEqual(afterAuthority, beforeAuthority) || afterPresent != beforePresent || !slices.Equal(afterKeys, beforeKeys) {
+		t.Fatalf("direct refresh changed broker session: authority=%#v keys=%q present=%t", afterAuthority, afterKeys, afterPresent)
 	}
 }

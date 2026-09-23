@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -20,6 +23,90 @@ func (n classificationNamedTool) Spec() tool.ToolSpec { return tool.ToolSpec{Nam
 func (classificationNamedTool) ReadOnly() bool        { return true }
 func (classificationNamedTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(call.ID, "ok"), nil
+}
+
+type countingRegistrationTool struct {
+	name  string
+	calls int
+}
+
+func (t *countingRegistrationTool) Spec() tool.ToolSpec {
+	t.calls++
+	return tool.ToolSpec{Name: t.name}
+}
+func (*countingRegistrationTool) ReadOnly() bool { return true }
+func (*countingRegistrationTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
+	return session.ToolResult{}, nil
+}
+
+func TestBrokerSelectionBuildExcludesGlobalMCPInputs(t *testing.T) {
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:       t.TempDir(),
+		UseMock:         true,
+		NoSoul:          true,
+		MCPAuthority:    mcpauthority.NewBroker(mcpauthority.BrokerConfig{}),
+		ToolHiveEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	// ToolHive source discovery is only selected when ToolHiveEnabled reaches the
+	// real Build path. Broker mode must expose neither that global source nor its
+	// global-tool fallback; broker tools arrive only through an attachment.
+	for _, source := range built.Service.ListMcpSources(t.Context()).Sources {
+		if source.Kind == "toolhive" {
+			t.Fatalf("broker Build retained the global ToolHive source: %+v", source)
+		}
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario3_RegistrationMetadataAndDuplicateHandoff(t *testing.T) {
+	t.Run("exact broker and non-broker registration handoff", func(t *testing.T) {
+		classified := newClassifiedCatalog()
+		classified.catalog.MustRegister(classificationNamedTool("Read"))
+		broker := &countingRegistrationTool{name: "mcp__calendar__list"}
+		keys, err := registerSessionTools(classified, []tool.Tool{broker}, []string{"mcp__calendar__list"}, nil, nil)
+		if err != nil {
+			t.Fatalf("registerSessionTools: %v", err)
+		}
+		if broker.calls != 1 || len(keys) != 1 || keys[0] != "mcp__calendar__list" {
+			t.Fatalf("broker registration = keys %q, Spec calls %d", keys, broker.calls)
+		}
+		if got := classified.catalog.Names(); len(got) != 2 || got[0] != "Read" || got[1] != "mcp__calendar__list" {
+			t.Fatalf("final catalog names = %q", got)
+		}
+	})
+	t.Run("incoming duplicate is safe and does not retry Spec", func(t *testing.T) {
+		classified := newClassifiedCatalog()
+		classified.catalog.MustRegister(classificationNamedTool("Read"))
+		broker := &countingRegistrationTool{name: "Read"}
+		_, err := registerSessionTools(classified, []tool.Tool{broker}, []string{"Read"}, nil, nil)
+		var collision *server.WorkspaceEnrollmentCollisionError
+		if !errors.As(err, &collision) || collision.Key != "Read" {
+			t.Fatalf("duplicate handoff = %v, want safe Read collision", err)
+		}
+		if broker.calls != 0 {
+			t.Fatalf("preflight called Spec %d times, want none", broker.calls)
+		}
+	})
+	t.Run("unfrozen registration captures each key without an extra Spec call", func(t *testing.T) {
+		classified := newClassifiedCatalog()
+		classified.catalog.MustRegister(classificationNamedTool("Read"))
+		first := &countingRegistrationTool{name: "mcp__calendar__list"}
+		second := &countingRegistrationTool{name: "mcp__calendar__get"}
+		keys, err := registerSessionTools(classified, []tool.Tool{first, second}, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("registerSessionTools: %v", err)
+		}
+		if first.calls != 1 || second.calls != 1 {
+			t.Fatalf("Spec calls = first %d, second %d; want one each", first.calls, second.calls)
+		}
+		if want := []string{"mcp__calendar__get", "mcp__calendar__list"}; !reflect.DeepEqual(keys, want) {
+			t.Fatalf("registration keys = %q, want %q", keys, want)
+		}
+	})
 }
 
 func TestCallerSeparation_ClassificationKindsMatchRealRegistrationContext(t *testing.T) {

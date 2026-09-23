@@ -47,7 +47,7 @@ func brokerTools(local *localBrokerAttachment) []tool.Tool {
 	return tools
 }
 
-func (s *Service) callSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, acquire ExecutionWorkspaceAcquirer, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error) {
+func (s *Service) callSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, acquire ExecutionWorkspaceAcquirer, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (SessionEngineResult, error) {
 	if s.cfg.SessionContextEngine != nil {
 		return s.cfg.SessionContextEngine(ctx, id, owner.Clone(), acquire, sel, specs, profile, workspace, mode, append([]tool.Tool(nil), sessionTools...))
 	}
@@ -55,7 +55,7 @@ func (s *Service) callSessionEngine(ctx context.Context, id session.SessionID, o
 		if s.cfg.SessionEngineWithTools == nil {
 			return SessionEngineResult{}, fmt.Errorf("%w: broker tools require an explicit session catalogue factory", ErrConfig)
 		}
-		return s.cfg.SessionEngineWithTools(ctx, sel, specs, profile, workspace, mode, append([]tool.Tool(nil), sessionTools...))
+		return s.cfg.SessionEngineWithTools(ctx, sel, specs, profile, workspace, mode, append([]tool.Tool(nil), sessionTools...), append([]string(nil), sessionToolKeys...))
 	}
 	if s.cfg.SessionEngine == nil {
 		return SessionEngineResult{}, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)

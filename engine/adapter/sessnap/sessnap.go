@@ -28,7 +28,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -141,6 +143,10 @@ type Snapshot struct {
 	// genuinely pre-feature legacy record; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
 	Authority *session.Authority `json:"authority,omitempty"`
+	// WorkspaceEnrollmentBrokerKeys is the exact completed broker registration-key
+	// ledger. Presence distinguishes known empty provenance from legacy absence.
+	WorkspaceEnrollmentBrokerKeys        []string `json:"workspace_enrollment_broker_keys,omitempty"`
+	WorkspaceEnrollmentBrokerKeysPresent bool     `json:"workspace_enrollment_broker_keys_present,omitempty"`
 	// EnvironmentRef is the sole durable execution-environment identity. It is
 	// required and must contain the exact provider revision used for reattachment.
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
@@ -315,6 +321,7 @@ func Of(s *session.Session) (Snapshot, error) {
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
 	}
+	snap.WorkspaceEnrollmentBrokerKeys, snap.WorkspaceEnrollmentBrokerKeysPresent = s.WorkspaceEnrollmentBrokerKeys()
 	if s.Conversation != nil {
 		snap.Messages = make([]messageDTO, len(s.Conversation.Messages))
 		for i, m := range s.Conversation.Messages {
@@ -360,6 +367,9 @@ func (s Snapshot) Restore() (*session.Session, error) {
 
 	if err := restoreAuthority(restored, s.Authority); err != nil {
 		return nil, err
+	}
+	if err := restored.RestoreWorkspaceEnrollmentBrokerKeys(s.WorkspaceEnrollmentBrokerKeys, s.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
+		return nil, fmt.Errorf("sessnap: restore workspace enrollment broker keys: %w", err)
 	}
 
 	// Rebuild the conversation history verbatim.
@@ -583,12 +593,89 @@ func Unmarshal(line []byte) (*session.Session, error) {
 	if err := validateAuthorityWireClaim(wire.Authority); err != nil {
 		return nil, fmt.Errorf("sessnap: decode authority: %w", err)
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(line, &fields); err != nil {
+		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
+	}
+	if err := validateWorkspaceEnrollmentBrokerKeysWire(fields); err != nil {
+		return nil, fmt.Errorf("sessnap: decode workspace enrollment broker keys: %w", err)
+	}
 
 	var snap Snapshot
 	if err := json.Unmarshal(line, &snap); err != nil {
 		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
 	}
 	return snap.Restore()
+}
+
+func validWorkspaceEnrollmentKeyEscapes(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if i+1 >= len(raw) {
+			return false
+		}
+		if raw[i+1] != 'u' {
+			i++
+			continue
+		}
+		if i+6 > len(raw) {
+			return false
+		}
+		code, ok := jsonEscapeCode(raw[i+2 : i+6])
+		if !ok {
+			return false
+		}
+		i += 5
+		if code < 0xd800 || code > 0xdfff {
+			continue
+		}
+		if code >= 0xdc00 || i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+			return false
+		}
+		low, ok := jsonEscapeCode(raw[i+3 : i+7])
+		if !ok || low < 0xdc00 || low > 0xdfff {
+			return false
+		}
+		i += 6
+	}
+	return true
+}
+
+func jsonEscapeCode(raw []byte) (rune, bool) {
+	code, err := strconv.ParseUint(string(raw), 16, 16)
+	if err != nil {
+		return 0, false
+	}
+	return rune(code), true
+}
+
+func validateWorkspaceEnrollmentBrokerKeysWire(fields map[string]json.RawMessage) error {
+	keysRaw, keysSupplied := fields["workspace_enrollment_broker_keys"]
+	presentRaw, presentSupplied := fields["workspace_enrollment_broker_keys_present"]
+	present := false
+	if presentSupplied {
+		if bytes.Equal(bytes.TrimSpace(presentRaw), []byte("null")) {
+			return errors.New("null presence")
+		}
+		if err := json.Unmarshal(presentRaw, &present); err != nil {
+			return errors.New("presence must be a boolean")
+		}
+	}
+	var keys []string
+	if keysSupplied && !bytes.Equal(bytes.TrimSpace(keysRaw), []byte("null")) {
+		if !utf8.Valid(keysRaw) || !validWorkspaceEnrollmentKeyEscapes(keysRaw) {
+			return errors.New("keys contain invalid UTF-8")
+		}
+		if err := json.Unmarshal(keysRaw, &keys); err != nil {
+			return errors.New("keys must be an array of strings")
+		}
+	}
+	if (!present && len(keys) != 0) || !session.ValidWorkspaceEnrollmentToolNames(keys) {
+		return errors.New("invalid broker-key ledger")
+	}
+	return nil
 }
 
 func validateAuthorityWireClaim(raw json.RawMessage) error {

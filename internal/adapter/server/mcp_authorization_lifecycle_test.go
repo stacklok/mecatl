@@ -306,7 +306,7 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	cfg.SessionEngine = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
 		return SessionEngineResult{Engine: buildEngine(nil), BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
-	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, specs []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+	cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, specs []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 		names := make([]string, 0, len(tools))
 		for _, candidate := range tools {
 			names = append(names, candidate.Spec().Name)
@@ -1536,7 +1536,7 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 		return SessionEngineResult{Engine: f.svc.cfg.Engine, BuiltForMode: mode, RuntimeRevision: revision, Close: func() error { return nil }}, nil
 	}
 	f.svc.cfg.SessionEngine = build
-	f.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+	f.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool, _ []string) (SessionEngineResult, error) {
 		return build(ctx, sel, specs, profile, workspace, mode)
 	}
 
@@ -1578,7 +1578,7 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 		return SessionEngineResult{Engine: withoutRuntime.svc.cfg.Engine, BuiltForMode: mode, Close: func() error { return nil }}, nil
 	}
 	withoutRuntime.svc.cfg.SessionEngine = withoutBuild
-	withoutRuntime.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+	withoutRuntime.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool, _ []string) (SessionEngineResult, error) {
 		return withoutBuild(ctx, sel, specs, profile, workspace, mode)
 	}
 	for range 2 {
