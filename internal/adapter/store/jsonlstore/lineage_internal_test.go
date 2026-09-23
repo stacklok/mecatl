@@ -166,6 +166,60 @@ func TestLineageUnrelatedPartitionLockDoesNotBlockWriter(t *testing.T) {
 	}
 }
 
+func TestLineageReadWaitsForInFlightPartitionUpdate(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := lineageTestSession(t, "root", session.SessionKindMain, session.SessionRelationship{})
+	if err := st.Create(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	st.lineagePartitionWriteObserver = func(path string) {
+		if path == st.lineageRecordPath(root.ID) {
+			close(writeStarted)
+			<-releaseWrite
+		}
+	}
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- st.Save(t.Context(), root) }()
+	select {
+	case <-writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Save did not reach lineage partition write")
+	}
+
+	type readResult struct {
+		result port.SessionLineageResult
+		err    error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		result, err := st.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10})
+		readDone <- readResult{result: result, err: err}
+	}()
+	var early *readResult
+	select {
+	case result := <-readDone:
+		early = &result
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseWrite)
+	if err := <-saveDone; err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if early != nil {
+		t.Fatalf("ReadSessionLineage returned during in-flight update: %+v, %v", early.result, early.err)
+	}
+	result := <-readDone
+	if result.err != nil || len(result.result.Records) != 1 || result.result.Records[0].ID != root.ID {
+		t.Fatalf("ReadSessionLineage after update = %+v, %v", result.result, result.err)
+	}
+}
+
 func TestLineageWriterTouchesOnlyAffectedPartitions(t *testing.T) {
 	st, err := New(t.TempDir())
 	if err != nil {
