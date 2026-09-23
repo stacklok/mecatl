@@ -236802,6 +236802,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790180445288,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "50267fff034ff652d39f598a9c32e57bf4bb00fb",
+          "message": "feat(mecatui): unify bounded scrolling and cursor selection (#1615)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T09:12:45-07:00",
+          "tree_id": "e8286e7d431f03426d0d51a691a29a762f9dcb45",
+          "url": "https://github.com/stacklok/mecatl/commit/50267fff034ff652d39f598a9c32e57bf4bb00fb"
+        },
+        "date": 1790181117309,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -343942,6 +343976,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790181114034,
+  "lastUpdate": 1790181118146,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
