@@ -139,6 +139,7 @@ PR after verification. There is no cleanup or status-only PR.
   padding from becoming vertical whitespace while retaining intentional
   Markdown and input-rail exceptions. Status: landed.
 - [Mecatui functional conversation-card rendering](mecatui-functional-conversation-card-rendering.md) — follows the landed card-layout correction with deterministic, stateless prepared conversation-card rendering and caller-owned cache keys, while preserving main-scrollback frame, anchor, selection, and cache invariants. Status: proposed.
+- [Mecatui typed scrollback model](mecatui-typed-scrollback-model.md) — replaces the main scrollback's broad mutable block union with a sealed, typed client-local state model whose transitions own stable identity and revisioning while the root UI retains event projection, rendering, cache, frame, and viewport ownership. Status: proposed.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only
