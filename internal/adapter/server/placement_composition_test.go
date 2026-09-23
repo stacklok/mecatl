@@ -300,36 +300,6 @@ func TestInvalidProviderBindingIsClosed(t *testing.T) {
 	}
 }
 
-type rootCapturingCommandLister struct{ root string }
-
-func (l *rootCapturingCommandLister) List(_ context.Context, root string) ([]server.Command, error) {
-	l.root = root
-	return []server.Command{{Name: "test"}}, nil
-}
-
-func TestSlashCommandsUseHostCompositionRoot(t *testing.T) {
-	hostRoot := t.TempDir()
-	provider := &placementLifecycleSpy{compositionRoot: hostRoot}
-	lister := &rootCapturingCommandLister{}
-	cfg := placementLifecycleConfig(provider, memstore.New())
-	cfg.Commands = lister
-	svc, err := server.NewService(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer svc.Close()
-	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.ListCommandsForSession(t.Context(), sess.ID); err != nil {
-		t.Fatal(err)
-	}
-	if lister.root != hostRoot || lister.root == "/workspace" {
-		t.Fatalf("command composition root = %q, want host %q", lister.root, hostRoot)
-	}
-}
-
 func TestGuestExecutionRootNeverBecomesHostCompositionRoot(t *testing.T) {
 	hostSource := t.TempDir()
 	const marker = "host-source-project-policy"

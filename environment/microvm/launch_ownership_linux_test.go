@@ -172,8 +172,8 @@ func (f *testOwnedRunner) cleanup(t *testing.T) {
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
-		_, err := rawProcessStartTime(f.process.pid)
-		if errors.Is(err, os.ErrNotExist) {
+		startTime, err := rawProcessStartTime(f.process.pid)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ESRCH) || (err == nil && startTime != f.process.startTime) {
 			return
 		}
 		if err != nil {
@@ -625,7 +625,7 @@ func TestLaunchOwnershipFixtureLifecycleLeavesNoHelpers(t *testing.T) {
 			deadline := time.Now().Add(3 * time.Second)
 			for {
 				startTime, identityErr := rawProcessStartTime(state.PID)
-				if errors.Is(identityErr, os.ErrNotExist) || (identityErr == nil && startTime != state.StartTime) {
+				if errors.Is(identityErr, os.ErrNotExist) || errors.Is(identityErr, unix.ESRCH) || (identityErr == nil && startTime != state.StartTime) {
 					break
 				}
 				if identityErr != nil {
