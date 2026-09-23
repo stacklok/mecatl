@@ -19,4 +19,4 @@ behavior:
   published package entry points, methods, types, and errors.
 
 For task-oriented instructions, start with
-[Building on Mecatl](/building/index.md) or [Use mecatui](/mecatui/index.md).
+[Build with Mecatl](/building/index.md) or [Use mecatui](/mecatui/index.md).

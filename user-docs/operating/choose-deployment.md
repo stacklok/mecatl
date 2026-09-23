@@ -92,7 +92,7 @@ another option.
 
 Once you've chosen an option, follow its deployment guide:
 
-- [Embed the engine directly](/building/deployment/embed-engine.md)
-- [Run mecated standalone](/building/deployment/mecated.md)
-- [Cloud-native k8s with mecak8s](/building/deployment/mecak8s.md)
-- [Single-shot CI with mecatequi](/building/deployment/mecatequi.md)
+- [Embed the engine directly](/building/embed-engine.md)
+- [Run mecated standalone](/operating/mecated.md)
+- [Cloud-native k8s with mecak8s](/operating/mecak8s.md)
+- [Single-shot CI with mecatequi](/operating/mecatequi.md)

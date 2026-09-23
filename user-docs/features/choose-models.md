@@ -71,7 +71,7 @@ API keys. The file is plaintext, so its permissions are not encryption: same-UID
 processes, including permitted agent Shell commands, can read it. Do not put a
 secret in flags, prompts, settings, or logs. Use an environment variable or the
 operator-managed credential file when interactive entry is unsuitable. See
-[Run mecated standalone](/building/deployment/mecated.md#configure-providers) for
+[Run mecated standalone](/operating/mecated.md#configure-providers) for
 credential-file and daemon configuration details.
 
 After setup, you may set the embedded default with
@@ -83,7 +83,7 @@ model access, billing, or account health.
 `openai-codex` is distinct from the public `openai` API-key provider. Setup can
 reuse a locally usable manual Codex subscription token for default selection but
 never requests, writes, refreshes, imports, or removes that token. See the
-[manual subscription-token deployment guidance](/building/deployment/mecated.md#provider-and-model).
+[manual subscription-token deployment guidance](/operating/mecated.md#provider-and-model).
 
 Use `providers add PROVIDER` to define a custom provider, `login PROVIDER` to
 manage its locally owned credential, and `logout` or `remove` to remove it.
@@ -131,7 +131,7 @@ model.
 `mecatui` accepts these flags for its embedded server. They do not reconfigure a
 server used through `mecatui connect`. `mecak8s` exposes the corresponding
 server configuration. See the
-[operator provider and model reference](/building/deployment/mecated.md#provider-and-model)
+[operator provider and model reference](/operating/mecated.md#provider-and-model)
 for credential sources and deployment options.
 
 ### Operator-defined gateways
@@ -463,7 +463,7 @@ A bare `model_id` returns HTTP 400 or gRPC `InvalidArgument`. The same applies
 to an unknown or unavailable provider. The API returns the new session ID and
 resolved model information after successful creation.
 
-See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for the shared
+See [Drive via gRPC / HTTP](/operating/grpc-http.md) for the shared
 session lifecycle and [the HTTP/SSE API reference](/reference/http-sse-api.md)
 for endpoint details.
 

@@ -225,5 +225,5 @@ needs the durable timeline across both run IDs.
 
 - [TypeScript SDK core API](/reference/typescript-sdk-api/core.md) for
   responder, error, and plan-resolution types.
-- [Permissions and guardrails for builders](/building/what-you-get/permissions.md)
+- [Permissions and posture](/features/permissions-and-posture.md)
 - [Start and resume sessions](/features/start-and-resume-sessions.md)

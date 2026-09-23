@@ -35,7 +35,7 @@ mecatui providers
 `login`, `logout`, and `set-default` manage it. For credential sources, secret
 safety, and provider selection, see
 [Choose models and providers](/features/choose-models.md). The [standalone
-deployment guide](/building/deployment/mecated.md#configure-providers) owns the
+deployment guide](/operating/mecated.md#configure-providers) owns the
 operator `providers` and `credential_store` schema.
 
 `mecatui login ADDRESS` authenticates this client to a remote server; it does
@@ -59,5 +59,5 @@ server out of your local process.
 - [Troubleshooting](./troubleshooting.md)
 
 To deploy or operate the server, see the guides for
-[`mecated`](/building/deployment/mecated.md) and
-[`mecak8s`](/building/deployment/mecak8s.md).
+[`mecated`](/operating/mecated.md) and
+[`mecak8s`](/operating/mecak8s.md).

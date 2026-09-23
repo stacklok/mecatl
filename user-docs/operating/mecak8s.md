@@ -34,7 +34,7 @@ sessions from Redis. The pod is disposable; the session is not.
 
 The repository includes a disposable local Kind environment with Redis and two
 `mecak8s` replicas. Follow
-[Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to create
+[Try Mecatl on Kubernetes](/operating/kubernetes.md) to create
 the cluster and connect with `mecatui`.
 
 For the optional Keycloak qualification flow and implementation details, see the
@@ -812,7 +812,7 @@ successor recovers the session and previous `allow-always` decisions from Redis.
 ## Verify session failover
 
 Use the disposable cluster from
-[Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md), which runs
+[Try Mecatl on Kubernetes](/operating/kubernetes.md), which runs
 two ready replicas without production authentication. Get both pod names and
 forward the first pod's HTTP port:
 
@@ -1100,11 +1100,11 @@ Use an API-key provider instead of mounting a local Codex OAuth credential.
 
 ## What's next
 
-- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md) —
+- [Choose how to run Mecatl](/operating/choose-deployment.md) —
   decision tree comparing all four options.
-- [Run mecated standalone](/building/deployment/mecated.md) — the interactive,
+- [Run mecated standalone](/operating/mecated.md) — the interactive,
   single-server alternative with a full operator surface.
-- [Embed the engine directly](/building/deployment/embed-engine.md) — bring your
+- [Embed the engine directly](/building/embed-engine.md) — bring your
   own composition if you need to run the loop inside an existing service.
-- [Single-shot CI with mecatequi](/building/deployment/mecatequi.md) — the
+- [Single-shot CI with mecatequi](/operating/mecatequi.md) — the
   stateless, one-prompt-per-run option for GitHub Actions.

@@ -99,5 +99,5 @@ the claim rather than rewriting it.
 
 - [ADR 0028](./0028-mecatequi.md) — mecatequi's binary contract, token boundary, and the superseded pinning decision.
 - [ADR 0319](./0319-release-archives-and-homebrew-tap.md) — release archives and the Homebrew tap; its rejected-alternatives entry on pre-tag commits is superseded here.
-- [The mecatequi CI guide](https://mecatl.dev/docs/building/deployment/mecatequi) — how consumers adopt the reusable workflow.
+- [The mecatequi CI guide](https://mecatl.dev/docs/operating/mecatequi) — how consumers adopt the reusable workflow.
 - [ADR 0002](./0002-documentation-lifecycle.md) — the documentation lifecycle this record follows.

@@ -118,9 +118,10 @@ with `find`, cron, filesystem age rules, or a shell loop. The management path
 understands session families, sidecars, leases, active runs, and snapshot
 generations; filename matching does not.
 
-Cleanup is destructive and protects unknown, active, awaiting, live, and leased
-sessions. A stale plan must be discarded and planned again. See
-[Operate local session storage](/building/deployment/session-storage-operations.md)
+ Optimization is non-destructive. Cleanup is destructive and protects unknown,
+ active, awaiting, live, and leased sessions. A stale plan must be discarded and
+ planned again. See
+ [Operate local session storage](/operating/session-storage-operations.md)
 for the platform runbooks and authorization requirements.
 
 ## Single-writer protection
@@ -165,5 +166,5 @@ blocked until explicitly closed.
 ## Next steps
 
 - [Start and resume sessions](./start-and-resume-sessions.md)
-- [Operate local session storage](/building/deployment/session-storage-operations.md)
+- [Operate local session storage](/operating/session-storage-operations.md)
 - [Execution environments](./execution-environments.md)

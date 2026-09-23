@@ -54,7 +54,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | 1 | [Project README](../README.md) — feature overview and quick start |
 | 2 | [Build your first agent](https://mecatl.dev/docs/building/getting-started/first-agent) |
 | 3 | [See Mecatl in 60 seconds](https://mecatl.dev/docs/building/getting-started/demo) |
-| 4 | [Run `mecated` standalone](https://mecatl.dev/docs/building/deployment/mecated) |
+| 4 | [Run `mecated` standalone](https://mecatl.dev/docs/operating/mecated) |
 | Then | Choose a task, feature, deployment, or reference from the [public documentation](https://mecatl.dev/docs/) |
 
 ---

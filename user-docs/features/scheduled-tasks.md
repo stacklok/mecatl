@@ -12,9 +12,6 @@ Schedule a saved prompt to run on a cron cadence or once at a future time. Each
 fire starts a fresh headless session with its configured workspace, model,
 permissions, limits, and mutation setting.
 
-For the storage, claiming, lease, firing, event, and recovery model, see
-[Scheduled tasks for builders](/building/what-you-get/scheduled-tasks.md).
-
 ## Availability
 
 Scheduling requires a backend that implements `ScheduleStore`:
@@ -27,6 +24,25 @@ Scheduling requires a backend that implements `ScheduleStore`:
 Without a schedule-capable backend, the Schedule tool and schedule APIs report
 that scheduling is unavailable. The plain in-memory store does not provide
 durable schedules.
+
+## Storage and delivery
+
+The schedule store is authoritative. Each schedule contains an immutable
+prompt, trigger, model selection, workspace, permission mode, limits, mutation
+setting, and timezone, plus mutable fire state.
+
+Mecatl claims and advances a due slot before starting its run. This prevents
+two replicas from firing the same slot. A leader lease limits polling to one
+replica, while the atomic claim remains the duplicate-execution safeguard.
+
+A crash after a claim can skip that slot. Recurring schedules continue at the
+next slot. A one-shot schedule can be lost, so use an external job system when
+the work requires stronger delivery guarantees. Each successful claim creates
+a fresh session whose record preserves the conversation, tool calls, usage,
+terminal state, and fire result.
+
+Embeddings can provide `port.ScheduleStore`. Implementations must make claims
+atomic and can use the shared `engine/adapter/scheduleconformance` suite.
 
 ## Create and manage a schedule
 
@@ -107,12 +123,8 @@ session lifecycle.
 - Retained fire sessions and event logs may contain sensitive plaintext; protect
   the backing store accordingly.
 
-For the claim-before-fire, at-most-once, singleton, leader-lease, event,
-metrics, and shutdown details, see
-[Scheduled tasks for builders](/building/what-you-get/scheduled-tasks.md).
-
 ## Next steps
 
 - [Session continuity](./session-continuity.md)
-- [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
+- [Mecatl deployment choices](/operating/choose-deployment.md)
 - [Scheduled task API reference](/reference/grpc-api.md)

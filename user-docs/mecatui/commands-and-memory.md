@@ -34,7 +34,7 @@ change a separately configured consolidation schedule.
 In embedded mode, these settings live with the embedded server. In `connect`
 mode, ask the remote server operator to change the settings and restart the
 server. For configuration details, see
-[Memory and knowledge](/building/what-you-get/memory.md).
+[Memory and user model](/features/memory.md).
 
 ## Review and maintain memory
 
@@ -55,9 +55,9 @@ under its current configuration and policy. For learning, consolidation, and
 authorization behavior, see [Learning](/features/learning.md) and
 [Dreaming and memory consolidation](/features/dreaming.md). Builders configuring
 stores, retention, or learning should use the
-[memory guide](/building/what-you-get/memory.md).
+[memory guide](/features/memory.md).
 
 ## Next steps
 
 - [Review learning behavior](/features/learning.md).
-- [Configure memory stores and retention](/building/what-you-get/memory.md).
+- [Configure memory stores and retention](/features/memory.md).

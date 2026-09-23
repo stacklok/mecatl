@@ -12,7 +12,7 @@ This page is the **exhaustive, auto-generated reference** for the operator
 (`internal/adapter/permconfig/schema.go`) — the same structs that strictly
 parse the file at startup — so it cannot drift from the code.
 
-For configuration workflows and examples, see [Configure Mecatl](/building/deployment/settings.md).
+For configuration workflows and examples, see [Configure Mecatl](/operating/settings.md).
 To scaffold a complete commented file, run
 `mecated config init` (or `mecated config init --print` to print it).
 Validate the conventional file with `mecated config validate`, or select
@@ -33,7 +33,7 @@ map/list/sub-block). It is not a universal process-runtime default: command root
 and modes can supply their own defaults, disable a feature, or reject a setting.
 The example values in the `config init` skeleton are ILLUSTRATIVE, not defaults.
 For the configuration planes and intentional per-mode differences, see
-[Configure Mecatl](/building/deployment/settings.md).
+[Configure Mecatl](/operating/settings.md).
 
 ## `permissions`
 
@@ -364,19 +364,19 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 
 By design, `settings.yaml` covers the subtrees above. Several other
 operator features are configured through **CLI flags** (and, for some, their own
-files) rather than this YAML. See [Run mecated standalone](/building/deployment/mecated.md)
+files) rather than this YAML. See [Run mecated standalone](/operating/mecated.md)
 for the full flag tables. The pointers below are the starting points:
 
 | Feature | How it is configured | See |
 | --- | --- | --- |
 | Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
-| User-model storage | `--user-model-dir` | [Memory and knowledge](/building/what-you-get/memory.md) |
-| Memory | `--memory-dir` / `--memory-store-url` | [Memory and knowledge](/building/what-you-get/memory.md) |
+| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and user model](/features/memory.md) |
+| Memory | `--memory-dir` / `--memory-store-url` | [Memory and user model](/features/memory.md) |
 | Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
-| Session leasing | `--session-lease-*` | [Run mecated standalone](/building/deployment/mecated.md#multi-replica) |
+| Session leasing | `--session-lease-*` | [Run mecated standalone](/operating/mecated.md#multi-replica) |
 
 The model slots / aliases above also have CLI twins (`--model-slot` /
 `--model-alias`); the guardrails checker model has `--guardrails-model`; the
 router kill-switch has `--subagent-model-router=false`. The CLI flag and the
-YAML key are two surfaces for the same setting. See [Configure Mecatl](/building/deployment/settings.md)
+YAML key are two surfaces for the same setting. See [Configure Mecatl](/operating/settings.md)
 for precedence.

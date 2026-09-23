@@ -40,12 +40,12 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 | Goal | Start with |
 | --- | --- |
-| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) |
-| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) |
+| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/operating/mecated) |
+| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/operating/mecak8s) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
-| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
+| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/operating/grpc-http) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
-| Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine) |
+| Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/embed-engine) |
 
 ## Install
 
@@ -72,7 +72,7 @@ The supplied `mecak8s` runtime demonstrates this deployment model. It uses
 Redis for session state and event logs, Kubernetes leases to ensure one writer
 per session, and a drain path for replacing pods. You can also embed the engine
 and provide the backing services and execution environment yourself. See
-[What is a cloud-native harness?](https://mecatl.dev/docs/building/cloud-native-harness)
+[What is a cloud-native harness?](https://mecatl.dev/docs/cloud-native-harness)
 for the runtime guarantees and boundaries.
 
 ## Open and modular by design
@@ -126,19 +126,19 @@ task build
 
 For an embedded deployment, see the
 [engine compatibility contract](./engine/COMPATIBILITY.md) and the
-[embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine).
+[embedding guide](https://mecatl.dev/docs/building/embed-engine).
 
 > **Security:** `mecated` is unauthenticated by default and intended for
 > loopback, single-user use. Configure authentication and transport protection
 > before binding it off-loopback. The
-> [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) covers
+> [deployment guide](https://mecatl.dev/docs/operating/mecated) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
 
 ## User documentation
 
 - [Mecatl documentation](https://mecatl.dev/docs/intro) for user guides and
   deployment information.
-- [Client integration guide](https://mecatl.dev/docs/building/deployment/grpc-http)
+- [Client integration guide](https://mecatl.dev/docs/operating/grpc-http)
   for gRPC and HTTP/SSE clients.
 - [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) for
   Node.js, Bun, and browser applications.

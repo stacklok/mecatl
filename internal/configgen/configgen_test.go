@@ -143,10 +143,10 @@ func TestGeneratedArtifactsDescribeSchemaDefaults(t *testing.T) {
 			t.Errorf("%s does not distinguish schema fallbacks from process-runtime defaults", name)
 		}
 	}
-	if !strings.Contains(skeleton, "https://mecatl.dev/docs/building/deployment/settings") {
+	if !strings.Contains(skeleton, "https://mecatl.dev/docs/operating/settings") {
 		t.Error("skeleton does not direct operators to the public configuration-plane guide")
 	}
-	if !strings.Contains(reference, "](/building/deployment/settings.md)") {
+	if !strings.Contains(reference, "](/operating/settings.md)") {
 		t.Error("reference does not link to the rendered configuration-plane guide")
 	}
 }

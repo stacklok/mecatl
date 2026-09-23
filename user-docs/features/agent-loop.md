@@ -1,5 +1,5 @@
 ---
-sidebar_position: 1
+sidebar_position: 90
 title: The agent loop
 description:
   Understand how the Mecatl engine runs turns, dispatches tools, records events,
@@ -121,65 +121,12 @@ gRPC clients send `ResumeApproval` on the `Converse` stream. HTTP clients use
 
 ## Context limits and compaction
 
-Before each turn, Mecatl estimates the complete model request, including
-instructions, messages, tool results, and tool schemas. At 80% of the context
-window by default, it compacts persisted history. Compaction cannot remove the
-other request layers.
+Before each turn, Mecatl estimates the complete model request and compacts
+persisted history when it approaches the selected model's context window. A
+separate run-token budget can end the session between turns.
 
-Two compaction strategies ship out of the box:
-
-- **Heuristic** (default) preserves the goal, recent file paths, and recent
-  messages while truncating large tool results.
-- **Cascade** (`--compaction=cascade`) progressively removes low-value content
-  and summarizes only when needed. Separate trigger and target thresholds avoid
-  repeated compaction near the limit.
-
-Both strategies guarantee:
-
-- The latest user instruction and first user message remain verbatim.
-- Retained history never begins with a tool result whose call was removed.
-- Invalid compacted history is discarded in favor of the original history.
-
-After automatic compaction, the run continues. In `mecatui`, `/compact` runs one
-manual pass while idle and preserves visible scrollback. Cascade compaction can
-use model tokens for summarization. See
-[Context windows](/features/context-windows.md).
-
-### Where "the model's context window" comes from
-
-Mecatl resolves the context window from, in order:
-
-1. `--context-window-override`.
-1. An exact `models.context_windows` entry in user-global settings.
-1. Live provider metadata.
-1. The bundled models.dev catalog.
-1. A 128K fallback.
-
-It resolves the value before each check, so refreshed provider metadata applies
-without a restart. Project settings cannot change context-window limits.
-
-Use `--context-window-override` when provider metadata is wrong. It changes both
-the compaction threshold and the `mecatui` context meter.
-
-Until live metadata arrives, `mecatui` can show a token count without a context
-bar. The bar appears after the refresh.
-
-### Token budget
-
-`--max-run-tokens` (`MaxRunTokens`) limits one session's input and output
-tokens. Mecatl checks it between turns, so the current turn completes. Cache
-tokens do not count, and the value is not a currency limit.
-
-Crossing the budget completes the run with stop reason `budget`; you can reopen
-the session. Each child enforces the limit against its own usage, so a
-delegation tree can exceed the parent's limit. Per-call child limits can only
-tighten the configured value.
-
-:::note[Default]
-
-`MaxRunTokens` defaults to `0`, which means unlimited.
-
-:::
+[Context windows](./context-windows.md) owns the resolution order, compaction
+strategies, thresholds, token-budget behavior, and `mecatui` context meter.
 
 ---
 
@@ -197,33 +144,17 @@ Every run ends in exactly one of three terminal states:
 next turn boundary. Restart closes incomplete tool calls with error results so
 the conversation remains valid.
 
-### Restarting a session
+The service repairs incomplete tool calls before recovering a failed,
+cancelled, or abandoned run. An awaiting session keeps its pending approval.
+See [Start and resume sessions](./start-and-resume-sessions.md) for the client
+workflow and [Session continuity](./session-continuity.md) for persistence and
+crash recovery.
 
-A session that ends in any terminal state can be re-entered:
+## Next steps
 
-- **Completed:** `Reopen` returns the session to idle.
-- **Cancelled:** `Interrupt` closes incomplete tool calls and returns to idle.
-- **Failed:** `Recover` repairs the conversation and returns to idle. A
-  permanent cause can make the next run fail again. When the server identifies a
-  permanent failure, such as a 4xx response other than 408 or 429 or a context
-  overflow, `mecatui` recommends starting a new session or changing the request.
-  A recovery warning appears before the first turn of the retried run.
-
-A persisted `running` snapshot can represent a crashed process. After acquiring
-the run lock and lease, the service calls `Abandon` to close incomplete tool
-calls before recovery. It does not reset a live run.
-
-An `awaiting` session requires an approval verdict before a new prompt.
-Resetting it to idle would discard the pending request.
-
-The service handles these recovery transitions when a client re-enters a
-session.
-
-## What's next
-
-- [Permissions and guardrails](permissions.md) for how the permission rule
+- [Permissions and posture](./permissions-and-posture.md) for how the permission rule
   engine and model-based guardrails work.
-- [Hook system](hooks.md) for lifecycle hooks that fire before and after tool
+- [Hook system](./hooks.md) for lifecycle hooks that fire before and after tool
   calls, prompts, and sessions.
 - [Extension points](/building/extension-points/index.md) to replace providers,
   stores, policies, and other capabilities.

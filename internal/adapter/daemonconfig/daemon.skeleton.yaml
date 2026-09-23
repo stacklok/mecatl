@@ -20,7 +20,7 @@
 # command/file execution to the network — enable auth and/or TLS first.
 #
 # The v1 schema is the small API-edge slice below. Unknown keys are REJECTED
-# (strict parse). See https://mecatl.dev/docs/building/deployment/mecated for the full reference.
+# (strict parse). See https://mecatl.dev/docs/operating/mecated for the full reference.
 
 version: v1
 

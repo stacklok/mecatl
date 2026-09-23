@@ -160,5 +160,5 @@ tokens, idempotency, and session isolation.
 ## Next steps
 
 - [Implement session storage](session-store.md).
-- [Deploy Mecatl on Kubernetes](/building/deployment/mecak8s.md).
-- [Choose a deployment](/building/getting-started/deployment-decision.md).
+- [Deploy Mecatl on Kubernetes](/operating/mecak8s.md).
+- [Choose a deployment](/operating/choose-deployment.md).

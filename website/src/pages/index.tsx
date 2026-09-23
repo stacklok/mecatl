@@ -45,9 +45,9 @@ const capabilities: HomepageItem[] = [
 
 const deployments: {label: string; desc: React.ReactNode; link: string}[] = [
   {label: 'Local or remote', desc: <>Run locally with <code>mecatui</code>, or connect to <code>mecated</code> over gRPC or HTTP/SSE.</>, link: '/docs/mecatui'},
-  {label: 'Cloud-native', desc: <><code>mecak8s</code>: stateless pods, Redis-backed state, and multi-replica coordination.</>, link: '/docs/building/deployment/mecak8s'},
-  {label: 'CI', desc: <>Use <code>mecatequi</code> to turn one prompt into a patch and a pass/fail result for your pipeline.</>, link: '/docs/building/deployment/mecatequi'},
-  {label: 'Embed', desc: 'Import the engine directly into your Go project.', link: '/docs/building/deployment/embed-engine'},
+  {label: 'Cloud-native', desc: <><code>mecak8s</code>: stateless pods, Redis-backed state, and multi-replica coordination.</>, link: '/docs/operating/mecak8s'},
+  {label: 'CI', desc: <>Use <code>mecatequi</code> to turn one prompt into a patch and a pass/fail result for your pipeline.</>, link: '/docs/operating/mecatequi'},
+  {label: 'Embed', desc: 'Import the engine directly into your Go project.', link: '/docs/building/embed-engine'},
 ];
 
 const delay = (ms: number) => ({'--d': `${ms}ms`}) as React.CSSProperties;
@@ -62,15 +62,15 @@ function Hero() {
       <div className={`${styles.wrap} ${styles.heroWrap}`}>
         <div className={styles.heroBody}>
           <h1 className={styles.h1} data-reveal="">
-            The open source, <Link className={styles.heroTitleLink} to="/docs/building/cloud-native-harness">cloud-native harness</Link>
+            The open source, <Link className={styles.heroTitleLink} to="/docs/cloud-native-harness">cloud-native harness</Link>
           </h1>
           <p className={styles.sub} data-reveal="" style={delay(100)}>
             Build and run capable agents with the same platform patterns you use for the rest of your software.
           </p>
           <div className={styles.heroCtas} data-reveal="" style={delay(200)}>
             <Link className={styles.ctaPrimary} to="/docs/mecatui/getting-started">Use it now</Link>
-            <Link className={styles.ctaSecondary} to="/docs/building/cloud-native-harness">What is a cloud-native harness?</Link>
-            <Link className={styles.ctaSecondary} to="/docs/building/deployment/mecak8s">Run on Kubernetes</Link>
+            <Link className={styles.ctaSecondary} to="/docs/cloud-native-harness">What is a cloud-native harness?</Link>
+            <Link className={styles.ctaSecondary} to="/docs/operating/mecak8s">Run on Kubernetes</Link>
           </div>
         </div>
         <Link className={styles.mascot} to="/colophon" data-plx="0.08">

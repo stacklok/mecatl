@@ -194,7 +194,7 @@ opaque values in a richer event schema.
 
 ## Next steps
 
-- [Embed the engine](/building/deployment/embed-engine.md) in a Go service.
+- [Embed the engine](/building/embed-engine.md) in a Go service.
 - [Implement extension points](/building/extension-points/index.md) against the
   guarded interfaces.
 - [Review the engine changelog](https://github.com/stacklok/mecatl/blob/main/engine/CHANGELOG.md)
