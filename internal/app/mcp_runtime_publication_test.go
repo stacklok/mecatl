@@ -793,6 +793,27 @@ func TestBuiltCloseWaitsForPinnedMCPTransport(t *testing.T) {
 	}
 }
 
+func TestDebugMCPAvailabilityFollowsPublishedRuntime(t *testing.T) {
+	set := newMCPRuntimeSet(nil)
+	available := debugMCPAvailable(catalogAssets{mcpRuntimes: set})
+	if available() {
+		t.Fatal("DebugMCP available before any runtime was published")
+	}
+	withTools := &mcpReconcileCandidate{generation: 1, tools: []mcpToolMeta{{Name: "mcp__a__tool"}}}
+	if !set.publish(nil, withTools) {
+		t.Fatal("publish runtime with tools failed")
+	}
+	if !available() {
+		t.Fatal("DebugMCP unavailable after a runtime with tools was published")
+	}
+	if !set.publish(withTools, &mcpReconcileCandidate{generation: 2}) {
+		t.Fatal("publish empty runtime failed")
+	}
+	if available() {
+		t.Fatal("DebugMCP still available after the published runtime lost all tools")
+	}
+}
+
 func TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix(t *testing.T) {
 	const (
 		name        = "mcp__svc__echo"

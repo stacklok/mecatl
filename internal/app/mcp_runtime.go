@@ -151,6 +151,17 @@ func (s *mcpRuntimeSet) currentToolNames() []string {
 	return out
 }
 
+// debugMCPAvailable reports whether debug sessions can borrow direct MCP
+// tools. With a runtime set it reads the currently published runtime on every
+// call; without one it falls back to the Build-time manager.
+func debugMCPAvailable(assets catalogAssets) func() bool {
+	if assets.mcpRuntimes != nil {
+		return func() bool { return len(assets.mcpRuntimes.currentToolNames()) > 0 }
+	}
+	available := assets.globalMgr != nil && len(assets.globalMgr.Tools()) > 0
+	return func() bool { return available }
+}
+
 func (s *mcpRuntimeSet) currentResourceServers() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

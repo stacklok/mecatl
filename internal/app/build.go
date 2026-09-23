@@ -2586,7 +2586,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		SessionEngine:          sessFactory,
 		SessionEngineWithTools: assets.sessionFactoryWithTools,
 		DebugSessionEngine:     debugSessionEngineFactory(cfg, reg, provider, store, eventLog, policy, assets.globalMgr, assets.mcpRuntimes),
-		DebugMCP:               assets.globalMgr != nil && len(assets.globalMgr.Tools()) > 0,
+		DebugMCP:               debugMCPAvailable(assets),
 		// ModeNeedsEngine (ADR 0030 Layer 3): tells the Service whether a session's
 		// PermissionMode would resolve a model DIFFERING from the shared engine's model
 		// (cfg.Model) — i.e. whether a plan slot is configured AND it resolves to a

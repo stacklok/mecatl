@@ -280,9 +280,11 @@ type Config struct {
 	// Nil disables creation and makes persisted debug sessions fail closed at
 	// rehydration rather than falling back to Engine or SessionEngine.
 	DebugSessionEngine DebugSessionEngineFactory
-	// DebugMCP reports that the debug factory can borrow selected direct tools from
-	// a configured global MCP manager.
-	DebugMCP bool
+	// DebugMCP reports whether the debug factory can currently borrow selected
+	// direct tools from the published direct MCP runtime. It is read on every
+	// capabilities request because the runtime can change after startup. Nil
+	// means unavailable.
+	DebugMCP func() bool
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
 	// StorageManagementAuthorized gates process-wide storage health. A nil
@@ -2651,7 +2653,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// derived under the same service construction semantics.
 		ManualCompaction:    s.cfg.Engine != nil,
 		SessionDebug:        s.cfg.DebugSessionEngine != nil,
-		DebugMcp:            s.cfg.DebugMCP,
+		DebugMcp:            s.cfg.DebugMCP != nil && s.cfg.DebugMCP(),
 		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
 		McpRefresh:          s.cfg.MCPRefresh != nil,
 	}
