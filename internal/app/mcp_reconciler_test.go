@@ -185,6 +185,9 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
 			sources: []mcpsource.Source{th}, toolHive: true,
 			after: func(d time.Duration) <-chan time.Time {
+				if d == minMCPReconcileCooldown {
+					return time.After(d)
+				}
 				if d < minMCPPollInterval || d > maxMCPPollInterval {
 					t.Errorf("poll interval outside jitter bounds: %v", d)
 				}
@@ -291,7 +294,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 	})
 }
 
-func TestADR_0345_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
+func TestADR_0350_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	if maxMCPReconcileSources <= 0 || maxMCPReconcileServers <= 0 || maxMCPActiveListEntries <= 0 || maxMCPCandidatePages <= 0 || maxMCPCandidateBytes <= 0 || maxMCPRetainedRuntimes <= 0 || maxMCPReconcileCycleDuration <= 0 {
 		t.Fatal("every reconciliation dimension must have an independent finite bound")
 	}
@@ -528,7 +531,7 @@ func stringContains(s, sub string) bool {
 }
 func eventuallyReconcile(t *testing.T, f func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if f() {
 			return

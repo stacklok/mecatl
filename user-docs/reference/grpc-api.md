@@ -265,6 +265,13 @@ provider/model identity.
 |`ListTeam`|unary|snapshot of the roster, shared task list, and quiescence|
 |`CleanupTeam`|unary|tear down a finished team and release its resources|
 
+`CreateTeam` and pre-run `SpawnTeammate` validate and record roster declarations;
+they do not create member engines, workspaces, or durable member sessions. `RunTeam`
+constructs those resources under its runtime pin and persists members as they run.
+Factory or workspace-fork failures therefore surface from `RunTeam`. A startup
+failure retains the declarations and queued messages so the caller can retry
+`RunTeam`.
+
 ### The `Converse` flow
 
 The bidi stream drives exactly one run:

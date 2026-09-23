@@ -89,7 +89,9 @@ group.
 ## Tool namespacing
 
 Every remote tool is registered as `mcp__<server>__<tool>`. The namespace
-prevents a remote tool from shadowing a built-in tool.
+prevents a remote tool from shadowing a built-in tool. The complete catalog name
+must be valid UTF-8, contain no control characters, and fit within 256 bytes.
+Mecatl rejects malformed names rather than rewriting their identity.
 
 |Server|Remote tool|Catalog name|
 |-|-|-|

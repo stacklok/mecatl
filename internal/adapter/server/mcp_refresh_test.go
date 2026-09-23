@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -324,7 +325,8 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				svc, store, id := newFixture(t, []string{"mcp__new__call"}, nil, false, nil)
+				var reconciles atomic.Int32
+				svc, store, id := newFixture(t, []string{"mcp__new__call"}, nil, false, func() { reconciles.Add(1) })
 				sess, err := store.Store.Load(context.Background(), id)
 				if err != nil {
 					t.Fatal(err)
@@ -340,6 +342,9 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 				}
 				if store.saveCount() != 0 {
 					t.Fatalf("refresh persisted ineligible session %d times", store.saveCount())
+				}
+				if got := reconciles.Load(); got != 0 {
+					t.Fatalf("ineligible refresh reconciled %d times, want 0", got)
 				}
 			})
 		}
@@ -378,6 +383,36 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 		}
 		if store.saveCount() != 1 {
 			t.Fatalf("concurrent stable union saved %d times, want 1", store.saveCount())
+		}
+	})
+
+	t.Run("run-entry-lock-precedes-reconciliation", func(t *testing.T) {
+		entered := make(chan struct{}, 2)
+		release := make(chan struct{})
+		var calls atomic.Int32
+		svc, _, id := newFixture(t, []string{"Read"}, nil, false, func() {
+			entered <- struct{}{}
+			if calls.Add(1) == 1 {
+				<-release
+			}
+		})
+		done := make(chan error, 2)
+		go func() { _, err := svc.RefreshMcpSources(ownerCtx, id); done <- err }()
+		<-entered
+		go func() { _, err := svc.RefreshMcpSources(ownerCtx, id); done <- err }()
+		select {
+		case <-entered:
+			t.Fatal("second reconciler entered before the first released run-entry exclusion")
+		case <-time.After(20 * time.Millisecond):
+		}
+		close(release)
+		for range 2 {
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := calls.Load(); got != 2 {
+			t.Fatalf("serialized reconciler calls = %d, want 2", got)
 		}
 	})
 

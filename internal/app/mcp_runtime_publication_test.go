@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -400,6 +401,22 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("direct RunTeam did not pin before member construction")
 	}
+	if err := teamSvc.CancelTeammate(context.Background(), teamID, "lead"); !errors.Is(err, server.ErrTeamNotRunning) {
+		t.Fatalf("cancel during team startup = %v, want ErrTeamNotRunning", err)
+	}
+	if err := teamSvc.CleanupTeam(context.Background(), teamID); !errors.Is(err, server.ErrTeamRunning) {
+		t.Fatalf("cleanup during team startup = %v, want ErrTeamRunning", err)
+	}
+	duplicateRun := make(chan error, 1)
+	go func() {
+		_, err := teamSvc.RunTeam(context.Background(), teamID, func(agent.TeamEvent) {})
+		duplicateRun <- err
+	}()
+	spawnDuringStart := make(chan error, 1)
+	go func() {
+		_, err := teamSvc.SpawnTeammate(context.Background(), teamID, agent.MemberSpec{Name: "late"})
+		spawnDuringStart <- err
+	}()
 	if !teamRuntimes.publish(teamOld, teamNew) {
 		t.Fatal("publish direct-team revision 2")
 	}
@@ -409,6 +426,12 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	close(releaseFactory)
 	if err := <-runDone; err != nil {
 		t.Fatal(err)
+	}
+	if err := <-duplicateRun; !errors.Is(err, server.ErrTeamRunning) {
+		t.Fatalf("duplicate RunTeam during startup = %v, want ErrTeamRunning", err)
+	}
+	if err := <-spawnDuringStart; !errors.Is(err, server.ErrTeamRunning) {
+		t.Fatalf("SpawnTeammate during startup = %v, want ErrTeamRunning", err)
 	}
 	member, err := teamStore.Load(context.Background(), agent.MemberSessionID(teamID, "lead"))
 	if err != nil {

@@ -29,6 +29,7 @@ const (
 	maxMCPRetainedRuntimes       = 4
 	maxMCPDiagnosticBytes        = 512
 	maxMCPReconcileCycleDuration = 45 * time.Second
+	minMCPReconcileCooldown      = time.Second
 	minMCPPollInterval           = 25 * time.Second
 	maxMCPPollInterval           = 35 * time.Second
 )
@@ -180,7 +181,7 @@ func (r *mcpSourceReconciler) invalidate() {
 
 func (r *mcpSourceReconciler) loop() {
 	defer r.wg.Done()
-	var poll <-chan time.Time
+	var poll, cooldown <-chan time.Time
 	if r.toolHive {
 		poll = r.after(mcpPollDelay())
 	}
@@ -193,6 +194,16 @@ func (r *mcpSourceReconciler) loop() {
 			r.invalidate()
 			poll = r.after(mcpPollDelay())
 		case <-r.trigger:
+			// A continuously dirty server must not reconnect the entire candidate
+			// set in a tight loop. Requests during the cooldown share one cycle.
+			if cooldown != nil {
+				select {
+				case <-cooldown:
+				case <-r.ctx.Done():
+					replyMCPWaiters(r.takeWaiters(), mcpReconcileResult{stale: true}, r.ctx.Err())
+					return
+				}
+			}
 			waiters := r.takeWaiters()
 			r.mu.Lock()
 			r.status.Reconciling = true
@@ -200,6 +211,7 @@ func (r *mcpSourceReconciler) loop() {
 			result, err := r.cycle()
 			r.publishStatus(result)
 			r.cyclesDone.Add(1)
+			cooldown = r.after(minMCPReconcileCooldown)
 			replyMCPWaiters(waiters, result, err)
 		}
 	}
@@ -272,24 +284,33 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		result.candidate = current
 		return result, nil
 	}
+	// Consuming a dirty bit is provisional until a complete candidate is
+	// accepted (including an equal snapshot). Failures/deferred publication
+	// must remain retryable even when the source configuration is unchanged.
+	refreshed := false
+	defer func() {
+		if !refreshed {
+			r.candidateDirty.Store(true)
+		}
+	}()
 	if r.build == nil {
 		return result, errors.New("MCP source reconciler has no candidate builder")
 	}
 
 	generation := r.nextGen.Add(1)
 	r.preparingGen.Store(generation)
+	defer r.preparingGen.CompareAndSwap(generation, 0)
 	dirty := func() {
 		r.mu.Lock()
-		isCurrent := r.current != nil && r.current.generation == generation
+		active := (r.current != nil && r.current.generation == generation) || r.preparingGen.Load() == generation
 		r.mu.Unlock()
-		if isCurrent || r.preparingGen.Load() == generation {
+		if active {
 			r.candidateDirty.Store(true)
 			r.invalidate()
 		}
 	}
 	candidate, err := r.build(cycleCtx, configs, dirty)
 	if err != nil {
-		r.preparingGen.CompareAndSwap(generation, 0)
 		result.stale = true
 		result.diagnostics = appendBoundedDiagnostic(result.diagnostics, err.Error())
 		r.mu.Lock()
@@ -298,14 +319,12 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 		return result, err
 	}
 	if candidate == nil {
-		r.preparingGen.CompareAndSwap(generation, 0)
 		return result, errors.New("MCP candidate builder returned nil")
 	}
 	candidate.generation = generation
 	candidate.configs = cloneMCPConfigs(configs)
 	candidate.inventory = cloneMCPInventory(inventory)
 	if err := validateMCPCandidate(candidate); err != nil {
-		r.preparingGen.CompareAndSwap(generation, 0)
 		candidate.close()
 		result.stale = true
 		result.diagnostics = appendBoundedDiagnostic(result.diagnostics, err.Error())
@@ -316,12 +335,11 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 	old := r.current
 	r.mu.Unlock()
 	if equalMCPCandidate(old, candidate) {
-		r.preparingGen.CompareAndSwap(generation, 0)
+		refreshed = true
 		candidate.close()
 		result.candidate = old
 		return result, nil
 	}
-	r.preparingGen.CompareAndSwap(generation, 0)
 	if r.publish != nil {
 		if !r.publish(old, candidate) {
 			candidate.close()
@@ -345,6 +363,7 @@ func (r *mcpSourceReconciler) cycle() (mcpReconcileResult, error) {
 			old.close()
 		}
 	}
+	refreshed = true
 	result.candidate = candidate
 	result.changed = true
 	return result, nil

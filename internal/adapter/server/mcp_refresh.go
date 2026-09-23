@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
 )
@@ -58,10 +60,19 @@ func (s *Service) RefreshMcpSources(ctx context.Context, id session.SessionID) (
 		return MCPRefreshResult{}, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 
-	snapshot, reconcileErr := s.cfg.MCPRefresh(ctx)
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	current, err := s.mcpRefreshTarget(ctx, id)
+	if err != nil {
+		return MCPRefreshResult{}, err
+	}
+
+	snapshot, reconcileErr := s.cfg.MCPRefresh(ctx)
 	if reconcileErr != nil {
+		if errors.Is(reconcileErr, ErrInternal) {
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "direct MCP source reconciliation failed", "session", string(id), "err", reconcileErr.Error())
+			return MCPRefreshResult{}, fmt.Errorf("%w: reconcile direct MCP sources", ErrInternal)
+		}
 		return MCPRefreshResult{}, reconcileErr
 	}
 	result := MCPRefreshResult{Revision: snapshot.Revision, Changed: snapshot.Changed}
@@ -70,10 +81,6 @@ func (s *Service) RefreshMcpSources(ctx context.Context, id session.SessionID) (
 	}
 	names := append([]string(nil), snapshot.ToolNames...)
 
-	current, err := s.mcpRefreshTarget(ctx, id)
-	if err != nil {
-		return MCPRefreshResult{}, err
-	}
 	additions, err := mcpRefreshAdditions(current, names)
 	if err != nil {
 		return MCPRefreshResult{}, err
@@ -105,11 +112,13 @@ func (s *Service) RefreshMcpSources(ctx context.Context, id session.SessionID) (
 
 	oldSnapshot, err := sessnap.Of(old)
 	if err != nil {
-		return MCPRefreshResult{}, fmt.Errorf("%w: snapshot direct MCP authority candidate: %v", ErrInternal, err)
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "snapshot direct MCP authority candidate failed", "session", string(id), "err", err.Error())
+		return MCPRefreshResult{}, fmt.Errorf("%w: snapshot direct MCP authority candidate", ErrInternal)
 	}
 	candidate, err := oldSnapshot.Restore()
 	if err != nil {
-		return MCPRefreshResult{}, fmt.Errorf("%w: restore direct MCP authority candidate: %v", ErrInternal, err)
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "restore direct MCP authority candidate failed", "session", string(id), "err", err.Error())
+		return MCPRefreshResult{}, fmt.Errorf("%w: restore direct MCP authority candidate", ErrInternal)
 	}
 	if err := candidate.GrantToolAuthority(additions); err != nil {
 		return MCPRefreshResult{}, fmt.Errorf("%w: grant direct MCP authority: %v", ErrFailedPrecondition, err)
@@ -147,7 +156,8 @@ func (s *Service) RefreshMcpSources(ctx context.Context, id session.SessionID) (
 		return result, nil
 	}
 	if reflect.DeepEqual(confirmed, old) {
-		return MCPRefreshResult{}, fmt.Errorf("%w: persist MCP authority: %v", ErrInternal, saveErr)
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "persist MCP authority failed", "session", string(id), "err", saveErr.Error())
+		return MCPRefreshResult{}, fmt.Errorf("%w: persist MCP authority", ErrInternal)
 	}
 	return MCPRefreshResult{}, fmt.Errorf("%w: MCP refresh save outcome is uncertain", ErrUnavailable)
 }

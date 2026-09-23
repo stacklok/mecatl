@@ -941,56 +941,56 @@ func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics, requi
 	}
 	srv.tools = tools
 
-	// Resources and prompts are STATIC SNAPSHOTS taken once here, and only when
-	// the server advertised the matching capability in the initialize handshake.
-	// A server that exposes tools but not resources/prompts is fine: we skip the
-	// absent capability so one limited server never breaks the harness. Listing
-	// is also non-fatal — a server that advertises the capability but errors the
-	// list is logged-and-skipped rather than failing the whole connect, since the
-	// tools are already usable.
+	if err := srv.listInitialResourcesAndPrompts(connectCtx, requireComplete); err != nil {
+		_ = sess.Close()
+		_ = oauthController.Close()
+		return nil, err
+	}
+	return srv, nil
+}
+
+func (s *Server) listInitialResourcesAndPrompts(ctx context.Context, requireComplete bool) error {
+	// Absent capabilities are valid. Ordinary connections tolerate list errors;
+	// reconciliation candidates require a complete snapshot.
+	cfg, sess := s.cfg, s.session
 	caps := serverCapabilities(sess)
 	if caps != nil && caps.Resources != nil {
 		var res []Resource
-		var rerr error
+		var err error
 		if requireComplete {
-			res, rerr = srv.listResourcesBounded(connectCtx, sess, cfg.CandidateBudget)
+			res, err = s.listResourcesBounded(ctx, sess, cfg.CandidateBudget)
 		} else {
-			res, rerr = srv.listResources(connectCtx)
+			res, err = s.listResources(ctx)
 		}
-		if rerr != nil {
+		if err != nil {
 			if requireComplete {
-				_ = sess.Close()
-				_ = oauthController.Close()
-				return nil, fmt.Errorf("mcp: list resources on server %q: %w", cfg.Name, rerr)
+				return fmt.Errorf("mcp: list resources on server %q: %w", cfg.Name, err)
 			}
-			diag.Log(connectCtx, port.LevelWarn, "mcp: listing resources failed; continuing without them",
-				"server", cfg.Name, "err", rerr)
+			s.diag.Log(ctx, port.LevelWarn, "mcp: listing resources failed; continuing without them",
+				"server", cfg.Name, "err", err)
 		} else {
-			srv.resources = res
+			s.resources = res
 		}
 	}
 	if caps != nil && caps.Prompts != nil {
-		var pr []Prompt
-		var perr error
+		var prompts []Prompt
+		var err error
 		if requireComplete {
-			pr, perr = srv.listPromptsBounded(connectCtx, sess, cfg.CandidateBudget)
+			prompts, err = s.listPromptsBounded(ctx, sess, cfg.CandidateBudget)
 		} else {
-			pr, perr = srv.listPrompts(connectCtx)
+			prompts, err = s.listPrompts(ctx)
 		}
-		if perr != nil {
+		if err != nil {
 			if requireComplete {
-				_ = sess.Close()
-				_ = oauthController.Close()
-				return nil, fmt.Errorf("mcp: list prompts on server %q: %w", cfg.Name, perr)
+				return fmt.Errorf("mcp: list prompts on server %q: %w", cfg.Name, err)
 			}
-			diag.Log(connectCtx, port.LevelWarn, "mcp: listing prompts failed; continuing without them",
-				"server", cfg.Name, "err", perr)
+			s.diag.Log(ctx, port.LevelWarn, "mcp: listing prompts failed; continuing without them",
+				"server", cfg.Name, "err", err)
 		} else {
-			srv.prompts = pr
+			s.prompts = prompts
 		}
 	}
-
-	return srv, nil
+	return nil
 }
 
 // dial establishes a fresh SDK ClientSession against the configured server. It

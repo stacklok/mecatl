@@ -5520,7 +5520,9 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	desiredRuntimeRevision := s.cfg.SharedEngineRevision
 	if s.cfg.OperationRevision != nil {
-		desiredRuntimeRevision = s.cfg.OperationRevision(ctx)
+		if revision := s.cfg.OperationRevision(ctx); revision != 0 || desiredRuntimeRevision == 0 {
+			desiredRuntimeRevision = revision
+		}
 	}
 	switch {
 	case hasEngine && (se.runtimeRevision != desiredRuntimeRevision || se.builtForMode != "" && se.builtForMode != sess.Mode):

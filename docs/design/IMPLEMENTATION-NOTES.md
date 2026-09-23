@@ -5998,7 +5998,7 @@ without affinity or a durable-broker decision. Guards include `internal/adapter/
 `internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
 `internal/adapter/mcpbroker/toolhive_process_test.go`.
 
-**Ordered direct MCP source reconciliation and runtime publication (ADR 0345):**
+**Ordered direct MCP source reconciliation and runtime publication (ADR 0350):**
 `internal/app/mcp_reconciler.go` (`mcpSourceReconciler`) is the one Build-owned,
 serialized/coalesced path for initial resolution, manual requests, current-server
 list-change notifications, and ToolHive-only bounded jittered polling. It consults
@@ -6008,7 +6008,11 @@ as withdrawal. Stable, non-dirty observations stop before candidate connection.
 A dirty current-runtime notification rebuilds a complete candidate and therefore
 re-lists tools, resources, and prompts together; callbacks from displaced
 candidate generations are ignored, while a callback received during candidate
-construction queues exactly one successor after publication. Reconciler-owned
+construction or publication queues exactly one successor. A failed candidate or
+deferred publication retains the dirty state for the next trigger, including the
+retry after retirement drains. A one-second cooldown between cycles bounds
+notification-driven reconnects; requests arriving during that wait share the next
+cycle, and shutdown cancels the wait. Reconciler-owned
 servers keep their validated tool/resource/prompt projections frozen: notifications
 only invalidate the reconciler, so old and failed candidates cannot lazily mutate a
 published schema. `internal/adapter/mcp/mcp.go`
@@ -6022,11 +6026,17 @@ resource, and prompt metadata. `internal/app/mcp_runtime.go` (`mcpRuntimeSet`)
 atomically publishes the complete candidate as one manager/provider/catalog
 contribution. Root runs pin it in `server.Service.beginRunAdmission`; the pin
 context reaches prompt expansion and every Subagent/Parallel/Team/named/reference
-factory built by the one `assembleCatalog` path. Direct `RunTeam` stores only
-member declarations at creation; at the actual run boundary it acquires one current
-operation pin, then builds the supervisor, every member engine, referenced specialist,
-and root authority from that same context. An unrun Team therefore never fills the
-retirement set. Out-of-run resource and prompt provider calls take one
+factory built by the one `assembleCatalog` path. Direct `CreateTeam` and pre-run
+`SpawnTeammate` calls validate and store declarations only; they neither construct
+member engines/forks nor persist member sessions. At the actual `RunTeam` boundary,
+the Service acquires one current operation pin and every member lease, enters an
+internal starting phase, then builds the supervisor, every member engine/fork,
+referenced specialist, and root authority from that same context. Factory and fork
+errors are therefore reported by `RunTeam`, not declaration calls; failed startup
+returns the team to created state with its declarations and queued messages intact
+for retry. The runtime Team and non-nil supervisor publish atomically with the
+running phase. An unrun Team therefore never fills the retirement set or retains
+member leases. Out-of-run resource and prompt provider calls take one
 call-scoped pin. Shared and cached default, selector, no-FS, client-MCP, mode, specialist, and debug engines carry only a revision tag;
 `server.Service.engineAndEnvironmentFor` rebuilds a mismatch before use, so idle
 engine caches never lease a manager and their close functions never own one.
@@ -6038,10 +6048,11 @@ cancels and joins the worker, and closes all remaining runtime managers. Caller
 cancellation only abandons that caller's reconciliation wait.
 
 `server.Service.RefreshMcpSources` is the explicit direct control over that shared
-reconciler. It owner-preflights before reconciliation, then takes `runEntryMu` and
-admits only quiescent idle or completed ordinary roots with no broker binding.
-The request uses the returned candidate's exact revision and active direct tool
-names even if a successor publishes before delivery. Existing names are a zero-write
+reconciler. It owner-preflights, takes `runEntryMu`, and admits only quiescent idle
+or completed ordinary roots with no broker binding before invoking reconciliation.
+Ineligible requests therefore perform no source work. The request uses the returned
+candidate's exact revision and active direct tool names even if a successor publishes
+before delivery. Existing names are a zero-write
 no-op with no mutation lease. Additions trigger a fresh authoritative load under
 the real mutation lease, one `Session.GrantToolAuthority` stable union, and at most
 one cancel-detached bounded save. A save error is confirmed by a bounded detached

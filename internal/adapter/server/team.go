@@ -36,15 +36,16 @@ var ErrTeamNotRunning = errors.New("server: team is not running")
 var ErrTooManyTeams = errors.New("server: too many live teams")
 
 // teamPhase is a team's lifecycle phase in the registry, guarded by Service.mu. A
-// team is created on CreateTeam, transitions atomically to running on RunTeam
-// (rejecting a second RunTeam and any SpawnTeammate), and to done when RunTeam
-// returns. The phase serialises access to the Supervisor's unsynchronised
+// team is created on CreateTeam, transitions through starting while RunTeam
+// constructs its runtime, then atomically publishes a non-nil supervisor with the
+// running phase, and transitions to done when RunTeam returns. The phase serialises access to the Supervisor's unsynchronised
 // members/order maps: only one RunTeam may drive a team, and no member may be
 // spawned once driving has begun.
 type teamPhase int
 
 const (
 	teamCreated teamPhase = iota
+	teamStarting
 	teamRunning
 	teamDone
 )
@@ -113,8 +114,8 @@ type teamState struct {
 
 // CreateTeamOnDefaultPlacement allocates a new agent team over the trusted default
 // placement, stores an optional initial roster, and returns its server-assigned
-// id together with that roster. When immutable-runtime publication is wired, the
-// declarations intentionally remain engine-free until RunTeam acquires its pin.
+// id together with that roster. Declarations intentionally remain engine-free and
+// member-session-free until RunTeam acquires its operation pin and member leases.
 //
 // Enrolment is ATOMIC: if any member fails to enrol the whole team is abandoned —
 // it is never registered (no partial team leaks) and does not consume a MaxTeams
@@ -207,28 +208,6 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 	if err := s.declareInitialRoster(t, id, members); err != nil {
 		return "", nil, err
 	}
-	if s.cfg.OperationPin == nil {
-		leased := make([]session.SessionID, 0, len(members))
-		for _, spec := range members {
-			memberID := agent.MemberSessionID(id, spec.Name)
-			if err := s.acquireLease(ctx, memberID); err != nil {
-				for _, acquired := range leased {
-					s.releaseLease(acquired)
-				}
-				return "", nil, err
-			}
-			leased = append(leased, memberID)
-		}
-		builtTeam, sup, err := s.buildTeamForOperation(ctx, id, state)
-		if err != nil {
-			s.deleteAbandonedMembers(ctx, leased)
-			for _, acquired := range leased {
-				s.releaseLease(acquired)
-			}
-			return "", nil, err
-		}
-		state.team, state.sup = builtTeam, sup
-	}
 
 	s.mu.Lock()
 	// The slot was claimed above, so no capacity refusal can occur here — the cap
@@ -264,6 +243,9 @@ func (s *Service) deleteAbandonedMembers(ctx context.Context, ids []session.Sess
 		return
 	}
 	for _, id := range ids {
+		if !s.mutationLeaseHeld(id) {
+			continue
+		}
 		if err := s.deleteSessionFamily(ctx, id, prunable); err != nil && !errors.Is(err, port.ErrSessionNotFound) {
 			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "abandoned team member snapshot could not be deleted; left for retention", "session", string(id), "err", err.Error())
 		}
@@ -312,16 +294,7 @@ func (s *Service) SpawnTeammate(ctx context.Context, teamID string, spec agent.M
 	if spec.Mutating && s.cfg.Forker == nil {
 		return team.Member{}, fmt.Errorf("%w: %v", ErrFailedPrecondition, agent.ErrNoForker)
 	}
-	if s.cfg.OperationPin == nil {
-		memberID := agent.MemberSessionID(teamID, spec.Name)
-		if err := s.acquireLease(ctx, memberID); err != nil {
-			return team.Member{}, err
-		}
-		if err := ts.sup.AddMember(ctx, spec); err != nil {
-			s.releaseLease(memberID)
-			return team.Member{}, classifyAddMemberErr(err)
-		}
-	} else if err := ts.team.AddMember(spec.Name, spec.AgentType); err != nil {
+	if err := ts.team.AddMember(spec.Name, spec.AgentType); err != nil {
 		return team.Member{}, classifyAddMemberErr(err)
 	}
 	if err := ts.team.SetMemberSession(spec.Name, agent.MemberSessionID(teamID, spec.Name)); err != nil {
@@ -388,7 +361,10 @@ func (s *Service) SendTeammateMessage(ctx context.Context, teamID, from, to, bod
 	if err := ts.team.Send(from, to, body); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	if s.cfg.OperationPin != nil && ts.phase == teamCreated {
+	s.mu.Lock()
+	phase := ts.phase
+	s.mu.Unlock()
+	if phase == teamCreated {
 		ts.messages = append(ts.messages, teamDeclarationMessage{from: from, to: to, body: body})
 	}
 	return nil
@@ -420,12 +396,12 @@ func (s *Service) CancelTeammate(ctx context.Context, teamID, member string) err
 		return err
 	}
 	s.mu.Lock()
-	phase := ts.phase
+	phase, sup := ts.phase, ts.sup
 	s.mu.Unlock()
-	if phase != teamRunning {
+	if phase != teamRunning || sup == nil {
 		return fmt.Errorf("%w: %q", ErrTeamNotRunning, teamID)
 	}
-	if !ts.sup.CancelMember(member) {
+	if !sup.CancelMember(member) {
 		return fmt.Errorf("%w: %q", ErrChildNotFound, member)
 	}
 	return nil
@@ -512,26 +488,8 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	if err != nil {
 		return agent.TeamOutcome{}, err
 	}
-	if s.cfg.OperationPin != nil {
-		pinned, release, pinErr := s.cfg.OperationPin(ctx)
-		if pinErr != nil {
-			return agent.TeamOutcome{}, pinErr
-		}
-		if release != nil {
-			defer release()
-		}
-		ctx = pinned
-	}
-	// Atomically claim the team for this run. A second concurrent RunTeam (or one
-	// after a completed run) is rejected — the Supervisor's member state is not safe
-	// to drive twice. The transition is guarded by Service.mu so that of two callers
-	// racing to claim, exactly one wins. The per-team `run` mutex is ALSO held across
-	// the check+transition so an in-flight SpawnTeammate (which holds `run` across its
-	// own AddMember) cannot be mid-write to the supervisor's member maps when we flip
-	// to teamRunning and hand them to sup.Run. We release `run` the instant the phase
-	// has flipped — NOT across sup.Run itself — so a spawn that arrives after the flip
-	// sees teamRunning and is rejected cleanly, with no map race. Lock order is `run`
-	// then `s.mu`, matching SpawnTeammate, so the two cannot deadlock.
+	// Claim startup under the per-team lock. teamStarting keeps cancellation and
+	// cleanup from observing a running phase before the supervisor is published.
 	ts.run.Lock()
 	s.mu.Lock()
 	if ts.phase != teamCreated {
@@ -539,8 +497,26 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 		ts.run.Unlock()
 		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrTeamRunning, teamID)
 	}
-	ts.phase = teamRunning
+	ts.phase = teamStarting
 	s.mu.Unlock()
+
+	restoreCreated := func() {
+		s.mu.Lock()
+		ts.phase = teamCreated
+		s.mu.Unlock()
+		ts.run.Unlock()
+	}
+	if s.cfg.OperationPin != nil {
+		pinned, release, pinErr := s.cfg.OperationPin(ctx)
+		if pinErr != nil {
+			restoreCreated()
+			return agent.TeamOutcome{}, pinErr
+		}
+		if release != nil {
+			defer release()
+		}
+		ctx = pinned
+	}
 
 	leased := make([]session.SessionID, 0, len(ts.specs))
 	for _, spec := range ts.specs {
@@ -549,33 +525,27 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 			for _, acquired := range leased {
 				s.releaseLease(acquired)
 			}
-			s.mu.Lock()
-			ts.phase = teamCreated
-			s.mu.Unlock()
-			ts.run.Unlock()
+			restoreCreated()
 			return agent.TeamOutcome{}, err
 		}
 		leased = append(leased, memberID)
 	}
 
-	if s.cfg.OperationPin != nil {
-		runtimeTeam, runtimeSupervisor, err := s.buildTeamForOperation(ctx, teamID, ts)
-		if err != nil {
-			s.deleteAbandonedMembers(ctx, leased)
-			for _, acquired := range leased {
-				s.releaseLease(acquired)
-			}
-			s.mu.Lock()
-			ts.phase = teamCreated
-			s.mu.Unlock()
-			ts.run.Unlock()
-			return agent.TeamOutcome{}, err
+	runtimeTeam, runtimeSupervisor, err := s.buildTeamForOperation(ctx, teamID, ts)
+	if err != nil {
+		s.deleteAbandonedMembers(ctx, leased)
+		for _, acquired := range leased {
+			s.releaseLease(acquired)
 		}
-		s.mu.Lock()
-		ts.team = runtimeTeam
-		ts.sup = runtimeSupervisor
-		s.mu.Unlock()
+		restoreCreated()
+		return agent.TeamOutcome{}, err
 	}
+	s.mu.Lock()
+	ts.team = runtimeTeam
+	ts.sup = runtimeSupervisor
+	ts.phase = teamRunning
+	s.mu.Unlock()
+	sup := runtimeSupervisor
 	ts.run.Unlock()
 
 	defer func() {
@@ -583,7 +553,7 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 		ts.phase = teamDone
 		s.mu.Unlock()
 	}()
-	return ts.sup.Run(ctx, sink), nil
+	return sup.Run(ctx, sink), nil
 }
 
 // ListTeam returns the team roster, the shared task list, and whether the team
@@ -593,7 +563,10 @@ func (s *Service) ListTeam(ctx context.Context, teamID string) ([]team.Member, [
 	if err != nil {
 		return nil, nil, false, err
 	}
-	return ts.team.Members(), ts.team.Tasks(), ts.team.Quiescent(), nil
+	s.mu.Lock()
+	t := ts.team
+	s.mu.Unlock()
+	return t.Members(), t.Tasks(), t.Quiescent(), nil
 }
 
 // CleanupTeam drops a created or done team from the registry and frees its slot.
@@ -609,7 +582,7 @@ func (s *Service) CleanupTeam(ctx context.Context, teamID string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("%w: %q", ErrTeamNotFound, teamID)
 	}
-	if ts.phase == teamRunning {
+	if ts.phase == teamStarting || ts.phase == teamRunning {
 		s.mu.Unlock()
 		return fmt.Errorf("%w: %q", ErrTeamRunning, teamID)
 	}

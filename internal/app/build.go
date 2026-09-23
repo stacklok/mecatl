@@ -2214,7 +2214,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			return assets.mcpRuntimes.pin(ctx)
 		},
-		OperationRevision: mcpRuntimeRevision,
+		OperationRevision: func(ctx context.Context) uint64 {
+			if revision := mcpRuntimeRevision(ctx); revision != 0 {
+				return revision
+			}
+			if assets.mcpRuntimes != nil {
+				return assets.mcpRuntimes.currentRevision()
+			}
+			return 0
+		},
 		SharedEngineRevision: func() uint64 {
 			if assets.mcpRuntimes == nil {
 				return 0
