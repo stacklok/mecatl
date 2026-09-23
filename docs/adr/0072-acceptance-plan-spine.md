@@ -57,7 +57,7 @@ Adopt the sibling-repo spine variant, adapted to mecatl's anchors:
   agent) can pick up a plan and know exactly what "done" means.
 - The per-plan `**Status:**` lifecycle is a *workflow* state, distinct from
   the shipped/deferred subsystem status ADR 0002 reserves to
-  `docs/design/PRODUCTION-READINESS.md` — the two trackers do not overlap.
+  [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) — the two trackers do not overlap.
 - `principles.md` is a second prose copy of the AGENTS.md invariants — a
   deliberate, disclaimed index; the source wins on any disagreement, and a
   change to an invariant must update the summary in the same change.

@@ -119,5 +119,5 @@ bodies are frozen; the pointer above is the record).
   the living "Model-switch context carryover" section.
 - [`docs/tui.md`](../tui.md) — the `/models` picker section (seamless switch,
   `/clear` as fresh-start).
-- [`docs/design/PRODUCTION-READINESS.md`](../design/PRODUCTION-READINESS.md) —
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) —
   the status tracker.

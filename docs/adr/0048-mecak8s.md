@@ -134,9 +134,9 @@ single-replica; filed as a follow-up).
   that makes remote services first-class.
 - [ADR 0028 — mecatequi](./0028-mecatequi.md) — the precedent for a new binary
   that composes `app.Build` with a different posture.
-- [`docs/design/MECAK8S-PLAN.md`](../design/MECAK8S-PLAN.md) — the living
+- [Historical mecak8s execution plan](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/MECAK8S-PLAN.md) — the living
   execution plan (step sequence, manifests, e2e architecture, risks).
-- [`docs/design/PRODUCTION-READINESS.md`](../design/PRODUCTION-READINESS.md) —
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) —
   the status tracker (mecak8s row added when implementation ships).
 - [`docs/usage.md`](../usage.md) — the operator guide (mecak8s section added
   when implementation ships).

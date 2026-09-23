@@ -22,7 +22,6 @@ not restate it.
 - [`architecture.md`](architecture.md) — the living architecture reference.
 - [Public documentation](https://mecatl.dev/docs/) — canonical user-facing guidance and reference.
 - [`adr/README.md`](adr/README.md) — the frozen ADR index (the *why* archive).
-- [`design/PRODUCTION-READINESS.md`](design/PRODUCTION-READINESS.md) — the live shipped/deferred status tracker.
 - [ADR 0215](adr/0215-openai-subscription-manual-token.md) — the landed,
   experimental `openai-codex` capability and its private-backend boundary.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent

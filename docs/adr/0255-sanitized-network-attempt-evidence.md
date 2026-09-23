@@ -32,4 +32,4 @@ Adding a new direct event transport requires applying the debugger-only visibili
 - [Cloud-native arc](./0027-cloud-native.md)
 - [Architecture overview](../architecture.md)
 - [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
-- [Production readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

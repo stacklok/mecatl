@@ -22,9 +22,10 @@ costs honestly — an ADR with only upsides is a sales pitch, not a record.>
 
 ## See also
 
-<Links to the living docs this decision is reflected in (architecture.md sections,
-the tracker), and to related ADRs — e.g. the lifecycle convention in
-[ADR 0002](./0002-documentation-lifecycle.md).>
+<Links to the owning living architecture or public documentation, related ADRs,
+ and an issue/PR when it supplies relevant context. See the lifecycle convention in
+[ADR 0002](./0002-documentation-lifecycle.md) and current
+[documentation change review](../development-process.md#documentation-change-review).>
 
 ---
 
@@ -40,8 +41,8 @@ Guidance (delete before committing):
 - An ADR is a POINT-IN-TIME record. Once Accepted, you do not edit it to match new
   code. To change the decision, write a NEW ADR that Supersedes this one, and add a
   "Superseded by" line above. The supersede pointer is the only post-acceptance edit.
-- Current behaviour lives in docs/architecture.md; status lives in
-  docs/design/PRODUCTION-READINESS.md. Don't duplicate either here.
+- **Status/work tracking**: use issues and PRs. Describe current limitations in the
+  owning guide; do not add a second feature-status tracker or execution journal.
 - Number monotonically: the next NNNN after the highest existing docs/adr/ file.
 See docs/adr/0002-documentation-lifecycle.md for the full convention.
 -->

@@ -12,8 +12,8 @@ import (
 // pure function of (cursor, n, limit) — the window FOLLOWS the cursor (no stored
 // offset to drift), so the selected row stays in view when paging past the top or
 // bottom edge. Shared by the slash palette (renderPalette), the @-mention menu
-// (renderMention), and the /models picker (renderModelsPanel); lifted from
-// palette.go (was paletteWindow) so the call sites can't diverge.
+// (renderMention); retained for those fixed-row consumers while modelsState.Render
+// uses bounded.List for item-aware geometry.
 func scrollWindow(cursor, n, limit int) (start, end int) {
 	if n <= limit {
 		return 0, n
@@ -51,6 +51,15 @@ func clampScroll(want, total, window int) int {
 		return mx
 	}
 	return want
+}
+
+// clampBounded constrains an index to a possibly empty collection. It remains a
+// generic UI helper for fixed-row surface state.
+func clampBounded(value, count int) int {
+	if count <= 0 || value < 0 {
+		return 0
+	}
+	return min(value, count-1)
 }
 
 type renderedLineWindowBounds struct {

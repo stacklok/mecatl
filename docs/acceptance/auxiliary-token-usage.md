@@ -2,14 +2,14 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — adds recognized durable session token-accounting purposes, forward-compatible opaque-kind persistence, and their existing public projection while preserving budget and run-usage semantics.
-**Decision record:** [ADR 0350](../adr/0350-purpose-attributed-auxiliary-token-usage.md)
+**Decision record:** [ADR 0354](../adr/0354-returned-auxiliary-usage-results.md)
 **Phase:** canonical auxiliary usage accounting
-**Status:** proposed, 2026-09-22. Decisions resolved with the issue owner.
-**Delivery:** Split. Durable persistence and exported engine accounting interfaces require independent human contract review before implementation.
+**Status:** proposed, 2026-09-23. Material API revision approved with the issue owner.
+**Delivery:** Split. This amendment requires human review before implementation restarts.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1216](https://github.com/stacklok/mecatl/issues/1216).
-**Plan PR:** [#1793](https://github.com/stacklok/mecatl/pull/1793)
-**Approved baseline:** absent until approved
+**Plan PR:** pending
+**Approved baseline:** absent until amendment approval
 
 Extend the canonical `Session.tokenUsage` ledger from title generation to every reachable,
 session-associated auxiliary LLM call. Each purpose records provider-reported token usage under
@@ -27,16 +27,17 @@ ledger/budget separation in [ADR 0307](../adr/0307-canonical-durable-token-accou
 - [x] Accounting is forward-only and best-effort. — Decision: record reported partial-stream usage; count each physical retry attempt exactly once; do not retry uncertain calls solely for accounting, backfill historical records, or introduce pricing.
 - [x] Mixed-version writers need not preserve new auxiliary buckets. — Decision: an older binary may discard unknown buckets after reading and saving a new snapshot; this early-product tradeoff does not add rollout configuration or compatibility preservation.
 - [x] No client/UI presentation is part of this change. — Decision: existing canonical ledger projections remain the only exposure.
+- [x] Auxiliary producers return a full purpose/model-attributed dictionary. — Decision: breaking pre-v1 APIs return `session.AuxiliaryUsage`; Jev reports its configured classifier model under the `jev/` backend identity and parent callers preserve valid producer model entries while validating/remapping purpose buckets.
 
 ## Interface contract
 
 - **gRPC / protobuf:** None — existing session and session-summary canonical `token_usage` map projections carry recognized and opaque forward-compatible kind keys; no RPC, message, or field changes.
-- **Exported Go APIs / interfaces:** Add `session.UsageKindCompaction`, `session.UsageKindReflection`, `session.UsageKindRouter`, `session.UsageKindAskReviewer`, `session.UsageKindGuardrail`, and `session.UsageKindParallelJudge`. `Session.RecordTokenUsage` and `RestoreTokenUsage` must accept and preserve non-empty unrecognized `UsageKind` values as opaque buckets, while only recognized `router` usage receives the explicit internal budget treatment; do not change `port.LLMProvider`, `port.LLMRequest`, or public method signatures. Private auxiliary-call reporting must hand the owner-side recorder immutable purpose, provider ID, model ID, owner session ID, and aggregate `session.Usage` for every terminal outcome; a custom/non-LLM reporter that supplies no usage records nothing.
+- **Exported Go APIs / interfaces:** Add `session.AuxiliaryUsage{Buckets map[UsageKind]TokenUsage}` and an owned-copy `Merge(AuxiliaryUsage) AuxiliaryUsage` operation. Break `agent.Compactor.Compact`, `agent.EvidenceReflector.Reflect`, `agent.EvidenceReflector.ReflectProjection`, `agent.ChildAskReviewer.Review`, `agent.BranchJudge.Judge`, `agent.RunGuardrailCheck`, `agent.RunModelRouter`, and `agent.Deps.SubagentModelRouter` so each returns this complete value. Producers assign purpose and exact model attribution; parent callers validate/remap buckets but preserve producer attribution, including Jev's configured classifier model under the `jev/` backend identity. Add the recognized `UsageKind` constants and preserve opaque non-empty kinds. Do not widen `port.LLMProvider` or `port.LLMRequest`.
 - **Tool schemas:** None — no tool name, parameter, result, or model-visible affordance changes.
 - **CLI / config:** None — existing `models.slots.compaction`, `reflection`, `router`, `ask-reviewer`, and `guardrail` continue to select models without new keys or defaults; Parallel judging gains no slot.
-- **Events / persistence:** Persist and restore the six new buckets through the existing `token_usage` snapshot, store, event-source metadata, and authorized session/session-summary projections. No new event or per-attempt ledger is added. At the physical-stream boundary, sum every usage emission once for its provider attempt; retries contribute each distinct attempt's reported usage and wrappers do not duplicate forwarded values. Record partial usage observed before a terminal error/cancellation and persist best effort without reissuing an uncertain call.
+- **Events / persistence:** Persist and restore returned auxiliary buckets through the existing `token_usage` snapshot, store, event-source metadata, and authorized session/session-summary projections. No new event or per-attempt ledger is added. A producer aggregates every usage emission once per provider attempt; retries contribute each attempted stream's reported usage. The current owner synchronously records the returned value only while its Service capability remains valid; after lease loss it drops the result with bounded diagnostics and never reloads, replays, or writes through a stale session pointer.
 - **Security / authority:** Composition/server code selects the provider/model and binds every recorded call to its true source session. Accounting stores purpose, aggregate token counts, and provider/model attribution only; it never stores prompts, model output, raw provider errors, request IDs, credentials, or client-selected billing controls. Calls without a source session are not attributed to any session.
-- **Compatibility / migration:** Forward-only additive engine API change: update `engine/api/*.txt` and `engine/CHANGELOG.md` as an Added/minor surface. Current and future readers preserve non-empty unrecognized kind buckets across restore/save; existing snapshots retain their `main`, `session_title`, and legacy `unknown` model-attribution behavior, with no backfill or rewrite. Older released binaries may still drop unknown auxiliary buckets after loading and saving a new snapshot; mixed-version writer preservation is intentionally unsupported. `Session.Usage` and legacy snapshot `usage` remain deprecated mirrors of `token_usage[main]` only.
+- **Compatibility / migration:** Intentional pre-v1 breaking engine API change: regenerate `engine/api/*.txt` and classify the changed signatures in `engine/CHANGELOG.md` as Changed/minor. There is no old/new callback bridge. Current and future readers preserve non-empty unrecognized kind buckets across restore/save; existing snapshots retain their `main`, `session_title`, and legacy `unknown` attribution behavior, with no backfill or rewrite.
 
 ## In scope — 4 scenarios, in implementation order
 

@@ -247,9 +247,8 @@ func TestModelProvenanceNoStatusRow_NotAutoSelected(t *testing.T) {
 
 // --- ●/★ markers -----------------------------------------------------------
 
-// TestModelRowMarkers asserts the fixed-width 2-marker column: ● on the pending
-// (active) row, ★ on the global-default row, "●★" when a row is both, and two
-// spaces when neither — layout-stable for goldens.
+// TestModelRowMarkers asserts that current/default state is projected through separate
+// bounded status cells, never embedded into model text.
 func TestModelRowMarkers(t *testing.T) {
 	active := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
 	gd := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
@@ -257,18 +256,25 @@ func TestModelRowMarkers(t *testing.T) {
 	claude := client.ModelInfo{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"}
 	mini := client.ModelInfo{ID: "gpt-5-mini", ProviderID: "openai", DisplayName: "GPT-5 mini"}
 
-	if got := modelRowText(active, gd, nil, gpt); !strings.HasPrefix(got, "●  ") {
-		t.Errorf("active row should start with the ● marker (+ space pad), got %q", got)
-	}
-	if got := modelRowText(active, gd, nil, claude); !strings.HasPrefix(got, " ★ ") {
-		t.Errorf("global-default row should carry the ★ marker, got %q", got)
-	}
-	if got := modelRowText(active, gd, nil, mini); !strings.HasPrefix(got, "   ") {
-		t.Errorf("a plain row should have a blank 2-cell marker column, got %q", got)
-	}
-	// A row that is BOTH active AND the global default shows "●★".
-	if got := modelRowText(active, active, nil, gpt); !strings.HasPrefix(got, "●★ ") {
-		t.Errorf("a row that is both active and global default should show ●★, got %q", got)
+	for _, tc := range []struct {
+		name string
+		mi   client.ModelInfo
+		def  client.ModelSelection
+		want [2]string
+	}{
+		{name: "active", mi: gpt, def: gd, want: [2]string{"●", ""}},
+		{name: "global default", mi: claude, def: gd, want: [2]string{"", "★"}},
+		{name: "plain", mi: mini, def: gd, want: [2]string{}},
+		{name: "both", mi: gpt, def: active, want: [2]string{"●", "★"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := modelStatusCells(active, tc.def, tc.mi); got != tc.want {
+				t.Errorf("status cells = %q, want %q", got, tc.want)
+			}
+			if got := modelRowText(active, tc.def, nil, tc.mi); strings.HasPrefix(got, "●") || strings.HasPrefix(got, "★") {
+				t.Errorf("model text embeds status markers: %q", got)
+			}
+		})
 	}
 }
 

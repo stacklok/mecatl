@@ -62,7 +62,7 @@ WebFetch behavior, limits, and security decisions remain frozen and authoritativ
 
 - [Architecture overview](../architecture.md#1-what-it-is)
 - [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - [ADR 0021 — Guardrails](./0021-guardrails.md)
 - [ADR 0105 — Built-in WebFetch](./0105-built-in-webfetch.md)
 - [ADR 0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)

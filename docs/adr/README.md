@@ -13,9 +13,11 @@ Each ADR records *why* a thing is shaped the way it is at a point in time and is
 supersession in this living index; never edit the landed record. Copy
 [`template.md`](./template.md) to start one. Number monotonically.
 
-Current behaviour lives in [`docs/architecture.md`](../architecture.md) (the living
-reference); shipped/deferred status lives in
-[PRODUCTION-READINESS.md](../design/PRODUCTION-READINESS.md) (the single tracker).
+Current behavior belongs in the owning [architecture topic](../READING.md) and
+public guide. Track actionable work in issues and PRs rather than a second
+hand-maintained status ledger. Follow the [documentation change review](../development-process.md#documentation-change-review)
+for current ownership; historical references in ADRs do not require recreating
+retired trackers or completed execution plans.
 Documentation/citation conventions are in [`docs/design/README.md`](../design/README.md).
 
 > History: ADRs 0004–0029 were the former `docs/design/*` design records, consolidated
@@ -154,6 +156,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*
+- [0353 — Session-scoped agent identity](./0353-session-scoped-agent-identity.md) *(proposed)*
 - [0013 — Agent definitions](./0013-agent-definitions.md)
 - [0014 — Agent teams](./0014-agent-teams.md)
 - [0015 — Background subagents](./0015-background-subagents.md)
@@ -199,8 +202,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
-- [0057 — MCP server notifications](./0057-mcp-server-notifications.md) *(deferred “no live catalog mutation” decision proposed to be superseded by 0353; notification transport, bounded lazy-list, reconnect, and teardown decisions retained)*
-- [0353 — Reconcile stale direct MCP source snapshots](./0353-mcp-source-reconciliation.md) *(proposed; preserves exact-name authority and supersedes 0057 only for its deferred “no live catalog mutation” decision)*
+- [0057 — MCP server notifications](./0057-mcp-server-notifications.md) *(deferred “no live catalog mutation” decision proposed to be superseded by 0355; notification transport, bounded lazy-list, reconnect, and teardown decisions retained)*
+- [0355 — Reconcile stale direct MCP source snapshots](./0355-mcp-source-reconciliation.md) *(proposed; preserves exact-name authority and supersedes 0057 only for its deferred “no live catalog mutation” decision)*
 - [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
 - [0078 — MCP typed tool results](./0078-mcp-typed-tool-results.md)
 - [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)

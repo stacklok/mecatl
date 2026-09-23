@@ -264,8 +264,6 @@ hard-deny vetoes the mutating create)
 - `user-docs/`: replace the declarative-settings + `mecated schedules` CLI
   sections with the in-chat `Schedule` tool + on-by-default behaviour.
 - `user-docs/reference/configuration.md`: remove the `schedules` subtree.
-- `docs/design/IMPLEMENTATION-NOTES.md`: update the scheduled-tasks note.
-- `docs/design/PRODUCTION-READINESS.md`: scheduled-tasks row status update.
 - `engine/api/*.txt` + `engine/CHANGELOG.md` if the tool/registration changes
   the engine's exported surface (`task api:update`).
 - configuration-reference regeneration + the matlatl strict link gate (`task docs`).

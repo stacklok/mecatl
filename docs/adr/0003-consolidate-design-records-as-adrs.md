@@ -23,7 +23,7 @@ for the same kind of artifact is overhead with no payoff.
   (content preserved; every inbound link, citation, and code-comment reference
   updated). [`docs/adr/README.md`](./README.md) is the index.
 - `docs/design/` keeps only the **non-records**: the live status tracker
-  ([PRODUCTION-READINESS.md](../design/PRODUCTION-READINESS.md)) and the dense
+  ([Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)) and the dense
   living implementation reference
   ([IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)), plus the
   documentation/citation conventions in [its README](../design/README.md).

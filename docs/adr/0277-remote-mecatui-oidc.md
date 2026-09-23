@@ -188,7 +188,7 @@ offline tests.
 - [ADR 0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [TUI guide](../tui.md)
 - [Architecture guide](../architecture.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - `user-docs/mecatui/remote-servers.md`
 
 ---

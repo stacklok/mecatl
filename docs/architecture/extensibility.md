@@ -59,7 +59,7 @@ reconciler retains source last-known-good state, builds complete immutable
 candidates, and atomically publishes one runtime revision. Root operations pin
 that revision; displaced runtimes close after their pins drain. See
 [ADR 0057](../adr/0057-mcp-server-notifications.md) and
-[ADR 0353](../adr/0353-mcp-source-reconciliation.md).
+[ADR 0355](../adr/0355-mcp-source-reconciliation.md).
 
 Automatic reconciliation changes current availability but never widens durable
 session authority. `Service.RefreshMcpSources` owner-checks an eligible idle or

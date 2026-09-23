@@ -14,7 +14,7 @@ Trust is resolved in a phased approach at composition time, producing a single `
 
 ## Consequences
 
-Phases 0–2c shipped; Phase 3 descoped. Current behaviour is in docs/architecture.md. Status is in docs/design/PRODUCTION-READINESS.md. Trust never overrides a permission Deny or a configured Ask; the gate is monotonic-positive only. A mid-session trust grant takes effect only on the next process start. AGENTS.md and CLAUDE.md remain outside the trust gate and drift anchor by accepted operator decision.
+Phases 0–2c shipped; Phase 3 descoped. Current behaviour is in docs/architecture.md. Status is in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md). Trust never overrides a permission Deny or a configured Ask; the gate is monotonic-positive only. A mid-session trust grant takes effect only on the next process start. AGENTS.md and CLAUDE.md remain outside the trust gate and drift anchor by accepted operator decision.
 
 ---
 

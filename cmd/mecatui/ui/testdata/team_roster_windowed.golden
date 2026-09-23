@@ -1,18 +1,24 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃    Subagents    Parallel  ▸ Teams                                                            ┃
   ┃                                                                                              ┃
-  ┃  agents                                                                                      ┃
-  ┃  ▶ ◆ · member-h · working… · worker · ↑0 ↓0                                                  ┃
-  ┃  tab switch · esc close                                                                      ┃
+  ┃  agents · 20 members                                                                         ┃
+  ┃                                                                                              ┃
+  ┃    · +6 rows above                                                                           ┃
+  ┃      ↑0 ↓0                                                                                   ┃
+  ┃    ◆ · member-g                                                                              ┃
+  ┃      working… · worker                                                                       ┃
+  ┃      ↑0 ↓0                                                                                   ┃
+  ┃  ▶ ◆ · member-h                                                                              ┃
+  ┃      working… · worker                                                                       ┃
+  ┃      ↑0 ↓0                                                                                   ┃
+  ┃    · +11 rows below                                                                          ┃
+  ┃                                                                                              ┃
+  ┃  ↑/↓ select · enter focus · x cancel · t tasks · f findings · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
 
 
 │

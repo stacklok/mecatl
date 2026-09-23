@@ -14,7 +14,7 @@ Deliver the arc in four phases: Phase 1 adds three missing snapshot fields (prof
 
 ## Consequences
 
-Phases 0–4 are shipped; the harness is now genuinely disposable across process restarts AND safe under a multi-replica deployment that wires a session lease. Teams are the largest honest gap: mid-round team coordination state does not survive restart (row 10 of the fidelity ledger). Phase 4 makes single-writer enforcement CODE-ENFORCED when a lease backend is wired (decision (c) update below). Current composition automatically wires the flock backend beneath every local JSONL StoreDir; other stores without a lease retain the v1 session-affinity constraint, and destructive maintenance fails closed. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
+Phases 0–4 are shipped; the harness is now genuinely disposable across process restarts AND safe under a multi-replica deployment that wires a session lease. Teams are the largest honest gap: mid-round team coordination state does not survive restart (row 10 of the fidelity ledger). Phase 4 makes single-writer enforcement CODE-ENFORCED when a lease backend is wired (decision (c) update below). Current composition automatically wires the flock backend beneath every local JSONL StoreDir; other stores without a lease retain the v1 session-affinity constraint, and destructive maintenance fails closed. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 
@@ -782,7 +782,7 @@ to durable proposal state; row 30 records that materialization accounting and ev
 pre-admission operation reset by design. Cancellation or close before admission leaves
 no queue, singleflight, receipt, reservation, provider, repository, or proposal state.
 
-**Direct MCP reconciliation re-audit (ADR 0353).** List 1 row 64 inventories the
+**Direct MCP reconciliation re-audit (ADR 0355).** List 1 row 64 inventories the
 Build-owned worker, jitter/cooldown timers, coalescing state, source LKG/status, immutable current
 and retiring runtimes, revision-tagged caches, and run/operation pins. Explicit
 refresh adds no outlives-a-call resource: it borrows the existing run-entry lock,
