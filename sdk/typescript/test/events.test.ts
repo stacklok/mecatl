@@ -147,7 +147,10 @@ describe("event unions", () => {
     expect(grpcTeamStart.payload.roster[0]?.routingDecision?.confidence).toBe(0);
     expect(grpcTeamStart.payload.roster[0]?.routingDecision?.minimumConfidence).toBe(0);
     expect(grpcTeamStart.payload.roster[0]).not.toHaveProperty("memberSessionId");
-    expect(grpcTeamStart.payload.roster[1]?.routingDecision).toMatchObject({ backend: "jev", outcome: "skipped" });
+    expect(grpcTeamStart.payload.roster[1]?.routingDecision).toMatchObject({
+      backend: "jev",
+      outcome: "skipped",
+    });
     expect(grpcTeamStart.payload.roster[1]?.routingDecision?.confidence).toBeUndefined();
     expect(grpcTeamStart.payload.roster[1]?.routingDecision?.minimumConfidence).toBeUndefined();
     expect(grpcTeamStart.payload.roster[2]?.routingDecision).toBeUndefined();
@@ -228,7 +231,10 @@ describe("event unions", () => {
     expect(httpTeamStart.payload.roster[0]?.routingDecision?.confidence).toBe(0);
     expect(httpTeamStart.payload.roster[0]?.routingDecision?.minimumConfidence).toBe(0);
     expect(httpTeamStart.payload.roster[0]).not.toHaveProperty("memberSessionId");
-    expect(httpTeamStart.payload.roster[1]?.routingDecision).toMatchObject({ backend: "jev", outcome: "skipped" });
+    expect(httpTeamStart.payload.roster[1]?.routingDecision).toMatchObject({
+      backend: "jev",
+      outcome: "skipped",
+    });
     expect(httpTeamStart.payload.roster[1]?.routingDecision?.confidence).toBeUndefined();
     expect(httpTeamStart.payload.roster[1]?.routingDecision?.minimumConfidence).toBeUndefined();
     expect(httpTeamStart.payload.roster[2]?.routingDecision).toBeUndefined();
