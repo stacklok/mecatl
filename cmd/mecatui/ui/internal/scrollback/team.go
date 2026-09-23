@@ -98,13 +98,3 @@ func (t TeamCards) Update(callID string, update TeamUpdate) bool {
 	payload.Update = update
 	return c.replace(i, payload)
 }
-
-// StartTeam is part of the internal typed scrollback contract.
-func (c *Conversation) StartTeam(callID string, start TeamStart) bool {
-	return c.Teams().Start(callID, start)
-}
-
-// UpdateTeam is part of the internal typed scrollback contract.
-func (c *Conversation) UpdateTeam(callID string, update TeamUpdate) bool {
-	return c.Teams().Update(callID, update)
-}

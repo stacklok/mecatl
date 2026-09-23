@@ -72,6 +72,12 @@ func (m Model) teamBlockForOverlay() *block {
 	if m.team.aggregate == "" {
 		return m.conv.latestTeamBlock()
 	}
+	for i := 0; i < m.conv.scrollback.Len(); i++ {
+		if b, ok := delegationBlockFromSnapshot(m.conv.scrollback.SnapshotAt(i)); ok && b.team && teamBlockIdentity(&b) == m.team.aggregate {
+			return &b
+		}
+	}
+	// Legacy test fixtures deliberately exercise overlay mechanics without a model.
 	for i := range m.conv.blocks {
 		b := &m.conv.blocks[i]
 		if b.kind == blockTool && b.team && teamBlockIdentity(b) == m.team.aggregate {

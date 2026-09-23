@@ -106,29 +106,3 @@ func (p PlainCards) AddDelivery(fireID, text string) BlockID {
 func (p PlainCards) AddDeliveryWithSchedule(scheduleName, fireID, text string) BlockID {
 	return p.conversation.append(DeliveryCardSnapshot{ScheduleName: scheduleName, FireID: fireID, Text: text})
 }
-
-// AddNotice is part of the internal typed scrollback contract.
-func (c *Conversation) AddNotice(text string) BlockID { return c.Notices().AddNotice(text) }
-
-// AddRecoveryNotice is part of the internal typed scrollback contract.
-func (c *Conversation) AddRecoveryNotice(text string) BlockID {
-	return c.Notices().AddRecoveryNotice(text)
-}
-
-// AddTurnStat is part of the internal typed scrollback contract.
-func (c *Conversation) AddTurnStat(text string) BlockID { return c.Notices().AddTurnStat(text) }
-
-// AddError is part of the internal typed scrollback contract.
-func (c *Conversation) AddError(text string, permanent bool) BlockID {
-	return c.Notices().AddError(text, permanent)
-}
-
-// AddHook is part of the internal typed scrollback contract.
-func (c *Conversation) AddHook(phase, tool, decision string) BlockID {
-	return c.Notices().AddHook(phase, tool, decision)
-}
-
-// AddDelivery is part of the internal typed scrollback contract.
-func (c *Conversation) AddDelivery(fireID, text string) BlockID {
-	return c.Notices().AddDelivery(fireID, text)
-}

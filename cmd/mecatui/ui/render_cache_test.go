@@ -111,6 +111,16 @@ var oracleSteps = []struct {
 		c.addTool("call-2", "Shell", `{"command":"go vet ./..."}`)
 		c.resolveTool("call-2", "ok", false) // tail
 	}},
+	{"applySubagentTyped", func(c *conversation) {
+		c.addTool("typed-sub", "Subagent", `{}`)
+		c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "typed-sub", ChildID: "typed-child", Goal: "typed"})
+		c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: "typed-sub", ToolCount: 1, Stop: "end_turn"})
+	}},
+	{"applyTeamTyped", func(c *conversation) {
+		c.addTool("typed-team", "Team", `{}`)
+		c.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: "typed-team", TeamID: "typed-team", Roster: []client.TeamMemberSpec{{Name: "member"}}})
+		c.applyTeamTyped(client.TeamMsg{Kind: client.TeamEnd, ParentCallID: "typed-team", Rounds: 1, Stop: "end_turn"})
+	}},
 	{"setSubagentStart", func(c *conversation) {
 		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
 		c.setSubagentStart("call-sub", "dig into the code", "", "", "", "")
@@ -221,6 +231,10 @@ var oracleSteps = []struct {
 var oracleNonMutators = map[string]string{
 	"appendBlock":         "legacy delegation compatibility gateway",
 	"syncSnapshot":        "typed model snapshot projection gateway, driven by ordinary mutators",
+	"syncCall":            "typed call projection gateway, driven by typed delegation mutations",
+	"subagentCard":        "typed snapshot lookup",
+	"teamCard":            "typed snapshot lookup",
+	"ensureTeamCard":      "typed Team specialization gateway, driven by applyTeamTyped",
 	"presentationBlocks":  "read-only typed snapshot projection for renderer/frame consumers",
 	"recordFileChange":    "changes only appendix metadata, which is not yet a rendered block",
 	"isEmpty":             "pure read",

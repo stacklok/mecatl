@@ -115,29 +115,3 @@ func (m MessageCards) EndReasoningStream() bool {
 	payload.ReasoningStreaming = false
 	return c.replace(i, payload)
 }
-
-// AddUser is part of the internal typed scrollback contract.
-func (c *Conversation) AddUser(in UserInput) BlockID { return c.Messages().AddUser(in) }
-
-// AddAssistant is part of the internal typed scrollback contract.
-func (c *Conversation) AddAssistant(in AssistantInput) BlockID {
-	return c.Messages().AddAssistant(in)
-}
-
-// AppendAssistant is part of the internal typed scrollback contract.
-func (c *Conversation) AppendAssistant(text string) bool {
-	return c.Messages().AppendAssistant(text)
-}
-
-// ReviseAssistant is part of the internal typed scrollback contract.
-func (c *Conversation) ReviseAssistant(text string) bool {
-	return c.Messages().ReviseAssistant(text)
-}
-
-// AppendReasoning is part of the internal typed scrollback contract.
-func (c *Conversation) AppendReasoning(text string) bool {
-	return c.Messages().AppendReasoning(text)
-}
-
-// EndReasoningStream is part of the internal typed scrollback contract.
-func (c *Conversation) EndReasoningStream() bool { return c.Messages().EndReasoningStream() }

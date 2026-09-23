@@ -105,13 +105,3 @@ func (s SubagentCards) Update(callID string, update SubagentUpdate) bool {
 	payload.Update = update
 	return c.replace(i, payload)
 }
-
-// StartSubagent is part of the internal typed scrollback contract.
-func (c *Conversation) StartSubagent(callID string, start SubagentStart) bool {
-	return c.Subagents().Start(callID, start)
-}
-
-// UpdateSubagent is part of the internal typed scrollback contract.
-func (c *Conversation) UpdateSubagent(callID string, update SubagentUpdate) bool {
-	return c.Subagents().Update(callID, update)
-}

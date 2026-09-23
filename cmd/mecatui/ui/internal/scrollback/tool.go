@@ -89,11 +89,3 @@ func (t ToolCards) Resolve(callID string, result ToolResult) bool {
 	}
 	return false
 }
-
-// AddToolCall is part of the internal typed scrollback contract.
-func (c *Conversation) AddToolCall(call ToolCall) BlockID { return c.Tools().Add(call) }
-
-// ResolveTool is part of the internal typed scrollback contract.
-func (c *Conversation) ResolveTool(callID string, result ToolResult) bool {
-	return c.Tools().Resolve(callID, result)
-}

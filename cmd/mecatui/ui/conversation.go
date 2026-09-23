@@ -441,6 +441,8 @@ func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
 		b.kind, b.raw, b.hookPhase, b.hookTool, b.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
 	case scrollback.DeliveryCardSnapshot:
 		b.kind, b.raw, b.toolName, b.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
+	case scrollback.SubagentCardSnapshot, scrollback.TeamCardSnapshot:
+		return delegationBlockFromSnapshot(s)
 	default:
 		return block{}, false
 	}
@@ -570,27 +572,17 @@ func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...cl
 	if !c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)}) {
 		return false
 	}
-	for j := len(c.blocks) - 1; j >= 0; j-- {
-		b := &c.blocks[j]
-		if b.kind != blockTool || b.toolID != callID {
-			continue
-		}
-		// Delegation payloads deliberately retain their Task 3 compatibility projection.
-		if b.subagent || b.team {
-			if !b.resolved {
-				b.rev++
-				b.resolved, b.resultBody, b.resultError, b.resultBlocks = true, body, isErr, blocks
-			}
+	for i := len(c.blocks) - 1; i >= 0; i-- {
+		b := &c.blocks[i]
+		// Legacy test fixtures may deliberately use the old focused-card seam without
+		// specializing the typed model. Preserve that seam; production always syncs.
+		if b.toolID == callID && (b.subagent || b.team) {
+			b.rev++
+			b.resolved, b.resultBody, b.resultError, b.resultBlocks = true, body, isErr, blocks
 			return true
 		}
-		for i := 0; i < c.scrollback.Len(); i++ {
-			s := c.scrollback.SnapshotAt(i)
-			if s.ID == scrollback.BlockID(b.id) {
-				c.syncSnapshot(i)
-				return true
-			}
-		}
 	}
+	c.syncCall(callID)
 	return true
 }
 
@@ -1260,6 +1252,11 @@ func (c *conversation) setTeamFindings(parentCallID string, findings []client.Te
 // mutates it). A team card with no lanes yet (team.start not seen, or empty
 // roster) is skipped so the overlay never opens onto an empty roster.
 func (c *conversation) latestTeamBlock() *block {
+	for i := c.scrollback.Len() - 1; i >= 0; i-- {
+		if b, ok := delegationBlockFromSnapshot(c.scrollback.SnapshotAt(i)); ok && b.team && len(b.teamLanes) > 0 {
+			return &b
+		}
+	}
 	for i := len(c.blocks) - 1; i >= 0; i-- {
 		b := &c.blocks[i]
 		if b.kind == blockTool && b.team && len(b.teamLanes) > 0 {

@@ -1824,16 +1824,19 @@ func (m *Model) applySubagent(msg client.SubagentMsg) {
 // the read-only transcript gets the SAME projection without any live-run footer
 // side-effect.
 func applySubagentTo(c *conversation, msg client.SubagentMsg) {
+	msg.Goal, msg.Text, msg.Detail, msg.Cause = terminaltext.Sanitize(msg.Goal), terminaltext.Sanitize(msg.Text), terminaltext.Sanitize(msg.Detail), terminaltext.Sanitize(msg.Cause)
 	switch msg.Kind {
 	case client.SubagentStart:
-		c.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
+		c.applySubagentTyped(msg)
 		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model, msg.Background)
-		c.setSubagentRoutingDecision(msg.ParentCallID, msg.ChildID, msg.RoutingDecision)
+		if msg.ChildID != "" {
+			c.fleetLane(msg.ChildID).routingDecision = cloneRoutingDecision(msg.RoutingDecision)
+		}
 	case client.SubagentTool:
-		c.addSubagentTool(msg)
+		c.applySubagentTyped(msg)
 		c.fleetTool(msg)
 	case client.SubagentEnd:
-		c.setSubagentEnd(msg.ParentCallID, msg.Usage, msg.ToolCount, msg.Stop, msg.DurationMs)
+		c.applySubagentTyped(msg)
 		c.fleetEnd(msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.Cause, msg.DurationMs)
 	}
 }
@@ -1876,10 +1879,8 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 func (m *Model) applyTeam(msg client.TeamMsg) {
 	applyTeamTo(&m.conv, msg)
 	if msg.Kind == client.TeamEnd {
-		// team.end carries the terminal task + findings snapshots too, so the sub-views
-		// land the final state even if no member event followed the last transition.
-		m.conv.setTeamTasks(msg.ParentCallID, msg.Tasks)
-		m.conv.setTeamFindings(msg.ParentCallID, msg.Findings)
+		// team.end carries the terminal task + findings snapshots; applyTeamTo includes
+		// them in its typed update before the transient footer status is layered on.
 		// A team boundary is transient (like a no-progress notice): a brief muted footer
 		// status, never a durable scrollback notice. The durable team outcome already rides
 		// the team card + the run's ResultMsg.
@@ -1895,18 +1896,8 @@ func (m *Model) applyTeam(msg client.TeamMsg) {
 // read-only transcript gets the SAME projection without any live-run footer
 // side-effect.
 func applyTeamTo(c *conversation, msg client.TeamMsg) {
-	switch msg.Kind {
-	case client.TeamStart:
-		c.setTeamStart(msg.ParentCallID, msg.TeamID, msg.Roster)
-	case client.TeamMember:
-		c.addTeamMember(msg)
-	case client.TeamTasks:
-		c.setTeamTasks(msg.ParentCallID, msg.Tasks)
-	case client.TeamFindings:
-		c.setTeamFindings(msg.ParentCallID, msg.Findings)
-	case client.TeamEnd:
-		c.setTeamEnd(msg.ParentCallID, msg.TeamID, msg.Rounds, msg.Stop, msg.Usage, msg.Dispositions)
-	}
+	msg.TeamID, msg.Member, msg.Text, msg.Detail, msg.Cause = terminaltext.Sanitize(msg.TeamID), terminaltext.Sanitize(msg.Member), terminaltext.Sanitize(msg.Text), terminaltext.Sanitize(msg.Detail), terminaltext.Sanitize(msg.Cause)
+	c.applyTeamTyped(msg)
 }
 
 // onResize updates the WIDTH-bearing widget dimensions and invalidates the glamour

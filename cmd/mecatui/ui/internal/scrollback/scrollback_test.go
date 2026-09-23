@@ -7,13 +7,13 @@ import (
 
 func TestMecatuiTypedScrollbackModel_Scenario1_StableIdentityAndImmutableSnapshots(t *testing.T) {
 	var c Conversation
-	userID := c.AddUser(UserInput{Text: "prompt", Media: []string{"image/png"}})
-	toolID := c.AddToolCall(ToolCall{ID: "call", Name: "Read", Arguments: `{"path":"a.go"}`, Artifacts: []Artifact{{Text: "before"}}})
+	userID := c.Messages().AddUser(UserInput{Text: "prompt", Media: []string{"image/png"}})
+	toolID := c.Tools().Add(ToolCall{ID: "call", Name: "Read", Arguments: `{"path":"a.go"}`, Artifacts: []Artifact{{Text: "before"}}})
 	if userID == toolID || userID == 0 || toolID == 0 {
 		t.Fatalf("IDs = %d, %d; want distinct non-zero document-local IDs", userID, toolID)
 	}
 	in := ToolResult{Body: "done", Artifacts: []Artifact{{Text: "after"}}}
-	if !c.ResolveTool("call", in) {
+	if !c.Tools().Resolve("call", in) {
 		t.Fatal("resolve tool")
 	}
 	in.Artifacts[0].Text = "mutated input"
@@ -39,23 +39,23 @@ func TestMecatuiTypedScrollbackModel_Scenario1_StableIdentityAndImmutableSnapsho
 
 func TestMecatuiTypedScrollbackModel_Scenario1_TransitionsAdvanceVisibleRevision(t *testing.T) {
 	var c Conversation
-	c.AddToolCall(ToolCall{ID: "call", Name: "Subagent"})
+	c.Tools().Add(ToolCall{ID: "call", Name: "Subagent"})
 	initial := c.SnapshotAt(0).Revision
-	if !c.StartSubagent("call", SubagentStart{Goal: "inspect"}) {
+	if !c.Subagents().Start("call", SubagentStart{Goal: "inspect"}) {
 		t.Fatal("start subagent")
 	}
 	started := c.SnapshotAt(0).Revision
 	if started != initial+1 {
 		t.Fatalf("revision = %d, want %d", started, initial+1)
 	}
-	if !c.UpdateSubagent("call", SubagentUpdate{Current: "Read", Trace: []TraceEntry{{Text: "a"}}}) {
+	if !c.Subagents().Update("call", SubagentUpdate{Current: "Read", Trace: []TraceEntry{{Text: "a"}}}) {
 		t.Fatal("update subagent")
 	}
 	updated := c.SnapshotAt(0).Revision
 	if updated != started+1 {
 		t.Fatalf("revision = %d, want %d", updated, started+1)
 	}
-	if !c.UpdateSubagent("call", SubagentUpdate{Current: "Read", Trace: []TraceEntry{{Text: "a"}}}) {
+	if !c.Subagents().Update("call", SubagentUpdate{Current: "Read", Trace: []TraceEntry{{Text: "a"}}}) {
 		t.Fatal("idempotent update should match")
 	}
 	if got := c.SnapshotAt(0).Revision; got != updated {
@@ -65,9 +65,9 @@ func TestMecatuiTypedScrollbackModel_Scenario1_TransitionsAdvanceVisibleRevision
 
 func TestMecatuiTypedScrollbackModel_Scenario1_InvalidTransitionsAreNoOps(t *testing.T) {
 	var c Conversation
-	c.AddToolCall(ToolCall{ID: "ordinary", Name: "Read"})
+	c.Tools().Add(ToolCall{ID: "ordinary", Name: "Read"})
 	before := c.SnapshotAt(0)
-	if c.UpdateTeam("missing", TeamUpdate{}) || c.StartSubagent("missing", SubagentStart{}) || c.UpdateTeam("ordinary", TeamUpdate{}) {
+	if c.Teams().Update("missing", TeamUpdate{}) || c.Subagents().Start("missing", SubagentStart{}) || c.Teams().Update("ordinary", TeamUpdate{}) {
 		t.Fatal("invalid transitions matched")
 	}
 	after := c.SnapshotAt(0)
@@ -78,12 +78,12 @@ func TestMecatuiTypedScrollbackModel_Scenario1_InvalidTransitionsAreNoOps(t *tes
 
 func TestMecatuiTypedScrollbackModel_Scenario1_ChangedFilesAppendixIdentityAndFallback(t *testing.T) {
 	var c Conversation
-	first := c.AddUser(UserInput{Text: "first"})
+	first := c.Messages().AddUser(UserInput{Text: "first"})
 	appendixID := c.RecordFileChange("first.go")
 	if appendixID == first {
 		t.Fatalf("appendix ID = %d, must not reuse block ID %d", appendixID, first)
 	}
-	second := c.AddNotice("later")
+	second := c.Notices().AddNotice("later")
 	if got := c.RecordFileChange("first.go"); got != appendixID {
 		t.Fatalf("duplicate change ID = %d, want %d", got, appendixID)
 	}
@@ -98,9 +98,9 @@ func TestMecatuiTypedScrollbackModel_Scenario1_ChangedFilesAppendixIdentityAndFa
 
 func TestMecatuiTypedScrollbackModel_Scenario2_TransitionsAndSnapshotsOwnNestedData(t *testing.T) {
 	var c Conversation
-	c.AddToolCall(ToolCall{ID: "sub", Artifacts: []Artifact{{Kind: "image", Data: []byte("call")}}})
+	c.Tools().Add(ToolCall{ID: "sub", Artifacts: []Artifact{{Kind: "image", Data: []byte("call")}}})
 	decision := RoutingDecision{Confidence: Float64(0.8), MinimumConfidence: Float64(0.5)}
-	if !c.StartSubagent("sub", SubagentStart{Goal: "goal", Routing: decision}) {
+	if !c.Subagents().Start("sub", SubagentStart{Goal: "goal", Routing: decision}) {
 		t.Fatal("start subagent")
 	}
 	update := SubagentUpdate{
@@ -108,7 +108,7 @@ func TestMecatuiTypedScrollbackModel_Scenario2_TransitionsAndSnapshotsOwnNestedD
 		Usage:     Usage{InputTokens: 2},
 		Artifacts: []Artifact{{Kind: "resource_link", Data: []byte("result")}},
 	}
-	if !c.UpdateSubagent("sub", update) {
+	if !c.Subagents().Update("sub", update) {
 		t.Fatal("update subagent")
 	}
 	update.Trace[0].Detail = "mutated input"
