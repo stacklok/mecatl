@@ -71,15 +71,15 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 		g    []parallelGroup
 	}
 	views := []view{
-		{name: "subagent roster", tab: tabSubagents, sub: subagentState{cursor: 1}, f: fleet},
+		{name: "subagent roster", tab: tabSubagents, sub: subagentState{roster: agentsTestListCursor(1)}, f: fleet},
 		{name: "subagent focus", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "selected", detail: agentsTestViewport(3)}, f: fleet},
 		{name: "subagent missing", tab: tabSubagents, sub: subagentState{view: subagentFocus, child: "missing"}},
 		{name: "subagent empty", tab: tabSubagents},
-		{name: "parallel roster", tab: tabParallel, par: parallelState{cursor: 1}, g: groups},
-		{name: "parallel focus", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "group", branchCursor: 1}, g: groups},
+		{name: "parallel roster", tab: tabParallel, par: parallelState{roster: agentsTestListCursor(1)}, g: groups},
+		{name: "parallel focus", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "group", branches: agentsTestListCursor(1)}, g: groups},
 		{name: "parallel missing", tab: tabParallel, par: parallelState{view: parallelGroupView, group: "missing"}},
 		{name: "parallel empty", tab: tabParallel},
-		{name: "team roster", tab: tabTeams, team: teamState{cursor: 1}, b: teamBlock},
+		{name: "team roster", tab: tabTeams, team: teamState{roster: agentsTestListCursor(1)}, b: teamBlock},
 		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", detail: agentsTestViewport(4)}, b: teamBlock},
 		{name: "team missing", tab: tabTeams, team: teamState{view: teamFocus, member: "missing"}, b: teamBlock},
 		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, detail: agentsTestViewport(2)}, b: teamBlock},

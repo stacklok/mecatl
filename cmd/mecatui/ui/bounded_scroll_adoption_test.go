@@ -26,11 +26,11 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AllAgentsSubviewsFitOfferedGeometr
 		par  parallelState
 		team teamState
 	}{
-		{"subagent roster", tabSubagents, subagentState{view: subagentRoster, cursor: 8}, parallelState{}, teamState{}},
+		{"subagent roster", tabSubagents, subagentState{view: subagentRoster, roster: agentsTestListCursor(8)}, parallelState{}, teamState{}},
 		{"subagent focus", tabSubagents, subagentState{view: subagentFocus, child: fleet[0].childID}, parallelState{}, teamState{}},
-		{"parallel roster", tabParallel, subagentState{}, parallelState{view: parallelRoster, cursor: 8}, teamState{}},
-		{"parallel group", tabParallel, subagentState{}, parallelState{view: parallelGroupView, group: groups[0].parentCallID, branchCursor: 2}, teamState{}},
-		{"team roster", tabTeams, subagentState{}, parallelState{}, teamState{view: teamRoster, cursor: 8}},
+		{"parallel roster", tabParallel, subagentState{}, parallelState{view: parallelRoster, roster: agentsTestListCursor(8)}, teamState{}},
+		{"parallel group", tabParallel, subagentState{}, parallelState{view: parallelGroupView, group: groups[0].parentCallID, branches: agentsTestListCursor(2)}, teamState{}},
+		{"team roster", tabTeams, subagentState{}, parallelState{}, teamState{view: teamRoster, roster: agentsTestListCursor(8)}},
 		{"team focus", tabTeams, subagentState{}, parallelState{}, teamState{view: teamFocus, member: "member-00"}},
 		{"team tasks", tabTeams, subagentState{}, parallelState{}, teamState{view: teamTasks}},
 		{"team findings", tabTeams, subagentState{}, parallelState{}, teamState{view: teamFindings}},
@@ -75,7 +75,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 		control.SetCursor(5)
 		control.Scroll(bounded.LineDown)
 		before := control.View().Rows[0]
-		m.subagents.cursor, m.subagents.roster = control.Cursor(), control
+		m.subagents.roster = control
 
 		mm, _ := m.Update(client.SubagentMsg{Kind: client.SubagentTool, ChildID: "child-05", ToolName: strings.Repeat("streamed-tool-", 8), ToolCount: 1})
 		m = mm.(Model)
@@ -99,10 +99,10 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsModesUseSharedAccounting(t *
 		out  string
 		want string
 	}{
-		{"subagent", renderSubagentRoster(th, subagentState{cursor: 9}, fleet, hk, 12, 42), "goal-09"},
-		{"parallel", renderParallelRoster(th, parallelState{cursor: 9}, groups, hk, 12, 42), "join-09"},
-		{"parallel branch", renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: groups[0].parentCallID, branchCursor: 2}, groups, hk, 42, 24), "branch-3"},
-		{"team", renderTeamRoster(th, teamState{cursor: 9}, team, hk, 14, 42), "member-09"},
+		{"subagent", renderSubagentRoster(th, subagentState{roster: agentsTestListCursor(9)}, fleet, hk, 12, 42), "goal-09"},
+		{"parallel", renderParallelRoster(th, parallelState{roster: agentsTestListCursor(9)}, groups, hk, 12, 42), "join-09"},
+		{"parallel branch", renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: groups[0].parentCallID, branches: agentsTestListCursor(2)}, groups, hk, 42, 24), "branch-3"},
+		{"team", renderTeamRoster(th, teamState{roster: agentsTestListCursor(9)}, team, hk, 14, 42), "member-09"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plain := stripANSIstr(tc.out)
@@ -129,7 +129,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_AgentsPersistRenderedAnchor(t *tes
 	th, hk, width, height := m.agentsListGeometry()
 	control, _, _ := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width).configuredControl(th, height)
 	control.SetCursor(5)
-	m.subagents.cursor, m.subagents.roster = control.Cursor(), control
+	m.subagents.roster = control
 
 	// A streamed update rebuilds the control. Its persisted top anchor must be the
 	// anchor the renderer uses after reserving indicator rows.
@@ -151,7 +151,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		for i := range lanes {
 			lanes[i].name = fmt.Sprintf("member-%d", i)
 		}
-		b := &block{teamLanes: lanes}
+		b := &block{toolID: "call-t1", teamID: "t1", teamLanes: lanes}
 		before := teamSelectableList(th, teamState{}, b, hk, 80)
 		control, _, _ := before.configuredControl(th, 12)
 		control.SetCursor(5)
@@ -161,8 +161,8 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		}
 		after := teamSelectableList(th, teamState{roster: control}, b, hk, 80)
 		control, _, _ = after.configuredControl(th, 12)
-		if got := control.CursorID(); got != "member-5" {
-			t.Fatalf("late member session handle changed list identity to %q, want member-5", got)
+		if got := control.CursorID(); got != teamLaneListID(b, "member-5") {
+			t.Fatalf("late member session handle changed list identity to %q, want %q", got, teamLaneListID(b, "member-5"))
 		}
 		gotTop := control.View().Rows[0]
 		if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
@@ -175,7 +175,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		for i := range branches {
 			branches[i] = parallelBranch{index: i, label: fmt.Sprintf("branch-%d", i+1)}
 		}
-		g := &parallelGroup{branches: branches}
+		g := &parallelGroup{parentCallID: "p1", branches: branches}
 		before := parallelBranchSelectableList(th, parallelState{}, g, hk, 80)
 		control, _, _ := before.configuredControl(th, 12)
 		control.SetCursor(5)
@@ -185,12 +185,86 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		}
 		after := parallelBranchSelectableList(th, parallelState{branches: control}, g, hk, 80)
 		control, _, _ = after.configuredControl(th, 12)
-		if got := control.CursorID(); got != "branch-5" {
-			t.Fatalf("late branch child handle changed list identity to %q, want branch-5", got)
+		if got := control.CursorID(); got != parallelBranchID("p1", 5) {
+			t.Fatalf("late branch child handle changed list identity to %q, want %q", got, parallelBranchID("p1", 5))
 		}
 		gotTop := control.View().Rows[0]
 		if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
 			t.Fatalf("late branch child handle moved top anchor to {%q,%d}, want {%q,%d}", gotTop.ID, gotTop.ItemLine, top.ID, top.ItemLine)
+		}
+	})
+
+	t.Run("aggregate-scoped IDs do not retain a coincident branch or member anchor", func(t *testing.T) {
+		branches := []parallelBranch{{index: 0, label: "zero"}, {index: 1, label: "one"}}
+		first := parallelBranchSelectableList(th, parallelState{}, &parallelGroup{parentCallID: "p1", branches: branches}, hk, 80)
+		control, _, _ := first.configuredControl(th, 12)
+		control.SetCursor(1)
+		second := parallelBranchSelectableList(th, parallelState{branches: control}, &parallelGroup{parentCallID: "p2", branches: branches}, hk, 80)
+		control, _, _ = second.configuredControl(th, 12)
+		if got := control.CursorID(); got != parallelBranchID("p2", 1) {
+			t.Fatalf("parallel selection leaked across groups: %q", got)
+		}
+
+		lanes := []teamLane{{name: "one"}, {name: "two"}}
+		firstBlock := &block{toolID: "call-t1", teamID: "t1", teamLanes: lanes}
+		firstTeam := teamSelectableList(th, teamState{}, firstBlock, hk, 80)
+		control, _, _ = firstTeam.configuredControl(th, 12)
+		control.SetCursor(1)
+		secondBlock := &block{toolID: "call-t2", teamID: "t2", teamLanes: lanes}
+		secondTeam := teamSelectableList(th, teamState{roster: control}, secondBlock, hk, 80)
+		control, _, _ = secondTeam.configuredControl(th, 12)
+		if got := control.CursorID(); got != teamLaneListID(secondBlock, "two") {
+			t.Fatalf("team selection leaked across teams: %q", got)
+		}
+	})
+	t.Run("delimiter-bearing aggregate IDs preserve real branch and member anchors", func(t *testing.T) {
+		branches := make([]parallelBranch, 8)
+		for i := range branches {
+			branches[i] = parallelBranch{index: i, label: fmt.Sprintf("branch-%d", i)}
+		}
+		group := &parallelGroup{parentCallID: "a:b", branches: branches}
+		branchList := parallelBranchSelectableList(th, parallelState{}, group, hk, 80)
+		control, _, _ := branchList.configuredControl(th, 16)
+		control.SetCursor(5)
+		control.Scroll(bounded.LineDown)
+		branchTop := control.View().Rows[0]
+		group.branches[0], group.branches[7] = group.branches[7], group.branches[0]
+		branchList = parallelBranchSelectableList(th, parallelState{branches: control}, group, hk, 80)
+		control, _, _ = branchList.configuredControl(th, 16)
+		if got := control.CursorID(); got != parallelBranchID("a:b", 5) {
+			t.Fatalf("delimiter-bearing branch selection=%q want %q", got, parallelBranchID("a:b", 5))
+		}
+		if got := control.View().Rows[0]; got.ID != branchTop.ID || got.ItemLine != branchTop.ItemLine {
+			t.Fatalf("delimiter-bearing branch anchor={%q,%d} want {%q,%d}", got.ID, got.ItemLine, branchTop.ID, branchTop.ItemLine)
+		}
+
+		lanes := make([]teamLane, 8)
+		for i := range lanes {
+			lanes[i].name = fmt.Sprintf("member-%d", i)
+		}
+		lanes[5].name = "c"
+		team := &block{toolID: "a:b", teamID: "metadata", teamLanes: lanes}
+		teamList := teamSelectableList(th, teamState{}, team, hk, 80)
+		control, _, _ = teamList.configuredControl(th, 16)
+		control.SetCursor(5)
+		control.Scroll(bounded.LineDown)
+		memberTop := control.View().Rows[0]
+		team.teamLanes[0], team.teamLanes[7] = team.teamLanes[7], team.teamLanes[0]
+		teamList = teamSelectableList(th, teamState{roster: control}, team, hk, 80)
+		control, _, _ = teamList.configuredControl(th, 16)
+		wantMember := teamLaneListID(team, "c")
+		if got := control.CursorID(); got != wantMember {
+			t.Fatalf("delimiter-bearing member selection=%q want %q", got, wantMember)
+		}
+		if got := control.View().Rows[0]; got.ID != memberTop.ID || got.ItemLine != memberTop.ItemLine {
+			t.Fatalf("delimiter-bearing member anchor={%q,%d} want {%q,%d}", got.ID, got.ItemLine, memberTop.ID, memberTop.ItemLine)
+		}
+
+		collisionShape := &block{toolID: "a", teamID: "other-metadata", teamLanes: []teamLane{{name: "b:c"}}}
+		collisionList := teamSelectableList(th, teamState{roster: control}, collisionShape, hk, 80)
+		control, _, _ = collisionList.configuredControl(th, 16)
+		if got, old := control.CursorID(), wantMember; got != teamLaneListID(collisionShape, "b:c") || got == old {
+			t.Fatalf("actual team aggregate collision shape leaked selection: got=%q old=%q", got, old)
 		}
 	})
 }
@@ -248,7 +322,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 			t.Fatalf("Models selected row does not apply spinner style: want fragment %q in %q", want, modelOut)
 		}
 
-		agentsOut := renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{cursor: 0}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24)
+		agentsOut := renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{roster: agentsTestListCursor(0)}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24)
 		if want := strings.TrimSuffix(th.Style("spinner").Render("▶"), "\x1b[m"); !strings.Contains(agentsOut, want) {
 			t.Fatalf("Agents selected row does not apply spinner style: want fragment %q in %q", want, agentsOut)
 		}
@@ -267,7 +341,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_CursorAndStatusStylesStayDistinct(
 	if selectedStyle.GetHorizontalFrameSize() != 0 || fmt.Sprint(selectedStyle.GetForeground()) != fmt.Sprint(th.Color("accent")) {
 		t.Fatalf("selected-row style is not unbordered accent: frame=%d foreground=%v accent=%v", selectedStyle.GetHorizontalFrameSize(), selectedStyle.GetForeground(), th.Color("accent"))
 	}
-	agents := stripANSIstr(renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{cursor: 0}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24))
+	agents := stripANSIstr(renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{roster: agentsTestListCursor(0)}, teamState{view: teamRoster}, nil, nil, boundedScenarioGroups(1), defaultHelpKeys(), 80, 24, 24))
 	if !strings.Contains(agents, "▸ Parallel") || !strings.Contains(agents, "▶") || !strings.Contains(agents, "winner") {
 		t.Fatalf("agents cursor, active tab, and winner markers are not independent:\n%s", agents)
 	}
@@ -308,7 +382,7 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 			m := boundedScenarioAgentsModel(t, mode)
 			m.vp.SetContent(strings.Repeat("hidden conversation\n", 80))
 			m.vp.SetYOffset(7)
-			beforeCursor := []int{m.subagents.cursor, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor}
+			beforeCursor := []int{boundedListCursor(m.subagents.roster), boundedListCursor(m.parallel.roster), boundedListCursor(m.parallel.branches), boundedListCursor(m.team.roster)}
 			for range 200 {
 				mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 				m = mm.(Model)
@@ -324,7 +398,7 @@ func TestMecatuiBoundedScrollCursor_Scenario3_AgentsWheelSubviewMatrix(t *testin
 			if m.vp.YOffset() != 7 {
 				t.Fatalf("wheel over %s leaked to hidden conversation: %d", mode, m.vp.YOffset())
 			}
-			afterCursor := []int{m.subagents.cursor, m.parallel.cursor, m.parallel.branchCursor, m.team.cursor}
+			afterCursor := []int{boundedListCursor(m.subagents.roster), boundedListCursor(m.parallel.roster), boundedListCursor(m.parallel.branches), boundedListCursor(m.team.roster)}
 			for i := range beforeCursor {
 				if afterCursor[i] != beforeCursor[i] {
 					t.Fatalf("wheel moved logical cursor: before=%v after=%v", beforeCursor, afterCursor)
@@ -423,8 +497,9 @@ func TestMecatuiBoundedScrollCursor_Scenario3_WheelNeverLeaksOrNavigatesFallback
 	if m.subagents.roster != nil {
 		afterOffset = m.subagents.roster.Offset()
 	}
-	if m.vp.YOffset() != 5 || m.subagents.cursor != before.cursor || afterOffset != beforeOffset {
-		t.Fatalf("compact agents wheel leaked or navigated: vp=%d cursor=%d offset=%d", m.vp.YOffset(), m.subagents.cursor, afterOffset)
+	beforeCursor := boundedListCursor(before.roster)
+	if m.vp.YOffset() != 5 || boundedListCursor(m.subagents.roster) != beforeCursor || afterOffset != beforeOffset {
+		t.Fatalf("compact agents wheel leaked or navigated: vp=%d cursor=%d offset=%d", m.vp.YOffset(), boundedListCursor(m.subagents.roster), afterOffset)
 	}
 
 	m = boundedScenarioAgentsModel(t, "team-tasks")
@@ -489,13 +564,15 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	s = modelsSurface(t, m)
 	var first renderedHitRegion
 	var second []renderedHitRegion
+	firstIdentity := modelIdentity(s.filtered[0])
+	secondIdentity := modelIdentity(s.filtered[1])
 	for _, region := range m.hits.frame {
 		switch s.hitItems[region.id] {
-		case 0:
+		case firstIdentity:
 			if first.id == 0 {
 				first = region
 			}
-		case 1:
+		case secondIdentity:
 			second = append(second, region)
 		}
 	}

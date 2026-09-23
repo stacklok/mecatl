@@ -59,7 +59,7 @@ func (m Model) chooseModel(sel client.ModelSelection, label string) (tea.Model, 
 // on the SessionReadyMsg rebind. The picker owns the single cache warning; this
 // receipt only confirms that the server-authoritative conversation was adopted.
 func modelSwitchNote(label string) string {
-	return "switched to " + label + " — conversation kept"
+	return "switched to " + terminaltext.SanitizeSingleLine(label) + " — conversation kept"
 }
 
 // restartOnModel performs the restart-now handoff: it persists the pick

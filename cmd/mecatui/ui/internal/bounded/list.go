@@ -3,6 +3,7 @@ package bounded
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -357,11 +358,11 @@ func clampBounded(v, n int) int {
 func listGutterCells(cells int) int { return min(3, max(1, cells)) }
 
 func statusCell(cell string) string {
-	if ansi.StringWidth(cell) != 1 {
+	if !utf8.ValidString(cell) || ansi.StringWidth(cell) != 1 {
 		return ""
 	}
 	for _, r := range cell {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return ""
 		}
 	}

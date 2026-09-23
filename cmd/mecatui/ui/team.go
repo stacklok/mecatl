@@ -31,20 +31,15 @@ const (
 	teamFindings                 // the shared team findings ledger (member · body)
 )
 
-// teamState holds the agent-team overlay state on the Model. It is value-
-// embedded so the Model stays a plain struct that Update copies. It holds only a
-// view, a selection cursor, and the focused member NAME — never a copy of the
-// lanes. The panel reads the live lanes straight off the latest Team block each
-// render (see latestTeamBlock), so it always reflects the accumulating team
-// without duplicating or risking a stale snapshot. Focus is keyed by name (not
-// index) so a roster that grows under the overlay can't shift focus onto the
-// wrong member.
+// teamState holds the live overlay controls and the exact aggregate identity of a
+// focused member. The roster follows the latest team; focus stays pinned to the team
+// from which it was entered, even if a newer team arrives with the same member names.
 type teamState struct {
-	view   teamView
-	cursor int    // selected row in the roster (an index into the render order)
-	member string // the focused member's name (teamFocus)
-	roster *bounded.List
-	detail *bounded.Viewport
+	view      teamView
+	member    string // the focused member's name (teamFocus)
+	aggregate string // teamBlockIdentity of the focused team
+	roster    *bounded.List
+	detail    *bounded.Viewport
 }
 
 func newTeamState() teamState {
@@ -100,7 +95,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.team.view == teamNone {
 		return m, nil, false
 	}
-	b := m.conv.latestTeamBlock()
+	b := m.teamBlockForOverlay()
 	if b == nil {
 		// The team vanished from under the overlay (defensive — blocks only grow,
 		// but never trust it): close cleanly.
@@ -119,6 +114,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		case key.Matches(msg, m.keys.Close):
 			m.team.view = teamRoster
 			m.team.member = ""
+			m.team.aggregate = ""
 			m.team.detail.Reset()
 		case key.Matches(msg, m.keys.CancelChild):
 			mm, cmd := m.cancelTeamLane(b, teamFindLane(b, m.team.member))
@@ -136,6 +132,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		// consumed (the list is height-windowed, no live viewport).
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Tasks) {
 			m.team.view = teamRoster
+			m.team.aggregate = ""
 			m.team.detail.Reset()
 		}
 		return m, nil, true
@@ -150,6 +147,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		// live viewport.
 		if key.Matches(msg, m.keys.Close) || key.Matches(msg, m.keys.Findings) {
 			m.team.view = teamRoster
+			m.team.aggregate = ""
 			m.team.detail.Reset()
 		}
 		return m, nil, true
@@ -162,9 +160,9 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // render window follows the cursor), pgup/pgdn move it by a window's worth,
 // home/g and end/G jump to the first/last member, enter focuses the selected
 // member by name, esc closes. Selection is over the render ORDER (lead first),
-// matching what the user sees. The cursor is the single source of truth — the
-// visible window is derived from it at render time (teamWindow), so a roster
-// that grows under the overlay never desyncs a stored scroll offset.
+// matching what the user sees. The bounded List is the single source of truth — the
+// visible window is derived from it at render time, so a roster that grows under the
+// overlay never desyncs a stored scroll offset.
 func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cmd) {
 	th, hk, width, _ := m.agentsListGeometry()
 	switch {
@@ -172,33 +170,30 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		return m.closeTeam()
 	case key.Matches(msg, m.keys.Tasks):
 		m.team.view = teamTasks
+		m.team.aggregate = teamBlockIdentity(b)
 		m.team.detail.Reset()
 		return m, nil
 	case key.Matches(msg, m.keys.Findings):
 		m.team.view = teamFindings
+		m.team.aggregate = teamBlockIdentity(b)
 		m.team.detail.Reset()
 		return m, nil
 	}
-	if next, control, handled := m.navigateAgentsList(msg, teamSelectableList(th, m.team, b, hk, width)); handled {
-		m.team.cursor, m.team.roster = next, control
+	if control, handled := m.navigateAgentsList(msg, teamSelectableList(th, m.team, b, hk, width)); handled {
+		m.team.roster = control
 		return m, nil
 	}
 	switch {
 	case key.Matches(msg, m.keys.Choose):
-		order := teamLaneOrder(b.teamLanes)
-		if m.team.cursor < 0 || m.team.cursor >= len(order) {
-			return m, nil
+		if lane := selectedTeamLane(b, m.team.roster); lane != nil {
+			m.team.member = lane.name
+			m.team.aggregate = teamBlockIdentity(b)
+			m.team.view = teamFocus
+			m.team.detail.Reset()
 		}
-		m.team.member = b.teamLanes[order[m.team.cursor]].name
-		m.team.view = teamFocus
-		m.team.detail.Reset()
 		return m, nil
 	case key.Matches(msg, m.keys.CancelChild):
-		order := teamLaneOrder(b.teamLanes)
-		if m.team.cursor < 0 || m.team.cursor >= len(order) {
-			return m, nil
-		}
-		return m.cancelTeamLane(b, &b.teamLanes[order[m.team.cursor]])
+		return m.cancelTeamLane(b, selectedTeamLane(b, m.team.roster))
 	}
 	return m, nil
 }
@@ -275,6 +270,34 @@ const teamMinRosterRows = 3
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
+func teamLaneListID(b *block, member string) string {
+	return aggregateScopedID(teamBlockIdentity(b), member)
+}
+
+func selectedTeamLane(b *block, list *bounded.List) *teamLane {
+	if b == nil {
+		return nil
+	}
+	order := teamLaneOrder(b.teamLanes)
+	ids := make([]string, len(order))
+	for i, laneIndex := range order {
+		ids[i] = teamLaneListID(b, b.teamLanes[laneIndex].name)
+	}
+	return teamLaneByID(b, selectedListID(list, ids))
+}
+
+func teamLaneByID(b *block, id string) *teamLane {
+	if b == nil {
+		return nil
+	}
+	for i := range b.teamLanes {
+		if teamLaneListID(b, b.teamLanes[i].name) == id {
+			return &b.teamLanes[i]
+		}
+	}
+	return nil
+}
+
 func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
 	header := renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth)
@@ -283,7 +306,7 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 	}
 	order := teamLaneOrder(b.teamLanes)
 	nameW := teamNameWidth(b.teamLanes, order)
-	cursor := clampBounded(st.cursor, len(order))
+	cursor := clampBounded(boundedListCursor(st.roster), len(order))
 	list := agentsSelectableList{
 		header: header,
 		footer: renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth),
@@ -292,7 +315,7 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 	}
 	for _, laneIndex := range order {
 		lane := &b.teamLanes[laneIndex]
-		list.ids = append(list.ids, lane.name)
+		list.ids = append(list.ids, teamLaneListID(b, lane.name))
 		list.rows = append(list.rows, teamRosterTitle(lane, nameW, b.teamDone)+"\n    "+teamRosterWork(lane, b.teamDone)+"\n    "+teamRosterRuntime(lane))
 	}
 	return list

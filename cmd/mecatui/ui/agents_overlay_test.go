@@ -675,7 +675,7 @@ func TestSubagentRosterRowSeparatesTitleAndDetails(t *testing.T) {
 	}
 	other := subagentLane{childID: "other", goal: "other"}
 	render := func(width, cursor int, lane subagentLane) string {
-		return stripANSIstr(renderSubagentRoster(aztec(), subagentState{cursor: cursor}, []subagentLane{lane, other}, defaultHelpKeys(), 0, width))
+		return stripANSIstr(renderSubagentRoster(aztec(), subagentState{roster: agentsTestListCursor(cursor)}, []subagentLane{lane, other}, defaultHelpKeys(), 0, width))
 	}
 
 	selected := render(80, 0, ln)
@@ -796,7 +796,7 @@ func TestRosterRouteNavigation(t *testing.T) {
 			seed: func(m Model) Model {
 				return seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
 			},
-			cursor:  func(m Model) int { return m.team.cursor },
+			cursor:  func(m Model) int { return boundedListCursor(m.team.roster) },
 			wantTab: tabTeams,
 		},
 		{
@@ -804,7 +804,7 @@ func TestRosterRouteNavigation(t *testing.T) {
 			seed: func(m Model) Model {
 				return seedSubagents(m, "p1", startSub("p1", "c1", "first"), startSub("p1", "c2", "second"))
 			},
-			cursor:  func(m Model) int { return m.subagents.cursor },
+			cursor:  func(m Model) int { return boundedListCursor(m.subagents.roster) },
 			wantTab: tabSubagents,
 		},
 		{
@@ -812,7 +812,7 @@ func TestRosterRouteNavigation(t *testing.T) {
 			seed: func(m Model) Model {
 				return seedParallel(m, "p1", startPar("p1", "all", 1), startPar("p2", "all", 1))
 			},
-			cursor:  func(m Model) int { return m.parallel.cursor },
+			cursor:  func(m Model) int { return boundedListCursor(m.parallel.roster) },
 			wantTab: tabParallel,
 		},
 	}
@@ -1309,6 +1309,141 @@ func TestSubagentFocusBackgroundNoteHangsInFinalCard(t *testing.T) {
 
 // TestAgentsTeamsTabGolden locks the Teams tab of the unified overlay (the tab bar +
 // the former team roster), reached by `tab` from the Subagents-default view.
+func TestAgentsActionsFollowStableSelectionAfterRefresh(t *testing.T) {
+	t.Run("subagent enter", func(t *testing.T) {
+		m := seedSubagents(newMCPModel(t, aztec(), nil), "p", startSub("p", "first", "first"), startSub("p", "wanted", "wanted"))
+		m = resize(m, 100, 30)
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = mm.(Model)
+		m.conv.subagentFleet[0], m.conv.subagentFleet[1] = m.conv.subagentFleet[1], m.conv.subagentFleet[0]
+		m.reconcileAgentsLists()
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = mm.(Model)
+		if m.subagents.child != "wanted" {
+			t.Fatalf("enter focused %q after reorder, want wanted", m.subagents.child)
+		}
+	})
+
+	t.Run("parallel branch cancel", func(t *testing.T) {
+		m := seedParallel(newMCPModel(t, aztec(), nil), "p", startPar("p", "all", 2), branchStartPar("p", 0, "first", "first"), branchStartPar("p", 1, "wanted", "wanted"))
+		m.conv.parallelGroups[0].branches[0].childID = "first"
+		m.conv.parallelGroups[0].branches[1].childID = "wanted"
+		m = resize(m, 100, 30)
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = mm.(Model)
+		m.conv.parallelGroups[0].branches[0], m.conv.parallelGroups[0].branches[1] = m.conv.parallelGroups[0].branches[1], m.conv.parallelGroups[0].branches[0]
+		m.reconcileAgentsLists()
+		sender := &fakeSender{}
+		m.stream = client.NewStream(nil, sender)
+		_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+		if cmd != nil {
+			cmd()
+		}
+		frames := sender.frames()
+		if len(frames) != 1 || frames[0].GetCancelChild().GetChildId() != "wanted" {
+			t.Fatalf("parallel cancel frames = %#v, want wanted branch", frames)
+		}
+	})
+
+	t.Run("team member cancel", func(t *testing.T) {
+		m := seedTeam(newMCPModel(t, aztec(), nil), func(c *conversation) {
+			c.setTeamStart("t1", "team:one", []client.TeamMemberSpec{{Name: "first"}, {Name: "wanted:member"}})
+			b := c.latestTeamBlock()
+			b.teamLanes[0].sessionID = "child-first"
+			b.teamLanes[1].sessionID = "child-wanted"
+		})
+		m = resize(m, 100, 30)
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = mm.(Model)
+		b := m.conv.latestTeamBlock()
+		b.teamLanes[0], b.teamLanes[1] = b.teamLanes[1], b.teamLanes[0]
+		m.reconcileAgentsLists()
+		sender := &fakeSender{}
+		m.stream = client.NewStream(nil, sender)
+		_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+		if cmd != nil {
+			cmd()
+		}
+		frames := sender.frames()
+		if len(frames) != 1 || frames[0].GetCancelChild().GetChildId() != "child-wanted" {
+			t.Fatalf("team cancel frames = %#v, want wanted member", frames)
+		}
+	})
+}
+
+func TestAggregateScopedIDsAreCollisionFreeAndDoNotLeakAnchors(t *testing.T) {
+	if left, right := aggregateScopedID("team:one", "member"), aggregateScopedID("team", "one:member"); left == right {
+		t.Fatalf("delimiter-bearing aggregate IDs collide: %q", left)
+	}
+	if left, right := parallelBranchID("run:1", 23), parallelBranchID("run", 123); left == right {
+		t.Fatalf("delimiter-bearing parallel IDs collide: %q", left)
+	}
+
+	list := new(bounded.List)
+	list.SetGeometry(80, 4, 1, bounded.Clip)
+	first := aggregateScopedID("team:one", "member")
+	second := aggregateScopedID("team", "one:member")
+	list.SetItems([]bounded.ListItem{{ID: first, Text: "first"}, {ID: second, Text: "second"}})
+	list.SetCursor(1)
+	list.SetItems([]bounded.ListItem{{ID: second, Text: "second"}, {ID: first, Text: "first"}})
+	if got := list.CursorID(); got != second || list.Cursor() != 0 {
+		t.Fatalf("refresh leaked anchor across delimiter-bearing IDs: cursor=(%d,%q), want (0,%q)", list.Cursor(), got, second)
+	}
+}
+
+func TestTeamAggregateSubviewsPinTheirLedgerUntilRoster(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyPressMsg
+		view teamView
+	}{
+		{name: "tasks", key: tea.KeyPressMsg{Code: 't', Text: "t"}, view: teamTasks},
+		{name: "findings", key: tea.KeyPressMsg{Code: 'f', Text: "f"}, view: teamFindings},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := resize(newMCPModel(t, aztec(), nil), 100, 30)
+			first := block{kind: blockTool, team: true, toolID: "first", teamLanes: []teamLane{{name: "first-member"}}, teamTasks: []teamTask{{id: "first-task"}}, teamFindings: []teamFinding{{member: "first-member", body: "first-finding"}}}
+			m.conv.blocks = append(m.conv.blocks, first)
+			m.team, m.agentsTab = newTeamState(), tabTeams
+
+			mm, _ := m.onTeamRosterKey(tc.key, &m.conv.blocks[0])
+			m = mm.(Model)
+			if m.team.view != tc.view || m.team.aggregate != teamBlockIdentity(&m.conv.blocks[0]) {
+				t.Fatalf("opening %s = view %v, aggregate %q", tc.name, m.team.view, m.team.aggregate)
+			}
+
+			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, toolID: "newer", teamLanes: []teamLane{{name: "new-member"}}, teamTasks: []teamTask{{id: "new-task"}}, teamFindings: []teamFinding{{member: "new-member", body: "new-finding"}}})
+			pinned := m.teamBlockForOverlay()
+			if pinned == nil || pinned.toolID != "first" {
+				t.Fatalf("%s ledger followed newer team: %#v", tc.name, pinned)
+			}
+			if tc.view == teamTasks && pinned.teamTasks[0].id != "first-task" {
+				t.Fatalf("tasks ledger = %#v, want first team's task", pinned.teamTasks)
+			}
+			if tc.view == teamFindings && pinned.teamFindings[0].body != "first-finding" {
+				t.Fatalf("findings ledger = %#v, want first team's finding", pinned.teamFindings)
+			}
+
+			mm, _, _ = m.onTeamKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+			m = mm.(Model)
+			if m.team.view != teamRoster || m.team.aggregate != "" {
+				t.Fatalf("return to roster = view %v, aggregate %q", m.team.view, m.team.aggregate)
+			}
+			if got := m.teamBlockForOverlay(); got == nil || got.toolID != "newer" {
+				t.Fatalf("roster did not resume latest team: %#v", got)
+			}
+		})
+	}
+}
+
 func TestAgentsTeamsTabGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, agentsGoldenTeam)
@@ -1539,8 +1674,8 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedWrappedRowHasNoButtonChrome(t
 	branch := &parallelBranch{index: 0, label: strings.Repeat("long label ", 8)}
 	branches := []parallelBranch{*branch, {index: 1, label: "other"}}
 	group := []parallelGroup{{parentCallID: "wrapped", winner: -1, branches: branches}}
-	selected := stripANSIstr(renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "wrapped", branchCursor: 0}, group, defaultHelpKeys(), 20, 0))
-	unselected := stripANSIstr(renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "wrapped", branchCursor: 1}, group, defaultHelpKeys(), 20, 0))
+	selected := stripANSIstr(renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "wrapped", branches: agentsTestListCursor(0)}, group, defaultHelpKeys(), 20, 0))
+	unselected := stripANSIstr(renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "wrapped", branches: agentsTestListCursor(1)}, group, defaultHelpKeys(), 20, 0))
 	selectedLine := strings.Split(selected, "\n")[4]
 	unselectedLine := strings.Split(unselected, "\n")[4]
 	if got, want := strings.Replace(selectedLine, "▶ ", "  ", 1), unselectedLine; got != want {
@@ -1610,7 +1745,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		{"parallel empty", "▶ Parallel · esc close", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabParallel; return m }},
 		{"parallel group focus", "▶ parallel group-a · esc back", func(m Model) Model {
 			m.team.view, m.agentsTab = teamRoster, tabParallel
-			m.parallel = parallelState{view: parallelGroupView, group: "group-a", branchCursor: 1}
+			m.parallel = parallelState{view: parallelGroupView, group: "group-a", branches: agentsTestListCursor(1)}
 			m.conv.parallelGroups = []parallelGroup{{parentCallID: "group-a", branches: []parallelBranch{{label: "first"}, {label: "branch-focus"}}}}
 			return m
 		}},
@@ -1669,7 +1804,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		for _, tc := range cases {
 			t.Run(fmt.Sprintf("h%d/%s", height, tc.name), func(t *testing.T) {
 				m := tc.setup(resize(newMCPModel(t, aztec(), nil), 32, height))
-				before := []int{m.subagents.cursor, agentsTestOffset(m.subagents.detail), m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, agentsTestOffset(m.team.detail)}
+				before := []int{boundedListCursor(m.subagents.roster), agentsTestOffset(m.subagents.detail), boundedListCursor(m.parallel.roster), boundedListCursor(m.parallel.branches), boundedListCursor(m.team.roster), agentsTestOffset(m.team.detail)}
 				_ = m.View() // exercise the final view assembly before inspecting its overlay region.
 				body := stripANSIstr(m.renderBody())
 				if got := lipgloss.Height(body); got != 1 {
@@ -1683,7 +1818,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 				}
 				mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 				m = mm.(Model)
-				after := []int{m.subagents.cursor, agentsTestOffset(m.subagents.detail), m.parallel.cursor, m.parallel.branchCursor, m.team.cursor, agentsTestOffset(m.team.detail)}
+				after := []int{boundedListCursor(m.subagents.roster), agentsTestOffset(m.subagents.detail), boundedListCursor(m.parallel.roster), boundedListCursor(m.parallel.branches), boundedListCursor(m.team.roster), agentsTestOffset(m.team.detail)}
 				if !slices.Equal(before, after) {
 					t.Fatalf("compact navigation changed state: before=%v after=%v", before, after)
 				}
@@ -1854,7 +1989,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 			}
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabSubagents
 			return m
-		}, cursor: func(m Model) int { return m.subagents.cursor }, cancelID: func(i int) string { return fmt.Sprintf("child-%02d", i) }},
+		}, cursor: func(m Model) int { return boundedListCursor(m.subagents.roster) }, cancelID: func(i int) string { return fmt.Sprintf("child-%02d", i) }},
 		{name: "parallel group roster", labels: labels("G"), seed: func(m Model) Model {
 			m.conv.parallelGroups = make([]parallelGroup, total)
 			for i := range m.conv.parallelGroups {
@@ -1862,7 +1997,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 			}
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabParallel
 			return m
-		}, cursor: func(m Model) int { return m.parallel.cursor }},
+		}, cursor: func(m Model) int { return boundedListCursor(m.parallel.roster) }},
 		{name: "team roster", labels: labels("T"), seed: func(m Model) Model {
 			m.conv.addTool("t1", "Team", `{}`)
 			members := make([]client.TeamMemberSpec, total)
@@ -1875,7 +2010,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 			}
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
 			return m
-		}, cursor: func(m Model) int { return m.team.cursor }, cancelID: func(i int) string { return fmt.Sprintf("team-child-%02d", i) }},
+		}, cursor: func(m Model) int { return boundedListCursor(m.team.roster) }, cancelID: func(i int) string { return fmt.Sprintf("team-child-%02d", i) }},
 		{name: "focused parallel branches", labels: labels("B"), seed: func(m Model) Model {
 			branches := make([]parallelBranch, total)
 			for i := range branches {
@@ -1885,7 +2020,7 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabParallel
 			m.parallel = parallelState{view: parallelGroupView, group: "focused"}
 			return m
-		}, cursor: func(m Model) int { return m.parallel.branchCursor }, cancelID: func(i int) string { return fmt.Sprintf("branch-child-%02d", i) }},
+		}, cursor: func(m Model) int { return boundedListCursor(m.parallel.branches) }, cancelID: func(i int) string { return fmt.Sprintf("branch-child-%02d", i) }},
 	}
 	press := func(t *testing.T, m Model, code rune) Model {
 		t.Helper()
@@ -1994,15 +2129,16 @@ func TestMecatuiAgentsOverlayFit_Scenario2_WrappedDynamicContentFitsViewport(t *
 		}
 	}
 	m.team, m.agentsTab = teamState{view: teamRoster}, tabSubagents
-	m.subagents.cursor = 4
+	m.subagents.roster = agentsTestListCursor(4)
 	listTh, hk, width, height := m.agentsListGeometry()
 	list := subagentSelectableList(listTh, m.subagents, m.conv.subagentFleet, hk, width)
 	view := list.boundedView(listTh, height)
-	if len(view.Rows) == 0 || view.Rows[0].ItemIndex > m.subagents.cursor || view.Rows[len(view.Rows)-1].ItemIndex < m.subagents.cursor {
-		t.Fatalf("wrapped selected row %d is outside bounded physical view: %#v", m.subagents.cursor, view.Rows)
+	cursor := boundedListCursor(m.subagents.roster)
+	if len(view.Rows) == 0 || view.Rows[0].ItemIndex > cursor || view.Rows[len(view.Rows)-1].ItemIndex < cursor {
+		t.Fatalf("wrapped selected row %d is outside bounded physical view: %#v", cursor, view.Rows)
 	}
 	body := stripANSIstr(list.render(listTh, height))
-	selected := stripANSIstr(list.rows[m.subagents.cursor])
+	selected := stripANSIstr(list.rows[cursor])
 	if !strings.Contains(body, selected) {
 		t.Fatalf("wrapped selected row was split or cropped:\nwant complete:\n%s\nbody:\n%s", selected, body)
 	}

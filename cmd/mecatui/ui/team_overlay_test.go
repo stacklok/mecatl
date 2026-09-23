@@ -18,6 +18,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // seedTeam appends a Team tool block to the model's conversation and applies the
@@ -295,8 +296,8 @@ func TestAgentsSelectionAndFocus(t *testing.T) {
 	// Lead sorts first (cursor 0). Down → cursor 1 (scout).
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mm.(Model)
-	if m.team.cursor != 1 {
-		t.Fatalf("cursor = %d after down, want 1", m.team.cursor)
+	if boundedListCursor(m.team.roster) != 1 {
+		t.Fatalf("cursor = %d after down, want 1", boundedListCursor(m.team.roster))
 	}
 
 	// Enter → focus scout.
@@ -416,6 +417,116 @@ func TestAgentsShowsLatestTeam(t *testing.T) {
 	}
 	if strings.Contains(out, "alpha") {
 		t.Errorf("overlay should NOT show the earlier team (alpha), got %q", out)
+	}
+}
+
+func TestTeamFocusStaysOnOriginalAggregateWhenNewerTeamArrives(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m.conv.addTool("old-call", "Team", `{}`)
+	m.conv.setTeamStart("old-call", "old-team", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+	old := m.conv.latestTeamBlock()
+	old.teamLanes[0].sessionID = "old-member-session"
+	old.teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "old-team-trace"}}
+	m = resize(m, 100, 30)
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.team.aggregate != teamBlockIdentity(old) {
+		t.Fatalf("focused aggregate=%q want %q", m.team.aggregate, teamBlockIdentity(old))
+	}
+
+	m.conv.addTool("new-call", "Team", `{}`)
+	m.conv.setTeamStart("new-call", "new-team", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+	newest := m.conv.latestTeamBlock()
+	newest.teamLanes[0].sessionID = "new-member-session"
+	newest.teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "new-team-trace"}}
+	m.reconcileAgentsLists()
+	out := stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "old-team-trace") || strings.Contains(out, "new-team-trace") {
+		t.Fatalf("focused team silently retargeted after newer team arrived:\n%s", out)
+	}
+
+	sender := &fakeSender{}
+	m.stream = client.NewStream(nil, sender)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if cmd != nil {
+		cmd()
+	}
+	frames := sender.frames()
+	if len(frames) != 1 || frames[0].GetCancelChild().GetChildId() != "old-member-session" {
+		t.Fatalf("focused cancel frames=%#v, want old member session", frames)
+	}
+
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = mm.(Model)
+	if m.team.view != teamRoster || m.team.aggregate != "" {
+		t.Fatalf("focus back state=(%v,%q), want latest-team roster", m.team.view, m.team.aggregate)
+	}
+	out = stripANSIstr(m.View().Content)
+	if !strings.Contains(out, "new-team-trace") && !strings.Contains(out, "new-team") {
+		// The roster does not render traces; the team identity still must have switched.
+		if got := teamBlockIdentity(m.teamBlockForOverlay()); got != teamBlockIdentity(newest) {
+			t.Fatalf("roster retained old aggregate %q, want %q", got, teamBlockIdentity(newest))
+		}
+	}
+}
+
+func TestTeamLegacyEmptyIDAndLaterBackfillKeepSelectionAndFocus(t *testing.T) {
+	t.Run("roster selection and anchor", func(t *testing.T) {
+		b := &block{id: 7, toolID: "legacy-call", team: true, teamLanes: []teamLane{{name: "lead", lead: true}, {name: "worker"}, {name: "reviewer"}}}
+		before := teamSelectableList(aztec(), teamState{}, b, defaultHelpKeys(), 80)
+		control, _, _ := before.configuredControl(aztec(), 20)
+		control.SetCursor(1)
+		control.Scroll(bounded.LineDown)
+		wantID, wantTop := control.CursorID(), control.View().Rows[0]
+
+		b.teamID = "later-team-id"
+		after := teamSelectableList(aztec(), teamState{roster: control}, b, defaultHelpKeys(), 80)
+		control, _, _ = after.configuredControl(aztec(), 20)
+		if got := control.CursorID(); got != wantID {
+			t.Fatalf("teamID backfill changed selection from %q to %q", wantID, got)
+		}
+		if got := control.View().Rows[0]; got.ID != wantTop.ID || got.ItemLine != wantTop.ItemLine {
+			t.Fatalf("teamID backfill changed top anchor from {%q,%d} to {%q,%d}", wantTop.ID, wantTop.ItemLine, got.ID, got.ItemLine)
+		}
+	})
+
+	t.Run("focused aggregate", func(t *testing.T) {
+		m := resize(newMCPModel(t, aztec(), nil), 100, 30)
+		m.conv.addTool("legacy-call", "Team", `{}`)
+		m.conv.setTeamStart("legacy-call", "", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+		old := m.conv.latestTeamBlock()
+		old.teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "original trace"}}
+		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = mm.(Model)
+		wantAggregate := m.team.aggregate
+
+		old.teamID = "backfilled-id"
+		m.conv.addTool("new-call", "Team", `{}`)
+		m.conv.setTeamStart("new-call", "backfilled-id", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+		m.conv.latestTeamBlock().teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "new trace"}}
+		if got := teamBlockIdentity(m.teamBlockForOverlay()); got != wantAggregate {
+			t.Fatalf("teamID backfill transferred or lost focus: got %q want %q", got, wantAggregate)
+		}
+		out := stripANSIstr(m.View().Content)
+		if !strings.Contains(out, "original trace") || strings.Contains(out, "new trace") {
+			t.Fatalf("teamID backfill retargeted focused content:\n%s", out)
+		}
+	})
+}
+
+func TestTeamBlockIdentityFallsBackToParentThenBlock(t *testing.T) {
+	withParent := &block{id: 1, toolID: "call:legacy", team: true}
+	otherParent := &block{id: 2, toolID: "call", team: true}
+	if got, other := teamBlockIdentity(withParent), teamBlockIdentity(otherParent); got == "" || got == other {
+		t.Fatalf("legacy parent identities are not exact: %q %q", got, other)
+	}
+	withoutParent := &block{id: 99, team: true}
+	if got := teamBlockIdentity(withoutParent); got == "" || got == teamBlockIdentity(&block{id: 100, team: true}) {
+		t.Fatalf("block fallback identity is not exact: %q", got)
 	}
 }
 
@@ -725,8 +836,8 @@ func TestAgentsWindowFollowsCursor(t *testing.T) {
 	// end/G jumps to the last member.
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = mm.(Model)
-	if m.team.cursor != n-1 {
-		t.Fatalf("end did not jump to last: cursor=%d want %d", m.team.cursor, n-1)
+	if boundedListCursor(m.team.roster) != n-1 {
+		t.Fatalf("end did not jump to last: cursor=%d want %d", boundedListCursor(m.team.roster), n-1)
 	}
 	out := stripANSIstr(m.View().Content)
 	// The last member is the alphabetically-last numbered one ("member-s" for n=20:
@@ -758,8 +869,8 @@ func TestAgentsWindowFollowsCursor(t *testing.T) {
 	// home/g jumps back to the first.
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	m = mm.(Model)
-	if m.team.cursor != 0 {
-		t.Fatalf("home did not jump to first: cursor=%d", m.team.cursor)
+	if boundedListCursor(m.team.roster) != 0 {
+		t.Fatalf("home did not jump to first: cursor=%d", boundedListCursor(m.team.roster))
 	}
 }
 
@@ -774,17 +885,17 @@ func TestAgentsPageKeys(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
 
-	beforeDown := m.team.cursor
+	beforeDown := boundedListCursor(m.team.roster)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
-	if m.team.cursor <= beforeDown {
-		t.Errorf("pgdn did not move to a later bounded item: %d", m.team.cursor)
+	if boundedListCursor(m.team.roster) <= beforeDown {
+		t.Errorf("pgdn did not move to a later bounded item: %d", boundedListCursor(m.team.roster))
 	}
-	beforeUp := m.team.cursor
+	beforeUp := boundedListCursor(m.team.roster)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if m.team.cursor >= beforeUp {
-		t.Errorf("pgup did not move to an earlier bounded item: %d", m.team.cursor)
+	if boundedListCursor(m.team.roster) >= beforeUp {
+		t.Errorf("pgup did not move to an earlier bounded item: %d", boundedListCursor(m.team.roster))
 	}
 }
 

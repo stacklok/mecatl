@@ -132,7 +132,7 @@ func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
 	s.list.SetCursor(5)
 	s.list.Scroll(bounded.LineDown)
 	beforeTop := s.list.View().Rows[0]
-	if s.list.CursorID() != "provider\x00model-5" || beforeTop.ID == "" {
+	if s.list.CursorID() != aggregateScopedID("provider", "model-5") || beforeTop.ID == "" {
 		t.Fatalf("refresh setup cursor/top = %q/%q", s.list.CursorID(), beforeTop.ID)
 	}
 
@@ -143,11 +143,106 @@ func TestModelsSurfaceRefreshPreservesStableCursorAndTopAnchor(t *testing.T) {
 	s.catalog.models, s.filtered = reordered, reordered
 	_, _ = s.Render(40, 15)
 	s = modelsSurface(t, m)
-	if got := s.list.CursorID(); got != "provider\x00model-5" {
+	if got := s.list.CursorID(); got != aggregateScopedID("provider", "model-5") {
 		t.Fatalf("reordered refresh selected %q, want provider/model-5", got)
 	}
 	if afterTop := s.list.View().Rows[0]; afterTop.ID != beforeTop.ID || afterTop.ItemLine != beforeTop.ItemLine {
 		t.Fatalf("reordered refresh top anchor = {%q,%d}, want {%q,%d}", afterTop.ID, afterTop.ItemLine, beforeTop.ID, beforeTop.ItemLine)
+	}
+}
+
+func TestModelsSurfaceDelimiterIDsSurviveRefreshReorder(t *testing.T) {
+	first := client.ModelInfo{ProviderID: "a:b", ID: "c", DisplayName: "first"}
+	selected := client.ModelInfo{ProviderID: "a", ID: "b:c", DisplayName: "selected"}
+	s := &modelsState{
+		catalog:  modelCatalog{models: []client.ModelInfo{first, selected}},
+		filtered: []client.ModelInfo{first, selected},
+		filter:   textinput.New(),
+		deps:     surfaceDeps{keys: defaultKeys(), theme: aztec()},
+	}
+	_, _ = s.Render(40, 15)
+	s.list.SetCursor(1)
+	want := aggregateScopedID("a", "b:c")
+	if got, other := s.list.CursorID(), aggregateScopedID("a:b", "c"); got != want || got == other {
+		t.Fatalf("delimiter-bearing setup cursor=%q other=%q want=%q", got, other, want)
+	}
+
+	s.catalog.models, s.filtered = []client.ModelInfo{selected, first}, []client.ModelInfo{selected, first}
+	_, _ = s.Render(40, 15)
+	if got := s.list.CursorID(); got != want || s.list.Cursor() != 0 {
+		t.Fatalf("delimiter-bearing refresh cursor=(%d,%q), want (0,%q)", s.list.Cursor(), got, want)
+	}
+	chosen, ok := s.chosen()
+	if !ok || chosen.ProviderID != selected.ProviderID || chosen.ID != selected.ID {
+		t.Fatalf("delimiter-bearing refresh chose %+v, want %+v", chosen, selected)
+	}
+}
+
+func TestModelsStaleHitResolvesIdentityAfterReorderAndFilterRefresh(t *testing.T) {
+	first := client.ModelInfo{ProviderID: "provider", ID: "first", DisplayName: "First"}
+	second := client.ModelInfo{ProviderID: "provider", ID: "second", DisplayName: "Second"}
+	third := client.ModelInfo{ProviderID: "provider", ID: "third", DisplayName: "Third"}
+	hits := &hitRegions{}
+	s := &modelsState{
+		view: modelsPanel, catalog: modelCatalog{models: []client.ModelInfo{first, second, third}},
+		filtered: []client.ModelInfo{first, second, third}, filter: textinput.New(),
+		deps: surfaceDeps{keys: defaultKeys(), marks: defaultHelpKeys(), theme: aztec(), hits: hits},
+	}
+	_, _ = s.Render(80, 20)
+	var stale HitID
+	for hit, identity := range s.hitItems {
+		if identity == modelIdentity(first) {
+			stale = hit
+			break
+		}
+	}
+	if stale == 0 {
+		t.Fatal("render produced no hit for the first model")
+	}
+
+	// A refresh both filters out the old second row and moves the clicked model.
+	// The old numeric index now names third and must not become the click action.
+	s.catalog.models = []client.ModelInfo{third, first}
+	s.filtered = []client.ModelInfo{third, first}
+	_, handled, _ := s.HandleMsg(surfaceHitMsg{ID: stale})
+	if !handled || s.list.CursorID() != modelIdentity(first) {
+		t.Fatalf("stale click selected (%d,%q), want refreshed first-model identity", s.list.Cursor(), s.list.CursorID())
+	}
+	_, handled, shouldClose := s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	intent, ok := s.intent.(modelsSelectIntent)
+	if !handled || !shouldClose || !ok || intent.selection.ProviderID != first.ProviderID || intent.selection.ModelID != first.ID {
+		t.Fatalf("Enter after stale click intent=%#v handled=%v close=%v, want provider/first", s.intent, handled, shouldClose)
+	}
+}
+
+func TestModelsWheelCancelsPendingRevealBeforeRender(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reveal func(*modelsState)
+	}{
+		{"key", func(s *modelsState) { s.moveCursor(bounded.End) }},
+		{"click", func(s *modelsState) {
+			s.hitItems = map[HitID]string{1: modelIdentity(s.filtered[len(s.filtered)-1])}
+			_, _, _ = s.HandleMsg(surfaceHitMsg{ID: 1})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := boundedScenarioModelsState(t, 20)
+			_, _ = s.Render(40, 12)
+			tc.reveal(s)
+			if !s.list.RevealPending() {
+				t.Fatal("selection did not request reveal")
+			}
+			_, _ = s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			want := s.list.Offset()
+			if s.list.RevealPending() {
+				t.Fatal("wheel did not cancel pending reveal")
+			}
+			_, _ = s.Render(40, 12)
+			if got := s.list.Offset(); got != want {
+				t.Fatalf("render reapplied cancelled reveal: offset=%d want=%d", got, want)
+			}
+		})
 	}
 }
 
@@ -246,5 +341,33 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if s.list.Cursor() != 3 {
 		t.Fatalf("cursor after pgdown = %d, want first item after the effective 3-row window", s.list.Cursor())
+	}
+}
+
+func TestModelsNoCacheLegendConsumesFixedChromeBudget(t *testing.T) {
+	cached := client.ModelInfo{ProviderID: "anthropic", ID: "claude-opus", PromptCached: true}
+	picker := modelsState{
+		catalog:  modelCatalog{models: []client.ModelInfo{cached}},
+		filtered: []client.ModelInfo{cached},
+		filter:   textinput.New(),
+		deps:     surfaceDeps{keys: defaultKeys(), marks: defaultHelpKeys(), theme: aztec()},
+	}
+	prefix, cachedSuffix := modelsFixedLines(picker, "")
+
+	uncached := cached
+	uncached.PromptCached = false
+	picker.catalog.models, picker.filtered = []client.ModelInfo{uncached}, []client.ModelInfo{uncached}
+	_, uncachedSuffix := modelsFixedLines(picker, "")
+	if got, want := len(uncachedSuffix), len(cachedSuffix)+1; got != want {
+		t.Fatalf("uncached fixed chrome rows = %d, want %d", got, want)
+	}
+
+	const cachedListBudget = 4
+	out, _ := picker.Render(100, len(prefix)+len(cachedSuffix)+cachedListBudget)
+	if picker.rowBudget != cachedListBudget-1 {
+		t.Fatalf("uncached page budget = %d, want %d after legend chrome", picker.rowBudget, cachedListBudget-1)
+	}
+	if !strings.Contains(stripANSIstr(out), "no-cache = no prompt-cache breakpoint sent") {
+		t.Fatalf("uncached fixed legend did not render:\n%s", stripANSIstr(out))
 	}
 }

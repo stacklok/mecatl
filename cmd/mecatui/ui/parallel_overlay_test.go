@@ -15,7 +15,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // startPar / branchStartPar / branchToolPar / branchEndPar / endPar build the parallel.*
@@ -57,7 +56,7 @@ func TestParallelBranchWinnerUsesStatusCellSelectedAndUnselected(t *testing.T) {
 		{name: "winner selected", cursor: 1, want: "▶★ ◐ winner"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			state := parallelState{branchCursor: tc.cursor, branches: new(bounded.List)}
+			state := parallelState{branches: agentsTestListCursor(tc.cursor)}
 			got := stripANSIstr(parallelBranchSelectableList(aztec(), state, group, defaultHelpKeys(), 80).render(aztec(), 20))
 			if !strings.Contains(got, tc.want) {
 				t.Fatalf("winner gutter = %q, want output containing %q", got, tc.want)
@@ -289,7 +288,7 @@ func TestParallelBranchRowSeparatesSummaryAndActivity(t *testing.T) {
 	other := parallelBranch{index: 1, label: "other"}
 	group := []parallelGroup{{parentCallID: "group", winner: -1, branches: []parallelBranch{*br, other}}}
 	selected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group"}, group, defaultHelpKeys(), 80, 0))
-	unselected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group", branchCursor: 1}, group, defaultHelpKeys(), 80, 0))
+	unselected := stripANSIstr(renderParallelGroupFocus(aztec(), parallelState{view: parallelGroupView, group: "group", branches: agentsTestListCursor(1)}, group, defaultHelpKeys(), 80, 0))
 	if !strings.Contains(selected, "▶  ✓ branch-1") || !strings.Contains(unselected, "   ✓ branch-1") {
 		t.Fatalf("bounded branch selection markers changed: %q / %q", selected, unselected)
 	}

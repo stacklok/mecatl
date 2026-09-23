@@ -148,6 +148,13 @@ func widthLines(line string, width int, policy Policy) []string {
 			lines = append(lines, row+"\x1b[0m")
 			continue
 		}
+		if rw > width {
+			// A grapheme can be wider than a narrow viewport (for example, 2-cell
+			// CJK text in a 1-cell list). Skip it entirely rather than emitting an
+			// over-wide row or carrying it into the next row.
+			left += rw
+			continue
+		}
 		segment := ansi.Cut(line, left, left+rw)
 		left += rw
 		if ansi.StringWidth(segment) <= width {

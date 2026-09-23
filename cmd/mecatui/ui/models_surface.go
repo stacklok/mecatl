@@ -15,7 +15,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -44,9 +43,8 @@ type modelsState struct {
 	filtered     []client.ModelInfo
 	filter       textinput.Model
 	list         *bounded.List
-	rowBudget    int           // view cache, refreshed from Render geometry
-	hitItems     map[HitID]int // view cache, replaced by every Render frame
-	revealCursor bool
+	rowBudget    int              // view cache, refreshed from Render geometry
+	hitItems     map[HitID]string // view cache: collision-safe model ID, replaced by every Render frame
 	deps         surfaceDeps
 	intent       surfaceIntent
 }
@@ -73,10 +71,9 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	prefix, suffix := modelsFixedLines(*s, s.provenance)
 	s.rowBudget = max(0, height-len(prefix)-len(suffix))
 	list := s.listControl()
-	reveal := s.syncList(width, s.rowBudget) || s.revealCursor
-	view := list.ViewWithIndicators(s.rowBudget, reveal)
-	s.revealCursor = false
-	s.hitItems = make(map[HitID]int)
+	s.syncList(width, s.rowBudget)
+	view := list.ViewWithIndicators(s.rowBudget, list.RevealPending())
+	s.hitItems = make(map[HitID]string)
 
 	lines := make([]string, 0, height)
 	appendChrome := func(line string) {
@@ -111,7 +108,7 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 				x1 := min(max(0, width), lipgloss.Width(lines[y]))
 				if x1 > 0 {
 					regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
-					s.hitItems[id] = row.ItemIndex
+					s.hitItems[id] = row.ID
 				}
 			}
 		}
@@ -170,12 +167,17 @@ func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		if s.view == modelsNone {
 			return nil, false, false
 		}
-		index, current := s.hitItems[hit.ID]
+		identity, current := s.hitItems[hit.ID]
 		if !current {
 			return nil, true, false
 		}
-		s.listControl().SetCursor(index)
-		s.revealCursor = true
+		index := modelIndexByIdentity(s.filtered, identity)
+		if index < 0 {
+			return nil, true, false
+		}
+		list := s.listControl()
+		list.SetItems(modelsBoundedItems(s.catalog, s.filtered))
+		list.SetCursor(index)
 		return nil, true, false
 	}
 	result, ok := msg.(client.ModelsMsg)
@@ -234,21 +236,18 @@ func (s *modelsState) syncFilter() {
 	}
 }
 
-func (s *modelsState) syncList(width, height int) bool {
+func (s *modelsState) syncList(width, height int) {
 	list := s.listControl()
 	hadCursor := list.CursorID() != ""
 	list.SetGeometry(width, height, 3, bounded.Wrap)
 	list.SetItems(modelsBoundedItems(s.catalog, s.filtered))
-	reveal := len(s.filtered) > 0 && !hadCursor
 	if !hadCursor {
 		list.SetCursor(0)
 	}
-	return reveal
 }
 
 func (s *modelsState) moveCursor(move bounded.Move) {
 	list := s.listControl()
-	s.revealCursor = true
 	if list.Valid() {
 		list.Move(move)
 		return
@@ -271,11 +270,24 @@ func (s *modelsState) moveCursor(move bounded.Move) {
 	list.SetCursor(cursor)
 }
 
+func modelIdentity(model client.ModelInfo) string {
+	return aggregateScopedID(model.ProviderID, model.ID)
+}
+
+func modelIndexByIdentity(models []client.ModelInfo, identity string) int {
+	for i, model := range models {
+		if modelIdentity(model) == identity {
+			return i
+		}
+	}
+	return -1
+}
+
 func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bounded.ListItem {
 	items := make([]bounded.ListItem, 0, len(models))
 	for _, model := range models {
 		items = append(items, bounded.ListItem{
-			ID:          model.ProviderID + "\x00" + model.ID,
+			ID:          modelIdentity(model),
 			Text:        modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, model),
 			StatusCells: modelStatusCells(catalog.active, catalog.globalDefault, model),
 		})
@@ -307,13 +319,23 @@ func modelsFixedLines(picker modelsState, prov string) (prefix, suffix []string)
 	} else if len(picker.filtered) == 0 {
 		prefix = append(prefix, picker.deps.theme.Style("muted").Render("no models match "+strconv.Quote(picker.filter.Value())+" — "+picker.deps.marks.closeOnly+" to clear"))
 	}
-	for _, status := range renderProviderStatusLines(picker.catalog.statuses, len(picker.catalog.models) == 0) {
-		suffix = append(suffix, picker.deps.theme.Style("errorText").Render(terminaltext.Sanitize(status)))
+	if picker.err == nil {
+		statuses := renderProviderStatusLines(picker.catalog.statuses, len(picker.catalog.models) == 0)
+		if !picker.loading && len(picker.catalog.models) > 0 && len(picker.filtered) > 0 && len(statuses) > 0 {
+			// Keep provider remediation visually separate from selectable model rows.
+			suffix = append(suffix, "")
+		}
+		for _, status := range statuses {
+			suffix = append(suffix, picker.deps.theme.Style("errorText").Render(terminaltext.Sanitize(status)))
+		}
 	}
 	suffix = append(suffix, "",
 		picker.deps.theme.Style("muted").Render("type to filter · ↑/↓/"+picker.deps.marks.scrollUp+" move · "+picker.deps.marks.choose+" use · "+picker.deps.marks.setGlobalDefault+" set global default · "+picker.deps.marks.closeOnly+" clear filter / close"),
 		picker.deps.theme.Style("muted").Render("● current  ★ global default"),
 		picker.deps.theme.Style("muted").Render("reason = emits reasoning · set its effort tier with /effort"))
+	if anyUncachedModel(picker.catalog.models) {
+		suffix = append(suffix, picker.deps.theme.Style("muted").Render("no-cache = no prompt-cache breakpoint sent; costly for Claude models"))
+	}
 	return prefix, suffix
 }
 
@@ -321,7 +343,8 @@ func boundedDisplayLine(line string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	return ansi.Truncate(strings.Split(line, "\n")[0], width, "")
+	line, _, _ = strings.Cut(line, "\n")
+	return ansi.Truncate(line, width, "")
 }
 func (s *modelsState) chosen() (client.ModelInfo, bool) {
 	cursor := s.listControl().Cursor()

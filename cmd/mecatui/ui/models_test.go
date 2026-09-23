@@ -881,6 +881,54 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 	}
 }
 
+// TestModelsSelectionSanitizesDisplayNameStatus keeps server-supplied model
+// display names inert after a picker selection reaches the footer status.
+func TestModelsSelectionSanitizesDisplayNameStatus(t *testing.T) {
+	const hostile = "\x1b]0;pwned\x07"
+	const displayName = "Trusted Model" + hostile
+
+	fm := &fakeModels{models: []client.ModelInfo{{
+		ID:          "trusted-model",
+		ProviderID:  "test",
+		DisplayName: displayName,
+	}}}
+	conv := &fakeConv{
+		recv:              &fakeRecver{gate: make(chan struct{})},
+		send:              &fakeSender{},
+		caps:              modelsCaps(),
+		echoSelAsResolved: true,
+	}
+	m := newTestModelFromDeps(Deps{
+		Session:     conv,
+		Conv:        conv,
+		Models:      fm,
+		Transcript:  modelSwitchTranscriptLoader{},
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Server:      "127.0.0.1:8080",
+		Workspace:   "/workspace",
+		Mode:        "default",
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: modelsCaps(), ResolvedModel: client.ResolvedModel{ProviderID: "test", ModelID: "old"}},
+	)
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = feedModelSwitchBusiness(t, mm.(Model), cmd)
+
+	for _, rendered := range []string{m.statusMsg, m.renderFooter()} {
+		if strings.Contains(rendered, hostile) {
+			t.Errorf("hostile OSC sequence leaked into rendered status: %q", rendered)
+		}
+		if !strings.Contains(rendered, "Trusted Model]0;pwned") {
+			t.Errorf("sanitized display name missing from rendered status: %q", rendered)
+		}
+	}
+}
+
 // TestModelsEscClosesNoChange asserts esc closes the picker without changing the
 // active selection.
 func TestModelsEscClosesNoChange(t *testing.T) {

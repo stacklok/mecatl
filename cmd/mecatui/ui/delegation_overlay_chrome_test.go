@@ -51,9 +51,9 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 
 	// Each window still gets precisely its calculated row budget: the long
 	// chrome is truncated in place rather than becoming an unaccounted row.
-	rosterOut := renderSubagentRoster(th, subagentState{cursor: 6}, fleet, hk, height, bodyWidth)
-	parallelOut := renderParallelRoster(th, parallelState{cursor: 6}, groups, hk, height, bodyWidth)
-	teamOut := renderTeamRoster(th, teamState{cursor: 6}, team, hk, height, bodyWidth)
+	rosterOut := renderSubagentRoster(th, subagentState{roster: agentsTestListCursor(6)}, fleet, hk, height, bodyWidth)
+	parallelOut := renderParallelRoster(th, parallelState{roster: agentsTestListCursor(6)}, groups, hk, height, bodyWidth)
+	teamOut := renderTeamRoster(th, teamState{roster: agentsTestListCursor(6)}, team, hk, height, bodyWidth)
 	tasksOut := renderTeamTasks(th, team, hk, height, bodyWidth)
 	findingsOut := renderTeamFindings(th, team, hk, height, bodyWidth)
 	for _, tc := range []struct {
@@ -62,9 +62,9 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 		marker string
 		rows   int
 	}{
-		{"subagent roster", rosterOut, "goal-", len(subagentSelectableList(th, subagentState{cursor: 6}, fleet, hk, bodyWidth).boundedView(th, height).Rows)},
-		{"parallel roster", parallelOut, "branches", len(parallelSelectableList(th, parallelState{cursor: 6}, groups, hk, bodyWidth).boundedView(th, height).Rows)},
-		{"team roster", teamOut, "member-", len(teamSelectableList(th, teamState{cursor: 6}, team, hk, bodyWidth).boundedView(th, height).Rows)},
+		{"subagent roster", rosterOut, "goal-", len(subagentSelectableList(th, subagentState{roster: agentsTestListCursor(6)}, fleet, hk, bodyWidth).boundedView(th, height).Rows)},
+		{"parallel roster", parallelOut, "branches", len(parallelSelectableList(th, parallelState{roster: agentsTestListCursor(6)}, groups, hk, bodyWidth).boundedView(th, height).Rows)},
+		{"team roster", teamOut, "member-", len(teamSelectableList(th, teamState{roster: agentsTestListCursor(6)}, team, hk, bodyWidth).boundedView(th, height).Rows)},
 		{"tasks", tasksOut, "task-", teamTasksRows(height)},
 		{"findings", findingsOut, "finding-", teamFindingsRows(height)},
 	} {
