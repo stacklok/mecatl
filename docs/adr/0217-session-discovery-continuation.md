@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-14
 - Scope: session creation metadata, SessionStore snapshots/meta projections, HarnessService session inventory/transcript surfaces, and mecatui session discovery/continuation
-- Superseded by: [ADR 0285](./0285-predictable-mecatui-session-handles.md) (decision 8 only)
+- Superseded by: [ADR 0285](./0285-predictable-mecatui-session-handles.md) (decision 8 only); [ADR 0343](./0343-session-configuration-generations.md) (Decision 1 only where model and effort replacements were lineage-free peers)
 
 ## Context
 

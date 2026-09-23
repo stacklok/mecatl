@@ -40,7 +40,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0007 — Twelve-patterns audit](./0007-twelve-patterns-audit.md) *(historical)*
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
 - [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md)
-- [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md)
+- [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md) *(decision 8 superseded by 0285; model/effort replacement lineage clause superseded by proposed 0343)*
+- [0343 - Group explicit configuration replacements as session generations](./0343-session-configuration-generations.md) *(proposed; one-time exact predecessor activation preserves predecessor-only identity and bounded fail-visible inventory)*
 - [0285 — Predictable actionable mecatui session handles](./0285-predictable-mecatui-session-handles.md) *(ordinary fixed escaped raw-ID-prefix handles; supersedes ADR 0217 decision 8 without changing debugger evidence/incarnation handles or their digests)*
 - [0226 — Session storage separates current state, indexed metadata, and maintenance](./0226-session-storage-maintenance.md)
 - [0239 — Semantic stream retry and failed-step retry transport](./0239-semantic-stream-retry.md)
