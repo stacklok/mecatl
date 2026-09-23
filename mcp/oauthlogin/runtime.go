@@ -28,10 +28,16 @@ const (
 	// own capabilities decide which of the two a caller should use.
 	fixedCallbackPath = "/oauth/callback"
 
+	// exactRedirectAddress is the fixed bind address AND Host-header match for
+	// ExactRedirectURL — kept as ONE constant so a future port change can't desync
+	// the address fixedRedirect binds/matches from the literal ExactRedirectURL
+	// serves, which would only surface via TestFixedRedirectValidationIsStrict.
+	exactRedirectAddress = "127.0.0.1:18473"
+
 	// ExactRedirectURL is the fixed callback URI used by remote mecatui login.
 	// It is deliberately IPv4-literal and must not be changed to localhost or
 	// a wildcard address.
-	ExactRedirectURL = "http://127.0.0.1:18473" + fixedCallbackPath
+	ExactRedirectURL = "http://" + exactRedirectAddress + fixedCallbackPath
 
 	// ToolHiveCompatibleRedirectURL is the fixed callback URI used by native
 	// LLM login so an existing ToolHive-compatible client registration works.
@@ -191,10 +197,11 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path, address, callbackHost, redirectURL, attemptPolicy, err := resolveCallbackMode(r.opts, callbackPath, r.random)
+	mode, err := resolveCallbackMode(r.opts, callbackPath, r.random)
 	if err != nil {
 		return err
 	}
+	path, address, callbackHost, redirectURL, attemptPolicy := mode.path, mode.address, mode.callbackHost, mode.redirectURL, mode.attemptPolicy
 	ln, err := r.listen(ctx, "tcp4", address)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -331,7 +338,7 @@ type fixedRedirectConfig struct {
 func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
 	switch raw {
 	case ExactRedirectURL:
-		return fixedRedirectConfig{address: "127.0.0.1:18473", host: "127.0.0.1:18473", path: fixedCallbackPath}, true
+		return fixedRedirectConfig{address: exactRedirectAddress, host: exactRedirectAddress, path: fixedCallbackPath}, true
 	case ToolHiveCompatibleRedirectURL:
 		return fixedRedirectConfig{address: "localhost:8666", host: "localhost:8666", path: "/callback"}, true
 	default:
@@ -346,6 +353,20 @@ func validCallbackPath(path string) bool {
 	encoded := strings.TrimPrefix(path, callbackPrefix)
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
 	return err == nil && len(raw) == callbackBytes && base64.RawURLEncoding.EncodeToString(raw) == encoded
+}
+
+// callbackMode bundles the callback path, bind address, Host-header match, any
+// pre-computed redirect URL, and attempt policy resolveCallbackMode picks for one
+// authorize call. A struct, rather than resolveCallbackMode returning its five
+// fields positionally, so a future reorder or an added field fails to compile at
+// the call site instead of silently binding the wrong value (all but attemptPolicy
+// are plain strings).
+type callbackMode struct {
+	path          string
+	address       string
+	callbackHost  string
+	redirectURL   string
+	attemptPolicy callbackAttemptPolicy
 }
 
 // resolveCallbackMode picks the callback path, bind address, Host-header match, any
@@ -368,31 +389,29 @@ func validCallbackPath(path string) bool {
 // local co-resident process that manages to observe it once, not less — so both
 // keep the bounded attemptMatchingRoute lockout callback.go's ServeHTTP applies to
 // state-secret probing.
-func resolveCallbackMode(opts Options, callbackPath string, random io.Reader) (
-	path, address, callbackHost, redirectURL string, attemptPolicy callbackAttemptPolicy, err error,
-) {
-	address = "127.0.0.1:0"
-	attemptPolicy = attemptMatchingRoute
+func resolveCallbackMode(opts Options, callbackPath string, random io.Reader) (callbackMode, error) {
+	mode := callbackMode{address: "127.0.0.1:0", attemptPolicy: attemptMatchingRoute}
 	switch {
 	case opts.RedirectURL != "":
 		fixed, _ := fixedRedirect(opts.RedirectURL)
-		path = fixed.path
-		address = fixed.address
-		callbackHost = fixed.host
-		redirectURL = opts.RedirectURL
-		attemptPolicy = attemptFixedRoute
+		mode.path = fixed.path
+		mode.address = fixed.address
+		mode.callbackHost = fixed.host
+		mode.redirectURL = opts.RedirectURL
+		mode.attemptPolicy = attemptFixedRoute
 	case callbackPath != "":
-		path = callbackPath
+		mode.path = callbackPath
 	case opts.PinCallbackPath:
-		path = fixedCallbackPath
-		attemptPolicy = attemptFixedRoute
+		mode.path = fixedCallbackPath
+		mode.attemptPolicy = attemptFixedRoute
 	default:
-		path, err = randomCallbackPath(random)
+		path, err := randomCallbackPath(random)
 		if err != nil {
-			return "", "", "", "", 0, errors.New("generate OAuth callback path: failed")
+			return callbackMode{}, errors.New("generate OAuth callback path: failed")
 		}
+		mode.path = path
 	}
-	return path, address, callbackHost, redirectURL, attemptPolicy, nil
+	return mode, nil
 }
 
 func canonicalIssuer(raw string) (string, error) {

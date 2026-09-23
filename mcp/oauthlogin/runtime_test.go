@@ -629,32 +629,38 @@ func TestExactRedirectUsesFixedIPv4Callback(t *testing.T) {
 	}
 }
 
-func TestExactRedirectUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T) {
+// assertUnauthenticatedFloodDoesNotSpendAttempts drives one Authorize call over
+// opts, flooding the callback with unauthenticated wrong-state/wrong-method/
+// malformed-query probes before the real browser completes the flow, and asserts
+// none of that flood exhausts the fixed-route attempt budget. Shared by
+// TestExactRedirectUnauthenticatedFloodDoesNotSpendAttempts and
+// TestPinCallbackPathUnauthenticatedFloodDoesNotSpendAttempts, which differ only in
+// the Options literal and the failure-message suffix.
+func assertUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T, opts Options, floodLabel string) {
+	t.Helper()
 	var redirect string
-	runtime, err := New(Options{
-		RedirectURL: ExactRedirectURL,
-		Launcher: launcherFunc(func(_ context.Context, _ string) error {
-			for i := range 2 * maxRequestAttempts {
-				var req *http.Request
-				switch i % 3 {
-				case 0:
-					req, _ = http.NewRequest(http.MethodGet, callbackURL(redirect, "probe", "wrong-state", testIssuer), nil)
-				case 1:
-					req, _ = http.NewRequest(http.MethodPost, redirect+"?state=wrong-state", nil)
-				default:
-					req, _ = http.NewRequest(http.MethodGet, redirect+"?state=%zz", nil)
-				}
-				if got := request(t, req).status; got < 400 {
-					t.Fatalf("probe %d status = %d", i, got)
-				}
+	opts.Launcher = launcherFunc(func(_ context.Context, _ string) error {
+		for i := range 2 * maxRequestAttempts {
+			var req *http.Request
+			switch i % 3 {
+			case 0:
+				req, _ = http.NewRequest(http.MethodGet, callbackURL(redirect, "probe", "wrong-state", testIssuer), nil)
+			case 1:
+				req, _ = http.NewRequest(http.MethodPost, redirect+"?state=wrong-state", nil)
+			default:
+				req, _ = http.NewRequest(http.MethodGet, redirect+"?state=%zz", nil)
 			}
-			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
-			if got := request(t, valid).status; got != http.StatusOK {
-				t.Fatalf("valid status after fixed-path flood = %d", got)
+			if got := request(t, req).status; got < 400 {
+				t.Fatalf("probe %d status = %d", i, got)
 			}
-			return nil
-		}),
+		}
+		valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+		if got := request(t, valid).status; got != http.StatusOK {
+			t.Fatalf("valid status after %s flood = %d", floodLabel, got)
+		}
+		return nil
 	})
+	runtime, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,6 +677,10 @@ func TestExactRedirectUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestExactRedirectUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T) {
+	assertUnauthenticatedFloodDoesNotSpendAttempts(t, Options{RedirectURL: ExactRedirectURL}, "fixed-path")
 }
 
 func TestExactRedirectAuthenticatedRejectionIsTerminal(t *testing.T) {
@@ -785,8 +795,15 @@ func TestFixedRedirectValidationIsStrict(t *testing.T) {
 // callback PATH: two successive Authorize calls both land on fixedCallbackPath, but get
 // different ports, since RFC 8252 dynamic-port matching (which the client this option is
 // for already relies on) never checks the port.
+// TestPinCallbackPathUsesFixedPathEphemeralPort proves PinCallbackPath fixes only the
+// callback PATH: every Authorize call lands on the literal "/oauth/callback", and the
+// bind address requested from the listener seam is the ephemeral "127.0.0.1:0", not a
+// fixed port like ExactRedirectURL's "127.0.0.1:18473". Asserting the REQUESTED bind
+// address (rather than that two sequential real binds return different ports) avoids
+// a false failure if the OS legally reuses a just-released ephemeral port.
 func TestPinCallbackPathUsesFixedPathEphemeralPort(t *testing.T) {
 	var redirect string
+	var requestedAddresses []string
 	runtime, err := New(Options{
 		PinCallbackPath: true,
 		Launcher: launcherFunc(func(_ context.Context, _ string) error {
@@ -799,6 +816,11 @@ func TestPinCallbackPathUsesFixedPathEphemeralPort(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	realListen := runtime.listen
+	runtime.listen = func(ctx context.Context, network, address string) (net.Listener, error) {
+		requestedAddresses = append(requestedAddresses, address)
+		return realListen(ctx, network, address)
 	}
 
 	authorizeOnce := func() string {
@@ -831,13 +853,13 @@ func TestPinCallbackPathUsesFixedPathEphemeralPort(t *testing.T) {
 			t.Fatalf("redirect = %q, want suffix %q", redirect, "/oauth/callback")
 		}
 	}
-	firstPort := strings.TrimSuffix(strings.TrimPrefix(first, "http://127.0.0.1:"), fixedCallbackPath)
-	secondPort := strings.TrimSuffix(strings.TrimPrefix(second, "http://127.0.0.1:"), fixedCallbackPath)
-	if firstPort == "" || secondPort == "" {
-		t.Fatalf("could not extract ports from %q, %q", first, second)
+	if len(requestedAddresses) != 2 {
+		t.Fatalf("requested bind addresses = %v, want 2 calls", requestedAddresses)
 	}
-	if firstPort == secondPort {
-		t.Fatalf("both authorizations bound the same port %q; PinCallbackPath must not fix the port", firstPort)
+	for _, address := range requestedAddresses {
+		if address != "127.0.0.1:0" {
+			t.Fatalf("requested bind address = %q, want the ephemeral %q; PinCallbackPath must not fix the port", address, "127.0.0.1:0")
+		}
 	}
 }
 
@@ -846,47 +868,7 @@ func TestPinCallbackPathUsesFixedPathEphemeralPort(t *testing.T) {
 // pre-registered exactly like ExactRedirectURL, so it must get the same attemptFixedRoute
 // policy (ambient probes never exhaust the attempt budget).
 func TestPinCallbackPathUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T) {
-	var redirect string
-	runtime, err := New(Options{
-		PinCallbackPath: true,
-		Launcher: launcherFunc(func(_ context.Context, _ string) error {
-			for i := range 2 * maxRequestAttempts {
-				var req *http.Request
-				switch i % 3 {
-				case 0:
-					req, _ = http.NewRequest(http.MethodGet, callbackURL(redirect, "probe", "wrong-state", testIssuer), nil)
-				case 1:
-					req, _ = http.NewRequest(http.MethodPost, redirect+"?state=wrong-state", nil)
-				default:
-					req, _ = http.NewRequest(http.MethodGet, redirect+"?state=%zz", nil)
-				}
-				if got := request(t, req).status; got < 400 {
-					t.Fatalf("probe %d status = %d", i, got)
-				}
-			}
-			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
-			if got := request(t, valid).status; got != http.StatusOK {
-				t.Fatalf("valid status after pinned-path flood = %d", got)
-			}
-			return nil
-		}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	err = runtime.Authorize(ctx, testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
-		redirect = got
-		result, err := present(ctx, "https://as.example.test/authorize?state=s")
-		if err == nil && result.Code != "good" {
-			t.Fatalf("result = %#v", result)
-		}
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	assertUnauthenticatedFloodDoesNotSpendAttempts(t, Options{PinCallbackPath: true}, "pinned-path")
 }
 
 // TestPinCallbackPathAndRedirectURLAreMutuallyExclusive proves New refuses the
