@@ -111,10 +111,10 @@ The model separates source selection from execution while allowing explicit stor
 Both palette listing and invocation consult the same admitted source chain. File tools retain
 the exact execution backend, and source reads retain their own admission and freshness rules.
 
-The model additions are marked proposed until the shared implementation lands. The dependency
-stack is model/contract, then shared implementation, followed by MicroVM PR #580 and the Redis
-#1811 sibling integration. Shared acceptance uses offline reference adapters; real backend
-qualification belongs to the integration that owns it.
+The model defines the domain; implementation and approval status belong in the acceptance plan
+and this ADR's metadata. The dependency stack is model/contract, then shared implementation,
+followed by MicroVM PR #580 and the Redis #1811 sibling integration. Shared acceptance uses
+offline reference adapters; real backend qualification belongs to the integration that owns it.
 
 Any implementation adding long-lived connections, caches, or bindings must record their owner,
 cleanup, and restart behavior in ADR 0027's inventories. This model-only PR adds no such runtime

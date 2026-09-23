@@ -52,9 +52,9 @@ entities:
         ownership: referenced
         role: receives instructions and customizations from
         note: >
-          Proposed relationship: composition selects the context independently
-          from execution. A context source may explicitly share execution files;
-          the source-selection and restart contract is under interface review.
+          Composition selects the context independently from execution.
+          A context source may explicitly share execution files without
+          merging source authority with execution authority.
       - entity: Provider
         cardinality: "n:1"
         ownership: referenced
@@ -335,9 +335,9 @@ entities:
 
   HarnessContext:
     definition: >
-      Proposed source-authority model, not yet implemented. The deployment-configured
-      selection of model-facing project instructions, commands, rules, skills, and
-      agent definitions supplied to a `Session` through logical source contracts.
+      The deployment-configured selection of model-facing project instructions,
+      commands, rules, skills, and agent definitions supplied to a `Session`
+      through logical source contracts.
       Sources can read APIs, host files, databases, or explicitly selected files in
       the execution environment. Source selection is separate from `Environment`
       selection; separate responsibilities do not require separate storage.
@@ -353,30 +353,30 @@ entities:
     invariants:
       - id: harness-context-independent-of-execution
         statement: >
-          Proposed: deployment composition explicitly selects admitted harness
+          Deployment composition explicitly selects admitted harness
           sources. An execution `Workspace`, backend kind, root, or command
           namespace never implicitly selects instructions or customizations.
       - id: harness-context-explicit-storage-sharing
         statement: >
-          Proposed: a context source may explicitly read the same logical files
+          A context source may explicitly read the same logical files
           as the execution `Workspace`, using that backend's capabilities. Those
           files then follow the source's admission and freshness rules. Sharing
           storage does not merge source authority with execution authority or
           permit reopening a virtual root through a different backend.
       - id: harness-context-provenance-governs-trust
         statement: >
-          Proposed: source trust follows configured provenance and admission.
+          Source trust follows configured provenance and admission.
           Host-backed content is not trusted by locality, and project-tier
           content is admitted only by the resolved project-ingestion decision.
       - id: harness-context-preserves-source-freshness
         statement: >
-          Proposed: commands remain live on each List and Expand, project
+          Commands remain live on each List and Expand, project
           instructions are read once per `Run`, and rules, skills, and agent
           definitions retain their source-lifetime snapshot semantics. Listing
           and consumption use the same configured source authority.
       - id: harness-context-does-not-share-read-evidence
         statement: >
-          Proposed: harness-source reads never consult or update the execution
+          Harness-source reads never consult or update the execution
           `ReadLedger`, including when source and execution share backing files.
           `Sessions` sharing a harness context retain independent read evidence.
 
@@ -912,16 +912,16 @@ entities:
           untrusted input.
 
 scenarios:
-  - name: Proposed - Harness sources remain independent from execution storage
+  - name: Harness sources remain independent from execution storage
     actors: [Principal, Operator]
     steps:
-      - "This is a proposed contract scenario. The operator configures a `HarnessContext` using API-backed or file-backed sources independently from the execution `Environment`."
+      - "The operator configures a `HarnessContext` using API-backed or file-backed sources independently from the execution `Environment`."
       - "The command palette and prompt expansion consult the same configured live source, and instruction assembly uses the configured project-instruction source."
       - "Changing execution storage or runner does not implicitly change source authority, precedence, provenance, or freshness."
     invariants_touched:
       [harness-context-independent-of-execution, harness-context-preserves-source-freshness, workspace-tools-use-ports]
 
-  - name: Proposed - Unselected execution content cannot become harness sources
+  - name: Unselected execution content cannot become harness sources
     actors: [Principal, Operator]
     steps:
       - "The operator configures an external context source. The execution `Workspace` contains conflicting AGENTS.md, command, rule, skill, and agent-definition content that is not part of that source."
@@ -930,7 +930,7 @@ scenarios:
     invariants_touched:
       [harness-context-independent-of-execution, harness-context-provenance-governs-trust, workspace-contained]
 
-  - name: Proposed - Context explicitly reads execution files
+  - name: Context explicitly reads execution files
     actors: [Principal, Operator]
     steps:
       - "The operator explicitly configures a context source over files in the execution namespace; the source uses that backend rather than interpreting its root as a host path."
@@ -939,7 +939,7 @@ scenarios:
     invariants_touched:
       [harness-context-explicit-storage-sharing, harness-context-preserves-source-freshness, harness-context-provenance-governs-trust]
 
-  - name: Proposed - Shared harness context keeps session read ledgers isolated
+  - name: Shared harness context keeps session read ledgers isolated
     actors: [Principal, Operator]
     steps:
       - "Two `Sessions` attach the same `HarnessContext` and use execution environments backed by the same logical files."

@@ -111,7 +111,7 @@ An entry a `TeamMember` records to its `Team`'s shared findings ledger. The `Lea
 
 ### `HarnessContext`
 
-Proposed source-authority model, not yet implemented. The deployment-configured selection of model-facing project instructions, commands, rules, skills, and agent definitions supplied to a `Session` through logical source contracts. Sources can read APIs, host files, databases, or explicitly selected files in the execution environment. Source selection is separate from `Environment` selection; separate responsibilities do not require separate storage.
+The deployment-configured selection of model-facing project instructions, commands, rules, skills, and agent definitions supplied to a `Session` through logical source contracts. Sources can read APIs, host files, databases, or explicitly selected files in the execution environment. Source selection is separate from `Environment` selection; separate responsibilities do not require separate storage.
 
 **Relationships**
 
@@ -120,15 +120,15 @@ Proposed source-authority model, not yet implemented. The deployment-configured 
 
 **Invariants**
 
-- **harness-context-independent-of-execution** — Proposed: deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
+- **harness-context-independent-of-execution** — Deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
 
-- **harness-context-explicit-storage-sharing** — Proposed: a context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
+- **harness-context-explicit-storage-sharing** — A context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
 
-- **harness-context-provenance-governs-trust** — Proposed: source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
+- **harness-context-provenance-governs-trust** — Source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
 
-- **harness-context-preserves-source-freshness** — Proposed: commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
+- **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
 
-- **harness-context-does-not-share-read-evidence** — Proposed: harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
+- **harness-context-does-not-share-read-evidence** — Harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
 
 
 ### `Hook`
@@ -344,7 +344,7 @@ The central aggregate and unit of work: a stateful conversation between a princi
 - `Conversation` — 1:1 — owned — records
 - `Environment` — 1:1 — referenced — bound to — The `Session` persists the exact environment identity; the host reattaches its capabilities before a `Run`. Binding to an `Environment` does not imply exclusive ownership of its files.
 
-- `HarnessContext` — n:1 — referenced — receives instructions and customizations from — Proposed relationship: composition selects the context independently from execution. A context source may explicitly share execution files; the source-selection and restart contract is under interface review.
+- `HarnessContext` — n:1 — referenced — receives instructions and customizations from — Composition selects the context independently from execution. A context source may explicitly share execution files without merging source authority with execution authority.
 
 - `Provider` — n:1 — referenced — bound to — The `Session`'s provider binding stays fixed across turns
 - `Model` — n:1 — referenced — runs against — The host resolves this effective binding from the requested session selection and `PermissionMode`; the aggregate stores selection labels without interpreting them. The relationship describes the effective target for a turn, not a lifetime model pin. Existing restart semantics remain unchanged: explicit selections are restored, while an empty selection follows the deployment default rather than persisting the previously effective target.
@@ -624,26 +624,26 @@ erDiagram
 
 ## Scenarios
 
-### Proposed - Harness sources remain independent from execution storage
+### Harness sources remain independent from execution storage
 
 **Actors:** Principal, Operator
 
 **Steps**
 
-1. This is a proposed contract scenario. The operator configures a `HarnessContext` using API-backed or file-backed sources independently from the execution `Environment`.
+1. The operator configures a `HarnessContext` using API-backed or file-backed sources independently from the execution `Environment`.
 2. The command palette and prompt expansion consult the same configured live source, and instruction assembly uses the configured project-instruction source.
 3. Changing execution storage or runner does not implicitly change source authority, precedence, provenance, or freshness.
 
 **Invariants touched**
 
-- **harness-context-independent-of-execution** — Proposed: deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
+- **harness-context-independent-of-execution** — Deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
 
-- **harness-context-preserves-source-freshness** — Proposed: commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
+- **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
 
 - **workspace-tools-use-ports** — Read, ListDir, Write, Edit, Copy, Move, Remove, Glob, and Grep use the `Environment`'s `Workspace` capabilities. Their bodies do not select a storage backend or fall back to host filesystem access. Unsupported namespace operations return an explicit error.
 
 
-### Proposed - Unselected execution content cannot become harness sources
+### Unselected execution content cannot become harness sources
 
 **Actors:** Principal, Operator
 
@@ -655,14 +655,14 @@ erDiagram
 
 **Invariants touched**
 
-- **harness-context-independent-of-execution** — Proposed: deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
+- **harness-context-independent-of-execution** — Deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
 
-- **harness-context-provenance-governs-trust** — Proposed: source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
+- **harness-context-provenance-governs-trust** — Source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
 
 - **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific: Read, ListDir, Write, and Edit can serve policy-authorized external absolute targets, while mutating namespace operations and searches remain confined.
 
 
-### Proposed - Context explicitly reads execution files
+### Context explicitly reads execution files
 
 **Actors:** Principal, Operator
 
@@ -674,14 +674,14 @@ erDiagram
 
 **Invariants touched**
 
-- **harness-context-explicit-storage-sharing** — Proposed: a context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
+- **harness-context-explicit-storage-sharing** — A context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
 
-- **harness-context-preserves-source-freshness** — Proposed: commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
+- **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
 
-- **harness-context-provenance-governs-trust** — Proposed: source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
+- **harness-context-provenance-governs-trust** — Source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
 
 
-### Proposed - Shared harness context keeps session read ledgers isolated
+### Shared harness context keeps session read ledgers isolated
 
 **Actors:** Principal, Operator
 
@@ -693,7 +693,7 @@ erDiagram
 
 **Invariants touched**
 
-- **harness-context-does-not-share-read-evidence** — Proposed: harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
+- **harness-context-does-not-share-read-evidence** — Harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
 
 - **read-evidence-session-scoped** — Sharing backing files does not share read evidence between `Sessions`. A new child session receives fresh evidence even when it uses the parent's file namespace. A command changing a file does not count as the model reading that file's new version.
 
