@@ -2,10 +2,10 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — changes process-wide MCP publication, runtime ownership, a public refresh control, and one importable aggregate API.
-**Decision record:** [ADR 0350](../adr/0350-mcp-source-reconciliation.md)
+**Decision record:** [ADR 0351](../adr/0351-mcp-source-reconciliation.md)
 **Phase:** Minimal stale direct/global MCP source reconciliation
 **Status:** proposed, 2026-09-16. Directing-human decisions are settled; ready for amended Plan / Interface review.
-**Baseline synchronization:** merged `origin/main` at `6c75a42d9cad502685a42f5418f2bc99b9ae6376`; the proposed technical contract is unchanged, while its Proposed ADR and two ADR-named verification functions now use the next free number, 0350, after the rebased stack allocated 0345–0349.
+**Baseline synchronization:** merged `origin/main` at `501e5a08b1b145259158124d65a049c6814887ea`; the proposed technical contract is unchanged, while its Proposed ADR and two ADR-named verification functions now use the next free number, 0351, after synchronized main allocated 0350.
 **Delivery:** Split. Runtime publication and additive public controls require contract review. The directing human explicitly authorizes a stacked implementation PR before this Plan PR merges, based on the exact amended plan commit and targeting `plan/mcp-source-reconciliation`; this does not approve or merge either PR, and contract-drift gates remain.
 **Expected tasks:** deferred to orchestration after parent advisory review.
 **Issue:** [#1511](https://github.com/stacklok/mecatl/issues/1511) — tracks the work; this plan does not close it.
@@ -28,7 +28,7 @@ This amendment replaces the prior digest/binding/revocation design with the orig
 
 ## Interface contract
 
-- **gRPC / protobuf:** Add unary `HarnessService.RefreshMcpSources(RefreshMcpSourcesRequest) returns (RefreshMcpSourcesResponse)`. Request: `string session_id = 1`. Response: `uint64 revision = 1`, `bool changed = 2`. `revision` identifies the successfully pinned active runtime snapshot whose direct names were considered for the request (and, when needed, granted); it need not still be the latest revision when delivery completes. `changed` compares the request's observed active snapshot before and after its shared reconciliation cycle and reports whether that cycle published a different runtime or the precise authority union added names; a coalesced successor that supersedes the pinned snapshot does not rewrite this request's response. Add direct-only `ServerCapabilities.mcp_refresh = 30`; field 30 is unallocated on synchronized `origin/main` (`6c75a42d9cad502685a42f5418f2bc99b9ae6376`). Extend `ListMcpSourcesResponse` with `uint64 revision = 2`, `bool stale = 3`, and `bool reconciling = 4`; source rows remain the current published/pre-shadow inventory and the call performs no independent probe. `stale` also covers candidate/source degradation; no separate absent `degraded` field is implied. Add bodyless HTTP `POST /v1/sessions/{id}/mcp-refresh`. Existing broker RPC/HTTP/capability surfaces are unchanged.
+- **gRPC / protobuf:** Add unary `HarnessService.RefreshMcpSources(RefreshMcpSourcesRequest) returns (RefreshMcpSourcesResponse)`. Request: `string session_id = 1`. Response: `uint64 revision = 1`, `bool changed = 2`. `revision` identifies the successfully pinned active runtime snapshot whose direct names were considered for the request (and, when needed, granted); it need not still be the latest revision when delivery completes. `changed` compares the request's observed active snapshot before and after its shared reconciliation cycle and reports whether that cycle published a different runtime or the precise authority union added names; a coalesced successor that supersedes the pinned snapshot does not rewrite this request's response. Add direct-only `ServerCapabilities.mcp_refresh = 30`; field 30 is unallocated on synchronized `origin/main` (`501e5a08b1b145259158124d65a049c6814887ea`). Extend `ListMcpSourcesResponse` with `uint64 revision = 2`, `bool stale = 3`, and `bool reconciling = 4`; source rows remain the current published/pre-shadow inventory and the call performs no independent probe. `stale` also covers candidate/source degradation; no separate absent `degraded` field is implied. Add bodyless HTTP `POST /v1/sessions/{id}/mcp-refresh`. Existing broker RPC/HTTP/capability surfaces are unchanged.
 - **Exported Go APIs / interfaces:** Add `engine/session.(*Session).GrantToolAuthority([]string) error`, additive idempotent `engine/agent.(*Supervisor).Close()`, and `engine/agent.ErrSupervisorClosed`. `GrantToolAuthority` clones the input and validates every added name as non-empty, valid UTF-8, control-free, and at most 256 bytes, then stable-unions it into already-bound authority; duplicate input or existing names are idempotent. A rejected batch is nonmutating, and unrelated existing names are neither revalidated nor altered. It preserves unrelated authority axes and all other aggregate state; accepts only idle or completed state with no pending control; and never reopens completed state. `Supervisor.Close` cancels an active run, waits for settlement, and performs fork, inline-MCP closer, cancellation, registry/liveness, and other enrolled-member cleanup exactly once across repeated or concurrent calls; `Run` uses the same close path. Enrolment after close or run start returns `ErrSupervisorClosed`. Ordinary-root/provenance/owner checks stay in Service/composition. No new authority field, digest helper, agent run option, source port, or ToolHive import enters `engine/`.
 - **Tool schemas:** No model-visible tool is added or changed. Current catalog membership intersects existing exact-name authority. An authority-granted but catalog-absent call returns the exact permanent error `tool is currently unavailable; do not retry unless the catalog changes`; an ungranted absent name retains existing unknown-tool behavior.
 - **CLI / config:** Add no flag, key, URL rule, selector, credential input, or poll tuning. ToolHive discovery alone enables bounded automatic polling. Mecatui adds argument-free `/mcp-refresh`: direct-only capability invokes only `RefreshMcpSources`; broker-only capability invokes only `ConnectWorkspaceServices` with existing consent/cancellation/disclosure. Both/neither incompatible modes or missing collaborators fail closed. `/tools-connect` remains a deprecated broker-only alias and `/tools-cancel` is unchanged.
@@ -40,7 +40,7 @@ This amendment replaces the prior digest/binding/revocation design with the orig
 
 ### Scenario 1 — Ordered sources reconcile automatically and boundedly
 
-The production Build path constructs one reconciler over the existing ordered source resolver. ToolHive polling, current-runtime list notifications, and manual requests enter the same bounded coalescing path defined by [ADR 0350](../adr/0350-mcp-source-reconciliation.md).
+The production Build path constructs one reconciler over the existing ordered source resolver. ToolHive polling, current-runtime list notifications, and manual requests enter the same bounded coalescing path defined by [ADR 0351](../adr/0351-mcp-source-reconciliation.md).
 
 **Acceptance:**
 - AC1.1: Configured/static entries retain precedence over ToolHive collisions and pre-shadow source rows remain visible. Source failure retains LKG; successful empty withdraws that source. The production source-resolution path, not a synthetic merge helper alone, proves all cases.
@@ -50,11 +50,11 @@ The production Build path constructs one reconciler over the existing ordered so
   - verify: `TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix`
 - AC1.3: Source, server, tool/list, cycle, and retained-runtime bounds fail stale with bounded secret-safe diagnostics. Finite Service/reconciler constants separately cap active-list cardinality, total candidate page count and bytes, per-refresh union grant count, and accumulated historical granted names before save; boundary behavior is tested without exporting another engine field or reviving a public/global 512-record bound. Automatic cycles never invoke OAuth/browser consent and shutdown joins polling/reconciliation.
   - named subcases: `active-list-bound`, `candidate-page-byte-bound`, `union-grant-bound`, `historical-accumulation-bound`, `no-public-global-512-bound`, `consent-never-launched`, `shutdown-joins`
-  - verify: `TestADR_0350_ReconciliationBoundsConsentAndShutdown`
+  - verify: `TestADR_0351_ReconciliationBoundsConsentAndShutdown`
 
 ### Scenario 2 — Complete runtimes publish atomically and drain safely
 
-A candidate builds a complete manager/provider/tool/source snapshot and generation-bound `assembleCatalog` contribution. Publication atomically swaps current runtime only after candidate completion, preserving [ADR 0350](../adr/0350-mcp-source-reconciliation.md)'s consistency boundary.
+A candidate builds a complete manager/provider/tool/source snapshot and generation-bound `assembleCatalog` contribution. Publication atomically swaps current runtime only after candidate completion, preserving [ADR 0351](../adr/0351-mcp-source-reconciliation.md)'s consistency boundary.
 
 **Acceptance:**
 - AC2.1: A complete candidate publishes additions and removals, including successful empty. Candidate equality compares bounded runtime metadata/config for tools, resources, prompts, and resolved source/server state—not a durable security/authority digest. An unchanged candidate leaves revision, published engine/factory contribution, caches, and retirement state byte-for-byte unchanged and is closed/discarded if one was built. Changed all-or-nothing state may reconnect the full desired server set at bounded cost. Any connect/initialize/list/validation failure closes the entire candidate, retains the previous usable runtime, marks the same `stale` status, and delays otherwise valid changes until a later successful retry.
@@ -68,14 +68,14 @@ A candidate builds a complete manager/provider/tool/source snapshot and generati
 
 ### Scenario 3 — Name authority filters availability and widens only explicitly
 
-The current runtime contributes only active direct names. Existing authority remains name-based and the aggregate supplies one narrow union operation under [ADR 0350](../adr/0350-mcp-source-reconciliation.md).
+The current runtime contributes only active direct names. Existing authority remains name-based and the aggregate supplies one narrow union operation under [ADR 0351](../adr/0351-mcp-source-reconciliation.md).
 
 **Acceptance:**
 - AC3.1: A removed granted name is absent from model specs and dispatch, and a stale generated call gets exactly `tool is currently unavailable; do not retry unless the catalog changes`. An ungranted absent name stays an unknown-tool error. Exact-name reappearance automatically becomes available under the existing grant; same-name endpoint/schema/read-only drift requires no regrant.
   - verify: `TestMCPSourceReconciliation_Scenario3_NameAuthorityAvailabilityMatrix`
 - AC3.2: `Session.GrantToolAuthority` clones its input, rejects the whole batch without mutation unless every added name is non-empty, valid UTF-8, control-free, and at most 256 bytes, and stable-unions accepted names in input order. Duplicate input and already-present names are idempotent. It does not revalidate, reorder, or alter unrelated existing names or authority axes and preserves conversation/history, placement, owner, counters, and the exact lifecycle state; pending controls and states other than idle/completed are rejected without mutation.
   - named subcases: `invalid-batch-atomic`, `input-cloned`, `duplicate-stable-union`, `unrelated-legacy-name-untouched`, `name-256-byte-boundary`, `state-preservation`
-  - verify: `TestADR_0350_GrantToolAuthorityPreservesAggregateState`
+  - verify: `TestADR_0351_GrantToolAuthorityPreservesAggregateState`
 - AC3.3: Delegated authority remains the existing name intersection. Children started before publication inherit the pinned old runtime; children started after publication use the new active set. Resume permits an already granted same name when currently available and returns the permanent unavailable result when absent, without digest or migration state.
   - verify: `TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics`
 
