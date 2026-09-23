@@ -6,8 +6,12 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/noopauthority"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 func TestGrantedMissingToolIsPermanentlyUnavailableWithoutDispatch(t *testing.T) {
@@ -66,4 +70,44 @@ func TestUngrantedMissingToolRetainsUnknownBehavior(t *testing.T) {
 		}
 	}
 	t.Fatal("missing unknown tool result")
+}
+
+func TestResumedApprovalOfGrantedMissingToolIsPermanentlyUnavailable(t *testing.T) {
+	const (
+		name = "mcp__gone__tool"
+		want = "tool is currently unavailable; do not retry unless the catalog changes"
+	)
+	policy := permpolicy.NewPolicy(nil, permstore.New()) // mutating tools ask by default
+	sess := authoritySession(t, name)
+
+	present := &fakeTool{name: name, readOnly: false,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ran"), nil
+		}}
+	e1 := newEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("g1", name, `{}`))),
+		Catalog: catalogWith(t, present),
+		Policy:  policy,
+	})
+	askID, restored := driveToAwaiting(t, e1, sess, agent.MemEnv("/ws"), "call it")
+
+	e2 := newEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("done")),
+		Catalog: catalogWith(t),
+		Policy:  policy,
+	})
+	evs := resumeEvents(e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce))
+
+	if nonError, total := resultsFor(evs, "g1"); nonError != 0 || total != 1 {
+		t.Fatalf("results for g1: non-error=%d total=%d, want exactly one error result", nonError, total)
+	}
+	for _, ev := range evs {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "g1" {
+			if ev.ToolResult.Content != want {
+				t.Fatalf("resumed result = %q, want %q", ev.ToolResult.Content, want)
+			}
+			return
+		}
+	}
+	t.Fatal("no tool result for g1")
 }
