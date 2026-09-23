@@ -129,6 +129,8 @@ PR after verification. There is no cleanup or status-only PR.
 ## Plans
 
 - [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
+- [Provider-scoped model discovery](provider-model-discovery.md) — one composition-owned provider lifecycle for shared discovery, ordered publication, context-safe admission, and truthful retry recovery. Status: draft.
+
 - [Purpose-attributed auxiliary token usage](auxiliary-token-usage.md) — records every reachable session-associated auxiliary LLM call in the canonical ledger under a purpose-specific provider/model-attributed kind, without changing main-run accounting or budgets. Status: proposed.
 - [Root-conversation provider correlation](root-session-provider-correlation.md) — adds an outbound-only root-session header for grouping delegated and routed model requests while preserving the active session ID and its ingress-affinity contract. Status: proposed; awaiting Plan / Interface review.
 - [Acceptance-proof resolution efficiency](acceptance-proof-resolution-efficiency.md) — keeps plan-proof resolution fail closed while avoiding duplicate task execution within the existing Doc validation runner; Vitest batching is deferred. Status: proposed.
