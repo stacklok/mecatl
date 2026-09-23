@@ -127,12 +127,12 @@ func TestMecatuiTypedScrollbackModel_Scenario2_TransitionsAndSnapshotsOwnNestedD
 		t.Fatalf("subagent snapshot leaked mutation: %#v", got.Update)
 	}
 
-	c.AddToolCall(ToolCall{ID: "team"})
-	if !c.StartTeam("team", TeamStart{TeamID: "team-1"}) {
+	c.Tools().Add(ToolCall{ID: "team"})
+	if !c.Teams().Start("team", TeamStart{TeamID: "team-1"}) {
 		t.Fatal("start team")
 	}
 	team := TeamUpdate{Lanes: []TeamLane{{Name: "worker", Trace: []TraceEntry{{Text: "trace"}}}}, Tasks: []Task{{ID: "task", Dependencies: []string{"dep"}}}, Findings: []Finding{{Member: "worker", Body: "finding"}}}
-	if !c.UpdateTeam("team", team) {
+	if !c.Teams().Update("team", team) {
 		t.Fatal("update team")
 	}
 	team.Lanes[0].Trace[0].Text = "mutated input"
@@ -143,5 +143,46 @@ func TestMecatuiTypedScrollbackModel_Scenario2_TransitionsAndSnapshotsOwnNestedD
 	stored := c.SnapshotAt(1).Payload.(TeamCardSnapshot)
 	if stored.Update.Lanes[0].Trace[0].Text != "trace" || stored.Update.Tasks[0].Dependencies[0] != "dep" {
 		t.Fatalf("team snapshot leaked mutation: %#v", stored.Update)
+	}
+}
+
+func TestComponentFacadesAdvanceRevisionsAndOwnNestedData(t *testing.T) {
+	var c Conversation
+	messages := c.Messages()
+	messages.AddAssistant(AssistantInput{Reasoning: "thinking", ReasoningStreaming: true})
+	if !messages.AppendAssistant("answer") {
+		t.Fatal("append assistant")
+	}
+	if got := c.SnapshotAt(0).Revision; got != 1 {
+		t.Fatalf("assistant revision = %d, want 1", got)
+	}
+
+	call := ToolCall{ID: "sub", Artifacts: []Artifact{{Data: []byte("call")}}}
+	c.Tools().Add(call)
+	call.Artifacts[0].Data[0] = 'X'
+	if !c.Subagents().Start("sub", SubagentStart{Routing: RoutingDecision{Confidence: Float64(0.8)}}) {
+		t.Fatal("start subagent")
+	}
+	update := SubagentUpdate{
+		Trace:     []TraceEntry{{Text: "trace"}},
+		Artifacts: []Artifact{{Data: []byte("result")}},
+	}
+	if !c.Subagents().Update("sub", update) {
+		t.Fatal("update subagent")
+	}
+	update.Trace[0].Text = "mutated"
+	update.Artifacts[0].Data[0] = 'X'
+
+	snapshot := c.SnapshotAt(1)
+	if snapshot.Revision != 2 {
+		t.Fatalf("subagent revision = %d, want 2", snapshot.Revision)
+	}
+	subagent := snapshot.Payload.(SubagentCardSnapshot)
+	if string(subagent.Call.Artifacts[0].Data) != "call" || subagent.Update.Trace[0].Text != "trace" || string(subagent.Update.Artifacts[0].Data) != "result" {
+		t.Fatalf("component input mutation leaked into snapshot: %#v", subagent)
+	}
+	subagent.Update.Trace[0].Text = "snapshot mutation"
+	if got := c.SnapshotAt(1).Payload.(SubagentCardSnapshot).Update.Trace[0].Text; got != "trace" {
+		t.Fatalf("snapshot mutation leaked into conversation: %q", got)
 	}
 }
