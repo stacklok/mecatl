@@ -230570,6 +230570,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790092629559,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3aebbb5eeb0450a501a6292f16c6e89c402f2c2f",
+          "message": "refactor(mecatui): prepare conversation cards functionally (#1744)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-22T17:39:19-07:00",
+          "tree_id": "045b79f0972e824af457971e6a6bff382db75a48",
+          "url": "https://github.com/stacklok/mecatl/commit/3aebbb5eeb0450a501a6292f16c6e89c402f2c2f"
+        },
+        "date": 1790124602593,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -334803,6 +334837,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790124599613,
+  "lastUpdate": 1790124603561,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
