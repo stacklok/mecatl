@@ -154,7 +154,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*
-- [0352 — Session-scoped agent identity](./0352-session-scoped-agent-identity.md) *(proposed)*
+- [0353 — Session-scoped agent identity](./0353-session-scoped-agent-identity.md) *(proposed)*
 - [0013 — Agent definitions](./0013-agent-definitions.md)
 - [0014 — Agent teams](./0014-agent-teams.md)
 - [0015 — Background subagents](./0015-background-subagents.md)

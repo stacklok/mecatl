@@ -1,4 +1,4 @@
-# ADR 0352 — Session-scoped agent identity
+# ADR 0353 — Session-scoped agent identity
 
 - Status: Proposed
 - Date: 2026-09-22
