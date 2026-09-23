@@ -260479,6 +260479,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790172895989,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c9170514776286aa093284e0e24a3d93ae605f0",
+          "message": "fix: preserve workspace adapter during command discovery (#1799)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-23T16:27:44+02:00",
+          "tree_id": "a19dcb5f567a0c31b56fbd0087ca5dd042d49651",
+          "url": "https://github.com/stacklok/mecatl/commit/0c9170514776286aa093284e0e24a3d93ae605f0"
+        },
+        "date": 1790174333818,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3283,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 75.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1152,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -341571,6 +341610,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790174330800,
+  "lastUpdate": 1790174334779,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
