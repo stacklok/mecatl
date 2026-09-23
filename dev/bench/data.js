@@ -262681,6 +262681,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790181121565,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f6a13d6d1351a693b8db1fe18aaeb5ee220b2b7",
+          "message": "docs: plan MCP source reconciliation (#1527)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T21:10:57+02:00",
+          "tree_id": "592cbfba16540adff42c1429f298d5eba311a057",
+          "url": "https://github.com/stacklok/mecatl/commit/2f6a13d6d1351a693b8db1fe18aaeb5ee220b2b7"
+        },
+        "date": 1790191367795,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3318,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -344457,6 +344496,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790191364977,
+  "lastUpdate": 1790191368759,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
