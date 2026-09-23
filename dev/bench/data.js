@@ -234178,6 +234178,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790168676591,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "773c6c4220c6cc8afa9e80976eb2e739efdce367",
+          "message": "test(studio): integration suite over the real SDK against mecated --mock (#1767)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-23T15:14:42+02:00",
+          "tree_id": "6f0e30be5579928e85f3c23b8abb7832ac553c1d",
+          "url": "https://github.com/stacklok/mecatl/commit/773c6c4220c6cc8afa9e80976eb2e739efdce367"
+        },
+        "date": 1790169976634,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -340094,6 +340128,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790169973686,
+  "lastUpdate": 1790169977461,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
