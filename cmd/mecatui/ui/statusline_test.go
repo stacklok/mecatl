@@ -153,13 +153,13 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 func TestStatusHyperlinks_Scenario1_ValidLinkEmitsPairedOSC8(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	open := "\x1b]8;;https://example.test/docs\a"
-	close := "\x1b]8;;\a"
+	hyperlinkClose := "\x1b]8;;\a"
 	for _, surface := range []customization.Surface{
 		customization.Render(`<header><link href="https://example.test/docs">docs</link></header>`, nil).Header,
 		customization.Render(`<footer><link href="https://example.test/docs">docs</link></footer>`, nil).Footer,
 	} {
 		got := renderStatusSurface(th, surface, 20, false)
-		if openAt, textAt, closeAt := strings.Index(got, open), strings.Index(got, "docs"), strings.LastIndex(got, close); openAt < 0 || textAt < openAt || closeAt < textAt {
+		if openAt, textAt, closeAt := strings.Index(got, open), strings.Index(got, "docs"), strings.LastIndex(got, hyperlinkClose); openAt < 0 || textAt < openAt || closeAt < textAt {
 			t.Fatalf("link output %q does not contain paired OSC 8 hyperlink", got)
 		}
 		if !strings.Contains(got, "\x1b[4;") {
@@ -173,11 +173,11 @@ func TestStatusHyperlinks_Scenario1_AdjacentSpansDoNotLeakHyperlink(t *testing.T
 	spans := customization.Render(`<footer><text>before </text><link href="https://example.test/docs">docs</link><accent> after</accent></footer>`, nil).Footer.Spans
 	got := renderStatusSpans(th, spans)
 	open := "\x1b]8;;https://example.test/docs\a"
-	close := "\x1b]8;;\a"
-	if strings.Count(got, open) != 1 || strings.Count(got, close) != 1 || !strings.Contains(got, close+"\x1b[") {
+	hyperlinkClose := "\x1b]8;;\a"
+	if strings.Count(got, open) != 1 || strings.Count(got, hyperlinkClose) != 1 || !strings.Contains(got, hyperlinkClose+"\x1b[") {
 		t.Fatalf("adjacent output %q has leaking hyperlink boundaries", got)
 	}
-	if strings.Index(got, close) > strings.LastIndex(got, " after") {
+	if strings.Index(got, hyperlinkClose) > strings.LastIndex(got, " after") {
 		t.Fatalf("unlinked text remains inside hyperlink: %q", got)
 	}
 }
