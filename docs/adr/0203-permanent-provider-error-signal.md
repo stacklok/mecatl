@@ -132,7 +132,7 @@ The pieces:
 
 ## See also
 
-- [docs/design/IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) — dense
+- [docs/design/IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — dense
   mechanics ("Permanent provider-error signal" section).
 - [docs/architecture/agent-loop.md](../architecture/agent-loop.md) — the `result` event
   now carries `Permanent`.

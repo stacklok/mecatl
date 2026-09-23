@@ -25,7 +25,7 @@ for the same kind of artifact is overhead with no payoff.
 - `docs/design/` keeps only the **non-records**: the live status tracker
   ([PRODUCTION-READINESS.md](../design/PRODUCTION-READINESS.md)) and the dense
   living implementation reference
-  ([IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md)), plus the
+  ([IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)), plus the
   documentation/citation conventions in [its README](../design/README.md).
 - The single-source-of-truth split from ADR 0002 **still holds**: current behaviour
   in `docs/architecture.md`, mutable status in `PRODUCTION-READINESS.md`, the *why*

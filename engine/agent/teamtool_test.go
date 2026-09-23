@@ -281,8 +281,7 @@ func TestTeamToolFormsTeamAndIsolatesContent(t *testing.T) {
 // de-dup, no-Member, and the authoritative TERMINAL state (the last live snapshot and the
 // settled team.end both show completed). Per-transition visibility is best-effort; making
 // it a guarantee would require capturing the snapshot at mutation time and is a separate,
-// deliberate emit-path change (see the "team-snapshot fidelity note" in
-// docs/design/IMPLEMENTATION-NOTES.md), not a test fix.
+// deliberate emit-path change, not a test fix.
 func TestTeamToolStreamsTaskSnapshots(t *testing.T) {
 	// The lead creates the task on its first turn, then idles. The worker's first
 	// turn is a no-op (the task does not exist yet in round 1); the supervisor then
@@ -718,10 +717,56 @@ func TestMemberSessionIDRoundTripsTeamToolPath(t *testing.T) {
 		if got.ID != id {
 			t.Errorf("loaded session id = %q, want %q", got.ID, id)
 		}
-		wantRelationship := session.SessionRelationship{TeamID: publishedTeamID, MemberName: name, ParentSessionID: sess.ID, ParentIncarnation: sess.Incarnation()}
+		wantRelationship := session.SessionRelationship{TeamID: publishedTeamID, MemberName: name, ParentSessionID: sess.ID, ParentIncarnation: sess.Incarnation(), CallID: "p1"}
 		if got.Kind != session.SessionKindTeamMember || got.Relationship != wantRelationship {
 			t.Errorf("member metadata = (%q, %+v), want (%q, %+v)", got.Kind, got.Relationship, session.SessionKindTeamMember, wantRelationship)
 		}
+	}
+}
+
+func TestTeamToolMemberRelationshipsBindExactParentCall(t *testing.T) {
+	providers := map[string]*mockllm.Provider{
+		"lead": mockllm.New(
+			mockllm.TextTurn("delegating A"), mockllm.TextTurn("report A"),
+			mockllm.TextTurn("delegating B"), mockllm.TextTurn("report B"),
+		),
+		"worker": mockllm.New(mockllm.TextTurn("done A"), mockllm.TextTurn("done B")),
+	}
+	store := memstore.New()
+	teamTool := agent.NewTeamTool(teamToolFactory(t, providers), agent.WithTeamToolStore(store))
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("team-a", "Team", `{"goal":"A","members":[{"name":"lead","role":"coordinate"},{"name":"worker","role":"work"}]}`)),
+		mockllm.ToolCallTurn(toolCall("team-b", "Team", `{"goal":"B","members":[{"name":"lead","role":"coordinate"},{"name":"worker","role":"work"}]}`)),
+		mockllm.TextTurn("done"),
+	)
+	sess := newSession(t, session.Limits{})
+	evs := drain(newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, teamTool)}).Run(
+		context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "run both teams"},
+	))
+
+	starts := map[string]*session.TeamPayload{}
+	for _, ev := range evs {
+		if ev.Type == session.EvTeamStart && ev.Team != nil {
+			starts[ev.Team.ParentCallID] = ev.Team
+		}
+	}
+	for _, callID := range []string{"team-a", "team-b"} {
+		start := starts[callID]
+		if start == nil {
+			t.Fatalf("missing team.start for %q", callID)
+		}
+		for _, member := range start.Roster {
+			got, err := store.Load(t.Context(), agent.MemberSessionID(start.TeamID, member.Name))
+			if err != nil {
+				t.Fatalf("load %s/%s: %v", callID, member.Name, err)
+			}
+			if got.Relationship.CallID != session.ToolCallID(callID) {
+				t.Fatalf("%s/%s relationship call = %q, want %q", callID, member.Name, got.Relationship.CallID, callID)
+			}
+		}
+	}
+	if starts["team-a"].Roster[0].MemberSessionID == starts["team-b"].Roster[0].MemberSessionID {
+		t.Fatal("two real Team calls reused a member identity")
 	}
 }
 

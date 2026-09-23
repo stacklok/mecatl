@@ -139,8 +139,12 @@ Before reporting done, all of these must pass:
 - `task lint` — golangci-lint v2 + go vet, both modules (the depguard
   allowlist + the DAG test enforce the layering rule; a stray
   engine→internal import fails here).
-- `task test` — the full offline suite (root module + engine module +
-  the GOWORK=off engine-standalone hygiene proof), `-race`.
+- `task test` — the complete fast offline suite (root module + engine module +
+  authn/provider modules + GOWORK=off standalone hygiene proofs), without the race
+  detector. This is the worker completion gate.
+- For concurrency changes, run targeted `go test -race` commands for the affected
+  package while iterating. The orchestrator runs the full `task test:race` gate after
+  integration and before the PR is ready.
 - **If you touched any markdown:** `task docs` — configuration-reference regeneration +
   the matlatl strict link gate.
 - **If you touched the engine's exported API:** `task api:update` (commit

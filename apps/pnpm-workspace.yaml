@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+
+packages:
+  - contracts
+  - server
+  - web
+
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@stacklok-oss/mecatl-sdk@0.3.0'

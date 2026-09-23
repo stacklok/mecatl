@@ -221,6 +221,10 @@ models:
     router: coder
     title: quick
   router:
+    backend: jev
+    jev:
+      minimum-confidence: 0.5
+      maximum-input-bytes: 16384
     default-category: medium
     categories:
       - name: large
@@ -237,6 +241,65 @@ models:
         description: Work requiring visual input.
         model: image
 ```
+
+This example selects the Jev classifier backend. Set `TYPESAFE_API_KEY` in the
+server process environment. When Jev is active, Mecatl sends each eligible
+delegated task description and the configured category names and descriptions
+to Typesafe. Keep the default `backend: llm` if delegated task text must remain
+inside your configured LLM path.
+
+Jev uses model `jev-1.13.0` by default. `minimum-confidence: 0` accepts every
+valid choice; a higher value from `0` through `1` makes a lower-confidence
+choice fall back to the inherited model. The optional `base-url` must use HTTPS,
+except for loopback HTTP development endpoints. Jev routing accepts up to 255
+categories. `maximum-input-bytes` defaults to 16384 and accepts an integer from
+1 through 65536. Mecatl measures the complete rendered request text against this
+limit and never permits more than 64 KiB. It does not truncate an over-limit task,
+instructions, or taxonomy. Router observability uses the same backend-neutral
+outcomes for both classifiers: `classifier-error`, `bad-verdict`, `unknown-category`,
+`low-confidence`, `input-over-limit`, `capacity-timeout`, `cancelled`, and `timeout`.
+In particular, a deadline is reported as `timeout`; `cancelled` means caller cancellation.
+All remain fail-soft and count toward the existing three-miss per-run breaker.
+`default-category: medium` is an advisory instruction for either backend when no
+category clearly fits. It does not force a fallback category. A named model on a
+delegation or agent definition is deterministic and takes precedence over category
+routing; categories are advisory classification for otherwise unpinned work.
+
+### Diagnose a delegated model decision
+
+Start with the model line on the live delegation card. A successful decision keeps
+the compact `routed: <category> → <model>` form. A fallback names the model that
+actually ran and can add the rejected candidate and its confidence comparison:
+
+```text
+model: gpt-6-astra · fallback: low-confidence
+candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50
+```
+
+The candidate is evidence about the classifier result. It is not the model that
+ran. The `model:` value remains the actual model after a fallback.
+
+Press **F6** and focus the child, Parallel branch, or team member for the complete
+decision. The detail identifies the configured backend and classifier, candidate,
+actual model, final reason, threshold, miss count, and breaker state. A zero Jev
+threshold appears as disabled. LLM routing has no native confidence score, so its
+detail shows confidence as unavailable instead of `0.00`. Pin, fork, resume, and
+breaker skips show the actual model and why the classifier was not called.
+
+The live view explains the current run. To inspect retained evidence after the run,
+start a target-bound debugger with `mecatui debug <SESSION_ID>` or
+`mecatui connect <ADDRESS> debug <SESSION_ID>`, then ask it to use
+`InspectSession` with the `delegation` view. The debugger reads the stored
+Subagent, Parallel, and Team start events. If an older or incompletely persisted
+event has no routing decision, the evidence remains absent. Do not infer that a
+classifier ran from the displayed model or classifier configuration.
+
+Effective configuration tells you which backend, classifier, taxonomy, threshold,
+and category mappings the server can use. Runtime evidence tells you what happened
+for one delegation. Jev confidence is a backend-native score, not measured accuracy.
+Calibrate a nonzero threshold against a representative labeled workload from your
+own tasks. Mecatl does not provide a router evaluation command or a universal
+recommended threshold.
 
 These mechanisms are independent:
 

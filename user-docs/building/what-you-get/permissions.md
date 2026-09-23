@@ -183,6 +183,14 @@ Memory tools, `soul:apply`, and read-only child observability are also built-in
 allows that higher scopes can override. `Team` asks because it can create
 mutating members.
 
+For a main session on a local filesystem, `Read` and `ListDir` can access an
+external absolute target when policy authorizes it. The `auto` and `yolo`
+postures allow this read-only access; `strict` and `trusted` ask first. Configured
+asks and denies still take precedence. External access remains unavailable to
+children and virtual workspace backends, and `/proc`, `/sys`, and `/dev` remain
+blocked. For an external `ListDir`, choose a specific directory: listing the
+filesystem root `/` outside the workspace is unsupported.
+
 ### Effects: allow, ask, deny
 
 - **`allow`** runs the call without prompting.

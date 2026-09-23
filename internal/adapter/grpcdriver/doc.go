@@ -6,10 +6,8 @@
 //   - SessionStore implements port.SessionStore over SessionStoreService.
 //   - MemoryStore implements tool.MemoryStore over MemoryStoreService.
 //   - NewSessionStoreServer / NewMemoryStoreServer wrap an in-process store
-//     as the generated server interfaces (bufconn conformance fixtures today;
-//     promoting them to an importable location for external driver authors is
-//     deliberately deferred to a future DRIVERS.md — see
-//     docs/design/IMPLEMENTATION-NOTES.md).
+//     as the generated server interfaces; see docs/architecture/observability.md
+//     for the remote-driver boundary.
 //
 // # Trust model
 //

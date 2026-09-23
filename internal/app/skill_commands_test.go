@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,35 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 )
+
+type globFaultWorkspace struct {
+	tool.Workspace
+	err error
+}
+
+func (w globFaultWorkspace) Glob(context.Context, string) ([]string, error) {
+	return nil, w.err
+}
+
+func TestCommandListerPropagatesWorkspaceGlobFault(t *testing.T) {
+	fault := errors.New("virtual workspace glob failed")
+	cfg := Config{EnableCommands: true}
+	// Add a source-backed child so this exercises the concrete
+	// MultiExpander -> DirCommandExpander.Glob path. The dir child has precedence
+	// and its genuine enumeration fault must stop discovery.
+	cfg.commandSource = stubCommandSource{}
+	lister := buildCommandLister(cfg, nil)
+	if lister == nil {
+		t.Fatal("buildCommandLister returned nil")
+	}
+	_, err := lister.List(t.Context(), globFaultWorkspace{
+		Workspace: memfs.NewWorkspace("/virtual"),
+		err:       fault,
+	})
+	if !errors.Is(err, fault) {
+		t.Fatalf("List error = %v, want workspace Glob fault", err)
+	}
+}
 
 // TestSkillCommandBridgeExpandsSkillBody proves the WHOLE wiring: a discovered
 // skill is invocable as /<skill-name> and the expander injects the skill BODY

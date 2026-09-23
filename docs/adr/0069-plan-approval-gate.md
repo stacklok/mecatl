@@ -12,7 +12,7 @@
   completed path, Reopen-recoverable): the run STOPS, the session stays `ModePlan`, and the
   operator's NEXT typed prompt drives the revision — the model does NOT keep iterating
   in-turn with no operator input. The living docs (`docs/architecture/agent-loop.md`,
-  `docs/design/IMPLEMENTATION-NOTES.md`) and `engine/CHANGELOG.md`'s `StopPlanIterate` entry
+  [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)) and `engine/CHANGELOG.md`'s `StopPlanIterate` entry
   describe the shipped behaviour; this note corrects the frozen ADR rather than rewriting it.
 
 ## Context
@@ -230,7 +230,7 @@ discipline — no new outlives-a-call resource, no new rehydrate-fidelity ledger
   feature this gate completes.
 - [`docs/architecture/agent-loop.md`](../architecture/agent-loop.md) — the plan-approval
   approve→execute loop (living docs).
-- [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) — the plan
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the plan
   approval subsection (the seam mechanics).
 - [`docs/usage.md`](../usage.md) — the `ApprovePlan` RPC, the `--plan-mode-auto-approve`
   flag, the mecatui plan-approval UX.

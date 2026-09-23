@@ -118,5 +118,5 @@ true of the next change to it.
 - [ADR 0002](./0002-documentation-lifecycle.md) — the lifecycle convention this record follows.
 - [ADR 0027](./0027-cloud-native.md) — the resource inventory and rehydrate-fidelity ledger; `Delete`'s removal order is a row there.
 - [ADR 0020](./0020-diagnostics.md) — the injected `port.Diagnostics` seam the persistence WARN uses.
-- `docs/architecture.md` and `docs/design/IMPLEMENTATION-NOTES.md` — living descriptions of the store's behaviour.
+- `docs/architecture.md` and [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — living descriptions of the store's behaviour.
 - `docs/usage/troubleshooting.md` — the operator workflow for recovering ids from file contents.

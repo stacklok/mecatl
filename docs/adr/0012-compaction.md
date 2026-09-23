@@ -21,7 +21,7 @@ The agent survives long coding sessions without losing its goal or the most-rece
 
 This is the deep reference for how mecatl compresses a
 conversation that has grown past the context window. The terse per-subsystem status
-detail lives in `docs/design/IMPLEMENTATION-NOTES.md` ("Compaction never emits
+detail lives in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) ("Compaction never emits
 unpaired history"); the cloud-native non-destructive archive is owned by
 `docs/adr/0027-cloud-native.md` (Phase 3b). This doc is the rationale and the full
 mechanics; those two stay the status/inventory channels and cross-link back here.
@@ -352,7 +352,7 @@ prompt text only, and the model may overshoot (fail-open).
 
 ## 6. Safety invariants
 
-These have tests that fail if regressed (see `docs/design/IMPLEMENTATION-NOTES.md`,
+These have tests that fail if regressed (see [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md),
 "Compaction never emits unpaired history").
 
 ### Never emit unpaired history

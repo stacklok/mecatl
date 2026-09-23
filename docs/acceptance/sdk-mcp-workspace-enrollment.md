@@ -175,7 +175,7 @@ semantics remain those documented by [ADR 0322](../adr/0322-broker-mcp-status.md
 
 The SDK exposes the server's existing whole-bundle operations without copying mecatui's phase
 machine. Eligibility and atomic replacement remain in `internal/adapter/server/workspace_enrollment.go`
-as summarized in [the implementation notes](../design/IMPLEMENTATION-NOTES.md).
+as summarized in [the SDK architecture](../architecture.md#typescript-sdk).
 
 **Acceptance:**
 - AC2.1: Connect performs one start-or-observe target RPC and projects pending, connected, denied, cancelled, expired, failed, and unknown responses. Every success has a nonempty enrollment ID and positive required-service count; a nonempty presentation URL is accepted only for pending when it is absolute HTTP(S), and the SDK never opens, renders, logs, caches, persists, or automatically polls it.

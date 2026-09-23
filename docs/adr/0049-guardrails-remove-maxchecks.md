@@ -43,4 +43,4 @@ The two remaining cost/abuse guards from 0021's cost model are unchanged: **`min
 - [ADR 0021](./0021-guardrails.md) — the guardrails feature whose cost-model / call-cap clause this supersedes (everything else carries over).
 - [ADR 0046](./0046-guardrails-slot-enable.md) — the guardrails enable-model ADR (configure = enable); this ADR does not touch enable, only cost bounding.
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).
-- Living docs: [`docs/usage.md`](../usage.md) (the guardrails section + the `--guardrails-model` / `--guardrails` flag rows), [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) (guardrails cost model).
+- Living docs: [`docs/usage.md`](../usage.md) (the guardrails section + the `--guardrails-model` / `--guardrails` flag rows), [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (guardrails cost model).

@@ -55,7 +55,10 @@ You need:
 
 The chart creates the ServiceAccount and namespace-scoped permissions for
 Kubernetes Leases. It does not create production Redis, TLS Secrets, provider
-Secrets, gateways, or general NetworkPolicies.
+Secrets, gateways, or general NetworkPolicies. A deployment that selects
+`models.router.backend: jev` must project `TYPESAFE_API_KEY` from a Kubernetes
+Secret and allow HTTPS egress to `api.typesafe.ai`; eligible delegated task text
+leaves the cluster for classification.
 
 ## Quick start
 

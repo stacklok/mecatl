@@ -58,6 +58,7 @@ func authoritativeKeys() []string {
 	)
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
+	collect("models.router.jev", permconfig.JevRouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
 	collect("openrouter", permconfig.OpenRouterSection{})
 	collect("openrouter.models", permconfig.OpenRouterModelRoute{})

@@ -130,5 +130,5 @@ overlay never runs on that path.
 - [ADR 0014 — Agent teams](./0014-agent-teams.md): the read-only-member worktree
   isolation this overlay completes.
 - `docs/architecture/parallelism.md`: the forker section (the living "how it works").
-- `docs/design/IMPLEMENTATION-NOTES.md`: the forker/subagent worktree subsystem notes.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md): the forker/subagent worktree subsystem notes.
 - `docs/design/PRODUCTION-READINESS.md`: the fork-join / worktree shipped-status row.

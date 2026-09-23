@@ -177,7 +177,7 @@ type fakeLister struct {
 	cmds []server.Command
 }
 
-func (f fakeLister) List(_ context.Context, _ string) ([]server.Command, error) {
+func (f fakeLister) List(_ context.Context, _ tool.Workspace) ([]server.Command, error) {
 	return f.cmds, nil
 }
 

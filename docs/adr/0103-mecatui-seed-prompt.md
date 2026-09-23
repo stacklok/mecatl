@@ -128,5 +128,5 @@ Harder / accepted costs:
   reconciled against.
 - [`docs/tui.md`](../tui.md) — the operator-facing flag reference and the "Seeding an initial
   prompt" section.
-- [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) — the living
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the living
   per-subsystem mechanics.

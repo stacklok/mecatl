@@ -57,5 +57,5 @@ The wiring is the existing per-rule `Prompt` override: `defaultGuardrailSpecs`' 
 - [ADR 0021](./0021-guardrails.md) — the guardrails feature whose "local tools deliberately not matched" clause this supersedes (for `Bash`).
 - [ADR 0053](./0053-guardrails-default-block.md) — flipped the default rule set to block; this ADR mirrors its supersede-don't-edit precedent against 0021.
 - [ADR 0061](./0061-guardrails-human-override.md) — the one-shot `/guardrail-allow` human override that recovers a residual false-positive the Bash rubric's strict posture still leaves.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the living per-subsystem guardrails reference (the "Default-on with no rules" paragraph).
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the living per-subsystem guardrails reference (the "Default-on with no rules" paragraph).
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

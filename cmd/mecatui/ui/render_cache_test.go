@@ -111,6 +111,10 @@ var oracleSteps = []struct {
 		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
 		c.setSubagentStart("call-sub", "dig into the code", "", "", "", "")
 	}},
+	{"setSubagentRoutingDecision", func(c *conversation) {
+		confidence := 0.42
+		c.setSubagentRoutingDecision("call-sub", "child-1", &client.RoutingDecision{Backend: "jev", Confidence: &confidence, Outcome: "fallback"})
+	}},
 	{"addSubagentTool", func(c *conversation) {
 		c.addSubagentTool(client.SubagentMsg{
 			Kind: client.SubagentTool, ParentCallID: "call-sub", ToolName: "Grep", ToolCount: 1,
@@ -182,6 +186,9 @@ var oracleSteps = []struct {
 	{"parallelStart", func(c *conversation) { c.parallelStart("call-par", "first", 2) }},
 	{"parallelBranchStart", func(c *conversation) {
 		c.parallelBranchStart("call-par", 0, "parallel-call-par-0", "fast", "try the fast path", "", "", "", "")
+	}},
+	{"setParallelRoutingDecision", func(c *conversation) {
+		c.setParallelRoutingDecision("call-par", 0, &client.RoutingDecision{Backend: "jev", Outcome: "skipped"})
 	}},
 	{"parallelBranchTool", func(c *conversation) {
 		c.parallelBranchTool(client.ParallelMsg{

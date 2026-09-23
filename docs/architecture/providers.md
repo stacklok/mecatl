@@ -238,7 +238,7 @@ entries — all the same Responses wire protocol) carries the guard as well as t
 terminal event, so a truncated turn is never promoted to a successful
 `StopEndTurn`. See
 [`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md)
-and `docs/design/IMPLEMENTATION-NOTES.md` for the exact mechanics.
+for the transport rationale; `provider/ssefilter/ssefilter.go` owns frame filtering.
 `buildProvider` returns the registry **and** its default provider so the shared engine
 + every child/fork/team engine keep receiving the single default provider exactly as
 before (the default path is byte-identical). A composition-only `providerConstructor`
@@ -556,8 +556,38 @@ turn routing off, set `disabled: true` in the subtree or pass
 `--subagent-model-router` / `=true` is a harmless no-op (it still parses but neither
 enables nor disables — the router stays governed by the taxonomy). A project-tier
 `models.router:` is **stripped with a WARN**
-(operator-tier only). The classifier itself runs on the `router` model slot (default
-`cheap` tier; an operator `classifier-slot` overrides) — a tiny one-turn call.
+(operator-tier only). The default `backend: llm` classifier itself runs on the
+`router` model slot (default `cheap` tier; an operator `classifier-slot`
+overrides) as a tiny one-turn call.
+
+**Jev backend (ADR 0352).** An operator can instead set `backend: jev`. Composition
+constructs one `internal/adapter/jevrouter` Typesafe client and one eight-slot
+semaphore per Build, then shares them across the shared and per-session engine
+paths. Jev receives the delegated task as System One state and one fixed Choice
+question whose criteria are the operator's category names and descriptions. The
+adapter accepts only an exact offered category and maps that category through the
+same local alias-to-model resolver as the LLM classifier. It does not enter the
+provider registry. Both backends return the engine-owned `ModelRouteResult`, while
+the configured `SubagentModelRouter` wrapper retains backend, classifier model, and
+optional threshold for skipped decisions.
+
+Active Jev requires the environment-only `TYPESAFE_API_KEY`. Its defaults are
+model `jev-1.13.0` and no confidence filter. A configured confidence threshold
+makes lower-confidence choices ordinary misses. Requests queue for at most 10
+seconds, run with a 10-second request deadline and no SDK retries, carry at most
+the operator-configured `maximum-input-bytes` of measured text and 255 categories,
+and accept at most 1 MiB of response data. The input limit defaults to 16384 bytes,
+accepts values from 1 through 65536, and remains capped at 64 KiB in the adapter.
+HTTPS is required except for loopback HTTP endpoints, and redirects are
+disabled. These transport bounds do not bound arbitrary CPU time in SDK JSON
+processing. Every failure remains fail-soft. The adapter returns only a small
+adapter-local typed status; composition maps it to the engine-owned common outcomes
+`classifier-error`, `bad-verdict`, `unknown-category`, `low-confidence`,
+`input-over-limit`, `capacity-timeout`, `cancelled`, or `timeout` before returning the
+shared typed router result. Caller cancellation is distinct from caller, request, and typed SDK
+deadlines, and arbitrary SDK error text is never classified. Reported
+input and output usage survives hits, low-confidence misses, mapping misses, and
+protocol errors that contain validated usage.
 
 **How it fires.** For a default delegation with no per-call `model`, `fork`, or `resume`,
 the `Subagent` `run()` hook calls a composition-built classifier (`RunModelRouter`, role
@@ -617,17 +647,31 @@ deployments (it is orthogonal to the ask-review path).
 gauntlet-#7 safe) when routed; a per-classification INFO rides the existing child
 diagnostic chokepoint and a Build-once "router ACTIVE" fact narrates the config. Every
 MISS logs an INFO naming the reason (`degenerate-input`/`classifier-error`/`cancelled`/
-`bad-verdict`/`unknown-category`/`category-selector-empty`/`category-target-unresolvable`/
+`timeout`/`bad-verdict`/`unknown-category`/`low-confidence`/`input-over-limit`/
+`capacity-timeout`/`category-selector-empty`/`category-target-unresolvable`/
 `empty-model` — metadata only, issue #287); the breaker-open INFO is unchanged. The
 routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through
 the gRPC + HTTP relays and rendered by mecatui (inline card + f6 fleet roster).
 
+A configured router also attaches one optional `RoutingDecision` snapshot to each
+Subagent, Parallel branch, or Team member start projection. The snapshot carries the
+configured backend and classifier, locally validated candidate, optional confidence
+and threshold, `routed|fallback|skipped` outcome, and the post-decision breaker
+state. Existing `model`, `routed_category`, `routed_model`, and `routing_reason`
+remain authoritative for the model that ran and the final reason. Start events take
+independent copies, and later tool/end events do not clear them. Historical events
+without the snapshot remain absent. Mecatui keeps the compact model cue, adds a
+candidate/confidence line for a fallback, and shows all decision fields in expanded
+Subagent and Team cards (including completed Subagents) and all three F6 focus panes.
+`InspectSession` reads the same persisted start evidence in
+its `delegation` view without reconstructing it from display fields.
+
 The structured miss/gate half of this observability surface is described below under the
 per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
 
 **Team members + Parallel branches (ADR 0034).** The same router governs the other two
-delegation families, reusing the one `parentCaps.routeTask` closure the dispatcher binds per
+delegation families, reusing the one typed `parentCaps.routeDecision` closure the dispatcher binds per
 run (so a mixed turn shares ONE breaker / miss-counter / classifier-usage fold across all
 families). The per-family seam respects each family's engine lifetime:
 
@@ -638,7 +682,7 @@ families). The per-family seam respects each family's engine lifetime:
   Team-tool goroutine, so members classify one at a time. The routed model id threads
   through the `MemberEngine` factory's new `routedModel` parameter; the
   `EvTeamStart` roster entry carries `RoutedCategory`/`RoutedModel`. The gRPC `RunTeam`
-  direct path is **zero-caps** (no `routeTask`), so it never routes — byte-identical.
+  direct path is **zero-caps** (no `routeDecision`), so it never routes — byte-identical.
 - A **Parallel branch** is classified **per-branch in `runBranch`** (each branch routes at
   most once) over an OPTIONAL `engineFactory` (the `WithSubagentEngineFactory` shape); on a
   hit the branch runs on the routed engine, on a miss/unwired the shared branch child. The

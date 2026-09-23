@@ -130,5 +130,5 @@ ask-reviewer slot's enable model is UNCHANGED (sibling trap, out of scope).
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).
 - Living docs: [`docs/usage.md`](../usage.md) (the guardrails section + the `--guardrails-model`
   / `--guardrails` flag rows + the per-slot models section),
-  [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) (guardrails enable
+  [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (guardrails enable
   mechanics).

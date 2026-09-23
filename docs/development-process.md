@@ -94,7 +94,7 @@ requires a rationale. Material public decisions cannot be postponed until code e
    contract drift instead of making it; any material drift stops the run for a
    human-reviewed plan amendment.
 4. **Gate and review — automatic.** On the assembled implementation branch run `task lint`,
-   `task test`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
+   `task test:race`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
    The implementation PR links the approved baseline and reports interface conformance or
    an approved amendment.
 5. **Code review — human.** Review and merge the implementation PR. Only a PR that fully
@@ -142,13 +142,57 @@ The implementation owns tracked feature-scoped cleanup; do not defer it to a fol
 or status-only PR. Only explicitly orchestrator-created successful worktrees are eligible for removal;
 failed, harness-owned, primary, and ambiguous worktrees are retained.
 
+## Documentation change review
+
+Documentation changes follow the same work classification as other changes.
+Use the `tech-writer` skill and, for public documentation, `user-docs`. In each
+PR, identify the reader need and the owning page; no separate documentation
+report or checklist file is required.
+
+1. **Choose one owner.** Current system behavior belongs in the relevant
+   [architecture topic](READING.md); public tasks and reference belong in
+   `user-docs/`, following `user-docs/_README.md`. Update the existing page rather than
+   copying a feature description across the overview, a second reference, and
+   agent instructions. Add a page only for a distinct reader need.
+2. **Verify the state.** Check behavioral claims against code and tests. Plans
+   describe intended behavior; plan approval is not implementation. Keep durable
+   rationale in ADRs and mutable shipped/deferred status in the
+   [readiness tracker](design/PRODUCTION-READINESS.md).
+3. **Replace and prune.** Edit outdated explanations in place. Delete redundant
+   or obsolete text; preserve only verified, non-obvious knowledge absent from
+   its owner. Bug chronology, repair attempts, and implementation summaries
+   belong in PRs/Git, not living guides. Release notes and required API changelogs
+   remain legitimate release artifacts. Do not create another catch-all notes
+   document or bulk-migrate one into the architecture overview.
+4. **Review the reader's path.** Follow links to the owning page, check examples
+   and source/generated ownership, and run `task docs` (plus `task site:build`
+   for public behavior changes). Link and citation checks do not verify prose
+   semantics. Historical plans naming a retired document are not a requirement
+   to recreate it: update the relevant living owner. Preserve frozen decision
+   text; historical links may point to the exact Git revision they describe.
+
+For root agent instructions, require a concrete recurring mistake and explain
+why a code/test guard, existing documentation, or scoped rule is insufficient.
+Keep root guidance broadly applicable and short; review growth instead of using
+it as permanent memory for every bug fix. Use the existing reading map for
+navigation, not a second maintained package inventory.
+
 ## Verification gates
+
+Use focused package tests while iterating. Workers finish with `task test`, which runs the
+complete offline suite and standalone module proofs without the race detector. After work is
+integrated, run `task test:race` before any implementation PR is ready for review, including
+Routine and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
+the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and sharded
+race coverage on ready PRs and main.
 
 | Gate | What it pins |
 |---|---|
 | bundled acceptance-plan checker | plan shape, human-decision/status consistency, interface declaration, AC proofs, citations, scope |
+| focused package tests | the changed behavior during iteration |
+| `task test` | worker fast gate: complete offline suite and standalone module proofs |
+| `task test:race` | integrated/pre-PR complete suite with the race detector |
 | `task lint` | golangci-lint (including govet), layering rules |
-| `task test` | full offline suite and engine standalone proof |
 | `task api:check` | guarded engine API compatibility |
 | `task docs` | generated docs and strict links |
 | `task ac-trace-strict` | every landed AC proof resolves |

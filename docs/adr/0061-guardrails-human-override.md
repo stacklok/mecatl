@@ -46,5 +46,5 @@ The naive fixes are unsafe. Letting the MODEL waive a block is excessive agency 
 - [ADR 0021](./0021-guardrails.md) — the guardrails feature this adds a recovery path to.
 - [ADR 0053](./0053-guardrails-default-block.md) — default block (the posture that makes an override useful).
 - [ADR 0060](./0060-guardrails-bash-default.md) — the default Bash rule (the most common block an operator will override).
-- `docs/design/IMPLEMENTATION-NOTES.md` — the seam narrative (scan point, holder, strip, the security boundary).
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the seam narrative (scan point, holder, strip, the security boundary).
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

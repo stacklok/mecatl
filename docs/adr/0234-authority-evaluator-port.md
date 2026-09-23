@@ -64,7 +64,7 @@ outside the process; those are separate outbound-boundary work.
 ## See also
 
 - [Architecture — Authority evaluation](../architecture/agent-loop.md#authority-evaluation-at-execution)
-- [Implementation notes — Delegated authority](../design/IMPLEMENTATION-NOTES.md#delegated-authority)
+- [Implementation notes — Delegated authority](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md#delegated-authority)
 - [ADR 0014 — Agent teams](./0014-agent-teams.md)
 - [ADR 0036 — Engine module boundary](./0036-engine-module.md)
 - [ADR 0038 — Event-sourced rehydration](./0038-event-sourced-rehydration.md)

@@ -691,6 +691,8 @@ github.com/stacklok/toolhive-core/redisconn/azure v0.0.2 h1:Y4ND9e+6L7Oxt5XKkkoO
 github.com/stacklok/toolhive-core/redisconn/azure v0.0.2/go.mod h1:e2l9sodOGRgEPy9zc9P6JE4N4zIYl8LlKitbk7hPN1c=
 github.com/stacklok/toolhive-core/redisconn/gcp v0.0.2 h1:mHGe5yU3rWeFiF1xh4WOFMGi/ElEvpJoEy2vE8FFmr0=
 github.com/stacklok/toolhive-core/redisconn/gcp v0.0.2/go.mod h1:zJwqPbX4i2kAGmv/Jh8ttsviJg6W2oP7l/q6BVa72hk=
+github.com/stacklok/typesafe-go v0.1.0 h1:OIYJEEey/L7Xw24oc/WSOGpBkYO0uii33tENRTW2DhY=
+github.com/stacklok/typesafe-go v0.1.0/go.mod h1:LPlCeie7qPQinm0p9pR2hm8xJgbgqWj2h00kOy4ZvDI=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 h1:uOfcYT+3QungH6tIGSVCR/Y3KJmgJiHcojJbMTPDZAI=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1/go.mod h1:L1MQhA6x4dn9r007T033lsaZMv9EmBAdXyU/+EF40fo=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

@@ -184,4 +184,4 @@ user, or legacy record may become an alternate placement authority path.
 - [ADR 0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md)
 - [ADR 0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
 - [Architecture guide](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)

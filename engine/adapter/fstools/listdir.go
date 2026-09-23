@@ -17,9 +17,10 @@ When to use:
 - To distinguish immediate files from subdirectories.
 
 Arguments:
-- path: directory path relative to the workspace root; use "." for the root.
+- path: directory path relative to the workspace root, or a policy-authorized absolute path when the workspace backend supports it; use "." for the root.
 
 Limits:
+- Local external listing does not support the filesystem root "/"; choose a specific external directory.
 - Returns at most 1000 entries, sorted. Directories have a trailing "/".
 - Some virtual workspaces derive directories from file paths and do not preserve empty directories.`
 
@@ -38,7 +39,7 @@ func (ListDirTool) Spec() tool.ToolSpec {
 		Name: "ListDir", Description: listDirDescription,
 		Schema: schema(`{
   "type": "object",
-  "properties": {"path": {"type": "string", "description": "Directory path relative to the workspace root; use '.' for the root."}},
+  "properties": {"path": {"type": "string", "description": "Directory path relative to the workspace root, or a policy-authorized absolute path when supported by the workspace backend; use '.' for the root."}},
   "required": ["path"]
 }`),
 	}

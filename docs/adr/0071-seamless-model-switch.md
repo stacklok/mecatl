@@ -115,7 +115,7 @@ bodies are frozen; the pointer above is the record).
   itself remains same-provider/model-locked; that is a separate operation).
 - [ADR 0016 — Multi-provider](./0016-multi-provider.md) — the superseded
   mid-session-switch overlay and same-provider carryover gate.
-- [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) —
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) —
   the living "Model-switch context carryover" section.
 - [`docs/tui.md`](../tui.md) — the `/models` picker section (seamless switch,
   `/clear` as fresh-start).

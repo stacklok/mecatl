@@ -77,6 +77,6 @@ remain deferred.
 ## See also
 
 - [Architecture overview](../architecture.md#internal-credential-store)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md#credential-store)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md#credential-store)
 - [Production readiness](../design/PRODUCTION-READINESS.md)
 - [ADR 0027 resource inventory](./0027-cloud-native.md#list-1-resource-inventory)

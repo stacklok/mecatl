@@ -1,0 +1,80 @@
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ … Subagent                                                                                    │
+ │ ↳ inspect routing                                                                             │
+ │ backend: jev · classifier: jev-1.13.0 · outcome: fallback                                     │
+ │ candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                        │
+ │ actual model: gpt-6-astra · reason: low-confidence                                            │
+ │ breaker: 2/3 misses · closed                                                                  │
+ │ subagent · 0ms · ↑0 ↓0 · 0 tools · stop:done                                                  │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+       ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+       ┃                                                                                                        ┃
+       ┃  ▸ Subagents    Parallel    Teams                                                                      ┃
+       ┃                                                                                                        ┃
+       ┃  subagent · inspect routing                                                                            ┃
+       ┃  ✓ inspect routing #-child                                                                             ┃
+       ┃      model: gpt-6-astra · fallback: low-confidence                                                     ┃
+       ┃      candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50 · done · 0 tools · ↑0 ↓0     ┃
+       ┃    backend: jev · classifier: jev-1.13.0 · outcome: fallback                                           ┃
+       ┃      candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                            ┃
+       ┃      actual model: gpt-6-astra · reason: low-confidence                                                ┃
+       ┃      breaker: 2/3 misses · closed                                                                      ┃
+       ┃    bounded previews — child content is clamped + scrubbed, never in the parent conversation            ┃
+       ┃                                                                                                        ┃
+       ┃    ✓ Read                                                                                              ┃
+       ┃                                                                                                        ┃
+       ┃  esc back · ↑/↓ scroll · pgup/pgdn · home/end                                                          ┃
+       ┃                                                                                                        ┃
+       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ team done · 1 round                              ⑂ parallel 0◐ 1✓ · f6  ⛭ subagents 0◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

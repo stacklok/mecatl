@@ -82,6 +82,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0347 — Run-ID-addressed prompt-free controls](./0347-run-id-addressed-prompt-free-controls.md) *(proposed; supersedes ADR 0288 Decision 6 and ADR 0304 Decision 3 in part)*
 - [0348 — TypeScript SDK MCP authorization lifecycle](./0348-typescript-sdk-mcp-authorization-lifecycle.md) *(proposed; supersedes ADR 0304 Decision 3 only for the authorization-lifecycle resource)*
 - [0349 - Cause-free TypeScript SDK malformed-success decoding](./0349-typescript-sdk-malformed-success-decoding.md) *(proposed; narrows decoder diagnostics at the HTTP successful-response boundary)*
+- [0351 — Mecatl Studio: in-repo web UI behind a BFF over the published SDK](./0351-mecatl-studio-in-repo-web-ui.md) *(proposed; `apps/` workspace, one-origin image, `MECATL_*`/`STUDIO_*` split)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
@@ -181,6 +182,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0034 — Extend the model router to team members and Parallel branches](./0034-team-parallel-model-routing.md)
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
+- [0352 — Jev as an explicit delegated-model router backend](./0352-jev-delegated-model-router.md) *(proposed; narrowly supersedes ADR 0031's LLM-only classifier construction when selected)*
 - [0064 — Auto-detect the ToolHive LLM gateway proxy as a native provider](./0064-toolhive-llm-gateway-provider.md)
 - [0102 — ToolHive LLM gateway DIRECT mode (in-process OIDC token injection)](./0102-toolhive-direct-mode.md)
 - [0067 — OpenAI Chat Completions adapter (OpenCode Go provider)](./0067-openai-chat-completions-adapter.md)

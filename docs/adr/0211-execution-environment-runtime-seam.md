@@ -154,5 +154,5 @@ guarantee ADR 0208 states.
   authoritative; this ADR supersedes ONLY its staged deferral of the runtime seam
   (decisions 1–3).
 - [Architecture — ports and adapter boundaries](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [ADR 0027 — cloud-native state and resource inventory](./0027-cloud-native.md)

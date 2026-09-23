@@ -467,6 +467,10 @@ func prepareTeamFocusAt(th theme.Theme, b *block, member string, scroll int, hk 
 		subhead += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
 	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
+	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+		out.WriteString("\n")
+		out.WriteString(muted.Render(hangingIndentWrap(detail, "  ", bodyWidth)))
+	}
 	out.WriteString("\n\n")
 	prefix := out.String()
 

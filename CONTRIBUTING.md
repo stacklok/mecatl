@@ -54,7 +54,8 @@ Use the Taskfile rather than bare root-level build commands:
 
 ```sh
 task build
-task test
+task test          # complete fast offline suite while iterating
 task lint
+task test:race     # complete race suite before the PR is ready
 go run ./cmd/mecademo
 ```

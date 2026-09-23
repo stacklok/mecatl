@@ -52,6 +52,9 @@ run "go: docs-lint tool runs (Go code under docs/)" go true docs/lint/citations.
 run "go: docs non-Markdown assets run" go true docs/architecture/mecatl.modelith.yaml
 run "go: Taskfile + workflow run (self-validation)" go true Taskfile.yml .github/workflows/ci.yml
 run "go: mixed docs + Go runs" go true user-docs/intro.md internal/adapter/osfs/osfs.go
+run "go: Studio apps/ workspace skips" go false apps/web/src/main.tsx apps/server/src/app.ts apps/pnpm-lock.yaml apps/Dockerfile
+run "go: Studio apps/ + Go runs" go true apps/server/src/app.ts internal/app/build.go
+run "go: Studio apps/ + CI control runs" go true apps/web/src/main.tsx .github/workflows/ci.yml
 
 # --- sdk category: the pure-TS SDK unit job (`sdk`) -----------------------------
 # Relevant only to the SDK frontend and the proto contracts its committed bindings
@@ -83,8 +86,27 @@ run "site: mixed site + Go runs" site true website/a.tsx internal/b.go
 run "site: ci.yml (job definition) runs" site true .github/workflows/ci.yml
 run "site: Taskfile (task recipes) runs" site true Taskfile.yml
 
+# --- studio category: the Mecatl Studio job (`studio`) ---------------------------
+# Relevant only to apps/ (a self-contained workspace on the PUBLISHED SDK) and the
+# CI-control files. A Go, in-tree-SDK, contracts, or site change cannot alter it.
+run "studio: apps server runs" studio true apps/server/src/index.ts
+run "studio: apps web runs" studio true apps/web/src/main.tsx
+run "studio: apps lockfile runs" studio true apps/pnpm-lock.yaml
+run "studio: apps Dockerfile + compose run" studio true apps/Dockerfile apps/docker-compose.yml
+run "studio: apps Taskfile runs" studio true apps/Taskfile.yml
+run "studio: Go engine change skips" studio false engine/agent/loop.go
+run "studio: in-tree SDK change skips (Studio uses the published SDK)" studio false sdk/typescript/src/client.ts
+run "studio: contracts (proto) change skips (no in-tree codegen reaches apps/)" studio false contracts/proto/mecatl/v1/agent.proto
+run "studio: website + user-docs skip" studio false website/a.tsx user-docs/intro.md
+run "studio: docs skip" studio false docs/adr/0351-mecatl-studio-in-repo-web-ui.md
+run "studio: mixed apps + Go runs" studio true apps/server/src/app.ts engine/b.go
+# CI-control files that DEFINE the studio job / its task recipes must RUN it.
+run "studio: ci.yml (job definition) runs" studio true .github/workflows/ci.yml
+run "studio: Taskfile (task recipes) runs" studio true Taskfile.yml
+run "studio: .github/scripts change runs" studio true .github/scripts/relevant-changes.sh
+
 # --- fail-closed / safety across categories ------------------------------------
-for cat in go sdk site; do
+for cat in go sdk site studio; do
   run_raw "$cat: empty input fails closed to RUN" "$cat" true ''
   run_raw "$cat: unterminated input fails closed to RUN" "$cat" true 'docs/x.md'
   run "$cat: empty NUL record fails closed to RUN" "$cat" true ''
@@ -97,6 +119,7 @@ run "unknown category fails closed to RUN" bogus true docs/x.md
 # crossing the relevance boundary runs the family.
 run "go: rename out of SDK into Go runs" go true sdk/typescript/old.ts internal/new.go
 run "sdk: rename out of Go into SDK runs" sdk true internal/old.go sdk/typescript/new.ts
+run "studio: rename out of Go into apps runs" studio true internal/old.go apps/server/src/new.ts
 
 # Paths are records, never shell fragments: metacharacters remain one NUL-delimited
 # filename and cannot execute anything.

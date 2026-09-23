@@ -543,7 +543,7 @@ Repo commits directly to `main`; sequence as commits, not a multi-issue split:
 *(Shipped separately: issue #22 — the structured compaction template deferred in
 §7 landed as the tier-4 summarizer prompt behind the `agent.Compactor` seam
 (`CascadeCompactor`, `engine/agent/cascade.go`); see
-`docs/design/IMPLEMENTATION-NOTES.md`.)*
+[Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md).)*
 
 ## 8. Sources
 

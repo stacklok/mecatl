@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -59,6 +60,21 @@ func TestListDirMissingDirectory(t *testing.T) {
 	res := exec(t, ListDirTool{}, call(t, "ListDir", map[string]any{"path": "nope"}), ws)
 	if !res.IsError {
 		t.Fatal("ListDir of a missing directory must be a tool error")
+	}
+}
+
+func TestListDirRejectsNonDirectoryAndMalformedArgs(t *testing.T) {
+	ws := memfs.NewWorkspace("/")
+	seed(t, ws, "file.txt", "content")
+
+	res := exec(t, ListDirTool{}, call(t, "ListDir", map[string]any{"path": "file.txt"}), ws)
+	if !res.IsError {
+		t.Fatal("ListDir of a regular file must be a tool error")
+	}
+	malformed := session.NewToolCall("bad-list", "ListDir", []byte(`{"path":`))
+	res = exec(t, ListDirTool{}, malformed, ws)
+	if !res.IsError || !strings.Contains(res.Content, "invalid arguments") {
+		t.Fatalf("ListDir malformed args result = %+v, want model-visible invalid-arguments error", res)
 	}
 }
 

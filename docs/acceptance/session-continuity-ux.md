@@ -143,7 +143,7 @@ affordance is discoverable under existing TUI help conventions.
 The operator launches embedded or connect mode with an exact ID or asks for the latest
 eligible chat. Static adoption completes before the TUI accepts input and never creates a
 disposable startup session. The first prompt still performs atomic state/lease/environment
-validation through the ordinary run-entry funnel in [`IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md)
+validation through the ordinary run-entry funnel in [the agent-loop architecture](../architecture/agent-loop.md)
 and [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**

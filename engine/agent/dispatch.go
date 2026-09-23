@@ -1687,8 +1687,13 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		// already-branchy constructor stays under the gocyclo budget; the closure here is
 		// a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage.
 		route, breaker, hardAbort, diag := e.deps.SubagentModelRouter, r.router, r.hardAbort, r.diag
-		caps.routeTask = func(ctx context.Context, taskPrompt string) (string, string, string, bool) {
+		caps.routeDecision = func(ctx context.Context, taskPrompt string) modelRoutingResult {
 			return routeTaskBody(ctx, taskPrompt, route, breaker, hardAbort, diag, foldUsage)
+		}
+		caps.skipRoute = func(_ string) *session.RoutingDecision {
+			breaker.mu.Lock()
+			defer breaker.mu.Unlock()
+			return routerDecision(route, ModelRouteResult{}, "skipped", breaker)
 		}
 	}
 	if interactive {
@@ -1773,68 +1778,55 @@ func foldClassifierUsage(sess *session.Session) func(session.Usage) {
 func routeTaskBody(
 	ctx context.Context,
 	taskPrompt string,
-	route func(context.Context, string) (string, string, session.Usage, string, bool),
+	router *SubagentModelRouter,
 	breaker *modelRouterBreaker,
 	hardAbort chan struct{},
 	diag port.Diagnostics,
 	foldUsage func(session.Usage),
-) (category, model, reason string, ok bool) {
+) modelRoutingResult {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 	if breaker.consecutiveMiss >= breaker.max {
-		// Breaker open: skip the classifier, inherit the default model. The
-		// synthesized reason rides the delegation-start event (issue #397); this
-		// path stays diag-SILENT (no classification attempt was made).
-		return "", "", session.RoutingReasonBreakerOpen, false
+		return modelRoutingResult{reason: session.RoutingReasonBreakerOpen,
+			decision: routerDecision(router, ModelRouteResult{}, "skipped", breaker)}
 	}
-	// A run already past Cancel+grace is tearing down: skip the classifier turn
-	// rather than spend one whose child is about to be unwound. A nil channel
-	// never selects — correct no-route behaviour for a zero-caps construction.
 	select {
 	case <-hardAbort:
-		return "", "", session.RoutingReasonAborted, false
+		return modelRoutingResult{reason: session.RoutingReasonAborted,
+			decision: routerDecision(router, ModelRouteResult{}, "skipped", breaker)}
 	default:
 	}
-	// Pass the run's ctx (not context.Background()) so a Run.Cancel between this
-	// check and the classifier call propagates into RunModelRouter and the
-	// classifier turn dies with the run instead of running out its 30s clock
-	// (issue #94). The hardAbort check above is a fast-path skip; ctx is the
-	// race-closing bound. Fail-soft holds: a cancelled ctx → StopCancelled →
-	// ok=false → inherit the default model, the existing miss path.
-	category, model, classifierUsage, missReason, routeOK := route(ctx, taskPrompt)
-	// Fold classifier spend into the parent session's cumulative Usage
-	// UNCONDITIONALLY (on both miss and hit paths) so --max-run-tokens bounds
-	// the classifier cost (#92 fix). foldUsage is nil-safe (nop when sess==nil).
-	foldUsage(classifierUsage)
-	if !routeOK || strings.TrimSpace(model) == "" {
-		// Per-miss observability (issue #287): log WHY this plain delegation fell
-		// through to the inherited default model, at THIS dispatch chokepoint so all
-		// three delegation families (subagent/team/parallel) share the line for free.
-		// The nil-diag guard + the "empty-model" fallback live in logRouterMissReason
-		// so this hot closure stays under the gocyclo budget. It is emitted BEFORE the
-		// breaker-open check below; the breaker-open skip and the hardAbort skip above
-		// return earlier and stay SILENT deliberately (no classifier call was made, so
-		// there is no miss to attribute — only an actual classification attempt logs).
-		logRouterMissReason(ctx, diag, missReason)
-		if justOpened := noteRouterMiss(breaker); justOpened && diag != nil {
+	if router.Route == nil {
+		return modelRoutingResult{reason: session.RoutingReasonRouterDisabled,
+			decision: routerDecision(router, ModelRouteResult{}, "skipped", breaker)}
+	}
+	result := router.Route(ctx, taskPrompt)
+	foldUsage(result.Usage)
+	if !result.OK || strings.TrimSpace(result.Model) == "" {
+		switch {
+		case result.OK:
+			result.Reason = routingReasonEmptyModel
+		case strings.TrimSpace(result.Reason) == "":
+			result.Reason = routingReasonGeneric
+		default:
+			result.Reason = routingReasonPayload(result.Reason)
+		}
+		justOpened := noteRouterMiss(breaker)
+		decision := routerDecision(router, result, "fallback", breaker)
+		logRouterMissReason(ctx, diag, result.Reason, decision)
+		if justOpened && diag != nil {
 			diag.Log(ctx, port.LevelInfo,
 				"subagent model router: breaker OPEN after consecutive misses; remaining subagents this run inherit the default model",
 				"threshold", breaker.max)
 		}
-		// The missReason (or the "empty-model" fallback for a blank-model "hit")
-		// passes through as the RoutingReason the delegation-start event carries
-		// (issue #397) — bare metadata, same footing as the diag line.
-		if missReason == "" {
-			missReason = routingReasonEmptyModel
-		}
-		return "", "", missReason, false
+		return modelRoutingResult{reason: result.Reason, decision: decision}
 	}
-	breaker.consecutiveMiss = 0 // a successful classification resets the breaker.
+	breaker.consecutiveMiss = 0
+	decision := routerDecision(router, result, "routed", breaker)
 	if diag != nil {
-		diag.Log(ctx, port.LevelInfo,
-			"subagent routed", "category", category, "model", model)
+		diag.Log(ctx, port.LevelInfo, "subagent routed", routingDiagnosticAttrs(decision)...)
 	}
-	return category, model, "", true
+	return modelRoutingResult{category: result.Category, model: result.Model, ok: true, decision: decision}
 }
 
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain
@@ -1844,16 +1836,38 @@ func routeTaskBody(
 // classifier output (gauntlet #7). A nil diag is a no-op; a blank reason (a route that
 // reported ok but a blank model — a defensive belt-and-braces path with no reason of its
 // own) is logged as "empty-model".
-func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason string) {
+func logRouterMissReason(ctx context.Context, diag port.Diagnostics, missReason string, decision *session.RoutingDecision) {
 	if diag == nil {
 		return
 	}
-	if missReason == "" {
-		missReason = "empty-model"
-	}
+	attrs := []any{"reason", routingReasonPayload(missReason)}
+	attrs = append(attrs, routingDiagnosticAttrs(decision)...)
 	diag.Log(ctx, port.LevelInfo,
 		"subagent model router: classification MISSED; child inherits the default model",
-		"reason", missReason)
+		attrs...)
+}
+
+func routingDiagnosticAttrs(decision *session.RoutingDecision) []any {
+	if decision == nil {
+		return nil
+	}
+	attrs := []any{
+		"backend", decision.Backend,
+		"classifier_model", decision.ClassifierModel,
+		"candidate_category", decision.CandidateCategory,
+		"candidate_model", decision.CandidateModel,
+		"outcome", decision.Outcome,
+		"consecutive_misses", decision.ConsecutiveMisses,
+		"miss_limit", decision.MissLimit,
+		"breaker_open", decision.BreakerOpen,
+	}
+	if decision.Confidence != nil {
+		attrs = append(attrs, "confidence", *decision.Confidence)
+	}
+	if decision.MinimumConfidence != nil {
+		attrs = append(attrs, "minimum_confidence", *decision.MinimumConfidence)
+	}
+	return attrs
 }
 
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for

@@ -56,8 +56,10 @@ a PR. Without that request, draft and report only; do not perform those side eff
 
 ## Authoring
 
-1. Read `AGENTS.md`, `docs/architecture.md`, `docs/acceptance/README.md`, relevant ADRs,
-   and `docs/design/IMPLEMENTATION-NOTES.md` when applicable.
+1. Read `AGENTS.md`, `docs/acceptance/README.md`, relevant ADRs, and the owning
+   architecture topic from `docs/READING.md`. Follow the documentation change
+   review in `docs/development-process.md`: name the owning page, not a list of
+   duplicate update targets. Planned behavior stays in the plan until implemented.
 2. Draft from
    [`references/ACCEPTANCE-PLAN-TEMPLATE.md`](references/ACCEPTANCE-PLAN-TEMPLATE.md).
    Keep focused work compact. Every scenario has numbered `AC<n>.<m>:` assertions,

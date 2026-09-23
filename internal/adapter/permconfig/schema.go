@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -1520,11 +1521,19 @@ func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// RouterSection is the `models.router:` operator-tier subtree (ADR 0031): the semantic
-// Subagent model-router taxonomy. The classifier reads the category descriptions to
-// choose which category a delegated task belongs to; composition maps the chosen
-// category's Model selector through the alias/slot machinery to a concrete model id.
+// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0352):
+// the semantic delegated-model taxonomy and its explicitly selected classifier backend.
+// Composition maps the backend's exact category choice through the same local
+// category-to-model alias machinery.
 type RouterSection struct {
+	// Backend selects llm or jev. Empty input defaults to llm.
+	Backend string `yaml:"backend"`
+	// Jev configures the explicitly selected Typesafe Jev backend. The block is
+	// rejected with an active llm backend and ignored for active checks while routing
+	// is disabled or has no categories.
+	Jev                *JevRouterSection `yaml:"jev"`
+	classifierSlotSet  bool
+	defaultCategorySet bool
 	// ClassifierSlot names the model slot the CLASSIFIER itself runs on (the tiny,
 	// cheap one-turn classification call). Empty falls through to the `router` slot's
 	// default tier (cheap) — the classifier is housekeeping, not the routed work.
@@ -1561,11 +1570,63 @@ type RouterCategory struct {
 	Model string `yaml:"model"`
 }
 
+// JevRouterSection is the strict configuration for the Jev classifier backend.
+type JevRouterSection struct {
+	// Model is the Typesafe service model. Empty input defaults to jev-1.13.0.
+	Model string `yaml:"model"`
+	// BaseURL optionally overrides the Typesafe endpoint. Active routing accepts HTTPS
+	// or loopback HTTP; omission uses the pinned SDK endpoint.
+	BaseURL string `yaml:"base-url"`
+	// MinimumConfidence makes a valid lower-confidence answer an ordinary routing miss.
+	// Zero disables filtering; values must be finite and in [0,1].
+	MinimumConfidence float64 `yaml:"minimum-confidence"`
+	// MaximumInputBytes bounds the complete rendered textual request before SDK marshalling.
+	// Omission defaults to 16384; explicit values must be integers in [1,65536].
+	MaximumInputBytes int `yaml:"maximum-input-bytes"`
+}
+
+// UnmarshalYAML applies Jev defaults and rejects unknown keys or invalid values.
+func (j *JevRouterSection) UnmarshalYAML(node ast.Node) error {
+	j.Model = "jev-1.13.0"
+	j.MaximumInputBytes = 16384
+	if mapping, ok := permconfigMapping(node); ok {
+		for _, entry := range mapping.Values {
+			key, stringKey := permconfigMappingKey(entry.Key)
+			if stringKey && key == "maximum-input-bytes" {
+				if _, integer := entry.Value.(*ast.IntegerNode); !integer {
+					return fmt.Errorf("models.router.jev.maximum-input-bytes: must be an integer")
+				}
+			}
+		}
+	}
+	if err := decodeStrictMapping(node, "models.router.jev", map[string]any{
+		"model": &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
+		"maximum-input-bytes": &j.MaximumInputBytes,
+	}); err != nil {
+		return err
+	}
+	if math.IsNaN(j.MinimumConfidence) || math.IsInf(j.MinimumConfidence, 0) || j.MinimumConfidence < 0 || j.MinimumConfidence > 1 {
+		return fmt.Errorf("models.router.jev.minimum-confidence: must be finite and between 0 and 1")
+	}
+	if j.MaximumInputBytes < 1 || j.MaximumInputBytes > 65536 {
+		return fmt.Errorf("models.router.jev.maximum-input-bytes: must be between 1 and 65536")
+	}
+	return nil
+}
+
+// ClassifierSlotAuthored reports whether classifier-slot appeared in YAML.
+func (r *RouterSection) ClassifierSlotAuthored() bool { return r.classifierSlotSet }
+
+// DefaultCategoryAuthored reports whether default-category appeared in YAML.
+func (r *RouterSection) DefaultCategoryAuthored() bool { return r.defaultCategorySet }
+
 // strictFields is the single binding map for the models.router: subtree — the ONE
 // authoritative key set both UnmarshalYAML (the parser) and the configgen drift guard
 // (via the test-only KnownKeys accessor) read, so they cannot diverge.
 func (r *RouterSection) strictFields() map[string]any {
 	return map[string]any{
+		"backend":          &r.Backend,
+		"jev":              newPermconfigNodePointer(&r.Jev),
 		"classifier-slot":  &r.ClassifierSlot,
 		"categories":       &r.Categories,
 		"default-category": &r.DefaultCategory,
@@ -1576,7 +1637,17 @@ func (r *RouterSection) strictFields() map[string]any {
 // UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
 func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "models.router", r.strictFields())
+	r.Backend = "llm"
+	if err := decodeStrictMapping(node, "models.router", r.strictFields()); err != nil {
+		return err
+	}
+	r.Backend = strings.TrimSpace(r.Backend)
+	if r.Backend != "llm" && r.Backend != "jev" {
+		return fmt.Errorf("models.router.backend: must be llm or jev")
+	}
+	r.classifierSlotSet = mappingHasKey(node, "classifier-slot")
+	r.defaultCategorySet = mappingHasKey(node, "default-category")
+	return nil
 }
 
 func (c *RouterCategory) strictFields() map[string]any {
