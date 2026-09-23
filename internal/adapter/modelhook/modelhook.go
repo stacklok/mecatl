@@ -53,6 +53,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // Bounds and markers for the guardrail enforcement paths.
@@ -102,14 +103,20 @@ type CheckRequest struct {
 	Prompt string
 }
 
-// VerdictChecker judges one piece of tool content as DATA and returns a Verdict.
+// CheckResult is one guardrail verdict plus the checker model usage produced while deciding it.
+type CheckResult struct {
+	Verdict Verdict
+	Usage   session.AuxiliaryUsage
+}
+
+// VerdictChecker judges one piece of tool content as DATA and returns a CheckResult.
 // It is an adapter-local port (decision: keep engine/agent types out of the
 // adapter): the composition layer supplies an engine-backed implementation that
 // drives a tool-less one-turn checker engine over CheckRequest.Prompt and parses
 // the reply via ParseVerdict. An error means "the checker could not produce a
 // verdict" — the Runner then takes the rule's fail-open/closed path.
 type VerdictChecker interface {
-	Check(ctx context.Context, req CheckRequest) (Verdict, error)
+	Check(ctx context.Context, req CheckRequest) (CheckResult, error)
 }
 
 // Runner is the guardrails port.HookRunner decorator. Construct it per session via
@@ -294,10 +301,14 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 	}
 
 	prompt := buildCheckPrompt(phase, rule, ev.Tool, content)
-	verdict, err := r.checker.Check(ctx, CheckRequest{Phase: phase, Tool: ev.Tool, Content: content, Prompt: prompt})
+	result, err := r.checker.Check(ctx, CheckRequest{Phase: phase, Tool: ev.Tool, Content: content, Prompt: prompt})
+	if reporter := port.AuxiliaryUsageReporterFromContext(ctx); reporter != nil {
+		reporter(result.Usage)
+	}
 	if err != nil {
 		return r.onCheckerError(ctx, phase, rule, ev, err)
 	}
+	verdict := result.Verdict
 
 	if verdict.Safe != nil && *verdict.Safe {
 		r.failures.reset()              // a completed verdict clears the consecutive-failure escalation

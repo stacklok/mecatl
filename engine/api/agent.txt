@@ -1,5 +1,5 @@
-    ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
-    ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
+    ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, usage session.AuxiliaryUsage, err error)
+    ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, session.AuxiliaryUsage, error)
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, usage session.AuxiliaryUsage, err error)
     ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
@@ -157,8 +157,8 @@ func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
 func NewUserModelObserver(engine *Engine) *UserModelReviewer
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
 func ParseReflectionOutcome(in learning.Input, raw []byte, limits ReflectionLimits) (learning.Outcome, error)
-func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
-func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool)
+func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, session.AuxiliaryUsage, error)
+func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.AuxiliaryUsage, missReason string, ok bool)
 func StripLoneCodeFence(s string) string
 func TeamStop(o TeamOutcome) session.StopReason
 func TightenTeamTokenBudget(serverBudget int, request int) int
@@ -226,12 +226,12 @@ func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOpt
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
 type ArtifactHandle string
 type AskResolution uint8
-type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
+type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, usage session.AuxiliaryUsage, err error)}
 type BranchSummary struct{Label string; Summary string; Failed bool}
 type CascadeCompactor struct{Counter TokenCounter; BudgetTokens int; KeepLastTurns int; StripToolBodyChars int; MaxCollapseChars int; LLM port.LLMProvider; ProviderModel session.ProviderModelID; Model string; SummaryMaxTokens int}
 type ChildAskReview struct{Allowed bool; Reason string}
 type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
-type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
+type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, session.AuxiliaryUsage, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, usage session.AuxiliaryUsage, err error)}
 type DelegationTightening struct{Tools []string "json:\"tools,omitempty\""; RemainingDelegationDepth *int "json:\"remaining_delegation_depth,omitempty\""; FileSystem *bool "json:\"filesystem,omitempty\""; DirectWrite *bool "json:\"direct_write,omitempty\""}
 type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; AuthorityEvaluator port.AuthorityEvaluator; Hooks port.HookRunner; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; EnableDurableEvidence bool; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter *SubagentModelRouter; ProgressiveTools bool; DeliveryQueue port.DeliveryQueue; EnableSteer bool}
@@ -253,7 +253,7 @@ type MemberSpec struct{Name string; AgentType string; Lead bool; Mutating bool; 
 type MemberStopReason string
 type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
-type ModelRouteResult struct{Category string; Model string; Usage session.Usage; Reason string; OK bool; Confidence *float64}
+type ModelRouteResult struct{Category string; Model string; Usage session.AuxiliaryUsage; Reason string; OK bool; Confidence *float64}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PreparedRun struct{}

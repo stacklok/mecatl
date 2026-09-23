@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -91,22 +92,24 @@ func foldOperatorGuardrails(cfg Config) Config {
 // an unparseable/ambiguous reply is an ERROR too — so the Runner takes its
 // fail-open/closed path rather than trusting a malformed verdict.
 type engineGuardrailsChecker struct {
-	engine *agent.Engine
+	engine   *agent.Engine
+	identity session.ProviderModelID
 }
 
 // Check drives the checker engine and parses the verdict. The prompt is fully
 // assembled by the Runner (trusted rubric + fenced/neutralised content); this only
 // drives + parses.
-func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.Verdict, error) {
-	text, err := agent.RunGuardrailCheck(ctx, c.engine, req.Prompt)
+func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
+	text, usage, err := agent.RunGuardrailCheck(ctx, c.engine, req.Prompt)
+	usage = attributedAuxiliaryUsage(session.UsageKindGuardrail, c.identity, usage.Buckets[session.UsageKindGuardrail].Total)
 	if err != nil {
-		return modelhook.Verdict{}, err
+		return modelhook.CheckResult{Usage: usage}, err
 	}
 	v, ok := modelhook.ParseVerdict(text)
 	if !ok {
-		return modelhook.Verdict{}, errGuardrailVerdictUnparseable
+		return modelhook.CheckResult{Usage: usage}, errGuardrailVerdictUnparseable
 	}
-	return v, nil
+	return modelhook.CheckResult{Verdict: v, Usage: usage}, nil
 }
 
 // errGuardrailVerdictUnparseable is the sentinel for a checker reply that was not a
@@ -364,7 +367,11 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 	// (verdict-less) first turn must end in exactly ONE provider call (treated as a
 	// no-verdict failure), not be nudged into a second.
 	deps.MaxNoProgressNudges = -1
-	return engineGuardrailsChecker{engine: agent.NewEngine(deps)}
+	providerID := parentProviderID
+	if providerID == "" {
+		providerID = provReg.Default()
+	}
+	return engineGuardrailsChecker{engine: agent.NewEngine(deps), identity: session.ProviderModelID{ProviderID: providerID, ModelID: resolved}}
 }
 
 // buildGuardrailsEscapeChecker builds the ADR-0080 escape route's checker, or

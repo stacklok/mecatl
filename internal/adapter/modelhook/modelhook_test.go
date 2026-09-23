@@ -10,6 +10,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // fakeChecker is a scripted VerdictChecker: it records the prompt it was handed and
@@ -23,14 +24,14 @@ type fakeChecker struct {
 	lastSeen string
 }
 
-func (f *fakeChecker) Check(_ context.Context, req CheckRequest) (Verdict, error) {
+func (f *fakeChecker) Check(_ context.Context, req CheckRequest) (CheckResult, error) {
 	f.calls++
 	f.lastReq = req
 	f.lastSeen = req.Prompt
 	if f.err != nil {
-		return Verdict{}, f.err
+		return CheckResult{}, f.err
 	}
-	return f.verdict, nil
+	return CheckResult{Verdict: f.verdict}, nil
 }
 
 // passInner is a transparent inner HookRunner: every phase allows.
@@ -58,6 +59,35 @@ func postEvent(tool, content string, isErr bool) governance.HookEvent {
 func ruleBlock(match string, phases ...string) CompiledRule {
 	r, _ := CompileRule(RuleSpec{Match: match, Phases: phases, Mode: string(ModeBlock)})
 	return r
+}
+
+type usageChecker struct {
+	result CheckResult
+}
+
+func (c usageChecker) Check(context.Context, CheckRequest) (CheckResult, error) { return c.result, nil }
+
+func TestRunnerForwardsAuxiliaryUsageSynchronously(t *testing.T) {
+	usage := session.Usage{InputTokens: 5, OutputTokens: 2}
+	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindGuardrail: {Total: usage, Models: map[string]session.Usage{"provider/checker": usage}},
+	}}
+	runner := New(&passInner{}, Options{
+		Rules:   []CompiledRule{ruleBlock("Shell", "pre")},
+		Checker: usageChecker{result: CheckResult{Verdict: safe(), Usage: aux}},
+	})
+	var reported session.AuxiliaryUsage
+	ctx, deactivate := port.WithAuxiliaryUsageReporter(t.Context(), func(got session.AuxiliaryUsage) {
+		reported = reported.Merge(got)
+	})
+	defer deactivate()
+
+	if _, err := runner.Run(ctx, preEvent("Shell", `{"command":"echo ok"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := reported.Buckets[session.UsageKindGuardrail].Total; got != usage {
+		t.Fatalf("reported guardrail usage = %+v, want %+v", got, usage)
+	}
 }
 
 // (1) enforce BLOCK on Pre → real veto (HookOutcome.Block) + accurate message.

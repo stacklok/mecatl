@@ -22,10 +22,10 @@ import (
 // It returns a safe verdict so the call passes through unchanged.
 type promptCapturingChecker struct{ lastPrompt string }
 
-func (c *promptCapturingChecker) Check(_ context.Context, req modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c *promptCapturingChecker) Check(_ context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	c.lastPrompt = req.Prompt
 	safe := true
-	return modelhook.Verdict{Safe: &safe}, nil
+	return modelhook.CheckResult{Verdict: modelhook.Verdict{Safe: &safe}}, nil
 }
 
 // TestDefaultShellRuleRoutesToShellRubric is the KEY wiring test for the false-positive

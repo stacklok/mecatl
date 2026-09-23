@@ -49,9 +49,9 @@ type scriptedChecker struct {
 	calls   int
 }
 
-func (s *scriptedChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (s *scriptedChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	s.calls++
-	return s.verdict, nil
+	return modelhook.CheckResult{Verdict: s.verdict}, nil
 }
 
 func drain(r *agent.Run) []session.Event {
@@ -104,9 +104,9 @@ func shellDefaultRule(t *testing.T) modelhook.CompiledRule {
 // returns safe so the call passes through.
 type capturingChecker struct{ prompt string }
 
-func (c *capturingChecker) Check(_ context.Context, req modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c *capturingChecker) Check(_ context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	c.prompt = req.Prompt
-	return modelhook.Verdict{Safe: boolp(true)}, nil
+	return modelhook.CheckResult{Verdict: modelhook.Verdict{Safe: boolp(true)}}, nil
 }
 
 // TestShellDefaultRuleModelSeesLocalWriteSafeRubric drives the real loop: a representative
@@ -147,9 +147,9 @@ func TestShellDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
 // the ADVERSARIAL / uncooperative checker for the fail-open / fail-closed e2e.
 type erroringChecker struct{ calls int }
 
-func (c *erroringChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c *erroringChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	c.calls++
-	return modelhook.Verdict{}, errCheckerUnavailable
+	return modelhook.CheckResult{}, errCheckerUnavailable
 }
 
 type checkerErr string

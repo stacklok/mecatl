@@ -17,9 +17,9 @@ type countingChecker struct {
 	calls   int
 }
 
-func (c *countingChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c *countingChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	c.calls++
-	return c.verdict, nil
+	return modelhook.CheckResult{Verdict: c.verdict}, nil
 }
 
 // shellSkipRule is the default-shaped Shell rule: pre/block with the read-only pre-filter on.

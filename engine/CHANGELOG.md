@@ -262,6 +262,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
+  `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
+  `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and
+  `agent.RunModelRouter` carry the same purpose-attributed result. Adds the
+  request-scoped `port.AuxiliaryUsageReporter` callback and
+  `modelhook.CheckResult` propagation used to record guardrail usage only while
+  the owning Engine is synchronously running the hook. Changed (breaking,
+  pre-v1 minor).
+
 - **Direct auxiliary usage results** — `agent.Compactor.Compact`,
   `agent.EvidenceReflector.Reflect` / `ReflectProjection`, and the
   `learning.Reflector` seam now return `session.AuxiliaryUsage`; direct compaction
