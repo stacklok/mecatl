@@ -114,7 +114,7 @@ func TestStatusLine_RenderStatusSpansUsesLinkThemeStyle(t *testing.T) {
 }
 
 func TestStatusLine_RenderStatusSpansUsesSingleLineSanitization(t *testing.T) {
-	spans := []statusline.Span{{Text: "header\twith\nlayout\u2028controls\u2029"}}
+	spans := []customization.Span{{Text: "header\twith\nlayout\u2028controls\u2029"}}
 	if got, want := statusSpansText(spans), "headerwithlayoutcontrols"; got != want {
 		t.Fatalf("status text = %q, want %q", got, want)
 	}

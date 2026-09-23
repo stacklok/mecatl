@@ -6,6 +6,8 @@ import (
 	"text/template"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 func commonTemplateFuncs() template.FuncMap {
@@ -50,7 +52,7 @@ func lookup(key any, pairs ...any) (string, error) {
 			return "", fmt.Errorf("lookup: pair value %d must be a string", i/2+1)
 		}
 		if keyText == html.UnescapeString(candidate) {
-			return html.EscapeString(sanitizeTerminal(html.UnescapeString(value))), nil
+			return html.EscapeString(terminaltext.SanitizeSingleLine(html.UnescapeString(value))), nil
 		}
 	}
 	return "", nil

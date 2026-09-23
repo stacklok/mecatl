@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 func TestLookupAvailableToTitleAndStatusTemplates(t *testing.T) {
@@ -82,7 +84,7 @@ func TestLookupEscapesStatusValues(t *testing.T) {
 	if got, want := span.Text, "<primary>forged</primary>]8;;https://bad.example"; got != want {
 		t.Fatalf("status text = %q, want %q", got, want)
 	}
-	if strings.ContainsFunc(span.Text, terminalControl) {
+	if got := terminaltext.SanitizeSingleLine(span.Text); got != span.Text {
 		t.Fatalf("status text contains terminal control: %q", span.Text)
 	}
 }
