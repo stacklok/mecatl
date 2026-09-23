@@ -219,9 +219,12 @@ var oracleSteps = []struct {
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
-	"appendBlock":         "block-creation gateway, driven by every block appender",
+	"appendBlock":         "legacy delegation compatibility gateway",
+	"syncSnapshot":        "typed model snapshot projection gateway, driven by ordinary mutators",
+	"presentationBlocks":  "read-only typed snapshot projection for renderer/frame consumers",
 	"recordFileChange":    "changes only appendix metadata, which is not yet a rendered block",
 	"isEmpty":             "pure read",
+	"blockIDForCall":      "removed typed lookup helper compatibility allowance",
 	"currentAssistant":    "rev-bump gateway, driven via appendAssistant/appendReasoning/endReasoningStream",
 	"subagentBlock":       "rev-bump gateway, driven via the setSubagent* steps",
 	"teamBlock":           "rev-bump gateway, driven via the setTeam*/addTeamMember steps",

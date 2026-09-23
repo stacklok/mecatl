@@ -159,13 +159,14 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
 func (r *renderer) renderConversationFrame(c *conversation, expand bool) renderedFrame {
-	renderedBlocks, firstChanged := r.walkBlocks(c, expand)
+	presentation := c.presentationBlocks()
+	renderedBlocks, firstChanged := r.walkBlocks(presentation, expand)
 	n := len(renderedBlocks)
 	prefixN := min(firstChanged, n)
 	key := joinPrefixState{width: r.width, expand: expand}
 	prefixLines, prefixProvenance, ok := r.blocks.prefix(key, prefixN)
 	if !ok {
-		prefixLines, prefixProvenance = r.rebuildFramePrefix(c, renderedBlocks, prefixN, expand)
+		prefixLines, prefixProvenance = r.rebuildFramePrefix(presentation, renderedBlocks, prefixN, expand)
 		r.blocks.replacePrefix(prefixLines, prefixProvenance, prefixN, key)
 	}
 
@@ -183,7 +184,7 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 	frame.lines = append(frame.lines, prefixLines...)
 	frame.provenance = append(frame.provenance, prefixProvenance...)
 	for i := prefixN; i < n; i++ {
-		r.appendFrameSegment(&frame, c, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, presentation, renderedBlocks, i, expand)
 	}
 	// The trailing split element is the existing terminal empty viewport line.
 	frame.lines = append(frame.lines, "")
@@ -192,26 +193,26 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 	return frame
 }
 
-func (r *renderer) rebuildFramePrefix(c *conversation, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
+func (r *renderer) rebuildFramePrefix(presentation []block, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
 	lines := make([]string, 0, prefixN*2)
 	provenance := make([]renderedRow, 0, prefixN*2)
 	for i := 0; i < prefixN; i++ {
 		frame := renderedFrame{lines: lines, provenance: provenance}
-		r.appendFrameSegment(&frame, c, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, presentation, renderedBlocks, i, expand)
 		lines, provenance = frame.lines, frame.provenance
 	}
 	return lines, provenance
 }
 
-func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, renderedBlocks []string, index int, expand bool) {
+func (r *renderer) appendFrameSegment(frame *renderedFrame, presentation []block, renderedBlocks []string, index int, expand bool) {
 	if index > 0 {
-		for n := 0; n < blockBlankLinesAfter(c.blocks, index); n++ {
+		for n := 0; n < blockBlankLinesAfter(presentation, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
 	}
 	rendered := renderedBlocks[index]
-	rows := r.blockFrameRows(index, &c.blocks[index], rendered, expand)
+	rows := r.blockFrameRows(index, &presentation[index], rendered, expand)
 	for row, line := range strings.Split(rendered, "\n") {
 		frame.lines = append(frame.lines, line)
 		frame.provenance = append(frame.provenance, rows[row])

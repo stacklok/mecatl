@@ -583,12 +583,12 @@ func stripVS16(s string) string {
 
 // walkBlocks renders every block using the renderer-owned reusable backing slice.
 // It returns that render-pass output explicitly with the lowest changed block index.
-func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
-	firstChanged := len(c.blocks)
+func (r *renderer) walkBlocks(conversationBlocks []block, expand bool) ([]string, int) {
+	firstChanged := len(conversationBlocks)
 	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
-	for i := range c.blocks {
+	for i := range conversationBlocks {
 		before := r.blockRenders
-		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &c.blocks[i], expand))
+		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &conversationBlocks[i], expand))
 		if r.blockRenders != before && i < firstChanged {
 			firstChanged = i
 		}

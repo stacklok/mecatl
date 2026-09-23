@@ -1,11 +1,13 @@
 package scrollback
 
+// AppendixSnapshot is part of the internal typed scrollback contract.
 type AppendixSnapshot struct {
 	ID               BlockID
 	Files            []string
 	PrecedingBlockID BlockID
 }
 
+// AppendixSnapshot is part of the internal typed scrollback contract.
 func (c *Conversation) AppendixSnapshot() (AppendixSnapshot, bool) {
 	if c.appendix == nil {
 		return AppendixSnapshot{}, false
@@ -15,6 +17,7 @@ func (c *Conversation) AppendixSnapshot() (AppendixSnapshot, bool) {
 	}, true
 }
 
+// RecordFileChange is part of the internal typed scrollback contract.
 func (c *Conversation) RecordFileChange(path string) BlockID {
 	if path == "" {
 		return 0

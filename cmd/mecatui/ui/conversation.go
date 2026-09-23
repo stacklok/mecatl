@@ -5,6 +5,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
@@ -393,6 +394,10 @@ type subagentLane struct {
 // f6 Subagents tab. It is part of the conversation so a /clear (which rebuilds
 // the conversation) drops it too.
 type conversation struct {
+	// scrollback is the authoritative logical document for ordinary conversation cards.
+	// blocks is a renderer compatibility projection retained for delegation cards until
+	// their dedicated migration; it is refreshed only from immutable snapshots here.
+	scrollback  scrollback.Conversation
 	blocks      []block
 	nextBlockID uint64
 	// filesChanged preserves first-seen order; filesSeen tracks membership. The
@@ -413,30 +418,85 @@ type conversation struct {
 	parallelIndex  map[string]int
 }
 
-// appendBlock assigns the next UI-local document identity before adding a block.
-func (c *conversation) appendBlock(b block) {
-	c.nextBlockID++
-	b.id = c.nextBlockID
+func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
+	if s.Revision > uint64(^uint(0)>>1) {
+		panic("scrollback revision exceeds renderer capacity")
+	}
+	b := block{id: uint64(s.ID), rev: int(s.Revision)}
+	switch p := s.Payload.(type) {
+	case scrollback.UserCardSnapshot:
+		b.kind, b.raw, b.media = blockUser, p.Text, p.Media
+	case scrollback.AssistantCardSnapshot:
+		b.kind, b.raw, b.reasoning, b.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
+	case scrollback.ToolCardSnapshot:
+		b.kind, b.toolID, b.toolName, b.toolArgs, b.resolved, b.resultBody, b.resultError = blockTool, p.Call.ID, p.Call.Name, p.Call.Arguments, p.Resolved, p.Result.Body, p.Result.IsError
+		b.resultBlocks = contentBlocks(p.Result.Artifacts)
+	case scrollback.NoticeCardSnapshot:
+		b.kind, b.raw, b.recover = blockNotice, p.Text, p.Recover
+	case scrollback.TurnStatCardSnapshot:
+		b.kind, b.raw = blockTurnStat, p.Text
+	case scrollback.ErrorCardSnapshot:
+		b.kind, b.raw, b.permanent = blockError, p.Text, p.Permanent
+	case scrollback.HookCardSnapshot:
+		b.kind, b.raw, b.hookPhase, b.hookTool, b.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
+	case scrollback.DeliveryCardSnapshot:
+		b.kind, b.raw, b.toolName, b.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
+	default:
+		return block{}, false
+	}
+	return b, true
+}
+
+func (c *conversation) syncSnapshot(i int) {
+	b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(i))
+	if !ok {
+		return
+	}
+	for j := range c.blocks {
+		if c.blocks[j].id == b.id {
+			c.blocks[j] = b
+			return
+		}
+	}
 	c.blocks = append(c.blocks, b)
+	if b.id > c.nextBlockID {
+		c.nextBlockID = b.id
+	}
+}
+
+// presentationBlocks returns the renderer cache's immutable snapshot projection.
+// syncSnapshot refreshes a card only when the typed model advances its revision;
+// Task 3's delegation compatibility cards share this ordered presentation slice.
+func (c *conversation) presentationBlocks() []block { return c.blocks }
+
+func artifacts(blocks []client.ContentBlock) []scrollback.Artifact {
+	out := make([]scrollback.Artifact, len(blocks))
+	for i, b := range blocks {
+		out[i] = scrollback.Artifact{Kind: string(b.Kind), MIMEType: b.MimeType, Data: b.Data, URL: b.URL, Text: b.Text, Name: b.Name, Title: b.Title, Description: b.Description}
+	}
+	return out
+}
+
+func contentBlocks(artifacts []scrollback.Artifact) []client.ContentBlock {
+	out := make([]client.ContentBlock, len(artifacts))
+	for i, a := range artifacts {
+		out[i] = client.ContentBlock{Kind: client.ContentBlockKind(a.Kind), MimeType: a.MIMEType, Data: a.Data, URL: a.URL, Text: a.Text, Name: a.Name, Title: a.Title, Description: a.Description}
+	}
+	return out
 }
 
 // recordFileChange records a first-seen mutated workspace path. The synthetic
 // appendix gets one stable identity at its first distinct member.
 func (c *conversation) recordFileChange(path string) {
-	if path == "" {
+	id := c.scrollback.RecordFileChange(path)
+	if id == 0 {
 		return
 	}
-	if c.filesSeen == nil {
-		c.filesSeen = make(map[string]struct{})
-	}
-	if _, ok := c.filesSeen[path]; ok {
-		return
-	}
-	c.filesSeen[path] = struct{}{}
-	c.filesChanged = append(c.filesChanged, path)
-	if c.changedFilesAppendixID == 0 {
-		c.nextBlockID++
-		c.changedFilesAppendixID = c.nextBlockID
+	appendix, _ := c.scrollback.AppendixSnapshot()
+	c.filesChanged = appendix.Files
+	c.changedFilesAppendixID = uint64(appendix.ID)
+	if c.changedFilesAppendixID > c.nextBlockID {
+		c.nextBlockID = c.changedFilesAppendixID
 	}
 }
 
@@ -448,7 +508,8 @@ func (c *conversation) isEmpty() bool { return len(c.blocks) == 0 }
 
 // addUser appends a text-only user-prompt block.
 func (c *conversation) addUser(text string) {
-	c.appendBlock(block{kind: blockUser, raw: text})
+	c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text})
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // addUserWithMedia appends a user-prompt block carrying media-part placeholders.
@@ -457,13 +518,15 @@ func (c *conversation) addUser(text string) {
 // the text so a multimodal prompt is never silently rendered as text-only. With
 // no media it is equivalent to addUser.
 func (c *conversation) addUserWithMedia(text string, media []string) {
-	c.appendBlock(block{kind: blockUser, raw: text, media: media})
+	c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text, Media: media})
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // startAssistant opens a fresh, empty assistant block to accumulate deltas into.
 // Called on turn.start so each turn is its own markdown block.
 func (c *conversation) startAssistant() {
-	c.appendBlock(block{kind: blockAssistant})
+	c.scrollback.Messages().AddAssistant(scrollback.AssistantInput{})
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // appendAssistant appends streamed text to the current assistant block, opening
@@ -472,121 +535,63 @@ func (c *conversation) startAssistant() {
 // "reasoning…" live affordance (the reasoning summary, if any, freezes into its
 // static collapsed header).
 func (c *conversation) appendAssistant(text string) {
-	if b := c.currentAssistant(); b != nil {
-		b.raw += text
-		b.reasoningStreaming = false
-		return
-	}
-	c.appendBlock(block{kind: blockAssistant, raw: text})
+	c.scrollback.Messages().AppendAssistant(text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// reviseAssistant REPLACES the current assistant block's raw content with text
-// (rather than growing it like appendAssistant). It opens a fresh assistant block
-// if the last block is not one, mirroring appendAssistant's defensive shape.
-//
-// It exists for the streaming-floor benchmark (scrollback_bench_test.go): calling
-// it with a same-LENGTH but byte-DIFFERENT string each op makes markdownAt's
-// src-keyed cache MISS every op (render.go markdownAt keys on (src, width); the
-// rev bump that currentAssistant() performs misses blockCache; a fresh per-block
-// render bumps blockRenders, so the join cache also misses — the worst-case
-// streaming floor where the whole scrollback re-joins each op) WITHOUT growing
-// b.raw. Because the live block stays a fixed size, the per-op work is constant
-// and allocs/op is INDEPENDENT of b.N — the join still all-misses (the worst-case
-// streaming floor) but the live block does not grow. The mutation rides the
-// currentAssistant() gateway (the codebase's sole rev-bump path for assistant
-// blocks) so it never pokes block.rev directly.
 func (c *conversation) reviseAssistant(text string) {
-	if b := c.currentAssistant(); b != nil {
-		b.raw = text
-		b.reasoningStreaming = false
-		return
-	}
-	c.appendBlock(block{kind: blockAssistant, raw: text})
+	c.scrollback.Messages().ReviseAssistant(text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// appendReasoning accumulates streamed reasoning-summary text into the current
-// turn's assistant block. Reasoning is an attribute of that block (not a
-// reordered sibling) precisely because reasoning and answer deltas can interleave
-// within one turn — folding it in means a single reasoning region always renders,
-// above the merged answer, with a truthful line count. A reasoning delta arriving
-// before any assistant block (e.g. a delta racing turn.start) opens one rather
-// than dropping the text.
 func (c *conversation) appendReasoning(text string) {
-	b := c.currentAssistant()
-	if b == nil {
-		c.appendBlock(block{kind: blockAssistant})
-		b = &c.blocks[len(c.blocks)-1]
-	}
-	b.reasoning += text
-	// Reasoning is still "live" only while the answer text has not started.
-	if b.raw == "" {
-		b.reasoningStreaming = true
-	}
+	c.scrollback.Messages().AppendReasoning(text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// endReasoningStream clears the live "reasoning…" affordance on the current
-// assistant block (called on turn.end), so a turn that streamed reasoning but no
-// answer text settles into the static collapsed header.
 func (c *conversation) endReasoningStream() {
-	if b := c.currentAssistant(); b != nil {
-		b.reasoningStreaming = false
+	if c.scrollback.Messages().EndReasoningStream() {
+		c.syncSnapshot(c.scrollback.Len() - 1)
 	}
-}
-
-// currentAssistant returns the trailing assistant block (the one being streamed
-// into this turn) or nil when the last block is not an assistant block.
-//
-// It bumps the block's render revision (rev) before returning non-nil: it is the
-// sole gateway for the assistant mutators (appendAssistant / appendReasoning /
-// endReasoningStream), so bumping here keeps every mutation path invalidating the
-// render cache. A read-only future caller pays only a spurious re-render of one
-// block — never a stale frame.
-func (c *conversation) currentAssistant() *block {
-	if n := len(c.blocks); n > 0 && c.blocks[n-1].kind == blockAssistant {
-		c.blocks[n-1].rev++
-		return &c.blocks[n-1]
-	}
-	return nil
 }
 
 // addTurnStat appends a muted per-turn usage/elapsed stat line.
 func (c *conversation) addTurnStat(text string) {
-	c.appendBlock(block{kind: blockTurnStat, raw: text})
+	c.scrollback.Notices().AddTurnStat(text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// addTool appends a running tool-call block.
 func (c *conversation) addTool(id, name, args string) {
-	c.appendBlock(block{
-		kind:     blockTool,
-		toolID:   id,
-		toolName: name,
-		toolArgs: args,
-	})
+	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// resolveTool marks the tool block matching callID (its toolID) as resolved with
-// its result. Matching is by id only — never by tool name — mirroring the
-// tool_call.id ⇄ tool_result.call_id contract. Returns false if no match (the
-// caller can then render an orphan result notice). blocks carries the typed content
-// blocks relayed from the server (resource links, images, …) so the renderer can
-// surface user-audience artifacts distinctly; omitted/nil leaves the existing text
-// path byte-unchanged. The variadic shape keeps the common text-only call sites
-// (no blocks relayed) unchanged.
 func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.toolID == callID && !b.resolved {
-			b.rev++ // render-visible mutation (a possibly NON-tail block): invalidate its cache entry
-			b.resolved = true
-			b.resultBody = body
-			b.resultError = isErr
-			if len(blocks) > 0 {
-				b.resultBlocks = blocks
+	if !c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)}) {
+		return false
+	}
+	for j := len(c.blocks) - 1; j >= 0; j-- {
+		b := &c.blocks[j]
+		if b.kind != blockTool || b.toolID != callID {
+			continue
+		}
+		// Delegation payloads deliberately retain their Task 3 compatibility projection.
+		if b.subagent || b.team {
+			if !b.resolved {
+				b.rev++
+				b.resolved, b.resultBody, b.resultError, b.resultBlocks = true, body, isErr, blocks
 			}
 			return true
 		}
+		for i := 0; i < c.scrollback.Len(); i++ {
+			s := c.scrollback.SnapshotAt(i)
+			if s.ID == scrollback.BlockID(b.id) {
+				c.syncSnapshot(i)
+				return true
+			}
+		}
 	}
-	return false
+	return true
 }
 
 // subagentBlock returns the unresolved Subagent tool block whose toolID matches
@@ -1278,18 +1283,14 @@ func (c *conversation) liveTeamBlock() *block {
 
 // addNotice appends a muted info block (compaction / permission verb).
 func (c *conversation) addNotice(text string) {
-	c.appendBlock(block{kind: blockNotice, raw: text})
+	c.scrollback.Notices().AddNotice(text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // retractLatestNotice removes a provisional notice after its transport reply is
 // refused. It leaves unrelated notices untouched.
 func (c *conversation) retractLatestNotice(text string) {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		if c.blocks[i].kind == blockNotice && c.blocks[i].raw == text {
-			c.blocks = append(c.blocks[:i:i], c.blocks[i+1:]...)
-			return
-		}
-	}
+	c.scrollback.Notices().RetractLatestNotice(text)
 }
 
 // addRecoverNotice appends a WARNING-styled recover-notice block (a session that
@@ -1299,22 +1300,13 @@ func (c *conversation) retractLatestNotice(text string) {
 // bullet — and durable rather than a transient statusMsg so the run's first
 // event does not overwrite it before the user reads it.
 func (c *conversation) addRecoverNotice(text string) {
-	c.appendBlock(block{kind: blockNotice, raw: text, recover: true})
+	c.scrollback.Notices().AddRecoveryNotice(text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// addDelivery appends a fire-result delivery note block: a scheduled-task
-// affordance + the schedule name + the outcome body, visually distinct from a
-// user prompt, the model's text, and a notice. scheduleName + fireID label the
-// card; text is the full recorded note (the same fenced-untrusted content the
-// engine recorded) — the renderer strips the fence markers + redundant
-// provenance header for display (they are machine markers, not content).
 func (c *conversation) addDelivery(scheduleName, fireID, text string) {
-	c.appendBlock(block{
-		kind:           blockDelivery,
-		toolName:       scheduleName, // reused for the schedule-name label
-		deliveryFireID: fireID,
-		raw:            text,
-	})
+	c.scrollback.Notices().AddDeliveryWithSchedule(scheduleName, fireID, text)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // addHook appends a structured hook-notice block carrying the lifecycle phase,
@@ -1322,23 +1314,17 @@ func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 // distinctly from a plain notice — a hook glyph + phase, with the outcome
 // coloured (blocked stands out from a benign info/modified notice).
 func (c *conversation) addHook(text, phase, tool, decision string) {
-	c.appendBlock(block{
-		kind:         blockHook,
-		raw:          text,
-		hookPhase:    phase,
-		hookTool:     tool,
-		hookDecision: decision,
-	})
+	c.scrollback.Notices().AddHookText(text, phase, tool, decision)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // addError appends an error block.
 func (c *conversation) addError(text string) {
-	c.appendBlock(block{kind: blockError, raw: text})
+	c.scrollback.Notices().AddError(text, false)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
-// addPermanentError appends a permanent-error block: the error is a server-classified
-// PERMANENT provider rejection and retrying cannot help. The renderer shows a one-line
-// human summary; the raw error payload is available on expand (ctrl+t).
 func (c *conversation) addPermanentError(text string) {
-	c.appendBlock(block{kind: blockError, raw: text, permanent: true})
+	c.scrollback.Notices().AddError(text, true)
+	c.syncSnapshot(c.scrollback.Len() - 1)
 }

@@ -6,8 +6,10 @@ package scrollback
 
 import "reflect"
 
+// BlockID is part of the internal typed scrollback contract.
 type BlockID uint64
 
+// Kind is part of the internal typed scrollback contract.
 type Kind uint8
 
 const (
@@ -25,11 +27,13 @@ const (
 
 // PayloadSnapshot is closed: consumers can inspect package-defined snapshots but
 // cannot create another card family or mutate model-owned payload state.
+// PayloadSnapshot is part of the internal typed scrollback contract.
 type PayloadSnapshot interface {
 	Kind() Kind
 	payloadSnapshot()
 }
 
+// BlockSnapshot is part of the internal typed scrollback contract.
 type BlockSnapshot struct {
 	ID       BlockID
 	Revision uint64
@@ -42,6 +46,7 @@ type card struct {
 	payload  PayloadSnapshot
 }
 
+// Conversation is part of the internal typed scrollback contract.
 type Conversation struct {
 	cards    []card
 	nextID   BlockID
@@ -50,8 +55,10 @@ type Conversation struct {
 	seen     map[string]struct{}
 }
 
+// Len is part of the internal typed scrollback contract.
 func (c *Conversation) Len() int { return len(c.cards) }
 
+// SnapshotAt is part of the internal typed scrollback contract.
 func (c *Conversation) SnapshotAt(i int) BlockSnapshot {
 	card := c.cards[i]
 	return BlockSnapshot{ID: card.id, Revision: card.revision, Payload: clonePayload(card.payload)}
