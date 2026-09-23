@@ -80,11 +80,11 @@ is unavailable when:
 
 - ownership enforcement is enabled;
 - no planner is configured;
-- the selected store lacks reviewed atomic consolidation; or
-- a remote/base-only store does not positively advertise the required lifecycle
-  capabilities.
+- the selected store lacks reviewed atomic consolidation.
 
-The target store must remain the same supported store through planning and
+Remote memory drivers provide the mandatory lifecycle/CAS contract but do not add
+the separately required reviewed atomic consolidation. The target store must remain
+the same supported store through planning and
 application. Version checks turn concurrent edits into conflicts rather than
 silently overwriting newer facts. Storage-wide maintenance also requires the
 normal management authorization and a working cross-process lease where the

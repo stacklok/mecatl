@@ -1,6 +1,6 @@
 package ui
 
-// Tests for the per-BLOCK render cache (renderer.blockCache): settled blocks
+// Tests for the per-BLOCK render cache component: settled blocks
 // join the conversation string from cache and only blocks whose rev/width/expand
 // changed re-render. The conventions follow coalesce_test.go: fully offline,
 // flushes driven by explicit renderTickMsg, no output polling — and pure
@@ -100,6 +100,10 @@ var oracleSteps = []struct {
 	{"addTurnStat", func(c *conversation) { c.addTurnStat("turn 1 · ↑1.2k ↓300 · 2.1s") }},
 	{"addTool", func(c *conversation) { c.addTool("call-1", "Read", `{"path":"main.go"}`) }},
 	{"addNotice", func(c *conversation) { c.addNotice("context compacted") }},
+	{"retractLatestNotice", func(c *conversation) {
+		c.addNotice("provisional approval")
+		c.retractLatestNotice("provisional approval")
+	}},
 	// resolveTool covers BOTH shapes: the NON-TAIL resolve of call-1 (the notice
 	// above sits after it) and a fresh tail resolve.
 	{"resolveTool", func(c *conversation) {
@@ -110,6 +114,10 @@ var oracleSteps = []struct {
 	{"setSubagentStart", func(c *conversation) {
 		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
 		c.setSubagentStart("call-sub", "dig into the code", "", "", "", "")
+	}},
+	{"setSubagentRoutingDecision", func(c *conversation) {
+		confidence := 0.42
+		c.setSubagentRoutingDecision("call-sub", "child-1", &client.RoutingDecision{Backend: "jev", Confidence: &confidence, Outcome: "fallback"})
 	}},
 	{"addSubagentTool", func(c *conversation) {
 		c.addSubagentTool(client.SubagentMsg{
@@ -182,6 +190,9 @@ var oracleSteps = []struct {
 	{"parallelStart", func(c *conversation) { c.parallelStart("call-par", "first", 2) }},
 	{"parallelBranchStart", func(c *conversation) {
 		c.parallelBranchStart("call-par", 0, "parallel-call-par-0", "fast", "try the fast path", "", "", "", "")
+	}},
+	{"setParallelRoutingDecision", func(c *conversation) {
+		c.setParallelRoutingDecision("call-par", 0, &client.RoutingDecision{Backend: "jev", Outcome: "skipped"})
 	}},
 	{"parallelBranchTool", func(c *conversation) {
 		c.parallelBranchTool(client.ParallelMsg{
@@ -319,6 +330,22 @@ func receiverTypeName(expr ast.Expr) string {
 		return id.Name
 	}
 	return ""
+}
+
+func TestBlockRenderCacheStoreInvalidatesCoveredPrefix(t *testing.T) {
+	cache := blockRenderCache{}
+	key := joinPrefixState{width: 100, expand: true}
+	lines := []string{"settled"}
+	rows := []renderedRow{{blockID: 1, region: conversationRegionBody}}
+	cache.replacePrefix(lines, rows, 2, key)
+
+	if _, _, ok := cache.prefix(key, 2); !ok {
+		t.Fatal("precondition: stored prefix must be available")
+	}
+	cache.storeRendered(1, blockEntry{})
+	if _, _, ok := cache.prefix(key, 2); ok {
+		t.Error("storing a re-rendered block inside the cached prefix must invalidate the prefix")
+	}
 }
 
 // TestSettledBlocksRenderOnceDuringStreaming proves the headline win at the
@@ -491,17 +518,17 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 	m.conv.appendAssistant("the first transcript's answer")
 	m.conv.addUser("the first transcript's prompt")
 	m.refreshView()
-	if len(m.rend.blockCache) == 0 || len(m.rend.blockMD) == 0 {
+	if len(m.rend.blocks.rendered) == 0 || len(m.rend.blocks.markdown) == 0 {
 		t.Fatalf("precondition: both caches should be populated, got blockCache=%d blockMD=%d",
-			len(m.rend.blockCache), len(m.rend.blockMD))
+			len(m.rend.blocks.rendered), len(m.rend.blocks.markdown))
 	}
 
 	m = m.resetSession()
-	if len(m.rend.blockCache) != 0 {
-		t.Errorf("resetSession must empty blockCache, got %d entries", len(m.rend.blockCache))
+	if len(m.rend.blocks.rendered) != 0 {
+		t.Errorf("resetSession must empty blockCache, got %d entries", len(m.rend.blocks.rendered))
 	}
-	if len(m.rend.blockMD) != 0 {
-		t.Errorf("resetSession must empty blockMD, got %d entries", len(m.rend.blockMD))
+	if len(m.rend.blocks.markdown) != 0 {
+		t.Errorf("resetSession must empty blockMD, got %d entries", len(m.rend.blocks.markdown))
 	}
 
 	// Rebuild a DIFFERENT conversation at the SAME indices (rev 0 again): without
@@ -621,7 +648,7 @@ func TestIncrementalJoinWidthChangeDropsPrefix(t *testing.T) {
 	// it stale at the old width.
 	joinLinesString(r, c, false)
 	joinLinesString(r, c, false)
-	if len(r.joinPrefixLines) == 0 {
+	if len(r.blocks.prefixLines) == 0 {
 		t.Fatal("precondition: the prefix should be cached at width 100 before the width change")
 	}
 
@@ -648,7 +675,7 @@ func TestIncrementalJoinExpandToggleDropsPrefix(t *testing.T) {
 	// DROP it, not serve the collapsed prefix stale.
 	joinLinesString(r, c, false)
 	joinLinesString(r, c, false)
-	if len(r.joinPrefixLines) == 0 {
+	if len(r.blocks.prefixLines) == 0 {
 		t.Fatal("precondition: the prefix should be cached at expand=false before the toggle")
 	}
 
@@ -674,14 +701,14 @@ func TestIncrementalJoinResetDropsPrefix(t *testing.T) {
 	// prefix over them.
 	joinLinesString(r, c, false)
 	joinLinesString(r, c, false)
-	if len(r.joinPrefixLines) == 0 {
+	if len(r.blocks.prefixLines) == 0 {
 		t.Fatal("precondition: the incremental prefix should be populated")
 	}
 
 	r.resetBlockCaches()
-	if r.joinPrefixN != 0 || len(r.joinPrefixLines) != 0 {
+	if r.blocks.prefixN != 0 || len(r.blocks.prefixLines) != 0 {
 		t.Fatalf("resetBlockCaches must drop the incremental prefix, got N=%d lines=%d",
-			r.joinPrefixN, len(r.joinPrefixLines))
+			r.blocks.prefixN, len(r.blocks.prefixLines))
 	}
 
 	// Rebuild a DIFFERENT conversation at the SAME indices.
@@ -851,7 +878,7 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 	//    Two frames so the settled blocks hit and the prefix actually caches them.
 	r.renderConversationLines(c, false)
 	r.renderConversationLines(c, false)
-	if r.joinPrefixN == 0 {
+	if r.blocks.prefixN == 0 {
 		t.Fatal("precondition: the prefix must be cached over the settled scrollback")
 	}
 
@@ -902,7 +929,7 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 	r.renderConversationLines(c, false)
 	c.appendAssistant("more ")
 	r.renderConversationLines(c, false)
-	if r.joinPrefixN == 0 {
+	if r.blocks.prefixN == 0 {
 		t.Fatal("precondition: a partial prefix over the settled head must be cached")
 	}
 
@@ -944,10 +971,10 @@ func TestIncrementalJoinSteadyFrameAllocCeiling(t *testing.T) {
 	// Two stable renders: frame 1 cold (no prefix), frame 2 caches the full prefix.
 	r.renderConversationLines(c, false)
 	r.renderConversationLines(c, false)
-	if r.joinPrefixN != len(c.blocks) {
-		t.Fatalf("precondition: the full prefix must be cached (joinPrefixN=%d, want %d)", r.joinPrefixN, len(c.blocks))
+	if r.blocks.prefixN != len(c.blocks) {
+		t.Fatalf("precondition: the full prefix must be cached (joinPrefixN=%d, want %d)", r.blocks.prefixN, len(c.blocks))
 	}
-	nLines := len(r.joinPrefixLines)
+	nLines := len(r.blocks.prefixLines)
 
 	const iterations = 25
 	perOp := allocatedBytesPerIteration(iterations, func() {

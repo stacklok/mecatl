@@ -104,6 +104,198 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	}
 }
 
+// TestFooterStartupResumeHealsProvisionalWindow proves startup adoption starts the
+// same correlated refetch as a normal session bind. The snapshot's occupancy is
+// already authoritative and must survive the denominator-only refresh.
+func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
+	const sessionID = "resumed-session"
+	const occupancy = int64(40000)
+	conv := &fakeConv{
+		recv: &fakeRecver{}, send: &fakeSender{},
+		getSessionResults: []client.ResolvedModel{
+			{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000},
+		},
+	}
+	m := newTestModelFromDeps(Deps{
+		Session: conv, Conv: conv,
+		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true,
+		Resume: &client.ResumeSelection{
+			Row: client.SessionListItem{ID: sessionID},
+			Snapshot: client.SessionSnapshot{
+				ResolvedModel:    client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5"},
+				Usage:            client.Usage{InputTokens: 12345, OutputTokens: 678},
+				ContextOccupancy: &client.ContextOccupancy{InputTokens: occupancy},
+			},
+		},
+	})
+	m.width = 160
+
+	if got := m.contextWindow(); got != 0 {
+		t.Fatalf("resumed contextWindow() = %d, want provisional 0", got)
+	}
+	if foot := footerStr(m); !strings.Contains(foot, "ctx 40K") || strings.Contains(foot, "/") {
+		t.Fatalf("resumed footer = %q, want bare occupancy before refresh", foot)
+	}
+
+	updated, cmd := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("startup resume did not schedule resolved-model refresh")
+	}
+	var refreshed client.ResolvedModelMsg
+	for _, msg := range flattenBatch(cmd) {
+		if result, ok := msg.(client.ResolvedModelMsg); ok {
+			refreshed = result
+		}
+	}
+	if refreshed.SessionID != sessionID {
+		t.Fatalf("refresh session = %q, want %q", refreshed.SessionID, sessionID)
+	}
+	if n := conv.getSessionCalls(); n != 1 {
+		t.Fatalf("GetSession called %d times during startup resume, want 1", n)
+	}
+
+	updated, _ = m.Update(refreshed)
+	m = updated.(Model)
+	if got := m.contextWindow(); got != 1_050_000 {
+		t.Fatalf("healed contextWindow() = %d, want 1,050,000", got)
+	}
+	if got := m.contextTokens; got != occupancy {
+		t.Fatalf("refresh replaced resumed occupancy: got %d, want %d", got, occupancy)
+	}
+	if got := m.usage; got != (client.Usage{InputTokens: 12345, OutputTokens: 678}) {
+		t.Fatalf("refresh replaced resumed usage: got %+v", got)
+	}
+	if foot := footerStr(m); !strings.Contains(foot, "40K/1.1M") {
+		t.Fatalf("healed footer = %q, want visible meter without input", foot)
+	}
+}
+
+// TestFooterStartupResumeRefreshRestoresPersistedOccupancy covers the resume
+// boundary where the startup selection has an incomplete snapshot but the
+// authoritative GetSession refresh contains the persisted context occupancy.
+// The refresh must restore the numerator before any prompt or slash command.
+func TestFooterStartupResumeRefreshRestoresPersistedOccupancy(t *testing.T) {
+	const sessionID = "resumed-session"
+	const occupancy = int64(40_000)
+	conv := &fakeConv{
+		recv: &fakeRecver{}, send: &fakeSender{},
+		getSessionSnapshots: []client.SessionSnapshot{{
+			ResolvedModel:    client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000},
+			ContextOccupancy: &client.ContextOccupancy{InputTokens: occupancy, Estimated: true},
+		}},
+	}
+	m := newTestModelFromDeps(Deps{
+		Session: conv, Conv: conv,
+		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true,
+		Resume: &client.ResumeSelection{
+			Row:      client.SessionListItem{ID: sessionID},
+			Snapshot: client.SessionSnapshot{ResolvedModel: client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5"}},
+		},
+	})
+	m.width = 160
+
+	updated, cmd := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	var refreshed client.ResolvedModelMsg
+	for _, msg := range flattenBatch(cmd) {
+		if result, ok := msg.(client.ResolvedModelMsg); ok {
+			refreshed = result
+		}
+	}
+	if refreshed.SessionID != sessionID || refreshed.ContextOccupancy == nil || refreshed.ContextOccupancy.InputTokens != occupancy {
+		t.Fatalf("startup refresh = %#v, want persisted occupancy for %q", refreshed, sessionID)
+	}
+
+	updated, _ = m.Update(refreshed)
+	m = updated.(Model)
+	if m.contextUnknown || m.contextTokens != occupancy || !m.contextEstimated {
+		t.Fatalf("resumed context = tokens=%d unknown=%t estimated=%t", m.contextTokens, m.contextUnknown, m.contextEstimated)
+	}
+	if foot := footerStr(m); !strings.Contains(foot, "~40K/1.1M") {
+		t.Fatalf("footer = %q, want restored occupancy before a prompt", foot)
+	}
+}
+
+// TestFooterStartupResumeRetriesProvisionalWindow proves resume does not strand
+// a persisted numerator behind the server's short-lived zero-window sentinel.
+func TestFooterStartupResumeRetriesProvisionalWindow(t *testing.T) {
+	const sessionID = "resumed-session"
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{
+		{ResolvedModel: client.ResolvedModel{ContextWindow: 0}, ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000}},
+		{ResolvedModel: client.ResolvedModel{ContextWindow: 200_000}, ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000}},
+	}}
+	m := newTestModelFromDeps(Deps{
+		Session: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true,
+		Resume: &client.ResumeSelection{Row: client.SessionListItem{ID: sessionID}, Snapshot: client.SessionSnapshot{}},
+	})
+	m.width = 160
+
+	updated, cmd := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	var first client.ResolvedModelMsg
+	for _, msg := range flattenBatch(cmd) {
+		if result, ok := msg.(client.ResolvedModelMsg); ok {
+			first = result
+		}
+	}
+	updated, retry := m.Update(first)
+	m = updated.(Model)
+	if m.contextWindow() != 0 || retry == nil {
+		t.Fatalf("first refresh = window %d retry %v, want provisional window with retry", m.contextWindow(), retry != nil)
+	}
+
+	updated, refresh := m.Update(retry())
+	m = updated.(Model)
+	if refresh == nil {
+		t.Fatal("retry tick did not request the session snapshot")
+	}
+	second, ok := refresh().(client.ResolvedModelMsg)
+	if !ok || second.StartupResumeRefreshAttempt != 1 {
+		t.Fatalf("retry refresh = %#v, want attempt 1 snapshot", second)
+	}
+	m = applyAll(m, second)
+	if m.contextWindow() != 200_000 || !strings.Contains(footerStr(m), "40K/200K") {
+		t.Fatalf("retried footer = %q, want denominator after startup without interaction", footerStr(m))
+	}
+}
+
+func TestFooterStartupResumeDoesNotRetryKnownWindow(t *testing.T) {
+	m := newTestModelFromDeps(Deps{
+		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true,
+		Resume: &client.ResumeSelection{
+			Row:      client.SessionListItem{ID: "resumed-session"},
+			Snapshot: client.SessionSnapshot{ResolvedModel: client.ResolvedModel{ContextWindow: 200_000}},
+		},
+	})
+	updated, cmd := m.Update(client.ResolvedModelMsg{
+		SessionID: m.sessionID, Resolved: client.ResolvedModel{ContextWindow: 0}, AdoptContextOccupancy: true,
+	})
+	m = updated.(Model)
+	if m.contextWindow() != 200_000 || cmd != nil {
+		t.Fatalf("known window = %d retry %v, want preserved window without retry", m.contextWindow(), cmd != nil)
+	}
+}
+
+// TestFooterStartupResumeRefreshNeverReplacesLiveOccupancy proves a delayed
+// startup refresh cannot overwrite newer live metrics from the same session.
+func TestFooterStartupResumeRefreshNeverReplacesLiveOccupancy(t *testing.T) {
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true})
+	m.sessionID = "resumed-session"
+	m.contextTokens = 60_000
+	m.contextEstimated = false
+	m.startupAdopted = false // SessionInit from the first resumed prompt already landed.
+
+	m = applyAll(m, client.ResolvedModelMsg{
+		SessionID:             m.sessionID,
+		ContextOccupancy:      &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+		AdoptContextOccupancy: true,
+	})
+	if m.contextTokens != 60_000 || m.contextEstimated {
+		t.Fatalf("delayed startup refresh replaced live context: tokens=%d estimated=%t", m.contextTokens, m.contextEstimated)
+	}
+}
+
 // TestFooterHealStopsRefetchingOnceKnown proves the refetch is BOUNDED: once the
 // window is known (non-zero) the turn-end gate skips the RPC entirely — it fires at
 // most until the first heal lands, never on every turn forever.

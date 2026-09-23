@@ -91,6 +91,15 @@ func (s *Service) NeedsRehydrationForTest(sess *session.Session) bool {
 	return s.needsRehydration(sess)
 }
 
+// SetSteerPromotionStartedForTest installs an inert callback invoked after a
+// received steer is admitted to the terminal-race promotion path. Configure it
+// before serving.
+func (s *Service) SetSteerPromotionStartedForTest(fn func()) {
+	s.mu.Lock()
+	s.steerPromotionStarted = fn
+	s.mu.Unlock()
+}
+
 // SetSteerPromotionRegisteredForTest installs an inert callback invoked after a
 // promoted steer has registered its replacement run. Configure it before serving.
 func (s *Service) SetSteerPromotionRegisteredForTest(fn func()) {

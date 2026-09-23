@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MecatlBridge } from "../src/bridge.js";
-import { cannedMockReply, withMockDaemon } from "./harness.js";
+import { cannedMockReply, fixture, withMockDaemon } from "./harness.js";
 
 describe("MecatlBridge", () => {
   it("answers a prompt with the mock provider's canned reply", async () => {
@@ -113,5 +113,136 @@ describe("MecatlBridge", () => {
         await bridge.close();
       }
     });
+  });
+
+  it("threads onPermissionAsk to session.run so a real ask resolves through it", async () => {
+    await withMockDaemon(
+      async ({ baseUrl }) => {
+        const bridge = new MecatlBridge({ baseUrl });
+        try {
+          const asks: string[] = [];
+          const outcome = await bridge.handlePrompt(
+            "channel:thread-1",
+            "approve the scripted write",
+            undefined,
+            (ask) => {
+              asks.push(ask.tool);
+              return "allow_once";
+            },
+          );
+          expect(asks).toEqual(["Write"]);
+          expect(outcome.text).toBe("approved write completed");
+          expect(outcome.stopReason).toBe("end_turn");
+        } finally {
+          await bridge.close();
+        }
+      },
+      { script: fixture("permission-ask.json") },
+    );
+  });
+
+  it("with no onPermissionAsk, a permission ask is left pending until the run is cancelled", async () => {
+    await withMockDaemon(
+      async ({ baseUrl }) => {
+        const bridge = new MecatlBridge({ baseUrl });
+        try {
+          const prompt = bridge.handlePrompt("channel:thread-1", "approve the scripted write");
+          // Give the run a moment to reach the ask and genuinely stall on it,
+          // then cancel — without a responder, nothing else will ever settle it.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          await bridge.cancel("channel:thread-1");
+          await expect(prompt).resolves.toMatchObject({ stopReason: "cancelled" });
+        } finally {
+          await bridge.close();
+        }
+      },
+      { script: fixture("permission-ask.json") },
+    );
+  });
+
+  it("does not fire a second prompt's onStart until the first's onSettle, even while the first is stalled on an ask (panel-review, samuv)", async () => {
+    await withMockDaemon(
+      async ({ baseUrl }) => {
+        const bridge = new MecatlBridge({ baseUrl });
+        try {
+          const events: string[] = [];
+          let releaseAsk: (verdict: "allow_once") => void = () => {};
+          const askHeld = new Promise<"allow_once">((resolve) => {
+            releaseAsk = resolve;
+          });
+
+          const first = bridge.handlePrompt(
+            "channel:thread-1",
+            "approve the scripted write",
+            undefined,
+            () => askHeld,
+            () => {
+              events.push("first:start");
+            },
+            () => {
+              events.push("first:settle");
+            },
+          );
+
+          // Give the first run time to actually reach the ask and stall on it.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          expect(events).toEqual(["first:start"]);
+
+          const second = bridge.handlePrompt(
+            "channel:thread-1",
+            "hello",
+            undefined,
+            undefined,
+            () => {
+              events.push("second:start");
+            },
+            () => {
+              events.push("second:settle");
+            },
+          );
+
+          // The second call is queued behind the first — its onStart must not fire
+          // just because handlePrompt() was called; only once it's actually dequeued.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+          expect(events).toEqual(["first:start"]);
+
+          releaseAsk("allow_once");
+          await first;
+          await second;
+
+          expect(events).toEqual(["first:start", "first:settle", "second:start", "second:settle"]);
+        } finally {
+          await bridge.close();
+        }
+      },
+      { script: fixture("permission-ask.json") },
+    );
+  });
+
+  it("still fires onSettle if session creation itself fails (panel-review, samuv follow-up)", async () => {
+    // Nothing listens here, so sessions.create() (and #sessionFor) rejects before a session
+    // or run ever exists — onStart has already fired by then, so onSettle must still fire too,
+    // or Slack status would be stuck at "processing" forever.
+    const bridge = new MecatlBridge({ baseUrl: "http://127.0.0.1:1" });
+    try {
+      const events: string[] = [];
+      await expect(
+        bridge.handlePrompt(
+          "channel:thread-1",
+          "hello",
+          undefined,
+          undefined,
+          () => {
+            events.push("start");
+          },
+          () => {
+            events.push("settle");
+          },
+        ),
+      ).rejects.toThrow();
+      expect(events).toEqual(["start", "settle"]);
+    } finally {
+      await bridge.close();
+    }
   });
 });

@@ -39,7 +39,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 	t.Helper()
 	ctx := context.Background()
 
-	t.Run("save-load round trip", func(t *testing.T) {
+	t.Run("TestResumableSessionStatusMetrics_Scenario1_StoreRoundTripAndFailure", func(t *testing.T) {
 		st := newStore(t)
 		want := representativeSession(t, "conf-roundtrip")
 		if err := st.Save(ctx, want); err != nil {
@@ -50,9 +50,15 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			t.Fatalf("Load: %v", err)
 		}
 		assertSessionEqual(t, got, want)
+
+		legacy := newSession("conf-occupancy-absent")
+		loadedLegacy := roundTrip(t, st, legacy)
+		if occupancy, ok := loadedLegacy.LatestContextOccupancy(); ok {
+			t.Errorf("legacy LatestContextOccupancy = (%+v, true), want absent", occupancy)
+		}
 	})
 
-	t.Run("kind relationship round trip", func(t *testing.T) {
+	t.Run("TestResumableSessionStatusMetrics_Scenario1_AllSessionKindsRoundTrip", func(t *testing.T) {
 		cases := []struct {
 			id   session.SessionID
 			kind session.SessionKind
@@ -69,12 +75,17 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			t.Run(string(tc.kind), func(t *testing.T) {
 				st := newStore(t)
 				want := newSession(tc.id)
+				want.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: len(tc.id), Estimated: tc.kind == session.SessionKindDebug})
 				if err := want.RestoreSessionMetadata(tc.kind, tc.rel); err != nil {
 					t.Fatalf("RestoreSessionMetadata: %v", err)
 				}
 				got := roundTrip(t, st, want)
 				if got.Kind != tc.kind || !reflect.DeepEqual(got.Relationship, tc.rel) {
 					t.Errorf("metadata = (%q, %+v), want (%q, %+v)", got.Kind, got.Relationship, tc.kind, tc.rel)
+				}
+				wantOccupancy := session.ContextOccupancy{InputTokens: len(tc.id), Estimated: tc.kind == session.SessionKindDebug}
+				if occupancy, ok := got.LatestContextOccupancy(); !ok || occupancy != wantOccupancy {
+					t.Errorf("LatestContextOccupancy = (%+v, %v), want (%+v, true)", occupancy, ok, wantOccupancy)
 				}
 			})
 		}
@@ -548,7 +559,7 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 	ctx := context.Background()
 	st := newStore(t)
 	pager, ok := st.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(st) {
 		t.Fatalf("store %T does not implement port.SessionMetadataPager", st)
 	}
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
@@ -641,7 +652,7 @@ func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.Sessi
 	ctx := context.Background()
 	st := newStore(t)
 	pager, ok := st.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(st) {
 		t.Fatalf("store %T does not implement port.SessionMetadataPager", st)
 	}
 	deleter, ok := st.(port.ConditionalPrunableStore)
@@ -751,6 +762,7 @@ func representativeSession(t *testing.T, id session.SessionID) *session.Session 
 	mustOK(t, "RecordUsage", s.RecordUsage(session.Usage{
 		InputTokens: 1200, OutputTokens: 340, CacheReadTokens: 800, CacheWriteTokens: 200,
 	}))
+	s.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 1200, Estimated: true})
 	calls := []session.ToolCall{
 		// Keep Args COMPACT JSON: json.RawMessage round-trips verbatim only
 		// for already-compact payloads.
@@ -817,8 +829,13 @@ func assertSessionEqual(t *testing.T, got, want *session.Session) {
 	if got.Kind != want.Kind || !reflect.DeepEqual(got.Relationship, want.Relationship) {
 		t.Errorf("session metadata = (%q, %+v) want (%q, %+v)", got.Kind, got.Relationship, want.Kind, want.Relationship)
 	}
-	if got.Usage != want.Usage {
-		t.Errorf("Usage = %+v want %+v", got.Usage, want.Usage)
+	if got.UsageFor(session.UsageKindMain) != want.UsageFor(session.UsageKindMain) {
+		t.Errorf("main usage = %+v want %+v", got.UsageFor(session.UsageKindMain), want.UsageFor(session.UsageKindMain))
+	}
+	gotOccupancy, gotPresent := got.LatestContextOccupancy()
+	wantOccupancy, wantPresent := want.LatestContextOccupancy()
+	if gotPresent != wantPresent || gotOccupancy != wantOccupancy {
+		t.Errorf("LatestContextOccupancy = (%+v, %v), want (%+v, %v)", gotOccupancy, gotPresent, wantOccupancy, wantPresent)
 	}
 	if !got.CreatedAt.Equal(want.CreatedAt) {
 		t.Errorf("CreatedAt = %v want %v", got.CreatedAt, want.CreatedAt)
@@ -841,147 +858,5 @@ func mustOK(t *testing.T, op string, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("%s: %v", op, err)
-	}
-}
-
-// migrationJobID and migrationUnknownJobID are fixed, valid-format opaque job
-// handles (both in-tree SessionMigrationStore implementations require
-// exactly 32 hex characters).
-var (
-	migrationJobID        = strings.Repeat("c", 32)
-	migrationUnknownJobID = strings.Repeat("d", 32)
-)
-
-// RunSessionMigration exercises the shared port.SessionMigrationStore contract:
-// acquisition-gated mutation, cross-acquisition exclusion, ownership
-// rejection, and durable job-checkpoint round-tripping. It does NOT assert on
-// adapter-private physical format (on-disk layout, Redis key shapes, ...) —
-// only the port-level behavior every implementation must honor identically.
-//
-// seedMigratable must write ONE pre-migration ("not yet on the current
-// indexed format") session family directly, in whatever way is appropriate
-// for that adapter, and return its ID. Neither in-tree adapter's ordinary
-// port.SessionStore.Save path produces a migratable candidate — Save already
-// writes the current format — so this cannot be done generically through the
-// port alone; each adapter's own test supplies its existing internal seeding
-// helper (e.g. jsonlstore's seedMigrationV1, or writing directly into
-// miniredis for redisstore) as this hook.
-func RunSessionMigration(t *testing.T, newStore func(t *testing.T) port.SessionStore, seedMigratable func(t *testing.T, st port.SessionStore) session.SessionID) {
-	t.Helper()
-	st := newStore(t)
-	migrator, ok := st.(port.SessionMigrationStore)
-	if !ok {
-		t.Fatalf("store %T does not implement port.SessionMigrationStore", st)
-	}
-
-	unbound := context.Background()
-
-	// Unbound context: every mutating/ownership-sensitive call must reject.
-	if err := migrator.CheckSessionMigrationJobOwnership(unbound); err == nil {
-		t.Fatal("CheckSessionMigrationJobOwnership(unbound) = nil, want a rejection")
-	}
-	if err := migrator.SaveSessionMigrationJob(unbound, port.SessionMigrationJob{ID: migrationJobID}); err == nil {
-		t.Fatal("SaveSessionMigrationJob(unbound) = nil, want a rejection")
-	}
-	if _, err := migrator.MigrateSessionFamily(unbound, port.SessionMigrationFamily{}); err == nil {
-		t.Fatal("MigrateSessionFamily(unbound) = nil, want a rejection")
-	}
-
-	// Acquire, then confirm a second acquisition of the SAME job id is
-	// excluded while the first is still held.
-	boundCtx, release, err := migrator.AcquireSessionMigrationJob(unbound, migrationJobID)
-	if err != nil {
-		t.Fatalf("AcquireSessionMigrationJob: %v", err)
-	}
-	released := false
-	t.Cleanup(func() {
-		if !released {
-			_ = release()
-		}
-	})
-	// A short-lived context: a lock-based implementation may retry until its
-	// caller's context is done rather than failing on the first contended
-	// attempt, so the caller supplying a bound is what makes this
-	// deterministic here (a real caller is expected to do the same).
-	contendedCtx, contendedCancel := context.WithTimeout(unbound, 200*time.Millisecond)
-	_, _, contendedErr := migrator.AcquireSessionMigrationJob(contendedCtx, migrationJobID)
-	contendedCancel()
-	if contendedErr == nil {
-		t.Fatal("second AcquireSessionMigrationJob(same id) = nil, want exclusion while the first acquisition is held")
-	}
-	if err := migrator.CheckSessionMigrationJobOwnership(boundCtx); err != nil {
-		t.Fatalf("CheckSessionMigrationJobOwnership(bound) = %v, want nil", err)
-	}
-
-	// Seed one migratable family and find it via InspectSessionMigration.
-	id := seedMigratable(t, st)
-	inspection, err := migrator.InspectSessionMigration(boundCtx)
-	if err != nil {
-		t.Fatalf("InspectSessionMigration: %v", err)
-	}
-	if !inspection.Available {
-		t.Fatalf("InspectSessionMigration.Available = false, want true (reason %q)", inspection.UnavailableReason)
-	}
-	var family port.SessionMigrationFamily
-	found := false
-	for _, f := range inspection.Families {
-		if f.ID == id {
-			family, found = f, true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("InspectSessionMigration did not report seeded family %q among %d families", id, len(inspection.Families))
-	}
-
-	// A tampered fingerprint must be rejected as "changed", never silently
-	// migrated over content that no longer matches what was inspected.
-	tampered := family
-	tampered.Fingerprint += "-tampered"
-	if reason, err := migrator.MigrateSessionFamily(boundCtx, tampered); err != nil || reason != "changed" {
-		t.Fatalf("MigrateSessionFamily(tampered fingerprint) = (%q, %v), want (\"changed\", nil)", reason, err)
-	}
-
-	// The real migration, still holding the same acquisition, must succeed.
-	if reason, err := migrator.MigrateSessionFamily(boundCtx, family); err != nil || reason != "" {
-		t.Fatalf("MigrateSessionFamily(real family) = (%q, %v), want (\"\", nil)", reason, err)
-	}
-
-	// Job checkpoint round-trip: Save requires the acquisition, Load does not.
-	job := port.SessionMigrationJob{
-		ID: migrationJobID, State: port.SessionMigrationRunning, Generation: inspection.Generation,
-		V1Families: 1, Processed: 1, Migrated: 1, TerminalItems: map[string]bool{family.Handle: true},
-	}
-	if err := migrator.SaveSessionMigrationJob(boundCtx, job); err != nil {
-		t.Fatalf("SaveSessionMigrationJob: %v", err)
-	}
-	loaded, err := migrator.LoadSessionMigrationJob(unbound, migrationJobID)
-	if err != nil {
-		t.Fatalf("LoadSessionMigrationJob: %v", err)
-	}
-	if loaded.ID != job.ID || loaded.State != job.State || loaded.Processed != job.Processed ||
-		loaded.Migrated != job.Migrated || !loaded.TerminalItems[family.Handle] {
-		t.Fatalf("LoadSessionMigrationJob round-trip = %+v, want %+v", loaded, job)
-	}
-	if _, err := migrator.LoadSessionMigrationJob(unbound, migrationUnknownJobID); err == nil {
-		t.Fatal("LoadSessionMigrationJob(unknown id) = nil, want an error")
-	}
-
-	// Release, then confirm every acquisition-gated call rejects again.
-	// context.WithoutCancel: releasing may cancel boundCtx itself (e.g.
-	// redisstore's release cancels the acquisition's operation context), and
-	// a plain cancelled-context error would make this pass even if the
-	// adapter's OWN ownership fence were broken — it must be the fence being
-	// tested, not ctx cancellation.
-	if err := release(); err != nil {
-		t.Fatalf("release: %v", err)
-	}
-	released = true
-	releasedCtx := context.WithoutCancel(boundCtx)
-	if err := migrator.CheckSessionMigrationJobOwnership(releasedCtx); err == nil {
-		t.Fatal("CheckSessionMigrationJobOwnership(released) = nil, want a rejection")
-	}
-	if err := migrator.SaveSessionMigrationJob(releasedCtx, job); err == nil {
-		t.Fatal("SaveSessionMigrationJob(released) = nil, want a rejection")
 	}
 }

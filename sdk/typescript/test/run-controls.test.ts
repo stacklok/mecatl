@@ -188,15 +188,12 @@ describe("run controls", () => {
     >();
   });
 
-  it("legacy run and attached controls keep their compatibility contract", async () => {
-    expectTypeOf<Run["approve"]>().toEqualTypeOf<
-      (askId: string, allow: boolean) => Promise<void>
-    >();
+  it("run and attached controls expose only explicit verdict APIs", async () => {
     expectTypeOf<Run["resolveAsk"]>().toEqualTypeOf<
       (askId: string, verdict: PermissionVerdict) => Promise<void>
     >();
-    expectTypeOf<AttachedRun["approve"]>().toEqualTypeOf<
-      (askId: string, allow: boolean) => Promise<never>
+    expectTypeOf<AttachedRun["resolveAsk"]>().toEqualTypeOf<
+      (askId: string, verdict: PermissionVerdict) => Promise<never>
     >();
     expectTypeOf<AttachedRun["steer"]>().toEqualTypeOf<(text: string) => Promise<never>>();
 
@@ -204,7 +201,6 @@ describe("run controls", () => {
     const session = await harness.client.sessions.get(sessionId);
     const attached = await session.attach(runId);
     for (const operation of [
-      () => attached.approve("ask-1", true),
       () => attached.resolveAsk("ask-1", "allow_once"),
       () => attached.steer("turn left"),
     ]) {

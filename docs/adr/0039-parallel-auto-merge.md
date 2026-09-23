@@ -141,7 +141,7 @@ fails and `Merge` returns an error naming the fork path).
 
 - [Architecture guide](../architecture.md) — the Parallel section (to be updated
   to describe the auto-merge fast path).
-- `docs/design/IMPLEMENTATION-NOTES.md` — the delegation section (to be updated).
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the delegation section (to be updated).
 - `internal/adapter/forker/forker.go` (`Merger`, `mergeForkInner`) — the adapter.
 - `engine/tool/isolation.go` (`ForkMerger`) — the port.
 - `engine/agent/parallel.go` (`WithAutoMerge`, `executeFirst` auto-merge block) —

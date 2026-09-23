@@ -206,6 +206,10 @@ type anonymousConnectServer struct {
 	mecatlv1.UnimplementedHarnessServiceServer
 }
 
+func (anonymousConnectServer) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: &mecatlv1.ServerCapabilities{}}, nil
+}
+
 func (anonymousConnectServer) CreateSession(context.Context, *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
 	return &mecatlv1.CreateSessionResponse{SessionId: "anonymous-local"}, nil
 }

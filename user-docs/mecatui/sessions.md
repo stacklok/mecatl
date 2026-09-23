@@ -29,8 +29,11 @@ no chat qualifies, `mecatui` starts a new one. Storage and listing failures
 still return an error. You can combine either resume option with `--prompt` to
 send a task after the transcript loads.
 
-A resumed chat is the stored chat, not a copy. It keeps its model and exact
-server-owned placement. See [Session continuity](/features/session-continuity.md)
+A resumed chat is the stored chat, not a copy. It keeps its model, exact
+server-owned placement, cumulative token totals, and latest saved context meter.
+The meter includes an estimate marker when the server used display-only fallback
+accounting. A chat with no saved context measurement shows an unknown value until
+a completed turn establishes one. See [Session continuity](/features/session-continuity.md)
 for the storage and recovery behavior behind resume.
 
 To get the active session ID, run `/session` and press `c` to copy it. On a
@@ -39,6 +42,14 @@ normal exit, `mecatui` also writes a machine-readable handoff to standard error:
 ```text
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
+
+## Inspect the active session during a run
+
+Run `/session` after a session is bound to open its read-only details overlay,
+including while the agent is responding or waiting on a tool. It shows whether
+`mecatui` is using its embedded server or a remote target. Press `c` to copy the
+full session ID. Press `esc` to close the overlay and return focus to the
+conversation. Opening the overlay does not cancel, pause, or steer the run.
 
 ## Browse and maintain stored sessions
 
@@ -72,9 +83,8 @@ Caller identity records ownership when enabled, but does not isolate sessions
 between authenticated callers.
 
 When the server provides storage management, the inventory can also offer
-**Optimize storage** and **Clean up sessions**. Optimization is non-destructive.
-Cleanup is destructive and requires confirmation. The server operator controls
-availability and retention.
+**Clean up sessions**. Cleanup is destructive and requires confirmation. The
+server operator controls availability and retention.
 
 ## Name the active chat
 
@@ -145,9 +155,8 @@ mecatui debug 01JOPAQUESESSIONID \
 mecatui debug 01JOPAQUESESSIONID --debug-mcp github
 ```
 
-`TARGET` can be the full ID or the displayed 12-column handle. If a handle is
-ambiguous, copy the full ID from `/session` and try again. Use the embedded
-command for an embedded store and `connect ADDRESS` for the server that owns the
+`TARGET` can be the full ID or the short displayed handle. The handle is sanitized for terminal display and copy/paste as a debug `TARGET`; it is not an alternate server identity. If it is ambiguous, open `/session`, copy the full ID, and try again.
+Use the embedded command for an embedded store and `connect ADDRESS` for the server that owns the
 target. The optional `--prompt` value replaces the default diagnosis objective.
 
 When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI stating that the selected model will receive bounded target evidence. That evidence can contain prompts, model output, tool arguments and results, paths, and secrets. Invoking the command is the consent gesture; the default diagnostic prompt is then submitted automatically.
@@ -166,9 +175,13 @@ Unknown, disconnected, and tool-empty server names fail. Mutating MCP tools
 always require one-call approval, including in yolo mode.
 
 Debug views report when retained evidence is incomplete. Network views expose
-sanitized failure categories instead of raw errors, URLs, headers, bodies,
-prompts, tool arguments, or credentials. The debug conversation is stored as a
-separate durable session.
+sanitized failure categories, plus a bounded structural summary of the outer
+provider attempt (whether the provider's protocol terminal was actually
+observed, and a closed outcome such as complete, incomplete, stream error, or
+cancelled) — never raw errors, URLs, headers, bodies, prompts, tool arguments,
+or credentials. This can distinguish a provider stream that finished cleanly
+but produced unexpected output from one that was cut off or failed in
+transport. The debug conversation is stored as a separate durable session.
 
 For local process diagnostics, `--perf` starts a private `admin.sock`. Its raw
 metrics and pprof data are available to the operator and are not added to model

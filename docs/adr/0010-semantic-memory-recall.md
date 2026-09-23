@@ -14,7 +14,7 @@ Ship a pure-Go BM25 lexical SearchMemory tool as the blind-spot backstop: it sea
 
 ## Consequences
 
-The model can find trimmed or forgotten-key entries by keyword with no external dependency, no new Go module, and no network egress. The three-step loop becomes index (see recent) → SearchMemory (find by keyword) → Recall (load full value). Semantic recall remains off; the trigger to revisit is a real store observed near the cap with consolidation already enabled. The buildable semantic design is preserved here for future reference. Current behaviour: docs/architecture.md. Shipped/deferred state: docs/design/PRODUCTION-READINESS.md.
+The model can find trimmed or forgotten-key entries by keyword with no external dependency, no new Go module, and no network egress. The three-step loop becomes index (see recent) → SearchMemory (find by keyword) → Recall (load full value). Semantic recall remains off; the trigger to revisit is a real store observed near the cap with consolidation already enabled. The buildable semantic design is preserved here for future reference. Current behaviour: docs/architecture.md. Shipped/deferred state: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

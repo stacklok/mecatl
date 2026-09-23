@@ -6,9 +6,9 @@ description: >
   The domain of mecatl: a headless agentic coding harness. A `Session` carries a
   `Conversation` that a `Run` drives turn by turn against a `Provider`, invoking
   `Tools` under a permission model, emitting a stream of `Events`, and optionally
-  delegating to `Subagents` and `Teams`. Pass 2 adds the invariants that must
-  always hold and scenarios that stress-test them. For the prose walkthrough see
-  the [architecture guide](../architecture.md).
+  delegating to `Subagents` and `Teams`. Invariants and scenarios describe the
+  domain contracts. For the prose walkthrough see the
+  [architecture guide](../architecture.md).
 
 glossary:
   Principal: >
@@ -28,28 +28,50 @@ entities:
   Session:
     definition: >
       The central aggregate and unit of work: a stateful conversation between a
-      principal and a model, with its own workspace, usage accounting, and
+      principal and a model, with an `Environment` binding, usage accounting, and
       limits. A `Session` is a state machine (idle, running, awaiting, completed,
-      cancelled, failed) and is bound to exactly one `Provider` and `Model` for
-      its lifetime. It survives process restarts when backed by a store.
+      cancelled, failed) and is bound to one `Provider`. Its effective `Model`
+      is fixed for each `Turn`; a `PermissionMode` change can re-resolve the model
+      between turns within that provider. It survives process restarts when
+      backed by a store.
     relationships:
       - entity: Conversation
         cardinality: "1:1"
         ownership: owned
         role: records
-      - entity: Workspace
+      - entity: Environment
         cardinality: "1:1"
-        ownership: owned
-        role: scoped to
+        ownership: referenced
+        role: bound to
+        note: >
+          The `Session` persists the exact environment identity; the host
+          reattaches its capabilities before a `Run`. Binding to an
+          `Environment` does not imply exclusive ownership of its files.
+      - entity: HarnessContext
+        cardinality: "n:1"
+        ownership: referenced
+        role: receives instructions and customizations from
+        note: >
+          Composition selects the context independently from execution.
+          A context source may explicitly share execution files without
+          merging source authority with execution authority.
       - entity: Provider
         cardinality: "n:1"
         ownership: referenced
         role: bound to
-        note: A `Session`'s `Provider` is fixed for its lifetime
+        note: The `Session`'s provider binding stays fixed across turns
       - entity: Model
         cardinality: "n:1"
         ownership: referenced
         role: runs against
+        note: >
+          The host resolves this effective binding from the requested session
+          selection and `PermissionMode`; the aggregate stores selection labels
+          without interpreting them. The relationship describes the effective
+          target for a turn, not a lifetime model pin. Existing restart semantics
+          remain unchanged: explicit selections are restored, while an empty
+          selection follows the deployment default rather than persisting the
+          previously effective target.
       - entity: PermissionMode
         cardinality: "1:1"
         ownership: owned
@@ -78,8 +100,12 @@ entities:
     invariants:
       - id: fixed-provider-per-session
         statement: >
-          A `Session` is bound to one `Provider` and one `Model` for its entire
-          lifetime; they are re-derived together, never swapped individually.
+          The host preserves a `Session`'s `Provider` binding across turns.
+          Mode-driven `Model` re-resolution stays within that provider and takes
+          effect between turns. Provider/model-dependent collaborators are
+          derived coherently for the effective target, never cloned with only
+          the LLM swapped. This does not pin a floating default selection across
+          restart.
       - id: session-recover-before-reuse
         statement: >
           A `Session` in a terminal state (completed, cancelled, or failed) is
@@ -225,6 +251,10 @@ entities:
         cardinality: "n:1"
         ownership: referenced
         role: invokes
+      - entity: Environment
+        cardinality: "n:1"
+        ownership: referenced
+        role: executes with capabilities from
       - entity: ToolResult
         cardinality: "1:1"
         ownership: owned
@@ -250,20 +280,191 @@ entities:
           A `ToolResult` belongs to exactly one `ToolCall` and is recorded back
           into the `Conversation`.
 
+  Environment:
+    definition: >
+      The binding between a `Workspace`, a session-scoped `ReadLedger`, and an
+      optional `CommandRunner`. The host assembles these capabilities and passes
+      them together to each `ToolCall`. The binding defines how file access and
+      command execution reach the same logical files, even when their adapters
+      or physical locations differ. A shared directory or mount needs no copy
+      synchronization. A binding using separate copies would need an explicit
+      synchronization mechanism with conflict and failure handling; that mechanism
+      is not implemented by the Environment value itself. Local environments use
+      shared files; Redis-backed workspaces have no command runner today.
+    relationships:
+      - entity: Workspace
+        cardinality: "n:1"
+        ownership: referenced
+        role: provides file access through
+        note: Multiple environments can reference the same backing files.
+      - entity: ReadLedger
+        cardinality: "1:1"
+        ownership: referenced
+        role: carries read evidence in
+      - entity: CommandRunner
+        cardinality: "1:1"
+        ownership: referenced
+        role: optionally provides command execution through
+        note: >
+          Optional relationship: one runner when command execution is available,
+          none otherwise. The 1:1 cardinality describes the present case; it
+          does not require every environment to provide command execution.
+    invariants:
+      - id: environment-binding-coherent
+        statement: >
+          When a `CommandRunner` is present, the binding must make successful
+          `Workspace` changes visible to subsequent commands and completed command
+          changes visible to subsequent file operations. Matching root-path
+          strings alone does not establish that both capabilities reach the same
+          files. This is a binding contract, not a guarantee of atomicity against
+          concurrent external writers.
+      - id: environment-binding-failure-visible
+        statement: >
+          An unavailable binding, or a synchronization failure in a binding that
+          requires synchronization, must be reported rather than silently using
+          unrelated or stale copies. Establishing and maintaining the connection
+          belongs to the host's binding implementation, not the agent loop or
+          individual file `Tools`.
+      - id: environment-runner-optional
+        statement: >
+          An `Environment` can provide file access without a `CommandRunner`.
+          File storage does not imply command execution; absent capabilities
+          are omitted from the toolset or reported as unavailable. A no-filesystem
+          environment supplies a workspace that refuses file access and has no
+          command runner.
+
+  HarnessContext:
+    definition: >
+      The deployment-configured composition of admitted sources for model-facing
+      instructions, commands, rules, skills, and agent definitions supplied to a
+      `Session` through logical source contracts. Sources can read APIs, host
+      files, databases, or explicitly selected files in the execution environment.
+      Composition defines source ordering and content-kind-specific resolution:
+      which contributions combine, which named entries override others, and which
+      contributions are excluded. Source selection is separate from `Environment`
+      selection; separate responsibilities do not require separate storage.
+    relationships:
+      - entity: Skill
+        cardinality: "1:n"
+        ownership: referenced
+        role: makes available
+      - entity: AgentDef
+        cardinality: "1:n"
+        ownership: referenced
+        role: makes available
+    invariants:
+      - id: harness-context-independent-of-execution
+        statement: >
+          Deployment composition explicitly selects admitted harness
+          sources. An execution `Workspace`, backend kind, root, or command
+          namespace never implicitly selects instructions or customizations.
+      - id: harness-context-explicit-storage-sharing
+        statement: >
+          A context source may explicitly read the same logical files
+          as the execution `Workspace`, using that backend's capabilities. Those
+          files then follow the source's admission and freshness rules. Sharing
+          storage does not merge source authority with execution authority or
+          permit reopening a virtual root through a different backend.
+      - id: harness-context-provenance-governs-trust
+        statement: >
+          Source trust follows configured provenance and admission.
+          Host-backed content is not trusted by locality, and project-tier
+          content is admitted only by the resolved project-ingestion decision.
+      - id: harness-context-resolution-explicit
+        statement: >
+          Deployment composition defines enabled sources, ordering, named-entry
+          collision handling, and combination, replacement, or exclusion of
+          instruction and rule contributions according to their content kind.
+          Given the same configuration and source observations, resolution is
+          deterministic. Storage backend, transport, and discovery timing do not
+          establish precedence; listing and consumption use the same rules.
+      - id: harness-context-resolution-preserves-provenance
+        statement: >
+          Resolved content retains its contributing source provenance and
+          admission constraints. Combining or overriding content does not
+          promote a source to a more privileged trust tier.
+      - id: harness-context-overrides-do-not-grant-authority
+        statement: >
+          Context overrides select content; they cannot weaken `PermissionRules`,
+          grant execution capabilities, bypass source admission, or widen a
+          child's allowed tools. Instruction rules remain distinct from the
+          governance `PermissionRule` model.
+      - id: harness-context-preserves-source-freshness
+        statement: >
+          Commands remain live on each List and Expand, project
+          instructions are read once per `Run`, and rules, skills, and agent
+          definitions retain their source-lifetime snapshot semantics. Listing
+          and consumption use the same configured source authority.
+      - id: harness-context-does-not-share-read-evidence
+        statement: >
+          Harness-source reads never consult or update the execution
+          `ReadLedger`, including when source and execution share backing files.
+          `Sessions` sharing a harness context retain independent read evidence.
+
   Workspace:
     definition: >
-      The filesystem scope of a `Session`, rooted at a single directory and
-      contained so that file `Tools` cannot escape it via symlinks or parent
-      traversal. One `Workspace` per `Session`.
+      A logical file namespace exposed through a backend-independent port.
+      File `Tools` use it for content, metadata, search, and versioned mutations;
+      an optional namespace capability adds listing, copying, moving, and removal.
+      An adapter can serve local files, Redis-backed files, memory, or editor
+      buffers. Its root belongs to that backend and need not be a directory on
+      the harness host. Multiple `Sessions` can share the same backing files;
+      their read evidence remains separate in each session's `ReadLedger`.
     invariants:
       - id: workspace-contained
         statement: >
-          File `Tools` cannot read or write outside the `Workspace` root, except
-          through explicitly granted read-only roots.
-      - id: workspace-shell-env-scrubbed
+          File access stays within the backend's namespace unless both the
+          backend supports the requested external access and policy authorizes
+          it. A posture cannot create a missing backend capability or turn a
+          virtual root into a host filesystem path. Local out-of-root serving
+          is operation-specific: Read, ListDir, Write, and Edit can serve
+          policy-authorized external absolute targets, while mutating namespace
+          operations and searches remain confined.
+      - id: workspace-tools-use-ports
         statement: >
-          Every agent-facing shell in a `Workspace` runs with provider
-          credentials and other secrets scrubbed from its environment.
+          Read, ListDir, Write, Edit, Copy, Move, Remove, Glob, and Grep use the
+          `Environment`'s `Workspace` capabilities. Their bodies do not select a
+          storage backend or fall back to host filesystem access. Unsupported
+          namespace operations return an explicit error.
+
+  ReadLedger:
+    definition: >
+      A session's evidence of the file versions it has read, stored independently
+      of the `Workspace` content backend. Read records a version; Edit and
+      overwrite-Write compare that evidence with the current version before a
+      conditional replacement. The ledger can be in memory or durable storage.
+    relationships:
+      - entity: Session
+        cardinality: "1:1"
+        ownership: referenced
+        role: records read evidence for
+    invariants:
+      - id: read-evidence-session-scoped
+        statement: >
+          Sharing backing files does not share read evidence between `Sessions`.
+          A new child session receives fresh evidence even when it uses the
+          parent's file namespace. A command changing a file does not count as
+          the model reading that file's new version.
+
+  CommandRunner:
+    definition: >
+      The optional command-execution port bound into an `Environment`. It runs
+      commands in a namespace selected by the host. Programs access files through
+      a filesystem they understand, such as a shared directory or mount; they do
+      not call the Workspace interface. The environment binding supplies that
+      connection. Binding a working directory does not by itself sandbox a
+      command's filesystem access.
+    invariants:
+      - id: command-runner-bound
+        statement: >
+          A `CommandRunner` is bound at construction. Shell uses the runner from
+          the live `Environment`; it does not select a different workspace per
+          call. An isolated child binding connects both file access and command
+          execution to the child namespace, never to the parent's files.
+      - id: command-runner-env-scrubbed
+        statement: >
+          Every agent-facing shell runs with provider credentials and other
+          secrets scrubbed from its process environment.
 
   Provider:
     definition: >
@@ -284,16 +485,88 @@ entities:
 
   Model:
     definition: >
-      A specific model exposed by a `Provider`, with its own context window and
-      capabilities (text, image, reasoning). A `Session` runs against one `Model`;
-      a `Subagent` or `TeamMember` may override it within the same `Provider`, and
-      a `PermissionMode` change may re-resolve it within the same `Provider`
+      A specific model identified by the exact provider/model pair. Discovery
+      changes knowledge about its properties, not its identity. Provider listings
+      can be non-exhaustive; omission alone does not invalidate a passthrough
+      model. A `Session` runs against an effective `Model`; a `Subagent` or
+      `TeamMember` may override it within the same `Provider`, and a
+      `PermissionMode` change may re-resolve it within the same `Provider`
       (plan mode → a strong-reasoning model, ADR 0030 Layer 3).
     invariants:
       - id: model-override-stays-in-provider
         statement: >
           A `Subagent` or `TeamMember` may override the `Model` only within the
           `Session`'s bound `Provider`.
+
+  ModelMetadata:
+    definition: >
+      An immutable observation value object
+      describing one exact `Model`'s properties, including context window, input
+      capabilities, and reasoning support. Each field carries explicit knowledge
+      (known or unknown) and provenance (configuration, live discovery, or
+      catalog). A known capability can be supported or explicitly unsupported.
+      Observation records the evidence; host resolution policy chooses effective
+      values from that evidence and configuration. A policy fallback is a resolved
+      value, not an observation.
+    relationships:
+      - entity: Model
+        cardinality: "n:1"
+        ownership: referenced
+        role: describes
+        note: Observations from different sources can describe the same exact target
+    invariants:
+      - id: metadata-knowledge-explicit
+        statement: >
+          An absent property remains unknown, not false or unsupported.
+          Resolution preserves the distinction between an observed value and a
+          policy-permitted fallback, including their provenance.
+
+  ProviderDiscovery:
+    definition: >
+      Provider-scoped knowledge and attempt lifecycle,
+      shared by sessions within one host deployment instance. One composition-owned
+      discovery coordinator owns this lifecycle for each provider and is the
+      authoritative publisher of accepted live observations. It is neither a
+      per-session owner nor a singleton shared across replicas. Attempt states
+      are unattempted, in-flight, succeeded (returned model entries), empty
+      (completed with no entries), and failed. The latest attempt outcome is
+      distinct from the last successful metadata observations. Host resolution
+      policy determines whether those observations remain usable after failure.
+      The host coordinates discovery requests and publishes their results.
+    relationships:
+      - entity: Provider
+        cardinality: "n:1"
+        ownership: referenced
+        role: discovers metadata for
+        note: >
+          One lifecycle per provider within a host deployment instance; separate
+          instances have independent discovery knowledge.
+      - entity: ModelMetadata
+        cardinality: "1:n"
+        ownership: referenced
+        role: publishes accepted live observations as
+        note: >
+          A successful listing can describe multiple models, each with its own
+          observation. The 1:n cardinality describes the populated case; zero
+          observations are allowed, including before discovery or after an empty
+          first result. Configuration and catalog observations are other sources
+          of `ModelMetadata`, not results of a live discovery attempt.
+    invariants:
+      - id: discovery-provider-local
+        statement: >
+          Only a provider's own attempts establish its discovery state.
+          Another provider settling proves nothing about this provider's metadata;
+          unattempted is distinct from failed. Native providers remain demand-driven
+          without adding authenticated startup discovery.
+      - id: discovery-outcome-separate-from-observations
+        statement: >
+          A failed refresh records the latest attempt outcome without
+          turning last successful observations into a failed or empty observation.
+      - id: discovery-publication-ordered
+        statement: >
+          An obsolete attempt cannot overwrite newer accepted
+          observations. Publication follows the coordinator's ordering of attempts,
+          not the order in which network requests finish.
 
   PermissionMode:
     definition: >
@@ -660,6 +933,99 @@ entities:
           untrusted input.
 
 scenarios:
+  - name: Helpdesk context combines deployment files and services
+    actors: [Principal, Operator]
+    steps:
+      - "The operator configures a helpdesk `HarnessContext` with instructions from deployment files and additional instructions, rules, and skills from configured service sources, including gRPC implementations of the source contracts."
+      - "Composition specifies the order of instruction contributions and the resolution of same-name skills across the enabled sources. No repository or command runner is required to supply this context."
+      - "The harness consumes the resolved contributions with their source provenance and admission rules. Replacing a file adapter with an API adapter alone does not change precedence or trust."
+    invariants_touched:
+      [harness-context-independent-of-execution, harness-context-resolution-explicit, harness-context-resolution-preserves-provenance, environment-runner-optional]
+
+  - name: Coding context combines repository and deployment layers
+    actors: [Principal, Operator]
+    steps:
+      - "The operator configures repository instructions, rules, and skills from the mounted repository, organization skills from a service, and deployment instructions and commands. The repository is also the execution `Workspace`."
+      - "Composition combines admitted deployment and repository instruction contributions, permits a selected repository skill to replace an organization default, and gives a deployment command precedence over a same-name repository command."
+      - "Listing and consumption resolve the same named entries under the configured policy; combined and overridden contributions retain their own source provenance."
+      - "The operator disables repository context contributions without removing repository file access or command execution; deployment and service contributions remain available."
+      - "A repository contribution cannot change the composition policy, weaken a permission deny, or grant a child additional tools by claiming to override deployment content."
+    invariants_touched:
+      [harness-context-explicit-storage-sharing, harness-context-resolution-explicit, harness-context-resolution-preserves-provenance, harness-context-overrides-do-not-grant-authority, deny-dominant]
+
+  - name: Harness sources remain independent from execution storage
+    actors: [Principal, Operator]
+    steps:
+      - "The operator configures a `HarnessContext` using API-backed or file-backed sources independently from the execution `Environment`."
+      - "The command palette and prompt expansion consult the same configured live source, and instruction assembly uses the configured project-instruction source."
+      - "Changing execution storage or runner does not implicitly change source authority, precedence, provenance, or freshness."
+    invariants_touched:
+      [harness-context-independent-of-execution, harness-context-preserves-source-freshness, workspace-tools-use-ports]
+
+  - name: Unselected execution content cannot become harness sources
+    actors: [Principal, Operator]
+    steps:
+      - "The operator configures an external context source. The execution `Workspace` contains conflicting AGENTS.md, command, rule, skill, and agent-definition content that is not part of that source."
+      - "File tools may read the execution content under ordinary permissions, but automatic harness discovery and assembly do not ingest it."
+      - "The configured source retains its admission rules regardless of whether it is on the host or behind an API."
+    invariants_touched:
+      [harness-context-independent-of-execution, harness-context-provenance-governs-trust, workspace-contained]
+
+  - name: Context explicitly reads execution files
+    actors: [Principal, Operator]
+    steps:
+      - "The operator explicitly configures a context source over files in the execution namespace; the source uses that backend rather than interpreting its root as a host path."
+      - "Admitted project instructions and command definitions from those files are available through the source contracts. Palette listing and expansion use that same source."
+      - "An edit to a selected command file is visible on the next live List or Expand; project instructions refresh on the next Run. Unselected files do not become additional sources."
+    invariants_touched:
+      [harness-context-explicit-storage-sharing, harness-context-preserves-source-freshness, harness-context-provenance-governs-trust]
+
+  - name: Shared harness context keeps session read ledgers isolated
+    actors: [Principal, Operator]
+    steps:
+      - "Two `Sessions` attach the same `HarnessContext` and use execution environments backed by the same logical files."
+      - "Both sessions see the same admitted customizations, but each `Environment` carries its own `ReadLedger`."
+      - "A source read or a file read by the first session does not authorize Edit or overwrite-Write in the second session."
+    invariants_touched:
+      [harness-context-does-not-share-read-evidence, read-evidence-session-scoped]
+
+  - name: File tools and commands share a local binding
+    actors: [Principal, Operator]
+    steps:
+      - "The host binds a local `Workspace` and `CommandRunner` to shared files in an `Environment`, with a session-scoped `ReadLedger`."
+      - "An authorized Write creates a source file through the `Workspace`; a subsequent Shell command sees that file through its bound runner."
+      - "The command runs with a secret-scrubbed process environment and modifies the source file. The next Read sees the modification and records its version."
+    invariants_touched:
+      [environment-binding-coherent, workspace-tools-use-ports, command-runner-bound, command-runner-env-scrubbed, read-evidence-session-scoped]
+
+  - name: Shared Redis files do not imply shared read evidence or a shell
+    actors: [Principal, Operator]
+    steps:
+      - "The host binds two `Sessions` for the same principal to Redis-backed files through separate `Environments`, each with its own `ReadLedger` and no `CommandRunner`."
+      - "The first session creates a file; ListDir and Read in the second session access it through that session's `Workspace`, without consulting the host filesystem."
+      - "The second session must read the file itself before Edit; the first session's read evidence does not authorize an overwrite."
+      - "Shell is unavailable because this binding has no runner connected to the Redis files."
+    invariants_touched:
+      [environment-runner-optional, workspace-tools-use-ports, workspace-contained, read-evidence-session-scoped]
+
+  - name: An isolated child keeps file access and execution together
+    actors: [Principal]
+    steps:
+      - "The host forks an `Environment` into an isolated child namespace with fresh read evidence."
+      - "The child's `Workspace` and any `CommandRunner` refer to the child's files. A command sees changes made through the child's file tools."
+      - "The parent's files and `ReadLedger` are unchanged by work in that isolated child."
+    invariants_touched:
+      [environment-binding-coherent, command-runner-bound, read-evidence-session-scoped]
+
+  - name: A separate-copy binding must expose synchronization failures
+    actors: [Operator]
+    steps:
+      - "This is a contract scenario for a future binding using separate copies, not a shipped synchronization feature. The binding implementation must define how the `Workspace` and `CommandRunner` exchange changes and handle conflicts."
+      - "Before a command can consume a file-tool change, the binding must make it visible in the execution filesystem. After a command changes files, it must make those changes visible before subsequent file operations."
+      - "If synchronization fails or encounters an unresolved conflict, the affected operation reports the failure rather than claiming success against stale copies."
+    invariants_touched:
+      [environment-binding-coherent, environment-binding-failure-visible]
+
   - name: A tool call pauses for approval and resumes
     actors: [Principal, Client]
     steps:
@@ -785,10 +1151,47 @@ scenarios:
   - name: A subagent overrides the model within the same provider
     actors: [Principal]
     steps:
-      - "A `Session` is bound to one `Provider` and `Model` for its lifetime."
-      - "A delegation `ToolCall` spawns a `Subagent` with a `Model` override on the same `Provider`."
+      - "A `Session` keeps its `Provider` binding across turns; its effective `Model` is fixed during each turn."
+      - "A delegation `ToolCall` spawns a `Subagent` with a `Model` override on the same `Provider`, deriving provider/model-dependent collaborators together for that target."
       - "The `Subagent` replays its own `Conversation` statelessly each `Turn`."
     invariants_touched: [fixed-provider-per-session, model-override-stays-in-provider, provider-stateless-replay]
+
+  - name: Cold resume discovers metadata on the first explicit prompt
+    actors: [Principal, Client, Operator]
+    steps:
+      - "The host restores a transcript for an explicitly selected native provider/model without authenticated native startup discovery. That provider is healthy but its `ProviderDiscovery` is unattempted and the context window is unknown."
+      - "The first explicit prompt initiates or joins that provider's discovery through the deployment's coordinator. No earlier rejected prompt or model-picker request is required."
+      - "Discovery succeeds and publishes `ModelMetadata` for the exact target. Admission resolves the context window before context-dependent execution, including compaction and inference."
+      - "Execution and client projections use coherent resolution for that target and evidence/configuration basis; opening the picker is not a prerequisite."
+    invariants_touched:
+      [discovery-provider-local, metadata-before-context-dependent-execution, model-resolution-coherent]
+
+  - name: Providers settle independently and listings can omit passthrough models
+    actors: [Principal, Operator]
+    steps:
+      - "Provider A settles successfully while provider B remains unattempted. Sessions targeting B share B's lifecycle, not A's completion."
+      - "A prompt targeting B initiates or joins B's attempt rather than treating B as already failed. B returns a healthy listing that omits the requested passthrough `Model`."
+      - "The omission alone invalidates neither that exact target nor the existing healthy-omission fallback. Host policy can establish a permitted context-window fallback before execution, keeping it distinct from observed metadata. Listing membership is not an allowlist."
+    invariants_touched:
+      [discovery-provider-local, metadata-knowledge-explicit, metadata-before-context-dependent-execution]
+
+  - name: Failed refresh and obsolete completion preserve distinct knowledge
+    actors: [Operator]
+    steps:
+      - "A provider has accepted successful observations. An older refresh remains in flight when a newer attempt publishes updated observations."
+      - "The older request completes late with different values; its obsolete result cannot regress the newer accepted knowledge."
+      - "A subsequent refresh fails. `ProviderDiscovery` distinguishes this latest outcome from the last successful `ModelMetadata`; host resolution policy governs whether those observations remain usable."
+    invariants_touched:
+      [discovery-publication-ordered, discovery-outcome-separate-from-observations]
+
+  - name: Missing properties are not unsupported capabilities
+    actors: [Client, Operator]
+    steps:
+      - "Live `ModelMetadata` reports a context window but omits reasoning support and an input capability. Those fields are unknown."
+      - "An observation explicitly reporting no reasoning support is distinct from the omitted field. Host policy resolves required properties from available evidence and configuration without presenting a fallback as an observation."
+      - "For the same exact target and evidence/configuration basis, execution and client projections agree on resolved facts and knowledge distinctions; the client does not independently reinterpret unknown as unsupported."
+    invariants_touched:
+      [metadata-knowledge-explicit, model-resolution-coherent]
 
   - name: The agent remembers a fact and recalls it later
     actors: [Principal]
@@ -817,6 +1220,22 @@ scenarios:
 
 # Model-level invariants: cross-entity rules with no single owner.
 invariants:
+  - id: model-resolution-coherent
+    statement: >
+      For the same exact provider/model target and evidence/configuration
+      basis, execution and client projections use coherent host resolution of
+      context, capabilities, and reasoning. Metadata-dependent session facts and
+      provider/model-dependent collaborators use that basis; clients project the
+      host's interpretation rather than resolving it independently. This does not
+      require instantaneous atomic updates across network boundaries.
+  - id: metadata-before-context-dependent-execution
+    statement: >
+      Admission resolves the metadata needed for context-dependent
+      execution, or establishes a policy-permitted fallback, before compaction or
+      inference. Otherwise execution remains unadmitted. It need not await every
+      property, require picker activity, or add native-provider startup
+      authentication. A healthy listing's omission of a passthrough model alone
+      neither invalidates it nor removes its policy-permitted fallback.
   - id: budget-enforced-at-turn-boundary
     statement: >
       The token budget is checked at a `Turn` boundary: an in-flight `Turn`

@@ -415,7 +415,7 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 			return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
 		}
 	}
-	selectedTrajectory := learning.NewTrajectory(manifest.Source.Value, "", stop, sess.Usage, selectedMessages)
+	selectedTrajectory := learning.NewTrajectory(manifest.Source.Value, "", stop, sess.UsageFor(session.UsageKindMain), selectedMessages)
 	input := learning.NewInput(selectedTrajectory, selectedEvents, record.Signals, nil)
 	input.Manifest = &manifest
 	if err := learning.ValidateInput(input); err != nil {
@@ -499,7 +499,7 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 	if !ok {
 		return false, "source unavailable", ""
 	}
-	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
+	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.UsageFor(session.UsageKindMain), sess.Conversation.Messages)
 	var (
 		actual     learning.EvidenceRef
 		previewRef learning.EvidenceRef

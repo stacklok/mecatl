@@ -223,7 +223,7 @@ type pendingAskEvidence struct {
 }
 
 func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope string) statusEvidence {
-	out := statusEvidence{View: "status", Scope: scope, State: s.State, Kind: s.Kind, Limits: s.Limits, LatestRunCounters: s.Counters, SnapshotCumulativeUsage: s.Usage, Lifetime: t.lifetimeView(ctx, s.ID), CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+	out := statusEvidence{View: "status", Scope: scope, State: s.State, Kind: s.Kind, Limits: s.Limits, LatestRunCounters: s.Counters, SnapshotCumulativeUsage: s.UsageFor(session.UsageKindMain), Lifetime: t.lifetimeView(ctx, s.ID), CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
 	if scope == rootScope {
 		out.Target = s.ID
 	}
@@ -243,23 +243,12 @@ func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope 
 	}
 	if ask, ok := s.PendingAsk(); ok {
 		toolName, toolRepaired := safeLineRepair(ask.Tool)
-		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.Call, Origin: askOrigin(ask.Origin())}
+		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.Call, Origin: string(ask.Origin)}
 		if toolRepaired {
 			out.RepairedFields = append(out.RepairedFields, "pending_ask.tool")
 		}
 	}
 	return out
-}
-
-func askOrigin(origin session.AskOrigin) string {
-	switch origin {
-	case session.AskOriginHook:
-		return "hook"
-	case session.AskOriginPlan:
-		return "plan"
-	default:
-		return "permission"
-	}
 }
 
 type transcriptEvidence struct {

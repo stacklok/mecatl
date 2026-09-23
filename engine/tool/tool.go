@@ -337,6 +337,72 @@ type WorkspaceReader interface {
 	Stat(ctx context.Context, path string) (FileInfo, error)
 }
 
+// LocalFileOperands returns only operands whose built-in tool semantics identify
+// workspace-local files. Argument names on MCP, custom, or delegation tools are
+// payload labels and never mint local filesystem authority.
+func LocalFileOperands(name string, args json.RawMessage) []string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(args, &fields) != nil {
+		return nil
+	}
+	keys := []string(nil)
+	switch name {
+	case "Read", "Edit", "Write", "Remove", "ListDir":
+		keys = []string{"path"}
+	case "Copy", "Move":
+		keys = []string{"source", "destination"}
+	case ShellToolName:
+		var command string
+		if json.Unmarshal(fields["command"], &command) == nil {
+			if path, ok := exactLocalShellScript(command); ok {
+				return []string{path}
+			}
+		}
+	}
+	paths := make([]string, 0, len(keys))
+	for _, key := range keys {
+		var path string
+		if json.Unmarshal(fields[key], &path) == nil && path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func exactLocalShellScript(command string) (string, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || strings.ContainsAny(trimmed, ";&|$`()<>\\\n\r") {
+		return "", false
+	}
+	parts := strings.Fields(trimmed)
+	if strings.Join(parts, " ") != trimmed {
+		return "", false
+	}
+	if len(parts) == 1 && (strings.HasPrefix(parts[0], "./") || strings.HasSuffix(parts[0], ".sh")) {
+		return parts[0], true
+	}
+	if len(parts) == 2 && (parts[0] == "sh" || parts[0] == "bash" || parts[0] == "dash") && (strings.HasPrefix(parts[1], "./") || strings.HasSuffix(parts[1], ".sh")) {
+		return parts[1], true
+	}
+	return "", false
+}
+
+// BoundedWorkspaceReader is the optional evidence-safe versioned read seam.
+// ReadVersionBounded must reject content larger than maxBytes before allocating
+// more than maxBytes+1 bytes and must return content and version from one
+// consistent snapshot. Callers must fail closed when a Workspace lacks it.
+type BoundedWorkspaceReader interface {
+	ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
+}
+
+// BoundedWorkspaceRangeReader is the optional paging extension used for finite
+// evidence larger than one native preview. It must read at most maxBytes from
+// offset, reject files larger than totalLimit without allocating them, and
+// return the authoritative version and total size from the same opened snapshot.
+type BoundedWorkspaceRangeReader interface {
+	ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, FileVersion, int64, error)
+}
+
 // AuthorityResourceResolver derives the physical, workspace-confined identity of a
 // local path for authority evaluation. Implementations must resolve symlinks using
 // the same rules as filesystem access and reject an escape or any ambiguous path.
@@ -548,12 +614,14 @@ type MemoryEntry struct {
 // every implementation must pass (the flock-file reference adapter runs it
 // today; remote drivers run it over their client).
 type MemoryStore interface {
-	// RememberEntry stores e, overwriting any existing entry under e.Key and
-	// bumping its UpdatedAt. e.Description is the optional one-line tier-0 hook;
-	// an empty description means "derive from the value's first non-empty line
-	// on Index". An empty (or whitespace-only) key is rejected with an error.
-	RememberEntry(ctx context.Context, e MemoryEntry) error
-	// Recall returns the entry for the exact key. The boolean reports whether an
+	// Remember atomically creates or replaces a record only when expected matches
+	// its complete current state. Exists=false is create-only; Exists=true requires
+	// the exact opaque version. Empty versions never request an unconditional write.
+	Remember(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
+	// Inspect returns current state and revision history, including tombstones. A
+	// miss is (zero, false, nil).
+	Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
+	// Recall returns the active entry for the exact key. The boolean reports whether an
 	// entry was found; a miss is (zero, false, nil), not an error.
 	Recall(ctx context.Context, key string) (MemoryEntry, bool, error)
 	// List returns all entries whose key has the given prefix, sorted by key for
@@ -561,8 +629,12 @@ type MemoryStore interface {
 	// Search, List returns FULL entries — Value included — so consumers (e.g. a
 	// consolidation planner, a prefix-fallback read) can load payloads from it.
 	List(ctx context.Context, prefix string) ([]MemoryEntry, error)
-	// Forget deletes the entry for key. Deleting a missing key is not an error.
-	Forget(ctx context.Context, key string) error
+	// Forget atomically appends a tombstone when expected is the exact current
+	// opaque version.
+	Forget(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
+	// Undo atomically appends a compensating revision when expected is the exact
+	// current opaque version.
+	Undo(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
 	// Index returns the tier-0 routing table: every entry as (key, description,
 	// updated-at) with the VALUE OMITTED, sorted by key for deterministic output.
 	// The implementation fills Description (explicit, else derived from the

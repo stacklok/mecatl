@@ -14,8 +14,10 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -269,7 +271,7 @@ func (m Model) markDirty() (Model, tea.Cmd) {
 // unchanged; only the per-token re-render churn is coalesced). refreshView clears
 // viewDirty, making "rendered ⟺ not dirty" an invariant.
 //
-// Within each 16ms flush, the per-BLOCK render cache (renderer.blockCache, keyed
+// Within each 16ms flush, the per-BLOCK render cache component (renderer.blocks,
 // on block.rev/width/expand) means only blocks whose rev, the wrap width, or the
 // expand toggle changed actually re-render — in practice just the live tail
 // block; every settled block joins the conversation string from cache. The
@@ -530,13 +532,34 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
+const (
+	startupResumeRefreshDelay   = 100 * time.Millisecond
+	startupResumeRefreshRetries = 10
+)
+
+type startupResumeRefreshRetryMsg struct {
+	sessionID string
+	attempt   int
+}
+
+func (m Model) startupResumeRefreshRetryCmd(attempt int) tea.Cmd {
+	id := m.sessionID
+	return tea.Tick(startupResumeRefreshDelay, func(time.Time) tea.Msg {
+		return startupResumeRefreshRetryMsg{sessionID: id, attempt: attempt}
+	})
+}
+
 func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
+	m.submitStatusLine()
 	cmd := (&m).maybeKittyTransmit()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)
 	}
 	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
 		cmd = tea.Batch(cmd, liveCmd)
+	}
+	if m.sessionID != "" && m.deps.Session != nil {
+		cmd = tea.Batch(cmd, client.RefreshStartupResumeCmd(m.deps.Ctx, m.deps.Session, m.sessionID))
 	}
 	if m.workspaceEnrollmentActive() {
 		m.enrollment = workspaceEnrollmentState{}
@@ -687,7 +710,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case inventorySessionIDCopiedMsg:
 		if msg.err != nil {
-			m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + sanitizeTerminal(msg.err.Error()))
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + terminaltext.Sanitize(msg.err.Error()))
 			return m, nil, true
 		}
 		m.statusMsg = m.deps.Theme.Style("success").Render("copied exact session ID " + safeSessionID(msg.id))
@@ -695,6 +718,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case startupResumeReadyMsg:
 		mm, cmd := m.finishStartupResume()
 		return mm, cmd, true
+	case startupResumeRefreshRetryMsg:
+		if msg.sessionID != m.sessionID || !m.startupAdopted || m.deps.Session == nil {
+			return m, nil, true
+		}
+		return m, client.RefreshStartupResumeRetryCmd(m.deps.Ctx, m.deps.Session, msg.sessionID, msg.attempt), true
 	case reconnectMsg:
 		// Live-feed reconnect loop msgs (issue #387): degraded-state markers and
 		// the catch-up event msgs ride the reconnect channel. Handled here (a
@@ -737,7 +765,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.phase = phaseIdle
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
-			"could not switch to effort " + effortLabel(msg.sel.ReasoningEffort) + ": " + sanitizeTerminal(msg.err.Error()))
+			"could not switch to effort " + effortLabel(msg.sel.ReasoningEffort) + ": " + terminaltext.Sanitize(msg.err.Error()))
 		focusCmd := m.prompt.Focus()
 		m.refreshView()
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
@@ -766,14 +794,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.phase = phaseIdle
 		m.pendingModelSwitchNote = ""
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
-			"could not switch to " + sanitizeTerminal(msg.model) + ": " + sanitizeTerminal(msg.err.Error()))
+			"could not switch to " + terminaltext.Sanitize(msg.model) + ": " + terminaltext.Sanitize(msg.err.Error()))
 		focusCmd := m.prompt.Focus()
 		m.refreshView()
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
 	case statusContextMsg:
 		if msg.sessionID == m.sessionID {
 			m.statusContextRoot = msg.root
-			statusline.SetCommandCWD(m.deps.StatusSource, msg.root)
+			customization.SetCommandCWD(m.deps.StatusSource, msg.root)
 			m.submitStatusLine()
 		}
 		return m, nil, true
@@ -793,13 +821,25 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case workspaceEnrollmentPollTickMsg:
 		mm, cmd := m.applyWorkspaceEnrollmentPollTick(msg)
 		return mm, cmd, true
+	case client.MCPRefreshMsg:
+		if msg.RequestToken != m.mcpRefreshRequestToken || msg.SessionID != m.sessionID {
+			return m, nil, true
+		}
+		if msg.Err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh failed: " + terminaltext.Sanitize(msg.Err.Error()))
+		} else if msg.Result.Changed {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools refreshed (revision %d)", msg.Result.Revision))
+		} else {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools already current (revision %d)", msg.Result.Revision))
+		}
+		return m, nil, true
 	case client.SessionCompactedMsg:
 		if msg.RequestToken != m.compactRequestToken || msg.SessionID != m.sessionID || !m.compactPending {
 			return m, nil, true
 		}
 		m.compactPending = false
 		if msg.Err != nil {
-			m.statusMsg = m.deps.Theme.Style("warning").Render("could not compact model history: " + sanitizeTerminal(msg.Err.Error()))
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not compact model history: " + terminaltext.Sanitize(msg.Err.Error()))
 			return m, nil, true
 		}
 		if msg.Compacted {
@@ -826,7 +866,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.phase = phaseIdle
-		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not switch worktree: " + sanitizeTerminal(msg.err.Error()) + "; relist and try again")
+		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not switch worktree: " + terminaltext.Sanitize(msg.err.Error()) + "; relist and try again")
 		focusCmd := m.prompt.Focus()
 		return m, focusCmd, true
 	case clearSessionReadyMsg:
@@ -837,6 +877,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// any locally queued old-stream messages before binding the successor.
 		m.clearPending = nil
 		if m.stream != nil || m.streamCh != nil || m.cancelRun != nil {
+			// The source run is over and its stream terminal will now never be
+			// processed, so this is the LAST chance to settle the hook. The RPC
+			// response and the stream terminal arrive on independent commands,
+			// so server-side completion does not establish their reducer order:
+			// when the response wins the race, the terminal below never runs.
+			// Leaving it unsettled keeps Notifier.running true and silently
+			// dedupes the successor's busy signal.
+			m.notifyHookFailed(streamClosedReason)
 			m = m.endRun("")
 		}
 		m = m.resetSession()
@@ -856,7 +904,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if m.clearPending == nil || m.clearPending.sourceID != msg.sourceID || m.clearPending.token != msg.token || m.sessionID != msg.sourceID {
 			return m, nil, true
 		}
-		failure := "could not clear: " + sanitizeTerminal(msg.err.Error())
+		failure := "could not clear: " + terminaltext.Sanitize(msg.err.Error())
 		m.clearPending.failure = failure
 		activeSource := m.clearPending.sourcePhase == phaseRunning || m.clearPending.sourcePhase == phaseAwaitingApproval
 		if activeSource && !m.clearPending.sourceSettled {
@@ -884,14 +932,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = mm.(Model)
 		m.createModelSelection = client.ModelSelection{}
 		m.modelCatalog.active = client.ModelSelection{}
-		notice := "saved model " + sanitizeTerminal(modelSelLabel(msg.rejected)) +
-			" was rejected by the server (" + sanitizeTerminal(msg.err.Error()) +
+		notice := "saved model " + terminaltext.Sanitize(modelSelLabel(msg.rejected)) +
+			" was rejected by the server (" + terminaltext.Sanitize(msg.err.Error()) +
 			") — using the server default"
 		// Name the model the session actually fell back to, when known — mirroring
 		// the key-removed reconcile notice. The fallback create's response already
 		// carries it (applySessionReady set m.resolvedSessionModel from msg.ready).
 		if id := m.resolvedSessionModel.ModelID; id != "" {
-			notice += " — now running " + sanitizeTerminal(id)
+			notice += " — now running " + terminaltext.Sanitize(id)
 		}
 		m.statusMsg = m.deps.Theme.Style("warning").Render(notice)
 		return m, cmd, handled
@@ -925,12 +973,15 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.restartFailed = true
 		m.pendingModelSwitchNote = ""
 		m.statusMsg = m.deps.Theme.Style("errorText").Render(
-			"could not switch to " + sanitizeTerminal(msg.model) + ": " +
-				sanitizeTerminal(msg.err.Error()) + " — press " + firstKey(m.keys.Submit, "enter") + " to retry")
+			"could not switch to " + terminaltext.Sanitize(msg.model) + ": " +
+				terminaltext.Sanitize(msg.err.Error()) + " — press " + firstKey(m.keys.Submit, "enter") + " to retry")
 		_ = m.prompt.Focus()
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.restoreRefusedApproval(msg.Err) {
+			return m, nil, true
+		}
 		if m.phase == phaseAuthorizing && m.authorization.authorizationID != "" && client.IsMCPAuthorizationPending(msg.Err) {
 			// The parked authorization remains authoritative. The original Converse
 			// stream is done, but its card and automatic polling remain active.
@@ -946,6 +997,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if msg.Err != nil {
 				m.conv.addError("stream error: " + msg.Err.Error())
 			}
+			m.notifyHookFailed(streamErrReason(msg.Err))
 			m = m.endRun(stopError)
 			m.failedStepRetryRun = false
 			m.failedStepRetryAuthoritative = false
@@ -957,6 +1009,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			}
 			return m, m.refreshCmd(), true
 		}
+		if m.ownsAdmission() && client.IsContextWindowUnavailable(msg.Err) {
+			m = m.rejectAdmission()
+			return m, nil, true
+		}
+		m.admissionSubmission = nil
 		if msg.AuthReason != "" {
 			mm, cmd := m.reduceLiveAuthRecovery(msg.AuthReason)
 			return mm, cmd, true
@@ -968,9 +1025,10 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if m.failedStepRetryRun && !m.failedStepRetryAuthoritative {
 			// RetryStart transport/server rejection is non-destructive. The server is
 			// authoritative, so preserve textarea, transcript, queue, and /retry access.
+			m.notifyHookFailed(streamErrReason(msg.Err))
 			m = m.endRun(stopError)
 			m.failedStepRetryRun = false
-			m.statusMsg = m.deps.Theme.Style("warning").Render("retry was not started: " + sanitizeTerminal(msg.Err.Error()) + " — resolve the condition and use /retry")
+			m.statusMsg = m.deps.Theme.Style("warning").Render("retry was not started: " + terminaltext.Sanitize(msg.Err.Error()) + " — resolve the condition and use /retry")
 			if len(m.queued) > 0 {
 				m.queuePaused = stopError
 			}
@@ -985,6 +1043,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.promptRecovery.autoReplay = true
 		}
 		m.conv.addError("stream error: " + friendlyWorkspaceEnrollmentRejection(msg.Err.Error()))
+		m.notifyHookFailed(streamErrReason(msg.Err))
 		m = m.endRun(stopError)
 		liveCmd := m.armLiveFeed()
 		mm, drainCmd := m.drainQueue(stopError)
@@ -1009,6 +1068,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// RPC response arrives. Tear it down without draining queues, retrying steps,
 		// reopening live delivery, or otherwise continuing the source.
 		if m.clearPending != nil {
+			// A genuine terminal for the hook: the source run is over (no result
+			// will arrive). Without this the notifier stays running=true and the
+			// NEXT run's Start is silently deduped, so the host never goes busy
+			// again. Clear still owns the UI handoff; only the hook settles here.
+			m.notifyHookFailed(streamClosedReason)
 			m = m.endRun("closed")
 			m.clearPending.sourceSettled = true
 			m.phase = phaseConnecting
@@ -1022,6 +1086,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// finalise it; otherwise it's the expected post-result close (no-op).
 		if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
 			m.recoverPrompt(false)
+			// Genuine terminal: the stream ended while the run was still active,
+			// so the host gets a failed terminal rather than being left busy.
+			m.notifyHookFailed(streamClosedReason)
 			m = m.endRun("closed")
 			modeCmd := m.retryPendingModeCmd()
 			liveCmd := m.armLiveFeed()
@@ -1049,6 +1116,29 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.palette.commands = msg.Commands
 		mm, cmd := m.syncPalette()
 		return mm, cmd, true
+	case client.GuardrailCoverageMsg:
+		if !guardrailCoverageCurrent(msg, m.sessionID, m.guardrailStatusRequest) {
+			return m, nil, true
+		}
+		if msg.Posture {
+			checker := "checker unknown (status unavailable; do not infer off or healthy)"
+			if msg.Err == nil {
+				checker = guardrailPostureSummary(msg.Coverage)
+			}
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture) + "; " + checker)
+		} else if msg.Err != nil {
+			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
+		} else {
+			m.conv.addNotice(guardrailCoverageNotice(msg.Coverage))
+		}
+		m.refreshView()
+		return m, nil, true
+	case client.GuardrailReviewDetailMsg:
+		if msg.Err == nil {
+			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
+			m.refreshView()
+		}
+		return m, nil, true
 	case client.ResolvedModelMsg:
 		return m.onResolvedModelMsg(msg)
 	default:
@@ -1116,8 +1206,16 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	m.sessionCreatedAt = msg.CreatedAt
 	m.activePlacement = msg.Placement
+	if occupancy := msg.ContextOccupancy; msg.AdoptContextOccupancy && m.startupAdopted && occupancy != nil {
+		m.contextTokens = occupancy.InputTokens
+		m.contextUnknown = false
+		m.contextEstimated = occupancy.Estimated
+	}
 	if (&m).setResolvedSessionModel(msg.Resolved) {
 		m.refreshView()
+	}
+	if msg.AdoptContextOccupancy && m.startupAdopted && m.resolvedSessionModel.ContextWindow == 0 && msg.StartupResumeRefreshAttempt < startupResumeRefreshRetries {
+		return m, m.startupResumeRefreshRetryCmd(msg.StartupResumeRefreshAttempt + 1), true
 	}
 	return m, nil, true
 }
@@ -1145,7 +1243,7 @@ func (m Model) onRenderTick() (tea.Model, tea.Cmd) {
 }
 
 func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
-	displayName := oneLine(sanitizeTerminal(msg.DisplayName))
+	displayName := oneLine(terminaltext.Sanitize(msg.DisplayName))
 	target := ""
 	if displayName != "" {
 		target = " for " + displayName
@@ -1153,15 +1251,23 @@ func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
 	if msg.Status == mcpAuthorizationStatusPending {
 		return "MCP authorization required" + target + ". Open Browser or Copy Link to start automatic checking, or Cancel."
 	}
-	return fmt.Sprintf("MCP authorization%s: %s.", target, oneLine(sanitizeTerminal(msg.Status)))
+	return fmt.Sprintf("MCP authorization%s: %s.", target, oneLine(terminaltext.Sanitize(msg.Status)))
 }
 
 // updateStreamEvent reduces the per-event stream msgs into the conversation. It
 // is the back half of Update, split out so the cyclomatic complexity of each
 // stays manageable. Unknown msgs are a no-op.
+//
+//nolint:gocyclo // the explicit event reducer preserves refusal-before-settlement ordering.
 func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if refused, ok := msg.(client.ControlRefusedMsg); ok {
+		(&m).restoreControlRefused(refused)
+		return m, nil
+	}
+	m.settleApprovalOnEvent(msg)
 	switch msg := msg.(type) {
 	case client.SessionInitMsg:
+		m.admissionSubmission = nil
 		if m.startupFirstPromptPending {
 			m.startupFirstPromptPending = false
 			m.startupAdopted = false
@@ -1196,6 +1302,8 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// where even the estimate is zero.
 		if msg.Usage.InputTokens > 0 {
 			m.contextTokens = msg.Usage.InputTokens
+			m.contextUnknown = false
+			m.contextEstimated = msg.Estimated
 		}
 		m.conv.endReasoningStream()
 		if !trivialTurn(msg) {
@@ -1249,8 +1357,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case client.PermissionAskMsg:
 		return m.applyPermissionAsk(msg)
 	case client.HookMsg:
-		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
-		return m.afterEvent()
+		return m.applyHookMsg(msg)
 	case client.DeliveryNoteMsg:
 		return m.applyDeliveryNote(msg)
 	case client.ResultMsg:
@@ -1264,6 +1371,16 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// be added there, not here. Unknown msgs are a no-op.
 		return m.updateStreamSecondary(msg)
 	}
+}
+
+func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
+	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+	model, cmd := m.afterEvent()
+	if msg.Guardrail == nil || m.deps.Guardrails == nil {
+		return model, cmd
+	}
+	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID)
+	return model, tea.Batch(cmd, detailCmd)
 }
 
 // applyDeliveryNote reduces a DeliveryNoteMsg, extracted from updateStreamEvent
@@ -1293,6 +1410,13 @@ func (m Model) applyDeliveryNote(msg client.DeliveryNoteMsg) (tea.Model, tea.Cmd
 func (m *Model) beginTurnEvent() {
 	if m.failedStepRetryRun {
 		m.failedStepRetryAuthoritative = true
+	}
+	// Host hook busy signal (schema: UserPromptSubmit) — the agent began work.
+	// The notifier dedupes to one busy signal per run, so firing on every
+	// turn.start is correct (and covers the first turn whether the run began from
+	// a prompt, a resume, or a retry).
+	if m.deps.AgentHook != nil {
+		m.deps.AgentHook.Start(m.deps.Ctx, m.sessionID)
 	}
 	m.conv.startAssistant()
 	m.activeTool = ""
@@ -1606,6 +1730,47 @@ func (m Model) settleFailedClearSource() (Model, tea.Cmd, bool) {
 	return m, m.prompt.Focus(), true
 }
 
+// notifyHookStop mirrors a genuine run terminal to the host's agent lifecycle
+// hook. It is NOT called on the auto-retry (FailedStepRetryEligible) branch,
+// where the run continues — only on paths that end the run. The notifier fires
+// the terminal once per busy period and no-ops without a preceding Start, so the
+// clearPending settle path and the deferred-retry path calling it is harmless.
+func (m Model) notifyHookStop(msg client.ResultMsg) {
+	if m.deps.AgentHook == nil {
+		return
+	}
+	failed := msg.Stop == stopError
+	m.deps.AgentHook.Stop(m.deps.Ctx, m.sessionID, failed, msg.Error)
+}
+
+// Terminal previews for hook notifications that carry no error value of their
+// own: a stream that closed mid-run, and an auth recovery that cancelled one.
+const (
+	streamClosedReason = "stream closed before the run finished"
+	authRecoveryReason = "authentication needs attention"
+)
+
+// streamErrReason renders a transport error for the hook's notification preview,
+// tolerating a nil error (some stream-death branches carry the fact without an
+// err value).
+func streamErrReason(err error) string {
+	if err == nil {
+		return "stream error"
+	}
+	return err.Error()
+}
+
+// notifyHookFailed mirrors a TRANSPORT/stream-death terminal (not a server
+// ResultMsg) to the host hook as a FAILED terminal. Like notifyHookStop it
+// no-ops without a preceding Start, so a transport error before any turn began
+// emits nothing.
+func (m Model) notifyHookFailed(reason string) {
+	if m.deps.AgentHook == nil {
+		return
+	}
+	m.deps.AgentHook.Stop(m.deps.Ctx, m.sessionID, true, reason)
+}
+
 // applyResult handles a terminal ResultMsg: it folds the run's usage into the running
 // totals, surfaces a terminal error, ends the run, and drains any queued prompts.
 // Extracted from updateStreamEvent's switch to keep that dispatcher flat.
@@ -1630,6 +1795,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		// The terminal facts still belong in the source projection, but Clear owns
 		// what happens next. Settle only: no queued prompt, failed-step retry,
 		// pending-mode retry, plan continuation, live-feed rearm, or other source run.
+		m.notifyHookStop(msg)
 		m = m.endRun(msg.Stop)
 		m.failedStepRetryRun = false
 		m.failedStepRetryAuthoritative = false
@@ -1649,14 +1815,21 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		if len(m.queued) > 0 {
 			m.queuePaused = "retry_pending"
 		}
+		// A genuine end: the run stopped and waits for a manual /retry.
+		m.notifyHookStop(msg)
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
 		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
 	}
 	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
+		// NOT a genuine end: an automatic retry run starts now, so no Superset
+		// Stop. The retry's turn.start re-Starts (deduped, still busy), and the
+		// eventual real terminal fires Stop below.
 		m.failedStepRetryTried = true
 		rm, retryCmd := m.startFailedStepRetry()
 		return rm, tea.Batch(m.refreshCmd(), retryCmd, m.armLiveFeed())
 	}
+	// Every remaining path is a genuine run terminal that returns to idle.
+	m.notifyHookStop(msg)
 	if msg.Stop == stopError && msg.RetryDispositionPresent && msg.RetryDisposition == client.RetryDispositionRetryable {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("model step failed — use /retry to retry without duplicating the prompt")
 	}
@@ -1715,6 +1888,7 @@ func noticeLine(msg tea.Msg) string {
 // subagent event only costs the trace, never correctness or isolation.
 func (m *Model) applySubagent(msg client.SubagentMsg) {
 	applySubagentTo(&m.conv, msg)
+	m.reconcileAgentsLists()
 	// A BACKGROUND child finishing is otherwise invisible (its Subagent card
 	// resolved long ago with the started-result), so surface a brief transient
 	// footer notice — the same advisory channel as team-done / no-progress, never
@@ -1741,6 +1915,7 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 	case client.SubagentStart:
 		c.setSubagentStart(msg.ParentCallID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
 		c.fleetStart(msg.ChildID, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model, msg.Background)
+		c.setSubagentRoutingDecision(msg.ParentCallID, msg.ChildID, msg.RoutingDecision)
 	case client.SubagentTool:
 		c.addSubagentTool(msg)
 		c.fleetTool(msg)
@@ -1758,6 +1933,7 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 // are bounded/scrubbed/client-only (gauntlet #7).
 func (m *Model) applyParallel(msg client.ParallelMsg) {
 	applyParallelTo(&m.conv, msg)
+	m.reconcileAgentsLists()
 }
 
 // applyParallelTo is the pure conversation-projection half of applyParallel: it
@@ -1770,6 +1946,7 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 		c.parallelStart(msg.ParentCallID, msg.Join, msg.BranchCount)
 	case client.ParallelBranchStart:
 		c.parallelBranchStart(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.BranchLabel, msg.Goal, msg.RoutedCategory, msg.RoutedModel, msg.RoutingReason, msg.Model)
+		c.setParallelRoutingDecision(msg.ParentCallID, msg.BranchIndex, msg.RoutingDecision)
 	case client.ParallelBranchTool:
 		c.parallelBranchTool(msg)
 	case client.ParallelBranchEnd:
@@ -1795,6 +1972,7 @@ func (m *Model) applyTeam(msg client.TeamMsg) {
 		// the team card + the run's ResultMsg.
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("team done · %s", plural(msg.Rounds, "round")))
 	}
+	m.reconcileAgentsLists()
 }
 
 // applyTeamTo is the pure conversation-projection half of applyTeam: it routes a
@@ -2005,7 +2183,7 @@ func (m Model) hasDoubleEscapeDraft() bool {
 // gets Escape first. Only the focused, plain idle composer can use the gesture.
 func (m Model) doubleEscapeEligible() bool {
 	return m.keyboardEventTypes && m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
-		!m.sel.active && !m.prompt.HasSelection() && !m.palette.open && !m.mention.open &&
+		!m.sel.active && !m.prompt.HasSelection() && !m.paletteVisible() && !m.mentionVisible() &&
 		m.queuePaused == "" && !bodyOwnerOpen(m)
 }
 
@@ -2247,6 +2425,10 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // /models picker is the only SELECTING one (cursor + enter); the rest are read-only
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if s, ok := m.modal.(*admissionRecoveryState); ok {
+		mm, cmd := m.onAdmissionKey(msg, s)
+		return mm, cmd, true
+	}
 	if m.startupRunEntryFailed {
 		mm, cmd := m.onStartupRunEntryKey(msg)
 		return mm, cmd, true
@@ -2380,17 +2562,11 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 			m.prompt.Blur()
 		}
 		return m, nil, true, false
-	case sessionsMigrationJobIntent:
-		m.maintenanceMigrationJobID = intent.jobID
-		return m, nil, true, false
 	case sessionsCleanupJobIntent:
 		m.maintenanceCleanupJobID = intent.jobID
 		return m, nil, true, false
 	case sessionsTranscriptAdoptionIntent:
-		m.caps = intent.capabilities
-		(&m).setResolvedSessionModel(intent.model)
-		m.activeMode = intent.mode
-		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
+		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript, intent.snapshot)
 		return mm, cmd, true, stopSurfaceDispatch
 	case sessionsStartupQuitIntent:
 		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {
@@ -2505,6 +2681,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
@@ -2756,12 +2933,14 @@ func (m Model) pasteGateOpen() bool {
 // stays focused so the user can compose a steer or queued follow-up. It mirrors
 // onIdleKey's precedence so the input behaves the same mid-run as at idle, with
 // two differences — bare local built-ins still run locally, then enter steers or
-// enqueues ordinary input; esc cancels the in-flight run directly:
+// enqueues ordinary input; a visible slash-command palette owns esc dismissal before
+// a subsequent esc cancels the in-flight run:
 //
-//	(1) an open palette claims its navigation and completion keys (↑/↓/tab/enter)
-//	    so builtins dispatch through the same path and workspace rows complete;
-//	    esc is handled by the cancel path below;
-//	(2) esc/Cancel sends Cancel and leaves the draft, staged queue, and steer state intact;
+//	(1) an open palette claims its navigation, completion, and dismissal keys
+//	    (↑/↓/tab/enter/esc) so builtins dispatch through the same path and workspace
+//	    rows complete;
+//	(2) esc/Cancel after palette dismissal sends Cancel and leaves the draft, staged queue,
+//	    and steer state intact;
 //	(3) any bound Newline chord (shift+enter, ctrl+j, ctrl+enter, alt+enter by
 //	    default) → insert a newline;
 //	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
@@ -2771,18 +2950,17 @@ func (m Model) pasteGateOpen() bool {
 //
 // ctrl+t (expand) and ctrl+c (quit) are handled globally in onKey before this.
 func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	// Let the palette claim its navigation and completion keys while running. A
-	// selected builtin dispatches locally; a workspace row completes into the
-	// textarea. Esc stays with the layered cancel path below.
-	if m.palette.open && !key.Matches(msg, m.keys.Cancel) {
+	// Let the palette claim its navigation, completion, and dismissal keys while
+	// running. A selected builtin dispatches locally; a workspace row completes into
+	// the textarea. Once Esc dismisses the palette, the next Esc reaches cancel below.
+	if m.paletteVisible() {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
 	}
-	// The @-mention menu, like the palette, claims its navigation/complete keys
-	// while running EXCEPT enter (which reaches the same builtin dispatcher, then
-	// steers or queues) and esc (the Cancel branch sends Cancel directly).
-	if m.mention.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
+	// A visible @-mention menu has the same ownership while streaming as it does
+	// while idle, including completion and dismissal.
+	if m.mentionVisible() {
 		if mm, handled := m.onMentionKey(msg); handled {
 			return mm, nil
 		}
@@ -3078,14 +3256,14 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 // content — so it appears the moment the input becomes "/…" and tracks the
 // typed prefix.
 func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.palette.open {
+	if m.paletteVisible() {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
 	}
 	// The @-mention menu (mutually exclusive with the palette) claims the same
 	// navigation/complete keys while it is open.
-	if m.mention.open {
+	if m.mentionVisible() {
 		if mm, handled := m.onMentionKey(msg); handled {
 			return mm, nil
 		}
@@ -3204,19 +3382,28 @@ func (m Model) onIdleSubmit() (tea.Model, tea.Cmd) {
 // enter/tab over a BUILT-IN row, which runs the built-in directly (it may issue
 // a command, e.g. opening an overlay).
 func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	switch msg.String() {
-	case keyMenuUp:
+	if !m.paletteVisible() {
+		return m, nil, false
+	}
+	switch {
+	case msg.String() == keyMenuUp:
 		m.paletteMoveUp()
 		return m, nil, true
-	case keyMenuDown:
+	case msg.String() == keyMenuDown:
 		m.paletteMoveDown()
 		return m, nil, true
-	case keyMenuTab, keyMenuEnter:
+	case key.Matches(msg, m.keys.ScrollU):
+		m.palette.list.Move(bounded.PageUp)
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollD):
+		m.palette.list.Move(bounded.PageDown)
+		return m, nil, true
+	case msg.String() == keyMenuTab || msg.String() == keyMenuEnter:
 		if mm, cmd, ran := m.dispatchSelectedBuiltin(); ran {
 			return mm, cmd, true
 		}
 		return m.paletteComplete(), nil, true
-	case keyMenuDismiss:
+	case msg.String() == keyMenuDismiss:
 		return m.paletteDismiss(), nil, true
 	}
 	return m, nil, false
@@ -3230,16 +3417,25 @@ func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // the highlighted path; esc dismisses. The two menus never coexist (mutually
 // exclusive tokens), so the caller routes to whichever is open.
 func (m Model) onMentionKey(msg tea.KeyPressMsg) (Model, bool) {
-	switch msg.String() {
-	case keyMenuUp:
+	if !m.mentionVisible() {
+		return m, false
+	}
+	switch {
+	case msg.String() == keyMenuUp:
 		m.mentionMoveUp()
 		return m, true
-	case keyMenuDown:
+	case msg.String() == keyMenuDown:
 		m.mentionMoveDown()
 		return m, true
-	case keyMenuTab, keyMenuEnter:
+	case key.Matches(msg, m.keys.ScrollU):
+		m.mention.list.Move(bounded.PageUp)
+		return m, true
+	case key.Matches(msg, m.keys.ScrollD):
+		m.mention.list.Move(bounded.PageDown)
+		return m, true
+	case msg.String() == keyMenuTab || msg.String() == keyMenuEnter:
 		return m.mentionComplete(), true
-	case keyMenuDismiss:
+	case msg.String() == keyMenuDismiss:
 		return m.mentionDismiss(), true
 	}
 	return m, false
@@ -3249,10 +3445,10 @@ func (m Model) onMentionKey(msg tea.KeyPressMsg) (Model, bool) {
 // dispatches the equivalent canonical bare command. Non-builtin workspace rows
 // return ran=false so the caller can complete them into the model-facing input.
 func (m Model) dispatchSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
-	if !m.palette.open || m.palette.cursor >= len(m.palette.filtered) {
+	row := m.palette.selected()
+	if !m.palette.open || row.Name == "" {
 		return m, nil, false
 	}
-	row := m.palette.filtered[m.palette.cursor]
 	if !row.Builtin {
 		return m, nil, false
 	}
@@ -3394,6 +3590,9 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.conv.addError("attach: " + err.Error())
 		m.refreshView()
 		return m, nil
+	}
+	if text != "" || len(media.Parts) > 0 {
+		m.retainAdmission(text, media)
 	}
 	if hadStaged {
 		m.stagedMedia = nil
@@ -3624,6 +3823,11 @@ func (m Model) reduceLiveAuthRecovery(reason client.AuthReason) (tea.Model, tea.
 	// particular, an active Converse run is cancelled and its generation is
 	// invalidated; auth recovery is not a completed run.
 	if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
+		// Genuine terminal: auth recovery cancels the active run and hands the
+		// user to the connect surface, so the hook must settle. (Distinct from
+		// the phaseAuthorizing park in StreamClosedMsg, where the run is only
+		// suspended and its own terminal still arrives — that stays silent.)
+		m.notifyHookFailed(authRecoveryReason)
 		m = m.endRun("")
 	}
 	m.disarmLiveFeed()
@@ -3957,6 +4161,7 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
 		m.cancelRun = nil
@@ -3993,6 +4198,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd
+	}
+	if m.team.view != teamNone {
+		return m.onAgentsWheel(msg)
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
@@ -4754,6 +4962,10 @@ func sumUsage(a, b client.Usage) client.Usage {
 
 func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool) (Model, tea.Cmd) {
 	cancel()
+	if m.ownsAdmission() && client.IsContextWindowUnavailable(err) {
+		return m.rejectAdmission(), nil
+	}
+	m.admissionSubmission = nil
 	streamErr := authStreamErr(m, err)
 	if streamErr.AuthReason != "" {
 		mm, connectCmd := m.reduceLiveAuthRecovery(streamErr.AuthReason)
@@ -4763,7 +4975,7 @@ func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool)
 	m = m.endRun(stopError)
 	if retry {
 		m.failedStepRetryRun = false
-		m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + sanitizeTerminal(err.Error()) + " — use /retry to try again")
+		m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + terminaltext.Sanitize(err.Error()) + " — use /retry to try again")
 	} else {
 		m.conv.addError("open run: " + friendlyWorkspaceEnrollmentRejection(err.Error()))
 	}

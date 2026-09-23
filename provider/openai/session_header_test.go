@@ -69,7 +69,7 @@ func TestADR_0294_SessionHeaderLegalValueParity(t *testing.T) {
 }
 
 func sessionHeaderFallbackRequest(model string) port.LLMRequest {
-	assistant := session.NewAssistantMessage("", "opaque-blob", nil)
+	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), nil)
 	assistant.ReasoningItemID = "rs_bad"
 	return port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi"), assistant}}
 }

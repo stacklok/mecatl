@@ -20,9 +20,8 @@ func writeFile(t *testing.T, ws tool.Workspace, path, content string) {
 // TestNoopExpanderReturnsInputUnchanged verifies the default expander never
 // rewrites the input and never reports an expansion.
 func TestNoopExpanderReturnsInputUnchanged(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	for _, in := range []string{"hello world", "/review foo.go", ""} {
-		out, ok, err := prompt.NoopExpander{}.Expand(context.Background(), ws, in)
+		out, ok, err := prompt.NoopExpander{}.Expand(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -42,8 +41,8 @@ func TestDirCommandExpanderSubstitutes(t *testing.T) {
 	writeFile(t, ws, ".mecatl/commands/review.md",
 		"Please review $1 and also $2.\nAll args: $ARGUMENTS")
 
-	exp := prompt.NewDirCommandExpander()
-	out, ok, err := exp.Expand(context.Background(), ws, "/review foo.go bar.go")
+	exp := prompt.NewDirCommandExpander(ws)
+	out, ok, err := exp.Expand(context.Background(), "/review foo.go bar.go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,8 +63,8 @@ func TestDirCommandExpanderLeavesUnknownPlaceholders(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
 	writeFile(t, ws, ".mecatl/commands/c.md", "keep $HOME but drop [$3] and use $1")
 
-	exp := prompt.NewDirCommandExpander()
-	out, ok, err := exp.Expand(context.Background(), ws, "/c only")
+	exp := prompt.NewDirCommandExpander(ws)
+	out, ok, err := exp.Expand(context.Background(), "/c only")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,8 +84,8 @@ func TestDirCommandExpanderStripsFrontmatter(t *testing.T) {
 	writeFile(t, ws, ".mecatl/commands/review.md",
 		"---\ndescription: Review a file\n---\nReview $1 now.")
 
-	exp := prompt.NewDirCommandExpander()
-	out, ok, err := exp.Expand(context.Background(), ws, "/review foo.go")
+	exp := prompt.NewDirCommandExpander(ws)
+	out, ok, err := exp.Expand(context.Background(), "/review foo.go")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,8 +106,8 @@ func TestDirCommandExpanderClaudeDir(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
 	writeFile(t, ws, ".claude/commands/hi.md", "Hello $ARGUMENTS")
 
-	exp := prompt.NewDirCommandExpander()
-	out, ok, err := exp.Expand(context.Background(), ws, "/hi there")
+	exp := prompt.NewDirCommandExpander(ws)
+	out, ok, err := exp.Expand(context.Background(), "/hi there")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,8 +125,8 @@ func TestDirCommandExpanderUnknownCommand(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
 	writeFile(t, ws, ".mecatl/commands/review.md", "body")
 
-	exp := prompt.NewDirCommandExpander()
-	out, ok, err := exp.Expand(context.Background(), ws, "/nope foo")
+	exp := prompt.NewDirCommandExpander(ws)
+	out, ok, err := exp.Expand(context.Background(), "/nope foo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,9 +144,9 @@ func TestDirCommandExpanderNonCommand(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
 	writeFile(t, ws, ".mecatl/commands/review.md", "body")
 
-	exp := prompt.NewDirCommandExpander()
+	exp := prompt.NewDirCommandExpander(ws)
 	for _, in := range []string{"just chatting", "look at /etc/hosts", "/", "/ space"} {
-		out, ok, err := exp.Expand(context.Background(), ws, in)
+		out, ok, err := exp.Expand(context.Background(), in)
 		if err != nil {
 			t.Fatalf("unexpected error for %q: %v", in, err)
 		}
@@ -175,7 +174,7 @@ type stubExpander struct {
 	err   error
 }
 
-func (s stubExpander) Expand(_ context.Context, _ tool.Workspace, input string) (string, bool, error) {
+func (s stubExpander) Expand(_ context.Context, input string) (string, bool, error) {
 	if s.err != nil {
 		return input, false, s.err
 	}
@@ -186,14 +185,13 @@ func (s stubExpander) Expand(_ context.Context, _ tool.Workspace, input string) 
 }
 
 func TestMultiExpanderFirstWins(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	// Both match "/x"; the first (highest precedence) should win and shadow the
 	// second.
 	exp := prompt.NewMultiExpander(
 		stubExpander{match: "/x", out: "FIRST"},
 		stubExpander{match: "/x", out: "SECOND"},
 	)
-	out, ok, err := exp.Expand(context.Background(), ws, "/x")
+	out, ok, err := exp.Expand(context.Background(), "/x")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -203,13 +201,12 @@ func TestMultiExpanderFirstWins(t *testing.T) {
 }
 
 func TestMultiExpanderFallsThrough(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	// Only the second matches; the first passes through to it.
 	exp := prompt.NewMultiExpander(
 		stubExpander{match: "/a", out: "A"},
 		stubExpander{match: "/b", out: "B"},
 	)
-	out, ok, err := exp.Expand(context.Background(), ws, "/b")
+	out, ok, err := exp.Expand(context.Background(), "/b")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -219,12 +216,11 @@ func TestMultiExpanderFallsThrough(t *testing.T) {
 }
 
 func TestMultiExpanderNoneMatches(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	exp := prompt.NewMultiExpander(
 		stubExpander{match: "/a", out: "A"},
 		stubExpander{match: "/b", out: "B"},
 	)
-	out, ok, err := exp.Expand(context.Background(), ws, "/z")
+	out, ok, err := exp.Expand(context.Background(), "/z")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -243,10 +239,10 @@ func TestMultiExpanderDirShadowsLater(t *testing.T) {
 	writeFile(t, ws, ".mecatl/commands/dup.md", "FROM FILE")
 
 	exp := prompt.NewMultiExpander(
-		prompt.NewDirCommandExpander(), // highest precedence
+		prompt.NewDirCommandExpander(ws), // highest precedence
 		stubExpander{match: "/dup", out: "FROM STUB"},
 	)
-	out, ok, err := exp.Expand(context.Background(), ws, "/dup")
+	out, ok, err := exp.Expand(context.Background(), "/dup")
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
@@ -256,13 +252,12 @@ func TestMultiExpanderDirShadowsLater(t *testing.T) {
 }
 
 func TestMultiExpanderErrorStopsChain(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	sentinel := errStub("boom")
 	exp := prompt.NewMultiExpander(
 		stubExpander{err: sentinel},
 		stubExpander{match: "/x", out: "X"}, // never reached
 	)
-	_, ok, err := exp.Expand(context.Background(), ws, "/x")
+	_, ok, err := exp.Expand(context.Background(), "/x")
 	if err == nil {
 		t.Fatalf("expected the chain to surface the first expander's error")
 	}
@@ -282,19 +277,18 @@ type listerStub struct {
 	err  error
 }
 
-func (listerStub) Expand(_ context.Context, _ tool.Workspace, input string) (string, bool, error) {
+func (listerStub) Expand(_ context.Context, input string) (string, bool, error) {
 	return input, false, nil
 }
 
-func (s listerStub) List(_ context.Context, _ tool.Workspace) ([]prompt.Command, error) {
+func (s listerStub) List(_ context.Context) ([]prompt.Command, error) {
 	return s.cmds, s.err
 }
 
 // TestNoopExpanderListsNothing verifies the default expander enumerates no
 // commands.
 func TestNoopExpanderListsNothing(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
-	got, err := prompt.NoopExpander{}.List(context.Background(), ws)
+	got, err := prompt.NoopExpander{}.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -313,7 +307,7 @@ func TestDirCommandExpanderListDescriptions(t *testing.T) {
 	writeFile(t, ws, ".mecatl/commands/fix.md",
 		"Fix the failing test in $1\nmore body")
 
-	cmds, err := prompt.NewDirCommandExpander().List(context.Background(), ws)
+	cmds, err := prompt.NewDirCommandExpander(ws).List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -337,7 +331,7 @@ func TestDirCommandExpanderListDedupesAcrossDirs(t *testing.T) {
 	writeFile(t, ws, ".claude/commands/dup.md", "from claude")
 	writeFile(t, ws, ".claude/commands/only.md", "claude-only command")
 
-	cmds, err := prompt.NewDirCommandExpander().List(context.Background(), ws)
+	cmds, err := prompt.NewDirCommandExpander(ws).List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -360,7 +354,7 @@ func TestDirCommandExpanderListDedupesAcrossDirs(t *testing.T) {
 // files yields no commands and no error.
 func TestDirCommandExpanderListEmptyWhenNoDirs(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
-	cmds, err := prompt.NewDirCommandExpander().List(context.Background(), ws)
+	cmds, err := prompt.NewDirCommandExpander(ws).List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -373,13 +367,12 @@ func TestDirCommandExpanderListEmptyWhenNoDirs(t *testing.T) {
 // its children's lists, applies first-wins de-dup, sorts, and skips children
 // that do not implement CommandLister.
 func TestMultiExpanderListAggregatesAndDedupes(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	exp := prompt.NewMultiExpander(
 		listerStub{cmds: []prompt.Command{{Name: "b", Description: "first b"}, {Name: "a", Description: "a"}}},
 		stubExpander{match: "/x"}, // not a lister; contributes nothing
 		listerStub{cmds: []prompt.Command{{Name: "b", Description: "second b (shadowed)"}, {Name: "c", Description: "c"}}},
 	)
-	cmds, err := exp.List(context.Background(), ws)
+	cmds, err := exp.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -396,9 +389,8 @@ func TestMultiExpanderListAggregatesAndDedupes(t *testing.T) {
 
 // TestMultiExpanderListErrorStops verifies a child List error stops aggregation.
 func TestMultiExpanderListErrorStops(t *testing.T) {
-	ws := memfs.NewWorkspace("/proj")
 	exp := prompt.NewMultiExpander(listerStub{err: errStub("boom")})
-	if _, err := exp.List(context.Background(), ws); err == nil {
+	if _, err := exp.List(context.Background()); err == nil {
 		t.Fatalf("expected the child List error to surface")
 	}
 }

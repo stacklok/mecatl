@@ -61,18 +61,18 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES guardrails (the guardrails-parity enable model). A configured model with no rules runs the default BLOCK set (WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
-| `guardrails.minContentBytes` | `int` | `0` | MinContentBytes skips the checker for content shorter than this. 0 = check all. |
+| `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES contextual guardrails. A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
-| `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all rules). Per-rule failClosed overrides: failClosed:true tightens even under warn; failClosed:false (explicit) loosens even under fail. Empty = warn. |
-| `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default), "advisory", or "sanitize". An explicit rules list replaces the defaults entirely (this key is ignored). |
+| `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "fail" (default, fail-closed) or explicit "warn" (continue with an operational warning). Per-rule failClosed overrides: failClosed:true tightens under warn; explicit false loosens under fail. Empty = fail. |
+| `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default) or "advisory". An explicit rules list replaces the defaults entirely (this key is ignored). |
+| `guardrails.taskWindow` | `int` | `1` | TaskWindow selects the last K explicitly authenticated root prompts (default 1, clamped 1..3). |
 | `guardrails.escape` | `bool` | `false` | Escape is the ADR-0080 escape knob: when true AND a checker model is configured, an out-of-root FS escape at posture auto routes through the guardrail checker (an unsafe verdict denies; a checker error fails closed to the write-escape Ask). Default false = the un-routed posture table. |
 | `guardrails.rules` | `[]guardrailrulespec` | `(absent)` | Rules is the guardrail rule list. |
 | `guardrails.rules[].match` | `string` | `(empty)` | Match is the tool-name matcher (exact / "prefix*" / "*"). |
 | `guardrails.rules[].phases` | `[]string` | `(absent)` | Phases lists "pre"/"post"; empty = both. |
-| `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"sanitize"/"advisory"; empty defaults to block. |
-| `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt overrides the built-in inspection rubric. |
-| `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed flips the fail-open default for enforcing modes. |
+| `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"advisory"; empty defaults to block. |
+| `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt adds operator task-risk context beneath the fixed harness safety, provenance, evidence, and structured-output rubric; it cannot replace it. |
+| `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed optionally overrides the fail-closed global default for this rule. |
 
 ## `posture`
 
@@ -157,6 +157,67 @@ Strict endpoint overrides for built-in openai, openrouter, anthropic, and openco
 | `provider_overrides.openai` | `provideroverride` | `(absent)` |  |
 | `provider_overrides.openai.base_url` | `string` | `(required)` |  |
 
+## `harness_context`
+
+Tier: **operator**
+
+Selects trusted deployment-registered instruction and customization source IDs independently from execution placement. Unknown configured IDs fail startup; registration support is deployment-specific.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `harness_context.enabled_sources` | `[]string` | `(absent)` | EnabledSources is the unique allowlist of registered IDs. Each ID must be used by at least one kind; unknown, unused, or unsupported references fail startup. |
+| `harness_context.kinds` | `harnesscontextkinds` | `(absent)` | Kinds must include all five content kinds, each with an explicit mode. |
+| `harness_context.kinds.instructions` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.instructions.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.instructions.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.instructions.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.instructions.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.instructions.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.instructions.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.instructions.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.instructions.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.instructions.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.commands` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.commands.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.commands.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.commands.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.commands.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.commands.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.commands.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.commands.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.commands.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.commands.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.rules` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.rules.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.rules.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.rules.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.rules.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.rules.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.rules.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.rules.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.rules.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.rules.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.skills` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.skills.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.skills.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.skills.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.skills.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.skills.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.skills.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.skills.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.skills.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.skills.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.agent_defs` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.agent_defs.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.agent_defs.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.agent_defs.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.agent_defs.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.agent_defs.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.agent_defs.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.agent_defs.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.agent_defs.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.agent_defs.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+
 ## `learning`
 
 Tier: **operator + project**
@@ -166,6 +227,7 @@ Optional completed-trajectory observation policy. Off means no automatic complet
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `learning.mode` | `string` | `off` | Mode controls automatic completed-trajectory observation: off (default; no automatic reflection), review (signal-gated reflection stages durable proposals without memory writes), or auto (stage first, then conservatively promote only eligible non-conflicting facts). Operator settings establish the ceiling; project settings may only tighten it under off < review < auto and never raise autonomy. It does not override separately configured maintenance schedules such as --user-model-consolidate-interval. |
+| `learning.admission_interval` | `int` | `1` | AdmissionInterval admits every Nth eligible automatic reflection process-wide. Nil uses the default of 1; zero and one both admit every eligible reflection. This field is operator-owned; project values do not change admission cadence. |
 | `learning.sensitivity` | `string` | `balanced` | Sensitivity controls weighted automatic admission. Empty means balanced. |
 | `learning.skills` | `learningskillssection` | `(absent)` | Skills controls learned-skill lifecycle policy. |
 | `learning.skills.activation` | `string` | `validated when mode is explicitly auto; evaluated otherwise` | Activation is validated (default for Auto) or evaluated. Project settings may only tighten validated to evaluated. |
@@ -230,7 +292,7 @@ Managed command temporary-storage policy. Read only from user-global settings.ya
 
 Tier: **operator**
 
-Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.
+Exact verified OIDC issuer/subject pairs authorized for process-wide storage health and cleanup. Empty grants nobody; project values are ignored.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -271,13 +333,19 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `models.slots` | `map[string]string` | `(absent)` | Slots binds a slot name (a call-slot "compaction"/"ask-reviewer"/"guardrail" or a tier "cheap"/"fast"/"reasoning") to a model selector (alias or concrete id). |
+| `models.slots` | `map[string]modelslotvalue` | `(absent)` | Slots binds a slot name to a model selector. Call slots include "compaction", "ask-reviewer", and "guardrail"; tier slots include "cheap", "fast", and "reasoning". The "plan" slot selects the session model while the session is in plan mode. In default or accept-edits mode, the session uses its default model. When "plan" is unset, it falls through to the "reasoning" tier when configured. The guardrail slot alone also accepts an operator-only explicit provider route. |
 | `models.aliases` | `map[string]string` | `(absent)` | Aliases binds a short alias to a concrete model id (merged onto the CLI --model-alias map, CLI winning per key). |
 | `models.default` | `string` | `(empty)` | Default is the session-default model selector (alias or concrete id). It is the project-overridable session default (ADR 0030 Phase 4) — within the operator allowlist; the operator's own Default is uncapped. Empty = absent. |
 | `models.subagent` | `string` | `(empty)` | Subagent is the OPERATOR-TIER def-less child-default model selector (alias or concrete id): the settings.yaml twin of the --subagent-model flag (issue #288). It sets the global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (via an agent definition or a per-call override). Operator-tier ONLY: a project-tier subagent: is IGNORED with a WARN (the child-default model is an operator decision — the same operator-only captureModels discipline as default_provider/allowlist/router). The CLI --subagent-model WINS when both are set. Validated FAIL-FAST at Build (normalizeSubagentModel): a value that does not resolve to a usable model id is a startup error (unlike fail-soft models.default). Empty = absent (the flag/inherit-parent behaviour is unchanged). |
 | `models.default_provider` | `string` | `(empty)` | DefaultProvider is the OPERATOR-TIER deployment-wide default provider id (e.g. openai, openrouter, anthropic, toolhive). It mirrors the --default-provider flag (app.Config.DefaultProvider) so an operator can declare "toolhive is my default despite my API key" persistently in settings.yaml without unsetting the key. It feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override — it does NOT lower the precedence of key-driven providers. Operator-tier only: a project-tier default_provider: is IGNORED with a WARN (the same operator-only captureModels discipline as posture/guardrails/allowlist). Validated FAIL-FAST at Build (validateDefaultModel): an unknown/unavailable provider is a startup error. Empty = absent (the ladder's preferred default wins). The name pair (default = model, default_provider = provider) mirrors the wire grammar exactly. |
 | `models.allowlist` | `[]string` | `(absent)` | Allowlist is the OPERATOR-TIER, non-wideable cap (ADR 0030 Phase 4): the set of model selectors (alias names and/or concrete ids) a PROJECT-tier models: block may bind to. An empty/absent allowlist means project models stay WARN-ignored (the opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored with a WARN (a project cannot widen its own cap). |
 | `models.router` | `routersection` | `(absent)` | Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031, Phase 5; enable model superseded by ADR 0042): a classifier slot, the routing categories, the default category, and the YAML kill-switch. It is operator-tier ONLY — a project-tier router: sub-block is STRIPPED with a WARN (the taxonomy is an autonomous-spend/capability decision the operator owns, like the allowlist). nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent). Per ADR 0042 the TAXONOMY is the enable: a non-empty router: with categories turns the router ON unless `disabled: true` (or the CLI kill-switch) forces it off — the guardrails-parity enable model, replacing 0031's flag-to-enable. **Enable:** A non-empty `categories` list ENABLES the router (taxonomy-presence enable, ADR 0042 — NOT a CLI enable-flag); `disabled: true` (or --subagent-model-router=false) is the kill-switch. Operator-tier only. |
+| `models.router.backend` | `string` | `llm` | Backend selects llm or jev. Empty input defaults to llm. |
+| `models.router.jev` | `jevroutersection` | `(absent)` | Jev configures the explicitly selected Typesafe Jev backend. The block is rejected with an active llm backend and ignored for active checks while routing is disabled or has no categories. |
+| `models.router.jev.model` | `string` | `jev-1.13.0` | Model is the Typesafe service model. Empty input defaults to jev-1.13.0. |
+| `models.router.jev.base-url` | `string` | `(empty)` | BaseURL optionally overrides the Typesafe endpoint. Active routing accepts HTTPS or loopback HTTP; omission uses the pinned SDK endpoint. |
+| `models.router.jev.minimum-confidence` | `float64` | `0` | MinimumConfidence makes a valid lower-confidence answer an ordinary routing miss. Zero disables filtering; values must be finite and in [0,1]. |
+| `models.router.jev.maximum-input-bytes` | `int` | `16384` | MaximumInputBytes bounds the complete rendered textual request before SDK marshalling. Omission defaults to 16384; explicit values must be integers in [1,65536]. |
 | `models.router.classifier-slot` | `string` | `(empty)` | ClassifierSlot names the model slot the CLASSIFIER itself runs on (the tiny, cheap one-turn classification call). Empty falls through to the `router` slot's default tier (cheap) — the classifier is housekeeping, not the routed work. |
 | `models.router.categories` | `[]routercategory` | `(absent)` | Categories are the routing choices. Each carries a Name (the classifier's verdict key), a Description (the classifier's only signal — make them distinct), and a Model selector (an alias / slot / concrete id, resolved through the operator- merged alias map; operator taxonomy targets are UNCAPPED). |
 | `models.router.categories[].name` | `string` | `(empty)` | Name is the routing key the classifier echoes back as its verdict and the key composition maps to Model. |
@@ -377,7 +445,7 @@ for the full flag tables. The pointers below are the starting points:
 | Feature | How it is configured | See |
 | --- | --- | --- |
 | Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
-| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and knowledge](/building/what-you-get/memory.md) |
+| User-model storage | `--user-model-dir` | [Memory and knowledge](/building/what-you-get/memory.md) |
 | Memory | `--memory-dir` / `--memory-store-url` | [Memory and knowledge](/building/what-you-get/memory.md) |
 | Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
 | Session leasing | `--session-lease-*` | [Run mecated standalone](/building/deployment/mecated.md#multi-replica) |

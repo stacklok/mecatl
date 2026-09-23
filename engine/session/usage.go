@@ -34,7 +34,7 @@ func modelAttribution(providerID, modelID string) string {
 }
 
 // RecordTokenUsage adds usage to a canonical bucket under the opaque provider/model
-// attribution. It does not affect the main-run budget projection in Session.Usage.
+// attribution. It does not affect the main-run budget unless kind is UsageKindMain.
 func (s *Session) RecordTokenUsage(kind UsageKind, providerID, modelID string, usage Usage) {
 	if kind != UsageKindMain && kind != UsageKindSessionTitle {
 		return
@@ -63,8 +63,7 @@ func (s *Session) TokenUsageSnapshot() map[UsageKind]TokenUsage {
 	return cloneTokenUsage(s.tokenUsage)
 }
 
-// RestoreTokenUsage restores the canonical accounting ledger from trusted
-// persistence. A nil ledger is legacy data.
+// RestoreTokenUsage restores the canonical accounting ledger from trusted persistence.
 func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 	s.tokenUsage = make(map[UsageKind]TokenUsage, len(usage))
 	for kind, bucket := range usage {
@@ -82,7 +81,6 @@ func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 		}
 		s.tokenUsage[kind] = TokenUsage{Total: total, Models: models}
 	}
-	s.Usage = s.tokenUsage[UsageKindMain].Total
 }
 
 func cloneTokenUsage(in map[UsageKind]TokenUsage) map[UsageKind]TokenUsage {

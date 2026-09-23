@@ -70,10 +70,10 @@ type Policy struct {
 
 // AllowAllFloorRules returns the CANONICAL "default child posture" ruleset: a
 // single allow-all at ScopeBuiltinDefault. The floor scope is load-bearing for
-// the issue-#32 decision bits: a blanket allow-all must NOT register as a
+// the issue-#32 typed provenance: a blanket allow-all must NOT register as a
 // CONFIGURED rule (scope above the floor), or every substitution-floored child
-// ask would qualify for PermissionDecision.FlooredConfiguredAllow and
-// auto-approve instead of surfacing through the child-ask model. It is the
+// ask would receive configured-allow-floor provenance and auto-approve instead
+// of surfacing through the child-ask model. It is the
 // SINGLE source both the composition layer (internal/app childRules) and every
 // fixture that means "default child posture" build from, so the two cannot
 // drift. A fresh slice is returned per call (callers may append configured

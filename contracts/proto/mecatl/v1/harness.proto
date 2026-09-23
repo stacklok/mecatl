@@ -62,6 +62,9 @@ service HarnessService {
   // GetSession returns a snapshot of an existing session.
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
 
+  rpc ListGuardrailCoverage(ListGuardrailCoverageRequest) returns (ListGuardrailCoverageResponse);
+  rpc GetGuardrailReviewDetail(GetGuardrailReviewDetailRequest) returns (GetGuardrailReviewDetailResponse);
+
   // GetSessionTranscript returns the authoritative, snapshot-derived human
   // transcript for one owned session. It is read-only and does not use EventLog.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
@@ -107,6 +110,9 @@ service HarnessService {
   // run without opening or owning its event stream.
   rpc ResolveRunAsk(ResolveRunAskRequest) returns (ResolveRunAskResponse);
 
+  // ResolvePlanAsk acknowledges a verdict for one exact plan-originated ask.
+  rpc ResolvePlanAsk(ResolvePlanAskRequest) returns (ResolvePlanAskResponse);
+
   // CancelRun cancels the exact addressed live run without opening Converse.
   rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
 
@@ -135,11 +141,13 @@ service HarnessService {
   // server and returns the rendered messages.
   rpc GetMcpPrompt(GetMcpPromptRequest) returns (GetMcpPromptResponse);
 
-  // ListMcpSources returns the resolved MCP source inventory snapshot: each
-  // configured source (static / ToolHive), the servers it contributed, and any
-  // diagnostics it raised. Derived from the resolution snapshot taken at
-  // startup; it performs no live discovery.
+  // ListMcpSources returns the cached published/pre-shadow source inventory and
+  // reconciler status. It performs no independent upstream probe.
   rpc ListMcpSources(ListMcpSourcesRequest) returns (ListMcpSourcesResponse);
+
+  // RefreshMcpSources explicitly reconciles direct MCP sources for an owned
+  // eligible ordinary-root session and unions newly active direct names.
+  rpc RefreshMcpSources(RefreshMcpSourcesRequest) returns (RefreshMcpSourcesResponse);
 
   // ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
   // This read neither probes upstreams nor progresses enrollment.
@@ -320,14 +328,6 @@ service HarnessService {
   // GetStorageHealth returns authenticated, content-free aggregate storage
   // status. It never returns session ids, owners, paths, or transcript content.
   rpc GetStorageHealth(GetStorageHealthRequest) returns (GetStorageHealthResponse);
-
-  // Session migration is authenticated, semantics-preserving physical
-  // maintenance. Plan is read-only; apply/resume process bounded batches.
-  rpc PlanSessionMigration(PlanSessionMigrationRequest) returns (SessionMigrationPlan);
-  rpc ApplySessionMigration(ApplySessionMigrationRequest) returns (SessionMigrationJob);
-  rpc ResumeSessionMigration(ResumeSessionMigrationRequest) returns (SessionMigrationJob);
-  rpc CancelSessionMigration(CancelSessionMigrationRequest) returns (SessionMigrationJob);
-  rpc GetSessionMigrationJob(GetSessionMigrationJobRequest) returns (SessionMigrationJob);
 
   // Session cleanup is an authenticated plan/apply maintenance workflow. Plan is
   // read-only; apply requires its caller-bound opaque confirmation token.
@@ -652,7 +652,7 @@ message GetCompatibilityInfoRequest {}
 // answer different questions and conflating them is a bug:
 //
 //   - `capabilities` answers "what has this OPERATOR enabled?" — it changes with
-//     operator config. `bash: false` means the operator ran --no-bash.
+//     operator config. `shell: false` means the Shell tool is unavailable.
 //   - `features` answers "what does this BUILD implement?" — it changes when
 //     mecatl is upgraded.
 //
@@ -665,12 +665,10 @@ message GetCompatibilityInfoResponse {
   // instead. A client gates on api_major + feature identifiers, NEVER on a
   // server/package semver comparison.
   int32 api_major = 1;
-  // capabilities is the SAME ServerCapabilities projection CreateSessionResponse
-  // echoes — the operator-enabled feature set — served here so a client can read
-  // it without creating a probe session. Media (image/audio) here is a
-  // SERVER-WIDE hint for UI chrome only: the per-session
-  // CreateSessionResponse.session_capabilities echo remains authoritative for
-  // whether a given session may send media.
+  // capabilities is the canonical deployment-wide operator-enabled feature set.
+  // Media (image/audio) here is a SERVER-WIDE hint for UI chrome only: the
+  // per-session CreateSessionResponse.session_capabilities value remains
+  // authoritative for whether a given session may send media.
   ServerCapabilities capabilities = 2;
   // features are the build's supported feature identifiers as OPEN STRINGS, not
   // an enum — the EvNoProgress/StopBudget string-passthrough discipline. An
@@ -715,10 +713,9 @@ message ServerCapabilities {
   // teams is true when agent teams are enabled (a member-engine factory is
   // wired). Gates the f6 deep view's relevance.
   bool teams = 5;
-  // bash reports availability of the canonical Shell tool. Its historical
-  // spelling is retained for wire/API compatibility; false means Shell is not
-  // registered (for example, the operator ran --no-shell).
-  bool bash = 6;
+  // shell reports availability of the canonical Shell tool. False means Shell
+  // is not registered (for example, the operator ran --no-shell).
+  bool shell = 6;
   // image is true when the wired LLM provider consumes image prompt parts.
   // Gates the @-mention file-attach UX for images (a client refuses to send an
   // image part to a server whose provider cannot read it).
@@ -769,15 +766,10 @@ message ServerCapabilities {
   bool learning_proposals = 17;
   // learned_skills is true when the caller-partitioned lifecycle API is available.
   bool learned_skills = 18;
-  reserved 20;
-  reserved "legacy_adoption";
-  // storage_migration is true only when the backend implements durable bounded
-  // v1-to-v2 maintenance, a management authorizer is configured, and destructive
-  // mutation has cross-process lease exclusion (or explicitly proven private
-  // embedded single-writer composition).
-  bool storage_migration = 21;
+  reserved 20, 21;
+  reserved "legacy_adoption", "storage_migration";
   // storage_cleanup advertises the authenticated plan/apply/job maintenance API
-  // only under the same destructive-mutation exclusion as storage_migration.
+  // under destructive-mutation exclusion.
   bool storage_cleanup = 22;
   // manual_dream is the composition-time availability snapshot for the two
   // deployment-owned manual consolidation targets. An older server leaves it
@@ -810,6 +802,9 @@ message ServerCapabilities {
   // mcp_connector_status requires a wired broker inspector, enforced ownership
   // and a verified caller. It does not enable direct MCP resources or prompts.
   bool mcp_connector_status = 29;
+  // mcp_refresh is true when direct/global MCP source reconciliation is wired.
+  // It is mutually exclusive with workspace_enrollment in a valid deployment.
+  bool mcp_refresh = 30;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -843,18 +838,14 @@ message McpConnectorStatus {
 message CreateSessionResponse {
   // session_id is the id of the created session.
   string session_id = 1;
-  // capabilities reports which optional features this server has enabled, for an
-  // honest client UI. Nil/absent from an older server → treat as all-false.
-  ServerCapabilities capabilities = 2;
+  reserved 2;
+  reserved "capabilities";
 
   // session_capabilities reports the multimodal input capability of the
   // provider+model THIS session actually resolved to — the INTERSECTION of the
   // catalog's per-model modalities and the wired adapter's transmit capability,
-  // computed once in composition (internal/app). It MAY differ from `capabilities`
-  // (the server-wide shared-engine view) when the request carried
-  // provider_id/model_id selecting a NON-default engine. Clients gate per-session
-  // @-attach UX on THIS, not the server-wide bits. Nil/absent from an older server
-  // → fall back to `capabilities`. (multi-provider Phase 0, S5.)
+  // computed once in composition (internal/app). Clients gate per-session
+  // @-attach UX on THIS value.
   SessionCapabilities session_capabilities = 3;
 
   // resolved_model reports the EFFECTIVE provider+model THIS session actually
@@ -1094,8 +1085,8 @@ message SessionSummary {
   // created_at_unix is the creation timestamp in Unix seconds. Zero when the
   // snapshot could not be loaded.
   int64 created_at_unix = 6;
-  // title is the deprecated compatibility title; use title_metadata.title.
-  string title = 7 [deprecated = true];
+  reserved 7, 13, 14;
+  reserved "title", "workspace", "title_provenance";
   // owner is the verified caller the session is attributed to (ADR 0204), stamped
   // write-once at CreateSession from the validated token — never from the request
   // body. UNSET for an ownerless session (a no-auth deployment, or a session
@@ -1108,11 +1099,6 @@ message SessionSummary {
   SessionInventoryCapabilities capabilities = 11;
   // reason_code explains why a capability is unavailable. Empty means no denial.
   string reason_code = 12;
-  reserved 13;
-  reserved "workspace";
-  // title_provenance is deprecated compatibility provenance; use title_metadata.provenance.
-  // Allowed values: "first-prompt", "operator", "generated", or empty for legacy/unknown.
-  string title_provenance = 14 [deprecated = true];
   PlacementMetadata placement = 15;
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 16;
@@ -1223,45 +1209,6 @@ message GetStorageHealthResponse {
   bool ownerless_schedule_names_truncated = 32;
 }
 
-message PlanSessionMigrationRequest {}
-
-message SessionMigrationPlan {
-  string plan_id = 1;
-  bool available = 2;
-  string unavailable_reason = 3;
-  int64 v1_families = 4;
-  int64 v2_families = 5;
-  int64 invalid_families = 6;
-  int64 skipped_families = 7;
-  int64 current_bytes = 8;
-  int64 reclaimable_bytes = 9;
-  int64 temporary_bytes = 10;
-}
-
-message ApplySessionMigrationRequest {
-  string plan_id = 1 [(buf.validate.field).string.min_len = 1];
-  int32 batch_size = 2;
-}
-
-message ResumeSessionMigrationRequest {
-  string job_id = 1 [(buf.validate.field).string.min_len = 1];
-  int32 batch_size = 2;
-}
-
-message CancelSessionMigrationRequest {
-  string job_id = 1 [(buf.validate.field).string.min_len = 1];
-}
-
-message GetSessionMigrationJobRequest {
-  string job_id = 1 [(buf.validate.field).string.min_len = 1];
-}
-
-message SessionMigrationItemError {
-  string item_handle = 1;
-  string reason_code = 2;
-  string message = 3;
-}
-
 message CleanupCounts {
   int32 total = 1;
   map<string, int32> by_kind = 2;
@@ -1301,22 +1248,6 @@ message CleanupItemError {
   string item_handle = 1;
   string reason_code = 2;
   string message = 3;
-}
-
-message SessionMigrationJob {
-  string job_id = 1;
-  string state = 2;
-  int64 v1_families = 3;
-  int64 v2_families = 4;
-  int64 invalid_families = 5;
-  int64 skipped_families = 6;
-  int64 current_bytes = 7;
-  int64 reclaimable_bytes = 8;
-  int64 temporary_bytes = 9;
-  int64 processed = 10;
-  int64 migrated = 11;
-  int64 failed = 12;
-  repeated SessionMigrationItemError errors = 13;
 }
 
 message CleanupJob {
@@ -1394,6 +1325,14 @@ message ForkSessionResponse {
   PlacementMetadata placement = 2;
 }
 
+// ContextOccupancy is the latest display-only context-meter numerator recorded
+// for a completed agent-loop turn. It is neither durable token accounting nor a
+// run budget baseline.
+message ContextOccupancy {
+  int64 input_tokens = 1;
+  bool estimated = 2;
+}
+
 // Session is a snapshot of server-side session state.
 message Session {
   // session_id is the session's id.
@@ -1402,8 +1341,8 @@ message Session {
   string state = 2;
   // mode is the permission posture.
   PermissionMode mode = 3;
-  reserved 4, 13;
-  reserved "workspace", "adoption_source_session_id";
+  reserved 4, 10, 11, 12, 13;
+  reserved "workspace", "title", "capabilities", "title_provenance", "adoption_source_session_id";
   // limits are the configured stop conditions.
   Limits limits = 5;
   // turns is the number of model calls begun.
@@ -1420,19 +1359,6 @@ message Session {
   // place a client re-reads the model AFTER a mode change. Nil/absent from an older
   // server → client falls back to today's behavior.
   ResolvedModel resolved_model = 9;
-  // title is the deprecated compatibility title; use title_metadata.title.
-  string title = 10 [deprecated = true];
-  // title_provenance is deprecated compatibility provenance; use title_metadata.provenance.
-  // Allowed values: "first-prompt", "operator", "generated", or empty for legacy/unknown.
-  string title_provenance = 12 [deprecated = true];
-  // capabilities is the server's feature-advertisement snapshot (the SAME value
-  // CreateSessionResponse carries). It rides the Session snapshot so a client
-  // that reloads or switches to a persisted session (continue, /effort fork,
-  // /clear successor) can re-derive its affordances in ONE round-trip (GetSession)
-  // instead of creating another session. An older server omits the field, so the
-  // client sees a zero value
-  // and keeps its current caps untouched (fail-conservative).
-  ServerCapabilities capabilities = 11;
   // kind and relationship preserve the durable trusted-producer identity.
   string kind = 14;
   SessionRelationship relationship = 15;
@@ -1452,6 +1378,9 @@ message Session {
   // GetSession, resume, clear, and fork retain accurate media gates. Nil on an
   // older server tells clients to fall back to the server-wide capabilities.
   SessionCapabilities session_capabilities = 21;
+  // latest_context_occupancy is optional display state from the latest completed
+  // agent-loop turn. Its absence is unknown, including for legacy snapshots.
+  ContextOccupancy latest_context_occupancy = 22;
 }
 
 // SessionTitle is the canonical durable, source-free title lifecycle projection.
@@ -1617,6 +1546,9 @@ message Prompt {
   string text = 2;
   // parts carries non-text media (image/audio) alongside the text.
   repeated Content parts = 3;
+  // server_owned_plan_continuation opts this run into exact plan-ask controls
+  // and makes the daemon responsible for starting its approved proceed run.
+  bool server_owned_plan_continuation = 4;
 }
 
 // ResumeApproval releases a paused permission.ask, allowing or denying the
@@ -1625,15 +1557,12 @@ message Prompt {
 message ResumeApproval {
   // ask_id correlates the resolution with the paused ask.
   string ask_id = 1 [(buf.validate.field).string.min_len = 1];
-  // allow permits the tool when true, denies it when false. LEGACY: kept for
-  // back-compat with clients that predate `verdict`. When `verdict` is set
-  // (!= APPROVAL_VERDICT_UNSPECIFIED) it takes precedence and this bool is
-  // ignored; otherwise true maps to ALLOW_ONCE and false to DENY.
-  bool allow = 2;
-  // verdict is the three-way resolution: deny, allow this call once, or allow
-  // always (which additionally LEARNS a per-session allow rule for the matching
-  // tool + exact pattern). Preferred over `allow`; UNSPECIFIED falls back to it.
-  ApprovalVerdict verdict = 3;
+  reserved 2;
+  reserved "allow";
+  // verdict is the required three-way resolution: deny, allow this call once, or
+  // allow always (which additionally learns a per-session allow rule for the
+  // matching tool + exact pattern).
+  ApprovalVerdict verdict = 3 [(buf.validate.field).enum = {in: [1, 2, 3]}];
   // expected_run_id, when set, scopes this control to ONE run: the server
   // refuses it if the session's current run is a different one, and the newer
   // run is left untouched.
@@ -1649,6 +1578,12 @@ message ResumeApproval {
   // is current. Existing clients are unaffected; a client that knows the run id
   // it is acting on should always send it.
   string expected_run_id = 4;
+  // review_id and guardrail_kind acknowledge the purpose shown by a contextual
+  // guardrail prompt. They are mandatory and must exactly echo
+  // PermissionAsk.guardrail for EVERY guardrail-scoped ask (both ACTION and
+  // RESULT_RELEASE). They are absent only for ordinary permission asks.
+  string review_id = 5;
+  GuardrailApprovalKind guardrail_kind = 6;
 }
 
 // ApprovalVerdict is the client's three-way resolution of a permission.ask,
@@ -1657,8 +1592,7 @@ message ResumeApproval {
 // exact canonical pattern; it NEVER overrides a deny and NEVER bypasses plan-mode
 // mutation denial.
 enum ApprovalVerdict {
-  // APPROVAL_VERDICT_UNSPECIFIED falls back to the legacy `allow` bool at the
-  // server boundary (true -> ALLOW_ONCE, false -> DENY).
+  // APPROVAL_VERDICT_UNSPECIFIED is invalid at control boundaries.
   APPROVAL_VERDICT_UNSPECIFIED = 0;
   // APPROVAL_VERDICT_DENY refuses the proposed tool call.
   APPROVAL_VERDICT_DENY = 1;
@@ -1803,10 +1737,29 @@ message ResolveRunAskRequest {
   string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
   string ask_id = 3 [(buf.validate.field).string.min_len = 1];
   ApprovalVerdict verdict = 4 [(buf.validate.field).enum = {in: [1, 2, 3]}];
+  // review_id and guardrail_kind acknowledge the purpose shown by a contextual
+  // guardrail prompt. Both are required for scoped action/result-release asks and
+  // omitted together for ordinary permission asks.
+  string review_id = 5;
+  GuardrailApprovalKind guardrail_kind = 6;
 }
 
 // ResolveRunAskResponse acknowledges only the accepted run/ask correlation.
 message ResolveRunAskResponse {
+  string run_id = 1;
+  string ask_id = 2;
+}
+
+// ResolvePlanAskRequest addresses one plan-originated ask on one exact run.
+message ResolvePlanAskRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+  string ask_id = 3 [(buf.validate.field).string.min_len = 1];
+  ApprovalVerdict verdict = 4 [(buf.validate.field).enum = {in: [1, 2, 3]}];
+}
+
+// ResolvePlanAskResponse acknowledges only the accepted run/ask correlation.
+message ResolvePlanAskResponse {
   string run_id = 1;
   string ask_id = 2;
 }
@@ -1919,6 +1872,13 @@ message Authorization {
   string display_name = 5;
 }
 
+// PlanContinuationFailure correlates a known failed server-owned proceed start.
+// No execution run exists, so Event.run_id is empty.
+message PlanContinuationFailure {
+  string plan_run_id = 1;
+  string ask_id = 2;
+}
+
 // Event mirrors the domain session.Event one-for-one. `type` is the string
 // event kind; the structured submessages are populated per kind.
 message Event {
@@ -1941,9 +1901,8 @@ message Event {
   PermissionAsk ask = 7;
   // result is set on the terminal result event.
   Result result = 8;
-  // usage is set on usage-bearing events. On the result event it is the
-  // cumulative run total; turn.end carries its per-turn usage in turn_end.
-  Usage usage = 9;
+  reserved 9;
+  reserved "usage";
   // turn_end is set on turn.end events (this turn's usage + elapsed time).
   TurnEnd turn_end = 10;
   // hook is set on hook events: the structured phase/tool/decision so clients
@@ -2031,6 +1990,20 @@ message Event {
   // events. It is safe durable correlation only; the live presentation URL and
   // private continuation state never enter this payload.
   Authorization authorization = 24;
+  // control_refused is set on control.refused events. It identifies the exact
+  // approval ask whose submitted control was rejected and carries only a stable
+  // machine category; raw arguments and refusal rationale never enter it.
+  ControlRefused control_refused = 25;
+  // plan_continuation_failure is a session-scoped, content-safe indication
+  // that an accepted plan allow could not start its proceed run.
+  PlanContinuationFailure plan_continuation_failure = 26;
+}
+
+// ControlRefused is the metadata-only acknowledgement for a rejected in-stream
+// approval control. Message text remains a sanitized human diagnostic on Event.text.
+message ControlRefused {
+  string ask_id = 1;
+  string category = 2;
 }
 
 // ModelRetry identifies the failed-step retry intent being driven.
@@ -2073,27 +2046,116 @@ message SteerAck {
   string message_id = 4;
 }
 
+enum GuardrailJob {
+  GUARDRAIL_JOB_UNSPECIFIED = 0;
+  GUARDRAIL_JOB_ACTION = 1;
+  GUARDRAIL_JOB_INBOUND = 2;
+  GUARDRAIL_JOB_PERMISSION = 3;
+}
+
+enum GuardrailAssessment {
+  GUARDRAIL_ASSESSMENT_UNSPECIFIED = 0;
+  GUARDRAIL_ASSESSMENT_ACCEPTABLE = 1;
+  GUARDRAIL_ASSESSMENT_PROHIBITED = 2;
+  GUARDRAIL_ASSESSMENT_UNRESOLVED = 3;
+}
+
+enum GuardrailInspection {
+  GUARDRAIL_INSPECTION_UNSPECIFIED = 0;
+  GUARDRAIL_INSPECTION_COMPLETE = 1;
+  GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE = 2;
+}
+
+enum GuardrailDisposition {
+  GUARDRAIL_DISPOSITION_UNSPECIFIED = 0;
+  GUARDRAIL_DISPOSITION_EXECUTE = 1;
+  GUARDRAIL_DISPOSITION_ASK_ACTION = 2;
+  GUARDRAIL_DISPOSITION_WITHHOLD_RESULT = 3;
+  GUARDRAIL_DISPOSITION_RELEASE_RESULT = 4;
+  GUARDRAIL_DISPOSITION_DENY = 5;
+  GUARDRAIL_DISPOSITION_PASS_ADVISORY = 6;
+  GUARDRAIL_DISPOSITION_CONTINUE_WARNING = 7;
+}
+
+enum GuardrailApprovalKind {
+  GUARDRAIL_APPROVAL_KIND_UNSPECIFIED = 0;
+  GUARDRAIL_APPROVAL_KIND_ACTION = 1;
+  GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE = 2;
+}
+
+message GuardrailRef {
+  string ref = 1;
+  string category = 2;
+}
+
+message GuardrailReview {
+  string review_id = 1;
+  GuardrailJob job = 2;
+  GuardrailAssessment assessment = 3;
+  GuardrailInspection inspection = 4;
+  GuardrailDisposition disposition = 5;
+  string reason_code = 6;
+  string rule_id = 7;
+  string rule_origin = 8;
+  string checker_provider_id = 9;
+  string checker_model_id = 10;
+  repeated GuardrailRef concerns = 11;
+  repeated GuardrailRef sources = 12;
+}
+
+message GuardrailApprovalScope {
+  string review_id = 1;
+  GuardrailApprovalKind kind = 2;
+  string grant_digest = 3;
+  bool session_only = 4;
+  bool repeat_available = 5;
+  reserved 6;
+}
+
+message ListGuardrailCoverageRequest { string session_id = 1; }
+message GuardrailCoverageEntry {
+  string tool = 1;
+  string phase = 2;
+  GuardrailJob job = 3;
+  string mode = 4;
+  string rule_id = 5;
+  string rule_origin = 6;
+  GuardrailInspection inspection = 7;
+  string reason = 8;
+}
+message ListGuardrailCoverageResponse {
+  bool enabled = 1;
+  string checker_provider_id = 2;
+  string checker_model_id = 3;
+  repeated GuardrailCoverageEntry entries = 4;
+}
+message GetGuardrailReviewDetailRequest { string session_id = 1; string review_id = 2; }
+message GetGuardrailReviewDetailResponse {
+  string review_id = 1;
+  string concern = 2;
+  string source_display = 3;
+  string next_action = 4;
+}
+
 // Approval is the proto projection of session.ApprovalPayload (EvApproval):
 // the verdict half of a permission ask. Metadata-only (gauntlet #7): tool NAME +
-// verdict string + askID + the opaque gated-call id + the allow-always flag.
-// NEVER raw args. LOG-ONLY on the live Converse wire; surfaced only by the
+// verdict enum + askID + the opaque gated-call id. NEVER raw args. LOG-ONLY on the live Converse wire; surfaced only by the
 // StreamSessionEvents replay.
 message Approval {
   // ask_id is the id of the resolved permission ask (mirrors PermissionAsk.ask_id).
   string ask_id = 1;
-  // verdict is the resolution string (allow_once / allow_always / deny) — a
-  // passthrough of session.VerdictString*, no enum.
-  string verdict = 2;
+  reserved 2, 5;
+  reserved "allow_always";
   // tool is the NAME of the tool the ask gated. It is the tool name ALONE — never
   // the call's args.
   string tool = 3;
   // call_id is the opaque id of the gated ToolCall (the durable, grammar-free
   // correlation handle a 3b consumer uses to find the call in the conversation).
   string call_id = 4;
-  // allow_always mirrors (Verdict == allow_always): the verdict asked the harness
-  // to learn a per-session allow rule. It honestly reflects the VERDICT, not the
-  // policy outcome (Policy.Learn may no-op on an unlearnable call).
-  bool allow_always = 5;
+  // verdict is the typed resolution of the permission ask.
+  ApprovalVerdict verdict = 6;
+  // origin is the explicit approval provenance. Empty/unknown origins fail closed.
+  string origin = 7;
 }
 
 // UserPrompt is the proto projection of session.UserPromptPayload (EvUserPrompt):
@@ -2219,6 +2281,23 @@ message Hook {
   // phases (PreToolUse / PostToolUse); empty otherwise. Lets a client address the
   // hook notice to the originating tool card. Mirrors session.HookPayload.CallID.
   string call_id = 4;
+  GuardrailReview guardrail = 5;
+}
+
+// RoutingDecision is bounded configured-router evidence attached to a delegation
+// start projection. Existing model/routed_*/routing_reason fields remain authoritative
+// for the child that actually ran and the final routing result.
+message RoutingDecision {
+  string backend = 1;
+  string classifier_model = 2;
+  string candidate_category = 3;
+  string candidate_model = 4;
+  optional double confidence = 5;
+  optional double minimum_confidence = 6;
+  string outcome = 7;
+  int32 consecutive_misses = 8;
+  int32 miss_limit = 9;
+  bool breaker_open = 10;
 }
 
 // Subagent is the REDACTED observability projection carried by the three
@@ -2308,6 +2387,9 @@ message Subagent {
   // reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the
   // emit site. Mirrors session.SubagentPayload.RoutingReason.
   string routing_reason = 18;
+  // routing_decision is the optional bounded configured-router evidence captured
+  // on subagent.start. Historical events and deployments without a router omit it.
+  optional RoutingDecision routing_decision = 19;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -2352,6 +2434,9 @@ message TeamMemberSpec {
   // member content crosses). Clamped at the emit site. Mirrors
   // session.TeamMemberSpec.RoutingReason.
   string routing_reason = 8;
+  // routing_decision is the optional bounded configured-router evidence captured
+  // for this member on team.start. Historical roster entries omit it.
+  optional RoutingDecision routing_decision = 9;
 }
 
 // Team is the BOUNDED observability projection carried by the three team.* events.
@@ -2553,6 +2638,9 @@ message Parallel {
   // it is context-isolation safe (gauntlet #7: no branch content crosses).
   // Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason.
   string routing_reason = 25;
+  // routing_decision is the optional bounded configured-router evidence captured
+  // on branch_start. Historical events and deployments without a router omit it.
+  optional RoutingDecision routing_decision = 26;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors
@@ -2598,6 +2686,10 @@ message PermissionAsk {
   string args = 3;
   // reason explains why approval is required.
   string reason = 4;
+  GuardrailApprovalScope guardrail = 5;
+  // call_id is the exact durable tool-call ID for presentation correlation.
+  // Absence means no tool-row attachment can be proven.
+  optional string call_id = 6;
 }
 
 // RetryDisposition is the neutral causal retry classification of a failed model
@@ -2631,11 +2723,9 @@ message Result {
   Usage usage = 3;
   // error carries the failure detail when stop is "error" (empty otherwise).
   string error = 4;
-  // permanent is true when an error stop is a PERMANENT provider rejection —
-  // replaying the identical request cannot succeed (e.g. a 4xx other than
-  // 408/429). Absent/false means transient or unclassified (fail-open).
-  bool permanent = 5;
-  // retry_disposition is always present on terminal results from new servers;
+  reserved 5;
+  reserved "permanent";
+  // retry_disposition is always present on terminal results from current servers;
   // absence identifies an older server, while explicit UNKNOWN is conservative.
   optional RetryDisposition retry_disposition = 6;
   // stream_progress is presence-aware for the same old-server distinction.
@@ -2653,6 +2743,9 @@ message TurnEnd {
   // duration_ms is the elapsed milliseconds for the turn's model call; 0 when
   // the server had no clock.
   int64 duration_ms = 2;
+  // estimated is true when usage.input_tokens is a display-only fallback
+  // estimate rather than provider-reported usage.
+  bool estimated = 3;
 }
 
 // Usage accounts for the token cost of a model call (or an aggregate).
@@ -2845,6 +2938,24 @@ message ListMcpSourcesRequest {}
 message ListMcpSourcesResponse {
   // sources are the (possibly empty) resolved sources.
   repeated McpSource sources = 1;
+  // revision is the current published direct-runtime revision.
+  uint64 revision = 2;
+  // stale is true when source or candidate degradation retained an older runtime.
+  bool stale = 3;
+  // reconciling is true while the shared reconciler is processing a cycle.
+  bool reconciling = 4;
+}
+
+// RefreshMcpSourcesRequest names the owned session whose direct-name authority
+// may be widened after reconciliation.
+message RefreshMcpSourcesRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// RefreshMcpSourcesResponse identifies the request-pinned runtime snapshot.
+message RefreshMcpSourcesResponse {
+  uint64 revision = 1;
+  bool changed = 2;
 }
 
 // ListToolHiveGroupsRequest requests the distinct ToolHive groups in the

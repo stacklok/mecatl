@@ -267,7 +267,7 @@ rather than leaking generated message types through the ergonomic entry point.
 ### Scenario 2 — session mutations return useful lifecycle values
 
 The session handle exposes server-owned operations directly and does not reproduce
-server eligibility rules, consistent with the [SDK composition boundary](../design/IMPLEMENTATION-NOTES.md).
+server eligibility rules, consistent with the [SDK composition boundary](../architecture.md#typescript-sdk).
 
 **Acceptance:**
 - AC2.1: `rename(title)` and `setMode(mode)` issue their exact existing unary requests and return the validated resulting `SessionSnapshot`; every snapshot-bearing operation refreshes the handle's known per-session media gates when the response carries them, so a later run follows a mode-dependent model change; `compact()` returns the exact `compacted` Boolean.

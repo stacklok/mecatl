@@ -263,6 +263,39 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	}
 }
 
+func TestToolCardTabIndentedResultDoesNotReflowAtFrame(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	_, cardWidth, _ := r.toolCardLayout()
+	b := &block{
+		kind:       blockTool,
+		toolID:     "tabbed-read",
+		toolName:   "Read",
+		resolved:   true,
+		resultBody: "cmd/mecatui/ui/render.go:789:\t\trows = functionalCardProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)",
+	}
+
+	rows := strings.Split(stripANSIstr(r.renderTool(b, true)), "\n")
+	containsStableContinuation := false
+	for i, row := range rows {
+		if got := maxLineWidth(row); got > cardWidth {
+			t.Errorf("card row %d width = %d, want ≤ %d: %q", i, got, cardWidth, row)
+		}
+		if strings.ContainsRune(row, '\t') {
+			t.Errorf("card row %d retained a literal tab: %q", i, row)
+		}
+		if strings.Contains(row, "r.indent, r.w") {
+			containsStableContinuation = true
+		}
+		if strings.Contains(row, "r.inden") && i+1 < len(rows) && strings.Contains(rows[i+1], "t, r.width)") {
+			t.Errorf("tab-indented source continuation reflowed at the frame:\n%s", strings.Join(rows, "\n"))
+		}
+	}
+	if !containsStableContinuation {
+		t.Errorf("tab-indented source was split again by the frame:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
 // TestCollapsedShellResultCapsVisualRows wraps multiline, indented Shell output
 // before applying the inline cap. Capping logical source lines instead would let
 // the final card wrap turn the retained rows into a taller collapsed card.

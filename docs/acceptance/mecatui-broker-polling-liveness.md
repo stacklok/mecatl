@@ -50,7 +50,7 @@ in `user-docs/mecatui/using-the-tui.md` remains the user-facing contract.
 
 Workspace enrollment remains the separate opaque bundle-level workflow defined by
 [ADR 0311](../adr/0311-per-upstream-mcp-broker-oauth-grants.md) and the broker implementation
-notes in [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md). Each
+notes in [the broker architecture](../architecture.md#internal-credential-store). Each
 connect, periodic check, retry, and cancel command derives the approved fixed deadline from the
 current operation context. A deadline is reduced through the existing correlated result path:
 the current attempt clears `busy` and its cancellation handle, reports a bounded sanitized

@@ -1,7 +1,7 @@
 # Session storage continuity — acceptance plan
 
-**Phase:** Large historical stores, migration, cleanup, and writable legacy continuity.
-**Status:** draft historical record, partially superseded 2026-09-02 by [ADR 0291](../adr/0291-server-owned-session-placement.md). Storage migration/cleanup landed; writable legacy-adoption criteria and their deleted proofs are no longer current acceptance claims.
+**Phase:** Historical storage continuity.
+**Status:** superseded.
 **Issue:** [stacklok/mecatl#583](https://github.com/stacklok/mecatl/issues/583), with sub-issues [#586](https://github.com/stacklok/mecatl/issues/586)–[#596](https://github.com/stacklok/mecatl/issues/596).
 **ADR:** [ADR-0226](../adr/0226-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
 **Accumulator branch:** `acc/session-storage-continuity` (off `main`).
@@ -213,7 +213,7 @@ sessions**. The capability-driven client and explicit vocabulary follow [ADR-021
 A daemon operator follows tested systemd or macOS launchd examples, inspects policy and dry-run
 impact, and performs a quiesced backup/migration/restore. The daemon remains the sole automatic
 cleanup owner under [ADR-0226](../adr/0226-session-storage-maintenance.md), with storage privacy
-and lifecycle documented in [`user-docs/reference/configuration.md`](https://mecatl.dev/docs/reference/configuration).
+and lifecycle documented in [`user-docs/reference/configuration.md`](../../user-docs/reference/configuration.md).
 
 **Acceptance:**
 - AC9.1: Tested systemd user-service and launchd examples parse, resolve the intended executable/config/state paths, preserve each argument exactly, and invoke the daemon-owned retention configuration rather than an external deletion command.
@@ -236,7 +236,7 @@ and lifecycle documented in [`user-docs/reference/configuration.md`](https://mec
 
 ## Cross-cutting deliverables
 
-- Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/design/PRODUCTION-READINESS.md`, `docs/tui.md`, and relevant `user-docs/` pages with the shipped behavior.
+- Update the owning session-storage architecture, TUI, and public `user-docs/` pages with the shipped behavior; do not recreate retired implementation notes or status trackers.
 - Inventory every catalog, maintenance-job registry, cache, goroutine, semaphore, and durable file in ADR 0027 Lists 1/2 as required by `AGENTS.md`.
 - Extend store/driver conformance and engine compatibility artifacts for any exported optional port surface.
 - Keep every test offline; no live model, Redis service, or network dependency.

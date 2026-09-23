@@ -18,25 +18,37 @@ import (
 
 type fakeStore struct {
 	entries  map[string]tool.MemoryEntry
+	records  map[string]tool.MemoryRecord
 	remember int
 	forget   int
 }
 
 func newFakeStore(entries ...tool.MemoryEntry) *fakeStore {
-	s := &fakeStore{entries: make(map[string]tool.MemoryEntry, len(entries))}
-	for _, entry := range entries {
+	s := &fakeStore{entries: make(map[string]tool.MemoryEntry, len(entries)), records: make(map[string]tool.MemoryRecord, len(entries))}
+	for i, entry := range entries {
 		s.entries[entry.Key] = entry
+		revision := tool.MemoryRevision{Key: entry.Key, Value: entry.Value, Description: entry.Description, Version: tool.MemoryVersion("seed-" + entry.Key + string(rune('a'+i))), Status: tool.MemoryStatusActive}
+		s.records[entry.Key] = tool.MemoryRecord{Current: revision, Revisions: []tool.MemoryRevision{revision}}
 	}
 	return s
 }
 
-func (s *fakeStore) RememberEntry(_ context.Context, entry tool.MemoryEntry) error {
+func (s *fakeStore) Remember(_ context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	current, exists := s.records[entry.Key]
+	if exists != expected.Exists || exists && current.Current.Version != expected.Version {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: entry.Key, Expected: expected.Version, Actual: current.Current.Version}
+	}
 	s.remember++
 	s.entries[entry.Key] = entry
-	return nil
+	revision := tool.MemoryRevision{Key: entry.Key, Value: entry.Value, Description: entry.Description, Version: "fake-current", Status: tool.MemoryStatusActive}
+	current.Current = revision
+	current.Revisions = append(current.Revisions, revision)
+	s.records[entry.Key] = current
+	return current, nil
 }
-func (s *fakeStore) Remember(ctx context.Context, key, value string) error {
-	return s.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: value})
+func (s *fakeStore) Inspect(_ context.Context, key string) (tool.MemoryRecord, bool, error) {
+	record, ok := s.records[key]
+	return record, ok, nil
 }
 func (s *fakeStore) Index(ctx context.Context) ([]tool.MemoryEntry, error) { return s.List(ctx, "") }
 func (s *fakeStore) Recall(_ context.Context, key string) (tool.MemoryEntry, bool, error) {
@@ -54,10 +66,21 @@ func (s *fakeStore) List(_ context.Context, prefix string) ([]tool.MemoryEntry, 
 	return entries, nil
 }
 func (*fakeStore) Search(context.Context, string, int) ([]tool.MemoryEntry, error) { return nil, nil }
-func (s *fakeStore) Forget(_ context.Context, key string) error {
+func (s *fakeStore) Forget(_ context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, ok := s.records[key]
+	if !ok || record.Current.Version != expected {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: key, Expected: expected, Actual: record.Current.Version}
+	}
 	s.forget++
 	delete(s.entries, key)
-	return nil
+	revision := tool.MemoryRevision{Key: key, Version: "fake-deleted", Status: tool.MemoryStatusDeleted}
+	record.Current = revision
+	record.Revisions = append(record.Revisions, revision)
+	s.records[key] = record
+	return record, nil
+}
+func (*fakeStore) Undo(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return tool.MemoryRecord{}, errors.New("not implemented")
 }
 func (s *fakeStore) mutations() int { return s.remember + s.forget }
 
@@ -77,7 +100,7 @@ func (s *atomicTestStore) RetireDuplicate(ctx context.Context, survivorKey strin
 		}
 		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: survivorKey, Expected: survivorVersion, Actual: actual}
 	}
-	return s.ForgetVersioned(ctx, sourceKey, sourceVersion)
+	return s.Forget(ctx, sourceKey, sourceVersion)
 }
 
 type recordingPlanner struct {
@@ -110,6 +133,19 @@ func keys(batch []tool.MemoryEntry) string {
 	return b.String()
 }
 
+func rememberLatest(ctx context.Context, store tool.MemoryStore, entry tool.MemoryEntry) error {
+	record, found, err := store.Inspect(ctx, entry.Key)
+	if err != nil {
+		return err
+	}
+	expected := tool.MemoryCurrent{Exists: found}
+	if found {
+		expected.Version = record.Current.Version
+	}
+	_, err = store.Remember(ctx, entry, expected)
+	return err
+}
+
 func TestPlanAdmissionRejectsHiddenModelTextAndReviewMatchesPersistence(t *testing.T) {
 	ctx := context.Background()
 	for name, hidden := range map[string]string{"nul": "\x00", "format": "\u2060"} {
@@ -130,7 +166,7 @@ func TestPlanAdmissionRejectsHiddenModelTextAndReviewMatchesPersistence(t *testi
 		t.Fatal(err)
 	}
 	for _, entry := range []tool.MemoryEntry{{Key: "a", Value: "old", Description: "old description"}, {Key: "b", Value: "source", Description: "source description"}} {
-		if err := store.RememberEntry(ctx, entry); err != nil {
+		if err := rememberLatest(ctx, store, entry); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -397,7 +433,7 @@ func TestConvergenceCandidatesBindExactInspectedRevision(t *testing.T) {
 	ctx := context.Background()
 	store := memmemory.New()
 	entry := tool.MemoryEntry{Key: "project/a", Value: "complete value", Description: "complete description"}
-	if err := store.RememberEntry(ctx, entry); err != nil {
+	if err := rememberLatest(ctx, store, entry); err != nil {
 		t.Fatal(err)
 	}
 	record, found, err := store.Inspect(ctx, entry.Key)
@@ -494,7 +530,7 @@ func seedStore(t *testing.T, values map[string]tool.MemoryEntry) *atomicTestStor
 	store := &atomicTestStore{Store: memmemory.New()}
 	for key, entry := range values {
 		entry.Key = key
-		if err := store.RememberEntry(context.Background(), entry); err != nil {
+		if err := rememberLatest(context.Background(), store, entry); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -608,7 +644,7 @@ func TestApplyStaleSurvivorConflictsWholeOperationAndStaleSourceOnlyItself(t *te
 	entry := tool.MemoryEntry{Value: "v", Description: "d"}
 	store := seedStore(t, map[string]tool.MemoryEntry{"a": entry, "b": entry, "c": entry})
 	consolidator, plan := generate(t, store, Config{}, supersession{Survivor: "a", Superseded: []string{"b", "c"}})
-	if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "a", Value: "v", Description: "d"}); err != nil {
+	if err := rememberLatest(context.Background(), store, tool.MemoryEntry{Key: "a", Value: "v", Description: "d"}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := consolidator.ApplyPlan(context.Background(), plan)
@@ -618,7 +654,7 @@ func TestApplyStaleSurvivorConflictsWholeOperationAndStaleSourceOnlyItself(t *te
 
 	store = seedStore(t, map[string]tool.MemoryEntry{"a": entry, "b": entry, "c": entry})
 	consolidator, plan = generate(t, store, Config{}, supersession{Survivor: "a", Superseded: []string{"b", "c"}})
-	if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "b", Value: "v", Description: "d"}); err != nil {
+	if err := rememberLatest(context.Background(), store, tool.MemoryEntry{Key: "b", Value: "v", Description: "d"}); err != nil {
 		t.Fatal(err)
 	}
 	report, err = consolidator.ApplyPlan(context.Background(), plan)
@@ -635,7 +671,7 @@ type survivorRaceStore struct {
 func (s *survivorRaceStore) RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error) {
 	if !s.mutated {
 		s.mutated = true
-		if err := s.RememberEntry(ctx, tool.MemoryEntry{Key: survivorKey, Value: "changed", Description: "d"}); err != nil {
+		if err := rememberLatest(ctx, s, tool.MemoryEntry{Key: survivorKey, Value: "changed", Description: "d"}); err != nil {
 			return tool.MemoryRecord{}, err
 		}
 	}
@@ -701,7 +737,7 @@ func TestApplyContinuesAfterConflictAndFailure(t *testing.T) {
 	base := seedStore(t, map[string]tool.MemoryEntry{"a": entry, "b": entry, "c": entry, "d": entry})
 	store := &failingConvergenceStore{atomicTestStore: base, failKey: "d"}
 	consolidator, plan := generate(t, store, Config{}, supersession{Survivor: "a", Superseded: []string{"b", "c", "d"}})
-	if err := base.RememberEntry(context.Background(), tool.MemoryEntry{Key: "c", Value: "v", Description: "d"}); err != nil {
+	if err := rememberLatest(context.Background(), base, tool.MemoryEntry{Key: "c", Value: "v", Description: "d"}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := consolidator.ApplyPlan(context.Background(), plan)
@@ -741,7 +777,7 @@ func TestReviewedExactDuplicateKeepsPerSourceAtomicBehavior(t *testing.T) {
 	entry := tool.MemoryEntry{Value: "same", Description: "same"}
 	store := seedStore(t, map[string]tool.MemoryEntry{"a": entry, "b": entry, "c": entry})
 	consolidator, plan := generate(t, store, Config{}, supersession{Kind: OperationExactDuplicate, Survivor: "a", Superseded: []string{"b", "c"}, Reason: "duplicates"})
-	if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "b", Value: "same", Description: "same"}); err != nil {
+	if err := rememberLatest(context.Background(), store, tool.MemoryEntry{Key: "b", Value: "same", Description: "same"}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := consolidator.ApplyReviewedPlan(context.Background(), plan)
@@ -792,7 +828,7 @@ func TestAutomaticApplyIgnoresSynthesis(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range []tool.MemoryEntry{{Key: "a", Value: "one"}, {Key: "b", Value: "two"}} {
-		if err := store.RememberEntry(context.Background(), entry); err != nil {
+		if err := rememberLatest(context.Background(), store, entry); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -819,7 +855,7 @@ func TestReviewedSynthesisRevisesSurvivorAndRetiresAllSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range []tool.MemoryEntry{{Key: "a", Value: "one", Description: "first"}, {Key: "b", Value: "two"}, {Key: "c", Value: "three"}} {
-		if err := store.RememberEntry(context.Background(), entry); err != nil {
+		if err := rememberLatest(context.Background(), store, entry); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -849,7 +885,7 @@ func TestReviewedSynthesisConflictIsAtomicAndLaterOperationContinues(t *testing.
 				t.Fatal(err)
 			}
 			for _, key := range []string{"a", "b", "c", "d", "e"} {
-				if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: key, Value: key}); err != nil {
+				if err := rememberLatest(context.Background(), store, tool.MemoryEntry{Key: key, Value: key}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -858,7 +894,7 @@ func TestReviewedSynthesisConflictIsAtomicAndLaterOperationContinues(t *testing.
 				{Kind: OperationSynthesizedReplacement, Survivor: "d", Superseded: []string{"e"}, Value: "later", Reason: "merge later"},
 			}
 			consolidator, plan := generate(t, store, Config{}, operations...)
-			if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: stale, Value: "changed"}); err != nil {
+			if err := rememberLatest(context.Background(), store, tool.MemoryEntry{Key: stale, Value: "changed"}); err != nil {
 				t.Fatal(err)
 			}
 			report, applyErr := consolidator.ApplyReviewedPlan(context.Background(), plan)
@@ -885,7 +921,7 @@ func TestReviewedSynthesisValidationFailureHasNoWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"user/a", "user/b"} {
-		if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: key, Value: key}); err != nil {
+		if err := rememberLatest(context.Background(), store, tool.MemoryEntry{Key: key, Value: key}); err != nil {
 			t.Fatal(err)
 		}
 	}

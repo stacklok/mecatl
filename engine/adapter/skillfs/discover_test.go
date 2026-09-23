@@ -46,7 +46,7 @@ description: Run a structured code review.
 Look for correctness, then style.
 `)
 
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestGoccyYAMLMigration_SemanticMatrixSkillFrontmatter(t *testing.T) {
 }
 
 func TestDiscoverMissingDirIsNotError(t *testing.T) {
-	got, skips, err := Discover(filepath.Join(t.TempDir(), "does-not-exist"))
+	got, skips, err := (DirSource{Dir: filepath.Join(t.TempDir(), "does-not-exist")}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("missing dir should not error: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestDiscoverMissingDirIsNotError(t *testing.T) {
 }
 
 func TestDiscoverEmptyDirArg(t *testing.T) {
-	got, _, err := Discover("")
+	got, _, err := (DirSource{}).Skills(context.Background())
 	if err != nil || got != nil {
 		t.Errorf("empty dir arg: got=%v err=%v, want nil/nil", got, err)
 	}
@@ -151,7 +151,7 @@ name: [unclosed
 body
 `)
 
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -248,7 +248,7 @@ description: uppercase and space
 ---
 body
 `)
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -278,7 +278,7 @@ description: matched
 ---
 body
 `)
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -301,7 +301,7 @@ description: underscore name
 ---
 body
 `)
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestDiscoverIgnoresNonSkillDirsAndFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestDiscoverCapsOversizedDescription(t *testing.T) {
 	longDesc := strings.Repeat("a", maxDescriptionBytes*2)
 	writeSkill(t, dir, "verbose", fmt.Sprintf("---\nname: verbose\ndescription: %s\n---\nbody\n", longDesc))
 
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestDiscoverWarnsOnOversizedBody(t *testing.T) {
 	bigBody := strings.Repeat("x", MaxOutputBytes+1000)
 	writeSkill(t, dir, "huge", "---\nname: huge\ndescription: a big skill\n---\n"+bigBody+"\n")
 
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestDiscoverCRLFFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	crlf := "---\r\nname: win\r\ndescription: CRLF line endings\r\n---\r\nbody here\r\n"
 	writeSkill(t, dir, "win", crlf)
-	got, skips, err := Discover(dir)
+	got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
 	t.Run("round-trips into Skill and SkillMeta", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "licensed", "---\nname: licensed\ndescription: A skill with optional advisory frontmatter.\nlicense: MIT\ncompatibility: \"mecatl >= 0.1\"\nmetadata:\n  author: stacklok\n  version: \"1\"\n---\nbody\n")
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -498,7 +498,7 @@ func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
 	t.Run("missing fields yield zero values with no skip and no note", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "commit-style", validSkill) // validSkill has only name+description
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -519,7 +519,7 @@ func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
 		longLicense := strings.Repeat("L", MaxLicenseBytes*2)
 		longCompat := strings.Repeat("C", MaxCompatibilityBytes*2)
 		writeSkill(t, dir, "verbose", fmt.Sprintf("---\nname: verbose\ndescription: clamps advisory fields\nlicense: %s\ncompatibility: %s\n---\nbody\n", longLicense, longCompat))
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -550,7 +550,7 @@ func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
 		}
 		metaBlock.WriteString("---\nbody\n")
 		writeSkill(t, dir, "big-meta", metaBlock.String())
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -575,7 +575,7 @@ func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
 		dir := t.TempDir()
 		bigVal := strings.Repeat("V", MaxMetadataValueBytes+1)
 		writeSkill(t, dir, "big-val", fmt.Sprintf("---\nname: big-val\ndescription: one huge metadata value\nmetadata:\n  author: %s\n---\nbody\n", bigVal))
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -625,7 +625,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 	t.Run("space-separated string form splits into names", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "tooling", "---\nname: tooling\ndescription: a skill with allowed-tools\nallowed-tools: \"Shell Read Grep\"\n---\nbody\n")
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -654,7 +654,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 	t.Run("extra whitespace is tolerated", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "ws", "---\nname: ws\ndescription: lots of whitespace\nallowed-tools: \"  Shell   Read    Grep  \"\n---\nbody\n")
-		got, _, err := Discover(dir)
+		got, _, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -667,7 +667,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 	t.Run("YAML list form is accepted", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "listform", "---\nname: listform\ndescription: list form\nallowed-tools:\n  - Shell\n  - Read\n  - Grep\n---\nbody\n")
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -683,7 +683,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 	t.Run("missing field yields nil with no skip and no note", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "commit-style", validSkill) // no allowed-tools
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -706,7 +706,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 			fmt.Fprintf(&b, "t%d", i)
 		}
 		writeSkill(t, dir, "many", fmt.Sprintf("---\nname: many\ndescription: too many tools\nallowed-tools: %q\n---\nbody\n", b.String()))
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -732,7 +732,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 		dir := t.TempDir()
 		long := strings.Repeat("T", MaxAllowedToolNameBytes*2)
 		writeSkill(t, dir, "longname", fmt.Sprintf("---\nname: longname\ndescription: one huge tool name\nallowed-tools: %q\n---\nbody\n", long))
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -753,7 +753,7 @@ func TestParseSkillAllowedTools(t *testing.T) {
 	t.Run("resolved scalar is preserved as text", func(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, dir, "scalar", "---\nname: scalar\ndescription: int scalar\nallowed-tools: 123\n---\nbody\n")
-		got, skips, err := Discover(dir)
+		got, skips, err := (DirSource{Dir: dir}).Skills(context.Background())
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}

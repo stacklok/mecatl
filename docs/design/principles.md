@@ -2,13 +2,11 @@
 
 The cross-cutting invariants mecatl is built to keep. Architecture decisions
 that violate one of these get pushed back. They are distilled from the
-[ADRs](../adr/) and the canonical agent contract in
-[`AGENTS.md`](../../AGENTS.md); each names the source that pins it. These are
-*platform* principles (cross-cutting); the *behavioural* invariants — the
-rules about permissions, compaction, the loop, delegation — live in
-`AGENTS.md` under "Things That Will Bite You" and in
-[IMPLEMENTATION-NOTES.md](IMPLEMENTATION-NOTES.md), and are pinned by named
-tests.
+[ADRs](../adr/) and the [architecture topics](../READING.md); each names the
+source that pins it. These are *platform* principles (cross-cutting); behavioral
+invariants about permissions, compaction, the loop, and delegation belong to
+their owning architecture topic and executable tests. `AGENTS.md` holds concise
+contributor instructions rather than a second subsystem reference.
 
 Acceptance plans cite these as `Principle N`; the
 [ac-trace](../acceptance/README.md) gate resolves the reference against this
@@ -81,9 +79,7 @@ carry a runtime obligation.
 
 ## See also
 
-- [`AGENTS.md`](../../AGENTS.md) — the canonical contract (the behavioural
-  invariants live there).
-- [IMPLEMENTATION-NOTES.md](IMPLEMENTATION-NOTES.md) — the dense per-subsystem
-  reference.
+- [`AGENTS.md`](../../AGENTS.md) — contributor instructions.
+- [Architecture reading map](../READING.md) — the owning subsystem references.
 - [Development process](../development-process.md) — the spine these
   principles are cited from.

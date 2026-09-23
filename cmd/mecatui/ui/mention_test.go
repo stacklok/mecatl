@@ -154,16 +154,17 @@ func TestMentionNavigateClamps(t *testing.T) {
 	if len(m.mention.matches) < 2 {
 		t.Fatalf("need ≥2 matches to test navigation, got %v", m.mention.matches)
 	}
+	_ = m.View()
 
 	m.mentionMoveUp() // already at top → clamp
-	if m.mention.cursor != 0 {
-		t.Fatalf("cursor = %d after up at top, want 0", m.mention.cursor)
+	if m.mention.list.Cursor() != 0 {
+		t.Fatalf("cursor = %d after up at top, want 0", m.mention.list.Cursor())
 	}
 	for i := 0; i < len(m.mention.matches)+3; i++ {
 		m.mentionMoveDown()
 	}
-	if m.mention.cursor != len(m.mention.matches)-1 {
-		t.Fatalf("cursor = %d after many downs, want %d (last)", m.mention.cursor, len(m.mention.matches)-1)
+	if m.mention.list.Cursor() != len(m.mention.matches)-1 {
+		t.Fatalf("cursor = %d after many downs, want %d (last)", m.mention.list.Cursor(), len(m.mention.matches)-1)
 	}
 }
 

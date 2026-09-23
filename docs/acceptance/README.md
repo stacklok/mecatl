@@ -3,8 +3,8 @@
 Each document here is an acceptance plan or completed acceptance record: the smallest set of
 work that makes one **Bounded** or **Architectural** issue/capability demonstrable on the
 running harness. The classifier and routing rules are canonical in
-[`docs/development-process.md`](../development-process.md). Spike and Routine work do not
-create plans. Classification follows the decision and blast radius, not diff size, and
+[`docs/development-process.md`](../development-process.md). Spike, Routine, and Cleanup work do
+not create plans. Classification follows the decision and blast radius, not diff size, and
 workers escalate uncertainty rather than silently downgrading. Plans are organized scenario-first — acceptance is about what the
 harness can show, not which packages exist on disk. A focused issue may use one
 scenario and one orchestration task; plans must not manufacture complexity. Each
@@ -39,8 +39,8 @@ exists that no landed plan tracks.
 
 Named-test conventions ac-trace recognises:
 
-- `TestInvariant_<id>` — an invariant from `AGENTS.md` ("Things That Will
-  Bite You") or `docs/design/IMPLEMENTATION-NOTES.md`, id kebab → snake.
+- `TestInvariant_<id>` — an invariant in the owning architecture topic or
+  `AGENTS.md`, id kebab → snake.
 - `TestADR_NNNN_*` — a rule codified in `docs/adr/NNNN-*.md`.
 - `Test<Plan>_Scenario<N>_*` — a scenario test a plan scenario claims.
 - Descriptive test names are accepted in a `verify:` line, but prefer the
@@ -82,11 +82,28 @@ authority** each begin `None — <rationale>`.
 review value. A workflow-only meta-change may treat process documents and skills as the
 interface reviewed in the same PR. Combined preparation opens no separate plan PR.
 
-Material contract drift stops orchestration with `blocked-contract-drift`; the orchestrator
-cannot create, commit, push, or open an amendment. A separate, explicitly authorized
-`/to-acceptance-plan` amendment invocation uses the Split Plan / Interface PR flow and must
-pass checker/docs verification, human review and merge, and return to `approved`. The
-orchestrator records the amendment PR and full merged commit before resuming.
+A contract amendment starts with `blocked-contract-drift`; the orchestrator cannot
+create, commit, push, or open one without explicit human authorization. The agent
+recommends a direct, Split, or superseding-ADR route and explains the risks. The
+directing human may explicitly authorize one or more identified amendments and override
+that recommendation. Each authorization identifies the affected plan or ADR, exact
+change, scope, and source.
+
+For an authorized direct amendment, quarantine all unintegrated attempts. Record the
+verbatim authorization, source, recommendation, and override decision, if any, in
+`run.md`; apply and separately commit the plan, ADR, and affected living/task doc changes
+as authorized; run the checker and `task docs`; then regenerate briefs/decomposition and
+dispatch fresh attempts. Revalidate integrated work before resuming. The authorization
+does not cover unrelated later deviations.
+
+The default for a material or uncertain plan amendment is a separate, explicitly
+authorized `/to-acceptance-plan` amendment invocation and the Split Plan / Interface PR
+flow. The merged amendment commit must become an ancestor of the accumulator, without
+rewriting integrated commits. Quarantine all unintegrated attempts, regenerate briefs
+and decomposition, and revalidate integrated work before resuming. The default for an
+ADR decision or rationale change is a
+new or superseding ADR. The directing human may explicitly authorize a different route,
+including an in-place ADR update; record that override and its rationale in `run.md`.
 
 ## Status lifecycle
 
@@ -111,6 +128,18 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
+- [Provider-scoped model discovery](provider-model-discovery.md) — one composition-owned provider lifecycle for shared discovery, ordered publication, context-safe admission, and truthful retry recovery. Status: draft.
+
+- [Purpose-attributed auxiliary token usage](auxiliary-token-usage.md) — records every reachable session-associated auxiliary LLM call in the canonical ledger under a purpose-specific provider/model-attributed kind, without changing main-run accounting or budgets. Status: proposed.
+- [Root-conversation provider correlation](root-session-provider-correlation.md) — adds an outbound-only root-session header for grouping delegated and routed model requests while preserving the active session ID and its ingress-affinity contract. Status: landed in this implementation candidate; authoritative on merge.
+- [Acceptance-proof resolution efficiency](acceptance-proof-resolution-efficiency.md) — keeps plan-proof resolution fail closed while avoiding duplicate task execution within the existing Doc validation runner; Vitest batching is deferred. Status: proposed.
+- [Workspace enrollment preserves session authority](workspace-enrollment-authority.md) — preserves all still-authorized composed tools while atomically replacing the authenticated broker bundle; already-corrupted snapshots remain narrowed by explicit compatibility decision. Status: proposed.
+- [Contextual investigative guardrails](contextual-guardrails.md) — proposed Architectural contract for one contextual action/inbound reviewer, exact post-mutation permission re-evaluation, session-only exact repeat grants, held-result release-once, main/worker trajectory, session-provider-bound guardrail-slot routing, and separate durable-machine/transient-human status. Product choices are approved; implementation builds capacity calibration and quality-measurement deliverables, while separately authorized real-model release validation is required before any production-readiness claim. Status: proposed.
+- [Native Kubernetes execution provider](native-kubernetes-execution.md) — separately deployed,
+  optional controller/executor service in this monorepo, with retained workspaces and kind
+  qualification. Status: draft; implementation is planned as a draft PR stacked on the plan PR.
+
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
@@ -123,7 +152,12 @@ PR after verification. There is no cleanup or status-only PR.
   operator-global `command_runner` defaults for the Shell interpreter and a deliberately
   constrained main-shell ambient credential grant, while managed temporary storage remains
   a separate lifecycle policy. Status: proposed.
-- [Mecatui bounded scroll and cursor control](mecatui-bounded-scroll-selection.md) — establishes shared package-private physical-line browsing and logical-item cursor behavior, then proves complete geometry, styling, wheel ownership, and Models click-to-cursor semantics across Agents and Models. Status: proposed.
+- [Mecatui bounded scroll and cursor control](mecatui-bounded-scroll-selection.md) — establishes composed package-private physical-line viewport and stable-ID list cursor behavior, then proves complete geometry, caller-owned selection styling, independent wheel ownership, and Models click-to-cursor semantics across Agents and Models. Status: landed in this implementation candidate; authoritative on merge.
+- [Mecatui slash-command palette bounded list](mecatui-slash-palette-bounded-list.md) — migrates the inline slash-command palette to the established bounded-list contract while preserving its input filtering, command dispatch/completion, and Escape ownership. Status: proposed.
+- [Mecatui mention palette bounded list](mecatui-mention-bounded-list.md) — migrates the inline `@` file-completion palette to the established bounded-list contract while preserving local completion and attachment semantics. Status: landed in this implementation candidate; authoritative on merge.
+- [Mecatui sessions inventory bounded list](mecatui-sessions-bounded-list.md) — migrates the selectable `/sessions` inventory to the established bounded-list contract while preserving tab/search filtering, incremental pagination, and capability-authorized session actions. Status: proposed.
+- [Mecatui agent-definition inventory bounded viewport](mecatui-agent-inventory-bounded-viewport.md) — replaces `/agents`' fixed physical-line window with a responsive centered, 128-column-capped bounded viewport while retaining read-only definition discovery and legacy overlay ownership. Status: proposed.
+- [Mecatui StatusML terminal hyperlinks](mecatui-status-hyperlinks.md) — emits native OSC 8 hyperlinks only for existing validated custom StatusML links, preserving terminal-owned activation and the current visual fallback. Status: proposed.
 - [Mecatui unified Agents overlay fit](mecatui-unified-agents-overlay-fit.md) — aligns every F6 selectable roster with the Sessions picker’s unbordered selection treatment and bounds every Agents-overlay subview to its offered viewport, with reachable overflow and compact short-terminal fallback. Status: proposed.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui effort-handoff recovery](mecatui-effort-handoff-recovery.md) — transactional `/effort` successor hydration that preserves the usable source until the target is validated, cleans failed or stale targets best-effort, and retires the source only after adoption. Status: proposed.
@@ -137,7 +171,13 @@ PR after verification. There is no cleanup or status-only PR.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
-  Markdown and input-rail exceptions. Status: draft.
+  Markdown and input-rail exceptions. Status: landed.
+- [Mecatui functional conversation-card rendering](mecatui-functional-conversation-card-rendering.md) — follows the landed card-layout correction with deterministic, stateless prepared conversation-card rendering and caller-owned cache keys, while preserving main-scrollback frame, anchor, selection, and cache invariants. Status: proposed.
+- [Mecatui typed scrollback model](mecatui-typed-scrollback-model.md) — replaces the main scrollback's broad mutable block union with a sealed, typed client-local state model whose transitions own stable identity and revisioning while the root UI retains event projection, rendering, cache, frame, and viewport ownership. Status: proposed.
+- [Harness context source authority](harness-context.md) — deployment-configured project
+  instructions and customizations independent of execution, with exact session-authorized acquisition
+  for selected execution-file sources. Status: proposed amendment to the contract approved in #1814;
+  downscoped for MicroVM and native Kubernetes delivery. No runtime behavior is shipped by the plan.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only
@@ -152,6 +192,7 @@ PR after verification. There is no cleanup or status-only PR.
   attributable Linux and macOS command/job temporary storage with a permission-visible
   system escape and deterministic crash-residue reaping. Status: landed.
 - [Session title generation and token usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-model token attribution. Status: draft.
+- [MCP source reconciliation](mcp-source-reconciliation.md) — bounded ToolHive polling, MCP notifications, and manual refresh publish immutable direct MCP runtimes while preserving exact-name authority; explicit owner refresh unions additions. Status: landed in the stacked implementation candidate; authoritative only after human merge.
 - [Mecatui-owned configurable terminal titles](mecatui-terminal-title-controller.md) — replaces Bubble Tea title emission with a renderer-serialized OSC 0 controller, user-global plain-text title templates over display-safe status facts, explicit disablement precedence, and live-run `/session` identity access. Status: proposed.
 - [Per-upstream MCP broker OAuth grants](mcp-broker-multi-upstream-oauth.md) — accept multiple broker OAuth upstreams while keeping grants, callback state, authenticated discovery, and workspace-enrollment progression backend-scoped. Status: draft.
 - [Broker MCP status](broker-mcp-status.md) — approved owner-scoped broker connector
@@ -168,10 +209,17 @@ PR after verification. There is no cleanup or status-only PR.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
-- [Agent model discovery](agent-model-discovery.md) — a bounded, read-only,
-  model-facing view of the existing resolved inventory, presenting exact
-  `(provider_id, model_id)` selection handles without redesigning provider identity.
-  Status: draft.
+- [Agent model discovery](agent-model-discovery.md) — replaces the alpha `DiscoverModels`
+  contract in place with selectable-provider facets, bounded literal-term search, opaque
+  snapshot-bound continuation, and stable model-visible workflow guidance while preserving
+  exact `(provider_id, model_id)` selection identity. Status: landed implementation candidate;
+  amendment PR #1864 is merged, and this becomes authoritative after the implementation PR merges.
+- [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
+  bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
+  existing delegation event, mecatui, and session-debugger paths. Status: landed implementation
+  candidate under direct operator approval and the continuing explicit stacked waiver;
+  Plan / Interface PR [#1735](https://github.com/stacklok/mecatl/pull/1735) and its stacked
+  implementation retain human merge gates.
 - [Scalable reflection evidence](scalable-reflection-evidence.md) — one versioned,
   deterministic bounded-evidence materializer for automatic and explicit reflection,
   replacing raw retained-size rejection while preserving coordinator and promotion safety.
@@ -227,10 +275,11 @@ PR after verification. There is no cleanup or status-only PR.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
+- [Durable model-stream structural evidence](model-stream-structural-evidence.md) — bounded, content-free summaries for successful, incomplete, errored, and cancelled provider attempts, retained only for target-bound debugger inspection. Status: proposed.
 - [Session debugger lineage lock](session-debug-lineage-lock.md) — root debug
   inspection avoids global lineage traversal while related and descendant-scoped
   evidence keeps its existing bounded, fail-closed revalidation. Status: draft.
-- [Session storage continuity](session-storage-continuity.md) — historical storage plan: bounded current snapshots, indexed metadata, and maintenance jobs landed; its writable legacy-adoption criteria were superseded by ADR 0291. Status: draft historical record.
+- [Session storage continuity](session-storage-continuity.md) — superseded historical storage plan. Status: superseded.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
@@ -335,14 +384,17 @@ PR after verification. There is no cleanup or status-only PR.
   ordinary ask resolution, cancellation, strict multimodal steering, and pending-steer
   retraction over gRPC and HTTP through `session.controls(runId)`, with request options,
   bounded correlated acknowledgements, and mandatory stale-run guards. Status: proposed.
-- [TypeScript SDK MCP authorization lifecycle](sdk-mcp-authorization-lifecycle.md) — a
-  session-bound authorization handle with live URL presentation, explicit typed recheck/cancel
-  flows, exact-run permission controls, single-consumption correlation, and honest
-  disconnect/recovery semantics over gRPC and HTTP. Status: proposed.
+- [TypeScript SDK MCP authorization lifecycle](sdk-mcp-authorization-lifecycle.md) — superseded proposal. Status: superseded.
+- [SDK high-level parity coverage](sdk-high-level-parity-coverage.md) — classifies every public RPC and mecatui builtin against the existing TypeScript SDK surface, with separate CI guards and cross-workflow examples. Status: proposed.
 - [TypeScript SDK HTTP well-known-type JSON compatibility](sdk-http-wkt-json-compatibility.md) —
   descriptor-guided Timestamp and Duration decoding for daemon stdlib-JSON responses across unary
   HTTP and SSE, preserving ProtoJSON strings, typed failures, and the registered raw response.
   Status: proposed.
+- [TypeScript SDK malformed-success decoding](sdk-malformed-success-decoding.md) -
+  cause-free protocol errors for malformed successful unary HTTP and ordinary SSE payloads,
+  retaining safe status and request-ID metadata while preserving server, transport, and
+  cancellation causes. Status: in-progress stacked implementation candidate; the local full
+  race suite is host-linker-blocked and remains for CI.
 
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
@@ -357,6 +409,28 @@ PR after verification. There is no cleanup or status-only PR.
 - [Unified provider configuration and Mecatui provider commands](unified-provider-configuration-and-mecatui-provider-commands.md) — replace the `llm.endpoints` facade and `mecatui llm` surface with one provider model, bounded OIDC configuration, portable local setup, and comprehensive provider help. Status: proposed.
 
 - [Protocol-native prompt-cache breakpoints](unified-prompt-cache-dialect.md) — ask an upstream to cache through the Responses protocol's own `prompt_cache_breakpoint` on every request, so an explicit-ask model caches on any endpoint without mecatl consulting the vendor, plus Messages routing where model ids are shared. Status: proposed.
+
+- [Mecatl Studio bootstrap](studio-bootstrap.md) — bring the Studio web UI into the repository as a self-contained `apps/` skeleton over the published SDK: BFF runtime modes, hardened OIDC browser sessions, a one-origin multi-stage image, CI, and the `publish-studio` release job. Status: landed in the implementation candidate; authoritative on merge.
+- [Studio public status and popup sign-in](studio-public-status-popup-auth.md) — a minimal anonymous connection and sign-in contract, same-origin popup OIDC completion, and route-preserving recovery with detailed runtime and account separation retained. Status: proposed.
+
+- [Mecatl Studio chat](studio-chat.md) — the first Studio feature layer: session inventory and lifecycle routes, the run SSE union that preserves unknown SDK kinds, run controls addressed to the exact durable run, and the chat workspace with its ported behaviour tests. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio session activity](studio-session-activity.md) — distinct browser projections and read-only inline cards and panel content for Subagent, Parallel, and Team events. Status: proposed.
+- [Mecatl Studio chat transcript and composer](studio-chat-transcript-composer.md) — aligns streamed rows, status and input behavior, bounded replay, and BFF-projected title and delivery facts within the existing Studio boundary. Status: proposed.
+- [Mecatl Studio chat approvals, review, and Escape](studio-chat-approvals-review-escape.md) — exact run-and-ask plan verdicts, inline permission and authorization review, one-layer Escape handling, and evidence-bound developer steer trace. Status: in-progress.
+
+- [Mecatl Studio schedules](studio-schedules.md) — the second Studio feature layer: capability-gated schedule inventory, create/update mapping onto the SDK spec with unexposed fields preserved, lifecycle actions and fire history, and the browser cron builder and phrase parser. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio knowledge](studio-knowledge.md) — the third Studio feature layer: per-capability-gated configured and learned skills, revision-checked learned-skill actions, learning proposals and session reflection, and user-memory consolidation plans, with the knowledge workspace. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio settings](studio-settings.md) — the fourth Studio feature layer: the safe, capability-gated runtime-settings inventory, storage health, the eight-section settings workspace, and chat's model picker restored over the live inventory. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio settings routes and About](studio-settings-routes-and-about.md) — direct section URLs, legacy redirects, provider detail, authenticated build facts, read-only deployment settings, and the shortcuts reference. Status: proposed.
+
+- [Mecatl Studio global search and keyboard shortcuts](studio-search-shortcuts.md) — the last Studio feature layer: a browser-owned search index over already-served inventories, the closed shortcut registry, the reference page with honest help features, and the palette in the top nav. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio workspace shell](studio-workspace-shell.md) — responsive workspace navigation and search interaction, accessible error routes, installable assets, and honest loaded-shell offline status. Status: proposed.
+- [Mecatl Studio appearance foundation](studio-appearance-foundation.md) — semantic light/dark tokens and Default, Aztec, Mono, and Solar choices in Appearance; same-origin fonts and pre-paint state; accessible shared controls for the 500px pivot. Status: landed (candidate, pending stacked PR merges).
 
 ## See also
 

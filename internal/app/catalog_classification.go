@@ -113,7 +113,7 @@ func classification(kind server.AccessKind, rationale string) *server.Classifica
 
 func coreToolClassification(t tool.Tool) (server.ClassificationEntry, bool) {
 	switch t.Spec().Name {
-	case "Read", "ListDir", "Edit", "Write", "Copy", "Move", "Remove", "Grep", "Glob", "Shell":
+	case "Read", listDirToolName, editToolName, writeToolName, "Copy", "Move", "Remove", "Grep", "Glob", "Shell":
 		return server.ClassificationEntry{Kind: server.KindExempt, Rationale: "bound to the authorized session workspace and governed by project trust and tool permissions"}, true
 	case "WebFetch", "WebSearch", "FetchMcpResource":
 		return server.ClassificationEntry{Kind: server.KindExempt, Rationale: "stateless outbound read with no caller-owned durable resource or handle"}, true

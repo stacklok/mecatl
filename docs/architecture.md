@@ -13,9 +13,8 @@
 
 ### How to read this
 
-Start with the **living guides** — this overview, the per-subsystem pages below,
-and [`docs/design/IMPLEMENTATION-NOTES.md`](design/IMPLEMENTATION-NOTES.md) —
-which describe the code as it exists today. The [ADR index](adr/README.md) is a
+Start with this overview and the per-subsystem living guides below, which
+describe the code as it exists today. The [ADR index](adr/README.md) is a
 **historical *why* archive**: each ADR records the decision made at a point in
 time and is frozen, so reach for it on demand to understand a rationale, not as
 the primary introduction to a feature.
@@ -206,7 +205,18 @@ session's authenticated membership, descriptions, schemas, and read-only hints. 
 omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is frozen for the session, so later runs and token refreshes do not
 rediscover it. Initial enrollment performs a fresh discovery; an explicit owner-controlled
 refresh may perform the same whole-bundle discovery after a completed turn or after broker
-process loss. A failure admits no mixed or partial catalogue. In a broker-only
+process loss. A failure admits no mixed or partial catalogue.
+
+Direct/global MCP uses a separate Build-owned reconciler. ToolHive-only bounded
+polling, current-runtime list notifications, and explicit refresh build complete
+immutable runtime candidates and publish one revision atomically. Root runs,
+direct teams, and resource/prompt operations pin one revision. Automatic cycles
+update availability without widening durable authority; an explicit owned-session
+refresh stable-unions missing active direct names. `ListMcpSources` reads cached
+published/pre-shadow inventory and revision, stale, and reconciling status without
+probing.
+
+In a broker-only
 session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
 same frozen route and authorization transaction, applies bounded in-memory jq before normal
 result rendering, and never opens a direct upstream connection or exposes the raw successful
@@ -288,8 +298,8 @@ append-only log can fold its `EventLog` (+ `SessionMeta`) into a session via
 `EvUserPrompt` so user turns reconstruct, with a replay-fidelity caveat for
 reasoning providers (#115, [ADR 0038](adr/0038-event-sourced-rehydration.md)); and the
 supply chain gains per-module **`govulncheck`** (engine strict-clean; a
-fail-closed reachable-vuln gate on the root) plus **`dependabot`** over both
-modules and the SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
+fail-closed reachable-vuln gate on the root) plus **Renovate** over the
+modules, npm workspaces, and SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
 provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `provider/openai`, the native Anthropic Messages API in
@@ -339,7 +349,12 @@ protobuf-es decoding, the HTTP transport recursively follows the output descript
 stdlib-JSON `{seconds,nanos}` objects only at `google.protobuf.Timestamp` and
 `google.protobuf.Duration` fields. ProtoJSON strings and `null` pass through, malformed objects
 fail as typed HTTP protocol errors, and normalization uses a detached value so `getRawJson()`
-retains the original unary or SSE data. UDS dials by
+retains the original unary or SSE data. JSON, well-known-type, and protobuf decode failures for
+successful unary responses and ordinary SSE data frames expose only generic SDK messages, HTTP
+status, and an available request ID; they omit decoder causes so rejected response text cannot
+escape through runtime-specific exception messages. Body acquisition, server errors,
+authentication, network, cancellation, and SSE reader failures stay outside that cause-free
+boundary. UDS dials by
 supplying connect-node's HTTP/2 node connection option for the socket path, never a
 `unix://` base URL. Unit tests inject transports; `sdk/typescript/e2e/` separately
 builds and spawns the same checkout's `mecated` with the offline mock provider to
@@ -349,6 +364,35 @@ The unbundled JavaScript names each sibling declaration through Deno's stable
 Deno 2.x without unstable resolution flags. See
 [ADR 0279](adr/0279-typescript-sdk-architecture.md) and
 [ADR 0339](adr/0339-typescript-sdk-deno.md).
+
+An ordinary `Run` can complete with a terminal result or park on
+`authorization.required`. `Run.outcome()` represents both as normal detached values;
+event iteration also ends cleanly after the park, while completed-only `Run.result()`
+raises `RunAuthorizationRequiredError` with the same handoff. Each remains a mutually
+exclusive consumption mode and releases the Session's live-run registration without
+changing the server's pending authorization.
+
+`Session.mcpAuthorization(authorizationId)` binds the handoff to the existing
+session-affined operation bag. The reusable handle asserts no state and stores no
+credential or lifecycle truth. `presentation()` returns one validated live HTTP(S) URL
+for application-owned display without opening or persisting it. Each `recheck()` or
+`cancel()` creates a distinct lazy, single-consumption flow. First consumption starts one
+exact-affinity control request. The flow validates the authoritative status and optional
+continuation into pending, settled, completed, or chained-authorization results. The SDK
+does not poll, retry a mutation, reconnect, or choose a permission verdict. Automatic
+permission responses use their separately declared request options and the existing
+prompt-free exact-run controls. This lifecycle is limited to session-scoped ToolHive broker
+handoffs; direct and global profiles remain host-local administration through `mecated mcp`.
+
+Request cancellation releases only SDK-owned resources. The server decides what committed
+before disconnect. gRPC detaches and drains ordinary continuation work but cancels a run
+stranded on an ordinary permission ask. HTTP requests cancellation of a still-active
+continuation and drains it. Both leave a follow-up authorization intact after its park is
+committed. An application that observed the continuation run ID may use existing attach or
+activity APIs for explicit recovery where storage retains it. Before that correlation is
+observed, a lost control response can be unrecoverable, and a new recheck succeeds only if
+the original authorization is still pending. See
+[ADR 0348](adr/0348-typescript-sdk-mcp-authorization-lifecycle.md).
 
 The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
 already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
@@ -425,8 +469,23 @@ The committed concise examples under `sdk/typescript/examples/` self-import only
 four exported entry points. A dedicated no-emit project runs after the package build, so no source
 path alias can hide an export/example drift. It covers remote and local Node/Bun use, callback
 tools, Deno remote and local use, browser+BFF guidance, permissions, durable attachment, teams,
-schedules, and plan resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
+schedules, plan resolution, session lifecycle, capability discovery, MCP workspace enrollment,
+and MCP authorization. The offline SDK e2e gate also compiles and executes the four latter
+workflow entry points against controlled daemon or protocol fixtures. The browser BFF is
+explicitly a deployment shape, not SDK server code. The larger
 Slack bot remains a separate pnpm project and has its own package-export typecheck CI leg.
+
+The test-only [high-level RPC inventory](../sdk/typescript/test/high-level-surface.test.ts)
+classifies every public `HarnessService` and `ScheduleService` descriptor by the public SDK
+operation that invokes it. The session handle invokes the two guardrail diagnostic RPCs through
+`guardrailCoverage()` and `guardrailReviewDetail()`. `StreamSessionEvents` and `StreamSessionLive`
+have individual raw-only rationales: durable `Session.activity()` and `attach()` instead use
+`WatchSessionEvents`. This coverage guard checks handwritten invocation paths separately from the
+raw transport catalog.
+The [TUI builtin inventory](../cmd/mecatui/ui/sdk_high_level_parity_test.go) classifies all
+actual builtin declarations by reusable SDK outcome or application, operator, and debug
+ownership. These inventories are verification data; the SDK and `mecatui` remain independent
+clients and share no command registry.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
 client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the
@@ -495,8 +554,9 @@ the local `NoRunsError`, including the deliberately documented interval where a 
 already stamped on a running session but has emitted no durable event. Unknown or
 foreign sessions, unsupported watch deployments, missing logs, and delegation-child
 ids remain distinct typed server refusals. `AttachedRun.live` reflects events observed
-through that attachment and becomes false when its selected run's terminal `result` is
-delivered.
+through that attachment and becomes false when its selected run delivers either a
+terminal `result` or a valid pending `authorization.required` park with exact run
+correlation and non-empty authorization and call IDs.
 
 `Session.activity()` keeps both the server filter and cursor run binding empty, so one
 ordered stream spans every run and also includes run-less `schedule.*` records. A run's
@@ -509,10 +569,11 @@ its existing immediate typed-gap termination.
 
 The attachment is one replay-then-follow operation: it yields the selected run's durable
 replay in append order, announces the live boundary once, follows new appends, and completes
-at that run's terminal `result`. A run that already finished therefore completes from replay
-without parking. `attach(runId, { from: "now" })` still opens the ordinary watch with an
-empty wire cursor and receives the replay, but discards replay envelopes client-side before
-yielding the live boundary; the mode is rejected locally when no explicit run id is supplied.
+at either that run's terminal `result` or a valid pending `authorization.required` park. A
+run that already reached either terminal therefore completes from replay without following.
+`attach(runId, { from: "now" })` still opens the ordinary watch with an empty wire cursor and
+receives the replay, but discards replay envelopes client-side before yielding the live
+boundary; the mode is rejected locally when no explicit run id is supplied.
 
 Ergonomic checkpoints are opaque, serializable `sdkcur/1` strings that wrap the server token
 with the view's run binding and effective server filter. The SDK validates that envelope and
@@ -538,8 +599,9 @@ attachment checkpoint under the same filter. The client
 invalidates and re-probes cached compatibility before each reconnect, so a replacement daemon's
 feature set is authoritative on the first attempt. The closed permanent-code set ends the view;
 ordinary mutations, prompts, permission verdicts, and owned run streams remain one-shot. An
-`AttachedRun` stops after its own `result`, while session activity treats every clean EOF as a
-reconnect point. Reconnected watches do not re-announce the replay-to-live boundary. An optional
+`AttachedRun` stops after its own `result` or valid pending authorization park, while session
+activity treats every clean EOF as a reconnect point. Reconnected watches do not re-announce
+the replay-to-live boundary. An optional
 `AttachOptions.signal`, iterator release, explicit disposal, or `Client.close()` aborts backoff and
 releases the current watch without cancelling the run.
 
@@ -582,6 +644,133 @@ coverage drives successful root and surfaced-child ask resolution, cancellation,
 steer, retraction, strict stale/error results, request cancellation and deadlines, and bounded
 acknowledgement-only rehydration across gRPC TCP, UDS, and HTTP. The attachment suites retain their
 stale-guarded cancellation, terminal SSE cursor errors, and default log-only filtering proofs.
+
+### Mecatl Studio
+
+Mecatl Studio is the browser UI, kept in the repository as the self-contained pnpm
+workspace `apps/` (`apps/web`, `apps/server`, `apps/contracts`; its own lockfile, pnpm
+12 pin, Biome config, and `apps/Taskfile.yml`, included in the root Taskfile as
+`studio:*`). It is a **client** of mecatl in the same sense the TypeScript SDK is, one
+layer further out: `apps/server` is a Hono backend for frontend (BFF) that depends on the
+**published** `@stacklok-oss/mecatl-sdk` from npm by a semver range — never on
+`sdk/typescript` by path or `workspace:` link — so Studio builds without a Go toolchain
+or the SDK's build, its Docker build context is `apps/` alone, and the UI lags the daemon
+by one SDK release on purpose. The boundary has three sides: the **browser** runs the
+Vite + React SPA in `apps/web` and calls only the BFF's `/api/v1` product API, importing
+`@mecatl-studio/contracts` and its generated query client but neither the SDK nor any
+daemon protocol type; the **BFF** holds the user's credential and forwards it per request
+through the SDK credential provider bound to the request's `AsyncLocalStorage` context,
+serving the SPA and `/api` from one origin; **mecatl** is reached only by the BFF. The
+BFF's `/api/v1` routes describe product capabilities rather than mirroring daemon
+endpoints, and `apps/contracts` (Zod schemas, the generated `openapi.json`, the generated
+Hey API client) is committed and drift-gated like `contracts/gen` and `engine/api/*.txt`.
+
+At startup the BFF resolves exactly one **runtime mode** from the environment:
+`external` (`MECATL_BASE_URL`, an existing gRPC listener), `spawn` (a local `mecated`
+from `MECATED_BIN` or `PATH`), or `mock` (`MECATL_DEV_MOCK=1`, `mecated --mock`); a
+conflicting combination exits non-zero before listening. Configuration is split by
+ownership — `MECATL_*` describes the target, `STUDIO_*` is Studio's own. Interactive
+login is Authorization Code + PKCE against the single issuer named by the target's
+RFC 9728 protected-resource document (fetched for `MECATL_RESOURCE_URL`, or derived
+from `MECATL_BASE_URL`); a `404` from discovery disables interactive login, any other
+discovery failure is a startup error, and a static token (`MECATL_AUTH_TOKEN`) or an
+issuer-less target yields the `static` / `none` auth modes, which WARN because every
+browser then acts as one principal. The **session model** is stateless: no server-side
+store, four `SameSite=Lax` cookies (`studio_access` and `studio_refresh` HttpOnly and
+sealed with AES-256-GCM under a key derived from `STUDIO_SESSION_SECRET`, `studio_login`
+for the in-flight PKCE transaction, and `studio_csrf` as the double-submit token), so
+every replica shares one secret and scales horizontally behind mecak8s with no new
+infrastructure. `Secure` flags and the callback origin derive from `STUDIO_PUBLIC_URL`,
+never from the request scheme, because production TLS terminates at an Ingress.
+
+`GET /api/v1/status` is the sole anonymous `/api/v1` exception. It returns only a
+coarse connection state (`checking`, `reachable`, or `unavailable`) and whether this
+browser needs to sign in. A daemon authentication rejection proves transport
+reachability; a transport failure reports unavailable even when sign-in is also
+required. Detailed `/api/v1/runtime`, settings, storage health, and feature routes
+retain the OIDC session gate. The browser uses the public status for its shell
+banner, giving outages priority over sign-in, and reads storage health only after
+authentication. OIDC sign-in can complete in a same-origin popup through the
+existing callback URL. The opener verifies the callback message's origin, source,
+and active attempt, then checks the BFF session; the callback message carries only
+a success or failure result. A blocked or closed popup leaves the route and draft
+mounted with retry and a manual new-tab sign-in path. After a same-account session
+recovery, reads refetch; mutations and streams await explicit user retry. The
+BFF's authenticated session response can include a validated email claim from
+the verified ID token. The raw subject stays in sealed server-readable
+credentials; the browser receives only the opaque account key for identity
+comparison. An OIDC session without that identity fails closed.
+
+The **image** is one origin: a multi-stage `Dockerfile` compiles `apps/web` and
+`apps/server` to `dist`, prunes the server to production dependencies with
+`pnpm deploy --prod`, and copies them onto `cgr.dev/chainguard/node` pinned by digest
+(the `.ko.yaml` posture), running `node dist/index.js` as the base's non-root user with
+`STUDIO_IMAGE=1` set — which refuses the spawn and mock modes and requires
+`STUDIO_ALLOW_UNAUTHENTICATED=1` for static/none auth. It is published as
+`ghcr.io/stacklok/mecatl/studio` by the `publish-studio` release job with the same sign,
+SBOM, and provenance steps as the Slack bot image, labelled
+`org.stacklok.mecatl.studio.stability=early-access` because Studio can change without
+notice between versions; `apps/docker-compose.yml` runs it against a locally built `mecated` for
+development. CI gates it with its own `studio` job and path-relevance category
+(`apps/*|.github/*|Taskfile.yml`), separate from the Go and SDK families because
+neither can change it. The bootstrap shipped health, runtime status, auth, and the shell;
+each feature port is a Bounded follow-up with its own acceptance plan, since new
+`/api/v1` routes and contract schemas are a public BFF interface. **Chat** is the first
+feature: `/api/v1/sessions…` carries the session inventory (paged through the SDK,
+`inspect_only_kind` rows filtered, delete/rename capabilities relayed from the daemon),
+creation with mode / model / reasoning effort / `toolAccess` (`noFilesystem` → the
+`no-fs` profile), detail with cumulative usage, rename, delete, mode, compaction, fork,
+clear, and the transcript; runs, replays (`…/activity`), and retries stream as
+Server-Sent Events carrying Studio's own `type`-discriminated union — `run.started`,
+`run.event`, `run.truncated`, `run.error` — where `run.event` wraps the SDK event with `bigint` counters
+as decimal strings and an SDK kind the SDK does not model forwarded as `unknown: true`
+with its wire kind and raw payload, so protocol drift stays visible instead of being
+dropped. Replay is bounded and resumable rather than unconditional: every `run.event`
+frame carries its durable cursor in the SSE `id` field, a request resumes exactly after
+the cursor in `Last-Event-ID` (or the `resumeFrom` query parameter), a no-cursor replay
+stops after `STUDIO_ACTIVITY_REPLAY_MAX` durable replay events with a
+`run.truncated` frame that points the client at the authoritative transcript, a durable
+gap ends the stream rather than streaming across the hole, an unusable cursor is `400`,
+and a session admits `STUDIO_ACTIVITY_MAX_STREAMS` concurrent streams per replica so one
+browser cannot impose unbounded historical reads. Live events stay unbounded; cancel, steer, and permission verdicts address the exact durable run through the
+SDK's control handle and answer `409 stale_run_control` for an ended one. Every mutation
+sits behind the bootstrap's same-origin + double-submit CSRF check and, with interactive
+login active, the `401` session gate. **Schedules** is the second feature:
+`/api/v1/schedules…` projects the daemon's ScheduleService (cron or one-shot trigger,
+permission mode, tool profile, fire history) through a contract that is capability-gated
+live on the negotiated snapshot's `scheduling` flag — the list answers `supported: false`
+with a reason instead of failing, every mutation answers `501 schedule_unsupported` — and
+whose updates re-send only the exposed fields while carrying the daemon's unexposed spec
+fields (`limits`, `selector`, `parts`, …) over untouched; the browser adds a cron builder
+and a natural-language phrase parser as pure functions. **Knowledge** is the third:
+`/api/v1/skills`, `/learned-skills…`, `/learning-proposals…`, `/sessions/{id}/reflection`,
+and `/user-memory…` project configured skills, versioned learned skills (detail, unified
+diff, lifecycle history, and `activate`/`archive`/`reject`/`rollback` carrying the daemon's
+`expectedRevision`), the evidence-backed learning queue (decide, undo promotion), session
+reflection receipts, and the user model with its daemon-curated consolidation plans
+(generate, then apply or dismiss by plan id); each surface is gated live on its own snapshot
+capability (`skills`, `learnedSkills`, `learningProposals`, `reflection`, `userModel`,
+`manualDream.userModel`) with a surface-specific `501` code, the two inventory lists degrade
+to `supported: false` instead, and the daemon's conflict on a stale token is relayed, never
+retried. **Settings** is the fourth: `GET /api/v1/settings/runtime` is a read-only,
+allowlisted projection — build id, server implementation, the provider's *display* endpoint,
+the model and provider inventory (with provider rows synthesised for models whose provider
+reports no status), and fixed `management` flags saying provider and routing configuration are
+deployment-managed — calling `server.info` only when the snapshot advertises `server_info` and
+`models.list` only under `modelSelection`; `GET /api/v1/storage/health` maps the daemon's
+storage health with counts as decimal strings and byte figures `null` unless marked available,
+gated on `storageHealth`. Never a credential, key, or raw base URL. Two **browser-only**
+surfaces complete the set with no BFF change: a global search palette whose index is a pure
+function over the inventories the BFF already served this user (titles, names, descriptions,
+and ids only, matched client-side with accent folding, never sent upstream), and a
+keyboard-shortcuts reference page over a closed static registry (bindings pinned to
+preventable primary-modifier combos) that lists only the deployment capabilities with a
+reachable spot in Studio's UI, each read off the same snapshot gate the owning component uses.
+See
+[ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
+[Studio bootstrap](acceptance/studio-bootstrap.md) and
+[Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own
+[README](../apps/README.md) for running and configuring it.
 
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
@@ -771,17 +960,16 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat.
 The sibling `mecatui debug TARGET` and
 `mecatui connect ADDRESS debug TARGET` forms create a separate durable `debug` session whose trusted relationship metadata binds
-one authorized target. The proto-free UI uses the same fixed 12-column,
-terminal-safe handle as the header: safe `[A-Za-z0-9._-]` bytes are literal except that
-a leading `-` is encoded as `%2D`; all other UTF-8 bytes are uppercase `%HH`, with only
-complete atoms that fit. The displayed literal has no leading `#`. A syntactically valid
-short target is resolved against the complete caller-filtered inventory: exact full-ID equality
-wins automatically, otherwise one unique projected match resolves. Multiple projections fail
-with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or no match
-passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path. Longer
-or malformed targets likewise remain exact-ID inputs automatically. Only the resolved exact ID
-crosses the real `Client.CreateDebugSession` request boundary, and the server remains the final
-authority.
+one authorized target. The proto-free UI uses the same fixed 12-column, terminal-safe handle as the header: safe
+`[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; all other UTF-8
+bytes are uppercase `%HH`, with only complete atoms that fit. The displayed literal has no leading
+`#`. A syntactically valid short target is resolved against the complete caller-filtered inventory:
+exact full-ID equality wins automatically, otherwise one unique projected match resolves. Multiple
+projections fail with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or
+no match passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path.
+Longer or malformed targets likewise remain exact-ID inputs automatically.
+Only the resolved exact ID crosses the real `Client.CreateDebugSession` request boundary, and the
+server remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
 contract, and always exposes the target-bound `InspectSession` tool; the model cannot
 choose another target or submit a raw session ID. A create request may additionally name
@@ -866,9 +1054,10 @@ first user turn ordered as objective, required InspectSession workflow, expected
 structure, then a delimited sanitized debugger-runtime context. The runtime block is
 compatibility/transport context, never target evidence; a custom `--prompt` changes only the
 objective. Durable safety, authority, and source hierarchy stay in the stable system Role.
-Its normal padded header keeps amber/bold `DEBUG target <handle>`
-ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title uses the same handle. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
+Its normal padded header keeps amber/bold `DEBUG target <handle>` ahead of lower-priority details,
+and `/session` exposes and copies the safely quoted exact target. The configured/default terminal
+title has a `DEBUG` prefix and no mandatory handle; a custom title template may include the handle.
+See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. Unknown legacy/custom rows remain inspect-only:
@@ -892,7 +1081,7 @@ unclaimed events reach the Bubbles textarea. The default action map therefore le
 previous line; Agents, Effort, and MCP Prompts use `f6`, `f7`, and `f8`.
 
 Its local status customization is a separate
-client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
+client-owned seam: `cmd/mecatui/customization.Source` receives display-safe `Input`
 snapshots from the UI and publishes latest semantic `Result` spans. It owns
 responsive template evaluation or a direct local executable, refresh and
 cancellation; the UI owns theme resolution, renderer chrome, clipping, and
@@ -1237,6 +1426,17 @@ server's `audience:["user"]` is not a suppression control). Server-returned
 fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
+**Harness context runtime.** The [domain model](architecture/mecatl.modelith.md#harnesscontext)
+defines source authority independently from execution. The [acceptance contract](acceptance/harness-context.md)
+owns the source-binding design; [ADR 0359](adr/0359-harness-context-source-authority.md)
+records its rationale. `app.Build` resolves the selected kind-specific registrations and owns
+process and per-session binding generations. A principal-scoped registration receives the exact
+session ID, stored owner, and profile. Only a selected registration declared for execution files
+receives a lazy callback that exactly reattaches the server-authorized placement. The callback
+returns a read-only workspace and its own release, never a runner, read ledger, public root, or
+caller-selected environment reference. Retiring a generation waits for existing engine and child
+references to drain; restart reconstructs bindings under current composition and authorization.
+
 **Server-owned placement.** Trusted composition installs one placement provider and
 scope before listeners serve, but service construction validates only that configuration: it
 never calls `Bind` or allocates a provisional placement. `CreateSession` accepts only the provider's deployment
@@ -1342,7 +1542,7 @@ HTTP successor routes.
 
 ## See also
 
-- [User documentation](https://mecatl.dev/docs/) — guides for building and operating Mecatl, plus rendered gRPC and HTTP/SSE reference material.
+- [User documentation](../user-docs/intro.md) — guides for building and operating Mecatl, plus rendered gRPC and HTTP/SSE reference material.
 - [mecatui terminal UI](tui.md) — the gRPC client that renders the event stream described above.
 - [ADR 0001 — the ACP adapter](adr/0001-acp-adapter.md) — the decisions behind the third (editor) wire surface.
 - [Go performance measurement & observability survey](perf-measurement-survey.md) — the technique reference behind [observability & persistence](architecture/observability.md).

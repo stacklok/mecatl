@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -18,7 +19,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 )
 
 // recordingProvider wraps a scripted provider and records the Model on the last
@@ -27,9 +27,11 @@ import (
 // preferred seam (m5): assert via a recorded LLMRequest.Model, not a test
 // accessor on the unexported Engine.deps.
 type recordingProvider struct {
-	inner *mockllm.Provider
-	mu    sync.Mutex
-	model string
+	inner  *mockllm.Provider
+	mu     sync.Mutex
+	model  string
+	active session.SessionID
+	root   session.SessionID
 }
 
 func (*recordingProvider) Capabilities() port.ProviderCapabilities {
@@ -37,16 +39,20 @@ func (*recordingProvider) Capabilities() port.ProviderCapabilities {
 }
 
 func (p *recordingProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	active, _ := port.SessionIDFromContext(ctx)
+	root, _ := port.RootSessionIDFromContext(ctx)
 	p.mu.Lock()
 	p.model = req.Model
+	p.active = active
+	p.root = root
 	p.mu.Unlock()
 	return p.inner.Stream(ctx, req)
 }
 
-func (p *recordingProvider) lastModel() string {
+func (p *recordingProvider) lastObservation() (string, session.SessionID, session.SessionID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.model
+	return p.model, p.active, p.root
 }
 
 // --- scopedToolNames ---------------------------------------------------------
@@ -349,13 +355,17 @@ func TestBuildAgentSubagentEnginesResolvedModelOnRequest(t *testing.T) {
 		Policy:  permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil),
 		Model:   "parent-model",
 	})
-	r := e.Run(context.Background(),
+	r := e.Run(port.WithRootSessionID(context.Background(), "main"),
 		session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 		memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 	for range r.Events() {
 	}
-	if got := rec.lastModel(); got != "cheap-id" {
-		t.Fatalf("recorded request model = %q, want the resolved per-def alias 'cheap-id'", got)
+	model, active, root := rec.lastObservation()
+	if model != "cheap-id" {
+		t.Fatalf("recorded request model = %q, want the resolved per-def alias 'cheap-id'", model)
+	}
+	if active != "subagent-s1-p1" || root != "main" {
+		t.Fatalf("named Subagent provider correlation = active %q root %q, want active %q root main", active, root, "subagent-s1-p1")
 	}
 }
 

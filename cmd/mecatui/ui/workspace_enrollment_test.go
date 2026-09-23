@@ -60,8 +60,8 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 // TestWorkspaceEnrollmentUserCopy covers the concise user-facing states around
 // /tools-connect so each remedy stays tied to its actual condition.
 func TestWorkspaceEnrollmentUserCopy(t *testing.T) {
-	if got := builtinCommands(client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}); !hasBuiltinDescription(got, "tools-connect", "require your approval") {
-		t.Fatalf("/tools-connect built-in = %#v, want approval-focused description", got)
+	if got := builtinCommands(client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}); !hasBuiltinDescription(got, "tools-connect", "deprecated alias for /mcp-refresh") {
+		t.Fatalf("/tools-connect built-in = %#v, want deprecated broker alias", got)
 	}
 
 	for _, tc := range []struct {

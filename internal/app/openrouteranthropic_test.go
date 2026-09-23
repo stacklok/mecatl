@@ -256,6 +256,25 @@ func TestUnifiedPromptCache_Scenario4_PostureLineNamesPostureAndSource(t *testin
 	}
 }
 
+func TestADR_0346_CachePostureLogsOncePerProcess(t *testing.T) {
+	diag := newCapturingDiagnostics()
+	cfg := orCfg()
+	cfg.Diagnostics = diag
+	reg, err := buildProviderRegistry(cfg, noEnv)
+	if err != nil {
+		t.Fatalf("build registry: %v", err)
+	}
+	entry, ok := reg.Lookup(providerOpenRouter)
+	if !ok {
+		t.Fatal("openrouter entry missing")
+	}
+	_ = entry.remint("high", port.ProviderCapabilities{})
+	_ = entry.remint("low", port.ProviderCapabilities{})
+	if got := diag.countContaining("prompt cache:"); got != 1 {
+		t.Fatalf("prompt-cache posture logged %d times, want exactly once at registry assembly", got)
+	}
+}
+
 // TestADR_0346_AnthropicFamilyClassifier pins the narrow matcher behind the
 // default preference: it keys on the vendor namespace and the product name,
 // never a substring anywhere in the id.
@@ -525,7 +544,6 @@ func TestADR_0346_ChatCompletionsUnderCanonicalOpenAIDialectStillCaches(t *testi
 			// openaichatCacheDialectFor gates its implicit-caching dialect on.
 			providerOpenAI: {id: providerOpenAI, available: true, protocol: protocolOpenAIChatCompletions},
 		},
-		outcomes: newLiveOutcomeStore(),
 	}
 	if !promptCachedFor(reg, cfg, providerOpenAI, "gpt-5") {
 		t.Error("canonical OpenAI over Chat Completions caches implicitly; prompt_cached must be true")

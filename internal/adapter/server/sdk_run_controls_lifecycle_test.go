@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -62,7 +63,7 @@ func makePlanControlSession(t *testing.T, id session.SessionID) *session.Session
 		t.Fatal(err)
 	}
 	if err := sess.PauseForApproval(session.PendingAsk{
-		AskID: "plan-ask", Tool: "PresentPlan", Call: call.ID, PlanOriginated: true,
+		AskID: "plan-ask", Tool: "PresentPlan", Call: call.ID, Origin: session.ApprovalOriginPlan,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,23 @@ func makePersistedControlSession(t *testing.T, id session.SessionID) (*session.S
 	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
-	ask := session.PendingAsk{AskID: "durable-ask", Tool: "Write", Call: call.ID}
+	ask := session.PendingAsk{AskID: "durable-ask", Tool: "Write", Call: call.ID, Origin: session.ApprovalOriginPermission}
+	if err := sess.PauseForApproval(ask); err != nil {
+		t.Fatal(err)
+	}
+	return sess, ask
+}
+
+func makePersistedScopedControlSession(t *testing.T, id session.SessionID, kind session.GuardrailApprovalKind) (*session.Session, session.PendingAsk) {
+	t.Helper()
+	sess, _ := makePersistedControlSession(t, id)
+	if _, err := sess.ResumeWith(); err != nil {
+		t.Fatal(err)
+	}
+	ask := session.PendingAsk{
+		AskID: "scoped-ask", Tool: "Write", Call: "durable-call", Origin: session.ApprovalOriginHookGuardrail,
+		Guardrail: &session.GuardrailPendingScope{ReviewID: "original-review", Kind: kind},
+	}
 	if err := sess.PauseForApproval(ask); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +164,7 @@ func TestSDKRunControls_PersistedPlanAskRefusesWithoutRehydration(t *testing.T) 
 		t.Fatal(err)
 	}
 	pending, ok := got.PendingAsk()
-	if got.State != session.StateAwaiting || got.Mode != session.ModePlan || !ok || pending.AskID != "plan-ask" || pending.Origin() != session.AskOriginPlan {
+	if got.State != session.StateAwaiting || got.Mode != session.ModePlan || !ok || pending.AskID != "plan-ask" || pending.Origin != session.ApprovalOriginPlan {
 		t.Fatalf("persisted plan mutated: state=%q mode=%q pending=%+v ok=%t", got.State, got.Mode, pending, ok)
 	}
 }
@@ -214,39 +231,87 @@ func TestSDKRunControls_PersistedResolveHonorsPreAcceptanceCancellationAndDeadli
 }
 
 func TestSDKRunControls_PersistedResolveReloadsAfterLeaseAcquire(t *testing.T) {
-	store := memstore.New()
-	parked, ask := makePersistedControlSession(t, "post-lease-stale-control")
-	if err := store.Save(t.Context(), parked); err != nil {
-		t.Fatal(err)
-	}
-	lease := &fakeLease{}
-	lease.acquireHook = func(id session.SessionID, _ string) {
-		fresh, err := store.Load(context.Background(), id)
-		if err != nil {
-			panic(err)
-		}
-		if _, err := fresh.ResumeWith(); err != nil {
-			panic(err)
-		}
-		if err := fresh.PauseForApproval(session.PendingAsk{AskID: "replacement-ask", Tool: "Write", Call: "durable-call"}); err != nil {
-			panic(err)
-		}
-		if err := store.Save(context.Background(), fresh); err != nil {
-			panic(err)
-		}
-	}
-	var ran atomic.Int64
-	svc := newControlLifecycleService(t, store, mockllm.New(mockllm.TextTurn("must not run")), &ran, lease, nil)
-	t.Cleanup(svc.Close)
-	_, err := svc.ResolveRunAsk(t.Context(), parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce)
-	if !errors.Is(err, server.ErrAskNotPending) {
-		t.Fatalf("ResolveRunAsk over stale pre-lease snapshot = %v, want ErrAskNotPending", err)
-	}
-	if ran.Load() != 0 {
-		t.Fatalf("stale allow-once executed the tool %d time(s)", ran.Load())
-	}
-	if _, live := svc.LookupRun(parked.ID); live {
-		t.Fatal("stale pre-lease snapshot left a resumed run")
+	for _, tc := range []struct {
+		name   string
+		kind   session.GuardrailApprovalKind
+		scoped bool
+	}{
+		{name: "ordinary"},
+		{name: "contextual action", kind: session.GuardrailApprovalAction, scoped: true},
+		{name: "contextual result release", kind: session.GuardrailApprovalResultRelease, scoped: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			var parked *session.Session
+			var ask session.PendingAsk
+			if tc.scoped {
+				parked, ask = makePersistedScopedControlSession(t, session.SessionID("post-lease-stale-"+tc.name), tc.kind)
+			} else {
+				parked, ask = makePersistedControlSession(t, "post-lease-stale-control")
+			}
+			if err := store.Save(t.Context(), parked); err != nil {
+				t.Fatal(err)
+			}
+			lease := &fakeLease{}
+			lease.acquireHook = func(id session.SessionID, _ string) {
+				fresh, err := store.Load(context.Background(), id)
+				if err != nil {
+					panic(err)
+				}
+				if _, err := fresh.ResumeWith(); err != nil {
+					panic(err)
+				}
+				replacement := session.PendingAsk{AskID: "replacement-ask", Tool: "Write", Call: "durable-call", Origin: session.ApprovalOriginPermission}
+				if tc.scoped {
+					replacement = ask
+					replacement.Guardrail = &session.GuardrailPendingScope{ReviewID: "replacement-review", Kind: tc.kind}
+				}
+				if err := fresh.PauseForApproval(replacement); err != nil {
+					panic(err)
+				}
+				if err := store.Save(context.Background(), fresh); err != nil {
+					panic(err)
+				}
+			}
+			var ran atomic.Int64
+			svc := newControlLifecycleService(t, store, mockllm.New(mockllm.TextTurn("must not run")), &ran, lease, nil)
+			t.Cleanup(svc.Close)
+			var err error
+			if tc.scoped {
+				_, err = svc.ResolveScopedRunAsk(t.Context(), parked.ID, parked.RunID(), agent.ApprovalResolution{
+					AskID: ask.AskID, ReviewID: ask.Guardrail.ReviewID, Kind: tc.kind, Verdict: session.VerdictAllowOnce,
+				})
+				if !errors.Is(err, agent.ErrApprovalIntentMismatch) {
+					t.Fatalf("ResolveScopedRunAsk over stale pre-lease scope = %v, want ErrApprovalIntentMismatch", err)
+				}
+			} else {
+				_, err = svc.ResolveRunAsk(t.Context(), parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce)
+				if !errors.Is(err, server.ErrAskNotPending) {
+					t.Fatalf("ResolveRunAsk over stale pre-lease snapshot = %v, want ErrAskNotPending", err)
+				}
+			}
+			if ran.Load() != 0 {
+				t.Fatalf("stale allow-once executed the tool %d time(s)", ran.Load())
+			}
+			if _, live := svc.LookupRun(parked.ID); live {
+				t.Fatal("stale pre-lease snapshot left a resumed run")
+			}
+			got, err := store.Load(t.Context(), parked.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, ok := got.PendingAsk()
+			if !ok || got.State != session.StateAwaiting {
+				t.Fatalf("replacement was not preserved: state=%q pending=%+v ok=%t", got.State, pending, ok)
+			}
+			if tc.scoped {
+				if pending.AskID != ask.AskID || pending.Guardrail == nil || pending.Guardrail.ReviewID != "replacement-review" || pending.Guardrail.Kind != tc.kind {
+					t.Fatalf("scoped replacement changed: %+v", pending)
+				}
+			} else if pending.AskID != "replacement-ask" {
+				t.Fatalf("ordinary replacement changed: %+v", pending)
+			}
+		})
 	}
 }
 
@@ -276,15 +341,69 @@ func TestSDKRunControls_CloseJoinsDetachedControlRelay(t *testing.T) {
 	if err := store.Save(t.Context(), parked); err != nil {
 		t.Fatal(err)
 	}
+	blockingProvider := &closeJoinProvider{entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	provider := &providerContextCapture{provider: blockingProvider}
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(blockingProvider.release) })
+	var ran atomic.Int64
+	svc := newControlLifecycleService(t, store, provider, &ran, nil, nil)
+	forged := port.WithSessionID(port.WithRootSessionID(t.Context(), "forged-root"), "forged-active")
+	if _, err := svc.ResolveRunAsk(forged, parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce); err != nil {
+		t.Fatalf("ResolveRunAsk: %v", err)
+	}
+	<-blockingProvider.entered
+	provider.assertLast(t, parked.ID)
+	closed := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closed)
+	}()
+	<-blockingProvider.cancelled
+	select {
+	case <-closed:
+		t.Fatal("Service.Close returned before its detached control relay settled")
+	case <-time.After(25 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(blockingProvider.release) })
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not join the released detached control relay")
+	}
+	if _, live := svc.LookupRun(parked.ID); live {
+		t.Fatal("Service.Close returned with the detached run still registered")
+	}
+}
+
+func TestSDKRunControls_GRPCContextualResolveDetachesAndShutdownJoins(t *testing.T) {
+	store := memstore.New()
+	parked, ask := makePersistedScopedControlSession(t, "grpc-contextual-detached-control", session.GuardrailApprovalAction)
+	if err := store.Save(t.Context(), parked); err != nil {
+		t.Fatal(err)
+	}
 	provider := &closeJoinProvider{entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(provider.release) })
 	var ran atomic.Int64
 	svc := newControlLifecycleService(t, store, provider, &ran, nil, nil)
-	if _, err := svc.ResolveRunAsk(t.Context(), parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce); err != nil {
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+	response, err := client.ResolveRunAsk(t.Context(), &mecatlv1.ResolveRunAskRequest{
+		SessionId: string(parked.ID), ExpectedRunId: parked.RunID(), AskId: ask.AskID,
+		ReviewId: ask.Guardrail.ReviewID, GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION,
+		Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+	})
+	if err != nil {
 		t.Fatalf("ResolveRunAsk: %v", err)
 	}
+	if response.GetRunId() != parked.RunID() || response.GetAskId() != ask.AskID {
+		t.Fatalf("ResolveRunAsk acknowledgement = %+v", response)
+	}
 	<-provider.entered
+	if _, live := svc.LookupRun(parked.ID); !live {
+		t.Fatal("successful unary response cancelled the contextual continuation")
+	}
+
 	closed := make(chan struct{})
 	go func() {
 		svc.Close()
@@ -293,17 +412,17 @@ func TestSDKRunControls_CloseJoinsDetachedControlRelay(t *testing.T) {
 	<-provider.cancelled
 	select {
 	case <-closed:
-		t.Fatal("Service.Close returned before its detached control relay settled")
+		t.Fatal("Service.Close returned before the contextual relay settled")
 	case <-time.After(25 * time.Millisecond):
 	}
 	releaseOnce.Do(func() { close(provider.release) })
 	select {
 	case <-closed:
 	case <-time.After(time.Second):
-		t.Fatal("Service.Close did not join the released detached control relay")
+		t.Fatal("Service.Close did not join the contextual relay")
 	}
 	if _, live := svc.LookupRun(parked.ID); live {
-		t.Fatal("Service.Close returned with the detached run still registered")
+		t.Fatal("Service.Close returned with the contextual run still registered")
 	}
 }
 

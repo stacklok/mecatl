@@ -430,23 +430,15 @@ func withHTTPErrorMetadata(err error) error {
 // statuses (408, 429, 5xx) through its retry logic.
 func (e *responseStreamError) StatusCode() int { return e.status }
 
-// Permanent implements port.PermanentError. A responseStreamError is permanent
-// when the message signals a context-window overflow (replaying the identical
-// over-context prompt cannot succeed), or when the status code is a known
-// non-retryable 4xx rejection. Status 0 and retryable codes (408, 429, 5xx) are
-// NOT permanent (fail-open: an unclassifiable error may succeed on retry).
-func (e *responseStreamError) Permanent() bool {
-	if isContextOverflowMessage(e.msg) {
-		return true
+// RetryDisposition implements session.RetryDispositionError.
+func (e *responseStreamError) RetryDisposition() session.RetryDisposition {
+	if isContextOverflowMessage(e.msg) || e.status != 0 && !retryableStatus(e.status) {
+		return session.RetryDispositionPermanent
 	}
-	// status==0 means "unknown" — fail-open, not permanent. Context-overflow
-	// messages are already demoted to status 0 by providerErrorStatus, so the
-	// context-overflow check above is the discriminator that separates the two
-	// cases of status==0.
-	if e.status != 0 && !retryableStatus(e.status) {
-		return true
+	if retryableStatus(e.status) {
+		return session.RetryDispositionRetryable
 	}
-	return false
+	return session.RetryDispositionUnknown
 }
 
 // retryableStatus reports whether an HTTP status code is transient (worthy of

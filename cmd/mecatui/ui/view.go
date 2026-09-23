@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -41,7 +42,9 @@ func (m Model) View() tea.View {
 	var v tea.View
 	v.KeyboardEnhancements.ReportEventTypes = true
 	v.AltScreen = !m.deps.NoAltScreen
-	v.WindowTitle = m.windowTitle()
+	if m.deps.TerminalTitle != nil {
+		m.deps.TerminalTitle(m.statusLineSnapshot())
+	}
 	// Capture the mouse — but ONLY on the alt screen, and ONLY when mouse capture
 	// is not disabled. Capturing the mouse buys wheel-scroll and the in-app
 	// drag-select/copy layer (see selection.go) at the cost of the terminal's OWN
@@ -99,7 +102,7 @@ func (m Model) renderBody() string {
 	case m.showHelp:
 		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
 	case m.team.view != teamNone:
-		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
+		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.teamBlockForOverlay(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
 	case m.agentsInv.view != agentsInvNone:
 		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.modal != nil:
@@ -332,7 +335,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	// on SessionReadyMsg). The header only CHOOSES which known string to display; it
 	// never resolves a default itself. While connecting there is NO model segment.
 	if name := m.headerModelLabel(); name != "" {
-		seg := truncate(sanitizeTerminal(name), maxModelLen)
+		seg := truncate(terminaltext.Sanitize(name), maxModelLen)
 		// Downstream-provider suffix (issue #480): when the serving provider routed
 		// this session's latest turn to a DOWNSTREAM provider (openrouter today), append
 		// "/ <name>" so the operator sees e.g. "Kimi K3/Google". Shown ONLY when a route
@@ -340,7 +343,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 		// a cache hit, before the first turn, and for any non-routed provider, so the
 		// bare model segment shows with no stale/fabricated suffix.
 		if m.providerRoute != "" {
-			seg += "/" + sanitizeTerminal(m.providerRoute)
+			seg += "/" + terminaltext.Sanitize(m.providerRoute)
 		}
 		// Reasoning-effort suffix (ADR 0055): the EFFECTIVE effort the server resolved
 		// THIS session to, appended as a subtle ` · <effort>` so it rides WITH the model
@@ -366,7 +369,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 		// gateway IS the default, so the two never both render. Vendor-neutral —
 		// the provider id comes from the status row, not a hardcoded "toolhive".
 		parts = append(parts, m.deps.Theme.Style("muted").
-			Render(sanitizeTerminal(row.ProviderID)+" gateway available"))
+			Render(terminaltext.Sanitize(row.ProviderID)+" gateway available"))
 	}
 	if withNext != "" {
 		parts = append(parts, withNext)
@@ -385,7 +388,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	}
 	// Placement metadata is display-only; never derive or expose a server path.
 	if label := m.activePlacement.Label; label != "" {
-		parts = append(parts, m.deps.Theme.Style("muted").Render("place:"+sanitizeTerminal(label)))
+		parts = append(parts, m.deps.Theme.Style("muted").Render("place:"+terminaltext.Sanitize(label)))
 	}
 	if m.deps.Server != "" {
 		parts = append(parts, m.deps.Server)
@@ -417,7 +420,7 @@ func (m *Model) applyModeInputStyle() {
 }
 
 func (m Model) renderHeaderMode(mode string) string {
-	clean := sanitizeTerminal(mode)
+	clean := terminaltext.Sanitize(mode)
 	return "mode " + modeAccentStyle(m.deps.Theme, clean).Render(clean)
 }
 
@@ -446,7 +449,7 @@ func (m Model) headerNextBadge() string {
 			break
 		}
 	}
-	return "next: " + truncate(sanitizeTerminal(label), maxModelLen)
+	return "next: " + truncate(terminaltext.Sanitize(label), maxModelLen)
 }
 
 // scrollIndicator returns the muted "↑ NN%" header cue shown only when the view
@@ -742,9 +745,16 @@ func (m Model) contextWindow() int64 {
 func (m Model) fitFooter(left string, width int) string {
 	th := m.deps.Theme
 	window := m.contextWindow()
-	meter := renderContextMeter(th, m.contextTokens, window)
+	contextKnown := !m.contextUnknown || m.contextTokens > 0
+	meter := renderContextMeterState(th, m.contextTokens, window, contextKnown, m.contextEstimated)
 	meterCompact := renderContextMeterCompact(th, m.contextTokens, window)
 	meterMinimal := renderContextMeterMinimal(th, m.contextTokens, window)
+	if !contextKnown {
+		meterCompact, meterMinimal = meter, meter
+	} else if m.contextEstimated {
+		meterCompact = "ctx ~" + strings.TrimPrefix(meterCompact, "ctx ")
+		meterMinimal = "ctx ~" + strings.TrimPrefix(meterMinimal, "ctx ")
+	}
 
 	// The agents prefix is the combined team + subagent-fleet advertisement, prepended
 	// to the right side at three tiers (full/medium/compact). Each is built from up to
@@ -1126,7 +1136,7 @@ func effortHeaderSuffix(effort string) string {
 	if effort == "" || effort == effortAuto {
 		return ""
 	}
-	return sanitizeTerminal(effort)
+	return terminaltext.Sanitize(effort)
 }
 
 // truncate clamps s to at most limit display runes, appending an ellipsis when

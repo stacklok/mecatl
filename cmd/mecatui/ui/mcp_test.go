@@ -395,17 +395,16 @@ func TestMCPPanelRefreshPicksUpLiveStatus(t *testing.T) {
 	}
 	// The footer advertises the updated state and the refresh key.
 	view := string(stripANSI([]byte(m.View().Content)))
-	if !strings.Contains(view, "updated") || !strings.Contains(view, "r refresh") {
-		t.Fatalf("footer missing updated/refresh hint:\n%s", view)
+	if !strings.Contains(view, "updated") || !strings.Contains(view, "reload status") {
+		t.Fatalf("footer missing updated/status-reload hint:\n%s", view)
 	}
 	if !strings.Contains(view, "legacy") {
 		t.Fatalf("refreshed server 'legacy' not rendered:\n%s", view)
 	}
 }
 
-// TestMCPPanelRefreshIndicatorWhileInFlight asserts that while a refresh is in
-// flight the footer reads "refreshing…" and a second r is a no-op (no duplicate
-// fetch), without clearing the already-shown sources.
+// TestMCPPanelRefreshIndicatorWhileInFlight asserts that while a cached-status
+// reload is in flight the footer reports it and a second r is a no-op.
 func TestMCPPanelRefreshIndicatorWhileInFlight(t *testing.T) {
 	fm := samplePanelMCP()
 	m := newMCPModel(t, aztec(), fm)
@@ -425,8 +424,8 @@ func TestMCPPanelRefreshIndicatorWhileInFlight(t *testing.T) {
 		t.Fatalf("sources cleared during refresh (should stay visible)")
 	}
 	view := string(stripANSI([]byte(m.View().Content)))
-	if !strings.Contains(view, "refreshing") {
-		t.Fatalf("footer missing refreshing indicator:\n%s", view)
+	if !strings.Contains(view, "reloading status") {
+		t.Fatalf("footer missing status-reload indicator:\n%s", view)
 	}
 	// A second r while in flight is a no-op.
 	mm, cmd2 := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})

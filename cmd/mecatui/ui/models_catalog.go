@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // modelCatalog is Model-owned model discovery state. It survives picker close and
@@ -41,7 +42,7 @@ func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case selectionSavedMsg:
 		if msg.err != nil {
 			m.statusMsg = m.deps.Theme.Style("warning").Render(
-				"model set for this run, but could not persist: " + sanitizeTerminal(msg.err.Error()))
+				"model set for this run, but could not persist: " + terminaltext.Sanitize(msg.err.Error()))
 		}
 		return m, nil, true
 	default:
@@ -79,7 +80,7 @@ func (m Model) applyModelsCatalog(msg client.ModelsMsg) (tea.Model, tea.Cmd, boo
 	}
 	if !m.gatewayNoticeShown && !isToolhiveProviderID(m.resolvedSessionModel.ProviderID) {
 		if row, ok := availableNotDefaultStatus(msg.Statuses); ok {
-			pid := sanitizeTerminal(row.ProviderID)
+			pid := terminaltext.Sanitize(row.ProviderID)
 			m.gatewayNotice = pid + " gateway available (" + strconv.Itoa(int(row.ModelCount)) +
 				" models, no API key needed) — /models to use it, or --default-provider " + pid
 			m.gatewayNoticeShown = true
@@ -117,10 +118,10 @@ func (m Model) reconcileSelection() Model {
 	}
 	m.modelCatalog.active = client.ModelSelection{}
 	m.createModelSelection = client.ModelSelection{}
-	notice := "saved model " + sanitizeTerminal(gone) +
+	notice := "saved model " + terminaltext.Sanitize(gone) +
 		" is no longer available (provider key removed?) — using the server default"
 	if id := m.resolvedSessionModel.ModelID; id != "" {
-		notice += " — now running " + sanitizeTerminal(id)
+		notice += " — now running " + terminaltext.Sanitize(id)
 	}
 	m.statusMsg = m.deps.Theme.Style("warning").Render(notice)
 	return m
@@ -149,11 +150,11 @@ func (m Model) modelProvenanceLine() string {
 		return ""
 	}
 	label := m.liveModelLabel()
-	line := "current: " + sanitizeTerminal(label) + " (" + m.modelProvenance(eff) + ")"
+	line := "current: " + terminaltext.Sanitize(label) + " (" + m.modelProvenance(eff) + ")"
 	if row, ok := availableNotDefaultStatus(m.modelCatalog.statuses); ok {
 		if row.ProviderID != eff.ProviderID && !m.modelCatalog.configProvenanceProviderIDs[eff.ProviderID] {
-			line += " · " + sanitizeTerminal(row.ProviderID) +
-				" gateway also available — outranked by your " + sanitizeTerminal(eff.ProviderID) + " key"
+			line += " · " + terminaltext.Sanitize(row.ProviderID) +
+				" gateway also available — outranked by your " + terminaltext.Sanitize(eff.ProviderID) + " key"
 		}
 	}
 	return line

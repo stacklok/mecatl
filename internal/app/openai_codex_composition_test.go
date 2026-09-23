@@ -215,10 +215,9 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 			},
 		},
 		defaultID: providerOpenAI,
-		meta:      newLiveMetaStore(),
-		outcomes:  newLiveOutcomeStore(),
+		meta:      newMetadataFixture(),
 	}
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAICodex: {{
 			ID: "codex-image", InputModalities: []string{"text", "image"}, Reasoning: true, ToolCall: true,
 		}},
@@ -272,8 +271,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 				id: providerOpenAICodex, provider: noFSProvider, available: true,
 			}},
 			defaultID: providerOpenAICodex,
-			meta:      newLiveMetaStore(),
-			outcomes:  newLiveOutcomeStore(),
+			meta:      newMetadataFixture(),
 		}
 		factory2 := sessionEngineFactory(Config{Model: "codex-image", NoSoul: true}, reg2, noFSProvider,
 			memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,

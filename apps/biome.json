@@ -1,0 +1,70 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!web/src/routeTree.gen.ts",
+      "!contracts/openapi.json",
+      "!contracts/src/generated"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351).",
+              "../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351).",
+              "../../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351).",
+              "../../../../sdk/typescript": "Studio consumes only the published @stacklok-oss/mecatl-sdk (ADR 0351)."
+            }
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["web/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@stacklok-oss/mecatl-sdk": "Browser code calls the BFF; it never imports the Mecatl SDK (ADR 0351).",
+                  "@stacklok-oss/mecatl-sdk/node": "Browser code calls the BFF; it never imports the Mecatl SDK (ADR 0351).",
+                  "@stacklok-oss/mecatl-sdk/gen": "Browser code calls the BFF; it never imports the daemon protocol (ADR 0351)."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  }
+}

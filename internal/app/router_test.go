@@ -85,7 +85,7 @@ func TestBuildModelRouterTaskMapsCategoryToModel(t *testing.T) {
 	if fn == nil {
 		t.Fatal("router task must be non-nil when enabled with a taxonomy")
 	}
-	cat, model, usage, reason, ok := fn(context.Background(), "redesign the storage layer")
+	cat, model, usage, reason, ok := callModelRouter(context.Background(), fn, "redesign the storage layer")
 	if !ok {
 		t.Fatal("a valid classification must resolve")
 	}
@@ -115,7 +115,7 @@ func TestBuildModelRouterTaskPropagatesUsageOnMiss(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "session-model")
 
 	fn := buildModelRouterTask(routerTaxonomyCfg(), reg, prov, providerAnthropic, "session-model")
-	cat, model, usage, reason, ok := fn(context.Background(), "x")
+	cat, model, usage, reason, ok := callModelRouter(context.Background(), fn, "x")
 	if ok || cat != "" || model != "" {
 		t.Fatalf("a garbage verdict must be a fail-soft miss; got (cat=%q, model=%q, ok=%v)", cat, model, ok)
 	}
@@ -140,7 +140,7 @@ func TestBuildModelRouterTaskResolvesCategoryAlias(t *testing.T) {
 	cfg.ModelAliases = map[string]string{"tiny": "resolved-tiny-1.0"} // alias → concrete id
 
 	fn := buildModelRouterTask(cfg, reg, prov, providerAnthropic, "session-model")
-	_, model, _, _, ok := fn(context.Background(), "rename a var")
+	_, model, _, _, ok := callModelRouter(context.Background(), fn, "rename a var")
 	if !ok || model != "resolved-tiny-1.0" {
 		t.Fatalf("aliased category routed to (%q, %v), want resolved-tiny-1.0 true", model, ok)
 	}
@@ -153,7 +153,7 @@ func TestBuildModelRouterTaskFailSoftOnMiss(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "session-model")
 
 	fn := buildModelRouterTask(routerTaxonomyCfg(), reg, prov, providerAnthropic, "session-model")
-	if _, _, _, reason, ok := fn(context.Background(), "x"); ok || reason != agent.RouterMissBadVerdict {
+	if _, _, _, reason, ok := callModelRouter(context.Background(), fn, "x"); ok || reason != agent.RouterMissBadVerdict {
 		t.Fatalf("a classifier miss must be fail-soft with the engine reason passed through; ok=%v reason=%q", ok, reason)
 	}
 }
@@ -168,7 +168,7 @@ func TestBuildModelRouterTaskFailSoftOnUnresolvableTarget(t *testing.T) {
 	fn := buildModelRouterTask(cfg, reg, prov, providerAnthropic, "session-model")
 	// The classifier picks "small" (RouterCategories[0]); its target "sonnet" resolves to
 	// inherit → a COMPOSITION-side miss naming the category + selector (issue #287).
-	_, _, _, reason, ok := fn(context.Background(), "x")
+	_, _, _, reason, ok := callModelRouter(context.Background(), fn, "x")
 	if ok {
 		t.Fatal("an unresolvable category target must be fail-soft (ok=false)")
 	}
@@ -186,7 +186,7 @@ func TestBuildModelRouterTaskFailSoftOnEmptySelector(t *testing.T) {
 	cfg := routerTaxonomyCfg()
 	cfg.RouterCategories[0].Model = "" // the chosen category's selector is empty
 	fn := buildModelRouterTask(cfg, reg, prov, providerAnthropic, "session-model")
-	_, _, _, reason, ok := fn(context.Background(), "x")
+	_, _, _, reason, ok := callModelRouter(context.Background(), fn, "x")
 	if ok {
 		t.Fatal("an empty category selector must be fail-soft (ok=false)")
 	}
@@ -368,6 +368,25 @@ func TestLogModelRouterFacts(t *testing.T) {
 			t.Fatalf("the DISABLED WARN must NOT fire when a taxonomy is present and not disabled; got:\n%s", log)
 		}
 	})
+	t.Run("Jev summary includes safe threshold and category mapping", func(t *testing.T) {
+		var buf bytes.Buffer
+		diag := slogdiag.New(&buf, false, port.LevelDebug)
+		cfg := Config{
+			Model: "session-model", Diagnostics: diag, RouterBackend: routerBackendJev,
+			RouterJevModel: "jev-1.13.0", RouterJevMinimumConfidence: 0,
+			RouterCategories: []permconfig.RouterCategory{{Name: "deep", Description: "PRIVATE DESCRIPTION", Model: "capable"}},
+		}
+		logModelRouterFacts(cfg)
+		log := buf.String()
+		for _, want := range []string{"backend=jev", "classifier=jev-1.13.0", "minimum_confidence=0", `category_mappings="[deep=capable]"`} {
+			if !strings.Contains(log, want) {
+				t.Fatalf("Jev startup summary missing %q: %s", want, log)
+			}
+		}
+		if strings.Contains(log, "PRIVATE DESCRIPTION") {
+			t.Fatalf("category description leaked into startup summary: %s", log)
+		}
+	})
 }
 
 // The `router` slot (or classifier-slot) actually changes which model the CLASSIFIER
@@ -389,7 +408,7 @@ func TestRouterClassifierRunsOnSlotModel(t *testing.T) {
 	if fn == nil {
 		t.Fatal("router task must be non-nil")
 	}
-	cat, _, _, _, ok := fn(context.Background(), "classify this")
+	cat, _, _, _, ok := callModelRouter(context.Background(), fn, "classify this")
 	if !ok || cat != "large" {
 		t.Fatalf("classification failed: cat=%q ok=%v", cat, ok)
 	}
@@ -549,7 +568,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 // terminal text).
 func drainRunWithSubagentStart(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) (final string, starts []session.SubagentPayload) {
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {

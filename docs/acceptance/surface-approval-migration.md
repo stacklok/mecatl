@@ -18,7 +18,7 @@ mecatui into a multi-window manager or alter approval policy/product behavior.
 - [ADR-0069](../adr/0069-plan-approval-gate.md) fixes the meaning and terminal ordering of plan approval. This UI refactor must not change the `PresentPlan` gate, verdicts, or post-terminal continuation.
 - [`architecture.md` — mecatui](../architecture.md) keeps `cmd/mecatui/ui` a proto-free client that resolves an ask by sending `ResumeApproval` on the existing stream; the surface does not take ownership of transport.
 - [`surface-migration-plan.md`](../design/surface-migration-plan.md) fixes the Phase-2 contract: one dynamic modal, surfaces size while parents place, and Model retains effects whose lifetime exceeds the surface.
-- [`IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) specifies that plan review is scrollable, args review remains type-specific, and the interactive continuation starts only after terminal `plan_approved`.
+- [the surface contract](../design/surface-migration-plan.md) specifies that plan review is scrollable, args review remains type-specific, and the interactive continuation starts only after terminal `plan_approved`.
 
 ## In scope — 4 scenarios, in implementation order
 
@@ -50,7 +50,7 @@ An operator can review ordinary permission asks, plan asks, and full args views 
 the migrated surface. The surface emits semantic intents while Model performs the
 existing transport, notice, phase, spinner, and post-terminal continuation effects. The
 plan-review and continuation ordering remain those recorded in
-[`IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) and [ADR-0069](../adr/0069-plan-approval-gate.md).
+[the surface contract](../design/surface-migration-plan.md) and [ADR-0069](../adr/0069-plan-approval-gate.md).
 
 **Acceptance:**
 - AC2.1: Keyboard verdicts, focus movement, child-ask withholding of Allow Always, `/debug-ask` with a nil stream, exact ask-ID verdict sending, and the no-extra-reader rule retain current behavior.

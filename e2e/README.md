@@ -32,6 +32,7 @@ Environment knobs (all optional):
 | `MECATL_E2E_TARGET` | (unset → spawn local) | `host:port` of an existing mecated; skips the local spawn |
 | `MECATL_E2E_MODEL` | `anthropic/claude-haiku-4.5` | default-lane model for all tool scenarios (see "Prompt phrasing vs the upstream prompt filter" for why the OpenAI-family lane was demoted) |
 | `MECATL_E2E_MODEL_SECONDARY` | `openai/gpt-4.1-mini` | second lane (single-turn smoke only); `skip` disables it |
+| `MECATL_E2E_SLOT_CHEAP_MODEL` | `google/gemini-2.5-flash` | compaction model-slot spec only: inexpensive distinct model that supports the native cache-breakpoint lane |
 | `MECATL_E2E_MAX_RUN_TOKENS` | `50000` | `--max-run-tokens` for the spawned server (a single full-catalog turn is ~5-6k input tokens; a runaway brake, not a cost control — raised 20k→50k for multi-turn + cross-restart headroom against live-model verbosity drift) |
 | `MECATL_E2E_MAX_TEAM_TOKENS` | `60000` | `--max-team-tokens` for the spawned server |
 | `MECATL_E2E_COMPACTION_WINDOW` | `2000` | compaction spec only: the `--context-window-override` for its own spawn (trigger = 0.8 × the estimated complete request) |
@@ -143,14 +144,16 @@ package would need its own suite bootstrap and its own server):
 13. **approve-after-kill (cloud-native Phase 2)** — raises a real `Write`
     permission ask on the haiku lane, **SIGKILL**s the mecated process WITHOUT
     cleanup, restarts a SECOND mecated over the SAME `--store-dir`, POSTs
-    `/v1/sessions/{id}/approve` (`allow_once`) to the second process's HTTP
-    listener, and asserts the pending `Write` ran EXACTLY ONCE (real `note.txt`
-    with content `survived`) and the resumed run reached `end_turn`. Live
+    `/v1/sessions/{id}/controls/resolve-ask` with the captured exact `run_id`
+    and `ask_id` (`allow_once`) to the second process's HTTP listener, then
+    watches the finite durable event replay for completion. It asserts the
+    pending `Write` ran EXACTLY ONCE (real `note.txt` with content `survived`)
+    and the resumed run reached `end_turn`. Live
     counterpart of the offline two-Build gate `TestApproveAfterRestartE2E`
     (`internal/app/`). Lane-pinned to haiku because it needs a real tool call
     (the OpenAI lane content-filters tool-bearing requests). Spawns its OWN
     process pair (`harness.NewLocal` + `harness.NewLocalSharingStore`,
-    `(*Local).Kill`, `harness.ApproveOverHTTP`); local-target only.
+    `(*Local).Kill`, `harness.ResolveAskOverHTTP`); local-target only.
 
 All assertions are event-stream / side-effect assertions — never model prose.
 `FlakeAttempts(2)` is on the cheap specs — provider smoke, skills, memory, and
@@ -168,9 +171,10 @@ The approve-after-kill spec needs three seams the suite target does not:
 - `(*Local).Kill()` — SIGKILL + reap, leaving the state tree intact (the
   "disposable process" death). Distinct from `Close` (SIGTERM-first graceful);
   `Close` after `Kill` is a safe no-op.
-- `harness.ApproveOverHTTP(ctx, httpAddr, sessionID, askID, verdict)` +
-  `harness.DrainSSE` — a stdlib `net/http` client that POSTs the approve body and
-  returns the rehydrate-relay SSE stream. `(*Local).HTTPAddr()` exposes the
+- `harness.ResolveAskOverHTTP(ctx, httpAddr, sessionID, runID, askID, verdict)`
+  posts an exact-run resolve control and validates the JSON acknowledgement.
+  `harness.ReplaySessionEventsOverHTTP` reads the finite durable event replay
+  used to observe the detached resumed run. `(*Local).HTTPAddr()` exposes the
   listener.
 
 ## Artifacts

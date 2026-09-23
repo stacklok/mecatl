@@ -77,7 +77,7 @@ func TestProjectModelsHonouredWithinAllowlist(t *testing.T) {
 	if got.Default != "opus-id" {
 		t.Fatalf("project default not captured: %q", got.Default)
 	}
-	if got.Slots["plan"] != "opus-id" {
+	if got.Slots["plan"].Model != "opus-id" {
 		t.Fatalf("project slot not captured: %+v", got.Slots)
 	}
 	if got.Aliases["myalias"] != "gpt-4o" {

@@ -15,10 +15,9 @@ import (
 // rather than resolved file targets, preserves notifications when Kubernetes swaps
 // a projected volume's ..data symlink.
 type Watcher struct {
-	watcher *fsnotify.Watcher
-	stop    chan struct{}
-	done    chan struct{}
-	once    sync.Once
+	stop chan struct{}
+	done chan struct{}
+	once sync.Once
 }
 
 // New starts a watcher. Events are delayed until debounce has elapsed without a
@@ -70,8 +69,12 @@ func newWatcher(paths []string, debounce, maxDebounce time.Duration, onChange fu
 		}
 	}
 
-	w := &Watcher{watcher: fw, stop: make(chan struct{}), done: make(chan struct{})}
-	go w.run(debounce, maxDebounce, onChange, onError, armed)
+	w := &Watcher{stop: make(chan struct{}), done: make(chan struct{})}
+	go func() {
+		defer close(w.done)
+		defer func() { _ = fw.Close() }()
+		w.run(fw.Events, fw.Errors, debounce, maxDebounce, onChange, onError, armed)
+	}()
 	return w, nil
 }
 
@@ -154,10 +157,7 @@ func (d *debouncer) fire(events <-chan fsnotify.Event) (open, ready bool) {
 	}
 }
 
-func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onError func(error), armed chan<- struct{}) {
-	defer close(w.done)
-	defer func() { _ = w.watcher.Close() }()
-
+func (w *Watcher) run(events <-chan fsnotify.Event, errs <-chan error, debounce, maxDebounce time.Duration, onChange func(), onError func(error), armed chan<- struct{}) {
 	d := &debouncer{debounce: debounce, maxDebounce: maxDebounce}
 	defer d.stop()
 
@@ -165,21 +165,21 @@ func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onEr
 		select {
 		case <-w.stop:
 			return
-		case _, ok := <-w.watcher.Events:
+		case _, ok := <-events:
 			if !ok {
 				return
 			}
 			d.arm(time.Now())
 			signalArmed(armed)
 		case <-d.timerC:
-			open, ready := d.fire(w.watcher.Events)
+			open, ready := d.fire(events)
 			if !open {
 				return
 			}
 			if ready {
 				onChange()
 			}
-		case err, ok := <-w.watcher.Errors:
+		case err, ok := <-errs:
 			if !ok {
 				return
 			}

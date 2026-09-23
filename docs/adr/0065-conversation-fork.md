@@ -72,5 +72,5 @@ The fork inherits the source's `ProviderID`/`ModelID` labels and rehydrates the 
 - [ADR 0077 — Direct-write subagent](./0077-direct-write-subagent.md) — the trust-model precedent for a non-sandboxed child (peer-parity).
 - `CreateSession.source_session_id` (issue #20) reuses the same `ForkSnapshot`/`SeedHistory` primitives for same-provider conversation carryover on model switch — a client-side session-create variant under the same same-provider constraint.
 - [`docs/architecture.md`](../architecture.md) — the sessions/storage section (fork paragraph added when implementation ships).
-- [`docs/design/PRODUCTION-READINESS.md`](../design/PRODUCTION-READINESS.md) — the status tracker (conversation-fork row added when implementation ships).
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) — the status tracker (conversation-fork row added when implementation ships).
 - [`docs/usage.md`](../usage.md) — the operator guide (ForkSession route added when implementation ships).

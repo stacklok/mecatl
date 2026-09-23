@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -120,7 +121,7 @@ func (s *skillsState) Render(width, _ int) (string, []ClickableRegion) {
 	if s.view == skillsDetail && s.detail != nil {
 		body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff, width)
 		if s.err != nil {
-			body += "\n\n" + s.deps.theme.Style("errorText").Render(sanitizeTerminal(s.err.Error())) + "\npress esc, then enter to refresh"
+			body += "\n\n" + s.deps.theme.Style("errorText").Render(terminaltext.Sanitize(s.err.Error())) + "\npress esc, then enter to refresh"
 		}
 		return body, nil
 	}
@@ -467,7 +468,7 @@ func cardTextWidth(width int) int {
 // the offered card-body budget. Callers apply styles only after this step;
 // assistant Markdown remains on its separate glamour rendering path.
 func wrapCardText(text string, budget int) string {
-	text = sanitizeTerminal(text)
+	text = terminaltext.Sanitize(text)
 	if budget > 0 {
 		return ansi.Wrap(text, budget, "")
 	}
@@ -564,13 +565,13 @@ func skillsEmptyCopy(caps client.Capabilities) string {
 func skillsRowLines(th theme.Theme, skills []client.Skill, budget int) []string {
 	var lines []string
 	for _, s := range skills {
-		name := sanitizeTerminal(s.Name)
+		name := terminaltext.Sanitize(s.Name)
 		if s.AgentOwned {
-			name += "  [agent-owned · active " + sanitizeTerminal(s.ActiveVersion) + " · " + sanitizeTerminal(s.OwnerAgent) + "]"
+			name += "  [agent-owned · active " + terminaltext.Sanitize(s.ActiveVersion) + " · " + terminaltext.Sanitize(s.OwnerAgent) + "]"
 		}
 		lines = append(lines, renderToolCardText(th.Style("toolName"), name, budget))
 		if s.Description != "" {
-			desc := th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(s.Description), budget))
+			desc := th.Style("toolArgs").Render(indentWrap(terminaltext.Sanitize(s.Description), budget))
 			lines = append(lines, strings.Split(desc, "\n")...)
 		}
 	}
@@ -594,7 +595,7 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 	case st.loading:
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")
 	case st.err != nil:
-		line := "list skills: " + sanitizeTerminal(st.err.Error())
+		line := "list skills: " + terminaltext.Sanitize(st.err.Error())
 		if budget > 0 {
 			line = ansi.Wrap(line, budget, "")
 		}

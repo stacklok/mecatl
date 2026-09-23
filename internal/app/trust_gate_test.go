@@ -142,14 +142,9 @@ func TestUntrustedWorkspaceWithholdsProjectCommands(t *testing.T) {
 	ws := t.TempDir()
 	writeCommand(t, ws, ".mecatl/commands", "greet", "Hello from the repo command")
 
-	wsReader, err := osfs.NewWorkspace(ws)
-	if err != nil {
-		t.Fatalf("open ws: %v", err)
-	}
-
 	expand := func(cfg Config) (string, bool) {
 		exp := buildCommandExpander(cfg, nil)
-		out, ok, err := exp.Expand(context.Background(), wsReader, "/greet")
+		out, ok, err := exp.Expand(context.Background(), "/greet")
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
@@ -177,7 +172,7 @@ func TestUntrustedWorkspaceWithholdsProjectCommands(t *testing.T) {
 		t.Fatalf("write explicit command: %v", err)
 	}
 	exp := buildCommandExpander(Config{Workspace: ws, CommandsDir: explicitRel, TrustProject: false}, nil)
-	out, ok, err := exp.Expand(context.Background(), wsReader, "/op")
+	out, ok, err := exp.Expand(context.Background(), "/op")
 	if err != nil {
 		t.Fatalf("expand explicit: %v", err)
 	}
@@ -238,11 +233,7 @@ func TestUntrustedWorkspaceStillUsable(t *testing.T) {
 	if _, isNoop := exp.(prompt.NoopExpander); !isNoop {
 		t.Errorf("untrusted: command expander should degrade to NoopExpander, got %T", exp)
 	}
-	wsReader, err := osfs.NewWorkspace(ws)
-	if err != nil {
-		t.Fatalf("open ws: %v", err)
-	}
-	out, expanded, err := exp.Expand(context.Background(), wsReader, "just a normal prompt")
+	out, expanded, err := exp.Expand(context.Background(), "just a normal prompt")
 	if err != nil {
 		t.Fatalf("noop expand errored (loop would be broken): %v", err)
 	}

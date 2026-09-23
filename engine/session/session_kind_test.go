@@ -82,6 +82,40 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 	}
 }
 
+func TestADR_0352_TeamMemberCallRelationshipRoundTrip(t *testing.T) {
+	t.Parallel()
+	parentIncarnation := session.NewIncarnationID()
+	member, err := session.NewTeamMember("member", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}, session.Limits{}, time.Unix(1, 0), "team", "reviewer", "parent", parentIncarnation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := member.Relationship
+	rel.CallID = "team-call"
+	if err := member.RestoreSessionMetadata(session.SessionKindTeamMember, rel); err != nil {
+		t.Fatalf("stamp call relationship: %v", err)
+	}
+	snap, err := sessnap.Of(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := snap.Restore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Relationship != rel {
+		t.Fatalf("relationship = %+v, want %+v", restored.Relationship, rel)
+	}
+
+	for _, invalid := range []session.SessionRelationship{
+		{TeamID: "team", MemberName: "reviewer", CallID: "team-call"},
+		{TeamID: "team", MemberName: "reviewer", ParentSessionID: "parent", CallID: "team-call"},
+	} {
+		if err := session.ValidateSessionMetadata(session.SessionKindTeamMember, invalid); err == nil {
+			t.Fatalf("accepted call without valid parent lifetime: %+v", invalid)
+		}
+	}
+}
+
 func TestADR_0108_PublicCreateCannotForgeKind(t *testing.T) {
 	t.Parallel()
 	s := session.New("public", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))

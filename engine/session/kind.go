@@ -76,7 +76,7 @@ func ValidateSessionMetadata(kind SessionKind, rel SessionRelationship) error {
 		}
 	case SessionKindTeamMember:
 		if !validTeamMemberRelationship(rel) {
-			return fmt.Errorf("%w: team member requires team id and member name with optional parent session", ErrInvalidSessionMetadata)
+			return fmt.Errorf("%w: team member requires team id and member name with optional parent lifetime and parent call id", ErrInvalidSessionMetadata)
 		}
 	case SessionKindDebug:
 		if !validDebugRelationship(rel) {
@@ -123,7 +123,9 @@ func validTeamMemberRelationship(rel SessionRelationship) bool {
 	forbidden.MemberName = ""
 	forbidden.ParentSessionID = ""
 	forbidden.ParentIncarnation = ""
-	return rel.TeamID != "" && rel.MemberName != "" && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
+	forbidden.CallID = ""
+	callValid := rel.CallID == "" || rel.ParentSessionID != "" && rel.ParentIncarnation.Valid()
+	return rel.TeamID != "" && rel.MemberName != "" && callValid && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validDebugRelationship(rel SessionRelationship) bool {

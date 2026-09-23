@@ -11,17 +11,17 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // These tests cover Phase 2 — the Subagent tool (read-only explorer) gets full Shell
@@ -501,9 +501,9 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 		t.Fatal("precondition: expected a non-nil sandboxed runner")
 	}
 	childCat := tool.NewCatalog()
-	childCat.MustRegister(tools.ReadTool{})
-	childCat.MustRegister(tools.GrepTool{})
-	childCat.MustRegister(tools.GlobTool{})
+	childCat.MustRegister(fstools.ReadTool{})
+	childCat.MustRegister(fstools.GrepTool{})
+	childCat.MustRegister(fstools.GlobTool{})
 	// agent.NewShellTool, mirroring the production child construction
 	// (readOnlyExplorerCatalog), so the test child exercises the same Shell the
 	// composition root hands real children.

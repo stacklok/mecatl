@@ -399,17 +399,17 @@ func assistantItems(m session.Message) []responses.ResponseInputItemUnionParam {
 	// One input item per captured reasoning item, in emission order, each under
 	// the id ITS blob is bound to. Sending several blobs under one id is what the
 	// provider rejects as invalid_encrypted_content, so the pairing is preserved
-	// end to end (see reasoning.go); a pre-packing blob unpacks to the single
-	// (m.Reasoning, m.ReasoningItemID) pair, replaying exactly as it used to.
+	// end to end (see reasoning.go). Only a complete current envelope is
+	// replayable; historical bare ciphertext and malformed/unsupported envelopes
+	// are omitted rather than reinterpreted.
 	//
 	// The SDK's ResponseReasoningItemParam.ID is a PLAIN string tagged
 	// `json:"id" api:"required"` with NO omitzero, so an unset id serialises
 	// unconditionally as `"id":""`, which strict OpenAI-compatible gateways (Azure
 	// GPT-5.x) reject with HTTP 400 on turn 2+ during store:false stateless
-	// replay. unpackReasoningItems therefore drops any item missing an id (D1a:
-	// lose that item's reasoning continuity, never 400), so every item reaching
-	// this loop carries one.
-	items := unpackReasoningItems(m.Reasoning, m.ReasoningItemID)
+	// replay. unpackReasoningItems validates the complete envelope, so every item
+	// reaching this loop carries both its opaque id and encrypted content.
+	items := unpackReasoningItems(m.Reasoning)
 	next := 0
 	emitReasoning := func(it reasoningItem) {
 		reasoning := responses.ResponseReasoningItemParam{

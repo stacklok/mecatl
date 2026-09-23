@@ -218,7 +218,7 @@ func TestPlanModeAutoApproveDoesNotFireInteractive(t *testing.T) {
 	// we're testing that the auto-approve does NOT pre-empt).
 	var sawPlanAsk bool
 	for ev := range r.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan {
 			sawPlanAsk = true
 			built.Service.MaybeAutoApprovePlan(context.Background(), sess.ID, ev)
 			r.Cancel()
@@ -294,7 +294,7 @@ func TestPlanModeAutoApproveDoesNotFireForNonPlanAsk(t *testing.T) {
 	// Drain until the policy ask surfaces, then cancel (the auto-approve must NOT
 	// fire for a non-plan ask).
 	for ev := range r.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() != session.AskOriginPlan {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin != session.ApprovalOriginPlan {
 			built.Service.MaybeAutoApprovePlan(context.Background(), sess.ID, ev)
 			r.Cancel()
 		}

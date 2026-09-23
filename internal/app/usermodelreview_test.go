@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -29,7 +30,7 @@ type countObserver struct{ calls atomic.Int64 }
 
 func drainRunToLearningLog(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) string {
 	t.Helper()
 	recorder := server.NewRunEventRecorder(ctx, svc, id)
@@ -53,7 +54,7 @@ func (o *countObserver) Observe(context.Context, learning.Trajectory) error {
 }
 
 func TestLearningAdmissionIsGlobalAcrossConcurrentProviderObservers(t *testing.T) {
-	admission := newLearningAdmission(3)
+	admission := newLearningAdmissionGate(3)
 	a, b := &countObserver{}, &countObserver{}
 	observers := []learning.Observer{newAdmittedObserver(a, admission), newAdmittedObserver(b, admission)}
 	var wg sync.WaitGroup
@@ -184,104 +185,108 @@ func TestFoldLearningModeProjectRequiresAdmissionAndCannotRaise(t *testing.T) {
 	}
 }
 
-func TestLegacyUserModelReviewProjectsToAutoAndConflicts(t *testing.T) {
-	cfg := learningResolverConfig(t, "", "")
-	cfg.UserModelReview = true
+func TestLearningAdmissionIntervalPrecedence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(path, []byte("learning:\n  admission_interval: 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{PermissionConfigs: []string{path}, LearningAdmissionInterval: 1}
+	cfg.permResolver = buildPermResolver(cfg)
 	got, err := foldLearningMode(cfg)
-	if err != nil || got.LearningMode != learning.Auto {
-		t.Fatalf("legacy = %s, %v", got.LearningMode, err)
+	if err != nil || got.LearningAdmissionInterval != 7 {
+		t.Fatalf("settings interval = %d, %v; want 7", got.LearningAdmissionInterval, err)
 	}
-	cfg = learningResolverConfig(t, "review", "")
-	cfg.UserModelReview = true
-	if _, err := foldLearningMode(cfg); err == nil {
-		t.Fatal("legacy flag + review should conflict")
-	}
-	cfg = learningResolverConfig(t, "auto", "")
-	cfg.UserModelReview = true
-	if got, err := foldLearningMode(cfg); err != nil || got.LearningMode != learning.Auto {
-		t.Fatalf("legacy flag + auto = %s, %v", got.LearningMode, err)
+
+	cfg.LearningAdmissionInterval = 0
+	cfg.LearningAdmissionIntervalSet = true
+	got, err = foldLearningMode(cfg)
+	if err != nil || got.LearningAdmissionInterval != 0 {
+		t.Fatalf("explicit CLI zero = %d, %v; want 0", got.LearningAdmissionInterval, err)
 	}
 }
 
 func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *testing.T) {
-	ctx := context.Background()
-	workspace := t.TempDir()
-	providers := map[string]*mockllm.Provider{}
-	built, err := buildIsolated(t, ctx, Config{
-		Model:                   "test-model",
-		ContextWindowOverride:   defaultContextWindowTokens,
-		Workspace:               workspace,
-		NoSoul:                  true,
-		LearningMode:            learning.Auto,
-		UserModelDir:            t.TempDir(),
-		UserModelReviewInterval: 2,
-		envDetector: fakeEnv(map[string]string{
-			"OPENAI_API_KEY":     "test-key",
-			"OPENROUTER_API_KEY": "test-key",
-		}),
-		liveModelHTTPClient: offlineHTTPClient(),
-		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
-			var turns []mockllm.Turn
-			switch id {
-			case providerOpenAI:
-				turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn(`{"kind":"abstained"}`)}
-			case providerOpenRouter:
-				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn(`{"kind":"abstained"}`), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
-			default:
-				turns = []mockllm.Turn{mockllm.TextTurn("unused")}
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		workspace := t.TempDir()
+		providers := map[string]*mockllm.Provider{}
+		built, err := buildIsolated(t, ctx, Config{
+			Model:                     "test-model",
+			ContextWindowOverride:     defaultContextWindowTokens,
+			Workspace:                 workspace,
+			NoSoul:                    true,
+			LearningMode:              learning.Auto,
+			UserModelDir:              t.TempDir(),
+			LearningAdmissionInterval: 2,
+			envDetector: fakeEnv(map[string]string{
+				"OPENAI_API_KEY":     "test-key",
+				"OPENROUTER_API_KEY": "test-key",
+			}),
+			liveModelHTTPClient: offlineHTTPClient(),
+			providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+				var turns []mockllm.Turn
+				switch id {
+				case providerOpenAI:
+					turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn(`{"kind":"abstained"}`)}
+				case providerOpenRouter:
+					turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn(`{"kind":"abstained"}`), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
+				default:
+					turns = []mockllm.Turn{mockllm.TextTurn("unused")}
+				}
+				p := mockllm.New(turns...)
+				providers[id] = p
+				return p
+			},
+		})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+
+		defaultSession, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+		if err != nil {
+			t.Fatalf("CreateSession(default): %v", err)
+		}
+		defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "Remember that I prefer concise answers")
+		if err != nil {
+			t.Fatalf("StartRun(default): %v", err)
+		}
+		_ = drainRunToLearningLog(ctx, t, built.Service, defaultSession.ID, defaultRun)
+		waitCalls := func(provider *mockllm.Provider, want int) int {
+			t.Helper()
+			deadline := time.Now().Add(2 * time.Second)
+			for provider.Calls() < want && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
 			}
-			p := mockllm.New(turns...)
-			providers[id] = p
-			return p
-		},
+			return provider.Calls()
+		}
+		if got := waitCalls(providers[providerOpenAI], 2); got != 2 {
+			t.Fatalf("default provider calls after admitted completion = %d, want 2 (run + review)", got)
+		}
+
+		runSelected := func(prompt string) {
+			t.Helper()
+			sess, createErr := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: "test-model"})
+			if createErr != nil {
+				t.Fatalf("CreateSessionWithProvider: %v", createErr)
+			}
+			run, runErr := built.Service.StartRun(ctx, sess.ID, prompt)
+			if runErr != nil {
+				t.Fatalf("StartRun(selected): %v", runErr)
+			}
+			_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
+		}
+
+		runSelected("Remember that I prefer short examples")
+		if got := waitCalls(providers[providerOpenRouter], 2); got != 2 {
+			t.Fatalf("selected provider calls after hard trigger = %d, want 2 (run + review)", got)
+		}
+		runSelected("Remember that I prefer Go examples")
+		if got := waitCalls(providers[providerOpenRouter], 4); got != 4 {
+			t.Fatalf("selected provider calls after second hard trigger = %d, want 4 (two runs + two reviews)", got)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	defer built.Close()
-
-	defaultSession, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
-	if err != nil {
-		t.Fatalf("CreateSession(default): %v", err)
-	}
-	defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "Remember that I prefer concise answers")
-	if err != nil {
-		t.Fatalf("StartRun(default): %v", err)
-	}
-	_ = drainRunToLearningLog(ctx, t, built.Service, defaultSession.ID, defaultRun)
-	waitCalls := func(provider *mockllm.Provider, want int) int {
-		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
-		for provider.Calls() < want && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		return provider.Calls()
-	}
-	if got := waitCalls(providers[providerOpenAI], 2); got != 2 {
-		t.Fatalf("default provider calls after admitted completion = %d, want 2 (run + review)", got)
-	}
-
-	runSelected := func(prompt string) {
-		t.Helper()
-		sess, createErr := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: "test-model"})
-		if createErr != nil {
-			t.Fatalf("CreateSessionWithProvider: %v", createErr)
-		}
-		run, runErr := built.Service.StartRun(ctx, sess.ID, prompt)
-		if runErr != nil {
-			t.Fatalf("StartRun(selected): %v", runErr)
-		}
-		_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
-	}
-
-	runSelected("Remember that I prefer short examples")
-	if got := waitCalls(providers[providerOpenRouter], 2); got != 2 {
-		t.Fatalf("selected provider calls after hard trigger = %d, want 2 (run + review)", got)
-	}
-	runSelected("Remember that I prefer Go examples")
-	if got := waitCalls(providers[providerOpenRouter], 4); got != 4 {
-		t.Fatalf("selected provider calls after second hard trigger = %d, want 4 (two runs + two reviews)", got)
-	}
 }
 
 func TestStartupProjectOffKeepsAlternateRootAutomaticAssets(t *testing.T) {
@@ -570,7 +575,7 @@ func TestLearningObserverUsesSelectedProviderAndModelWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer := buildLearningObserver(cfg, reg, selectedID, selectedProvider, userStore, newLearningAdmission(1))
+	observer := buildLearningObserver(cfg, reg, selectedID, selectedProvider, userStore, newLearningAdmissionGate(1))
 	if observer == nil {
 		t.Fatal("auto observer is nil")
 	}
@@ -597,7 +602,7 @@ func TestLearningCompositionModesAndAutoWrite(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := Config{LearningMode: mode, Model: "model"}
-			if got := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmission(1)); got != nil {
+			if got := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmissionGate(1)); got != nil {
 				t.Fatalf("%s observer must be inert in standard composition", mode)
 			}
 			if provider.Calls() != 0 {
@@ -621,7 +626,7 @@ func TestLearningCompositionModesAndAutoWrite(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	cfg := Config{LearningMode: learning.Auto, Model: "model"}
-	observer := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmission(1))
+	observer := buildLearningObserver(cfg, regForTest(provider, providerMock, cfg.Model), providerMock, provider, userStore, newLearningAdmissionGate(1))
 	if err := observer.Observe(context.Background(), learning.Trajectory{
 		SessionID: "s", Workspace: "/ws", Messages: []session.Message{session.NewUserMessage("I prefer concise answers")},
 	}); err != nil {

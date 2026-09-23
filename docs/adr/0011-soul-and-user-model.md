@@ -15,7 +15,7 @@ Implement the soul as a user-authored, agent-read-only identity fragment (`~/.co
 
 ## Consequences
 
-The agent has a stable, operator-controlled identity that survives compaction (re-read from disk each build) and cannot be overwritten by tool use. The user-model accumulates cross-session preferences without leaking into the governance scope. The background reviewer is off by default to avoid per-session LLM spend. Trust hierarchy and deny-dominance are unchanged; `soul:apply` and the memory tool names are pre-approved as lowest-scope floor Allows, overridable by higher-scope config. Current behaviour: docs/architecture.md. Shipped/deferred state: docs/design/PRODUCTION-READINESS.md.
+The agent has a stable, operator-controlled identity that survives compaction (re-read from disk each build) and cannot be overwritten by tool use. The user-model accumulates cross-session preferences without leaking into the governance scope. The background reviewer is off by default to avoid per-session LLM spend. Trust hierarchy and deny-dominance are unchanged; `soul:apply` and the memory tool names are pre-approved as lowest-scope floor Allows, overridable by higher-scope config. Current behaviour: docs/architecture.md. Shipped/deferred state: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

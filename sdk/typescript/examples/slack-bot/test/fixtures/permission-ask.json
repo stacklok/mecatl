@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "approve-write",
+          "name": "Write",
+          "args": { "path": "approved.txt", "content": "approved\n" }
+        }
+      ]
+    },
+    { "text": "approved write completed" }
+  ]
+}

@@ -21,15 +21,16 @@ import (
 // ask id. It decodes only what the assertions read, so the test needs no proto
 // import.
 type sseEvent struct {
-	Type string `json:"type"`
-	Ask  struct {
+	Type  string `json:"type"`
+	RunID string `json:"run_id"`
+	Ask   struct {
 		AskID string `json:"ask_id"`
 	} `json:"ask"`
 }
 
 // promptOverHTTP POSTs a prompt to the session's SSE prompt endpoint and drains
 // the event stream, invoking onEvent for each decoded event (so a caller can
-// approve a permission.ask inline via a concurrent /approve). It returns whether
+// approve a permission.ask inline via a concurrent /controls/resolve-ask). It returns whether
 // any permission.ask was observed on the stream. The relay loop behind /prompt is
 // what Appends every event to the durable EventLog (the loop itself never does),
 // so driving through it is what exercises the Phase 3a logging the 3b replay
@@ -73,7 +74,7 @@ func promptOverHTTP(t *testing.T, srvURL, id, text string, onEvent func(ev sseEv
 //     (gated Ask under ModeDefault: a mutating tool, no allow rule; learnable, its
 //     pattern is the exact path). Drive it over the HTTP /prompt relay (the relay
 //     Appends every event to the durable EventLog) and approve the ask ALLOW_ALWAYS
-//     via a concurrent /approve: the verdict is logged AND learned into built1's
+//     via a concurrent /controls/resolve-ask: the verdict is logged AND learned into built1's
 //     in-memory permstore.
 //  2. built1.Close() = process death: the in-memory permstore dies; only the durable
 //     session snapshot + event log survive.
@@ -131,14 +132,18 @@ func TestApprovalReplayAfterRestartE2E(t *testing.T) {
 	}
 	srv1 := httptest.NewServer(server.NewHTTPHandler(built1.Service))
 
-	// Drive the run over /prompt and approve the ask ALLOW_ALWAYS via /approve. The
+	// Drive the run over /prompt and approve the ask ALLOW_ALWAYS via /controls/resolve-ask. The
 	// approve runs from the SSE drain callback; the same-process live run resolves it.
 	var approved bool
 	saw1 := promptOverHTTP(t, srv1.URL, string(sess.ID), "build it", func(ev sseEvent) {
 		if ev.Type == "permission.ask" && !approved {
 			approved = true
-			body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": session.VerdictStringAllowAlways})
-			ar, aerr := http.Post(srv1.URL+"/v1/sessions/"+string(sess.ID)+"/approve",
+			body, _ := json.Marshal(map[string]any{
+				"expected_run_id": ev.RunID,
+				"ask_id":          ev.Ask.AskID,
+				"verdict":         session.VerdictStringAllowAlways,
+			})
+			ar, aerr := http.Post(srv1.URL+"/v1/sessions/"+string(sess.ID)+"/controls/resolve-ask",
 				"application/json", strings.NewReader(string(body)))
 			if aerr != nil {
 				t.Errorf("POST approve: %v", aerr)
@@ -177,8 +182,8 @@ func TestApprovalReplayAfterRestartE2E(t *testing.T) {
 	// then fails fast instead of hanging on the mutation).
 	sawAsk2 := promptOverHTTP(t, srv2.URL, string(sess.ID), "build it again", func(ev sseEvent) {
 		if ev.Type == "permission.ask" {
-			body, _ := json.Marshal(map[string]any{})
-			ar, aerr := http.Post(srv2.URL+"/v1/sessions/"+string(sess.ID)+"/cancel",
+			body, _ := json.Marshal(map[string]any{"expected_run_id": ev.RunID})
+			ar, aerr := http.Post(srv2.URL+"/v1/sessions/"+string(sess.ID)+"/controls/cancel",
 				"application/json", strings.NewReader(string(body)))
 			if aerr == nil {
 				ar.Body.Close()
@@ -208,8 +213,12 @@ func answerAsks(t *testing.T, srvURL, id, text, verdict string) (sawAsk bool) {
 		if ev.Type != "permission.ask" {
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": verdict})
-		ar, aerr := http.Post(srvURL+"/v1/sessions/"+id+"/approve",
+		body, _ := json.Marshal(map[string]any{
+			"expected_run_id": ev.RunID,
+			"ask_id":          ev.Ask.AskID,
+			"verdict":         verdict,
+		})
+		ar, aerr := http.Post(srvURL+"/v1/sessions/"+id+"/controls/resolve-ask",
 			"application/json", strings.NewReader(string(body)))
 		if aerr != nil {
 			t.Errorf("POST approve: %v", aerr)
@@ -356,8 +365,12 @@ func TestApprovalReplayIgnoresNonAllowAlways(t *testing.T) {
 			verdict = session.VerdictStringDeny
 		}
 		asks++
-		body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": verdict})
-		ar, aerr := http.Post(srv1.URL+"/v1/sessions/"+string(sess.ID)+"/approve",
+		body, _ := json.Marshal(map[string]any{
+			"expected_run_id": ev.RunID,
+			"ask_id":          ev.Ask.AskID,
+			"verdict":         verdict,
+		})
+		ar, aerr := http.Post(srv1.URL+"/v1/sessions/"+string(sess.ID)+"/controls/resolve-ask",
 			"application/json", strings.NewReader(string(body)))
 		if aerr == nil {
 			ar.Body.Close()
@@ -397,8 +410,12 @@ func TestApprovalReplayIgnoresNonAllowAlways(t *testing.T) {
 			return
 		}
 		reasks++
-		body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": session.VerdictStringAllowOnce})
-		ar, aerr := http.Post(srv2.URL+"/v1/sessions/"+string(sess.ID)+"/approve",
+		body, _ := json.Marshal(map[string]any{
+			"expected_run_id": ev.RunID,
+			"ask_id":          ev.Ask.AskID,
+			"verdict":         session.VerdictStringAllowOnce,
+		})
+		ar, aerr := http.Post(srv2.URL+"/v1/sessions/"+string(sess.ID)+"/controls/resolve-ask",
 			"application/json", strings.NewReader(string(body)))
 		if aerr == nil {
 			ar.Body.Close()

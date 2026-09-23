@@ -198,22 +198,20 @@ omitted. Debug mode enables the mouse-coordinate footer, steer correlation,
 keymap-resolution diagnostics at startup, and debug-only local commands such as
 `/debug-ask`. These surfaces are off by default.
 
-An explicit `--debug=false` overrides the environment. The compatibility
-variables `MECATUI_DEBUG_MOUSE`, `MECATUI_DEBUG_STEER`, `MECATUI_DEBUG_ASK`, and
-`MECATUI_DEBUG_KEYMAP` enable only their named surface. Debug mode is
-client-only and does not change server configuration or the operational log
-level.
+An explicit `--debug=false` overrides the environment. Debug mode is client-only
+and does not change server configuration or the operational log level.
 
 ## Find diagnostics
 
 In embedded mode, `mecatui` writes operational diagnostics to
 `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to
-`~/.local/state/mecatl/mecatui.log`. One process holds the default log lock; a
-second instance disables its own default log rather than sharing the file. Use
-`--diagnostics-log` to give concurrent instances separate files, or `--quiet` to
-disable the log. At startup, `mecatui` reduces an oversized log to its most
-recent 10 MiB. An unsafe path disables logging without changing the existing
-file.
+`~/.local/state/mecatl/mecatui.log`. One process holds that log at a time. A
+second instance writes to a per-process sibling beside it, named with its
+process ID as in `mecatui.4821.log`, and prints that path to stderr at startup
+so no instance loses its diagnostics. Use `--diagnostics-log` to name each
+instance's file yourself, or `--quiet` to disable the log. At startup, `mecatui`
+reduces an oversized log to its most recent 10 MiB. An unsafe path disables
+logging without changing the existing file.
 
 Use `/diagnostics` to send a concise, sanitized bug-report snapshot through the
 normal prompt path. It includes build identities and available display

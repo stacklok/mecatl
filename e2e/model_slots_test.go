@@ -44,9 +44,10 @@ func modelSlotSpecs() {
 					ginkgo.Skip("remote target: cannot spawn with --model-slot / --context-window-override")
 				}
 
-				// The cheap slot model: a real, cheap model on the OpenRouter lane. The
-				// session runs on DefaultModel(); the compaction summary must route here.
-				cheap := envOrDefault("MECATL_E2E_SLOT_CHEAP_MODEL", "openai/gpt-4.1-mini")
+				// The cheap slot model is an inexpensive, distinct model on the OpenRouter lane.
+				// It supports the native cache-breakpoint lane. The session runs on DefaultModel();
+				// the compaction summary must route here.
+				cheap := envOrDefault("MECATL_E2E_SLOT_CHEAP_MODEL", "google/gemini-2.5-flash")
 				window := envOrDefault("MECATL_E2E_COMPACTION_WINDOW", "2000")
 
 				spawn, err := harness.NewLocalWith(

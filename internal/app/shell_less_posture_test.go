@@ -29,7 +29,7 @@ import (
 // tools and appends ONE shell-less posture clause to the per-request system
 // prompt's VOLATILE suffix. This is the capability-truth point: the shared
 // engine's catalog/prompt are built once from server config and may advertise
-// Shell a per-run Environment override (ACP/editor, --no-bash, a runner that could
+// Shell a per-run Environment override (ACP/editor, --no-shell, a runner that could
 // not be built) cannot serve. An ACP override with a shell-less Environment and a
 // shared engine that HAS Shell converges here, independent of the shared Engine's
 // catalog — so the model is told "NO shell" and a stale/hallucinated Shell call
@@ -208,7 +208,7 @@ func TestShellBearingEnvironmentAdvertisesShellAndLacksNote(t *testing.T) {
 	}
 }
 
-// TestNoShellDeploymentDocumentsShellLessOnVolatileSuffix proves the --no-bash
+// TestNoShellDeploymentDocumentsShellLessOnVolatileSuffix proves the --no-shell
 // deployment path converges at the SAME buildRequest choke point: a NoShell=true
 // engine (catalog has no Shell) run against a shell-less Environment drops the
 // (already absent) Shell spec and appends the shell-less clause to the VOLATILE

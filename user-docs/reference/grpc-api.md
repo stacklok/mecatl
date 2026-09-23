@@ -10,6 +10,10 @@ This is the detailed operator and wire reference. For the client-integration
 entry point, event lifecycle, and HTTP/SSE comparison, start with
 [Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
 
+For generated RPC signatures, streaming directions, messages, enums, fields,
+and protobuf comments, see the
+[gRPC schema reference](/reference/grpc-schema.md).
+
 Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 
 ## Server identity
@@ -221,8 +225,19 @@ should hide the action. Calling an old server's unknown method returns
 |`UndoLearningPromotion`|unary|CAS compensating revision only while the linked promoted memory revision remains current; stale/newer revisions return `ABORTED`|
 |`ListMcpResources` / `ReadMcpResource`|unary|static MCP resource snapshots; read one resource by URI|
 |`ListMcpPrompts` / `GetMcpPrompt`|unary|MCP prompt snapshots; expand one prompt to its rendered messages|
-|`ListMcpSources`|unary|the resolved MCP source inventory (static / ToolHive) + diagnostics|
+|`ListMcpSources`|unary|cached published/pre-shadow MCP sources plus revision, stale, and reconciling status; performs no probe|
+|`RefreshMcpSources`|unary|reconcile direct MCP for an eligible owned root and return the request-pinned revision plus request-local changed result|
 |`ListToolHiveGroups`|unary|the distinct ToolHive groups in the resolved inventory (no live ToolHive call)|
+
+`RefreshMcpSources` accepts only an owned ordinary root in `idle` or `completed`
+state with no local active run or broker binding. An unchanged runtime and
+already-complete authority union is a no-op with no write; additions are a stable
+union. The returned revision belongs to the operation pin and need not be the
+latest publication when delivery completes. Cancellation before save prevents
+the authority mutation. Once save starts, cancellation or a storage error can
+leave the result ambiguous; clients should inspect `ListMcpSources` and retry the
+same idempotent refresh. Public load, reconciliation, and persistence errors are
+generic and do not contain backend details.
 
 **Manual dream review.** Read `CreateSessionResponse.capabilities.manual_dream`
 to discover generation and decision availability independently for project
@@ -263,6 +278,25 @@ provider/model identity.
 |`RunTeam(RunTeamRequest) → stream TeamEvent`|server-stream|drive the team to quiescence; every member's events stream tagged with the member name, and the stream **ends with a single terminal frame carrying `TeamEvent.outcome`** (rounds, stop, `budget_exhausted`, usage, dispositions, findings)|
 |`ListTeam`|unary|snapshot of the roster, shared task list, and quiescence|
 |`CleanupTeam`|unary|tear down a finished team and release its resources|
+
+`CreateTeam` and pre-run `SpawnTeammate` validate and record roster declarations;
+they do not create member engines, workspaces, or durable member sessions. `RunTeam`
+constructs those resources under its operation-pinned runtime, which is not
+necessarily the latest revision when the stream completes, and persists members
+as they run. A configured member store that supports atomic member creation must
+also support session deletion so partial startup can be rolled back; otherwise
+`RunTeam` fails before member enrollment. Factory or workspace-fork failures
+surface from `RunTeam`. On startup failure, the server closes constructed member
+resources, then attempts to remove each abandoned snapshot while its mutation
+lease remains held, and only then releases the lease. Snapshot removal is
+best-effort: a lost lease or deletion failure can leave the snapshot, and the
+server reports `abandoned team member snapshot could not be deleted; left for
+retention`. The supported recovery is the configured child-session retention or
+an authorized storage cleanup after verifying the session is not live; see
+[Session storage operations](/building/deployment/session-storage-operations.md).
+The server retains team declarations and queued messages so a caller can retry
+`RunTeam`, but that retry does not guarantee that a leftover snapshot has already
+been removed.
 
 ### The `Converse` flow
 

@@ -629,7 +629,7 @@ func TestSessionTitleGeneration_Scenario2_AutomaticWorkIsOutsideChatRun(t *testi
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	usageBefore := sess.Usage
+	usageBefore := sess.UsageFor(session.UsageKindMain)
 	messagesBefore := append([]session.Message(nil), sess.Conversation.Messages...)
 
 	svc.submitTitleGeneration(sess.ID)
@@ -645,8 +645,8 @@ func TestSessionTitleGeneration_Scenario2_AutomaticWorkIsOutsideChatRun(t *testi
 			t.Fatalf("Load: %v", loadErr)
 		}
 		if loaded.TitleGeneration == session.TitleGenerationGenerated {
-			if loaded.Usage != usageBefore {
-				t.Fatalf("main usage changed: got %#v, want %#v", loaded.Usage, usageBefore)
+			if got := loaded.UsageFor(session.UsageKindMain); got != usageBefore {
+				t.Fatalf("main usage changed: got %#v, want %#v", loaded.UsageFor(session.UsageKindMain), usageBefore)
 			}
 			if len(loaded.Conversation.Messages) != len(messagesBefore) {
 				t.Fatalf("automatic title generation added conversation messages: %#v", loaded.Conversation.Messages)

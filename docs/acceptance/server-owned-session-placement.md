@@ -72,10 +72,11 @@ returns a complete environment whose identity and bound runner share its namespa
 Missing resolver/provider, authorization drift, revision mismatch, nil workspace, or
 identity mismatch is a failed precondition with no fallback.
   - verify: `TestInvariant_persisted_placement_reattaches_exactly`
-- AC2.3: Zero refs, duplicate legacy `Workspace` state, and otherwise invalid snapshots are
-rejected; there is no lazy stamping, migration sweep, workspace inference, adoption, or
-alternate authority path.
-  - verify: `TestADR_0291_LegacyDuplicatePlacementStateIsUnsupported`
+- AC2.3: Zero refs and otherwise invalid canonical snapshot state are rejected; unknown
+snapshot fields are ignored by standard JSON decoding and cannot override the canonical
+`EnvironmentRef`. There is no lazy stamping, migration sweep, workspace inference, adoption,
+or alternate authority path.
+  - verify: `TestADR_0291_UnknownPlacementFieldsAreIgnored`
 - AC2.4: Public projections, events, client-visible logs, and errors expose only bounded
 display metadata and never an exact private ref, physical path, or secret backend locator.
 Trusted operator diagnostics may retain physical roots.

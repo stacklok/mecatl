@@ -16,7 +16,7 @@ import (
 // pathescape_scenario5b_test.go pins AC5.1b/AC5.1c
 // (docs/acceptance/path-escape-posture.md Scenario 5): the base-SHARING
 // (nil-forker) read-only Subagent child — wired whenever Shell is disabled
-// (--no-bash / an empty shell / the issue-#40 untrusted-workspace gate nils the
+// (--no-shell / an empty shell / the issue-#40 untrusted-workspace gate nils the
 // sandboxed runner) — must NOT inherit the main session's relaxed workspace.
 // Before the fix the child ran against the parent's escapeWorkspace verbatim
 // (forkChildEnvironment returns the parent ws unchanged for a nil forker), so a
@@ -31,14 +31,14 @@ import (
 // out-of-root Read errors (osfs ErrPathEscape), and a writable direct-write
 // child's out-of-root Write likewise never lands. Runs at both relaxed
 // postures (yolo and auto), each with both shell-less triggers (an explicit
-// --no-bash and the untrusted-workspace gate).
+// --no-shell and the untrusted-workspace gate).
 func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX path fixtures")
 	}
 	triggers := map[string]func(cfg *Config){
-		"no-bash":   func(cfg *Config) { cfg.NoShell = true },
+		"no-shell":  func(cfg *Config) { cfg.NoShell = true },
 		"untrusted": func(cfg *Config) { cfg.TrustProject = false },
 	}
 	for _, posture := range []Posture{PostureYolo, PostureAuto} {

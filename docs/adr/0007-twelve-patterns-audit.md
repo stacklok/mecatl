@@ -14,7 +14,7 @@ Prioritize five work packages to close the gaps: fire the three missing hook pha
 
 ## Consequences
 
-All five work packages shipped; all gaps in the audit are now closed. The audit is superseded as a live status tracker — it is preserved here as the rationale record for why each seam exists in its current form. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
+All five work packages shipped; all gaps in the audit are now closed. The audit is superseded as a live status tracker — it is preserved here as the rationale record for why each seam exists in its current form. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 
@@ -597,4 +597,4 @@ be serialized; the non-loop work of every package can proceed concurrently.
 
 ---
 
-*Part of the [design docs](../design/README.md). Related: [Production Readiness — status & roadmap](../design/PRODUCTION-READINESS.md), [System-Prompt Research & Enhancement (issue #19)](0024-system-prompt-research.md).*
+*Part of the [design docs](../design/README.md). Related: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md), [System-Prompt Research & Enhancement (issue #19)](0024-system-prompt-research.md).*

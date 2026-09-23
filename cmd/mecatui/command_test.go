@@ -606,7 +606,7 @@ func TestRejectEmbeddedOnlyFlagsInConnect(t *testing.T) {
 		"no-prompt-cache", "anthropic-cache-ttl",
 		"memory-dir", "no-memory", "store-dir", "no-store",
 		"soul-file", "no-soul", "approve-soul", "soul-strict",
-		"user-model-dir", "no-user-model", "user-model-review", "user-model-review-interval",
+		"user-model-dir", "no-user-model", "learning-admission-interval",
 		"commands-dir", "no-commands", "skills-dir", "no-skills",
 		"perf", "perf-addr", "perf-goroutine-warn-threshold", "perf-mcp",
 		"reasoning-effort", "quiet",
@@ -664,7 +664,7 @@ func TestSharedFlagsValidInBothModes(t *testing.T) {
 func flagValueForTest(name string) string {
 	switch name {
 	case "mock", "no-shell", "trust-project", "yolo", "no-memory", "no-store",
-		"no-soul", "approve-soul", "soul-strict", "no-user-model", "user-model-review",
+		"no-soul", "approve-soul", "soul-strict", "no-user-model",
 		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure", "anonymous",
 		"no-alt-screen", "inline", "no-mouse", "no-banner", "list-themes",
 		"subagent-model-router", "help-all", "quiet", "no-prompt-cache":
@@ -698,7 +698,7 @@ func flagValueForTest(name string) string {
 		return "k=v"
 	case "llm-per-attempt-timeout", "llm-stream-idle-timeout":
 		return "30s"
-	case "perf-goroutine-warn-threshold", "user-model-review-interval":
+	case "perf-goroutine-warn-threshold", "learning-admission-interval":
 		return "1"
 	case "toolhive-llm":
 		return "true"

@@ -288,9 +288,43 @@ Provider credentials are read from `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
 use an owner-only `auth.yaml` file. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).
 
+An active `models.router.backend: jev` reads `TYPESAFE_API_KEY` from the process
+environment. This router credential has no `auth.yaml` or command-line form. It
+is inert unless an operator taxonomy selects the Jev backend.
+
 The experimental `openai-codex` provider uses a manually supplied ChatGPT Codex
 token and has no login or refresh flow. See the same credential guide for its
 schema and lifecycle.
+
+#### Context discovery recovery
+
+For a provider that supports discovery, the first session prompt starts or joins
+listing when the model has no known context window. A failed or empty listing returns
+`context_window_unavailable` (HTTP 503 or gRPC `Unavailable`) without recording the
+prompt. Native authenticated providers list on demand; starting the daemon does
+not authenticate to their model-list endpoint. ToolHive and required Codex default
+selection retain their bounded startup probes.
+
+Restore the configured provider's reachability and credentials, then retry after
+the ten-second per-provider cooldown. Each ordinary discovery attempt and admission
+wait is bounded to ten seconds. Client cancellation ends only that client's wait;
+shutdown cancels and joins discovery before closing its credential resources.
+ListModels requests can also refresh providers after cooldown, but opening the
+picker is not a prerequisite for retry.
+
+If the provider cannot supply metadata, configure a verified window under the exact
+provider/model key in operator-global `models.context_windows`, then restart
+`mecated` to load the settings. The deployment-wide `--context-window-override`
+takes precedence over that map. Use the provider's actual limit rather than a guessed
+value to bypass rejection; see [Context windows](/features/context-windows.md) for
+configuration and precedence. Discovery metadata is process-local and reacquired
+after restart; previously successful metadata can remain usable until then even
+after a listing failure. It does not establish current inference authorization.
+
+This gate covers Service session entry, including failed-step retry and restored
+approval resumption. Direct child, utility, and team engine entry can still use the
+128000 defensive fallback for unknown models. For rejected text and attachment
+recovery in `mecatui`, see [model context troubleshooting](/features/choose-models.md#model-context-metadata-is-unavailable).
 
 #### Offline mock providers (no credentials)
 
@@ -334,8 +368,10 @@ not selected. Disable detection with `--toolhive-llm=false` on shared hosts.
   process.
 - `proxy` requires a running local proxy and supports self-signed gateways.
 
-Run `thv llm setup` before using direct mode; `mecated` does not open a browser
-when credentials are missing. Direct mode does not honor `tls_skip_verify`.
+Run `thv llm setup` before using direct mode. `mecated` reads ToolHive's
+encrypted credentials, including THVSEC v1 files written by ToolHive v0.50.0.
+It does not open a browser when credentials are missing. Direct mode does not
+honor `tls_skip_verify`.
 
 |Flag|Default|Purpose|
 |-|-|-|
@@ -378,6 +414,9 @@ full rule engine. Posture is read from the operator-global `settings.yaml`
 The rule list and cost knobs live in the operator-global `settings.yaml`
 (`guardrails:` subtree). A project-tier `guardrails:` block is ignored with a
 WARN because a checked-in file cannot weaken an operator security check.
+Checker outage is fail-closed by default; set `onCheckerDown: warn` only when
+continue-with-warning is the intended deployment policy. The owner-authorized
+coverage and transient detail APIs are gRPC-only; no HTTP paths are implied.
 
 ### MCP
 
@@ -450,9 +489,11 @@ Enable JSONL persistence by pointing `--store-dir` at a directory:
 mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
-The store writes snapshots, tool-call audit, and events beneath `sid-v1`.
-In-flight sessions recover from their snapshot. Older histories migrate on the
-next write. Files are plaintext and owner-only; do not edit or share them. See
+The store writes current snapshots, tool-call audit, events, inventory, and
+lineage beneath `sid-v1`. Files at the addressed current paths must use the
+current format; malformed or incompatible content fails validation without
+being overwritten. Distinct root-level artifacts are not listed or loaded.
+Files are plaintext and owner-only; do not edit or share them. See
 [Session store](/building/extension-points/session-store.md) for the layout and
 durability guarantees.
 
@@ -468,11 +509,18 @@ When configured, its Redis-backed store has no PVC requirement.
 Configure retention in the operator `settings.yaml`. Main-session deletion is
 off by default and requires `acknowledge_main_deletion: true` when enabled.
 Follow [Operate local session storage](session-storage-operations.md) for the
-schema, service definitions, backups, migration, and restore.
+schema, service definitions, backups, cleanup, and restore.
 
 `--session-store-url` replaces the local store with a gRPC driver and cannot be
-combined with `--store-dir`. Current remote drivers do not support OIDC caller
-ownership; use local JSONL or `mecak8s` for multi-user deployments.
+combined with `--store-dir`. Session and memory drivers must negotiate Mecatl's
+current contract at startup; old or partially implemented peers are rejected.
+Optional session operations such as listing, metadata paging, deletion, lineage,
+atomic create, and activity projection remain capability-gated. Remote driver
+operators own their backing namespace and upgrade policy: Mecatl does not scan,
+adopt, migrate, or reject unrelated old driver artifacts. Malformed data returned
+from the selected current namespace fails closed. Current remote drivers do not
+support OIDC caller ownership; use local JSONL or `mecak8s` for multi-user
+deployments.
 
 `--learning-store-url` selects a trusted single-tenant driver for distributed
 learning. Startup rejects partial driver support and deployments with OIDC

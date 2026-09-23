@@ -97,5 +97,5 @@ the change is confined to `cmd/mecatui` (no engine-port stability review, no
   "reconnecting TUI replays missed deliveries" note).
 - [ADR 0056 — MCP client reconnect](./0056-mcp-client-reconnect.md) (the same
   client-owns-the-reconnect boundary, applied to the MCP transport).
-- `docs/design/IMPLEMENTATION-NOTES.md` — the live-feed reconnect mechanics.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the live-feed reconnect mechanics.
 - The lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

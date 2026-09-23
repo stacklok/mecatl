@@ -36,8 +36,8 @@ and emits a test stub.
 Name the test after the rule it defends. The first two patterns are what
 `ac-trace` gates against:
 
-- `TestInvariant_<id>` — an invariant from `AGENTS.md` ("Things That Will
-  Bite You") or `docs/design/IMPLEMENTATION-NOTES.md`, id kebab → snake.
+- `TestInvariant_<id>` — an invariant in the owning architecture topic or
+  `AGENTS.md`, id kebab → snake.
   Example: `TestInvariant_deny_dominant_scope_resolution`.
 - `TestADR_NNNN_*` — a rule codified in `docs/adr/NNNN-*.md`. Example:
   `TestADR_0041_DirectWriteSubagent`.
@@ -138,18 +138,28 @@ step before you trust a green result:
 Every test carries at least one assertion that can fail on a real
 regression. `_ = err` is not verification.
 
-### Step 5: Verify with the Taskfile
+### Step 5: Verify the affected behavior
 
-```bash
-task test          # both modules + the engine-standalone hygiene proof
-cd engine && go test ./agent/ -run TestYourNewTest   # a single engine test
+Run the named regression tests, then the smallest affected package tests and their direct
+integration boundaries. Run each command from its owning module; for example:
+
+```sh
+(cd engine && go test ./agent/ -run TestYourNewTest)
+(cd engine && go test ./agent/)
+# For concurrency changes, also run the affected package with -race.
 ```
+
+Follow [verification ownership](../../../docs/development-process.md#verification-gates):
+implementation, retry, and repair workers report task-local commands and exit codes.
+The integration owner runs `task test`, `task lint`, and `task test:race` on the assembled
+candidate. When working without an orchestrator, the sole implementer owns those final
+checks. Do not repeat aggregate gates after each test edit or worker attempt.
 
 Then check whether the implementation contradicts its declared work classification or
 introduces an unplanned durable decision. Stop as contract drift rather than silently
 upgrading/downgrading it. Only Architectural work with a genuinely new or superseding durable
 decision adds an ADR and its `TestADR_NNNN_*` pin; a current invariant may instead belong in
-AGENTS.md / IMPLEMENTATION-NOTES.md with `TestInvariant_<id>`. Routine and Bounded rationale
+the owning architecture topic with `TestInvariant_<id>`. Routine and Bounded rationale
 stays in the issue, PR, plan, or ordinary test name. If you touched the engine's exported API:
 `task api:update` plus the `engine/CHANGELOG.md` note.
 

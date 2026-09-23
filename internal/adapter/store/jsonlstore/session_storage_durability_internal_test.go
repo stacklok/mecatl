@@ -132,12 +132,6 @@ func TestSessionStorageContinuity_Scenario1_AtomicCrashRecovery(t *testing.T) {
 			if err := st.Save(context.Background(), prior); err != nil {
 				t.Fatalf("seed Save: %v", err)
 			}
-			// A stale v1 record must never regain authority after v2 committed.
-			v1Path := st.resolver.canonicalPath(prior.ID, kindSnapshot)
-			if err := os.WriteFile(v1Path, []byte(`{"id":"atomic-crash","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/stale","created_at":"2023-11-14T22:13:20Z","messages":[],"title":"stale-v1"}`+"\n"), 0o600); err != nil {
-				t.Fatalf("write stale v1: %v", err)
-			}
-
 			ops := defaultSnapshotOps()
 			tc.inject(&ops)
 			failing, err := newStoreWithSnapshotOps(dir, ops)
@@ -161,9 +155,53 @@ func TestSessionStorageContinuity_Scenario1_AtomicCrashRecovery(t *testing.T) {
 				wantTitle = "new"
 			}
 			if got.Title != wantTitle {
-				t.Fatalf("reopened title = %q, want committed %q (never torn, absent, or stale v1)", got.Title, wantTitle)
+				t.Fatalf("reopened title = %q, want committed %q (never torn or absent)", got.Title, wantTitle)
 			}
 		})
+	}
+}
+
+// TestSessionStorageWriteFailurePreservesPriorOccupancy proves a failed write
+// does not replace a previously committed context meter with the attempted one.
+func TestSessionStorageWriteFailurePreservesPriorOccupancy(t *testing.T) {
+	dir := t.TempDir()
+	prior := newSnapshotSession("occupancy-atomicity", "prior")
+	priorOccupancy := session.ContextOccupancy{InputTokens: 1200, Estimated: true}
+	prior.RecordLatestContextOccupancy(priorOccupancy)
+
+	seed, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := seed.Save(t.Context(), prior); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+
+	ops := defaultSnapshotOps()
+	ops.write = func(f *os.File, data []byte) (int, error) {
+		n, _ := f.Write(data[:len(data)/2])
+		return n, syscall.EIO
+	}
+	failing, err := newStoreWithSnapshotOps(dir, ops)
+	if err != nil {
+		t.Fatalf("newStoreWithSnapshotOps: %v", err)
+	}
+	attempt := newSnapshotSession(prior.ID, "attempted")
+	attempt.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 8192})
+	if err := failing.Save(t.Context(), attempt); err == nil {
+		t.Fatal("Save with partial write = nil, want error")
+	}
+
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatalf("reopen New: %v", err)
+	}
+	got, err := reopened.Load(t.Context(), prior.ID)
+	if err != nil {
+		t.Fatalf("Load after failed Save: %v", err)
+	}
+	if occupancy, ok := got.LatestContextOccupancy(); !ok || occupancy != priorOccupancy {
+		t.Fatalf("occupancy after failed Save = (%+v, %v), want (%+v, true)", occupancy, ok, priorOccupancy)
 	}
 }
 
@@ -186,19 +224,14 @@ func TestStoreInitializationDurablyPublishesCreatedDirectories(t *testing.T) {
 	}
 	canonical := filepath.Join(root, canonicalDirName)
 	catalog := filepath.Join(canonical, inventoryCatalogDirName)
-	migrationRegistry := filepath.Join(canonical, migrationJobsDir)
 	wantPrefix := []string{
 		filepath.Join(physicalBase, "parent"), physicalBase,
 		root, filepath.Join(physicalBase, "parent"),
 		canonical, root,
 		catalog, canonical,
-		migrationRegistry, canonical,
 	}
 	if len(synced) < len(wantPrefix) || !reflect.DeepEqual(synced[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("initial directory syncs = %v, want prefix %v", synced, wantPrefix)
-	}
-	if info, err := os.Lstat(migrationRegistry); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf("migration registry = (%v, %v), want a real directory", info, err)
 	}
 }
 

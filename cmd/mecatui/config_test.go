@@ -362,16 +362,21 @@ func TestParseFlagsDefaults(t *testing.T) {
 	}
 }
 
-func TestParseFlagsDebugResolution(t *testing.T) {
-	debugEnvs := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
-	for _, key := range debugEnvs {
-		t.Setenv(key, "")
+func TestRemovedOperatorAliasesAreRejected(t *testing.T) {
+	for _, args := range [][]string{{"--no-bash"}, {"--user-model-review"}, {"--user-model-review-interval=2"}} {
+		if _, err := parseFlags(args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("parseFlags(%v) error = %v, want unknown-flag rejection", args, err)
+		}
 	}
+}
 
-	assertSurfaces := func(t *testing.T, cfg config, debug, mouse, steer, ask, keymap bool) {
+func TestParseFlagsDebugResolution(t *testing.T) {
+	t.Setenv("MECATUI_DEBUG", "")
+
+	assertSurfaces := func(t *testing.T, cfg config, want bool) {
 		t.Helper()
-		if cfg.debug != debug || cfg.debugMouse != mouse || cfg.debugSteer != steer || cfg.debugAsk != ask || cfg.debugKeymap != keymap {
-			t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t, want debug:%t mouse:%t steer:%t ask:%t keymap:%t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap, debug, mouse, steer, ask, keymap)
+		if cfg.debug != want || cfg.debugMouse != want || cfg.debugSteer != want || cfg.debugAsk != want || cfg.debugKeymap != want {
+			t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t, want all %t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap, want)
 		}
 	}
 
@@ -379,55 +384,40 @@ func TestParseFlagsDebugResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSurfaces(t, cfg, true, true, true, true, true)
+	assertSurfaces(t, cfg, true)
 
 	t.Setenv("MECATUI_DEBUG", "1")
 	cfg, err = parseFlags(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSurfaces(t, cfg, true, true, true, true, true)
+	assertSurfaces(t, cfg, true)
 
-	for _, key := range debugEnvs {
-		t.Setenv(key, "1")
-	}
 	cfg, err = parseFlags([]string{"--debug=false"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSurfaces(t, cfg, false, false, false, false, false)
+	assertSurfaces(t, cfg, false)
 }
 
-func TestExplicitDebugFalseDisablesEveryEnvAlias(t *testing.T) {
-	aliases := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
-	cases := make([][]string, 0, len(aliases)+1)
-	for _, alias := range aliases {
-		cases = append(cases, []string{alias})
-	}
-	cases = append(cases, aliases)
-	for _, enabled := range cases {
-		t.Run(strings.Join(enabled, "+"), func(t *testing.T) {
-			for _, alias := range aliases {
-				t.Setenv(alias, "")
-			}
-			for _, alias := range enabled {
-				t.Setenv(alias, "1")
-			}
-			cfg, err := parseFlags([]string{"--debug=false"})
+func TestLegacyDebugEnvironmentAliasesAreIgnored(t *testing.T) {
+	t.Setenv("MECATUI_DEBUG", "")
+	for _, key := range []string{"MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "1")
+			cfg, err := parseFlags(nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if cfg.debug || cfg.debugMouse || cfg.debugSteer || cfg.debugAsk || cfg.debugKeymap {
-				t.Fatalf("--debug=false did not disable aliases %v: debug:%t mouse:%t steer:%t ask:%t keymap:%t", enabled, cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap)
+				t.Fatalf("%s unexpectedly enabled a debug surface", key)
 			}
 		})
 	}
 }
 
 func TestCanonicalDebugWiresEveryRuntimeSurface(t *testing.T) {
-	for _, key := range []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"} {
-		t.Setenv(key, "")
-	}
+	t.Setenv("MECATUI_DEBUG", "")
 	cfg, err := parseFlags([]string{"--debug"})
 	if err != nil {
 		t.Fatal(err)
@@ -436,36 +426,6 @@ func TestCanonicalDebugWiresEveryRuntimeSurface(t *testing.T) {
 	applyDebugConfig(cfg, &deps)
 	if !deps.Debug || !deps.DebugMouse || !deps.DebugSteer || !deps.DebugAsk || !cfg.debugKeymap {
 		t.Fatalf("canonical debug wiring = Debug:%t mouse:%t steer:%t ask:%t keymap:%t", deps.Debug, deps.DebugMouse, deps.DebugSteer, deps.DebugAsk, cfg.debugKeymap)
-	}
-}
-
-func TestParseFlagsLegacyDebugAliasesStayNarrow(t *testing.T) {
-	debugEnvs := []string{"MECATUI_DEBUG", "MECATUI_DEBUG_MOUSE", "MECATUI_DEBUG_STEER", "MECATUI_DEBUG_ASK", "MECATUI_DEBUG_KEYMAP"}
-	for _, key := range debugEnvs {
-		t.Setenv(key, "")
-	}
-	for _, tc := range []struct {
-		env                       string
-		mouse, steer, ask, keymap bool
-	}{
-		{env: "MECATUI_DEBUG_MOUSE", mouse: true},
-		{env: "MECATUI_DEBUG_STEER", steer: true},
-		{env: "MECATUI_DEBUG_ASK", ask: true},
-		{env: "MECATUI_DEBUG_KEYMAP", keymap: true},
-	} {
-		t.Run(tc.env, func(t *testing.T) {
-			for _, key := range debugEnvs {
-				t.Setenv(key, "")
-			}
-			t.Setenv(tc.env, "1")
-			cfg, err := parseFlags(nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if cfg.debug || cfg.debugMouse != tc.mouse || cfg.debugSteer != tc.steer || cfg.debugAsk != tc.ask || cfg.debugKeymap != tc.keymap {
-				t.Fatalf("debug surfaces = debug:%t mouse:%t steer:%t ask:%t keymap:%t", cfg.debug, cfg.debugMouse, cfg.debugSteer, cfg.debugAsk, cfg.debugKeymap)
-			}
-		})
 	}
 }
 

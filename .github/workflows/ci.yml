@@ -70,14 +70,19 @@ jobs:
       # as the macOS flags — default true (RUN) and flip to false only when the
       # change provably cannot affect that family. go_relevant gates the Go
       # build/test matrix; sdk_relevant gates the pure-TypeScript SDK unit job;
-      # site_relevant gates the Docusaurus site build.
+      # site_relevant gates the Docusaurus site build; studio_relevant gates the
+      # Mecatl Studio (apps/) job.
       go_relevant: ${{ steps.classify.outputs.go_relevant }}
       sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}
       site_relevant: ${{ steps.classify.outputs.site_relevant }}
+      studio_relevant: ${{ steps.classify.outputs.studio_relevant }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Fetch bounded ancestry for merge-base..head PR comparisons. If the
+          # merge base is beyond that depth, classification fails closed.
+          fetch-depth: 100
 
       - name: Classify changed paths
         id: classify
@@ -99,6 +104,7 @@ jobs:
           go_relevant=true
           sdk_relevant=true
           site_relevant=true
+          studio_relevant=true
           case "$EVENT_NAME" in
             pull_request)
               base="$PR_BASE_SHA"
@@ -116,35 +122,44 @@ jobs:
           if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]] \
             && [[ "$base" != 0000000000000000000000000000000000000000 ]] \
             && [[ "$head" != 0000000000000000000000000000000000000000 ]] \
-            && git fetch --no-tags origin "$base" "$head" \
+            && git fetch --no-tags --depth=100 origin "$base" "$head" \
             && git cat-file -e "$base^{commit}" \
             && git cat-file -e "$head^{commit}"; then
-            trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"
-            if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then
-              result="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$trusted_classifier")" || result=false
-              if [[ "$result" == true ]]; then
-                docs_only=true
+            compare_base="$base"
+            if [[ "$EVENT_NAME" == pull_request ]]; then
+              compare_base="$(git merge-base "$base" "$head")" || compare_base=""
+            fi
+            if [[ -n "$compare_base" ]]; then
+              trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"
+              if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then
+                result="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$trusted_classifier")" || result=false
+                if [[ "$result" == true ]]; then
+                  docs_only=true
+                fi
               fi
-            fi
-            # Same trusted-from-base-ref discipline for the macOS relevance flags:
-            # a PR cannot edit the classifier to skip a job it should run, because
-            # the base version is used until it merges. A missing script (the PR
-            # that introduces it) leaves both flags at their fail-closed RUN value.
-            macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"
-            if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then
-              macos_go="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" go)" || macos_go=true
-              macos_sdk="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
-            fi
-            # Same trusted-from-base-ref discipline for the Linux job-family flags:
-            # a PR cannot edit the classifier to skip a job it should run, because
-            # the base version is used until it merges. A missing script (the PR
-            # that introduces it) leaves all three flags at their fail-closed RUN
-            # value.
-            relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"
-            if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then
-              go_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true
-              sdk_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true
-              site_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
+              # Same trusted-from-base-ref discipline for the macOS relevance flags:
+              # a PR cannot edit the classifier to skip a job it should run, because
+              # the base version is used until it merges. A missing script (the PR
+              # that introduces it) leaves both flags at their fail-closed RUN value.
+              macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"
+              if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then
+                macos_go="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$macos_classifier" go)" || macos_go=true
+                macos_sdk="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
+              fi
+              # Same trusted-from-base-ref discipline for the Linux job-family flags:
+              # a PR cannot edit the classifier to skip a job it should run, because
+              # the base version is used until it merges. A missing script (the PR
+              # that introduces it) leaves all four flags at their fail-closed RUN
+              # value. (A base-ref classifier that predates the `studio` category
+              # treats it as an unknown category and prints true — RUN — so the PR
+              # that introduces the category also fails closed.)
+              relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"
+              if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then
+                go_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true
+                sdk_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true
+                site_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
+                studio_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true
+              fi
             fi
           fi
           # One redirect group for all outputs (shellcheck SC2129).
@@ -155,6 +170,7 @@ jobs:
             echo "go_relevant=$go_relevant"
             echo "sdk_relevant=$sdk_relevant"
             echo "site_relevant=$site_relevant"
+            echo "studio_relevant=$studio_relevant"
           } >> "$GITHUB_OUTPUT"
 
       # Validate the path classifiers HERE, in the always-run changes job — never
@@ -506,6 +522,92 @@ jobs:
       - name: Test Slack bot example (offline, spawns mecated --mock)
         run: task slack-bot:test
 
+  studio:
+    name: Mecatl Studio (apps/)
+    needs: changes
+    # Studio is a self-contained pnpm workspace on the PUBLISHED
+    # @stacklok-oss/mecatl-sdk (ADR 0351); its offline gates are pure Node. The
+    # integration suite at the end builds bin/mecated and drives the BFF against
+    # it, so a daemon change can break Studio too: the job runs when either its
+    # own studio_relevant flag (apps/ + the CI-control files) or go_relevant is
+    # set, never on sdk relevance alone. The image build is push: false — the
+    # same apps/Dockerfile the `publish-studio` release job pushes, here only
+    # proven to build.
+    if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Install the packageManager pin explicitly (read from apps/package.json —
+      # pnpm 12.x, deliberately NOT the SDK's pnpm 11 pin: the workspace is
+      # self-contained). Do not rely on corepack being present or enabled on the
+      # runner.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: apps/package.json
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: apps/.node-version
+          cache: pnpm
+          cache-dependency-path: apps/pnpm-lock.yaml
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install Studio dependencies (frozen)
+        run: task studio:install
+
+      - name: Lint and format-check Studio (Biome)
+        run: task studio:lint
+
+      - name: Type-check Studio (contracts, server, web)
+        run: task studio:typecheck
+
+      - name: Test Studio (Vitest, offline)
+        run: task studio:test
+
+      - name: Install Chromium for Studio browser journeys
+        run: task studio:browser:install
+
+      - name: Test Studio browser journeys (Playwright, offline)
+        run: task studio:browser
+
+      - name: Verify committed contracts artifacts are fresh
+        run: task studio:generated-check
+
+      # The integration suite boots the BFF over the REAL SDK against a spawned
+      # `mecated --mock`, so it needs the Go toolchain to build bin/mecated —
+      # the same shape as the Slack bot example job. The task requires the
+      # binary it just built, so a build that produced none fails here.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - name: Integration-test Studio against a spawned mecated --mock
+        run: task studio:test:integration
+
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+
+      # Build-only proof of apps/Dockerfile (the multi-stage image the release job
+      # publishes). amd64 only here — the release job builds both platforms.
+      - name: Build Studio image (no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: apps
+          file: apps/Dockerfile
+          platforms: linux/amd64
+          push: false
+
   build:
     name: Build
     needs: changes
@@ -655,12 +757,14 @@ jobs:
     needs: changes
     # macOS is ~10x a Linux minute. Native Go tests, so gate on Go relevance
     # (macos_go — skips docs/site/SDK-frontend-only changes) and on drafts.
+    # Restoring the macOS Go cache can take over 10 minutes before the native
+    # tests and FreeBSD cross-build begin.
     if: >-
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-14
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -677,8 +781,9 @@ jobs:
           go test ./internal/adapter/managedtemp -count=1
           go test ./internal/adapter/osfs -run '^TestADR_0281_.*' -count=1
           go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+          # The FreeBSD check covers the OS adapter. The app is released for
+          # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
-          GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/app-freebsd.test" ./internal/app
 
   test-race-root-a:
     name: Test (race root-a)
@@ -1404,7 +1509,7 @@ jobs:
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
 
   docs:
-    name: Docs (matlatl)
+    name: Doc validation
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -1430,6 +1535,34 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
+            Taskfile.yml
+
+      # ac-trace resolves TypeScript proof titles through the SDK compiler, so run
+      # it here alongside the existing always-on documentation gate. This avoids a
+      # separate runner while still covering docs-only acceptance-plan changes.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.x'
+          # ac-trace installs the SDK and Studio dependency closures with pnpm.
+          cache: pnpm
+          cache-dependency-path: |
+            sdk/typescript/pnpm-lock.yaml
+            apps/pnpm-lock.yaml
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Acceptance-proof traceability gate
+        run: task ac-trace-strict
+
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: '1.72.0'
+          github_token: ${{ github.token }}
 
       # Documentation-only changes still run the repository's Go-backed structural
       # checks (ADR numbering/shape, citations, lifecycle, and reading-map checks).
@@ -1463,6 +1596,23 @@ jobs:
             exit 1
           fi
 
+      # Regenerate into RUNNER_TEMP so the freshness check never modifies the
+      # checkout. The checked-in page is the exact output developers get from
+      # `task docs:grpc-ref`.
+      - name: gRPC schema reference is up to date
+        shell: bash
+        run: |
+          set -euo pipefail
+          buf generate --template buf.gen.grpc-docs.yaml \
+            --output "$RUNNER_TEMP/grpc-reference" \
+            --path contracts/proto/mecatl/v1/harness.proto \
+            --path contracts/proto/mecatl/v1/schedule.proto
+          generated="$RUNNER_TEMP/grpc-reference/user-docs/reference/grpc-schema.md"
+          if ! diff -u user-docs/reference/grpc-schema.md "$generated"; then
+            echo "::error file=user-docs/reference/grpc-schema.md::gRPC schema reference is out of date — run 'task docs:grpc-ref' and commit the result."
+            exit 1
+          fi
+
       # matlatl's composite action builds the gate from ITS OWN checkout, so
       # there is no binary step and no extra credentials here — only org Actions
       # access to stacklok/matlatl (granted org-wide). strict also fails on
@@ -1471,7 +1621,7 @@ jobs:
       # records the tag. findings.json + junit.xml land in matlatl-out/.
       - name: matlatl docs gate (strict)
         id: matlatl
-        uses: stacklok/matlatl@166a04c0fec85155f5be150eab34e3451672b033 # v0.0.8
+        uses: stacklok/matlatl@0b3087139018a4aa49ec6889ede1c17263e5d93c # v0.0.11
         with:
           strict: "true"
 
@@ -1484,11 +1634,10 @@ jobs:
     if: needs.changes.outputs.site_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # `user-docs/` (the mecatl.dev site content) is excluded from the matlatl
-    # corpus above — see .matlatlignore — because its Docusaurus content-root
-    # links aren't matlatl-relative. Without this job nothing on the PR path
-    # checks it at all. Vercel builds previews and production after the change
-    # reaches GitHub, so this required job remains the pre-merge content gate.
+    # matlatl checks user-docs links and graph structure; this complementary
+    # gate verifies Docusaurus rendering and site-specific link resolution.
+    # Vercel builds previews and production after the change reaches GitHub,
+    # so this required job remains the pre-merge site build gate.
     # The SDK reference check fails when its committed declaration-based
     # pages drift. `npm run build` is the SAME command the deploy workflow uses,
     # and Docusaurus's own `onBrokenLinks: 'throw'` (docusaurus.config.ts) fails
@@ -1514,11 +1663,19 @@ jobs:
       - name: Verify generated SDK reference is fresh
         run: task sdk:docs:check
 
+      - name: Install site dependencies
+        working-directory: website
+        run: npm ci
+
+      # Docusaurus builds through its own bundler and never runs tsc, so a
+      # TypeScript upgrade that breaks the site config only surfaces here.
+      - name: Typecheck site
+        working-directory: website
+        run: npm run typecheck
+
       - name: Build site
         working-directory: website
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
   user-docs-gate:
     name: User docs (gate)

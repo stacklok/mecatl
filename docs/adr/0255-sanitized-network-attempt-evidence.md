@@ -31,5 +31,5 @@ Adding a new direct event transport requires applying the debugger-only visibili
 - [ADR 0254](./0254-session-debugger-admin-transport.md)
 - [Cloud-native arc](./0027-cloud-native.md)
 - [Architecture overview](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
-- [Production readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

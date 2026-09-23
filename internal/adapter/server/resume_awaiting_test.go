@@ -158,9 +158,11 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 		}
 		return nil
 	}
-	svc2 := newAskingServiceWithAwait(t, store2, ps2, &ran2, mockllm.New(mockllm.TextTurn("done after approval")), true, awaitWindow)
+	continuationProvider := &providerContextCapture{provider: mockllm.New(mockllm.TextTurn("done after approval"))}
+	svc2 := newAskingServiceWithAwait(t, store2, ps2, &ran2, continuationProvider, true, awaitWindow)
+	forged := port.WithSessionID(port.WithRootSessionID(context.Background(), "forged-root"), "forged-active")
 
-	if run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, ""); !errors.Is(err, admissionErr) || run != nil {
+	if run, err := svc2.ApproveRun(forged, sess.ID, askID, session.VerdictAllowOnce, ""); !errors.Is(err, admissionErr) || run != nil {
 		t.Fatalf("ApproveRun admission failure = run %v, err %v; want nil, %v", run, err, admissionErr)
 	}
 	if !callbackSawPending.Load() || ran2.Load() != 0 {
@@ -175,7 +177,7 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 		t.Fatalf("failed admission consumed pending approval: state=%s pending=%+v present=%t", parked.State, pending, ok)
 	}
 	rejectAdmission = false
-	run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
+	run, err := svc2.ApproveRun(forged, sess.ID, askID, session.VerdictAllowOnce, "")
 	if err != nil {
 		t.Fatalf("ApproveRun after restart: %v", err)
 	}
@@ -193,6 +195,7 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 		}
 	}
 	svc2.FinishRun(sess.ID, run)
+	continuationProvider.assertLast(t, sess.ID)
 
 	if ran2.Load() != 1 {
 		t.Fatalf("pending Write executed %d time(s) on resume, want EXACTLY 1", ran2.Load())

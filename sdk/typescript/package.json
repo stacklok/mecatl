@@ -1,6 +1,6 @@
 {
   "name": "@stacklok-oss/mecatl-sdk",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for the mecatl agentic coding harness",
   "license": "Apache-2.0",
   "repository": {
@@ -62,15 +62,15 @@
     "prepack": "pnpm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
-    "@microsoft/api-extractor": "7.59.0",
+    "@biomejs/biome": "2.5.13",
+    "@microsoft/api-extractor": "7.59.1",
     "@playwright/test": "1.63.0",
     "typescript": "6.0.3",
     "typescript-5.7": "npm:typescript@5.7.3",
     "vitest": "4.1.11"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "2.14.1",
+    "@bufbuild/protobuf": "2.15.0",
     "@connectrpc/connect": "2.2.0",
     "@connectrpc/connect-node": "2.2.0",
     "@types/node": "24.13.3",

@@ -48,4 +48,4 @@ consumers.
 
 - [Agent loop](../architecture/agent-loop.md)
 - [Memory](../architecture/memory.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

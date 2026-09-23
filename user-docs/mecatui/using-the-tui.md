@@ -28,7 +28,8 @@ retains `~/` when inserted, supports leading `./` and `../` components after `~/
 also works when the client workspace is empty. With no client workspace, non-home
 completion has no implicit process-cwd fallback. Completion lists files only, prunes
 hidden files and directories, and is bounded; use `↑`/`↓` then `tab` or `enter` to
-select a result.
+select a result. While file completion is visible, `enter` completes the selected
+path and `esc` dismisses the list before their ordinary idle or running action.
 
 On send, mecatui reads a mentioned regular file and uploads its bytes into the
 conversation: text files are inlined and supported media becomes an attachment. The
@@ -99,6 +100,25 @@ offered, or deny it. Long arguments can be scrolled; `ctrl+t` opens a
 full-screen view when needed. Mouse buttons activate the same choices as their
 displayed keys.
 
+## Get editor notifications
+
+Run `mecatui` in a terminal provided by a supported editor and the editor can
+tell you when the agent needs an approval and when a run ends. You configure
+nothing in `mecatui` for this.
+
+`mecatui` reports four lifecycle points to the editor's agent hook: the start of
+a turn, an approval request from the main session, the operator's answer to that
+request, and the run's terminal state. The answer returns the editor's status to
+working immediately instead of leaving the approval notification active until
+the run ends. The editor decides how to present these reports. Approval requests
+raised by a subagent stay out of the report, so delegated work does not compete
+with the main session for your attention.
+
+Superset is the supported editor. The reports reach it only once Superset
+registers `mecatl` as a hook-emitting agent. Until that registration ships,
+`mecatui` sends nothing and no editor notifications appear. In any other
+terminal, `mecatui` skips the report and its behavior is unchanged.
+
 ## Complete browser authorization
 
 When workspace-service enrollment or an MCP tool opens a browser, complete the
@@ -121,6 +141,7 @@ commands supported by the connected server.
 |Task|Open in `mecatui`|More information|
 |-|-|-|
 |Browse MCP servers, resources, and prompts|`/mcp`; press `f8` to open MCP prompts directly|[MCP client](/building/what-you-get/mcp-client.md)|
+|Refresh direct MCP tools or broker workspace services|`/mcp-refresh`|[Use learning and memory commands](./commands-and-memory.md#workspace-service-enrollment)|
 |Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
 |Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
 |Inspect the user model|`/usermodel`|[Memory](/building/what-you-get/memory.md)|
@@ -155,7 +176,7 @@ for the available modes and their behavior.
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
-|`/posture`|Shows the server's operator posture and active defenses. See [Permissions and posture](/features/permissions-and-posture.md).|
+|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable or older-server status is unknown. See [Permissions and posture](/features/permissions-and-posture.md).|
 
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait

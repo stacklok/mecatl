@@ -163,7 +163,7 @@ type candidate struct {
 // for unattended consolidation. Implementations compare both bound versions and
 // tombstone the source in one transaction.
 type duplicateRetirementStore interface {
-	tool.MemoryConvergenceStore
+	tool.MemoryStore
 	RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error)
 }
 
@@ -407,25 +407,21 @@ func (c *Consolidator) selectEntries(ctx context.Context, entries []tool.MemoryE
 		c.cursor = (start + advance) % len(entries)
 	}()
 
-	lifecycle, convergent := c.store.(tool.MemoryConvergenceStore)
 	for examined < len(entries) && len(selected) < c.cfg.MaxEntries {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, fmt.Errorf("dream: select memory: %w", err)
 		}
 		entry := entries[(start+examined)%len(entries)]
 		examined++
-		binding := candidate{entry: entry}
-		if convergent {
-			record, found, err := lifecycle.Inspect(ctx, entry.Key)
-			if err != nil {
-				return nil, nil, fmt.Errorf("dream: inspect candidate: %w", err)
-			}
-			if !found || record.Current.Status != tool.MemoryStatusActive {
-				continue
-			}
-			entry = tool.MemoryEntry{Key: record.Current.Key, Value: record.Current.Value, Description: record.Current.Description, UpdatedAt: record.Current.UpdatedAt}
-			binding = candidate{entry: entry, version: record.Current.Version}
+		record, found, err := c.store.Inspect(ctx, entry.Key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dream: inspect candidate: %w", err)
 		}
+		if !found || record.Current.Status != tool.MemoryStatusActive {
+			continue
+		}
+		entry = tool.MemoryEntry{Key: record.Current.Key, Value: record.Current.Value, Description: record.Current.Description, UpdatedAt: record.Current.UpdatedAt}
+		binding := candidate{entry: entry, version: record.Current.Version}
 		raw, err := json.Marshal(entryWireOf(entry))
 		if err != nil {
 			return nil, nil, errors.New("dream: encode candidate")

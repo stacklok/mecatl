@@ -13,6 +13,88 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Display-only latest context occupancy** — adds `session.ContextOccupancy` and
+  `Session.LatestContextOccupancy` / `Session.RecordLatestContextOccupancy` for
+  the optional non-zero context-meter numerator from a completed agent-loop turn.
+  It remains distinct from canonical `TokenUsage` and run budgets. Added (minor).
+
+- **Root-session run correlation context** — adds `port.WithRootSessionID` and
+  `port.RootSessionIDFromContext` so trusted engine composition can preserve one
+  causal session identity across nested runs without changing active session
+  identity. Added (minor).
+
+- **Plan continuation failure correlation** — adds
+  `session.EvPlanContinuationFailed` and
+  `session.PlanContinuationFailurePayload` for a session-scoped, content-safe
+  signal when an approved plan cannot start its server-owned proceed run while
+  the daemon still holds the session lease. Added (minor).
+
+- **Exact plan-ask resolution** — adds `agent.Run.ResolvePlanAsk` and
+  `agent.AskResolutionNotPlan`. The new method consumes only a root
+  plan-originated ask and reports ordinary asks without changing them.
+  `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
+  Added (minor).
+
+- **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
+  `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
+  snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).
+
+- **Backend-neutral router outcomes** — adds `agent.RouterMissTimeout`,
+  `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and
+  `RouterMissCapacityTimeout` to the engine-owned closed classifier-outcome taxonomy.
+  Added (minor).
+
+- **Authoritative negotiated session-store capabilities** — adds
+  `port.SessionCapabilitySupport` and the `SupportsSessionCreate`,
+  `SupportsSessionMetadataPaging`, and `SupportsSessionLineage` probes. Adapters
+  that retain optional interfaces for compatibility can now report negotiated
+  false capabilities without consumers selecting unusable operations. Added (minor).
+
+- **Idempotent team-supervisor teardown** — adds `agent.Supervisor.Close`, a concurrent-safe, repeatable lifecycle endpoint that cancels an active run and waits until enrolled members stop and their resources are released exactly once. Event callbacks drain independently: `Close` may be called from a callback, while `Run` still waits for every ordered callback before returning. Member factories and cleanup callbacks must not synchronously re-enter `Close`. `AddMember` after run start or close returns `agent.ErrSupervisorClosed`. Added (minor).
+
+- **Remote contextual-approval intent validation** — adds `agent.Run.ValidateRemoteApprovalIntent` so transport adapters can require an exact review/purpose acknowledgement before releasing a privately held tool result, without consuming the pending ask. Added (minor).
+
+- **Typed child-ask provenance and contextual permission review** — replaces the
+  `PermissionDecision`/`PendingAsk` configured/floored boolean pair with the closed
+  `governance.AskProvenance` value, including the built-in substitution-floor state.
+  Adds `agent.ReviewJobPermission`, `PermissionReviewPolicyProvider`, closed
+  `ReviewFailureCode` values, and `GuardrailReviewFailure`. The built-in worker Shell
+  floor can receive one enforcing permission-specific review without learning or
+  persisting authority. Changed (breaking, pre-v1 minor).
+
+- **Contextual review task provenance and plan receipts** — adds `session.UserPromptProvenance`, `session.Message.UserPromptProvenance`, `session.UserPromptPayload.Provenance`, `session.Session.RecordPrincipalPromptWithParts`, `session.Session.RecordHarnessPrompt`, `agent.Deps.ReviewTaskWindow`, `agent.Deps.PlanApprovals`, `agent.PlanApprovalReceipt`, and the optional `agent.PlanApprovalStore`. Hosts can preserve fail-closed principal provenance and bounded process-local, single-use plan approval evidence without conflating either with permission learning, result release, durable replay, or guardrail repeat grants. Added (minor).
+
+- **Atomic contextual approval resolution** — adds `agent.ApprovalResolution`,
+  `agent.ValidateApprovalResolution`, and `agent.Run.ResolveApproval` so hosts validate
+  the exact pending review purpose and submit its verdict under one registry lock. Changes
+  `Run.Approve` to return an actionable error and restricts it to ordinary/legacy action
+  approvals; result release requires the atomic operation. Stable
+  `ErrApprovalNotPending`, `ErrApprovalIntentMismatch`, `ErrApprovalUnsupported`, and
+  `ErrApprovalGrantIneligible` categories let hosts classify failures with `errors.Is`,
+  while `GuardrailReviewTerminalFailure` documents the fail-closed evidence-failure marker.
+  `ReviewEvidencePreparation`
+  also gains a trusted originating-session `Authorize` callback that evidence preparers
+  must consult before backend metadata or content reads. Changed (breaking, pre-v1 minor).
+
+- **Contextual guardrail foundation** — adds the consumer-local `agent.ToolReviewer`,
+  `ReviewEvidenceSource`, `ReviewEvidencePreparer`, explicit review policy/metadata/grant
+  extension interfaces, and `ReviewDetailSink`, with bounded request, result, evidence,
+  trajectory, preparation, and detail value types. `ReviewDetail.RootSessionID`
+  explicitly binds child detail to its delegation-root lifetime so external sinks do
+  not silently treat a child as a root. Adds `tool.BoundedWorkspaceReader` so
+  evidence-capable workspaces can reject oversized reads before allocation. Adds
+  session-owned machine projections for guardrail reviews and approval scopes, plus explicit
+  `session.ApprovalOrigin` on pending and durable approval records. Adds
+  `tool.LocalFileOperands` so only explicit built-in filesystem semantics can mint
+  local evidence/targets, and `tool.BoundedWorkspaceRangeReader` plus opaque
+  continuation metadata for version-consistent finite evidence paging. Added (minor).
+
+- **Explicit approval origin** — replaces `session.PendingAsk.HookOriginated`,
+  `PlanOriginated`, and the derived `AskOrigin` accessor/type with one serialized
+  `PendingAsk.Origin`. Missing or unrecognized origins now fail closed and cannot
+  execute, learn permission rules, arm hook waivers, or transition plan mode. Changed
+  (breaking, pre-v1 minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
@@ -21,6 +103,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   child policy/hook ask exactly once while leaving plan-originated asks pending
   for the dedicated plan-resolution choreography. `Run.Approve` remains the
   all-origin compatibility path. Added (minor).
+
+- **`session.Session.GrantToolAuthority`** — stable-unions bounded, control-free tool names into an idle or completed session's existing name authority without reopening it or changing unrelated aggregate state. Added (minor).
 
 - **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
 
@@ -64,14 +148,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `TitlePayload.Revision`: a durable, title-specific monotonic revision that
   advances only for effective title metadata mutations. Added (minor).
 - **Canonical token-usage buckets and title lifecycle projection** — adds
-  `session.UsageKind`/`TokenUsage` and `Session.TokenUsageSnapshot`, canonical
-  token usage kinds with opaque model attribution maps. Each total is normalized
-  to the sum of its model entries; legacy snapshots map unattributed usage to
-  `unknown`. The snapshot is an owned read view of the aggregate's private
-  canonical ledger. `Session.Usage` remains dual-written compatibility data.
-  `SessionTitle` is the source-free canonical title lifecycle projection; its
-  nested usage is removed. Added (minor); the retained wire title/provenance
-  fields are deprecated (pre-v1 breaking compatibility classification).
+  `session.UsageKind`/`TokenUsage`, `Session.TokenUsageSnapshot`, and
+  `Session.UsageFor`, with canonical token usage kinds and opaque model attribution
+  maps. Each total is normalized to the sum of its model entries. Current snapshots
+  persist only this canonical ledger. `SessionTitle` is the source-free canonical
+  title lifecycle projection; its nested usage is removed. Added (minor); the
+  removed compatibility projections are classified below.
 
 - **Reversible external-authorization claims** — `session.Session.RestoreAuthorizationClaim` compensates a claimed continuation that could not be registered, returning the aggregate to the exact durable `authorizing` state instead of abandoning unresolved tool calls in `running`. Added (minor).
 
@@ -234,6 +316,41 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
+
+- **Exact Team parent-call correlation** — Team-tool member relationships now
+  populate the existing `session.SessionRelationship.CallID`; validation permits
+  that optional value only with a valid parent lifetime. The exported
+  `session.NewTeamMember` signature and relationship shape are unchanged, and
+  historical relationships without a call ID remain loadable but uncorrelated.
+  Older engine binaries may reject newly populated Team-member relationships because
+  their validation forbade this existing field for that kind. Changed (breaking,
+  pre-v1 minor).
+
+- **Delegated-model router callback** — changes `agent.Deps.SubagentModelRouter`
+  from the callback tuple to `*agent.SubagentModelRouter`, preserving configured
+  classifier metadata on skipped decisions and candidate evidence on rejected
+  decisions. Changed (breaking, pre-v1 minor).
+
+- **Model-router deadline outcome** — `agent.RunModelRouter` now reports an observed
+  caller or operation deadline as `RouterMissTimeout` instead of conflating it with
+  `RouterMissCancelled`; cancellation remains `RouterMissCancelled`. Changed
+  (observable behavior, pre-v1 minor).
+
+- **Mandatory versioned memory lifecycle/CAS** — consolidates `tool.MemoryStore`
+  around `Remember`, `Inspect`, `Recall`, `List`, `Index`, `Search`, `Forget`, and
+  `Undo`. Every mutation now requires either an explicit absent-state expectation
+  or the exact opaque current version; the optional lifecycle/convergence
+  interfaces and unconditional mutation methods are removed. Changed/breaking
+  (pre-v1 minor).
+
+- **Canonical session accounting, retry metadata, and snapshot restore** — adds
+  `session.RetryMetadata` and `Session.UsageFor`, changes failure/retry-pending APIs
+  to pass that value object instead of positional tuples, and changes
+  `sessnap.RestoreState` to accept adapter-owned `sessnap.RestoreData`. Snapshot
+  decoding validates canonical fields, ignores unknown fields, and treats an omitted
+  empty token ledger as its zero value. Changed/breaking (pre-v1 minor).
+
 - **Go compatibility floor** - the engine module requires Go 1.27. The root,
   provider, and authentication modules use the same floor. Changed (breaking,
   pre-v1 minor).
@@ -335,6 +452,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
 
 ### Removed
+
+- **`port.RetryDisposition`, `port.StreamProgress`, and their constants** — removes
+  the temporary source-compatibility aliases. Providers and decorators use the
+  canonical `session.RetryDisposition` and `session.StreamProgress` vocabularies;
+  the classifier interfaces remain port-owned. Removed/breaking (pre-v1 minor).
+
+- **Legacy session usage/permanence projections** — removes exported
+  `Session.Usage`, `Event.Usage`, `ResultPayload.Permanent`,
+  `Session.RecordFailurePermanence`, `Session.FailurePermanence`, and
+  `port.PermanentError`. Canonical accounting is available through
+  `UsageFor`/`TokenUsageSnapshot`; terminal retry classification is carried only
+  by `RetryMetadata` and `port.RetryDispositionError`. Removed/breaking (pre-v1 minor).
 
 - **Subagent `max_tokens` tool argument** — removed the deprecated alias for
   `max_run_tokens` from the `Subagent` tool schema. Both named the SAME cumulative

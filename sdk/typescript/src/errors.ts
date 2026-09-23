@@ -5,6 +5,10 @@ import { Code, ConnectError } from "@connectrpc/connect";
 export const MECATL_ERROR_CODES = [
   "activity_gap",
   "ask_not_pending",
+  "approval_grant_ineligible",
+  "approval_intent_mismatch",
+  "approval_not_pending",
+  "approval_unsupported",
   "attempt_live_claim_conflict",
   "attempt_terminal_conflict",
   "attempt_version_conflict",
@@ -38,9 +42,6 @@ export const MECATL_ERROR_CODES = [
   "learning_unavailable",
   "management_unauthorized",
   "mcp_connector_unavailable",
-  "migration_backend",
-  "migration_conflict",
-  "migration_unsupported",
   "mcp_authorization_pending",
   "no_active_run",
   "no_event_log",
@@ -209,7 +210,17 @@ export class AuthenticationError extends MecatlError {
   }
 }
 
-/** A transport response violated the SDK's protocol contract. @public */
+/**
+ * A transport response violated the SDK's protocol contract.
+ *
+ * Malformed successful HTTP responses and ordinary SSE data frames omit the
+ * underlying JSON or protobuf decoder cause. They retain safe correlation
+ * metadata such as HTTP status and a response request ID when available.
+ * Server errors, authentication failures, and transport or body-read failures
+ * keep their separately defined cause behavior.
+ *
+ * @public
+ */
 export class ProtocolError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "protocol" });
@@ -327,7 +338,6 @@ export class IncompatibleServerError extends MecatlError {
 export class ServerError extends MecatlError {
   declare readonly code: ServerErrorCode;
 
-  // biome-ignore lint/complexity/noUselessConstructor: this narrows code to the server vocabulary.
   constructor(
     message: string,
     options: Omit<MecatlErrorOptions, "code"> & { code: ServerErrorCode },

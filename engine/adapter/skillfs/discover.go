@@ -292,14 +292,6 @@ func (s DirSource) origin() tool.SkillOrigin {
 	return tool.SkillOriginExplicit
 }
 
-// Discover scans dir for skills and returns them. It is a thin convenience
-// wrapper over DirSource preserved for backward compatibility and for callers
-// (and tests) that want single-directory discovery without composing a Source.
-// New code should construct a DirSource (and compose it with NewMultiSource).
-func Discover(dir string) ([]Skill, []SkipError, error) {
-	return DirSource{Dir: dir}.Skills(context.Background())
-}
-
 // ParseSkill splits raw into YAML frontmatter and a markdown body and validates
 // the required header fields. It returns:
 //   - a fatal reason string (with a zero Skill) on any structural problem, so the

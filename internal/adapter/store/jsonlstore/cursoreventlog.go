@@ -352,14 +352,8 @@ func (st *Store) eventLogGeneration(ctx context.Context, id session.SessionID) (
 	return generation, present, err
 }
 
-// eventLogGenerationLocked reads the generation from the log's header record.
-// Callers hold the family lock.
-//
-// An EXISTING log with no header record reports the EMPTY generation, not an
-// error. That is the legacy log written before cursors existed: its cursors also
-// carry an empty generation, so the comparison holds with no special case, and a
-// deployment that upgrades mid-flight keeps serving its old logs instead of
-// failing every read on them.
+// eventLogGenerationLocked reads the mandatory generation header. An existing
+// unversioned log is unsupported and remains untouched.
 func (st *Store) eventLogGenerationLocked(id session.SessionID) (generation string, present bool, err error) {
 	f, completeSize, err := st.openEventFileLocked(id)
 	if err != nil {
@@ -383,8 +377,8 @@ func (st *Store) eventLogGenerationLocked(id session.SessionID) (generation stri
 	if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
 		return "", true, fmt.Errorf("decode generation header: %w", err)
 	}
-	if rec.V != eventLogGenerationTag {
-		return "", true, nil // a legacy log: present, unversioned basis
+	if rec.V != eventLogGenerationTag || rec.G == "" {
+		return "", true, fmt.Errorf("jsonlstore: unsupported unversioned event log; data was left unchanged")
 	}
 	return rec.G, true, nil
 }
@@ -398,21 +392,11 @@ func (st *Store) openEventFileLocked(id session.SessionID) (*os.File, int64, err
 	if err != nil || !present {
 		return nil, 0, err
 	}
-	var root *os.Root
-	var name string
-	switch path {
-	case st.resolver.canonicalPath(id, kindEvents):
-		root, err = os.OpenRoot(st.resolver.canonicalDir())
-		name = filepath.Base(path)
-	case st.resolver.legacyPath(id, kindEvents):
-		root, err = os.OpenRoot(st.resolver.dir)
-		name, _ = st.resolver.legacyName(id, kindEvents)
-	default:
-		return nil, 0, errors.New("event path escaped store roots")
-	}
+	root, err := os.OpenRoot(st.resolver.canonicalDir())
 	if err != nil {
 		return nil, 0, fmt.Errorf("open event root: %w", err)
 	}
+	name := filepath.Base(path)
 	defer func() { _ = root.Close() }()
 
 	f, err := openRegular(root, name)

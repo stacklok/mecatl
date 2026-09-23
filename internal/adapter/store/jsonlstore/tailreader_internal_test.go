@@ -2,15 +2,9 @@ package jsonlstore
 
 import (
 	"bytes"
-	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/stacklok/mecatl/engine/adapter/sessnap"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 type virtualTailReader struct {
@@ -56,56 +50,6 @@ func TestReadLastLineAtIsBoundedByLatestRecord(t *testing.T) {
 	}
 	if r.minOffset < r.size-int64(2*len(latest)+lastLineSeekWindow) {
 		t.Fatalf("read reached offset %d, too far into the 8 GiB history", r.minOffset)
-	}
-}
-
-func TestStoreLoadAndMetaListSkipOversizedHistory(t *testing.T) {
-	st, err := New(t.TempDir())
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	sess := session.New("large-tail", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
-	if err := sess.SeedHistory([]session.Message{session.NewUserMessage(strings.Repeat("z", 128*1024))}); err != nil {
-		t.Fatalf("SeedHistory: %v", err)
-	}
-	latest, err := sessnap.Marshal(sess)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if len(latest) <= lastLineSeekWindow {
-		t.Fatalf("fixture latest record = %d bytes, want > %d", len(latest), lastLineSeekWindow)
-	}
-	path := st.resolver.canonicalPath(sess.ID, kindSnapshot)
-	f, err := os.Create(path) //nolint:gosec // test-owned temporary store
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if _, err := f.Seek(int64(maxScannerTokenSize+1), 0); err != nil {
-		t.Fatalf("Seek sparse history: %v", err)
-	}
-	if _, err := f.Write([]byte{'\n'}); err != nil {
-		t.Fatalf("Write history delimiter: %v", err)
-	}
-	if _, err := f.Write(append(latest, '\n')); err != nil {
-		t.Fatalf("Write latest: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	loaded, err := st.Load(context.Background(), sess.ID)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.ID != sess.ID || len(loaded.Conversation.Messages) != 1 {
-		t.Fatalf("Load = id %q messages %d, want %q/1", loaded.ID, len(loaded.Conversation.Messages), sess.ID)
-	}
-	rows, err := st.MetaList(context.Background())
-	if err != nil {
-		t.Fatalf("MetaList: %v", err)
-	}
-	if len(rows) != 1 || rows[0].ID != sess.ID {
-		t.Fatalf("MetaList = %#v, want one %q row", rows, sess.ID)
 	}
 }
 

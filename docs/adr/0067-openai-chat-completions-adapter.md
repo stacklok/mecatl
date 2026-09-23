@@ -89,4 +89,4 @@ identity (no-clamp) case of `clampEffortForProvider`.
 ## See also
 
 - [ADR 0016](./0016-multi-provider.md), [ADR 0064](./0064-toolhive-llm-gateway-provider.md), [ADR 0055](./0055-reasoning-effort.md)
-- Living reference: `docs/design/IMPLEMENTATION-NOTES.md` (provider registry, capability intersection)
+- Living reference: [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (provider registry, capability intersection)

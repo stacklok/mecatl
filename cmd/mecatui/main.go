@@ -38,9 +38,10 @@ import (
 	"github.com/adrg/xdg"
 	"golang.org/x/term"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/agenthook"
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
-	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
@@ -130,19 +131,33 @@ func validateRunConfig(cfg config) error {
 }
 
 // buildStatusSource constructs a source from already-validated customization.
-func buildStatusSource(customization statusCustomization) statusline.Source {
-	return newSource(customization)
+func buildStatusSource(statusConfig statusCustomization) customization.Source {
+	return newSource(statusConfig)
 }
 
-func prepareStatusSource(cfg config) (statusline.Source, error) {
-	if err := validateRunConfig(cfg); err != nil {
-		return nil, err
+// buildClientPresentation constructs status and title rendering from one validated
+// client-settings snapshot. Both embedded and connect modes use this same path.
+func buildClientPresentation(cfg config, settings clientSettings, output io.Writer) (customization.Source, *terminalTitleController, error) {
+	statusConfig := shippedStatusCustomization()
+	if settings.StatusCustomization != nil {
+		statusConfig = *settings.StatusCustomization
 	}
-	customization, err := readStatusCustomization()
+	renderer, err := newTitleRenderer(settings.TerminalTitle)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("terminal_title.template: %w", err)
 	}
-	return buildStatusSource(customization), nil
+	controller := newTerminalTitleController(output, terminalTitleEnabled(cfg, settings.TerminalTitle), renderer)
+	controller.debug = cfg.debugTarget != ""
+	return buildStatusSource(statusConfig), controller, nil
+}
+
+func newMecatuiProgram(ctx context.Context, deps ui.Deps, title *terminalTitleController) *tea.Program {
+	deps.TerminalTitle = title.Set
+	return tea.NewProgram(ui.New(deps), tea.WithContext(ctx), tea.WithOutput(title))
+}
+
+func closeTerminalTitle(title *terminalTitleController) error {
+	return title.Close()
 }
 
 func run(argv []string) error {
@@ -196,7 +211,14 @@ func runWithOptions(argv []string, options runOptions) error {
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
 	}
-	statusSource, err := prepareStatusSource(cfg)
+	if err := validateRunConfig(cfg); err != nil {
+		return err
+	}
+	settings, err := readClientSettings()
+	if err != nil {
+		return err
+	}
+	statusSource, title, err := buildClientPresentation(cfg, settings, os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -228,7 +250,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
 	keyboardProbe := resolveKeyboardProbe(stdoutIsTTY)
 	if options.recoveryOnly {
-		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
+		defer func() { _ = statusSource.Close(context.Background()) }()
+		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, title, options)
 	}
 
 	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
@@ -300,11 +323,17 @@ func runWithOptions(argv []string, options runOptions) error {
 	defer func() { _ = statusSource.Close(context.Background()) }()
 
 	connectionMode := resolveConnectionMode(cfg)
+	// Held concretely (not just as the ui interface) because this run OWNS its
+	// shutdown: a /connect restart re-enters runWithOptions and builds a fresh
+	// notifier, so this one must be settled first (see closeAgentLifecycleHook).
+	agentHook := agenthook.New(os.Environ())
 	deps := applyLaunchIntent(cfg, ui.Deps{
 		Session:                 &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
+		AgentHook:               agentLifecycleHook(agentHook),
 		Conv:                    cl,
 		MCP:                     cl,
 		Cmds:                    cl,
+		Guardrails:              cl,
 		ServerInfo:              cl,
 		Skills:                  cl,
 		Agents:                  cl,
@@ -317,7 +346,6 @@ func runWithOptions(argv []string, options runOptions) error {
 		Sched:                   cl,
 		Sessions:                cl,
 		StorageHealth:           cl,
-		Migration:               cl,
 		Cleanup:                 cl,
 		SessionManagement:       cl,
 		Transcript:              cl,
@@ -379,9 +407,6 @@ func runWithOptions(argv []string, options runOptions) error {
 		// Escape hatch: disable mouse capture so the terminal's native selection
 		// works (trades away in-app wheel scroll + drag-select). Default false.
 		NoMouse: cfg.noMouse,
-		// Dynamic terminal window/tab title: off collapses to bare "mecatui".
-		// Default false (dynamic: "<title> — <status word> mecatui").
-		NoWindowTitle: cfg.terminalTitleOff,
 		// Seed prompt from -p/--prompt + --prompt-file: joined at startup and
 		// auto-submitted once the first session is ready (interactive-seed, NOT a
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
@@ -397,23 +422,31 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.OpenURL = openBrowserURL
 
 	// Apply keymap overrides (CLI for now).
-	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
+	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
 		_ = cl.Close()
 		transCleanup()
 		return err
 	}
 
-	model := ui.New(deps)
 	var finalModel tea.Model
 	var runErr error
 	if options.runProgram != nil {
-		finalModel, runErr = options.runProgram(ctx, model)
+		finalModel, runErr = options.runProgram(ctx, ui.New(deps))
 	} else {
-		finalModel, runErr = tea.NewProgram(model, tea.WithContext(ctx)).Run()
+		prog := newMecatuiProgram(ctx, deps, title)
+		finalModel, runErr = prog.Run()
 	}
 	interrupted := ctx.Err() != nil
+	if err := closeTerminalTitle(title); runErr == nil && err != nil {
+		runErr = err
+	}
 
 	runCleanup(forceExit, func() {
+		// Settle the lifecycle hook FIRST: this must complete before the restart
+		// below can build a successor notifier, or a slow hook command could
+		// deliver this generation's terminal after the next generation's busy
+		// signal and mark the host idle during a live run.
+		closeAgentLifecycleHook(agentHook)
 		_ = cl.Close()
 		transCleanup()
 	})
@@ -562,10 +595,15 @@ func resolveKeyboardProbe(stdoutIsTTY bool) bool {
 	return stdoutIsTTY
 }
 
-func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
+func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, title *terminalTitleController, options runOptions) error {
 	deps := ui.Deps{Ctx: ctx, Theme: th, ThemeAutoDetect: themeAutoDetect, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
-	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
+	prog := newMecatuiProgram(ctx, deps, title)
 	finalModel, runErr := prog.Run()
+	if runErr == nil && ctx.Err() == nil {
+		if err := title.Close(); err != nil {
+			runErr = err
+		}
+	}
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, options.connectTransport)
 	}
@@ -687,6 +725,35 @@ func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent,
 func applyLaunchIntent(cfg config, deps ui.Deps) ui.Deps {
 	deps.BrowseSessions = cfg.browseSessions
 	return deps
+}
+
+// agentLifecycleHook adapts the host-editor agent-lifecycle hook emitter to the
+// reducer's consumer interface, returning an honestly-nil interface when no
+// supported host was detected (so the reducer's nil check reflects the real "no
+// external channel" state instead of a typed-nil wrapper). See
+// cmd/mecatui/agenthook.
+func agentLifecycleHook(n *agenthook.Notifier) ui.LifecycleNotifier {
+	if n == nil {
+		return nil
+	}
+	return n
+}
+
+// agentHookDrainTimeout bounds how long shutdown waits for queued lifecycle
+// deliveries. Short on purpose: a wedged hook command must not delay exit or a
+// /connect restart, and a dropped late notification is far cheaper than a
+// terminal arriving during the NEXT run.
+const agentHookDrainTimeout = 3 * time.Second
+
+// closeAgentLifecycleHook settles this run's lifecycle notifier within a bound,
+// closing the generation boundary before any successor notifier exists.
+func closeAgentLifecycleHook(n *agenthook.Notifier) {
+	if n == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), agentHookDrainTimeout)
+	defer cancel()
+	n.Close(ctx)
 }
 
 const defaultDebugPrompt = "Diagnose the bound target session and explain the most likely cause of its reported behavior."
@@ -920,9 +987,11 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 	// ~/.local/state/...), or io.Discard under --quiet / on any open failure — NEVER
 	// stderr, which would corrupt the Bubble Tea alt-screen. The same writer backs
 	// BOTH the app.Diagnostics sink and the perf surface's slog.Logger, so neither
-	// path leaks a line to the terminal. The file handle (when one was opened) is
-	// closed by the returned cleanup alongside the server.
-	diagW, diagCloser, toFile := openDiagLogWriter(xdgconfig.OSEnv, cfg.quiet, cfg.diagnosticsLog)
+	// path leaks a line to the terminal. Lock contention is reported immediately,
+	// before trust prompting or embedded startup can block or fail. The file handle
+	// (when one was opened) is closed by the returned cleanup alongside the server.
+	diagSink := openDiagLogWriterAndReport(xdgconfig.OSEnv, cfg.quiet, cfg.diagnosticsLog, os.Stderr)
+	diagW, diagCloser := diagSink.Writer, diagSink.Closer
 	diag := slogdiag.New(diagW, false, port.LevelInfo)
 	// A dedicated slog.Logger over the SAME writer for the perf surface's Logger field.
 	// Explicit injection (rather than relying on the redirected default below) keeps the
@@ -969,11 +1038,13 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 		_ = diagCloser.Close()
 		return target, client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
 	}
-	if toFile {
+	if diagSink.Path != "" {
 		// One line, written to the FILE sink (never the TUI), so an operator can find
-		// where the embedded server's diagnostics went.
+		// where the embedded server's diagnostics went. The path comes from the sink
+		// itself, so it names the file actually opened — the --diagnostics-log
+		// override and the per-process fallback included.
 		diag.Log(ctx, port.LevelInfo, "mecatui: embedded server diagnostics log opened",
-			"path", resolveDiagLogPath(xdgconfig.OSEnv))
+			"path", diagSink.Path)
 	}
 	fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
 	if addr := srv.AdminAddr(); addr != "" {
@@ -1311,12 +1382,10 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		ApproveSoul: cfg.approveSoul,
 		SoulStrict:  cfg.soulStrict,
 		// User model ON by default (issue #14, Phase 2): cross-project operator FACTS.
-		// The background reviewer (UserModelReview) and consolidation stay OFF by
-		// default — both spend tokens on the real provider, so an idle TUI never does.
-		UserModelDir:            cfg.userModelDir,
-		NoUserModel:             cfg.noUserModel,
-		UserModelReview:         cfg.userModelReview,
-		UserModelReviewInterval: cfg.userModelReviewInterval,
+		UserModelDir:                 cfg.userModelDir,
+		NoUserModel:                  cfg.noUserModel,
+		LearningAdmissionInterval:    cfg.learningAdmissionInterval,
+		LearningAdmissionIntervalSet: cfg.learningAdmissionIntervalSet,
 		// Slash commands ON by default (the .mecatl/commands + .claude/commands
 		// convention); --no-commands disables, --commands-dir overrides. File-backed
 		// commands are local, user-authored prompt templates — no network/trust cost,

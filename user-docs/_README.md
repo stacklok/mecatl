@@ -27,7 +27,7 @@ directories; do not create a manual sidebar to express this structure.
 |`building/typescript-sdk/`|TypeScript developers connecting applications, controlling sessions and runs, or owning a local daemon.|Wire-protocol reference and shared feature semantics. Link to the owning reference or feature page.|
 |`building/what-you-get/`|Builders who need an overview or technical reference for engine capabilities included in an embedding.|Operator procedures and feature configuration that applies across deployment options. Link to the feature page for those.|
 |`building/extension-points/`|Developers integrating with Mecatl's public seams, ports, and APIs.|How to operate a supplied deployment or use an existing feature.|
-|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl deployment.|Client workflows and shared feature behavior except where a deployment changes availability or operation.|
+|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl deployment. The Studio page also guides people using that deployment's browser client.|Other client workflows and shared feature behavior except where a deployment changes availability or operation.|
 |`features/`|Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to deployment-specific instructions.|Terminal-client controls, embedding APIs, and deployment runbooks.|
 |`reference/`|Readers looking up generated configuration or SDK fields and exact gRPC and HTTP/SSE contracts.|Tutorials, deployment workflows, and conceptual background. Link to the owning guide.|
 
@@ -58,12 +58,14 @@ feature guide.
 |`mecated` operation and flags|`building/deployment/mecated.md`|Feature pages explain shared behavior and link to the deployment guide for flags.|
 |`mecak8s` operation and Helm values|`building/deployment/mecak8s.md`|Feature pages describe shared behavior without restating chart values.|
 |`mecatequi` and GitHub Actions|`building/deployment/mecatequi.md`|Workflow maintainers keep implementation notes in `.github/workflows/README.md`.|
+|Mecatl Studio web UI|`building/deployment/studio.md`|Feature pages describe shared behavior; the Studio page owns browser chat workflows, the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
 |Provider and model selection|`features/choose-models.md`|`building/deployment/mecated.md` owns daemon-specific credential and flag details.|
 |Workspace trust|`features/permissions-and-posture.md`|`features/project-instructions-and-rules.md` describes the project-content consequence.|
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `building/what-you-get/memory.md`|Extension-point pages document the importable interfaces.|
 |Hooks|`building/what-you-get/hooks.md`|`building/extension-points/hook-runner.md` owns host-integration details.|
 |Configuration schema|`reference/configuration.md`|`building/deployment/settings.md` explains which configuration plane to use.|
-|gRPC API|`reference/grpc-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
+|gRPC API behavior|`reference/grpc-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
+|gRPC schema|`reference/grpc-schema.md`|The generated page owns exact services, RPC signatures, messages, enums, fields, and proto comments; `reference/grpc-api.md` owns behavior and semantics.|
 |HTTP and SSE API|`reference/http-sse-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
 |TypeScript SDK workflows|`building/getting-started/typescript-sdk.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
 |TypeScript SDK method reference|`reference/typescript-sdk-api/`|SDK guides link to the generated entry-point reference instead of copying signatures or option inventories.|
@@ -151,6 +153,8 @@ Generated reference pages are exceptions to direct editing:
 
 - For `reference/configuration.md`, change the configuration schema or
   generator, then run `task docs:configref`.
+- For `reference/grpc-schema.md`, change the public protobuf contracts or the
+  generator template, then run `task docs:grpc-ref`.
 - For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change the
   TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then run
   `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed output

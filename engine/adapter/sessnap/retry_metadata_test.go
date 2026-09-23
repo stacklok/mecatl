@@ -16,15 +16,12 @@ func TestSnapshotRoundTripsTypedFailureMetadata(t *testing.T) {
 	if err := s.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+	if err := s.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := Of(s)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if snap.Permanent {
-		t.Fatal("retryable snapshot marked permanent")
 	}
 	wire, err := json.Marshal(snap)
 	if err != nil {
@@ -39,8 +36,9 @@ func TestSnapshotRoundTripsTypedFailureMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, p := got.FailureMetadata(); d != session.RetryDispositionRetryable || p != session.StreamProgressVisible {
-		t.Fatalf("restored metadata = (%v,%v)", d, p)
+	want := session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}
+	if got := got.FailureMetadata(); got != want {
+		t.Fatalf("restored metadata = %+v, want %+v", got, want)
 	}
 }
 
@@ -54,7 +52,7 @@ func TestSnapshotRoundTripsPreparedFailedStepRetry(t *testing.T) {
 			if err := s.Fail(); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+			if err := s.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.PrepareFailedStepRetry(); err != nil {
@@ -73,19 +71,21 @@ func TestSnapshotRoundTripsPreparedFailedStepRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			d, p, ok := got.FailedStepRetryPending()
-			if !ok || d != session.RetryDispositionRetryable || p != session.StreamProgressVisible || got.State != s.State {
-				t.Fatalf("restored pending = (%v,%v,%v), state=%s want %s", d, p, ok, got.State, s.State)
+			metadata, ok := got.FailedStepRetryPending()
+			want := session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}
+			if !ok || metadata != want || got.State != s.State {
+				t.Fatalf("restored pending = (%+v,%v), state=%s want %s", metadata, ok, got.State, s.State)
 			}
 		})
 	}
 }
 
 func TestSnapshotRejectsInvalidRetryVocabulary(t *testing.T) {
+	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	cases := []Snapshot{
-		{ID: "bad-disposition", State: session.StateFailed, StopReason: session.StopError, RetryDisposition: session.RetryDisposition(99), CreatedAt: time.Now()},
-		{ID: "bad-progress", State: session.StateFailed, StopReason: session.StopError, StreamProgress: session.StreamProgress(99), CreatedAt: time.Now()},
-		{ID: "bad-pending", State: session.StateIdle, RetryPending: true, RetryPendingDisposition: session.RetryDisposition(99), RetryPendingProgress: session.StreamProgressPrecommit, CreatedAt: time.Now()},
+		{ID: "bad-disposition", State: session.StateFailed, StopReason: session.StopError, RetryDisposition: session.RetryDisposition(99), TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
+		{ID: "bad-progress", State: session.StateFailed, StopReason: session.StopError, StreamProgress: session.StreamProgress(99), TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
+		{ID: "bad-pending", State: session.StateIdle, RetryPending: true, RetryPendingDisposition: session.RetryDisposition(99), RetryPendingProgress: session.StreamProgressPrecommit, TokenUsage: map[session.UsageKind]session.TokenUsage{}, EnvironmentRef: env, CreatedAt: time.Now()},
 	}
 	for _, snap := range cases {
 		if _, err := snap.Restore(); err == nil {
@@ -94,7 +94,7 @@ func TestSnapshotRejectsInvalidRetryVocabulary(t *testing.T) {
 	}
 }
 
-func TestSnapshotNewPermanentSetsLegacyBool(t *testing.T) {
+func TestSnapshotRecordsPermanentRetryDisposition(t *testing.T) {
 	s := session.New("permanent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
@@ -102,46 +102,57 @@ func TestSnapshotNewPermanentSetsLegacyBool(t *testing.T) {
 	if err := s.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordFailureMetadata(session.RetryDispositionPermanent, session.StreamProgressPrecommit); err != nil {
+	want := session.RetryMetadata{Disposition: session.RetryDispositionPermanent, Progress: session.StreamProgressPrecommit}
+	if err := s.RecordFailureMetadata(want); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := Of(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !snap.Permanent || snap.RetryDisposition != session.RetryDispositionPermanent {
-		t.Fatalf("snapshot permanent compatibility = %v, disposition=%v", snap.Permanent, snap.RetryDisposition)
+	if snap.RetryDisposition != want.Disposition || snap.StreamProgress != want.Progress {
+		t.Fatalf("snapshot retry metadata = (%v,%v), want %+v", snap.RetryDisposition, snap.StreamProgress, want)
 	}
 }
 
-func TestSnapshotTypedDispositionWinsOverLegacyPermanent(t *testing.T) {
-	snap := Snapshot{
-		ID:               "conflict",
-		State:            session.StateFailed,
-		StopReason:       session.StopError,
-		Permanent:        true,
-		RetryDisposition: session.RetryDispositionRetryable,
-		StreamProgress:   session.StreamProgressPrecommit,
-		EnvironmentRef:   session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
-		CreatedAt:        time.Now(),
+func TestSnapshotIgnoresUnknownFields(t *testing.T) {
+	wire := []byte(`{
+		"token_usage":{"main":{"Total":{"InputTokens":5}}},
+		"retry_disposition":1,
+		"usage":"not an aggregate",
+		"permanent":{"misleading":true},
+		"future_payload":{"token_usage":"malformed","retry_disposition":"invalid"}
+	}`)
+	var snap Snapshot
+	if err := json.Unmarshal(wire, &snap); err != nil {
+		t.Fatalf("Unmarshal with unknown fields: %v", err)
 	}
-	got, err := snap.Restore()
-	if err != nil {
-		t.Fatal(err)
+	if got := snap.TokenUsage[session.UsageKindMain].Total.InputTokens; got != 5 {
+		t.Fatalf("canonical token usage = %d, want 5", got)
 	}
-	if d, p := got.FailureMetadata(); d != session.RetryDispositionRetryable || p != session.StreamProgressPrecommit || got.FailurePermanence() {
-		t.Fatalf("conflicting metadata = (%v,%v), permanent=%v; typed retryable must win", d, p, got.FailurePermanence())
+	if snap.RetryDisposition != session.RetryDispositionRetryable {
+		t.Fatalf("canonical retry disposition = %v, want retryable", snap.RetryDisposition)
 	}
 }
 
-func TestSnapshotLegacyPermanentRestoresTypedDisposition(t *testing.T) {
-	snap := Snapshot{ID: "legacy", State: session.StateFailed, StopReason: session.StopError, Permanent: true, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Now()}
-	got, err := snap.Restore()
-	if err != nil {
-		t.Fatal(err)
+func TestSnapshotAcceptsOmittedEmptyTokenUsage(t *testing.T) {
+	var snap Snapshot
+	if err := json.Unmarshal([]byte(`{"unrecognized":["anything"]}`), &snap); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
 	}
-	d, p := got.FailureMetadata()
-	if d != session.RetryDispositionPermanent || p != session.StreamProgressUnknown || !got.FailurePermanence() {
-		t.Fatalf("legacy metadata = (%v,%v), permanent=%v", d, p, got.FailurePermanence())
+	if len(snap.TokenUsage) != 0 {
+		t.Fatalf("token usage = %#v, want zero value", snap.TokenUsage)
+	}
+}
+
+func TestSnapshotRejectsMalformedCanonicalData(t *testing.T) {
+	for _, wire := range []string{
+		`{"token_usage":"invalid"}`,
+		`{"token_usage":{},"retry_disposition":"invalid"}`,
+	} {
+		var snap Snapshot
+		if err := json.Unmarshal([]byte(wire), &snap); err == nil {
+			t.Fatalf("malformed canonical snapshot accepted: %s", wire)
+		}
 	}
 }

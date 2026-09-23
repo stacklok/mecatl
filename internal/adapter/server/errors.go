@@ -19,14 +19,6 @@ var (
 	ErrMaintenanceExclusionUnavailable = errors.New("server: storage maintenance exclusion unavailable")
 	// ErrStorageHealthBackend is the sanitized aggregate-health backend failure.
 	ErrStorageHealthBackend = errors.New("server: storage health unavailable")
-	// ErrMigrationUnsupported reports that the configured session store has no
-	// physical v1-to-v2 maintenance capability.
-	ErrMigrationUnsupported = errors.New("server: session migration is not supported")
-	// ErrMigrationConflict reports an invalid durable job transition.
-	ErrMigrationConflict = errors.New("server: migration job conflict")
-	// ErrMigrationBackend is the only caller-visible backend failure. Raw paths,
-	// records, and backend error strings stay behind the adapter boundary.
-	ErrMigrationBackend = errors.New("server: storage maintenance failed")
 	// ErrCleanupPlanStale reports that catalog candidates, scope, or policy changed
 	// after dry-run. No item is deleted from a stale plan.
 	ErrCleanupPlanStale = errors.New("server: cleanup plan is stale")
@@ -42,7 +34,7 @@ var (
 	// well-formed and the caller's belief was simply overtaken by events — the run
 	// they meant to act on has already ended and another has begun. Adapters map
 	// it to Aborted / HTTP 409 Conflict, alongside the other
-	// you-lost-a-race sentinels (ErrMigrationConflict, ErrProposalConflict), so a
+	// you-lost-a-race sentinels (for example ErrProposalConflict), so a
 	// client can distinguish "retry against the current run" from "fix your
 	// arguments".
 	ErrStaleRunControl = errors.New("server: control targets a run that is no longer current")

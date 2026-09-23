@@ -100,6 +100,6 @@ plus `model == routedModel` when routed) — no duplication. Applied at all four
 - [ADR 0031](./0031-subagent-model-router.md) — the Subagent model router (the `routed_*` provenance signal this widens).
 - [ADR 0034](./0034-team-parallel-model-routing.md) — team/Parallel routing + the routed wire.
 - [ADR 0027](./0027-cloud-native.md) — the durable-log posture (metadata-only events persist fine).
-- [docs/design/IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) — the per-delegation model surface mechanics.
+- [docs/design/IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the per-delegation model surface mechanics.
 - [docs/architecture/providers.md](../architecture/providers.md) — the living router/model-surface section.
 - The lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

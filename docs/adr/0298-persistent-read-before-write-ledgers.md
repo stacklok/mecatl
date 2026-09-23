@@ -69,5 +69,5 @@ This decision changes Environment capability composition but not filesystem cont
 - [ADR 0048 — mecak8s](./0048-mecak8s.md)
 - [ADR 0233 — Secure external Redis](./0233-secure-external-redis.md)
 - [Architecture — ports and adapter boundaries](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [Acceptance plan](../acceptance/persistent-read-before-write-ledgers.md)

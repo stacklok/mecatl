@@ -344,7 +344,6 @@ describe("client disposal", () => {
       () => session.run("again"),
       () => session.close(),
       () => session.delete(),
-      () => run.approve("ask-1", true),
       () => run.cancel(),
       () => run.resolveAsk("ask-1", "deny"),
       () => run.steer("again"),

@@ -13,9 +13,11 @@ Each ADR records *why* a thing is shaped the way it is at a point in time and is
 supersession in this living index; never edit the landed record. Copy
 [`template.md`](./template.md) to start one. Number monotonically.
 
-Current behaviour lives in [`docs/architecture.md`](../architecture.md) (the living
-reference); shipped/deferred status lives in
-[PRODUCTION-READINESS.md](../design/PRODUCTION-READINESS.md) (the single tracker).
+Current behavior belongs in the owning [architecture topic](../READING.md) and
+public guide. Track actionable work in issues and PRs rather than a second
+hand-maintained status ledger. Follow the [documentation change review](../development-process.md#documentation-change-review)
+for current ownership; historical references in ADRs do not require recreating
+retired trackers or completed execution plans.
 Documentation/citation conventions are in [`docs/design/README.md`](../design/README.md).
 
 > History: ADRs 0004–0029 were the former `docs/design/*` design records, consolidated
@@ -81,12 +83,19 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0341 - Deno reuses the ConnectRPC gRPC transport](./0341-typescript-sdk-deno-grpc.md) *(supersedes ADRs 0339 and 0340 for the HTTP-only transport and Node-compatibility exclusions)*
 - [0347 — Run-ID-addressed prompt-free controls](./0347-run-id-addressed-prompt-free-controls.md) *(proposed; supersedes ADR 0288 Decision 6 and ADR 0304 Decision 3 in part)*
 - [0348 — TypeScript SDK MCP authorization lifecycle](./0348-typescript-sdk-mcp-authorization-lifecycle.md) *(proposed; supersedes ADR 0304 Decision 3 only for the authorization-lifecycle resource)*
+- [0349 - Cause-free TypeScript SDK malformed-success decoding](./0349-typescript-sdk-malformed-success-decoding.md) *(proposed; narrows decoder diagnostics at the HTTP successful-response boundary)*
+- [0351 — Mecatl Studio: in-repo web UI behind a BFF over the published SDK](./0351-mecatl-studio-in-repo-web-ui.md) *(proposed; `apps/` workspace, one-origin image, `MECATL_*`/`STUDIO_*` split)*
+- [0361 — Studio exposes coarse status and completes browser login in a popup](./0361-studio-anonymous-status-and-popup-login.md) *(proposed; anonymous status, authenticated runtime, and same-origin callback messaging)*
+- [0366 — Resolve plan asks by exact run and ask](./0366-exact-plan-ask-control.md) *(proposed; strict control for live and restored plan asks, extending ADR 0347)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
+- [0356 — Durable context occupancy in session snapshots](./0356-durable-context-occupancy.md) *(proposed; extends ADR 0307 without changing lifetime-ledger or budget semantics)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
+- [0364 — Optional native Kubernetes execution provider](./0364-native-kubernetes-execution.md) *(draft; separate service, preserves ADR 0048)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
 - [0337 — Classify synthetic user-prompt origin at emission](./0337-synthetic-user-prompt-origin.md) *(proposed)*
+- [0359 - Harness context source authority is independent of execution](./0359-harness-context-source-authority.md) *(proposed amendment)*
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md) *(skill read-root carve-out superseded by 0108)*
@@ -154,6 +163,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*
+- [0353 — Session-scoped agent identity](./0353-session-scoped-agent-identity.md) *(proposed)*
 - [0013 — Agent definitions](./0013-agent-definitions.md)
 - [0014 — Agent teams](./0014-agent-teams.md)
 - [0015 — Background subagents](./0015-background-subagents.md)
@@ -172,6 +182,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0330 — Isolated bounded Redis follow capacity](./0330-isolated-redis-follow-capacity.md) *(raises mecatl's Go floor to 1.27, replaces ADR 0233's old shared-client package locator, supersedes ADR 0250's shared-pool sizing deferral, and supersedes ADR 0240's no-force-close rule for isolated follow clients only)*
 
 ### Providers & APIs
+- [0362 — Provider-scoped model discovery ownership](./0362-provider-scoped-model-discovery.md) *(proposed; supersedes only ADR 0342's global settlement, prior-rejection retry, and discovery-readiness policy)*
 - [0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md) *(proposed)*
 - [0307 — Canonical durable token accounting and run-scoped budgets](./0307-canonical-durable-token-accounting.md)
 - [0016 — Multi-provider](./0016-multi-provider.md)
@@ -182,6 +193,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0034 — Extend the model router to team members and Parallel branches](./0034-team-parallel-model-routing.md)
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
+- [0352 — Jev as an explicit delegated-model router backend](./0352-jev-delegated-model-router.md) *(proposed; narrowly supersedes ADR 0031's LLM-only classifier construction when selected)*
 - [0064 — Auto-detect the ToolHive LLM gateway proxy as a native provider](./0064-toolhive-llm-gateway-provider.md)
 - [0102 — ToolHive LLM gateway DIRECT mode (in-process OIDC token injection)](./0102-toolhive-direct-mode.md)
 - [0067 — OpenAI Chat Completions adapter (OpenCode Go provider)](./0067-openai-chat-completions-adapter.md)
@@ -195,10 +207,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0332 — Mecatui local provider enrollment preserves existing credential custody](./0332-mecatui-local-provider-enrollment.md) *(proposed; outcome-typed ordered commits)*
 
 - [0333 — Unified provider configuration and Mecatui provider commands](./0333-unified-provider-configuration-and-mecatui-provider-commands.md) *(proposed; supersedes the `llm.endpoints` facade and unifies the local provider CLI)*
+- [0360 — Separate root-conversation correlation from active-session identity](./0360-root-session-provider-correlation.md) *(proposed; preserves the active affinity header and adds an outbound-only root header)*
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
-- [0057 — MCP server notifications](./0057-mcp-server-notifications.md)
+- [0057 — MCP server notifications](./0057-mcp-server-notifications.md) *(deferred “no live catalog mutation” decision proposed to be superseded by 0355; notification transport, bounded lazy-list, reconnect, and teardown decisions retained)*
+- [0355 — Reconcile stale direct MCP source snapshots](./0355-mcp-source-reconciliation.md) *(proposed; preserves exact-name authority and supersedes 0057 only for its deferred “no live catalog mutation” decision)*
 - [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
 - [0078 — MCP typed tool results](./0078-mcp-typed-tool-results.md)
 - [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)
@@ -217,6 +231,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
 - [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed)*
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
+- [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(Decision 6 superseded by 0358)*
+- [0358 — Durable workspace-enrollment broker authority provenance](./0358-durable-workspace-enrollment-broker-authority.md) *(proposed; supersedes ADR 0335 Decision 6 only)*
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)
@@ -225,10 +241,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0045 — Explicit-bucket latency histograms (zero-config quantiles on `/metrics`)](./0045-explicit-bucket-latency-histograms.md)
 - [0098 — Telemetry for the headless binaries (mecatequi, mecak8s)](./0098-headless-telemetry.md)
 - [0338 — Product (adoption) metrics over OTLP](./0338-product-metrics.md)
+- [0357 — Durable model-stream structural evidence](./0357-durable-model-stream-structural-evidence.md) *(accepted; implementation pending approved plan)*
 
 ### Governance & trust
 - [0241 — Canonical untrusted-content fences live in governance](./0241-governance-fence-ownership.md)
-- [0021 — Guardrails](./0021-guardrails.md)
+- [0021 — Guardrails](./0021-guardrails.md) *(its one-payload/tool-less classifier architecture is drafted for supersession by 0363)*
+- [0363 — Contextual investigative guardrails](./0363-contextual-investigative-guardrails.md) *(proposed; product direction approved, implementation calibration/measurement required, separately authorized real-model validation required before any production-readiness claim)*
 - [0049 — Remove the guardrails per-session checker call-count cap](./0049-guardrails-remove-maxchecks.md)
 - [0050 — Remove the guardrails oversized-content inspection skip](./0050-guardrails-remove-maxcontentbytes.md)
 - [0051 — Surface advisory guardrail findings to the TUI](./0051-guardrails-advisory-tui-visibility.md)

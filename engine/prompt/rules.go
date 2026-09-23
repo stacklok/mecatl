@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // Cap values: the SOUL body cap is 20 KiB (internal/adapter/soul/store.go). Rules
@@ -49,7 +48,7 @@ var _ InstructionAssembler = RulesAssembler{}
 // is unused: rules are resolved against their source (filesystem / driver), not the
 // session workspace root. It fails soft on a nil source, a source error, or an
 // empty rule set.
-func (a RulesAssembler) Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error) {
+func (a RulesAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
 	if a.Src == nil {
 		return nil, nil
 	}

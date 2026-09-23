@@ -220,8 +220,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"soul-strict":                     {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 	"user-model-dir":                  {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 	"no-user-model":                   {group: groupMemoryKnowledge, common: false, acp: acpInclude},
-	"user-model-review":               {group: groupMemoryKnowledge, common: false, acp: acpInclude},
-	"user-model-review-interval":      {group: groupMemoryKnowledge, common: false, acp: acpInclude},
+	"learning-admission-interval":     {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 	"user-model-consolidate-interval": {group: groupMemoryKnowledge, common: false, acp: acpInclude},
 
 	// ── Skills & agents (both) ───────────────────────────────────────────

@@ -136,11 +136,36 @@ func (r *RunEventRecorder) appendPending(p *pendingDelta) {
 }
 
 func (r *RunEventRecorder) append(ev session.Event) {
-	if err := r.svc.appendEvent(r.ctx, r.id, ev); err != nil {
+	ctx := r.ctx
+	if verdictCtx := r.svc.takeExactApprovalContext(r.id, ev); verdictCtx != nil {
+		ctx = verdictCtx
+	}
+	if err := r.svc.appendEvent(ctx, r.id, ev); err != nil {
 		if !r.warned {
 			r.warned = true
-			r.svc.cfg.Diagnostics.Log(r.ctx, port.LevelWarn, "event log append failed",
+			r.svc.cfg.Diagnostics.Log(ctx, port.LevelWarn, "event log append failed",
 				"session", string(r.id), "event", string(ev.Type), "err", err.Error())
 		}
 	}
+}
+
+// takeExactApprovalContext selects the accepted verdict caller for only the
+// matching live approval, then drops the saved context. The recorder uses its
+// original run context for other events, including in-stream approvals.
+func (s *Service) takeExactApprovalContext(id session.SessionID, ev session.Event) context.Context {
+	if ev.Type != session.EvApproval || ev.Approval == nil || ev.Approval.AskID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	st := s.runs[id]
+	matchingRun := st != nil && st.run != nil && st.run.RunID() == ev.RunID
+	s.mu.Unlock()
+	if !matchingRun {
+		return nil
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	ctx := st.exactApprovalContexts[ev.Approval.AskID]
+	delete(st.exactApprovalContexts, ev.Approval.AskID)
+	return ctx
 }

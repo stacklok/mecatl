@@ -34,6 +34,7 @@ func BuildModel(docs Docs) *Model {
 		providersSubtree(docs),
 		credentialStoreSubtree(docs),
 		providerOverridesSubtree(docs),
+		harnessContextSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
 		commandRunnerSubtree(docs),
@@ -109,6 +110,47 @@ func renderType(t reflect.Type) string {
 	}
 }
 
+func harnessContextSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("HarnessContextSection", permconfig.HarnessContextSection{}, docs)
+	kindFields := fieldsOf("HarnessContextKind", permconfig.HarnessContextKind{}, docs)
+	for _, field := range kindFields {
+		switch field.Key {
+		case "mode":
+			field.ExampleValue = "combine"
+		case "exclude":
+			field.Nested = fieldsOf("HarnessContextExclude", permconfig.HarnessContextExclude{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
+		case "overrides":
+			field.Nested = fieldsOf("HarnessContextOverride", permconfig.HarnessContextOverride{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
+		}
+	}
+	for _, field := range fields {
+		if field.Key != "kinds" {
+			continue
+		}
+		for _, key := range []string{"instructions", "commands", "rules", "skills", "agent_defs"} {
+			field.Nested = append(field.Nested, &Field{Key: key, Type: "HarnessContextKind", Default: "(absent)", Nested: kindFields})
+		}
+	}
+	return &Subtree{
+		Key: "harness_context", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Selects trusted deployment-registered instruction and customization source IDs independently from execution placement. Unknown configured IDs fail startup; registration support is deployment-specific.",
+		Fields: fields,
+		Example: []string{
+			"enabled_sources: [local]",
+			"kinds:",
+			"  instructions: {sources: [local], mode: combine}",
+			"  commands: {sources: [local], mode: combine}",
+			"  rules: {sources: [local], mode: combine}",
+			"  skills: {sources: [local], mode: combine}",
+			"  agent_defs: {sources: [local], mode: combine}",
+		},
+	}
+}
+
 func permissionsSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("Permissions", permconfig.Permissions{}, docs)
 	for _, f := range fields {
@@ -141,11 +183,12 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	for _, f := range fields {
 		switch f.Key {
 		case "model":
-			f.EnableNote = "Setting a model here ENABLES guardrails (the guardrails-parity " +
-				"enable model). A configured model with no rules runs the default BLOCK set " +
-				"(WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). " +
+			f.EnableNote = "Setting a model here ENABLES contextual guardrails. " +
+				"A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. " +
 				"Leave empty (and pass no --guardrails-model) to keep guardrails OFF."
 			f.ExampleValue = "claude-haiku-4-6"
+		case "taskWindow":
+			f.Default, f.ExampleValue = "1", "1"
 		case "rules":
 			f.Nested = fieldsOf("GuardrailRuleSpec", permconfig.GuardrailRuleSpec{}, docs)
 		}
@@ -305,7 +348,7 @@ func storageManagementSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{
 		Key: "storage_management", Tier: TierOperator, CommentedOut: true,
-		Doc:    "Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.",
+		Doc:    "Exact verified OIDC issuer/subject pairs authorized for process-wide storage health and cleanup. Empty grants nobody; project values are ignored.",
 		Fields: fields,
 	}
 }
@@ -314,19 +357,21 @@ func learningSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("LearningSection", permconfig.LearningSection{}, docs)
 	fields[0].ExampleValue = "off"
 	fields[0].Default = "off"
-	fields[1].ExampleValue = "balanced"
-	fields[1].Default = "balanced"
+	fields[1].ExampleValue = "10"
+	fields[1].Default = "1"
+	fields[2].ExampleValue = "balanced"
+	fields[2].Default = "balanced"
 	skills := fieldsOf("LearningSkillsSection", permconfig.LearningSkillsSection{}, docs)
 	skills[0].ExampleValue = "validated"
 	skills[0].Default = "validated when mode is explicitly auto; evaluated otherwise"
-	fields[2].Nested = skills
+	fields[3].Nested = skills
 	automatic := fieldsOf("LearningAutomaticSection", permconfig.LearningAutomaticSection{}, docs)
 	automatic[0].Type, automatic[1].Type = configDurationType, configDurationType
 	defaults := []string{"10m", "1h", "8", "100000", "4", "50000"}
 	for i := range automatic {
 		automatic[i].ExampleValue, automatic[i].Default = defaults[i], defaults[i]
 	}
-	fields[3].Nested = automatic
+	fields[4].Nested = automatic
 	return &Subtree{
 		Key: "learning", Tier: TierProject,
 		Doc:          "Optional completed-trajectory observation policy. Off means no automatic completed-trajectory reflection or review; project settings may only tighten the operator ceiling off < review < auto. Separately configured consolidation schedules are independent.",
@@ -433,7 +478,28 @@ func modelsSubtree(docs Docs) *Subtree {
 				"--subagent-model-router=false) is the kill-switch. Operator-tier only."
 			rf := fieldsOf("RouterSection", permconfig.RouterSection{}, docs)
 			for _, nf := range rf {
-				if nf.Key == "categories" {
+				switch nf.Key {
+				case "backend":
+					nf.Default = "llm"
+					nf.ExampleValue = "jev"
+				case "jev":
+					nf.Nested = fieldsOf("JevRouterSection", permconfig.JevRouterSection{}, docs)
+					for _, jf := range nf.Nested {
+						switch jf.Key {
+						case "model":
+							jf.Default = "jev-1.13.0"
+							jf.ExampleValue = "jev-1.13.0"
+						case "base-url":
+							jf.ExampleValue = "https://api.typesafe.ai"
+						case "minimum-confidence":
+							jf.Default = "0"
+							jf.ExampleValue = "0.5"
+						case "maximum-input-bytes":
+							jf.Default = "16384"
+							jf.ExampleValue = "16384"
+						}
+					}
+				case "categories":
 					nf.Nested = fieldsOf("RouterCategory", permconfig.RouterCategory{}, docs)
 					for _, cf := range nf.Nested {
 						switch cf.Key {

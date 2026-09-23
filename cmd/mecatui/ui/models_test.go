@@ -145,7 +145,7 @@ func TestRunModelsOpensPicker(t *testing.T) {
 	}
 }
 
-// TestModelsPanelSanitizesNames locks the sanitizeTerminal wrappers in the /models
+// TestModelsPanelSanitizesNames locks the terminaltext.Sanitize wrappers in the /models
 // picker against deletion: open the picker with a model whose id + display_name +
 // provider_id embed ANSI/OSC escapes (the live OpenRouter catalog is an UNTRUSTED
 // source now), feed the inventory, render, and assert no raw ESC (0x1b) survives.
@@ -165,10 +165,10 @@ func TestModelsPanelSanitizesNames(t *testing.T) {
 
 	// stripANSIstr removes the LEGITIMATE theme styling escapes; what remains must
 	// carry NO raw ESC — if any survives, it came from the server-derived model
-	// id/display_name/provider_id and sanitizeTerminal was not applied.
+	// id/display_name/provider_id and terminaltext.Sanitize was not applied.
 	out := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the rendered picker; sanitizeTerminal not applied:\n%q", out)
+		t.Errorf("raw ESC (0x1b) leaked into the rendered picker; terminaltext.Sanitize not applied:\n%q", out)
 	}
 	// The sanitized fields still render as inert text (ESC stripped, body kept):
 	// the id-fallback label, the provider segment, and the display-name label.
@@ -183,7 +183,7 @@ func TestModelsPanelSanitizesNames(t *testing.T) {
 	m = typeFilter(t, m, "router")
 	out = stripANSIstr(m.View().Content)
 	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("raw ESC leaked into the FILTERED picker; sanitizeTerminal not applied:\n%q", out)
+		t.Errorf("raw ESC leaked into the FILTERED picker; terminaltext.Sanitize not applied:\n%q", out)
 	}
 }
 
@@ -207,23 +207,23 @@ func TestModelsCursorNav(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	if modelsSurface(t, m).cursor != 0 {
-		t.Fatalf("initial cursor = %d, want 0", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 0 {
+		t.Fatalf("initial cursor = %d, want 0", modelsSurface(t, m).list.Cursor())
 	}
 	if len(modelsSurface(t, m).filtered) != 4 {
 		t.Fatalf("filtered len = %d, want 4 (empty filter ⇒ filtered == models)", len(modelsSurface(t, m).filtered))
 	}
 	// Up at the top clamps.
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if modelsSurface(t, m).cursor != 0 {
-		t.Errorf("cursor after up at top = %d, want 0 (clamped)", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 0 {
+		t.Errorf("cursor after up at top = %d, want 0 (clamped)", modelsSurface(t, m).list.Cursor())
 	}
 	// Down moves through all 4 rows then clamps at the last.
 	for i := 0; i < 6; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if modelsSurface(t, m).cursor != 3 {
-		t.Errorf("cursor after many downs = %d, want 3 (clamped at last)", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 3 {
+		t.Errorf("cursor after many downs = %d, want 3 (clamped at last)", modelsSurface(t, m).list.Cursor())
 	}
 }
 
@@ -257,8 +257,8 @@ func TestModelsFilterNarrows(t *testing.T) {
 	if modelsSurface(t, m).filtered[0].ID != "anthropic/claude" {
 		t.Fatalf("filtered[0].ID = %q, want anthropic/claude", modelsSurface(t, m).filtered[0].ID)
 	}
-	if modelsSurface(t, m).cursor != 0 {
-		t.Errorf("cursor after narrowing = %d, want 0 (clamped to filtered bounds)", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 0 {
+		t.Errorf("cursor after narrowing = %d, want 0 (clamped to filtered bounds)", modelsSurface(t, m).list.Cursor())
 	}
 	// enter switches IMMEDIATELY (no confirm overlay): a live session exists, so the
 	// carryover handoff fires. The picker closes and the phase moves to connecting.
@@ -292,7 +292,7 @@ func TestModelsCarryoverKeepsVisibleProjection(t *testing.T) {
 	m.conv.startAssistant()
 	m.conv.appendAssistant("visible assistant")
 	m.refreshView()
-	if len(m.rend.blockCache) == 0 || len(m.rend.blockMD) == 0 {
+	if len(m.rend.blocks.rendered) == 0 || len(m.rend.blocks.markdown) == 0 {
 		t.Fatal("precondition: visible conversation should populate renderer caches")
 	}
 
@@ -537,15 +537,15 @@ func TestModelsFilterCursorClamp(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if modelsSurface(t, m).cursor != 3 {
-		t.Fatalf("precondition: cursor = %d, want 3", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 3 {
+		t.Fatalf("precondition: cursor = %d, want 3", modelsSurface(t, m).list.Cursor())
 	}
 	m = typeFilter(t, m, "gpt-5-mini")
 	if len(modelsSurface(t, m).filtered) != 1 {
 		t.Fatalf("filtered len = %d, want 1", len(modelsSurface(t, m).filtered))
 	}
-	if modelsSurface(t, m).cursor != 0 {
-		t.Errorf("cursor after narrowing = %d, want 0 (clamped)", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 0 {
+		t.Errorf("cursor after narrowing = %d, want 0 (clamped)", modelsSurface(t, m).list.Cursor())
 	}
 }
 
@@ -603,8 +603,8 @@ func TestModelsFilterDoesNotInterceptJK(t *testing.T) {
 	if modelsSurface(t, m).filter.Value() != "kimi" {
 		t.Errorf("filter value = %q, want \"kimi\" (k/i/m/i must type, not navigate)", modelsSurface(t, m).filter.Value())
 	}
-	if modelsSurface(t, m).cursor != 0 {
-		t.Errorf("cursor moved to %d while typing \"kimi\"; j/k must not be intercepted as nav", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 0 {
+		t.Errorf("cursor moved to %d while typing \"kimi\"; j/k must not be intercepted as nav", modelsSurface(t, m).list.Cursor())
 	}
 	if len(modelsSurface(t, m).filtered) != 1 || modelsSurface(t, m).filtered[0].ID != "kimi-k2" {
 		t.Errorf("filter \"kimi\" should narrow to kimi-k2, got %+v", modelsSurface(t, m).filtered)
@@ -614,8 +614,8 @@ func TestModelsFilterDoesNotInterceptJK(t *testing.T) {
 	modelsSurface(t, m).filter.SetValue("")
 	modelsSurface(t, m).syncFilter()
 	m = typeFilter(t, m, "jamba")
-	if modelsSurface(t, m).filter.Value() != "jamba" || modelsSurface(t, m).cursor != 0 {
-		t.Errorf("typing \"jamba\": value=%q cursor=%d, want value \"jamba\" cursor 0", modelsSurface(t, m).filter.Value(), modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).filter.Value() != "jamba" || modelsSurface(t, m).list.Cursor() != 0 {
+		t.Errorf("typing \"jamba\": value=%q cursor=%d, want value \"jamba\" cursor 0", modelsSurface(t, m).filter.Value(), modelsSurface(t, m).list.Cursor())
 	}
 }
 
@@ -645,14 +645,14 @@ func itoa3(i int) string {
 // SELECTED row in the rendered window and pushes an early row out of view.
 func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 	fm := manyModels(30)
-	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 
 	// Drive the cursor to the last row.
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if modelsSurface(t, m).cursor != 29 {
-		t.Fatalf("cursor after End = %d, want 29", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 29 {
+		t.Fatalf("cursor after End = %d, want 29", modelsSurface(t, m).list.Cursor())
 	}
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "model-029") {
@@ -672,14 +672,14 @@ func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 // top, the first row is visible again (the window follows the cursor up too).
 func TestModelsWindowFollowsCursorPastTop(t *testing.T) {
 	fm := manyModels(30)
-	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	m := newModelsModelSized(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if modelsSurface(t, m).cursor != 0 {
-		t.Fatalf("cursor after Home = %d, want 0", modelsSurface(t, m).cursor)
+	if modelsSurface(t, m).list.Cursor() != 0 {
+		t.Fatalf("cursor after Home = %d, want 0", modelsSurface(t, m).list.Cursor())
 	}
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "model-000") {
@@ -881,6 +881,54 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 	}
 }
 
+// TestModelsSelectionSanitizesDisplayNameStatus keeps server-supplied model
+// display names inert after a picker selection reaches the footer status.
+func TestModelsSelectionSanitizesDisplayNameStatus(t *testing.T) {
+	const hostile = "\x1b]0;pwned\x07"
+	const displayName = "Trusted Model" + hostile
+
+	fm := &fakeModels{models: []client.ModelInfo{{
+		ID:          "trusted-model",
+		ProviderID:  "test",
+		DisplayName: displayName,
+	}}}
+	conv := &fakeConv{
+		recv:              &fakeRecver{gate: make(chan struct{})},
+		send:              &fakeSender{},
+		caps:              modelsCaps(),
+		echoSelAsResolved: true,
+	}
+	m := newTestModelFromDeps(Deps{
+		Session:     conv,
+		Conv:        conv,
+		Models:      fm,
+		Transcript:  modelSwitchTranscriptLoader{},
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Server:      "127.0.0.1:8080",
+		Workspace:   "/workspace",
+		Mode:        "default",
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: modelsCaps(), ResolvedModel: client.ResolvedModel{ProviderID: "test", ModelID: "old"}},
+	)
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = feedModelSwitchBusiness(t, mm.(Model), cmd)
+
+	for _, rendered := range []string{m.statusMsg, m.renderFooter()} {
+		if strings.Contains(rendered, hostile) {
+			t.Errorf("hostile OSC sequence leaked into rendered status: %q", rendered)
+		}
+		if !strings.Contains(rendered, "Trusted Model]0;pwned") {
+			t.Errorf("sanitized display name missing from rendered status: %q", rendered)
+		}
+	}
+}
+
 // TestModelsEscClosesNoChange asserts esc closes the picker without changing the
 // active selection.
 func TestModelsEscClosesNoChange(t *testing.T) {
@@ -929,7 +977,7 @@ func TestModelsErrorRenders(t *testing.T) {
 // RPC error), must NOT keep rendering the stale status's remediation line
 // beneath the new, unrelated error — a failed ListModels carries no
 // statuses. Both the state-clear (updateModelsMsg) and the render-time
-// defense (renderModelsPanel gated on st.err == nil) are exercised by
+// defense (modelsState.Render gates on st.err == nil) are exercised by
 // asserting the FINAL rendered view.
 func TestModelsErrorClearsStaleProviderStatuses(t *testing.T) {
 	statuses := []client.ProviderStatus{
@@ -1381,7 +1429,7 @@ func TestModelsPickerNoActiveMarkerWhenSelectionAbsent(t *testing.T) {
 	if m.modelCatalog.active != kept {
 		t.Fatalf("models.active = %+v, want the kept %+v", m.modelCatalog.active, kept)
 	}
-	panel := renderModelsPanel(m.deps.Theme, m.modelCatalog, *modelsSurface(t, m), m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30, modelsPanelFixedRows(*modelsSurface(t, m), "", defaultHelpKeys())))
+	panel := m.View().Content
 	rows := strings.Split(stripANSIstr(panel), "\n")
 	for _, row := range rows {
 		if strings.Contains(row, "●") && !strings.Contains(row, "● current") {
@@ -1792,6 +1840,26 @@ func TestModelsPickerGolden(t *testing.T) {
 	compareGolden(t, "models.golden", got)
 }
 
+// TestModelsPickerRetainsNaturalCardWidth prevents list-row bounding from narrowing
+// Models chrome before the surrounding card measures its natural width.
+func TestModelsPickerRetainsNaturalCardWidth(t *testing.T) {
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(),
+		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	out := stripANSIstr(m.View().Content)
+
+	const help = "type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close"
+	if !strings.Contains(out, help) {
+		t.Errorf("Models help action was truncated:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "┏") && strings.Count(line, "━") <= 100 {
+			t.Errorf("Models card width regressed to bounded content width: %q", line)
+		}
+	}
+}
+
 // TestModelsPickerDisabledGolden locks the "model selection not available" empty
 // state (caps.ModelSelection false, empty list).
 func TestModelsPickerDisabledGolden(t *testing.T) {
@@ -1866,15 +1934,21 @@ func TestModelsPickerFilteredGolden(t *testing.T) {
 	compareGolden(t, "models_filtered.golden", got)
 }
 
-// TestModelsPickerScrolledGolden locks a mid-list window: a 30-row list at a small
-// height with the cursor paged to the bottom, proving the list clips + the window
-// follows the cursor.
+// TestModelsPickerScrolledGolden locks a mid-list physical window: a 30-row list at
+// a small height with a wrapped final row and the cursor at the bottom, proving the
+// list clips physical lines (not logical rows), follows the cursor, and reports
+// complete hidden logical items in its overflow indicator.
 func TestModelsPickerScrolledGolden(t *testing.T) {
-	m := newModelsModelSized(t, manyModels(30), &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 14)
+	models := manyModels(30)
+	models.models[len(models.models)-1].DisplayName = strings.Repeat("wrapped model label ", 8)
+	m := newModelsModelSized(t, models, &fakeStore{}, modelsCaps(), client.ModelSelection{}, 100, 30)
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	got := stripANSI([]byte(m.View().Content))
+	if !bytes.Contains(got, []byte("↑ 26 items")) {
+		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
+	}
 	compareGolden(t, "models_scrolled.golden", got)
 }
 

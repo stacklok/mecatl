@@ -7,18 +7,15 @@ import (
 )
 
 func TestSnapshotFromUsesSessionMediaCapabilities(t *testing.T) {
-	global := &mecatlv1.ServerCapabilities{Image: true, Teams: true}
-
 	textOnly := snapshotFrom(&mecatlv1.Session{
-		Capabilities:        global,
 		SessionCapabilities: &mecatlv1.SessionCapabilities{},
 	})
-	if textOnly.Capabilities.Image || !textOnly.Capabilities.Teams {
+	if textOnly.Capabilities.Image || !textOnly.Capabilities.SessionMediaPresent {
 		t.Fatalf("text-only snapshot capabilities = %+v", textOnly.Capabilities)
 	}
-	legacy := snapshotFrom(&mecatlv1.Session{Capabilities: global})
-	if !legacy.Capabilities.Image || !legacy.Capabilities.Teams {
-		t.Fatalf("legacy snapshot capabilities = %+v", legacy.Capabilities)
+	withoutMedia := snapshotFrom(&mecatlv1.Session{})
+	if withoutMedia.Capabilities.SessionMediaPresent {
+		t.Fatalf("absent session media unexpectedly marked present: %+v", withoutMedia.Capabilities)
 	}
 }
 
@@ -57,5 +54,24 @@ func TestSnapshotFromReadsTitle(t *testing.T) {
 	nilSnap := snapshotFrom(nil)
 	if nilSnap.Title != "" {
 		t.Fatalf("nil Title = %q, want empty", nilSnap.Title)
+	}
+}
+
+func TestSnapshotFromProjectsMainUsageAndOptionalContextOccupancy(t *testing.T) {
+	snap := snapshotFrom(&mecatlv1.Session{
+		TokenUsage: map[string]*mecatlv1.TokenUsage{
+			"main": {Total: &mecatlv1.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}},
+		},
+		LatestContextOccupancy: &mecatlv1.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+	})
+	if snap.Usage != (Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}) {
+		t.Fatalf("main usage = %+v", snap.Usage)
+	}
+	if snap.ContextOccupancy == nil || *snap.ContextOccupancy != (ContextOccupancy{InputTokens: 40_000, Estimated: true}) {
+		t.Fatalf("context occupancy = %+v", snap.ContextOccupancy)
+	}
+	legacy := snapshotFrom(&mecatlv1.Session{TokenUsage: map[string]*mecatlv1.TokenUsage{"main": {Total: &mecatlv1.Usage{InputTokens: 120_000}}}})
+	if legacy.ContextOccupancy != nil || legacy.Usage.InputTokens != 120_000 {
+		t.Fatalf("legacy snapshot = %+v", legacy)
 	}
 }

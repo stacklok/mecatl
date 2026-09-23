@@ -16,14 +16,20 @@ import (
 
 // SessionSnapshot is the proto-free subset of a server session snapshot mecatui needs.
 type SessionSnapshot struct {
-	Mode            string
-	State           string
-	Placement       Placement
-	CreatedAt       int64
-	ResolvedModel   ResolvedModel
-	Title           string
-	TitleProvenance string
-	TitleRevision   uint64
+	Mode          string
+	State         string
+	Placement     Placement
+	CreatedAt     int64
+	ResolvedModel ResolvedModel
+	// Usage is the canonical cumulative main-session ledger. It is distinct from
+	// ContextOccupancy, which is only the latest context-meter display state.
+	Usage Usage
+	// ContextOccupancy is nil when a legacy or pre-turn snapshot has no known
+	// context-meter numerator.
+	ContextOccupancy *ContextOccupancy
+	Title            string
+	TitleProvenance  string
+	TitleRevision    uint64
 	// Capabilities is the server's feature-advertisement snapshot from the Session
 	// proto (the SAME global value CreateSessionResponse carries), with per-session
 	// media overlaid when SessionCapabilities is present. A client that reloads or
@@ -33,37 +39,45 @@ type SessionSnapshot struct {
 	Capabilities Capabilities
 }
 
+// ContextOccupancy is the optional latest context-meter display value from a
+// session snapshot. It is neither lifetime usage nor a model budget.
+type ContextOccupancy struct {
+	InputTokens int64
+	Estimated   bool
+}
+
+func contextOccupancyFrom(occupancy *mecatlv1.ContextOccupancy) *ContextOccupancy {
+	if occupancy == nil {
+		return nil
+	}
+	return &ContextOccupancy{InputTokens: occupancy.GetInputTokens(), Estimated: occupancy.GetEstimated()}
+}
+
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 	if s == nil {
 		return SessionSnapshot{Mode: ModeDefaultString}
 	}
 	return SessionSnapshot{
-		Mode:            ModeString(s.GetMode()),
-		State:           s.GetState(),
-		Placement:       placementFrom(s.GetPlacement()),
-		CreatedAt:       s.GetCreatedAtUnix(),
-		ResolvedModel:   resolvedModelFrom(s.GetResolvedModel()),
-		Title:           titleFromProto(s),
-		TitleProvenance: titleProvenanceFromProto(s),
-		TitleRevision:   s.GetTitleMetadata().GetRevision(),
-		Capabilities:    capabilitiesWithSessionMedia(s.GetCapabilities(), s.GetSessionCapabilities()),
+		Mode:             ModeString(s.GetMode()),
+		State:            s.GetState(),
+		Placement:        placementFrom(s.GetPlacement()),
+		CreatedAt:        s.GetCreatedAtUnix(),
+		ResolvedModel:    resolvedModelFrom(s.GetResolvedModel()),
+		Usage:            usageFrom(s.GetTokenUsage()["main"].GetTotal()),
+		ContextOccupancy: contextOccupancyFrom(s.GetLatestContextOccupancy()),
+		Title:            titleFromProto(s),
+		TitleProvenance:  titleProvenanceFromProto(s),
+		TitleRevision:    s.GetTitleMetadata().GetRevision(),
+		Capabilities:     capabilitiesWithSessionMedia(nil, s.GetSessionCapabilities()),
 	}
 }
 
 func titleFromProto(s *mecatlv1.Session) string {
-	if title := s.GetTitleMetadata().GetTitle(); title != "" {
-		return title
-	}
-	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
-	return s.GetTitle()
+	return s.GetTitleMetadata().GetTitle()
 }
 
 func titleProvenanceFromProto(s *mecatlv1.Session) string {
-	if provenance := s.GetTitleMetadata().GetProvenance(); provenance != "" {
-		return provenance
-	}
-	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
-	return s.GetTitleProvenance()
+	return s.GetTitleMetadata().GetProvenance()
 }
 
 // GetSession looks up an existing session by id and returns the server-authored
@@ -104,7 +118,14 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 // the reducer can drop a result that landed AFTER a /models switch rebound the
 // ui to a new session (a stale window must never clobber the new session's
 // denominator). Err set ⇒ the refetch failed; the reducer keeps the current
-// denominator (benign — the heal simply retries on the next turn boundary).
+// snapshot-derived display state (benign — the heal simply retries on the next
+// turn boundary).
+//
+// ContextOccupancy carries the persisted latest context-meter numerator. It
+// lets an authoritative startup-resume refetch restore the display state when
+// the initial snapshot was incomplete, without treating cumulative usage as
+// current context occupancy. It is adopted only when
+// AdoptContextOccupancy identifies that startup-resume handoff.
 //
 // Mode carries the server-confirmed permission posture from the session snapshot.
 // When non-empty (the plan-approval refresh path) the reducer applies it to the
@@ -126,10 +147,19 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel
-	Mode      string
-	State     string
-	Placement Placement
-	CreatedAt int64
+	// ContextOccupancy is the persisted latest context-meter display state from
+	// the same authoritative snapshot as Resolved.
+	ContextOccupancy *ContextOccupancy
+	// AdoptContextOccupancy scopes occupancy adoption to startup resume so a
+	// delayed ordinary model refresh cannot overwrite newer live turn metrics.
+	AdoptContextOccupancy bool
+	// StartupResumeRefreshAttempt orders the bounded startup-resume denominator
+	// retries. It is meaningful only with AdoptContextOccupancy.
+	StartupResumeRefreshAttempt int
+	Mode                        string
+	State                       string
+	Placement                   Placement
+	CreatedAt                   int64
 	// Title is the session's stored title from the snapshot (self-heal channel for
 	// the window title). See the struct doc.
 	Title string
@@ -172,25 +202,33 @@ func SetModeCmd(ctx context.Context, s ModeSetter, id, mode string) tea.Cmd {
 
 // RefreshResolvedModelCmd refetches the resolved model for session id off the
 // update goroutine; the result (success or error) arrives as a ResolvedModelMsg
-// with SessionID stamped so the reducer can correlate/drop it. It backs two paths:
-//
-//  1. The footer context-meter heal: the ui fires it on a turn boundary while the
-//     meter's denominator is still unknown, and the ResolvedModelMsg arm raises the
-//     window once the server's live-first resolution heals it.
-//  2. The plan-approval mode+model refresh (issue #206): after a plan_approved
-//     terminal, the ui fires it to refetch the server's flipped mode (plan→default/
-//     acceptEdits) and the execute model, so the header updates from the session
-//     snapshot.
-//
-// Mode is carried alongside ResolvedModel so the reducer can update both the mode
-// echo and the effective model in one refetch (reusing the ResolvedModelMsg arm).
-// Capabilities is carried so the caps-heal path (/sessions continue, /effort fork,
-// issue #348) can re-derive affordances in the same round-trip.
+// with SessionID stamped so the reducer can correlate/drop it. It backs the
+// footer context-meter denominator heal, plan-approval model/mode refresh, and
+// caps-heal path for /sessions continue + /effort fork.
 func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) tea.Cmd {
+	return refreshResolvedModelCmd(ctx, g, id, false, 0)
+}
+
+// RefreshStartupResumeCmd additionally carries persisted context occupancy for
+// the startup-resume handoff. Its result is marked so the UI can restore this
+// display-only snapshot without allowing ordinary delayed refreshes to replace
+// newer live turn metrics.
+func RefreshStartupResumeCmd(ctx context.Context, g SessionGetter, id string) tea.Cmd {
+	return refreshResolvedModelCmd(ctx, g, id, true, 0)
+}
+
+// RefreshStartupResumeRetryCmd retries startup-resume model metadata after an
+// explicitly provisional zero context window. attempt is diagnostic ordering;
+// the UI owns the bounded retry policy and stale-session guard.
+func RefreshStartupResumeRetryCmd(ctx context.Context, g SessionGetter, id string, attempt int) tea.Cmd {
+	return refreshResolvedModelCmd(ctx, g, id, true, attempt)
+}
+
+func refreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string, adoptContextOccupancy bool, startupResumeRefreshAttempt int) tea.Cmd {
 	return func() tea.Msg {
 		snap, err := g.GetSession(ctx, id)
 		return ResolvedModelMsg{
-			SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode,
+			SessionID: id, Resolved: snap.ResolvedModel, ContextOccupancy: snap.ContextOccupancy, AdoptContextOccupancy: adoptContextOccupancy, StartupResumeRefreshAttempt: startupResumeRefreshAttempt, Mode: snap.Mode,
 			State: snap.State, Placement: snap.Placement, CreatedAt: snap.CreatedAt,
 			Title: snap.Title, TitleProvenance: snap.TitleProvenance, TitleRevision: snap.TitleRevision, Capabilities: snap.Capabilities, Err: err,
 		}

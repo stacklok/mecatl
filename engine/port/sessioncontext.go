@@ -8,6 +8,7 @@ import (
 )
 
 type sessionIDContextKey struct{}
+type rootSessionIDContextKey struct{}
 type runSerialContextKey struct{}
 type turnIndexContextKey struct{}
 type runAttemptCarrierContextKey struct{}
@@ -86,6 +87,22 @@ func SessionIDFromContext(ctx context.Context) (session.SessionID, bool) {
 		return "", false
 	}
 	id, ok := ctx.Value(sessionIDContextKey{}).(session.SessionID)
+	return id, ok
+}
+
+// WithRootSessionID returns a child context carrying the causal root session for
+// model calls made in a run tree. It grants no authority and is intended only
+// for trusted composition code and engine-to-engine propagation.
+func WithRootSessionID(ctx context.Context, id session.SessionID) context.Context {
+	return context.WithValue(ctx, rootSessionIDContextKey{}, id)
+}
+
+// RootSessionIDFromContext returns the causal root session identity carried by ctx.
+func RootSessionIDFromContext(ctx context.Context) (session.SessionID, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	id, ok := ctx.Value(rootSessionIDContextKey{}).(session.SessionID)
 	return id, ok
 }
 

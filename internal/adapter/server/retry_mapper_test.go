@@ -29,31 +29,7 @@ func TestToProtoResultTypedMetadataPresence(t *testing.T) {
 			if got.StreamProgress == nil || *got.StreamProgress != tc.wantP {
 				t.Fatalf("stream progress = %v", got.StreamProgress)
 			}
-			if got.Permanent != (tc.d == session.RetryDispositionPermanent) {
-				t.Fatalf("permanent = %v", got.Permanent)
-			}
 		})
-	}
-}
-
-func TestToProtoResultTypedDispositionWinsOverLegacyPermanent(t *testing.T) {
-	got := toProtoResult(session.ResultPayload{
-		Stop:        session.StopError,
-		Permanent:   true,
-		Disposition: session.RetryDispositionRetryable,
-	})
-	if got.Permanent || got.RetryDisposition == nil || *got.RetryDisposition != mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE {
-		t.Fatalf("typed retryable did not win: permanent=%v disposition=%v", got.Permanent, got.RetryDisposition)
-	}
-}
-
-func TestToProtoResultLegacyPermanentCompatibility(t *testing.T) {
-	got := toProtoResult(session.ResultPayload{Stop: session.StopError, Permanent: true})
-	if !got.Permanent {
-		t.Fatal("legacy permanent bool was cleared")
-	}
-	if got.RetryDisposition == nil || *got.RetryDisposition != mecatlv1.RetryDisposition_RETRY_DISPOSITION_PERMANENT {
-		t.Fatalf("legacy-only disposition = %v, want permanent", got.RetryDisposition)
 	}
 }
 

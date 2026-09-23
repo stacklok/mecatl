@@ -26,13 +26,16 @@ import {
   ContentSchema,
   type ConverseResponse,
   type Event,
+  type GetGuardrailReviewDetailResponse,
   HarnessService,
+  type ListGuardrailCoverageResponse,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type Session as ProtoSession,
   type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
+import { createMcpAuthorization, type McpAuthorization } from "./mcp-authorization.js";
 import {
   type McpConnectorInventory,
   projectMcpConnectorInventory,
@@ -80,6 +83,7 @@ import {
   projectServerCompatibility,
   type Server,
   type ServerCompatibility,
+  ServerFeature,
 } from "./server.js";
 import {
   projectSessionSnapshot,
@@ -198,6 +202,16 @@ export interface ClearSessionOptions {
 export interface Session {
   readonly id: string;
   /**
+   * Binds one external authorization ID to this session without performing I/O.
+   *
+   * This handle consumes session-scoped ToolHive broker authorization handoffs.
+   * It does not administer direct or global MCP profiles or their credentials.
+   *
+   * @param authorizationId - Exact non-empty ID from an authorization event.
+   * @returns A reusable correlation handle that makes no authorization-state assertion.
+   */
+  mcpAuthorization(authorizationId: string): McpAuthorization;
+  /**
    * Reads the current broker connector inventory for this session.
    *
    * The inventory describes broker-local publication rather than connector
@@ -208,6 +222,30 @@ export interface Session {
    * @returns A detached SDK-owned connector inventory projection.
    */
   listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
+  /**
+   * Reads the effective guardrail coverage for this session.
+   *
+   * The server authorizes this diagnostic for the session owner. This RPC is
+   * available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The effective checker configuration and rule coverage.
+   */
+  guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
+  /**
+   * Reads bounded live detail for one guardrail review in this session.
+   *
+   * The server authorizes this diagnostic for the session owner. This RPC is
+   * available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+   *
+   * @param reviewId - Review ID from the session's guardrail event.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The review concern, source display, and next action.
+   */
+  guardrailReviewDetail(
+    reviewId: string,
+    options?: RequestOptions,
+  ): Promise<GetGuardrailReviewDetailResponse>;
   /**
    * Starts or observes this session's whole-bundle workspace enrollment.
    *
@@ -613,6 +651,27 @@ class SessionImpl implements Session {
     return projectMcpConnectorInventory(response);
   }
 
+  async guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse> {
+    this.#operations.assertOpen();
+    return this.#operations.unary(
+      HarnessService.method.listGuardrailCoverage,
+      { sessionId: this.id },
+      options,
+    );
+  }
+
+  async guardrailReviewDetail(
+    reviewId: string,
+    options?: RequestOptions,
+  ): Promise<GetGuardrailReviewDetailResponse> {
+    this.#operations.assertOpen();
+    return this.#operations.unary(
+      HarnessService.method.getGuardrailReviewDetail,
+      { reviewId, sessionId: this.id },
+      options,
+    );
+  }
+
   async connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment> {
     this.#operations.assertOpen();
     assertRequestNotAborted(options, this.#operations.transportKind);
@@ -662,6 +721,13 @@ class SessionImpl implements Session {
       { enrollmentId, kind: "cancel" },
       this.#operations.transportKind,
     );
+  }
+
+  mcpAuthorization(authorizationId: string): McpAuthorization {
+    return createMcpAuthorization(this.id, authorizationId, {
+      ...this.#operations,
+      promptCapabilities: () => this.#promptCapabilities,
+    });
   }
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
@@ -765,6 +831,27 @@ class SessionImpl implements Session {
   ): Promise<Run> {
     this.#assertRunAvailable();
     const encoded = encodePrompt(prompt, this.#promptCapabilities);
+    if (options.serverOwnedPlanContinuation === true) {
+      if (options.onPlanApproval !== undefined) {
+        throw new InvalidStateError("Server-owned plan continuation cannot use onPlanApproval", {
+          transport: this.#operations.transportKind,
+        });
+      }
+      // Reserve admission before awaiting compatibility; another run must not
+      // pass the local busy check while this one is still preflighting.
+      this.#busy = true;
+      try {
+        const features = await this.#operations.features(requestOptions);
+        if (!features.has(ServerFeature.ExactPlanAskControl)) {
+          throw new UnsupportedFeatureError(ServerFeature.ExactPlanAskControl, {
+            transport: this.#operations.transportKind,
+          });
+        }
+      } catch (error) {
+        this.#busy = false;
+        throw error;
+      }
+    }
     return this.#startRun(
       {
         kind: {
@@ -780,6 +867,9 @@ class SessionImpl implements Session {
             ),
             sessionId: this.id,
             text: encoded.text,
+            ...(options.serverOwnedPlanContinuation === true
+              ? { serverOwnedPlanContinuation: true }
+              : {}),
           },
         },
       },
@@ -790,6 +880,11 @@ class SessionImpl implements Session {
 
   async retry(options: RunOptions = {}, requestOptions?: RequestOptions): Promise<Run> {
     this.#assertRunAvailable();
+    if (options.serverOwnedPlanContinuation === true) {
+      throw new InvalidStateError("retry() cannot opt into server-owned plan continuation", {
+        transport: this.#operations.transportKind,
+      });
+    }
     return this.#startRun(
       { kind: { case: "retry", value: { sessionId: this.id } } },
       options,
@@ -893,7 +988,7 @@ class SessionImpl implements Session {
         transport: this.#operations.transportKind,
       });
     }
-    const refreshed = promptCapabilities(snapshot.sessionCapabilities, snapshot.capabilities);
+    const refreshed = promptCapabilities(snapshot.sessionCapabilities, this.#promptCapabilities);
     if (refreshed !== undefined) this.#promptCapabilities = refreshed;
     return snapshot;
   }
@@ -1079,6 +1174,7 @@ class ClientImpl implements Client {
               mcpServers: [...(input.mcpServers ?? []), mcpServer],
             };
           }
+          const compatibility = await this.#compatibility(requestOptions, false);
           const response = await this.#unary(
             HarnessService.method.createSession,
             request,
@@ -1088,7 +1184,7 @@ class ClientImpl implements Client {
           return this.#session(
             response.sessionId,
             "CreateSession",
-            promptCapabilities(response.sessionCapabilities, response.capabilities),
+            promptCapabilities(response.sessionCapabilities, compatibility.capabilities),
           );
         } catch (error) {
           lease?.finish(false);
@@ -1107,6 +1203,7 @@ class ClientImpl implements Client {
         return this.#session(response.sessionId, "ForkSession", undefined);
       },
       get: async (sessionId, options) => {
+        const compatibility = await this.#compatibility(options, false);
         const response = await this.#unary(
           HarnessService.method.getSession,
           { sessionId },
@@ -1124,7 +1221,7 @@ class ClientImpl implements Client {
         return new SessionImpl(
           snapshot.sessionId,
           this.#operations,
-          promptCapabilities(snapshot.sessionCapabilities, snapshot.capabilities),
+          promptCapabilities(snapshot.sessionCapabilities, compatibility.capabilities),
         );
       },
       list: operational.sessionInventory.list,
@@ -1605,12 +1702,19 @@ function unwrapEvents(
   transport: TransportKind,
   release: () => void,
 ): AsyncIterator<Event> {
+  let returned = false;
+  const close = async () => {
+    release();
+    if (returned) return;
+    returned = true;
+    await responses.return?.();
+  };
   return {
     next: async () => {
       try {
         const next = await responses.next();
         if (next.done) {
-          release();
+          await close();
           return { done: true, value: undefined };
         }
         const event = next.value.event;
@@ -1619,7 +1723,9 @@ function unwrapEvents(
             transport,
           });
         }
-        if (event.runId !== runId) {
+        const correlatedControlEvent =
+          event.type === "permission.ask" || event.type === "control.refused";
+        if (event.runId !== runId && !correlatedControlEvent) {
           throw new ProtocolError("The Converse stream changed run id", { transport });
         }
         if (event.type === "result") release();
@@ -1628,6 +1734,10 @@ function unwrapEvents(
         release();
         throw error;
       }
+    },
+    return: async () => {
+      await close();
+      return { done: true, value: undefined };
     },
   };
 }

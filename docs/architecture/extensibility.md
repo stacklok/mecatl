@@ -25,16 +25,15 @@ allocation and reaping and leaves existing managed data for explicit inspection 
 removal. Managed mode is available on Linux and macOS; other platforms must use
 `system` mode. See [ADR 0281](../adr/0281-managed-temporary-command-leases.md).
 
-**Portable memory capabilities.** `tool.MemoryStore` remains the six-method base
-contract. `tool.MemoryLifecycleStore` is an optional additive capability for opaque
-versions, inspection, tombstones, and compensating undo. Consumers register the
-portable `engine/adapter/memorytools` base family for every store and its lifecycle
-family only when that interface is implemented. Remote adapters may implement both;
-an old driver still serves ordinary operations and operator-profile reads through the
-original RPCs, while unsupported lifecycle mutations fail visibly instead of falling
-back to unversioned deletion. `prompt.OperatorProfileSource` is a separate
+**Portable memory contract.** `tool.MemoryStore` is one mandatory lifecycle/CAS
+contract: create-only or exact-version Remember, Inspect, Recall, List, exact-version
+Forget, Index, Search, and exact-version Undo. Portable
+`engine/adapter/memorytools` bodies register the same six model-facing tools for
+every store. Remote adapters must negotiate the exact current driver contract
+before composition; old/base-only peers are rejected rather than receiving
+unversioned writes or deletes. `prompt.OperatorProfileSource` is a separate
 consumer-defined read seam, so an embedding can supply live user facts without
-adopting the file adapter or the lifecycle capability.
+adopting the file adapter.
 
 **MCP client** (`internal/adapter/mcp`) — remote tools register here. The
 transport is **streaming-HTTP only** (the project's hard constraint): the
@@ -54,9 +53,23 @@ and the operation is never replayed automatically. See
 [ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md), and
 [ADR 0309](../adr/0309-mcp-ambiguous-closed-idle-post.md). The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
-`notifications/{tools,prompts,resources}/list_changed` invalidate the cached
-snapshots (lazily re-listed on the next read); live catalog refresh is
-deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
+`notifications/{tools,prompts,resources}/list_changed` enter the same serialized,
+bounded reconciler as explicit refresh and ToolHive-only jittered polling. The
+reconciler retains source last-known-good state, builds complete immutable
+candidates, and atomically publishes one runtime revision. Root operations pin
+that revision; displaced runtimes close after their pins drain. See
+[ADR 0057](../adr/0057-mcp-server-notifications.md) and
+[ADR 0355](../adr/0355-mcp-source-reconciliation.md).
+
+Automatic reconciliation changes current availability but never widens durable
+session authority. `Service.RefreshMcpSources` owner-checks an eligible idle or
+quiescent completed ordinary root, requests shared reconciliation, and
+stable-unions only missing active direct names. A no-op takes no mutation lease
+and performs no save. A widening refresh saves one detached candidate and
+confirms an ambiguous save by bounded authoritative reload while the run-entry
+and mutation exclusions remain held. `ListMcpSources` reports the cached
+published/pre-shadow inventory, revision, stale state, and active reconciliation
+without probing a source.
 
 A dedicated debug session can borrow only direct tools from explicitly named, already
 connected server-global MCP servers. It persists the names and the exact initial tool-name

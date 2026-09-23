@@ -1,7 +1,8 @@
 # Mecatl
 
 <p align="center">
-  <img src="./assets/mecatito.png" alt="Mecatito, the Mecatl mascot" width="260">
+  <img src="./assets/mecatl-hero.png" width="800"
+       alt="A traditional harness couples its UI, runtime, and models into one sealed vendor stack. Mecatl keeps the engine loop constant and lets you choose all three: any client, anywhere it runs, any model provider. Mecatito, the Mecatl mascot, leans over the top-right corner.">
 </p>
 
 **Mecatl is an open source, cloud-native agent harness.** It provides
@@ -42,59 +43,25 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 | Goal | Start with |
 | --- | --- |
-| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) |
-| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) |
+| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](./user-docs/building/deployment/mecated.md) |
+| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](./user-docs/building/deployment/mecak8s.md) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
-| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
+| Connect an application | The [TypeScript SDK guides](./user-docs/building/typescript-sdk/index.md) or the [gRPC and HTTP/SSE integration guide](./user-docs/building/deployment/grpc-http.md) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
-| Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine) |
+| Embed the runtime | [`engine`](./engine) and the [embedding guide](./user-docs/building/deployment/embed-engine.md) |
 
 ## Install
 
-The following methods install the two executables most people run — `mecatui`,
-the terminal client, and `mecated`, the server:
-
-<details>
-<summary><b>Homebrew</b></summary>
+Install `mecatui`, the terminal client, and `mecated`, the server, with
+Homebrew:
 
 ```sh
 brew install stacklok/tap/mecatl
 ```
 
-</details>
-
-<details>
-<summary><b>Conda</b></summary>
-
-```sh
-conda install -c conda-forge mecatl
-```
-
-</details>
-<details>
-<summary><b>Mamba</b></summary>
-
-```sh
-mamba install -c conda-forge mecatl
-```
-
-</details>
-
-<details>
-<summary><b>Pixi</b></summary>
-
-```sh
-pixi add mecatl
-```
-
-</details>
-
-Every release also attaches macOS and Linux archives (amd64 and arm64) with
-checksums, cosign signature bundles, SBOMs, and build provenance. See
-[Install Mecatl](https://mecatl.dev/docs/install) for archive verification, the
-container images, and the from-source path. `mecademo`, `mecatequi`, and
-`mecak8s` are not in the formulae — build them from a checkout with
-`task build`.
+[Install and verify Mecatl](./user-docs/install.md) covers Conda-forge,
+release archives, verification, and source builds. Build `mecademo`,
+`mecatequi`, and `mecak8s` from a checkout with `task build`.
 
 ## Run agents as production workloads
 
@@ -108,10 +75,15 @@ The supplied `mecak8s` runtime demonstrates this deployment model. It uses
 Redis for session state and event logs, Kubernetes leases to ensure one writer
 per session, and a drain path for replacing pods. You can also embed the engine
 and provide the backing services and execution environment yourself. See
-[What is a cloud-native harness?](https://mecatl.dev/docs/building/cloud-native-harness)
+[What is a cloud-native harness?](./user-docs/building/cloud-native-harness.md)
 for the runtime guarantees and boundaries.
 
 ## Open and modular by design
+
+<p align="center">
+  <img src="./assets/mecatl-architecture.png" width="800"
+       alt="The Mecatl engine loop sits at the center, providing tool dispatch, permissions, hooks, delegation, compaction, and events. Around it, each layer stays yours to choose: any client, any runtime, any model provider, any MCP server or gateway, and a state store that lives outside the process.">
+</p>
 
 Mecatl keeps the agent loop independent of the provider and infrastructure
 behind it. Reference adapters support offline development, while integrations
@@ -157,12 +129,12 @@ task build
 
 For an embedded deployment, see the
 [engine compatibility contract](./engine/COMPATIBILITY.md) and the
-[embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine).
+[embedding guide](./user-docs/building/deployment/embed-engine.md).
 
 > **Security:** `mecated` is unauthenticated by default and intended for
 > loopback, single-user use. Configure authentication and transport protection
 > before binding it off-loopback. The
-> [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) covers
+> [deployment guide](./user-docs/building/deployment/mecated.md) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
 
 ## Local microVM execution
@@ -208,19 +180,18 @@ boundaries, and platform limits.
 
 ## User documentation
 
-- [Mecatl documentation](https://mecatl.dev/docs/intro) for user guides and
+- [Mecatl documentation](./user-docs/intro.md) for user guides and
   deployment information.
-- [Client integration guide](https://mecatl.dev/docs/building/deployment/grpc-http)
+- [Client integration guide](./user-docs/building/deployment/grpc-http.md)
   for gRPC and HTTP/SSE clients.
-- [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) for
+- [TypeScript SDK guides](./user-docs/building/typescript-sdk/index.md) for
   Node.js, Bun, and browser applications.
 
 ## Architecture and engineering documentation
 
 - [Repository documentation index](./docs/README.md)
 - [Architecture guide](./docs/architecture.md)
-- [User documentation](https://mecatl.dev/docs/)
-- [Production-readiness tracker](./docs/design/PRODUCTION-READINESS.md)
+- [User documentation](./user-docs/intro.md)
 - [Engine compatibility contract](./engine/COMPATIBILITY.md)
 
 ## Contributing, security, and license

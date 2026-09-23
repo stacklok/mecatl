@@ -1,7 +1,6 @@
 package redisstore
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -61,46 +60,33 @@ func TestReadSessionLineageDoesNotReadUnrelatedPartitions(t *testing.T) {
 	}
 }
 
-func TestLegacyLineageRequiresExplicitBoundedCutover(t *testing.T) {
+func TestOldLineageNamespaceIsIgnoredUntouched(t *testing.T) {
 	mr := miniredis.RunT(t)
-	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}, session.Limits{}, time.Unix(1, 0))
-	child, err := session.NewSubagent("child", session.ModeDefault, root.EnvironmentRef, session.Limits{}, time.Unix(2, 0), root.ID, root.Incarnation(), "call")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows := []port.SessionLineageRecord{redisLineageRecord(root), redisLineageRecord(child)}
-	for _, row := range rows {
-		body, marshalErr := json.Marshal(row)
-		if marshalErr != nil {
-			t.Fatal(marshalErr)
-		}
-		mr.HSet(lineageHashKey, redisLineageKey(row.ID, row.Incarnation), string(body))
-	}
+	const oldKey = "mecatl:session-lineage:v1"
+	mr.HSet(oldKey, "poison", `{"bad":"old"}`)
+	before := mr.HGet(oldKey, "poison")
 	st, err := New(mr.Addr())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	query := port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10}
-	if _, err := st.ReadSessionLineage(t.Context(), query); err == nil {
-		t.Fatal("legacy global lineage was read before cutover")
-	}
-	if err := st.MigrateLegacyLineage(t.Context(), 0); err == nil {
-		t.Fatal("unbounded migration was accepted")
-	}
-	if err := st.MigrateLegacyLineage(t.Context(), len(rows)); err != nil {
+	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}, session.Limits{}, time.Unix(1, 0))
+	child, err := session.NewSubagent("child", session.ModeDefault, root.EnvironmentRef, session.Limits{}, time.Unix(2, 0), root.ID, root.Incarnation(), "call")
+	if err != nil {
 		t.Fatal(err)
 	}
+	for _, current := range []*session.Session{root, child} {
+		if err := st.Save(t.Context(), current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10}
 	result, err := st.ReadSessionLineage(t.Context(), query)
 	if err != nil || len(result.Records) != 2 || result.Records[0].ID != root.ID || result.Records[1].ID != child.ID {
-		t.Fatalf("migrated root and direct child=%+v err=%v", result.Records, err)
+		t.Fatalf("current root and direct child=%+v err=%v", result.Records, err)
 	}
-	exact := port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), RecordID: child.ID, RecordIncarnation: child.Incarnation(), Limit: 1}
-	if result, err = st.ReadSessionLineage(t.Context(), exact); err != nil || len(result.Records) != 1 {
-		t.Fatalf("migrated direct edge=%+v err=%v", result.Records, err)
-	}
-	if !lineageHashHas(t, st, redisLineageEdgePartition(root.ID, root.Incarnation()), redisLineageKey(child.ID, string(child.Incarnation()))) {
-		t.Fatal("migration did not materialize the child in the root direct-edge partition")
+	if got := mr.HGet(oldKey, "poison"); got != before {
+		t.Fatalf("old lineage changed: got %q want %q", got, before)
 	}
 }
 

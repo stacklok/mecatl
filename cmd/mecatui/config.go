@@ -59,8 +59,8 @@ type config struct {
 	tlsCA                 string
 	insecure              bool
 	listThemes            bool
-	// debug enables mecatui's client-side diagnostic surfaces. An explicit
-	// --debug value outranks MECATUI_DEBUG and the legacy per-surface aliases.
+	// debug enables all mecatui client-side diagnostic surfaces. An explicit
+	// --debug value outranks MECATUI_DEBUG.
 	debug        bool
 	debugFlagSet bool
 	debugMouse   bool
@@ -91,12 +91,9 @@ type config struct {
 	// inline). Wired to ui.Deps.NoMouse.
 	noMouse bool
 
-	// terminalTitleOff suppresses the dynamic terminal window/tab title (leaving
-	// it at the bare "mecatui"). Off by default (the title is dynamic: "<title> —
-	// <status word> mecatui"). Honoured from --terminal-title=off/false/0 or
-	// MECATUI_NO_TERMINAL_TITLE=1/true. The escape hatch for terminals/
-	// multiplexers where a set title does more harm than good. Wired to
-	// ui.Deps.NoWindowTitle.
+	// terminalTitleOff suppresses the terminal-title controller's OSC writes.
+	// Off by default. Honoured from --terminal-title=off/false/0 or
+	// MECATUI_NO_TERMINAL_TITLE=1/true.
 	terminalTitle        string
 	terminalTitleOff     bool
 	terminalTitleFlagSet bool
@@ -311,14 +308,13 @@ type config struct {
 	// about the operator (explicit user-memory tools plus a live bounded operator
 	// profile in the volatile system suffix). ON by default at the conventional
 	// $XDG_CONFIG_HOME/mecatl/usermodel (fallback ~/.config/mecatl/usermodel).
-	// userModelDir overrides the dir; noUserModel disables it. userModelReview
-	// enables the OPT-IN (off by default) Stop-triggered background reviewer;
-	// userModelReviewInterval is its session-count debounce. Map onto app.Config in
-	// embeddedConfig. The user model holds FACTS about the operator, never rules.
-	userModelDir            string
-	noUserModel             bool
-	userModelReview         bool
-	userModelReviewInterval int
+	// userModelDir overrides the directory; noUserModel disables it.
+	// learningAdmissionInterval is the process-wide automatic-reflection debounce.
+	// Map these values onto app.Config in embeddedConfig.
+	userModelDir                 string
+	noUserModel                  bool
+	learningAdmissionInterval    int
+	learningAdmissionIntervalSet bool
 
 	// Embedded-server slash-command config (used only when hosting an in-process
 	// server). Command expansion is ON by default, expanding "/<name>" inputs from
@@ -407,9 +403,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.debug, "debug", false, "enable client diagnostics and debug-only commands")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
-	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable in-app mouse handling and use the terminal's native text selection; keyboard scrolling remains available")
-	fs.BoolVar(&cfg.noBanner, "no-banner", false, "hide the welcome illustration; prompt hints remain visible")
-	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "update the terminal title with session status: on or off (also true/false/1/0)")
+	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
+	fs.BoolVar(&cfg.noBanner, "no-banner", false, "disable the welcome splash (mascot + gradient wordmark); the plain prompt hint and affordance list are still shown. Also forced on under --quiet or a non-interactive stdin")
+	fs.StringVar(&cfg.terminalTitle, "terminal-title", "on", "terminal title controller: on enables the configured/default plain-text OSC 0 title; off emits no title or cleanup sequence. Accepts on/off/true/false/1/0. Or set MECATUI_NO_TERMINAL_TITLE=1")
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)
@@ -477,8 +473,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.soulStrict, "soul-strict", false, "do not load the persona if it changed since approval")
 	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "store the cross-project user model in DIR (default: $XDG_CONFIG_HOME/mecatl/usermodel)")
 	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "embedded server only: disable the user model entirely (explicit tools and live operator profile)")
-	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "deprecated alias for learning.mode: auto")
-	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "review every N eligible completed sessions when automatic learning is enabled")
+	fs.IntVar(&cfg.learningAdmissionInterval, "learning-admission-interval", 1, "embedded server only: admit every Nth eligible automatic reflection process-wide; 0 or 1 admits every eligible reflection")
 	fs.StringVar(&cfg.commandsDir, "commands-dir", "", "embedded server only: directory of slash-command templates (<name>.md); empty = the conventional dirs (.mecatl/commands, .claude/commands)")
 	fs.BoolVar(&cfg.noCommands, "no-commands", false, "embedded server only: disable slash-command expansion entirely")
 	fs.StringVar(&cfg.skillsDir, "skills-dir", "", "embedded server only: directory of skill units (<name>/SKILL.md); empty = the conventional dirs (e.g. .claude/skills)")
@@ -497,7 +492,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 
 	fs.Usage = transportUsage(fs, mode, cfg.browseSessions)
 
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(args)); err != nil {
+	if err := fs.Parse(args); err != nil {
 		// Return the fully-registered FlagSet even on a parse/help error so the
 		// progressive-help completeness invariant (validateFlagApplicability) can
 		// run over the full real registration path via the --help-triggered ErrHelp
@@ -685,6 +680,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
 		// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
 		cfg.subagentModelRouterSet = true
+	case "learning-admission-interval":
+		cfg.learningAdmissionIntervalSet = true
 	case "no-steer":
 		// Record an explicit --no-steer so CLI out-ranks the settings.yaml steer: key.
 		cfg.noSteerFlagSet = true
@@ -705,17 +702,10 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 }
 
-// resolveDebugConfig applies the canonical debug switch and its legacy env aliases.
+// resolveDebugConfig applies the canonical debug switch and environment fallback.
 func resolveDebugConfig(cfg *config) {
-	// Explicit --debug=false suppresses all env fallbacks; without an explicit flag,
-	// the legacy variables remain narrow aliases for their original surfaces.
 	if !cfg.debugFlagSet {
 		cfg.debug = os.Getenv("MECATUI_DEBUG") == "1"
-		cfg.debugMouse = cfg.debug || os.Getenv("MECATUI_DEBUG_MOUSE") != ""
-		cfg.debugSteer = cfg.debug || os.Getenv("MECATUI_DEBUG_STEER") != ""
-		cfg.debugAsk = cfg.debug || os.Getenv("MECATUI_DEBUG_ASK") != ""
-		cfg.debugKeymap = cfg.debug || os.Getenv("MECATUI_DEBUG_KEYMAP") == "1"
-		return
 	}
 	cfg.debugMouse = cfg.debug
 	cfg.debugSteer = cfg.debug

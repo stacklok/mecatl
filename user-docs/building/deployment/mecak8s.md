@@ -55,7 +55,10 @@ You need:
 
 The chart creates the ServiceAccount and namespace-scoped permissions for
 Kubernetes Leases. It does not create production Redis, TLS Secrets, provider
-Secrets, gateways, or general NetworkPolicies.
+Secrets, gateways, or general NetworkPolicies. A deployment that selects
+`models.router.backend: jev` must project `TYPESAFE_API_KEY` from a Kubernetes
+Secret and allow HTTPS egress to `api.typesafe.ai`; eligible delegated task text
+leaves the cluster for classification.
 
 ## Quick start
 
@@ -207,17 +210,16 @@ API:
 
 ### Inspect the event log
 
-The durable event log at `mecatl:events:<SESSION_ID>` is a Redis Stream. Read it
-with:
+The durable event log at `mecatl:events:<SESSION_ID>` is a Redis
+Stream. Read it with:
 
 ```sh
 redis-cli XRANGE "mecatl:events:<SESSION_ID>" - +
 ```
 
 Each entry's `r` field contains the event envelope, including its `Actor`
-metadata. Mecatl migrates a legacy event-log LIST to a Stream on the next
-append, after which `LRANGE` returns `WRONGTYPE`. Do not modify the sibling
-cursor key, `mecatl:events-gen:<SESSION_ID>`, independently of the event log.
+metadata. Do not modify the sibling cursor key,
+`mecatl:events-gen:<SESSION_ID>`, independently of the event log.
 
 ### Size durable event followers
 
@@ -344,15 +346,20 @@ the exact `system:serviceaccount:<namespace>:<serviceaccount>` subject.
 Official clients send `X-Mecatl-Session-ID` on session-bound gRPC and HTTP
 requests when the ID is printable ASCII without surrounding spaces. Duplicate,
 malformed, and mismatched values are rejected. Existing clients may omit it.
+Gateways can use this active-session field for consistent routing, but the
+Kubernetes session lease remains the ownership authority.
 
-The field is a routing and provider-correlation hint. It grants no
-authentication, authorization, ownership, fencing, idempotency, or cache
-authority.
+Outbound model requests also carry `X-Mecatl-Root-Session-ID`. The root field
+stays constant across a main run's subagents, Parallel branches, team members,
+and delegated-model routing, while `X-Mecatl-Session-ID` identifies the active
+child session. Provider logs can therefore group delegated work by its main
+conversation without losing child-level attribution. The root field is outbound
+only and must not be used for gateway affinity.
 
-Use the header for consistent routing, but keep the Kubernetes session lease as
-the ownership authority. Lease loss blocks new state mutations on the stale pod,
-although an already admitted external call can finish. A pending approval stays
-durable for the successor.
+Both fields are correlation metadata. They grant no authentication,
+authorization, ownership, fencing, idempotency, or cache authority. Lease loss
+blocks new state mutations on the stale pod, although an already admitted
+external call can finish. A pending approval stays durable for the successor.
 
 Closing a live running or awaiting session fails precondition and does not
 release its lease. During shutdown, Mecatl stops admission, preserves pending
@@ -462,8 +469,9 @@ Pending setup shows “Setup in progress” and `x cancel setup`; prompts and a
 second refresh are blocked until the existing operation settles. The existing
 browser flow continues without a reopen-browser action. A running or awaiting
 session does not offer refresh. Setup is destructive and bundle-wide: starting
-it withdraws broker tools, and cancellation or failure leaves them unavailable;
-`/tools-connect` and `/tools-cancel` remain unchanged bare-command shortcuts.
+it withdraws broker tools, and cancellation or failure leaves them unavailable.
+Use `/mcp-refresh` for this broker flow. `/tools-connect` remains a deprecated
+broker-only alias, and `/tools-cancel` cancels pending setup.
 
 ToolHive remains the sole custodian of upstream OAuth presentation, callback
 state, credentials, tokens, refresh, and any grant reuse; Mecatl exposes only

@@ -14,6 +14,23 @@ const (
 	Allow Effect = "allow"
 )
 
+// AskProvenance identifies why an Ask survived the deterministic policy fold.
+// The zero value is unknown/no-match and grants no additional approval authority;
+// existing isolation and optional headless-review fallbacks still apply.
+type AskProvenance string
+
+const (
+	// AskProvenanceUnknown is a no-match/default Ask. It grants no additional
+	// approval authority; existing isolation and optional reviewer fallbacks apply.
+	AskProvenanceUnknown AskProvenance = ""
+	// AskProvenanceConfigured identifies a configured Ask rule.
+	AskProvenanceConfigured AskProvenance = "configured_ask"
+	// AskProvenanceConfiguredAllowFloor identifies a configured Allow stopped only by the substitution floor.
+	AskProvenanceConfiguredAllowFloor AskProvenance = "configured_allow_floor"
+	// AskProvenanceBuiltinSubstitutionFloor identifies the exact built-in worker substitution floor.
+	AskProvenanceBuiltinSubstitutionFloor AskProvenance = "builtin_substitution_floor"
+)
+
 // PermissionDecision is the immutable result of evaluating a tool call across
 // scopes. Reason is surfaced to the model on a deny so it can adapt (and to the
 // client on an ask).
@@ -22,36 +39,11 @@ type PermissionDecision struct {
 	Effect Effect
 	// Reason explains the decision; especially important on Deny and Ask.
 	Reason string
-	// The two ask-provenance bits below are a PAIR of mutually exclusive bools,
-	// not an enum, by deliberate choice: a THIRD ask-provenance signal would be
-	// the point to extract a single enum carried on both this type and on the
-	// session's pending-ask value object — until then, two bools with the
-	// documented exclusivity invariant are simpler than an enum nothing switches
-	// over.
-	//
-	// ConfiguredAsk reports that the winning Ask came from a CONFIGURED rule — a
-	// rule whose Scope sits ABOVE ScopeBuiltinDefault (operator/project/user
-	// intent) — as opposed to the built-in floor, the no-matching-rule default
-	// Ask, or the substitution-floor escalation (all false). It lets an
-	// approval layer enforce "never auto-approve a deliberately-configured Ask":
-	// a consumer that auto-approves some asks (e.g. an isolated sub-agent
-	// auto-clearing safe commands) should NOT auto-approve one with this bit set.
-	// Mutually exclusive with FlooredConfiguredAllow.
-	ConfiguredAsk bool
-	// FlooredConfiguredAllow reports that the decision is an Ask ONLY because of
-	// the built-in substitution floor (the Evaluator escalates a Shell segment
-	// containing command/process substitution or subshell grouping to Ask). It
-	// is set when, on a (possibly compound) Shell line: the floor-free fold is
-	// Allow; at least one segment was floor-escalated DESPITE a configured
-	// (above-floor) Allow matching it; AND that segment is provably safe to
-	// auto-approve under the floor — the configured Allow vouches for the OUTER
-	// command, every command hidden inside the substitution independently
-	// classifies read-only (the Allow can never vouch for a hidden command), and
-	// the blanked outer carries no construction that reaches outside an isolated
-	// worktree. It lets an approval layer relax the substitution floor for a
-	// command its operator already allowed, without trusting whatever a
-	// substitution hides. Mutually exclusive with ConfiguredAsk.
-	FlooredConfiguredAllow bool
+	// AskProvenance is meaningful only when Effect is Ask. It distinguishes a
+	// configured Ask, a configured Allow stopped solely by the substitution floor,
+	// and the exact built-in child Shell substitution floor eligible for contextual
+	// permission review. Unknown/default asks grant no additional approval authority.
+	AskProvenance AskProvenance
 }
 
 // Scope identifies the configuration layer a permission rule originates from.

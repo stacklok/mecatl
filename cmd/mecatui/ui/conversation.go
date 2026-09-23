@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
@@ -126,6 +127,9 @@ type teamLane struct {
 	// routingReason names WHY the router did not classify this member (issue #397 /
 	// ADR 0083); "" on a routed hit. BARE metadata — never member content.
 	routingReason string
+	// routingDecision is the configured router's immutable start snapshot (ADR 0352).
+	// Nil preserves historical events without reconstructing evidence.
+	routingDecision *client.RoutingDecision
 	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112 /
 	// ADR 0035), regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never member content — so gauntlet #7 holds.
@@ -217,7 +221,7 @@ type block struct {
 	kind blockKind
 
 	// rev is the block's render revision: bumped on EVERY post-append mutation of a
-	// render-visible field. The renderer's per-block cache (renderer.blockCache)
+	// render-visible field. The renderer's per-block cache (renderer.blocks)
 	// keys on it, so a settled block (rev unchanged) joins the conversation string
 	// from cache while a mutated block re-renders fresh. Blocks must therefore be
 	// mutated only through conversation methods — the bump sites are exactly four
@@ -306,7 +310,8 @@ type block struct {
 	// subRoutingReason names WHY the opt-in router did NOT classify this delegation
 	// (issue #397 / ADR 0083): empty on a routed hit, else a bounded gate/miss string.
 	// BARE metadata — never child content — so gauntlet #7 holds.
-	subRoutingReason string
+	subRoutingReason   string
+	subRoutingDecision *client.RoutingDecision
 	// subModel is the concrete model id the child ACTUALLY ran on (issue #112 /
 	// ADR 0035), regardless of how it was chosen. When routed, equals subRoutedModel.
 	// BARE metadata — never child content — so gauntlet #7 holds.
@@ -354,20 +359,21 @@ type block struct {
 // via SubagentStatus — the events carry only background + done, never the
 // registry's delivered state, so the lane renders what it honestly knows.
 type subagentLane struct {
-	childID        string
-	goal           string
-	background     bool
-	routedCategory string // opt-in model router's category label (ADR 0031); "" when unrouted
-	routedModel    string // opt-in model router's chosen model id (ADR 0031); "" when unrouted
-	routingReason  string // WHY the router did not classify (issue #397 / ADR 0083); "" on a routed hit
-	model          string // concrete model id the child ACTUALLY ran on (issue #112 / ADR 0035); == routedModel when routed
-	current        string // latest child tool name, "" when none yet
-	trace          []teamTrace
-	toolCount      int
-	usage          client.Usage
-	isError        bool // the most-recent child tool errored (transient)
-	done           bool
-	stop           string
+	childID         string
+	goal            string
+	background      bool
+	routedCategory  string // opt-in model router's category label (ADR 0031); "" when unrouted
+	routedModel     string // opt-in model router's chosen model id (ADR 0031); "" when unrouted
+	routingReason   string // WHY the router did not classify (issue #397 / ADR 0083); "" on a routed hit
+	routingDecision *client.RoutingDecision
+	model           string // concrete model id the child ACTUALLY ran on (issue #112 / ADR 0035); == routedModel when routed
+	current         string // latest child tool name, "" when none yet
+	trace           []teamTrace
+	toolCount       int
+	usage           client.Usage
+	isError         bool // the most-recent child tool errored (transient)
+	done            bool
+	stop            string
 	// cause is the child's FAILURE DETAIL on an errored terminal (subagent.end's
 	// Cause; empty otherwise) — the harness/provider error, not child-authored
 	// output, so gauntlet #7 holds (issue #319). It is the ONLY place the fleet
@@ -622,6 +628,33 @@ func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, rout
 	return true
 }
 
+// cloneRoutingDecision takes ownership of optional scalar presence as well as the
+// value itself. UI state must not retain pointers owned by a transient client event.
+func cloneRoutingDecision(in *client.RoutingDecision) *client.RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.Confidence != nil {
+		v := *in.Confidence
+		out.Confidence = &v
+	}
+	if in.MinimumConfidence != nil {
+		v := *in.MinimumConfidence
+		out.MinimumConfidence = &v
+	}
+	return &out
+}
+
+func (c *conversation) setSubagentRoutingDecision(parentCallID, childID string, decision *client.RoutingDecision) {
+	if b := c.subagentBlock(parentCallID); b != nil {
+		b.subRoutingDecision = cloneRoutingDecision(decision)
+	}
+	if childID != "" {
+		c.fleetLane(childID).routingDecision = cloneRoutingDecision(decision)
+	}
+}
+
 // addSubagentTool routes one subagent.tool projection into the matching Subagent
 // block's trace per the event's InnerKind: a tool.call sets the live current tool
 // and appends a pending chip (with its bounded arg preview); a tool.result
@@ -804,7 +837,8 @@ type parallelBranch struct {
 	routedModel    string
 	// routingReason names WHY the router did not classify this branch (issue #397 /
 	// ADR 0083); "" on a routed hit. BARE metadata — never branch content.
-	routingReason string
+	routingReason   string
+	routingDecision *client.RoutingDecision
 	// model is the concrete model id this branch ACTUALLY ran on (issue #112 /
 	// ADR 0035), regardless of how it was chosen; == routedModel when routed. BARE
 	// metadata — never branch content — so gauntlet #7 holds.
@@ -831,7 +865,7 @@ const maxParallelJoinModeLen = 24
 // parallelJoinMode bounds untrusted server metadata once at ingestion so every
 // roster, focus, essential, and compact projection reads the same safe value.
 func parallelJoinMode(join string) string {
-	return truncate(strings.Join(strings.Fields(sanitizeTerminal(join)), " "), maxParallelJoinModeLen)
+	return truncate(strings.Join(strings.Fields(terminaltext.Sanitize(join)), " "), maxParallelJoinModeLen)
 }
 
 type parallelGroup struct {
@@ -914,6 +948,13 @@ func (c *conversation) parallelBranchStart(parentCallID string, index int, child
 	br.routedModel = routedModel
 	br.routingReason = routingReason
 	br.model = model
+}
+
+func (c *conversation) setParallelRoutingDecision(parentCallID string, index int, decision *client.RoutingDecision) {
+	if parentCallID == "" {
+		return
+	}
+	c.parallelGroupFor(parentCallID).parallelBranchFor(index).routingDecision = cloneRoutingDecision(decision)
 }
 
 // parallelBranchTool routes one branch_tool projection into the branch lane: the
@@ -1025,14 +1066,15 @@ func (c *conversation) setTeamStart(parentCallID, teamID string, roster []client
 	b.teamLanes = make([]teamLane, 0, len(roster))
 	for _, m := range roster {
 		b.teamLanes = append(b.teamLanes, teamLane{
-			name:           m.Name,
-			role:           m.Role,
-			mutating:       m.Mutating,
-			lead:           m.Lead,
-			routedCategory: m.RoutedCategory,
-			routedModel:    m.RoutedModel,
-			routingReason:  m.RoutingReason,
-			model:          m.Model,
+			name:            m.Name,
+			role:            m.Role,
+			mutating:        m.Mutating,
+			lead:            m.Lead,
+			routedCategory:  m.RoutedCategory,
+			routedModel:     m.RoutedModel,
+			routingReason:   m.RoutingReason,
+			routingDecision: cloneRoutingDecision(m.RoutingDecision),
+			model:           m.Model,
 		})
 	}
 	return true
@@ -1237,6 +1279,17 @@ func (c *conversation) liveTeamBlock() *block {
 // addNotice appends a muted info block (compaction / permission verb).
 func (c *conversation) addNotice(text string) {
 	c.appendBlock(block{kind: blockNotice, raw: text})
+}
+
+// retractLatestNotice removes a provisional notice after its transport reply is
+// refused. It leaves unrelated notices untouched.
+func (c *conversation) retractLatestNotice(text string) {
+	for i := len(c.blocks) - 1; i >= 0; i-- {
+		if c.blocks[i].kind == blockNotice && c.blocks[i].raw == text {
+			c.blocks = append(c.blocks[:i:i], c.blocks[i+1:]...)
+			return
+		}
+	}
 }
 
 // addRecoverNotice appends a WARNING-styled recover-notice block (a session that

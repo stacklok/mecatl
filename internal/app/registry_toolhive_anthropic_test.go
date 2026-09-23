@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -114,9 +116,9 @@ func TestADR_0325_ProtocolSpecificWireRouting(t *testing.T) {
 	if !ok {
 		t.Fatal("toolhive-anthropic entry missing")
 	}
-	models, ok := reg.outcomes.getLastGood(providerToolhiveAnthropic)
-	if !ok || len(models) != 1 {
-		t.Fatalf("native last-known-good = %+v, ok=%v", models, ok)
+	models := reg.discovery.snapshot().providers[providerToolhiveAnthropic].observations
+	if len(models) != 1 {
+		t.Fatalf("native last-known-good = %+v", models)
 	}
 	seq, err := native.provider.Stream(context.Background(), port.LLMRequest{
 		Model:    "claude-sonnet-4-6",
@@ -169,7 +171,7 @@ func TestADR_0325_ProtocolSpecificWireRouting(t *testing.T) {
 	if m.ContextLimit != 1_000_000 || m.OutputLimit != 64_000 || !m.Reasoning || !m.Thinking.Adaptive {
 		t.Fatalf("native metadata = %+v", m)
 	}
-	projected := projectModelEntry(reg, providerToolhiveAnthropic, m)
+	projected := projectModelEntry(reg, Config{}, reg.discovery.snapshot(), providerToolhiveAnthropic, m)
 	if !projected.GetImage() || !projected.GetReasoning() || projected.GetContextLimit() != 1_000_000 {
 		t.Fatalf("projected native metadata = %+v", projected)
 	}
@@ -262,8 +264,8 @@ func TestToolhiveNativeAnthropic_Scenario1_Metadata(t *testing.T) {
 	if len(embeddedModels(providerToolhiveAnthropic)) != 0 {
 		t.Fatal("public Anthropic catalog became unverified ToolHive inventory")
 	}
-	meta := newLiveMetaStore()
-	meta.mergeSwap(map[string][]modelEntry{providerToolhiveAnthropic: models})
+	meta := newMetadataFixture()
+	meta.setMetadataFixture(map[string][]modelEntry{providerToolhiveAnthropic: models})
 	model := models[0]
 	adaptive, enabled, known := meta.thinkingFor(providerToolhiveAnthropic, model.ID)
 	if model.ContextLimit != 1_000_000 || meta.outputLimitFor(providerToolhiveAnthropic, model.ID) != 64_000 ||
@@ -390,17 +392,24 @@ func TestToolhiveNativeAnthropic_DirectCatalogDiagnosticsRedactResponseBody(t *t
 			"", "https://gateway.example/anthropic", client)},
 	}
 	reg := &providerRegistry{
-		entries:  map[string]providerEntry{entry.id: entry},
-		outcomes: newLiveOutcomeStore(),
+		entries: map[string]providerEntry{entry.id: entry},
 	}
 	diag := newCapturingDiagnostics()
 
-	if got := resolveProviderModels(context.Background(), diag, reg, entry.id); got != nil {
+	discovery := newProviderDiscovery(reg, Config{Diagnostics: diag})
+	defer discovery.Close()
+	view, err := discovery.request(context.Background(), entry.id, discoveryPicker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := view.providers[entry.id].observations; got != nil {
 		t.Fatalf("unauthorized native catalog = %+v, want no inventory", got)
 	}
 	if got, _ := seenAuth.Load().(string); got != "Bearer "+reflectedBearer {
 		t.Fatalf("catalog Authorization = %q", got)
 	}
+	// Publication wakes request waiters before diagnostics; join delivery before inspecting it.
+	discovery.Close()
 	records := strings.Join(diag.capturedStrings(), "\n")
 	if strings.Contains(records, reflectedBearer) || strings.Contains(records, `"error"`) {
 		t.Fatalf("diagnostics exposed native response body or credential: %s", records)
@@ -479,45 +488,42 @@ func TestToolhiveNativeAnthropic_Scenario1_DiscoveryPaths(t *testing.T) {
 }
 
 func TestToolhiveNativeAnthropic_Scenario3_IndependentOutcomes(t *testing.T) {
-	openAI := &fakeLister{models: []modelEntry{{ID: "openai-good"}}}
-	native := &fakeLister{err: fmt.Errorf("native down")}
-	reg := &providerRegistry{
-		entries: map[string]providerEntry{
+	synctest.Test(t, func(t *testing.T) {
+		openAI := &fakeLister{models: []modelEntry{{ID: "openai-good"}}}
+		native := &fakeLister{err: fmt.Errorf("native down")}
+		reg := &providerRegistry{entries: map[string]providerEntry{
 			providerToolhive:          {id: providerToolhive, available: true, intentDriven: true, lister: openAI},
 			providerToolhiveAnthropic: {id: providerToolhiveAnthropic, available: true, intentDriven: true, lister: native},
-		},
-		outcomes: newLiveOutcomeStore(),
-	}
-
-	first := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	if len(first[providerToolhive]) != 1 || len(first[providerToolhiveAnthropic]) != 0 {
-		t.Fatalf("first snapshot = %+v", first)
-	}
-	openAI.err = fmt.Errorf("openai down")
-	native.err = nil
-	native.models = []modelEntry{{ID: "native-good"}}
-	second := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	if got := second[providerToolhive]; len(got) != 1 || got[0].ID != "openai-good" {
-		t.Fatalf("OpenAI last-known-good was erased: %+v", got)
-	}
-	if got := second[providerToolhiveAnthropic]; len(got) != 1 || got[0].ID != "native-good" {
-		t.Fatalf("native healthy catalog missing: %+v", got)
-	}
-	if status, _ := reg.outcomes.getStatus(providerToolhive); status.State != statusUnreachable {
-		t.Fatalf("OpenAI status = %+v, want unreachable", status)
-	}
-	if status, _ := reg.outcomes.getStatus(providerToolhiveAnthropic); status.State != statusOK {
-		t.Fatalf("native status = %+v, want ok", status)
-	}
-
-	native.err = fmt.Errorf("native down again")
-	third := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	if got := third[providerToolhive]; len(got) != 1 || got[0].ID != "openai-good" {
-		t.Fatalf("OpenAI retained catalog after dual failure = %+v", got)
-	}
-	if got := third[providerToolhiveAnthropic]; len(got) != 1 || got[0].ID != "native-good" {
-		t.Fatalf("native retained catalog after dual failure = %+v", got)
-	}
+		}}
+		d := bindDiscoveryFixture(t, reg)
+		d.refresh(context.Background(), discoveryPicker)
+		synctest.Wait()
+		first := d.snapshot()
+		if len(first.providers[providerToolhive].observations) != 1 || len(first.providers[providerToolhiveAnthropic].observations) != 0 {
+			t.Fatalf("first snapshot=%+v", first.providers)
+		}
+		openAI.err = fmt.Errorf("openai down")
+		native.err, native.models = nil, []modelEntry{{ID: "native-good"}}
+		time.Sleep(discoveryCooldown)
+		d.refresh(context.Background(), discoveryPicker)
+		synctest.Wait()
+		second := d.snapshot()
+		if got := second.providers[providerToolhive]; len(got.observations) != 1 || got.observations[0].ID != "openai-good" || got.outcome.State != statusUnreachable {
+			t.Fatalf("OpenAI last-good/outcome=%+v", got)
+		}
+		if got := second.providers[providerToolhiveAnthropic]; len(got.observations) != 1 || got.observations[0].ID != "native-good" || got.outcome.State != statusOK {
+			t.Fatalf("native healthy catalog=%+v", got)
+		}
+		native.err = fmt.Errorf("native down again")
+		time.Sleep(discoveryCooldown)
+		d.refresh(context.Background(), discoveryPicker)
+		third := d.snapshot()
+		for _, pid := range []string{providerToolhive, providerToolhiveAnthropic} {
+			if !reflect.DeepEqual(third.providers[pid].observations, second.providers[pid].observations) {
+				t.Fatalf("dual failure erased %s", pid)
+			}
+		}
+	})
 }
 
 func TestToolhiveNativeAnthropic_Scenario3_DefaultCompatibility(t *testing.T) {
@@ -561,7 +567,7 @@ func TestToolhiveNativeAnthropic_Scenario3_DefaultCompatibility(t *testing.T) {
 	}, fakeEnv(nil))
 	if err == nil {
 		t.Fatalf("honest empty native catalog for explicit native default did not fail Build: default=%q status=%+v",
-			nativeReg.Default(), providerStatusProto(nativeReg))
+			nativeReg.Default(), nativeReg.discovery.CurrentModelSnapshot().ProviderStatus)
 	}
 }
 
@@ -615,37 +621,39 @@ func requireDeadlineNear(t *testing.T, observed <-chan deadlineObservation, want
 }
 
 func TestToolhiveProbeDeadlinePublishesHealthySibling(t *testing.T) {
-	observed := make(chan deadlineObservation, 2)
-	reg := &providerRegistry{
-		entries: map[string]providerEntry{
-			providerToolhive: {
-				id: providerToolhive, available: true,
-				lister: deadlineAwareLister{modelID: "openai-healthy", observed: observed},
+	synctest.Test(t, func(t *testing.T) {
+		observed := make(chan deadlineObservation, 2)
+		reg := &providerRegistry{
+			entries: map[string]providerEntry{
+				providerToolhive: {
+					id: providerToolhive, available: true,
+					lister: deadlineAwareLister{modelID: "openai-healthy", observed: observed},
+				},
+				providerToolhiveAnthropic: {
+					id: providerToolhiveAnthropic, available: true,
+					lister: deadlineAwareLister{stall: true, observed: observed},
+				},
 			},
-			providerToolhiveAnthropic: {
-				id: providerToolhiveAnthropic, available: true,
-				lister: deadlineAwareLister{stall: true, observed: observed},
-			},
-		},
-		meta:     newLiveMetaStore(),
-		outcomes: newLiveOutcomeStore(),
-	}
+			meta: newLiveMetaStore(),
+		}
 
-	started := time.Now()
-	if err := probeToolhive(reg, Config{}); err != nil {
-		t.Fatalf("probeToolhive: %v", err)
-	}
-	if elapsed := time.Since(started); elapsed < toolhiveProbeTimeout-300*time.Millisecond || elapsed > toolhiveProbeTimeout+time.Second {
-		t.Fatalf("probe elapsed = %v, want bounded near %v", elapsed, toolhiveProbeTimeout)
-	}
-	requireDeadlineNear(t, observed, toolhiveProbeTimeout)
-	requireDeadlineNear(t, observed, toolhiveProbeTimeout)
-	if model, ok := reg.meta.lookup(providerToolhive, "openai-healthy"); !ok || model.ID != "openai-healthy" {
-		t.Fatalf("healthy probe metadata was not published: %+v, ok=%v", model, ok)
-	}
-	if _, ok := reg.meta.lookup(providerToolhiveAnthropic, "openai-healthy"); ok {
-		t.Fatal("failed native probe published sibling metadata under the wrong provider")
-	}
+		bindDiscoveryFixture(t, reg)
+		started := time.Now()
+		if err := probeToolhive(reg, Config{}); err != nil {
+			t.Fatalf("probeToolhive: %v", err)
+		}
+		if elapsed := time.Since(started); elapsed != toolhiveProbeTimeout {
+			t.Fatalf("probe elapsed = %v, want %v", elapsed, toolhiveProbeTimeout)
+		}
+		requireDeadlineNear(t, observed, toolhiveProbeTimeout)
+		requireDeadlineNear(t, observed, toolhiveProbeTimeout)
+		if model, ok := reg.meta.lookup(providerToolhive, "openai-healthy"); !ok || model.ID != "openai-healthy" {
+			t.Fatalf("healthy probe metadata was not published: %+v, ok=%v", model, ok)
+		}
+		if _, ok := reg.meta.lookup(providerToolhiveAnthropic, "openai-healthy"); ok {
+			t.Fatal("failed native probe published sibling metadata under the wrong provider")
+		}
+	})
 }
 
 func TestToolhiveBackgroundRefreshCarriesOperationDeadline(t *testing.T) {
@@ -661,49 +669,49 @@ func TestToolhiveBackgroundRefreshCarriesOperationDeadline(t *testing.T) {
 				lister: deadlineAwareLister{modelID: "native", observed: observed},
 			},
 		},
-		meta:     newLiveMetaStore(),
-		outcomes: newLiveOutcomeStore(),
+		meta: newLiveMetaStore(),
 	}
 
-	startLiveModelRefresh(port.NopDiagnostics{}, reg, newFakeSwapper(), true, 0)()
+	bindDiscoveryFixture(t, reg).start(true, 0)
 	requireDeadlineNear(t, observed, liveModelRefreshTimeout)
 	requireDeadlineNear(t, observed, liveModelRefreshTimeout)
 }
 
 func TestToolhiveStaleRefreshDeadlinePublishesHealthySibling(t *testing.T) {
-	observed := make(chan deadlineObservation, 2)
-	reg := &providerRegistry{
-		entries: map[string]providerEntry{
-			providerToolhive: {
-				id: providerToolhive, available: true, intentDriven: true,
-				lister: deadlineAwareLister{modelID: "openai-recovered", observed: observed},
+	synctest.Test(t, func(t *testing.T) {
+		observed := make(chan deadlineObservation, 2)
+		reg := &providerRegistry{
+			entries: map[string]providerEntry{
+				providerToolhive: {
+					id: providerToolhive, available: true, intentDriven: true,
+					lister: deadlineAwareLister{modelID: "openai-recovered", observed: observed},
+				},
+				providerToolhiveAnthropic: {
+					id: providerToolhiveAnthropic, available: true, intentDriven: true,
+					lister: deadlineAwareLister{stall: true, observed: observed},
+				},
 			},
-			providerToolhiveAnthropic: {
-				id: providerToolhiveAnthropic, available: true, intentDriven: true,
-				lister: deadlineAwareLister{stall: true, observed: observed},
-			},
-		},
-		meta:     newLiveMetaStore(),
-		outcomes: newLiveOutcomeStore(),
-	}
-	reg.outcomes.recordFailure(providerToolhive, statusUnreachable, "retry")
-	reg.outcomes.recordFailure(providerToolhiveAnthropic, statusUnreachable, "retry")
+			meta: newLiveMetaStore(),
+		}
 
-	started := time.Now()
-	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), &refreshStaleModelsState{})
-	if elapsed := time.Since(started); elapsed < 1700*time.Millisecond || elapsed > 3*time.Second {
-		t.Fatalf("stale refresh elapsed = %v, want bounded near 2s", elapsed)
-	}
-	requireDeadlineNear(t, observed, 2*time.Second)
-	requireDeadlineNear(t, observed, 2*time.Second)
-	if model, ok := reg.meta.lookup(providerToolhive, "openai-recovered"); !ok || model.ID != "openai-recovered" {
-		t.Fatalf("healthy stale-refresh metadata was not published: %+v, ok=%v", model, ok)
-	}
+		bindDiscoveryFixture(t, reg)
+		started := time.Now()
+		reg.discovery.refresh(context.Background(), discoveryPicker)
+		if elapsed := time.Since(started); elapsed != liveModelRefreshTimeout {
+			t.Fatalf("refresh elapsed = %v, want %v", elapsed, liveModelRefreshTimeout)
+		}
+		requireDeadlineNear(t, observed, liveModelRefreshTimeout)
+		requireDeadlineNear(t, observed, liveModelRefreshTimeout)
+		if model, ok := reg.meta.lookup(providerToolhive, "openai-recovered"); !ok || model.ID != "openai-recovered" {
+			t.Fatalf("healthy stale-refresh metadata was not published: %+v, ok=%v", model, ok)
+		}
+	})
 }
 
 func TestToolhiveProtocolRefreshesStartConcurrently(t *testing.T) {
 	started := make(chan string, 2)
 	release := make(chan struct{})
+	defer closeIfOpen(release)
 	reg := &providerRegistry{
 		entries: map[string]providerEntry{
 			providerToolhive: {id: providerToolhive, available: true, lister: concurrentProbeLister{
@@ -713,11 +721,11 @@ func TestToolhiveProtocolRefreshesStartConcurrently(t *testing.T) {
 				id: "anthropic", started: started, release: release,
 			}},
 		},
-		outcomes: newLiveOutcomeStore(),
 	}
+	bindDiscoveryFixture(t, reg)
 	done := make(chan struct{})
 	go func() {
-		_ = liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+		reg.discovery.refresh(context.Background(), discoveryPicker)
 		close(done)
 	}()
 	for range 2 {
@@ -738,6 +746,7 @@ func TestToolhiveProtocolRefreshesStartConcurrently(t *testing.T) {
 func TestToolhiveStaleRefreshesStartConcurrently(t *testing.T) {
 	started := make(chan string, 2)
 	release := make(chan struct{})
+	defer closeIfOpen(release)
 	reg := &providerRegistry{
 		entries: map[string]providerEntry{
 			providerToolhive: {id: providerToolhive, available: true, intentDriven: true, lister: concurrentProbeLister{
@@ -747,15 +756,13 @@ func TestToolhiveStaleRefreshesStartConcurrently(t *testing.T) {
 				id: "anthropic", started: started, release: release,
 			}},
 		},
-		meta:     newLiveMetaStore(),
-		outcomes: newLiveOutcomeStore(),
+		meta: newLiveMetaStore(),
 	}
-	reg.outcomes.recordFailure(providerToolhive, statusUnreachable, "retry")
-	reg.outcomes.recordFailure(providerToolhiveAnthropic, statusUnreachable, "retry")
 
+	bindDiscoveryFixture(t, reg)
 	done := make(chan struct{})
 	go func() {
-		refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, newFakeSwapper(), &refreshStaleModelsState{})
+		reg.discovery.refresh(context.Background(), discoveryPicker)
 		close(done)
 	}()
 	for range 2 {
@@ -773,10 +780,12 @@ func TestToolhiveStaleRefreshesStartConcurrently(t *testing.T) {
 	}
 }
 
-func TestToolhiveConcurrencyDoesNotGeneralizeToOtherProviders(t *testing.T) {
+func TestDiscoveryConcurrencyIncludesCustomProviders(t *testing.T) {
 	started := make(chan string, 2)
 	releaseFirst := make(chan struct{})
 	releaseSecond := make(chan struct{})
+	defer closeIfOpen(releaseFirst)
+	defer closeIfOpen(releaseSecond)
 	reg := &providerRegistry{
 		entries: map[string]providerEntry{
 			"custom-a": {id: "custom-a", available: true, lister: concurrentProbeLister{
@@ -786,37 +795,27 @@ func TestToolhiveConcurrencyDoesNotGeneralizeToOtherProviders(t *testing.T) {
 				id: "custom-b", started: started, release: releaseSecond,
 			}},
 		},
-		outcomes: newLiveOutcomeStore(),
 	}
+	bindDiscoveryFixture(t, reg)
 	done := make(chan struct{})
 	go func() {
-		_ = liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
+		reg.discovery.refresh(context.Background(), discoveryPicker)
 		close(done)
 	}()
 
-	select {
-	case got := <-started:
-		if got != "custom-a" {
-			t.Fatalf("first provider = %q, want custom-a", got)
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case got := <-started:
+			seen[got] = true
+		case <-time.After(time.Second):
+			t.Fatal("providers did not start independently before release")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("first provider did not start")
 	}
-	select {
-	case got := <-started:
-		t.Fatalf("unrelated provider %q started concurrently", got)
-	case <-time.After(100 * time.Millisecond):
+	if !seen["custom-a"] || !seen["custom-b"] {
+		t.Fatalf("started=%v", seen)
 	}
-
 	close(releaseFirst)
-	select {
-	case got := <-started:
-		if got != "custom-b" {
-			t.Fatalf("second provider = %q, want custom-b", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("second provider did not start after the first completed")
-	}
 	close(releaseSecond)
 	select {
 	case <-done:

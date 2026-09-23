@@ -13,6 +13,8 @@ import Heading from "@theme/Heading";
 
 This page lists declarations added or changed by `@stacklok-oss/mecatl-sdk/node`. The entry point also exports the [shared core API](./core.md).
 
+For entry points and runtime support, see the [SDK API overview](./index.md).
+
 ## Symbol index
 
 | Symbol | Kind |

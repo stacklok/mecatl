@@ -36,3 +36,4 @@ To see the Kubernetes model locally, follow
 - [Use local microVM environments](./microvm-environments.md)
 - [Connect clients through gRPC or HTTP/SSE](./grpc-http.md)
 - [Run the `mecatui` container image](./mecatui.md)
+- [Run the Mecatl Studio web UI](./studio.md) (early access)

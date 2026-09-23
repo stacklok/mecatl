@@ -14,7 +14,7 @@ Option C was chosen: a real ServerCapabilities wire channel, delivered as a fiel
 
 ## Consequences
 
-Both phases shipped. Current behaviour is in docs/architecture.md. Status is in docs/design/PRODUCTION-READINESS.md. Adding a new optional feature requires only a new bool field on the proto message and corresponding logic in the server capabilities method; old clients treat absent fields as false. The port.ProviderCapabilities multimodal-input seam is a distinct concept from ServerCapabilities feature enablement and must not be conflated.
+Both phases shipped. Current behaviour is in docs/architecture.md. Status is in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md). Adding a new optional feature requires only a new bool field on the proto message and corresponding logic in the server capabilities method; old clients treat absent fields as false. The port.ProviderCapabilities multimodal-input seam is a distinct concept from ServerCapabilities feature enablement and must not be conflated.
 
 ---
 

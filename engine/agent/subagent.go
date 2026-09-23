@@ -79,6 +79,9 @@ type observableTool interface {
 // adapter/server/proto type crosses. A tool that does not implement childCapableTool
 // (or a nil caps) gets the legacy headless auto-deny posture, unchanged.
 type parentCaps struct {
+	// reviewRoot shares only harness-owned trajectory/reviewer state with workers.
+	// It never carries a parent conversation or model-authored summary.
+	reviewRoot *reviewRoot
 	// interactive is the PARENT run's interactivity: true when a human approver is
 	// attached (the surfaced ask can be answered), false for a headless run.
 	interactive bool
@@ -98,6 +101,11 @@ type parentCaps struct {
 	// "branch-2"`) the parent frames the surfaced ask with; empty keeps the legacy
 	// generic "subagent" framing.
 	surfaceAsk func(askID, childID string, child *Run, ask session.PendingAsk, requester string)
+	// emitChildApprovals flushes accepted surfaced-ask verdicts onto the parent
+	// stream from a child drain, outside the server's verdict-submission locks.
+	// A terminal child event also flushes a verdict whose cancelled await never
+	// emitted its own EvApproval.
+	emitChildApprovals func(child *Run)
 	// children is the parent run's child-run registry, handed down DIRECTLY — it is
 	// an agent-package type, so passing the handle has zero layering cost (unlike
 	// surfaceAsk, which stays a closure because it genuinely composes router
@@ -146,27 +154,15 @@ type parentCaps struct {
 	// plain Execute path (no parent session threaded) — a fork:true call then errors
 	// with an honest "not supported on this run", never a silent fresh-context child.
 	forkHistory func() []session.Message
-	// routeTask, when non-nil, is the OPT-IN semantic model router (ADR 0031): given a
-	// Subagent call's (model-authored, untrusted) task prompt it returns the chosen
-	// CATEGORY label and the ALREADY-RESOLVED concrete model id to mint the child on,
-	// plus ok. It is bound by the dispatcher (Engine.parentCaps) over the engine's
-	// SubagentModelRouter closure + this run's router breaker, so a fan-out's classifier
-	// spend is serialised and circuit-broken per run. The Subagent run() hook consults it
-	// ONLY for a plain default delegation (no per-call model/agent/fork/resume) and is
-	// FAIL-SOFT: ok=false → the call inherits the default explorer model unchanged. nil
-	// when no router is wired (the default) or on a child run (no nesting). The returned
-	// model is an opaque model string — engine/agent stays model-string-only (the layering
-	// rule); composition owns aliases/slots/the cap.
-	//
-	// reason is the internal why on a MISS (ok=false): the classifier's missReason passed
-	// through to diagnostics/event projection, or a harness-synthesised gate constant
-	// (session.RoutingReasonBreakerOpen / RoutingReasonAborted) when the classifier was
-	// skipped. Empty on a hit. routingReasonPayload reduces it to a closed static code before
-	// it rides delegation-start events (issue #397), so arbitrary callback text cannot cross.
-	//
-	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
-	// (issue #94); see SubagentModelRouter.
-	routeTask func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
+	// routeDecision, when non-nil, is the OPT-IN semantic model router (ADR 0031).
+	// It returns one typed result carrying the candidate, canonical final reason,
+	// accepted-route bit, and bounded decision snapshot. It is bound by the
+	// dispatcher over this run's breaker and usage fold. A nil callback means the
+	// router is unavailable; children never receive it, preserving no-nesting.
+	routeDecision func(ctx context.Context, taskPrompt string) modelRoutingResult
+	// skipRoute snapshots configured router metadata and current breaker state for a
+	// delegation gate that intentionally bypasses classification.
+	skipRoute func(reason string) *session.RoutingDecision
 	// owner is the PARENT session's verified owner (ADR 0204 decision 4), handed
 	// down so every child session (subagent-/parallel-/team-) is attributed to the
 	// same principal as the session that spawned it. It is read off the parent
@@ -195,6 +191,13 @@ type parentCaps struct {
 	// call-id-only id, unaffected outside real dispatch.
 	parentSessionID   session.SessionID
 	parentIncarnation session.IncarnationID
+}
+
+func (c parentCaps) routeConfigured(ctx context.Context, prompt string) modelRoutingResult {
+	if c.routeDecision == nil {
+		return modelRoutingResult{reason: session.RoutingReasonRouterDisabled}
+	}
+	return c.routeDecision(ctx, prompt)
 }
 
 // inheritOwner stamps the parent session's owner onto a freshly-minted child
@@ -2108,7 +2111,13 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 // It is a method (not a free func) to read t.writableEngineFactory / t.agentModelFactory /
 // t.routableAgents. The ctx is the run's ctx, threaded to routeTask so a Run.Cancel
 // propagates into the classifier turn (issue #94).
-func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string) {
+func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string, decision *session.RoutingDecision) {
+	skipped := func(reason string) (string, string, string, *session.RoutingDecision) {
+		if caps.skipRoute == nil {
+			return "", "", reason, nil
+		}
+		return "", "", reason, caps.skipRoute(reason)
+	}
 	// PRECEDENCE (issue #397): the explicit CHOICE gates (resume / fork / per-call model /
 	// agent def) attribute BEFORE the router-absent gate, so a delegation that pinned its
 	// model is never mislabeled "router-disabled" when no router is wired. The choice
@@ -2116,42 +2125,37 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 	// accurate why.
 	switch {
 	case resuming:
-		return "", "", session.RoutingReasonResume
+		return skipped(session.RoutingReasonResume)
 	case args.Fork:
-		return "", "", session.RoutingReasonFork
+		return skipped(session.RoutingReasonFork)
 	case strings.TrimSpace(args.Model) != "":
-		return "", "", session.RoutingReasonPinnedModel
+		return skipped(session.RoutingReasonPinnedModel)
 	}
 	if wantAgent := strings.TrimSpace(args.Agent); wantAgent != "" {
-		// A NAMED agent: a def that expressed model intent attributes to its own gate. A
-		// ROUTABLE def needs the applicable routed factory plus its ordinary writable
-		// fallback when writable; an incomplete factory set cannot consume a pick.
 		if _, pinned := t.pinnedAgents[wantAgent]; pinned {
-			return "", "", session.RoutingReasonAgentDefPinned
+			return skipped(session.RoutingReasonAgentDefPinned)
 		}
 		if _, routable := t.routableAgents[wantAgent]; !routable {
-			return "", "", session.RoutingReasonRouterDisabled
+			return skipped(session.RoutingReasonRouterDisabled)
 		}
 		if writable {
 			if t.agentWritableFactory == nil || t.agentWritableModelFactory == nil {
-				return "", "", session.RoutingReasonRouterDisabled
+				return skipped(session.RoutingReasonRouterDisabled)
 			}
 		} else if t.agentModelFactory == nil {
-			return "", "", session.RoutingReasonRouterDisabled
+			return skipped(session.RoutingReasonRouterDisabled)
 		}
 	} else if writable && t.writableEngineFactory == nil {
-		// A plain WRITABLE delegation whose writable engine factory is unwired would DISCARD
-		// the pick (issue #285) — router-disabled (as good as absent).
-		return "", "", session.RoutingReasonRouterDisabled
+		return skipped(session.RoutingReasonRouterDisabled)
 	}
-	if caps.routeTask == nil {
-		return "", "", session.RoutingReasonRouterDisabled
+	if caps.routeDecision == nil {
+		return skipped(session.RoutingReasonRouterDisabled)
 	}
-	cat, m, missReason, ok := caps.routeTask(ctx, args.Prompt)
-	if ok {
-		return cat, strings.TrimSpace(m), ""
+	routed := caps.routeConfigured(ctx, args.Prompt)
+	if routed.ok {
+		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
 	}
-	return "", "", missReason
+	return "", "", routed.reason, routed.decision
 }
 
 // reconcileRoutedModel makes delegation-start metadata agree with the engine that will
@@ -2160,11 +2164,15 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 // routed category/model must be cleared so consumers do not report a model that never ran,
 // and the static reason records the fallback. The factory-acceptance bit handles every
 // path (plain, writable, named specialist, and Parallel) without guessing from model ids.
-func reconcileRoutedModel(category, routedModel, reason string, accepted bool) (string, string, string) {
+func reconcileRoutedModel(category, routedModel, reason string, accepted bool, decision *session.RoutingDecision) (string, string, string, *session.RoutingDecision) {
 	if strings.TrimSpace(routedModel) != "" && !accepted {
-		return "", "", session.RoutingReasonTargetUnavailable
+		decision = cloneRoutingDecision(decision)
+		if decision != nil {
+			decision.Outcome = "fallback"
+		}
+		return "", "", session.RoutingReasonTargetUnavailable, decision
 	}
-	return category, routedModel, reason
+	return category, routedModel, reason, decision
 }
 
 // resolveEngineAndLimits resolves one Subagent call's child engine and base
@@ -2356,7 +2364,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// default explorer. routingReason names WHY the router did not classify (empty on a
 	// hit) and rides the subagent.start event (issue #397). The run's ctx threads down so
 	// a Run.Cancel propagates into the classifier turn (issue #94).
-	routedCategory, routedModel, routingReason := t.maybeRouteModel(ctx, args, resuming, writable, caps)
+	routedCategory, routedModel, routingReason, routingDecision := t.maybeRouteModel(ctx, args, resuming, writable, caps)
 
 	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
 	if !ok {
@@ -2365,8 +2373,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if errResult, ok := t.authorizeResumeLookup(ctx, call.ID, session.SessionID(args.Resume), resuming); !ok {
 		return errResult, nil
 	}
-	routedCategory, routedModel, routingReason = reconcileRoutedModel(
-		routedCategory, routedModel, routingReason, routedAccepted)
+	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+		routedCategory, routedModel, routingReason, routedAccepted, routingDecision)
 
 	// Background requires the parent run's child registry: it is where the started
 	// child's rendered result lands for SubagentStatus collection and what the
@@ -2437,7 +2445,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			engine: engine, limits: limits, resuming: resuming, childID: childID, authority: delegatedAuthority,
 			forkHistory:    forkHistory,
 			routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
-			timeoutCtx: timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
+			routingDecision: routingDecision,
+			timeoutCtx:      timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
 		}), nil
 	}
 
@@ -2536,6 +2545,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			RoutedCategory:   routedCategory,
 			RoutedModel:      routedModel,
 			RoutingReason:    routingReasonPayload(routingReason),
+			RoutingDecision:  cloneRoutingDecision(routingDecision),
 			Model:            engine.Model(),
 		}})
 	}
@@ -2546,6 +2556,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// wrap). See buildSubagentRunRequest.
 	runReq, submit, prompt := buildSubagentRunRequest(args, resuming,
 		resumePosture{writable: writable, editsSurvived: editsSurvived}, forkAdvisory)
+	runReq.reviewRoot = caps.reviewRoot
+	runReq.reviewIsolated = !writable && t.childForker != nil
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
 	// Shell asks are eligible for the A2 worktree-safe auto-approve; a forker-less
@@ -2719,11 +2731,12 @@ type backgroundChild struct {
 	// child was not routed (no router, or a fail-soft miss). The engine field already
 	// carries the routed engine — these are the LABELS only. routingReason is the
 	// bare-metadata why-not (issue #397), captured with them (empty on a routed hit).
-	routedCategory string
-	routedModel    string
-	routingReason  string
-	childID        session.SessionID
-	authority      session.Authority
+	routedCategory  string
+	routedModel     string
+	routingReason   string
+	routingDecision *session.RoutingDecision
+	childID         session.SessionID
+	authority       session.Authority
 	// timeoutCtx is non-nil iff a per-call timeout_ms deadline applies (the
 	// DeadlineExceeded disambiguation read, same as the foreground path).
 	timeoutCtx    context.Context //nolint:containedctx // deadline-disambiguation handle, mirrors run()'s timeoutCtx local
@@ -2785,14 +2798,15 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 	// subagent.start always precedes the started-result on the stream.
 	if b.emit != nil {
 		b.emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:   string(b.call.ID),
-			ChildID:        string(b.childID),
-			Goal:           subagentGoal(b.args),
-			Background:     true,
-			RoutedCategory: b.routedCategory,
-			RoutedModel:    b.routedModel,
-			RoutingReason:  routingReasonPayload(b.routingReason),
-			Model:          b.engine.Model(),
+			ParentCallID:    string(b.call.ID),
+			ChildID:         string(b.childID),
+			Goal:            subagentGoal(b.args),
+			Background:      true,
+			RoutedCategory:  b.routedCategory,
+			RoutedModel:     b.routedModel,
+			RoutingReason:   routingReasonPayload(b.routingReason),
+			RoutingDecision: cloneRoutingDecision(b.routingDecision),
+			Model:           b.engine.Model(),
 		}})
 	}
 	go t.driveBackground(ctx, b)
@@ -2886,6 +2900,8 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	// mode:"read-write"+background is rejected in validateMode, so a background child is
 	// always the read-only forked kind and gets the fresh-checkout resume note.
 	runReq, submit, prompt := buildSubagentRunRequest(b.args, b.resuming, resumePosture{}, forkAdvisory)
+	runReq.reviewRoot = b.caps.reviewRoot
+	runReq.reviewIsolated = t.childForker != nil
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
@@ -3037,6 +3053,10 @@ var routingReasonEventSafe = func() map[string]struct{} {
 		RouterMissDegenerateInput,
 		RouterMissClassifierError,
 		RouterMissCancelled,
+		RouterMissTimeout,
+		RouterMissLowConfidence,
+		RouterMissInputOverLimit,
+		RouterMissCapacityTimeout,
 		RouterMissBadVerdict,
 		RouterMissUnknownCategory,
 		routingReasonEmptyModel,
@@ -4185,6 +4205,7 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 			}
 		}
 	}
+	posture.emitChildApprovals(run)
 	return finalText, stop, cause, usage, toolCount
 }
 
@@ -4325,6 +4346,12 @@ type childPosture struct {
 	askLabel string
 }
 
+func (p childPosture) emitChildApprovals(run *Run) {
+	if p.caps.emitChildApprovals != nil {
+		p.caps.emitChildApprovals(run)
+	}
+}
+
 // childAutoDenyMessage is the ACCURATE message a headless (non-interactive) subagent's
 // auto-denied ask carries — NOT the misleading "denied by user … client approval
 // required" of the interactive path. It names the real cause (a non-interactive subagent
@@ -4414,39 +4441,35 @@ func handleChildEvent(run *Run, ev session.Event, posture childPosture) (text st
 	if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 		resolveChildAsk(run, *ev.Ask, posture)
 	}
+	if ev.Type == session.EvApproval || ev.Type == session.EvResult {
+		posture.emitChildApprovals(run)
+	}
 	if ev.Type == session.EvResult && ev.Result != nil {
 		return ev.Result.Text, ev.Result.Stop, true
 	}
 	return "", session.StopNone, false
 }
 
+func autoApproveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) bool {
+	switch {
+	case ask.AskProvenance == governance.AskProvenanceConfiguredAllowFloor:
+	case posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)):
+	default:
+		return false
+	}
+	_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
+	return true
+}
+
 // resolveChildAsk applies the 4-step resolution (plus the issue-#32 config axis;
 // see handleChildEvent's ordering doc) to one child permission ask.
 func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
-	// Config axis, BEFORE the isolation auto-approve. The two bits are mutually
-	// exclusive BY CONSTRUCTION (the evaluator never sets both), but they ride a
-	// PendingAsk that crosses run boundaries and is externally reachable, so the
-	// gate ORDER is the fail-safe for the illegal both-true state: ConfiguredAsk
-	// (surface / auto-deny) is checked FIRST, so a both-true ask fails SAFE
-	// (gated), never auto-approves.
-	//   - A CONFIGURED Ask must NEVER be auto-approved (the configured-Ask-never-
-	//     suppressed invariant, extended to A2): skip BOTH the floored-allow
-	//     auto-approve and the isolation auto-approve and fall through to
-	//     surface-to-human / headless auto-deny.
-	//   - Otherwise a substitution-floored ask whose every floored segment a
-	//     CONFIGURED Allow covers — with every extracted INNER positively
-	//     read-only and the blanked outer escape-rejection-free — resolves
-	//     AllowOnce: the configured child Allow vouches for the OUTER, and the
-	//     inner/escape bound was checked in the evaluator. Deny never reaches here
-	//     (it resolves in the ordinary fold).
-	if ask.ConfiguredAsk {
-		// Fall through to surface / headless auto-deny (skip every auto-approve).
-	} else if ask.FlooredConfiguredAllow {
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
-		return
-	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)) {
-		// Step A2: isolated child + isolation-approvable Shell → auto-approve.
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
+	// Typed provenance is fail-closed: configured asks skip every automatic
+	// branch; configured-allow floors retain their existing bounded AllowOnce;
+	// built-in substitution floors that reach this consumer retain the existing
+	// surface/headless path; unknown provenance does likewise.
+	configuredAsk := ask.AskProvenance == governance.AskProvenanceConfigured
+	if !configuredAsk && autoApproveChildAsk(run, ask, posture) {
 		return
 	}
 	// Surface to the human when the parent is interactive and a surface seam is
@@ -4472,7 +4495,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	// breaker-opened INFO) so an operator can tell a flaky reviewer from a blanket
 	// deny. The approved/denied command is named in the audit line (clamped) — an
 	// autonomous approval must record WHAT it ran, not only the policy reason.
-	if !ask.ConfiguredAsk && posture.caps.adjudicate != nil {
+	if !configuredAsk && posture.caps.adjudicate != nil {
 		outcome := posture.caps.adjudicate(ask, posture.isolated)
 		cmdPreview := clampPreview(surfacedCommandPreview(ask))
 		// One-time breaker-opened INFO, emitted regardless of WHICH non-allow outcome
@@ -4493,7 +4516,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 					"command", cmdPreview, "decision", "reviewed-allow",
 					"verdict_reason", clampPreview(outcome.reason))
 			}
-			run.Approve(ask.AskID, session.VerdictAllowOnce)
+			_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 			return
 		case outcome.reviewed:
 			if posture.caps.diag != nil {
@@ -4529,7 +4552,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 			"subagent permission ask auto-denied (non-interactive shell)",
 			"agent", posture.role, "tool", ask.Tool, "reason", ask.Reason)
 	}
-	run.autoDenyChildAsk(ask.AskID, childAutoDenyMessage(ask.Reason, ask.ConfiguredAsk))
+	run.autoDenyChildAsk(ask.AskID, childAutoDenyMessage(ask.Reason, configuredAsk))
 }
 
 // shellCmdFromArgs extracts the Shell command string from a pending ask's raw args,
@@ -4569,6 +4592,9 @@ func recordChildCauseOnSnapshot(child *session.Session, stop session.StopReason,
 
 func createSessionIfSupported(ctx context.Context, store port.SessionStore, sess *session.Session) error {
 	if store == nil {
+		return nil
+	}
+	if !port.SupportsSessionCreate(store) {
 		return nil
 	}
 	creator, ok := store.(port.SessionCreator)

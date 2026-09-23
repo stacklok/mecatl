@@ -111,7 +111,7 @@ func (s *Service) reconcilePendingTitles(parent context.Context, coordinator *ti
 		return
 	}
 	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(s.cfg.Store) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)

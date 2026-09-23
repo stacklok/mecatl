@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
@@ -65,7 +66,7 @@ func TestPromoteMovesAndValidates(t *testing.T) {
 		t.Fatalf("Promote: %v", err)
 	}
 	// It must now exist under active and be discoverable.
-	got, _, err := Discover(active)
+	got, _, err := (skillfs.DirSource{Dir: active}).Skills(context.Background())
 	if err != nil {
 		t.Fatalf("Discover active: %v", err)
 	}

@@ -221,7 +221,7 @@ if [[ "$combined" -eq 1 ]]; then
   fi
 
   combined_rationale_count=$(grep -cE '^\*\*Combined rationale:\*\*' "$plan" || true)
-  combined_rationale=$(grep -m 1 -E '^\*\*Combined rationale:\*\*' "$plan" || true)
+  combined_rationale=$(grep -E '^\*\*Combined rationale:\*\*' "$plan" | head -n 1 || true)
   combined_rationale=${combined_rationale#'**Combined rationale:**'}
   combined_rationale=${combined_rationale#" "}
   combined_rationale_compact=${combined_rationale//[[:space:]]/}
@@ -258,13 +258,13 @@ category_labels=(
 )
 
 for label in "${category_labels[@]}"; do
-  category_count=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { count++ } END { print count + 0 }')
+  category_count=$(awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { count++ } END { print count + 0 }' <<< "$interface_block")
   if [[ "$category_count" -ne 1 ]]; then
     note_fail "expected exactly one canonical interface category: $label"
     continue
   fi
 
-  category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " && !found { print; found = 1 }')
+  category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" '!found && index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; found = 1 }')
   category_content=${category_line#"$label"}
   category_content=${category_content#" "}
   if [[ -z "$category_content" ]]; then
@@ -292,7 +292,7 @@ if [[ "$combined" -eq 1 ]]; then
     '- **Security / authority:**'
   )
   for label in "${combined_labels[@]}"; do
-    category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " && !found { print; found = 1 }')
+    category_line=$(printf '%s\n' "$interface_block" | awk -v label="$label" '!found && index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { print; found = 1 }')
     category_content=${category_line#"$label"}
     category_content=${category_content#" "}
     if ! [[ "$category_content" =~ ^None[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].* ]]; then

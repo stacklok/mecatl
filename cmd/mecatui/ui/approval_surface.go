@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -133,6 +134,15 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		}
 		return nil, true, false
 	}
+	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
+		if detail.Err == nil && s.ask.guardrail != nil && detail.Detail.ReviewID == s.ask.guardrail.ReviewID {
+			s.ask.reviewDetail = detail.Detail
+			s.ask.reviewDetailUnavailable = false
+		} else if detail.Err != nil && s.ask.guardrail != nil {
+			s.ask.reviewDetailUnavailable = true
+		}
+		return nil, true, false
+	}
 	hit, ok := msg.(surfaceHitMsg)
 	if !ok {
 		return nil, false, false
@@ -183,11 +193,14 @@ func (s *approvalSurface) modalPlacement() modalPlacement {
 }
 
 type approvalResolvedIntent struct {
-	askID   string
-	verdict client.Verdict
-	notice  string
-	advance approvalAdvance
-	resume  phase
+	ask           pendingAsk
+	askID         string
+	verdict       client.Verdict
+	guardrail     *client.GuardrailApprovalScope
+	expectedRunID string
+	notice        string
+	advance       approvalAdvance
+	resume        phase
 }
 
 func (approvalResolvedIntent) isSurfaceIntent() {}
@@ -227,6 +240,16 @@ func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 // id classifies as the main agent (offers always-allow), and if sessionID were
 // empty everything would classify as a child (the always button is merely
 // withheld — never a wrong allow).
+func guardrailReviewSessionID(askID, parentID string) string {
+	if !isChildAsk(askID, parentID) {
+		return parentID
+	}
+	if i := strings.IndexByte(askID, ':'); i > 0 {
+		return askID[:i]
+	}
+	return parentID
+}
+
 func isChildAsk(askID, sessionID string) bool {
 	return strings.Contains(askID, ":") && !strings.HasPrefix(askID, sessionID+":")
 }
@@ -245,13 +268,13 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 	if s.known(msg.AskID) {
 		return false
 	}
+	offerAlways := !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg)
+	if msg.Guardrail != nil {
+		offerAlways = msg.Guardrail.Kind == "action" && msg.Guardrail.RepeatAvailable
+	}
 	next := pendingAsk{
-		AskID:          msg.AskID,
-		Tool:           msg.Tool,
-		Args:           msg.Args,
-		Reason:         msg.Reason,
-		focusedVerdict: client.VerdictAllowOnce,
-		offerAlways:    !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg),
+		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason, expectedRunID: msg.ExpectedRunID,
+		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail,
 	}
 	if open {
 		s.enqueue(next)
@@ -304,20 +327,35 @@ func (s *approvalSurface) markAskResolved(id string) {
 // the surface. It never re-arms the stream reader: the ask event already armed
 // the run's single reader, which delivers the resumed events after the one send.
 func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
-	askID := s.ask.AskID
+	ask := s.ask
+	askID := ask.AskID
 	s.markAskResolved(askID)
 	s.clearPlanReview()
 	s.clearAskArgsView()
 
 	notice := "permission allowed"
+	if s.ask.guardrail != nil {
+		notice = "guardrail action approved to run once"
+		if s.ask.guardrail.Kind == "result_release" {
+			notice = "guardrail released the already-produced result once (tool not rerun)"
+		}
+	}
 	switch v {
 	case client.VerdictAllowAlways:
-		notice = "permission allowed (always, this session)"
+		if s.ask.guardrail != nil {
+			notice = "guardrail action approved for this exact scope in this session"
+		} else {
+			notice = "permission allowed (always, this session)"
+		}
 	case client.VerdictDeny:
-		notice = "permission denied"
+		if s.ask.guardrail != nil {
+			notice = "guardrail review cancelled"
+		} else {
+			notice = "permission denied"
+		}
 	}
 	return approvalResolvedIntent{
-		askID: askID, verdict: v, notice: notice,
+		ask: ask, askID: askID, verdict: v, guardrail: ask.guardrail, expectedRunID: ask.expectedRunID, notice: notice,
 		advance: s.advance(), resume: s.restoredPhase(),
 	}
 }
@@ -466,12 +504,16 @@ func (s *approvalSurface) approvalExpandToggle() (approval bool) {
 // a surfaced subagent ask (a child engine's permission policy has a nil learn
 // store, so always-allow would be a silent no-op there).
 type pendingAsk struct {
-	AskID          string
-	Tool           string
-	Args           string
-	Reason         string
-	focusedVerdict client.Verdict
-	offerAlways    bool
+	AskID                   string
+	Tool                    string
+	Args                    string
+	Reason                  string
+	focusedVerdict          client.Verdict
+	offerAlways             bool
+	guardrail               *client.GuardrailApprovalScope
+	expectedRunID           string
+	reviewDetail            client.GuardrailReviewDetail
+	reviewDetailUnavailable bool
 }
 
 // isPlanAsk reports whether a permission ask is a plan-approval gate (the model
@@ -651,7 +693,7 @@ type shellAskArgs struct {
 // non-plan ask's args (issue #488). ok is false for plan asks and diff-capable
 // tools (their surfaces are the plan-review view and the in-modal diff).
 //
-// The RAW tier is the VERBATIM wire args text — sanitizeTerminal(ask.Args),
+// The RAW tier is the VERBATIM wire args text — terminaltext.Sanitize(ask.Args),
 // nothing else (no prettyJSON, no re-indent): raw is the escape hatch that can
 // never lie, "exactly what am I approving". The PRETTY tier is the readable
 // decode: a Shell ask's {"command": …} decodes into the command TEXT (real
@@ -666,12 +708,12 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 	if isPlanAsk(ask.Tool) || isDiffCapableAskTool(ask.Tool) {
 		return "", "", false
 	}
-	raw = sanitizeTerminal(strings.TrimSpace(ask.Args))
+	raw = terminaltext.Sanitize(strings.TrimSpace(ask.Args))
 	pretty = prettyJSON(ask.Args)
 	if ask.Tool == "Shell" {
 		var args shellAskArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(ask.Args)), &args); err == nil && args.Command != "" {
-			pretty = sanitizeTerminal(args.Command)
+			pretty = terminaltext.Sanitize(args.Command)
 			if args.TimeoutMS != 0 {
 				pretty += "\n" + th.Style("muted").Render(fmt.Sprintf("timeout_ms: %d", args.TimeoutMS))
 			}
@@ -708,7 +750,7 @@ func wrapAskArgs(s string, w int) string {
 // current rendered content width. Reasons are independent metadata: never parse
 // or reconstruct the child ask's Args to display them.
 func wrapApprovalReason(reason string, width int) string {
-	return wrapAskArgs(sanitizeTerminal(reason), width)
+	return wrapAskArgs(terminaltext.Sanitize(reason), width)
 }
 
 // segment that is NOT the last of its source line — "this logical line
@@ -823,6 +865,36 @@ func capApprovalCardBody(body string, height, actionRows int, marker string) str
 // and the hit-test therefore measure the same wrap, and height bounds the region's
 // row budget so centerCard never receives an over-region body. argsOffset is the
 // args mini-viewport's YOffset.
+func guardrailApprovalDescription(scope *client.GuardrailApprovalScope) string {
+	if scope.Kind == "result_release" {
+		return "Result review: Release once or Cancel. This releases the same already-produced result; the tool and its side effects are not run again."
+	}
+	if scope.RepeatAvailable {
+		return "Action review: Run once, Don't ask again for this exact action in this session, or Cancel."
+	}
+	return "Action review: Run once or Cancel. Repeat approval is unavailable because the complete action scope could not be version-bound."
+}
+
+func writeGuardrailApprovalDetail(b *strings.Builder, th theme.Theme, ask pendingAsk, width int) {
+	contentWidth := askArgsCardContentWidth(th, width)
+	write := func(text string) {
+		b.WriteString(th.Style("muted").Render(wrapApprovalReason(text, contentWidth)) + "\n")
+	}
+	write(guardrailApprovalDescription(ask.guardrail))
+	if ask.reviewDetailUnavailable {
+		write("Detailed explanation unavailable or expired; the displayed guardrail purpose still applies.")
+	}
+	if ask.reviewDetail.Concern != "" {
+		write("Concern: " + ask.reviewDetail.Concern)
+	}
+	if ask.reviewDetail.SourceDisplay != "" {
+		write("Source: " + ask.reviewDetail.SourceDisplay)
+	}
+	if ask.reviewDetail.NextAction != "" {
+		write("Next: " + ask.reviewDetail.NextAction)
+	}
+}
+
 func (s *approvalSurface) permissionModalBodyParts(width, height int) (body string, buttonsRow int) {
 	th := s.deps.theme
 	ask := s.ask
@@ -832,8 +904,15 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	queued := len(s.queue)
 	argsOffset := s.askVPOffset
 	titleText := "Permission required"
+	if ask.guardrail != nil {
+		if ask.guardrail.Kind == "result_release" {
+			titleText = "Guardrail result held"
+		} else {
+			titleText = "Guardrail action review"
+		}
+	}
 	if queued > 0 {
-		titleText = fmt.Sprintf("Permission required (1 of %d)", queued+1)
+		titleText = fmt.Sprintf("%s (1 of %d)", titleText, queued+1)
 	}
 	title := th.Style("askTitle").Render(titleText)
 
@@ -843,7 +922,10 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	// sanitized inside prettyJSON; the diff path sanitizes internally.)
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	b.WriteString(th.Style("toolName").Render(sanitizeTerminal(ask.Tool)) + "\n")
+	b.WriteString(th.Style("toolName").Render(terminaltext.Sanitize(ask.Tool)) + "\n")
+	if ask.guardrail != nil {
+		writeGuardrailApprovalDetail(&b, th, ask, width)
+	}
 	// Prefer a concrete diff for Edit/Write. It is always capped to the rows left
 	// above the pinned actions; ctrl+t opens the complete, scrollable diff in the
 	// approval-details view. Fall back to pretty JSON for any other tool, or when
@@ -1044,6 +1126,19 @@ func approvalButtons(th theme.Theme, hk helpKeys, ask pendingAsk, plan bool) []a
 				return planApprovalButtonLabel(hk.deny, "Deny", "iterate")
 			}
 		}
+		if ask.guardrail != nil {
+			switch verdict {
+			case client.VerdictAllowOnce:
+				if ask.guardrail.Kind == "result_release" {
+					return "[" + approvalMnemonic(hk.allow) + "] Release once"
+				}
+				return "[" + approvalMnemonic(hk.allow) + "] Run once"
+			case client.VerdictAllowAlways:
+				return "[" + approvalMnemonic(hk.allowAlways) + "] Don't ask again"
+			default:
+				return "[" + approvalMnemonic(hk.deny) + "] Cancel"
+			}
+		}
 		switch verdict {
 		case client.VerdictAllowOnce:
 			return approvalButtonLabel(hk.allow, "Allow", "allow")
@@ -1169,10 +1264,10 @@ func (s *approvalSurface) openPlan(width, height int) {
 	}
 	var head strings.Builder
 	head.WriteString(s.deps.theme.Style("askTitle").Render(title) + "\n")
-	head.WriteString(s.deps.theme.Style("toolName").Render(sanitizeTerminal(s.ask.Tool)) + "\n")
+	head.WriteString(s.deps.theme.Style("toolName").Render(terminaltext.Sanitize(s.ask.Tool)) + "\n")
 	modelLine := "execute model: session default model"
 	if s.modelID != "" {
-		modelLine = fmt.Sprintf("plan model: %s · execute model: session default model", sanitizeTerminal(s.modelID))
+		modelLine = fmt.Sprintf("plan model: %s · execute model: session default model", terminaltext.Sanitize(s.modelID))
 	}
 	head.WriteString(s.deps.theme.Style("muted").Render(modelLine) + "\n")
 	var body string
@@ -1289,9 +1384,9 @@ func (s *approvalSurface) openArgs(width, height int) {
 		return
 	}
 	previous, fresh := s.argsVP.YOffset(), !s.argsVPReady
-	title := "Ask args: " + sanitizeTerminal(s.ask.Tool)
+	title := "Ask args: " + terminaltext.Sanitize(s.ask.Tool)
 	if isDiffCapableAskTool(s.ask.Tool) {
-		title = "Approval details: " + sanitizeTerminal(s.ask.Tool)
+		title = "Approval details: " + terminaltext.Sanitize(s.ask.Tool)
 	}
 	if len(s.queue) > 0 {
 		title = fmt.Sprintf("%s (1 of %d)", title, len(s.queue)+1)
@@ -1372,7 +1467,7 @@ func planBodyFromArgs(rawArgs string) string {
 	if body == "" {
 		return ""
 	}
-	return sanitizeTerminal(strings.TrimRight(body, "\n"))
+	return terminaltext.Sanitize(strings.TrimRight(body, "\n"))
 }
 
 // approvalNotice renders the muted one-line verdict notice for a replayed

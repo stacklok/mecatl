@@ -135,9 +135,8 @@ verbatim on the assistant message item, never displayed or interpreted (issue
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
 - `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
   a closed usage kind and opaque server-selected provider/model entries; each total is
-  the sum of its entries. `Session.Usage` remains a deprecated lifetime compatibility
-  mirror of `TokenUsage[main]`; the run budget uses internal per-run state rather than
-  the mirror.
+  the sum of its entries. `Session.UsageFor` reads a bucket's authoritative total.
+  Run budgets measure the `main` bucket from an internal, immutable per-run baseline.
 
 ### Session titles and durable token accounting
 
@@ -162,8 +161,8 @@ active session, then retain only a strictly higher revision. This makes a snapsh
 followed by a delayed older live event converge on the snapshot rather than regress.
 
 A physical call records its input/output tokens only in `TokenUsage[session_title]`,
-attributed to the composition-selected opaque provider/model. It never changes
-`Session.Usage`, a main-run budget, `EvResult` usage, or the conversation. The Service
+attributed to the composition-selected opaque provider/model. It never changes the
+`main` usage bucket, a main-run budget, `EvResult` usage, or the conversation. The Service
 emits session-correlated, diagnostics-only lifecycle records for submission, admission,
 claim, generator selection/completion, and conditional commit loss. Completion records
 only outcome, provider/model attribution, token counts, and on failure a stable class
@@ -217,7 +216,7 @@ member. Team-unique structures stay on tier 2: `team.tasks` and `team.findings` 
 snapshots, `team.end` adds terminal per-member dispositions, plus the mutating cue and the
 context meter. A member/branch/child `permission.ask` is still never
 projected. The families are deliberately NOT merged; a 4th family is the trip-wire to
-extract a shared lifecycle value object (see `docs/design/IMPLEMENTATION-NOTES.md`).
+extract a shared lifecycle value object (see `engine/session/event.go`).
 Gauntlet #7 still holds: none of these projections injects branch/child/member transcripts
 into the parent conversation — only the delegation tool's final result does (plus, for
 Parallel, fork-root path handles).

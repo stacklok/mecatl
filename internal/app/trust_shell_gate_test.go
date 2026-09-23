@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 )
 
@@ -256,13 +256,13 @@ func TestUntrustedSubagentSpecCarriesNoShellNote(t *testing.T) {
 }
 
 // TestNoShellFlagNoteDistinctFromUntrusted pins the note's CAUSE attribution: a
-// shell-less deployment (--no-bash, or an empty shell) must NOT produce the
+// shell-less deployment (--no-shell, or an empty shell) must NOT produce the
 // posture-below-auto no-shell note — those causes keep the historical description
 // unchanged (the pre-#40 behaviour), whether the workspace is trusted or not.
 func TestNoShellFlagNoteDistinctFromUntrusted(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
-		"no-bash trusted":     func(c *Config) { c.NoShell = true },
-		"no-bash untrusted":   func(c *Config) { c.NoShell = true; c.TrustProject = false },
+		"no-shell trusted":    func(c *Config) { c.NoShell = true },
+		"no-shell untrusted":  func(c *Config) { c.NoShell = true; c.TrustProject = false },
 		"empty-shell trusted": func(c *Config) { c.Shell = "" },
 		// Empty shell + untrusted: the EMPTY SHELL must win the blame — there is no
 		// shell for --posture auto to enable, so the no-shell note (and its
@@ -502,14 +502,14 @@ func TestSandboxedShellAvailableGateTable(t *testing.T) {
 		shell          string
 		want           bool
 	}{
-		"happy trusted":           {false, true, "/bin/sh", true},
-		"no-bash trusted":         {true, true, "/bin/sh", false},
-		"empty-shell trusted":     {false, true, "", false},
-		"no-bash empty trusted":   {true, true, "", false},
-		"untrusted":               {false, false, "/bin/sh", false},
-		"no-bash untrusted":       {true, false, "/bin/sh", false},
-		"empty-shell untrusted":   {false, false, "", false},
-		"no-bash empty untrusted": {true, false, "", false},
+		"happy trusted":            {false, true, "/bin/sh", true},
+		"no-shell trusted":         {true, true, "/bin/sh", false},
+		"empty-shell trusted":      {false, true, "", false},
+		"no-shell empty trusted":   {true, true, "", false},
+		"untrusted":                {false, false, "/bin/sh", false},
+		"no-shell untrusted":       {true, false, "/bin/sh", false},
+		"empty-shell untrusted":    {false, false, "", false},
+		"no-shell empty untrusted": {true, false, "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := Config{NoShell: tc.noShell, Shell: tc.shell, TrustProject: tc.trust}
@@ -535,15 +535,15 @@ func TestForceCopyShellAvailableGateTable(t *testing.T) {
 		shell          string
 		want           bool
 	}{
-		"happy trusted":         {false, true, "/bin/sh", true},
-		"no-bash trusted":       {true, true, "/bin/sh", false},
-		"empty-shell trusted":   {false, true, "", false},
-		"no-bash empty trusted": {true, true, "", false},
+		"happy trusted":          {false, true, "/bin/sh", true},
+		"no-shell trusted":       {true, true, "/bin/sh", false},
+		"empty-shell trusted":    {false, true, "", false},
+		"no-shell empty trusted": {true, true, "", false},
 		// The asymmetry: trust is IRRELEVANT for force-copy.
-		"happy untrusted":         {false, false, "/bin/sh", true},
-		"no-bash untrusted":       {true, false, "/bin/sh", false},
-		"empty-shell untrusted":   {false, false, "", false},
-		"no-bash empty untrusted": {true, false, "", false},
+		"happy untrusted":          {false, false, "/bin/sh", true},
+		"no-shell untrusted":       {true, false, "/bin/sh", false},
+		"empty-shell untrusted":    {false, false, "", false},
+		"no-shell empty untrusted": {true, false, "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := Config{NoShell: tc.noShell, Shell: tc.shell, TrustProject: tc.trust}

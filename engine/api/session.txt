@@ -17,13 +17,14 @@
     method func (*Session).Complete() error
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
     method func (*Session).Fail() error
-    method func (*Session).FailedStepRetryPending() (RetryDisposition, StreamProgress, bool)
-    method func (*Session).FailureMetadata() (RetryDisposition, StreamProgress)
-    method func (*Session).FailurePermanence() bool
+    method func (*Session).FailedStepRetryPending() (RetryMetadata, bool)
+    method func (*Session).FailureMetadata() RetryMetadata
+    method func (*Session).GrantToolAuthority(names []string) error
     method func (*Session).Incarnation() IncarnationID
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)
     method func (*Session).LastError() string
+    method func (*Session).LatestContextOccupancy() (ContextOccupancy, bool)
     method func (*Session).LimitTripped() (StopReason, bool)
     method func (*Session).PauseForApproval(ask PendingAsk) error
     method func (*Session).PauseForAuthorization(pending PendingAuthorization) error
@@ -32,9 +33,11 @@
     method func (*Session).PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
-    method func (*Session).RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error
-    method func (*Session).RecordFailurePermanence(permanent bool) error
+    method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
+    method func (*Session).RecordHarnessPrompt(text string) error
     method func (*Session).RecordLastError(cause string) error
+    method func (*Session).RecordLatestContextOccupancy(occupancy ContextOccupancy)
+    method func (*Session).RecordPrincipalPromptWithParts(text string, parts []Content, instructions []Message) error
     method func (*Session).RecordTitleAttempt(attempt TitleAttempt)
     method func (*Session).RecordTitleSourcePrompt(text string)
     method func (*Session).RecordTokenUsage(kind UsageKind, providerID string, modelID string, usage Usage)
@@ -49,9 +52,8 @@
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ReplaceHistoryAtBoundary(messages []Message) error
-    method func (*Session).ResetUsage() error
     method func (*Session).RestoreAuthorizationClaim(pending PendingAuthorization) error
-    method func (*Session).RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error
+    method func (*Session).RestoreFailedStepRetryPending(metadata RetryMetadata) error
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
@@ -70,6 +72,7 @@
     method func (*Session).TitleAttempts() []TitleAttempt
     method func (*Session).TitleSourcePrompts() []string
     method func (*Session).TokenUsageSnapshot() map[UsageKind]TokenUsage
+    method func (*Session).UsageFor(kind UsageKind) Usage
     method func (*Session).ValidateAuthorizationState() error
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
@@ -80,9 +83,9 @@
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
-    method func (PendingAsk).Origin() AskOrigin
     method func (PendingAuthorization).Clone() PendingAuthorization
     method func (RetryDisposition).Valid() bool
+    method func (RetryMetadata).Valid() bool
     method func (State).IsTerminal() bool
     method func (StreamProgress).Valid() bool
     method func (Usage).Add(other Usage) Usage
@@ -92,9 +95,10 @@
 const ActivityActive ActivityState = "active"
 const ActivityDraft ActivityState = "draft"
 const ActivityUnknown ActivityState = ""
-const AskOriginHook AskOrigin = 1
-const AskOriginNone AskOrigin = 0
-const AskOriginPlan AskOrigin = 2
+const ApprovalOriginHookGuardrail ApprovalOrigin = "hook_guardrail"
+const ApprovalOriginPermission ApprovalOrigin = "permission"
+const ApprovalOriginPlan ApprovalOrigin = "plan"
+const ApprovalOriginUnknown ApprovalOrigin = ""
 const AuthorizationCancelled AuthorizationStatus = "cancelled"
 const AuthorizationClosed AuthorizationStatus = "closed"
 const AuthorizationDenied AuthorizationStatus = "denied"
@@ -128,6 +132,7 @@ const EvParallelEnd EventType = "parallel.end"
 const EvParallelStart EventType = "parallel.start"
 const EvPermissionAsk EventType = "permission.ask"
 const EvPermissionRetract EventType = "permission.retract"
+const EvPlanContinuationFailed EventType = "plan.continuation_failed"
 const EvProviderRoute EventType = "provider.route"
 const EvReasoningDelta EventType = "reasoning.delta"
 const EvRecoverNotice EventType = "recover_notice"
@@ -156,6 +161,8 @@ const EvUserPrompt EventType = "user_prompt"
 const GrantTypeClientCredentials GrantType = "client_credentials"
 const GrantTypeSystem GrantType = "system"
 const GrantTypeUser GrantType = "user"
+const GuardrailApprovalAction GuardrailApprovalKind = "action"
+const GuardrailApprovalResultRelease GuardrailApprovalKind = "result_release"
 const HookAdvisory HookDecision = "advisory"
 const HookBlocked HookDecision = "blocked"
 const HookInfo HookDecision = "info"
@@ -256,6 +263,9 @@ const TitleProvenanceOperator TitleProvenance = "operator"
 const TitleProvenanceUnknown TitleProvenance = ""
 const UsageKindMain UsageKind = "main"
 const UsageKindSessionTitle UsageKind = "session_title"
+const UserPromptProvenanceHarness UserPromptProvenance = "harness"
+const UserPromptProvenancePrincipal UserPromptProvenance = "principal"
+const UserPromptProvenanceUnknown UserPromptProvenance = ""
 const VerdictAllowAlways ApprovalVerdict = 2
 const VerdictAllowOnce ApprovalVerdict = 1
 const VerdictDeny ApprovalVerdict = 0
@@ -322,9 +332,9 @@ func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 func WithPrincipal(ctx context.Context, p *Principal) context.Context
 type ActivityState string
-type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
+type ApprovalOrigin string
+type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool; Origin ApprovalOrigin}
 type ApprovalVerdict int
-type AskOrigin int
 type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
 type AuthorizationBinding string
 type AuthorizationPayload struct{AuthorizationID string; DisplayName string; Call ToolCallID; ExpiresAt time.Time; Status AuthorizationStatus}
@@ -333,39 +343,47 @@ type AuthorizationStatus string
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
+type ContextOccupancy struct{InputTokens int; Estimated bool}
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string
 type EnvironmentRef struct{Kind EnvironmentKind; ID string; Revision string}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; PlanContinuationFailure *PlanContinuationFailurePayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
 type ExternalAuthorization struct{ID string; DisplayName string; Binding AuthorizationBinding; ExpiresAt time.Time}
 type ExternalBinding string
 type GrantType string
+type GuardrailApprovalKind string
+type GuardrailPendingScope struct{ReviewID string; Kind GuardrailApprovalKind; GrantDigest string; SessionOnly bool; RepeatAvailable bool}
+type GuardrailRef struct{Ref string; Category string}
+type GuardrailReviewPayload struct{ReviewID string; Job string; Assessment string; Inspection string; Disposition string; ReasonCode string; RuleID string; RuleOrigin string; CheckerProviderID string; CheckerModelID string; Concerns []GuardrailRef; Sources []GuardrailRef}
 type HookDecision string
-type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID}
+type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID; Guardrail *GuardrailReviewPayload}
 type IncarnationID string
 type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
 type MediaKind string
-type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; ReasoningItemID string; Parts []Content}
+type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; ReasoningItemID string; Parts []Content; UserPromptProvenance UserPromptProvenance}
 type ModelRetryPayload struct{Disposition RetryDisposition; Progress StreamProgress}
 type NetworkAttemptPayload struct{SessionID SessionID "json:\"session_id\""; RunSerial int64 "json:\"run_serial\""; Turn int "json:\"turn\""; Attempt int "json:\"attempt\""; MaxAttempts int "json:\"max_attempts\""; ElapsedMs int64 "json:\"elapsed_ms\""; RetryDisposition string "json:\"retry_disposition\""; StreamProgress string "json:\"stream_progress\""; Decision string "json:\"decision\""; SuppressionReason string "json:\"suppression_reason,omitempty\""; BackoffMs int64 "json:\"backoff_ms\""; FailureClass string "json:\"failure_class\""; HTTPStatus int "json:\"http_status,omitempty\""; InBandStatus int "json:\"in_band_status,omitempty\""; CorrelationKind string "json:\"correlation_kind,omitempty\""; CorrelationDigest string "json:\"correlation_digest,omitempty\""}
 type ParallelEventKind string
-type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; ChildIncarnation IncarnationID; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Stop StopReason; Usage Usage; DurationMs int64; Winner int}
-type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
+type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; ChildIncarnation IncarnationID; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Stop StopReason; Usage Usage; DurationMs int64; Winner int}
+type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; Guardrail *GuardrailPendingScope "json:\"guardrail,omitempty\""; Origin ApprovalOrigin "json:\"origin,omitempty\""; AskProvenance governance.AskProvenance "json:\"-\""}
 type PendingAuthorization struct{Authorization ExternalAuthorization; Call ToolCall; Deferred []ToolCall}
 type PendingWorkspaceEnrollment struct{ID WorkspaceEnrollmentID; RequiredServices uint32; ExpiresAt time.Time}
 type PermissionMode string
 type PlacementMetadata struct{Kind string "json:\"kind,omitempty\""; Label string "json:\"label,omitempty\""; Branch string "json:\"branch,omitempty\""; Revision string "json:\"revision,omitempty\""}
+type PlanContinuationFailurePayload struct{PlanRunID string; AskID string}
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
 type RequestManifestPayload struct{Provider string "json:\"provider,omitempty\""; Model string "json:\"model,omitempty\""; ReasoningEffort string "json:\"reasoning_effort,omitempty\""; ContextWindow int "json:\"context_window,omitempty\""; ToolNames []string "json:\"tool_names\""; ToolDecisions []RequestToolDecision "json:\"tool_decisions\""; AdvertisedToolSchemaBytes int "json:\"advertised_tool_schema_bytes\""; MessageCount int "json:\"message_count\""; MessageBytes int "json:\"message_bytes\""; Prompt []RequestPromptComponent "json:\"prompt\""}
 type RequestPromptComponent struct{Kind string "json:\"kind\""; Provenance string "json:\"provenance\""; Bytes int "json:\"bytes\""}
 type RequestToolDecision struct{Name string "json:\"name\""; Source string "json:\"source\""; Decision string "json:\"decision\""}
-type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool; Disposition RetryDisposition; Progress StreamProgress}
+type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Disposition RetryDisposition; Progress StreamProgress}
 type RetryDisposition uint8
+type RetryMetadata struct{Disposition RetryDisposition; Progress StreamProgress}
 type Role string
+type RoutingDecision struct{Backend string; ClassifierModel string; CandidateCategory string; CandidateModel string; Confidence *float64; MinimumConfidence *float64; Outcome string; ConsecutiveMisses int; MissLimit int; BreakerOpen bool}
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; EnvironmentRef EnvironmentRef; Placement PlacementMetadata; ExternalBinding ExternalBinding; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; TitleGeneration TitleGenerationState; TitleRevision uint64; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; EnvironmentRef EnvironmentRef; Placement PlacementMetadata; ExternalBinding ExternalBinding; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; TitleGeneration TitleGenerationState; TitleRevision uint64; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; OriginIncarnation IncarnationID "json:\"origin_incarnation,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; ParentIncarnation IncarnationID "json:\"parent_incarnation,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""; DebugTargetIncarnation IncarnationID "json:\"debug_target_incarnation,omitempty\""}
@@ -373,10 +391,10 @@ type State string
 type SteerPayload struct{Text string; Parts []Content; MessageID string}
 type StopReason string
 type StreamProgress uint8
-type SubagentPayload struct{ParentCallID string; ChildID string; ChildIncarnation IncarnationID; Goal string; Background bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; Cause string; DurationMs int64}
+type SubagentPayload struct{ParentCallID string; ChildID string; ChildIncarnation IncarnationID; Goal string; Background bool; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; Cause string; DurationMs int64}
 type TeamFindingSnapshot struct{Member string; Body string}
 type TeamMemberDisposition struct{Name string; Disposition string; Reason string; ErrorRounds int}
-type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string}
+type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string; MemberSessionID SessionID; MemberIncarnation IncarnationID}
 type TeamPayload struct{ParentCallID string; TeamID string; Roster []TeamMemberSpec; Member string; MemberSessionID string; MemberIncarnation IncarnationID; InnerKind EventType; Text string; ToolName string; Detail string; IsError bool; Rounds int; Stop StopReason; Usage Usage; ContextUsed int64; ContextWindow int64; Tasks []TeamTaskSnapshot; Findings []TeamFindingSnapshot; Dispositions []TeamMemberDisposition; Cause string}
 type TeamTaskSnapshot struct{ID string; Description string; State string; Assignee string; Deps []string}
 type TitleAttempt struct{ID string; Outcome TitleAttemptOutcome}
@@ -392,7 +410,8 @@ type Turn struct{Index int; Assistant Message; Results []ToolResult; Usage Usage
 type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64}
 type Usage struct{InputTokens int; OutputTokens int; CacheReadTokens int; CacheWriteTokens int; ReasoningTokens int}
 type UsageKind string
-type UserPromptPayload struct{Text string; Parts []Content; Synthetic bool}
+type UserPromptPayload struct{Text string; Parts []Content; Synthetic bool; Provenance UserPromptProvenance}
+type UserPromptProvenance string
 type WorkspaceEnrollmentID string
 var ErrIllegalTransition error
 var ErrInvalidContent error

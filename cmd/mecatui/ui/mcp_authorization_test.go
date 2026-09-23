@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
 func TestInvariant_mecatui_mcp_authorization_is_not_permission_approval(t *testing.T) {
@@ -215,30 +217,32 @@ func TestMCPAuthorizationOpeningOrCopyingStartsPolling(t *testing.T) {
 		{name: "copy", key: tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			control := &mcpAuthorizationControllerFake{}
-			m := New(Deps{
-				Ctx:              t.Context(),
-				MCPAuthorization: control,
-				OpenURL:          func(context.Context, string) error { return nil },
-				Clipboard:        &fakeClipboard{},
+			synctest.Test(t, func(t *testing.T) {
+				control := &mcpAuthorizationControllerFake{}
+				m := New(Deps{
+					Ctx:              t.Context(),
+					MCPAuthorization: control,
+					OpenURL:          func(context.Context, string) error { return nil },
+					Clipboard:        &fakeClipboard{},
+				})
+				m.sessionID = "session-1"
+				m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
+				_, actionCmd := m.onMCPAuthorizationKey(tc.key)
+				m = applyAll(m, actionCmd())
+				gen := m.authorization.controlGen
+				if !m.authorization.polling {
+					t.Fatal("successful presentation did not arm polling")
+				}
+				mm, pollCmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
+				m = mm.(Model)
+				if pollCmd == nil {
+					t.Fatal("presentation did not start an authorization observation")
+				}
+				runBatchLeaves(pollCmd)
+				if control.recheck != 1 {
+					t.Fatalf("rechecks = %d, want 1", control.recheck)
+				}
 			})
-			m.sessionID = "session-1"
-			m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
-			_, actionCmd := m.onMCPAuthorizationKey(tc.key)
-			m = applyAll(m, actionCmd())
-			gen := m.authorization.controlGen
-			if !m.authorization.polling {
-				t.Fatal("successful presentation did not arm polling")
-			}
-			mm, pollCmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
-			m = mm.(Model)
-			if pollCmd == nil {
-				t.Fatal("presentation did not start an authorization observation")
-			}
-			runBatchLeaves(pollCmd)
-			if control.recheck != 1 {
-				t.Fatalf("rechecks = %d, want 1", control.recheck)
-			}
 		})
 	}
 }
@@ -313,18 +317,127 @@ func (f *mcpAuthorizationControllerFake) CancelMCPAuthorization(context.Context,
 }
 
 type authorizationControlRecorder struct {
-	askID     string
-	verdict   client.Verdict
-	cancelled bool
+	askID         string
+	verdict       client.Verdict
+	guardrail     *client.GuardrailApprovalScope
+	expectedRunID string
+	err           error
+	cancelled     bool
 }
 
-func (r *authorizationControlRecorder) SendApproval(id string, verdict client.Verdict) error {
-	r.askID, r.verdict = id, verdict
-	return nil
+func (r *authorizationControlRecorder) SendApprovalForScope(id string, verdict client.Verdict, scope *client.GuardrailApprovalScope, expectedRunID string) error {
+	r.askID, r.verdict, r.guardrail, r.expectedRunID = id, verdict, scope, expectedRunID
+	return r.err
 }
 func (r *authorizationControlRecorder) SendCancel() error {
 	r.cancelled = true
 	return nil
+}
+
+func TestControlRefusedWireRoundTripRestoresCorrelatedAskAndPreservesQueue(t *testing.T) {
+	const runID = "run-refusal"
+	scope := &mecatlv1.GuardrailApprovalScope{
+		ReviewId:        "review-1",
+		Kind:            mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE,
+		RepeatAvailable: false,
+	}
+	recv := &fakeRecver{script: []*mecatlv1.ConverseResponse{
+		ev(&mecatlv1.Event{Type: "session.init", RunId: runID}),
+		ev(&mecatlv1.Event{Type: "permission.ask", RunId: runID, Ask: &mecatlv1.PermissionAsk{AskId: "ask-a", Tool: "Read", Guardrail: scope}}),
+		ev(&mecatlv1.Event{Type: "permission.ask", RunId: runID, Ask: &mecatlv1.PermissionAsk{AskId: "ask-b", Tool: "Write"}}),
+		ev(&mecatlv1.Event{Type: "message.delta", RunId: runID, Text: "unrelated progress"}),
+		ev(&mecatlv1.Event{Type: "control.refused", RunId: runID, Text: "intent mismatch", ControlRefused: &mecatlv1.ControlRefused{AskId: "ask-a", Category: "approval_intent_mismatch"}}),
+	}}
+	send := &fakeSender{}
+	stream := client.NewStream(recv, send)
+	ch := make(chan tea.Msg, 1)
+	go stream.ReadLoop(context.Background(), ch)
+	next := func() tea.Msg {
+		t.Helper()
+		select {
+		case msg := <-ch:
+			return msg
+		case <-time.After(scaleWait(3 * time.Second)):
+			t.Fatal("timed out waiting for wire event")
+			return nil
+		}
+	}
+
+	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m.sessionID = "session-1"
+	m.stream = stream
+	m.phase = phaseRunning
+	m = applyAll(m, next())
+	m = applyAll(m, next())
+	m = applyAll(m, next())
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	m = applyAll(m, next())
+	if m.pendingApproval == nil {
+		t.Fatal("unrelated progress settled submitted approval")
+	}
+	m = applyAll(m, next())
+	s := approvalSurfaceFor(&m)
+	if s == nil || s.ask.AskID != "ask-a" || len(s.queue) != 1 || s.queue[0].AskID != "ask-b" || m.phase != phaseAwaitingApproval {
+		t.Fatalf("refusal did not restore exact ask and queue: phase=%v surface=%+v", m.phase, s)
+	}
+	if stream.ApprovalResolved("ask-a") {
+		t.Fatal("refusal did not reset transport dedupe")
+	}
+	mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	frames := send.frames()
+	if len(frames) != 2 {
+		t.Fatalf("approval frames=%d, want original plus one retry", len(frames))
+	}
+	for i, frame := range frames {
+		ra := frame.GetResumeApproval()
+		if ra == nil || ra.GetAskId() != "ask-a" || ra.GetExpectedRunId() != runID || ra.GetReviewId() != "review-1" || ra.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE {
+			t.Fatalf("approval frame %d lost correlation: %+v", i, ra)
+		}
+	}
+	if current := approvalSurfaceFor(&m); current == nil || current.ask.AskID != "ask-b" {
+		t.Fatalf("valid retry did not advance to preserved ask: %+v", current)
+	}
+}
+
+func TestRefusedScopedApprovalReopensExactAskWithoutFalseAllowedNotice(t *testing.T) {
+	recorder := &authorizationControlRecorder{err: errors.New("intent mismatch")}
+	stream := client.NewAuthorizationEventStream(client.NewFakeEventStream(), recorder)
+	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m.sessionID = "session-1"
+	m.authorization = mcpAuthorizationState{controlStream: stream, controlGen: 3, runningControlGen: 3}
+	m.phase = phaseRunning
+	scope := &client.GuardrailApprovalScope{ReviewID: "review-1", Kind: "result_release"}
+	m = applyAll(m, client.PermissionAskMsg{AskID: "ask-1", Tool: "Read", Guardrail: scope, ExpectedRunID: "run-1"})
+	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	m = applyAll(m, client.AssistantDeltaMsg{Text: "unrelated worker progress"})
+	if m.pendingApproval == nil {
+		t.Fatal("unrelated progress settled submitted approval")
+	}
+	stale := client.EventToMsg(&mecatlv1.Event{Type: "control.refused", RunId: "run-1", Text: "stale", ControlRefused: &mecatlv1.ControlRefused{AskId: "ask-other", Category: "approval_not_pending"}})
+	m = applyAll(m, stale)
+	if m.pendingApproval == nil {
+		t.Fatal("refusal for another ask reopened or settled the submitted approval")
+	}
+	refused := client.EventToMsg(&mecatlv1.Event{Type: "control.refused", RunId: "run-1", Text: "intent mismatch", ControlRefused: &mecatlv1.ControlRefused{AskId: "ask-1", Category: "approval_intent_mismatch"}})
+	if _, ok := refused.(client.ControlRefusedMsg); !ok {
+		t.Fatalf("EventToMsg(control.refused) = %T, want ControlRefusedMsg", refused)
+	}
+	m = applyAll(m, refused)
+	s := approvalSurfaceFor(&m)
+	if s == nil || s.ask.AskID != "ask-1" || s.ask.guardrail != scope || s.ask.expectedRunID != "run-1" || m.phase != phaseAwaitingApproval {
+		t.Fatalf("restored approval = phase=%v surface=%+v", m.phase, s)
+	}
+	if got := lastNotice(m); strings.Contains(got, "released") || strings.Contains(got, "allowed") || strings.Contains(got, "approved") {
+		t.Fatalf("refused approval retained false success notice %q", got)
+	}
+	if stream.ApprovalResolved("ask-1") {
+		t.Fatal("refused approval remained transport-deduped")
+	}
 }
 
 func TestMCPAuthorizationContinuationPermissionUsesControlStream(t *testing.T) {
@@ -337,12 +450,13 @@ func TestMCPAuthorizationContinuationPermissionUsesControlStream(t *testing.T) {
 	m.authorization.controlGen = 7
 	m.authorization.runningControlGen = 7
 	m.phase = phaseRunning
-	m = applyAll(m, mcpAuthorizationEventMsg{sessionID: "session-1", authorizationID: "auth-1", gen: 7, msg: client.PermissionAskMsg{AskID: "session-1:1:followup", Tool: "protected"}})
+	scope := &client.GuardrailApprovalScope{ReviewID: "review-1", Kind: "action", RepeatAvailable: true}
+	m = applyAll(m, mcpAuthorizationEventMsg{sessionID: "session-1", authorizationID: "auth-1", gen: 7, msg: client.PermissionAskMsg{AskID: "session-1:1:followup", Tool: "protected", ExpectedRunID: "run-1", Guardrail: scope}})
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if recorder.askID != "session-1:1:followup" || recorder.verdict != client.VerdictAllowOnce {
-		t.Fatalf("authorization control approval = (%q, %v)", recorder.askID, recorder.verdict)
+	if recorder.askID != "session-1:1:followup" || recorder.verdict != client.VerdictAllowOnce || recorder.guardrail != scope || recorder.expectedRunID != "run-1" {
+		t.Fatalf("authorization control approval = (%q, %v, %+v, %q)", recorder.askID, recorder.verdict, recorder.guardrail, recorder.expectedRunID)
 	}
 	if m.phase != phaseRunning {
 		t.Fatalf("phase after approval = %v, want running", m.phase)

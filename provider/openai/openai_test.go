@@ -331,7 +331,7 @@ func TestReasoningReplayUsesRealBlobNotSummary(t *testing.T) {
 			packed += c.Text
 		}
 	}
-	items := unpackReasoningItems(packed, "")
+	items := unpackReasoningItems(packed)
 	if len(items) != 1 {
 		t.Fatalf("unpacked %d reasoning items, want 1; packed=%q", len(items), packed)
 	}
@@ -1121,14 +1121,9 @@ func TestBuildParams(t *testing.T) {
 		Messages: []session.Message{
 			session.NewUserMessage("open main.go"),
 			func() session.Message {
-				m := session.NewAssistantMessage("", "REASONING_BLOB", []session.ToolCall{
+				return session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "REASONING_BLOB"}}), []session.ToolCall{
 					session.NewToolCall("call_1", "read_file", json.RawMessage(`{"path":"main.go"}`)),
 				})
-				// The reasoning item is only emitted when a provider reasoning-item
-				// id was captured (Message.ReasoningItemID); without it the adapter
-				// drops the item rather than send `"id":""` (D1a).
-				m.ReasoningItemID = "rs_1"
-				return m
 			}(),
 			session.NewToolMessage(session.NewToolResult("call_1", "package main")),
 			session.NewAssistantMessage("done", "", nil),
@@ -1546,7 +1541,7 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", "opaque-blob", []session.ToolCall{{
+	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}), []session.ToolCall{{
 		ID: "call_1", Name: "Read", Args: json.RawMessage(`{"path":"README.md"}`), ItemID: "fc_keep",
 	}})
 	assistant.ReasoningItemID = "rs_bad"
@@ -1622,7 +1617,7 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	if keptID != "fc_keep" {
 		t.Fatalf("fallback function-call item id = %q, want fc_keep", keptID)
 	}
-	if req.Messages[1].Reasoning != "opaque-blob" || req.Messages[1].ReasoningItemID != "rs_bad" {
+	if req.Messages[1].Reasoning != packReasoningItems([]reasoningItem{{ID: "rs_bad", Blob: "opaque-blob"}}) || req.Messages[1].ReasoningItemID != "rs_bad" {
 		t.Fatal("recovery mutated the caller's request")
 	}
 }
@@ -1635,9 +1630,10 @@ func TestStreamEncryptedReasoningRecoveryBoundary(t *testing.T) {
 		itemID    string
 		body      string
 	}{
-		{name: "unrelated 400", reasoning: "blob", itemID: "rs_1", body: `{"error":{"message":"unrelated bad parameter"}}`},
-		{name: "blob without id has no wire envelope", reasoning: "blob", body: invalidBody},
-		{name: "id without blob has no wire envelope", itemID: "rs_1", body: invalidBody},
+		{name: "unrelated 400", reasoning: packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), body: `{"error":{"message":"unrelated bad parameter"}}`},
+		{name: "bare historical ciphertext is unsupported", reasoning: "blob", itemID: "rs_legacy", body: invalidBody},
+		{name: "partial current envelope is malformed", reasoning: `{"v":1,"items":[{"i":"rs_1","e":"blob"},{"i":"rs_2"}]}`, body: invalidBody},
+		{name: "wrong version is unsupported", reasoning: `{"v":2,"items":[{"i":"rs_1","e":"blob"}]}`, body: invalidBody},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1662,7 +1658,7 @@ func TestStreamEncryptedReasoningRecoveryBoundary(t *testing.T) {
 			if calls != 1 {
 				t.Fatalf("request count = %d, want 1 (no hidden fallback)", calls)
 			}
-			if tt.reasoning == "" || tt.itemID == "" {
+			if len(unpackReasoningItems(tt.reasoning)) == 0 {
 				var wire struct {
 					Input []map[string]any `json:"input"`
 				}
@@ -1670,7 +1666,7 @@ func TestStreamEncryptedReasoningRecoveryBoundary(t *testing.T) {
 					t.Fatalf("decode request: %v", err)
 				}
 				if got := countInputType(wire.Input, "reasoning"); got != 0 {
-					t.Fatalf("partial reasoning state serialized %d reasoning envelope(s), want 0", got)
+					t.Fatalf("unsupported/malformed reasoning serialized %d reasoning envelope(s), want 0", got)
 				}
 			}
 		})
@@ -1688,7 +1684,7 @@ func TestStreamDoesNotRepairPreChunkSSEError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", "blob", nil)
+	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
 	assistant.ReasoningItemID = "rs_1"
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
@@ -1713,7 +1709,7 @@ func TestStreamDoesNotRepairAfterNeutralChunk(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", "blob", nil)
+	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
 	assistant.ReasoningItemID = "rs_1"
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
@@ -1740,7 +1736,7 @@ func TestStreamFailedEncryptedReasoningFallbackIsNonRetryableAndCausal(t *testin
 	}))
 	defer srv.Close()
 
-	assistant := session.NewAssistantMessage("", "blob", nil)
+	assistant := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_1", Blob: "blob"}}), nil)
 	assistant.ReasoningItemID = "rs_1"
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}})
@@ -1822,43 +1818,43 @@ func itoa(i int) string {
 	return string(rune('0' + i%10)) // single-digit-ish; sequence_number value is not asserted
 }
 
-// TestResponseStreamErrorPermanent exercises Permanent() on responseStreamError.
+// TestResponseStreamErrorRetryDisposition exercises typed retry classification.
 // Non-retryable 4xx (≠408/429) and context-overflow messages are permanent;
 // transient codes (408, 429, 5xx) and unknown (0) are NOT permanent (fail-open).
-func TestResponseStreamErrorPermanent(t *testing.T) {
+func TestResponseStreamErrorRetryDisposition(t *testing.T) {
 	tests := []struct {
 		msg    string
 		status int
-		want   bool
+		want   session.RetryDisposition
 	}{
 		// Non-retryable 4xx — permanent client-side rejections.
-		{"response failed: invalid_request_error: bad request", 400, true},
-		{"response failed: permission_error: forbidden", 403, true},
-		{"response failed: not_found_error: not found", 404, true},
-		// Retryable codes — transient, NOT permanent.
-		{"response failed: rate_limit_exceeded: too many requests", 429, false},
-		{"response failed: server_error: internal error", 503, false},
-		{"response failed: gateway_timeout: upstream timeout", 504, false},
-		// Status 0 (unknown) — NOT permanent, fail-open.
-		{"response failed: unknown code", 0, false},
-		{"", 0, false},
-		// Context overflow — permanent even with transient-looking status.
-		{"response failed: server_error: Your input exceeds the context window of this model.", 503, true},
-		{"stream error: server_error: input exceeds the context length", 503, true},
-		{"response failed: server_error: maximum context length exceeded", 503, true},
-		{"response failed: server_error: prompt exceeds the token limit", 503, true},
-		{"response failed: server_error: request exceeded the token limit for this model", 503, true},
+		{"response failed: invalid_request_error: bad request", 400, session.RetryDispositionPermanent},
+		{"response failed: permission_error: forbidden", 403, session.RetryDispositionPermanent},
+		{"response failed: not_found_error: not found", 404, session.RetryDispositionPermanent},
+		// Retryable codes.
+		{"response failed: rate_limit_exceeded: too many requests", 429, session.RetryDispositionRetryable},
+		{"response failed: server_error: internal error", 503, session.RetryDispositionRetryable},
+		{"response failed: gateway_timeout: upstream timeout", 504, session.RetryDispositionRetryable},
+		// Status 0 is conservatively unknown.
+		{"response failed: unknown code", 0, session.RetryDispositionUnknown},
+		{"", 0, session.RetryDispositionUnknown},
+		// Context overflow is permanent even with a transient-looking status.
+		{"response failed: server_error: Your input exceeds the context window of this model.", 503, session.RetryDispositionPermanent},
+		{"stream error: server_error: input exceeds the context length", 503, session.RetryDispositionPermanent},
+		{"response failed: server_error: maximum context length exceeded", 503, session.RetryDispositionPermanent},
+		{"response failed: server_error: prompt exceeds the token limit", 503, session.RetryDispositionPermanent},
+		{"response failed: server_error: request exceeded the token limit for this model", 503, session.RetryDispositionPermanent},
 	}
 	for _, tt := range tests {
 		e := &responseStreamError{msg: tt.msg, status: tt.status}
-		if got := e.Permanent(); got != tt.want {
-			t.Errorf("Permanent() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
+		if got := e.RetryDisposition(); got != tt.want {
+			t.Errorf("RetryDisposition() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
 		}
 	}
 }
 
 // TestResponseStreamErrorErrorMessageUnchanged pins the invariant that adding
-// Permanent() does not change the Error() string.
+// RetryDisposition does not change the Error() string.
 func TestResponseStreamErrorErrorMessageUnchanged(t *testing.T) {
 	e := &responseStreamError{msg: "response failed: rate_limit_exceeded: Too Many Requests", status: 429}
 	if got := e.Error(); got != "response failed: rate_limit_exceeded: Too Many Requests" {
@@ -1866,17 +1862,13 @@ func TestResponseStreamErrorErrorMessageUnchanged(t *testing.T) {
 	}
 }
 
-// TestReasoningItemIDStamped asserts that a session.Message carrying both a
-// reasoning blob and a captured OpenAI Responses reasoning-item id
-// (Message.ReasoningItemID) produces a reasoning input item whose wire JSON
-// "id" field is that verbatim id. The SDK's ResponseReasoningItemParam.ID is a
-// PLAIN string tagged `json:"id" api:"required"` with no omitzero, so an unset
-// id serialises as `"id":""` — strict OpenAI-compatible gateways (Azure
-// GPT-5.x) 400 the turn-2+ request on it. The adapter must stamp the id when
-// known.
-func TestReasoningItemIDStamped(t *testing.T) {
-	m := session.NewAssistantMessage("", "REASONING_BLOB", nil)
-	m.ReasoningItemID = "rs_x"
+// TestCurrentReasoningEnvelopeStampedExactly asserts that a current envelope
+// produces a reasoning input item whose opaque id and encrypted content are
+// forwarded verbatim. Message.ReasoningItemID is deliberately stale: replay must
+// derive identity only from the current envelope.
+func TestCurrentReasoningEnvelopeStampedExactly(t *testing.T) {
+	m := session.NewAssistantMessage("", packReasoningItems([]reasoningItem{{ID: "rs_x", Blob: "REASONING_BLOB"}}), nil)
+	m.ReasoningItemID = "rs_stale"
 	req := port.LLMRequest{
 		Model: "gpt-5.2",
 		Messages: []session.Message{
@@ -1907,22 +1899,19 @@ func TestReasoningItemIDStamped(t *testing.T) {
 		t.Fatalf("no reasoning item in:\n%s", raw)
 	}
 	if got, ok := reasoning["id"].(string); !ok || got != "rs_x" {
-		t.Errorf("reasoning item[id] = %v, want %q (ReasoningItemID must be forwarded as id)\n%s", reasoning["id"], "rs_x", raw)
+		t.Errorf("reasoning item[id] = %v, want %q (current envelope id must be forwarded verbatim)\n%s", reasoning["id"], "rs_x", raw)
 	}
 	if got := reasoning["encrypted_content"]; got != "REASONING_BLOB" {
 		t.Errorf("reasoning item[encrypted_content] = %v, want REASONING_BLOB", got)
 	}
 }
 
-// TestReasoningItemDroppedWhenIDEmpty is the REGRESSION TRIPWIRE for D1a: a
-// message with a reasoning blob but an EMPTY ReasoningItemID must produce NO
-// reasoning input item at all. The SDK serialises ResponseReasoningItemParam.ID
-// unconditionally (json:"id" api:"required", no omitzero), so emitting the item
-// without a real id sends `"id":""` on the wire, which strict OpenAI-compatible
-// gateways reject with HTTP 400 on turn 2+. Only item-absence proves the fix —
-// asserting a field value would pass against `"id":""` and miss the bug.
-func TestReasoningItemDroppedWhenIDEmpty(t *testing.T) {
-	m := session.NewAssistantMessage("", "REASONING_BLOB", nil) // ReasoningItemID stays ""
+// TestBareHistoricalReasoningIsNotReplayed asserts the removed compatibility
+// path cannot be revived by the vestigial Message.ReasoningItemID field. Bare
+// ciphertext is unsupported and must never be reinterpreted as a current item.
+func TestBareHistoricalReasoningIsNotReplayed(t *testing.T) {
+	m := session.NewAssistantMessage("", "REASONING_BLOB", nil)
+	m.ReasoningItemID = "rs_legacy"
 	req := port.LLMRequest{
 		Model: "gpt-5.2",
 		Messages: []session.Message{
@@ -1944,7 +1933,7 @@ func TestReasoningItemDroppedWhenIDEmpty(t *testing.T) {
 	}
 	for _, it := range items {
 		if it["type"] == "reasoning" {
-			t.Errorf("reasoning item must be DROPPED when ReasoningItemID is empty (would serialise id:\"\"), but found: %v\n%s", it, raw)
+			t.Errorf("bare historical reasoning must be omitted, but found: %v\n%s", it, raw)
 		}
 	}
 }

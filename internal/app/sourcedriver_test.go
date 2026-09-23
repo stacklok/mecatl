@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -31,7 +32,6 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -654,7 +654,8 @@ func (s stubCommandSource) CommandBody(_ context.Context, name string) (string, 
 // same-named driver command; a driver command expands when no file matches),
 // and the palette merges both with the same first-wins precedence.
 func TestCommandDriverCompositionOrder(t *testing.T) {
-	cfg := Config{CommandsDir: "cmds"}
+	ws := memfs.NewWorkspace("/proj")
+	cfg := Config{CommandsDir: "cmds", commandWorkspace: ws}
 	cfg.commandSource = stubCommandSource{
 		bodies: map[string]string{
 			"dup":         "DRIVER dup body",
@@ -666,19 +667,18 @@ func TestCommandDriverCompositionOrder(t *testing.T) {
 		},
 	}
 	exp := buildCommandExpander(cfg, nil)
-	ws := memfs.NewWorkspace("/proj")
 	if err := ws.Write(context.Background(), "cmds/dup.md", []byte("---\ndescription: file dup\n---\nFILE dup body $ARGUMENTS")); err != nil {
 		t.Fatalf("write command file: %v", err)
 	}
 	ctx := context.Background()
 
 	// A same-named file command SHADOWS the driver command.
-	out, ok, err := exp.Expand(ctx, ws, "/dup x")
+	out, ok, err := exp.Expand(ctx, "/dup x")
 	if err != nil || !ok || out != "FILE dup body x" {
 		t.Errorf("Expand(/dup) = (%q, %v, %v), want the FILE body (file shadows driver)", out, ok, err)
 	}
 	// A driver-only command expands through the source (shared substitution).
-	out, ok, err = exp.Expand(ctx, ws, "/driver-only y")
+	out, ok, err = exp.Expand(ctx, "/driver-only y")
 	if err != nil || !ok || out != "DRIVER body for y" {
 		t.Errorf("Expand(/driver-only) = (%q, %v, %v), want the driver body", out, ok, err)
 	}
@@ -687,7 +687,7 @@ func TestCommandDriverCompositionOrder(t *testing.T) {
 	if !isLister {
 		t.Fatal("composed expander must implement prompt.CommandLister")
 	}
-	cmds, err := lister.List(ctx, ws)
+	cmds, err := lister.List(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

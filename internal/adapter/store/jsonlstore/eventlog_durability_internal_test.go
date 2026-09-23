@@ -147,60 +147,6 @@ func TestToolCallBestEffortAppendUsesAvailableSyncCapabilities(t *testing.T) {
 	}
 }
 
-func TestToolCallBestEffortLegacyFamilySurvivesWeakFilesystemAndLaterMigration(t *testing.T) {
-	st := newInternalStore(t)
-	id := session.SessionID("legacy-best-effort-tool-call")
-	writeBytes(t, st.resolver.legacyPath(id, kindSnapshot), append(snapshotLine(t, id, "legacy"), '\n'))
-	legacyTools := st.resolver.legacyPath(id, kindTools)
-	old := []byte("legacy audit record\n")
-	writeBytes(t, legacyTools, old)
-	if err := os.Chmod(legacyTools, 0o644); err != nil {
-		t.Fatalf("Chmod legacy tools: %v", err)
-	}
-
-	st.durability.DirectorySync = false
-	st.ToolCall(id, session.NewToolCall("call-weak", "Read", nil), session.NewToolResult("call-weak", "ok"), 0, 0)
-	weakData, err := os.ReadFile(legacyTools)
-	if err != nil {
-		t.Fatalf("Read weak-filesystem tool log: %v", err)
-	}
-	if !bytes.HasPrefix(weakData, old) || !bytes.Contains(weakData, []byte(`"call_id":"call-weak"`)) {
-		t.Fatalf("weak-filesystem tool log = %q, want old and new records", weakData)
-	}
-	info, err := os.Stat(legacyTools)
-	if err != nil {
-		t.Fatalf("Stat legacy tool log: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("legacy tool mode = %04o, want 0600", info.Mode().Perm())
-	}
-	if _, err := os.Stat(st.resolver.canonicalPath(id, kindTools)); !os.IsNotExist(err) {
-		t.Fatalf("canonical tool log before capable migration: %v", err)
-	}
-
-	st.durability.DirectorySync = true
-	st.ToolCall(id, session.NewToolCall("call-capable", "Write", nil), session.NewToolResult("call-capable", "ok"), 0, 0)
-	canonicalTools := st.resolver.canonicalPath(id, kindTools)
-	migrated, err := os.ReadFile(canonicalTools)
-	if err != nil {
-		t.Fatalf("Read migrated tool log: %v", err)
-	}
-	if !bytes.HasPrefix(migrated, old) || !bytes.Contains(migrated, []byte(`"call_id":"call-weak"`)) ||
-		!bytes.Contains(migrated, []byte(`"call_id":"call-capable"`)) {
-		t.Fatalf("migrated tool log = %q, want legacy, weak, and capable records", migrated)
-	}
-	if _, err := os.Stat(legacyTools); !os.IsNotExist(err) {
-		t.Fatalf("legacy tool log after migration: %v", err)
-	}
-	migratedInfo, err := os.Stat(canonicalTools)
-	if err != nil {
-		t.Fatalf("Stat migrated tool log: %v", err)
-	}
-	if migratedInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("migrated tool mode = %04o, want 0600", migratedInfo.Mode().Perm())
-	}
-}
-
 func TestEventLogAppendOperationOrder(t *testing.T) {
 	for _, torn := range []bool{false, true} {
 		t.Run("torn="+strconv.FormatBool(torn), func(t *testing.T) {
@@ -235,36 +181,6 @@ func TestEventLogAppendOperationOrder(t *testing.T) {
 			}
 			if fmt.Sprint(order) != fmt.Sprint(want) {
 				t.Fatalf("operation order = %v, want %v", order, want)
-			}
-		})
-	}
-}
-
-func TestToolCallAbsentSidecarFollowsAuthoritativeFamilyOnWeakFilesystem(t *testing.T) {
-	for _, canonical := range []bool{false, true} {
-		t.Run("canonical="+strconv.FormatBool(canonical), func(t *testing.T) {
-			st := newInternalStore(t)
-			st.durability.DirectorySync = false
-			id := session.SessionID("absent-tool-sidecar")
-			snapshot := append(snapshotLine(t, id, "authoritative"), '\n')
-			if canonical {
-				writeBytes(t, st.resolver.canonicalPath(id, kindSnapshot), snapshot)
-			} else {
-				writeBytes(t, st.resolver.legacyPath(id, kindSnapshot), snapshot)
-			}
-
-			st.ToolCall(id, session.NewToolCall("call", "Read", nil), session.NewToolResult("call", "ok"), 0, 0)
-			chosen := st.resolver.legacyPath(id, kindTools)
-			opposite := st.resolver.canonicalPath(id, kindTools)
-			if canonical {
-				chosen, opposite = opposite, chosen
-			}
-			data, err := os.ReadFile(chosen)
-			if err != nil || !bytes.Contains(data, []byte(`"call_id":"call"`)) {
-				t.Fatalf("chosen family tool log = %q, %v", data, err)
-			}
-			if _, err := os.Stat(opposite); !os.IsNotExist(err) {
-				t.Fatalf("opposite family sidecar was created: %v", err)
 			}
 		})
 	}

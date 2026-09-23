@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -24,13 +25,13 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	engineprompt "github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/acp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	toolsadapter "github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // scriptTool is a minimal mutating Tool: it returns a fixed body and records
@@ -177,9 +178,23 @@ type fakeLister struct {
 	cmds []server.Command
 }
 
-func (f fakeLister) List(_ context.Context, _ string) ([]server.Command, error) {
-	return f.cmds, nil
+func (f fakeLister) List(context.Context) ([]engineprompt.Command, error) {
+	out := make([]engineprompt.Command, 0, len(f.cmds))
+	for _, command := range f.cmds {
+		out = append(out, engineprompt.Command{Name: command.Name, Description: command.Description})
+	}
+	return out, nil
 }
+func (fakeLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (f fakeLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (server.CommandSourceBinding, func(), error) {
+	return f, func() {}, nil
+}
+func (fakeLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (fakeLister) Retire(session.SessionID) {}
 
 // editor is the scripted ACP CLIENT side of the test: it owns the agent's stdin
 // (it writes requests/responses there) and reads the agent's stdout (the agent's
@@ -644,7 +659,7 @@ func TestEndToEndFSDelegation(t *testing.T) {
 		svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
 			cfg.SharedEngineRoot = root
 			cfg.PlacementProvider = acpPlacementProvider{root: root, ref: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "fs-test-placement", Revision: "v1"}}
-		}, toolsadapter.ReadTool{}, toolsadapter.EditTool{})
+		}, fstools.ReadTool{}, fstools.EditTool{})
 		// Seed the file on DISK so that, in the caps-absent (osfs) scenario, Read+Edit
 		// have a real file to operate on. In the caps-present scenario the editor
 		// buffer (fsDefault) supplies the content and disk must stay as-is.
@@ -994,8 +1009,8 @@ func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	if got := binds.Load(); got != 2 { // both session/new calls
 		t.Fatalf("Bind calls = %d, want 2", got)
 	}
-	if got := reattaches.Load(); got != 4 { // create/load discovery plus both load attempts
-		t.Fatalf("Reattach calls = %d, want 4", got)
+	if got := reattaches.Load(); got != 2 { // only the two load attempts; source discovery is execution-independent
+		t.Fatalf("Reattach calls = %d, want 2", got)
 	}
 }
 

@@ -1,19 +1,14 @@
 // Package tools composes the model-facing tool catalog of the mecatl kit. The
-// correctness- and security-critical filesystem tool bodies — Read, Edit, Write,
-// Grep, Glob, and the optional Shell — now live in the importable engine module
-// (engine/adapter/fstools) so external consumers of engine/agent get them, and
-// their enforced invariants, by import; this package re-exports them via alias.go
-// and adds the host-repo-coupled tools that CANNOT live in the engine module:
-// FetchMcpResource (MCP-coupled). WebFetch and WebSearch are re-exported from
-// their importable engine reference adapters.
+// correctness- and security-critical filesystem tools live in the importable
+// engine/adapter/fstools package. This host package composes them with the
+// host-repo-coupled FetchMcpResource tool and the graduated WebFetch adapter.
 //
 // All() and Register() cover the always-available tools that need only a
 // Workspace — the fstools filesystem tools plus WebFetch and FetchMcpResource,
 // which need no extra dependency. Two tools are NOT in All() because they need an
 // injected dependency and are constructed/registered separately by the
-// composition root: Shell needs a tool.CommandRunner (NewShellTool(), an
-// alias for fstools.NewShellTool; a deployment with no shell simply omits it), and
-// WebSearch needs a search provider (NewWebSearchTool(provider)).
+// composition root: Shell comes from fstools.NewShellTool, and WebSearch comes
+// from search.NewWebSearchTool.
 //
 // Each tool parses its session.ToolCall.Args (JSON), runs against the Workspace
 // seam, and returns a session.ToolResult. Recoverable, model-addressable
@@ -43,7 +38,7 @@ import (
 // order: the filesystem tools from engine/adapter/fstools (Read, ListDir, Edit,
 // Write, Copy, Move, Remove, Grep, Glob) followed by the host-repo web/MCP reads. Shell is NOT included: it
 // requires a tool.CommandRunner and is optional — add it separately via
-// NewShellTool when a runner is configured.
+// fstools.NewShellTool when a runner is configured.
 //
 // FetchMcpResource (issue #223 Phase 2) is an outbound read like WebFetch, so
 // it rides in BOTH profiles via All() and NoFS().
@@ -74,8 +69,8 @@ func NoFS() []tool.Tool {
 // Register adds the always-available core tools (everything in All(), i.e. NOT
 // Shell) to cat. It returns the first registration error (e.g. a name collision)
 // encountered, or nil on success. To enable command execution, additionally
-// register NewShellTool(), e.g.
-// cat.MustRegister(tools.NewShellTool()).
+// register fstools.NewShellTool(), e.g.
+// cat.MustRegister(fstools.NewShellTool()).
 func Register(cat *tool.Catalog) error {
 	for _, t := range All() {
 		if err := cat.Register(t); err != nil {

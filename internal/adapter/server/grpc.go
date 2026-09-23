@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -126,13 +127,12 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
 	return &mecatlv1.CreateSessionResponse{
-		SessionId:    string(sess.ID),
-		Capabilities: h.svc.capabilitiesFor(ctx),
+		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: scaps.Image,
 			Audio: scaps.Audio,
 		},
-		ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID)),
+		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),
 	}, nil
 }
@@ -198,17 +198,49 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
+	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
 	if sess.Title == "" {
-		derived := DeriveTitle(sess)
-		//nolint:staticcheck // dual-write compatibility title alongside canonical metadata.
-		proto.Title = derived
-		proto.TitleMetadata.Title = derived
+		proto.TitleMetadata.Title = DeriveTitle(sess)
 	}
 	return &mecatlv1.GetSessionResponse{Session: proto}, nil
+}
+
+func (h *HarnessServer) ListGuardrailCoverage(ctx context.Context, req *mecatlv1.ListGuardrailCoverageRequest) (*mecatlv1.ListGuardrailCoverageResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	coverage, err := h.svc.ListGuardrailCoverage(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	entries := make([]*mecatlv1.GuardrailCoverageEntry, 0, len(coverage.Entries))
+	for _, entry := range coverage.Entries {
+		entries = append(entries, &mecatlv1.GuardrailCoverageEntry{
+			Tool: valid(entry.Tool), Phase: valid(entry.Phase), Job: guardrailJobToProto(entry.Job), Mode: valid(entry.Mode),
+			RuleId: valid(entry.RuleID), RuleOrigin: valid(entry.RuleOrigin), Inspection: guardrailInspectionToProto(entry.Inspection), Reason: valid(entry.Reason),
+		})
+	}
+	return &mecatlv1.ListGuardrailCoverageResponse{Enabled: coverage.Enabled, CheckerProviderId: valid(coverage.CheckerProviderID), CheckerModelId: valid(coverage.CheckerModelID), Entries: entries}, nil
+}
+
+func (h *HarnessServer) GetGuardrailReviewDetail(ctx context.Context, req *mecatlv1.GetGuardrailReviewDetailRequest) (*mecatlv1.GetGuardrailReviewDetailResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetReviewId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id and review_id are required")
+	}
+	detail, err := h.svc.GetGuardrailReviewDetail(ctx, session.SessionID(req.GetSessionId()), req.GetReviewId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetGuardrailReviewDetailResponse{ReviewId: valid(detail.ReviewID), Concern: valid(detail.Concern), SourceDisplay: valid(detail.SourceDisplay), NextAction: valid(detail.NextAction)}, nil
 }
 
 // GetSessionTranscript returns the owned session's snapshot-derived transcript.
@@ -238,7 +270,7 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
@@ -273,17 +305,42 @@ func (h *HarnessServer) ResolveRunAsk(ctx context.Context, req *mecatlv1.Resolve
 	default:
 		return nil, status.Error(codes.InvalidArgument, "verdict must be deny, allow_once, or allow_always")
 	}
-	ack, err := h.svc.ResolveRunAsk(
-		ctx,
-		session.SessionID(req.GetSessionId()),
-		req.GetExpectedRunId(),
-		req.GetAskId(),
-		verdictFromResumeApproval(req.GetVerdict(), false),
-	)
+	resolution := agent.ApprovalResolution{
+		AskID: req.GetAskId(), ReviewID: req.GetReviewId(), Kind: guardrailApprovalKindFromProto(req.GetGuardrailKind()), Verdict: verdictFromResumeApproval(req.GetVerdict()),
+	}
+	var ack RunAskAcknowledgement
+	var err error
+	if req.GetReviewId() != "" || req.GetGuardrailKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_UNSPECIFIED {
+		ack, err = h.svc.ResolveScopedRunAsk(ctx, session.SessionID(req.GetSessionId()), req.GetExpectedRunId(), resolution)
+	} else {
+		ack, err = h.svc.ResolveRunAsk(ctx, session.SessionID(req.GetSessionId()), req.GetExpectedRunId(), req.GetAskId(), resolution.Verdict)
+	}
 	if err != nil {
 		return nil, toStatus(err)
 	}
 	return &mecatlv1.ResolveRunAskResponse{RunId: ack.RunID, AskId: ack.AskID}, nil
+}
+
+// ResolvePlanAsk resolves one plan-originated permission ask on the exact run.
+func (h *HarnessServer) ResolvePlanAsk(ctx context.Context, req *mecatlv1.ResolvePlanAskRequest) (*mecatlv1.ResolvePlanAskResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetExpectedRunId() == "" || req.GetAskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id, expected_run_id, and ask_id are required")
+	}
+	switch req.GetVerdict() {
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+		mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
+	default:
+		return nil, status.Error(codes.InvalidArgument, "verdict must be deny, allow_once, or allow_always")
+	}
+	ack, err := h.svc.ResolvePlanAsk(ctx, session.SessionID(req.GetSessionId()), req.GetExpectedRunId(), req.GetAskId(), verdictFromResumeApproval(req.GetVerdict()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ResolvePlanAskResponse{RunId: ack.RunID, AskId: ack.AskID}, nil
 }
 
 // CancelRun cancels the exact addressed live run.
@@ -371,7 +428,7 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
 }
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.
@@ -462,7 +519,12 @@ func (h *HarnessServer) startConverse(ctx context.Context, first *mecatlv1.Conve
 		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
 			return "", nil, false, err
 		}
-		run, err := h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		var run *agent.Run
+		if prompt.GetServerOwnedPlanContinuation() {
+			run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(ctx, id, prompt.GetText(), parts)
+		} else {
+			run, err = h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		}
 		if err != nil {
 			return "", nil, false, toStatus(err)
 		}
@@ -527,6 +589,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	// race, never the client's guess). Buffered so a burst of steer frames
 	// never blocks the control reader behind a slow client.
 	steerAcks := make(chan *mecatlv1.SteerAck, 16)
+	controlNotices := make(chan *mecatlv1.Event, 16)
 
 	// The handoff mailbox: a too_late steer the Service PROMOTED to a fresh
 	// follow-up run is POSTED here by readControl, and after the original run's
@@ -543,7 +606,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	ct := &controlTarget{run: run}
 
 	controlErrors := make(chan error, 1)
-	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, controlErr: controlErrors, snd: snd}
+	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, notices: controlNotices, controlErr: controlErrors, snd: snd}
 	rl.recorder = NewRunEventRecorder(rl.logCtx, h.svc, id)
 
 	// Read subsequent control frames concurrently so an approval/cancel/steer
@@ -721,6 +784,7 @@ type runRelay struct {
 	logCtx     context.Context
 	id         session.SessionID
 	acks       chan *mecatlv1.SteerAck
+	notices    chan *mecatlv1.Event
 	controlErr chan error
 	snd        *streamSender
 	recorder   *RunEventRecorder
@@ -764,6 +828,7 @@ func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 	events := run.Events()
 	acks := rl.acks
+	notices := rl.notices
 	controlErr := rl.controlErr
 	for events != nil {
 		select {
@@ -781,6 +846,13 @@ func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 			h.sendEvent(rl, ev)
 			if rl.sendErr != nil {
 				h.svc.cancelRegisteredRun(rl.id, run) // first error: drain-to-discard from here
+			}
+		case notice := <-notices:
+			if rl.sendErr == nil {
+				if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: notice}); err != nil {
+					rl.sendErr = err
+					run.Cancel()
+				}
 			}
 		case ack, ok := <-acks:
 			if !ok {
@@ -930,6 +1002,40 @@ func (h *steerHandoff) closeAndWait() {
 // after the active run drains, and its terminal outcome is reported back as
 // the steer ack. On exit readControl closes the mailbox so the relay loop
 // learns no more promotions can arrive.
+func controlRefusedEvent(err error, askID, runID string) *mecatlv1.Event {
+	return &mecatlv1.Event{
+		Type:  "control.refused",
+		Text:  valid(err.Error()),
+		RunId: valid(runID),
+		ControlRefused: &mecatlv1.ControlRefused{
+			AskId:    valid(askID),
+			Category: classifyError(err).Code,
+		},
+	}
+}
+
+func (h *HarnessServer) handleResumeApprovalFrame(ctx context.Context, id session.SessionID, ct *controlTarget, rl *runRelay, ra *mecatlv1.ResumeApproval) {
+	if ra == nil {
+		return
+	}
+	target := ct.active()
+	if err := h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), target); err != nil {
+		select {
+		case rl.notices <- controlRefusedEvent(err, ra.GetAskId(), target.RunID()):
+		default:
+		}
+		return
+	}
+	resolution := approvalResolutionFromProto(ra)
+	if err := h.svc.resolveLiveRun(id, target, resolution, ra.GetExpectedRunId()); err != nil {
+		select {
+		case rl.notices <- controlRefusedEvent(err, resolution.AskID, target.RunID()):
+		default:
+		}
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
+	}
+}
+
 func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, ct *controlTarget, rl *runRelay, ho *steerHandoff) {
 	defer ho.close()
 	stream := rl.snd.stream
@@ -945,15 +1051,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 		}
 		switch k := frame.GetKind().(type) {
 		case *mecatlv1.ConverseRequest_ResumeApproval:
-			if k.ResumeApproval != nil {
-				ra := k.ResumeApproval
-				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
-					break
-				}
-				if err := h.svc.approveLiveRun(id, ct.active(), ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()), ra.GetExpectedRunId()); err != nil {
-					h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
-				}
-			}
+			h.handleResumeApprovalFrame(ctx, id, ct, rl, k.ResumeApproval)
 		case *mecatlv1.ConverseRequest_Cancel:
 			h.handleCancelFrame(ctx, id, ct, k.Cancel)
 		case *mecatlv1.ConverseRequest_CancelChild:
@@ -998,7 +1096,7 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 		return
 	}
 	target := ct.active()
-	if h.staleStreamControl(ctx, id, "cancel", frame.GetExpectedRunId(), target) {
+	if h.staleStreamControl(ctx, id, "cancel", frame.GetExpectedRunId(), target) != nil {
 		return
 	}
 	if err := h.svc.cancelLiveRun(id, target, frame.GetExpectedRunId()); err != nil {
@@ -1006,31 +1104,20 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 	}
 }
 
-// staleStreamControl reports whether a Converse control frame names a run that
-// is no longer the active one, refusing it if so (ADR 0249).
-//
-// The refusal is SILENT to the client, and that asymmetry is deliberate rather
-// than an oversight. Converse's approve and cancel frames are fire-and-forget:
-// the stream carries no per-control ack to put a typed error on, so the choices
-// are refuse-and-log or tear down the whole stream over one stale frame. Tearing
-// down would punish a client for a race it cannot avoid. A caller that needs the
-// typed ErrStaleRunControl uses the HTTP control endpoints, which return it; the
-// steer frame is the exception on this stream because it already HAS an ack
-// channel, so it reports too_late.
-//
-// The operator-visible half is the diagnostic below: nothing in the event
-// taxonomy reports a refused control, so without it a stale approve would vanish
-// without trace.
-func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) bool {
+// staleStreamControl reports a Converse control frame that names a run which is
+// no longer active (ADR 0249). Callers decide whether their control type has a
+// client-visible refusal lane; cancel remains fire-and-forget, while approval
+// emits control.refused correlated by ask id.
+func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) error {
 	if expected == "" || run == nil {
-		return false
+		return nil
 	}
 	if err := checkExpectedRun(expected, run.RunID()); err != nil {
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "stale control frame refused",
 			"session", string(id), "frame", frame, "expected_run", valid(expected), "active_run", valid(run.RunID()))
-		return true
+		return err
 	}
-	return false
+	return nil
 }
 
 // handleSteerFrame routes one steer frame through the Service (the single
@@ -1236,12 +1323,24 @@ func (h *HarnessServer) GetCompatibilityInfo(ctx context.Context, _ *mecatlv1.Ge
 
 // ListMcpSources returns the resolved MCP source inventory snapshot.
 func (h *HarnessServer) ListMcpSources(ctx context.Context, _ *mecatlv1.ListMcpSourcesRequest) (*mecatlv1.ListMcpSourcesResponse, error) {
-	infos := h.svc.ListMcpSources(ctx)
-	out := make([]*mecatlv1.McpSource, 0, len(infos))
-	for _, s := range infos {
+	cached := h.svc.ListMcpSources(ctx)
+	out := make([]*mecatlv1.McpSource, 0, len(cached.Sources))
+	for _, s := range cached.Sources {
 		out = append(out, toProtoMcpSource(s))
 	}
-	return &mecatlv1.ListMcpSourcesResponse{Sources: out}, nil
+	return &mecatlv1.ListMcpSourcesResponse{Sources: out, Revision: cached.Revision, Stale: cached.Stale, Reconciling: cached.Reconciling}, nil
+}
+
+// RefreshMcpSources reconciles direct MCP and grants additions to an eligible owned root.
+func (h *HarnessServer) RefreshMcpSources(ctx context.Context, req *mecatlv1.RefreshMcpSourcesRequest) (*mecatlv1.RefreshMcpSourcesResponse, error) {
+	if req == nil || req.GetSessionId() == "" {
+		return nil, toStatus(fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
+	}
+	result, err := h.svc.RefreshMcpSources(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.RefreshMcpSourcesResponse{Revision: result.Revision, Changed: result.Changed}, nil
 }
 
 // ListToolHiveGroups returns the distinct, non-empty ToolHive groups derived
@@ -1260,13 +1359,10 @@ func (h *HarnessServer) ListSkills(ctx context.Context, _ *mecatlv1.ListSkillsRe
 	return &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(ctx)}, nil
 }
 
-// ListModels returns the resolved selectable-model inventory snapshot plus
-// (issue #262) the per-provider live-listing status. ListModels itself
-// triggers the on-demand refresh (when installed), so ProviderStatuses is read
-// AFTER it to reflect the just-completed refresh.
+// ListModels returns models and provider statuses from one completed publication.
 func (h *HarnessServer) ListModels(ctx context.Context, _ *mecatlv1.ListModelsRequest) (*mecatlv1.ListModelsResponse, error) {
-	models := h.svc.ListModels(ctx)
-	return &mecatlv1.ListModelsResponse{Models: models, ProviderStatus: h.svc.ProviderStatuses()}, nil
+	view := h.svc.ListModelSnapshot(ctx)
+	return &mecatlv1.ListModelsResponse{Models: view.Models, ProviderStatus: view.ProviderStatus}, nil
 }
 
 // GetSoul returns the resolved soul (persona) snapshot.
@@ -1696,17 +1792,20 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 	// caller-visible, keep draining into the log, and let the run finish.
 	//
 	// The one exception is a run this dead stream has stranded: while parked on a
-	// permission ask, the run emits nothing and only an approval frame — which no
-	// longer has a channel to arrive on — can move it. Cancel that, and only that.
+	// non-plan permission ask, the run emits nothing and only an approval frame —
+	// which no longer has a channel to arrive on — can move it. Plan asks retain
+	// their separate durable approval workflow. Cancel only the ordinary ask.
 	sendErr := send(toProto(result.Event))
-	parkedOnAsk := false
+	controlEOF := false
+	parkedOnOrdinaryAsk := false
 	strand := func() {
-		if sendErr != nil && parkedOnAsk {
+		if (sendErr != nil || controlEOF) && parkedOnOrdinaryAsk {
 			h.svc.cancelRegisteredRun(id, result.Run)
 		}
 	}
 
 	var controlDone chan error
+	controlNotices := make(chan *mecatlv1.Event, 1)
 	if sendErr == nil {
 		controlDone = make(chan error, 1)
 		go func() {
@@ -1718,11 +1817,17 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				}
 				if frame.approval != nil {
 					ra := frame.approval
-					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
-						result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+					if err := h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run); err != nil {
+						controlNotices <- controlRefusedEvent(err, ra.GetAskId(), result.Run.RunID())
+						continue
+					}
+					resolution := approvalResolutionFromProto(ra)
+					if err := h.svc.resolveLiveRun(id, result.Run, resolution, ra.GetExpectedRunId()); err != nil {
+						controlNotices <- controlRefusedEvent(err, resolution.AskID, result.Run.RunID())
+						h.svc.Diagnostics().Log(ctx, port.LevelWarn, "authorization approval frame refused", "session", string(id), "err", err.Error())
 					}
 				} else if frame.cancel != nil {
-					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
+					if h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) == nil {
 						h.svc.cancelRegisteredRun(id, result.Run)
 					}
 				}
@@ -1735,11 +1840,22 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 		select {
 		case err := <-controlDone:
 			controlDone = nil
+			if errors.Is(err, io.EOF) {
+				controlEOF = true
+				strand()
+			}
 			if err != nil && !errors.Is(err, io.EOF) {
 				if sendErr == nil {
 					sendErr = err
 				}
 				strand()
+			}
+		case notice := <-controlNotices:
+			if sendErr == nil {
+				if err := send(notice); err != nil {
+					sendErr = err
+					strand()
+				}
 			}
 		case ev, ok := <-events:
 			if !ok {
@@ -1750,7 +1866,7 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 			// continuation. The control result above is its durable record, so
 			// forward the repeat without appending it again while draining.
 			if sameMCPAuthorizationControlEvent(result.Event, ev) {
-				parkedOnAsk = false
+				parkedOnOrdinaryAsk = false
 				if sendErr == nil {
 					if err := send(toProto(ev)); err != nil {
 						sendErr = err
@@ -1759,9 +1875,12 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				}
 				continue
 			}
-			// A parked run emits nothing, so an ask being the most recent event is
-			// what "parked awaiting approval" looks like from here.
-			parkedOnAsk = ev.Type == session.EvPermissionAsk
+			// A parked run emits nothing, so an ordinary ask being the most recent
+			// event is what "stranded without its control stream" looks like here.
+			// A plan-originated ask has a separate durable approval workflow.
+			parkedOnOrdinaryAsk = ev.Type == session.EvPermissionAsk &&
+				ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPermission
+			strand()
 			if sendErr != nil {
 				recorder.Observe(ev)
 				strand()
@@ -2065,69 +2184,6 @@ func toProtoStorageHealth(h StorageHealth) *mecatlv1.GetStorageHealthResponse {
 		resp.NextSweepUnix = h.NextSweep.Unix()
 	}
 	return resp
-}
-
-func toProtoMigrationPlan(plan MigrationPlan) *mecatlv1.SessionMigrationPlan {
-	return &mecatlv1.SessionMigrationPlan{
-		PlanId: plan.ID, Available: plan.Available, UnavailableReason: plan.UnavailableReason,
-		V1Families: plan.V1Families, V2Families: plan.V2Families, InvalidFamilies: plan.InvalidFamilies,
-		SkippedFamilies: plan.SkippedFamilies, CurrentBytes: plan.CurrentBytes,
-		ReclaimableBytes: plan.ReclaimableBytes, TemporaryBytes: plan.TemporaryBytes,
-	}
-}
-
-func toProtoMigrationJob(job MigrationJob) *mecatlv1.SessionMigrationJob {
-	out := &mecatlv1.SessionMigrationJob{
-		JobId: job.ID, State: job.State, V1Families: job.V1Families, V2Families: job.V2Families,
-		InvalidFamilies: job.InvalidFamilies, SkippedFamilies: job.SkippedFamilies,
-		CurrentBytes: job.CurrentBytes, ReclaimableBytes: job.ReclaimableBytes, TemporaryBytes: job.TemporaryBytes,
-		Processed: job.Processed, Migrated: job.Migrated, Failed: job.Failed,
-		Errors: make([]*mecatlv1.SessionMigrationItemError, 0, len(job.Errors)),
-	}
-	for _, item := range job.Errors {
-		out.Errors = append(out.Errors, &mecatlv1.SessionMigrationItemError{ItemHandle: item.ItemHandle, ReasonCode: item.ReasonCode, Message: item.Message})
-	}
-	return out
-}
-
-func (h *HarnessServer) PlanSessionMigration(ctx context.Context, _ *mecatlv1.PlanSessionMigrationRequest) (*mecatlv1.SessionMigrationPlan, error) {
-	plan, err := h.svc.PlanSessionMigration(ctx)
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationPlan(plan), nil
-}
-
-func (h *HarnessServer) ApplySessionMigration(ctx context.Context, req *mecatlv1.ApplySessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.ApplySessionMigration(ctx, req.GetPlanId(), int(req.GetBatchSize()))
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
-}
-
-func (h *HarnessServer) ResumeSessionMigration(ctx context.Context, req *mecatlv1.ResumeSessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.ResumeSessionMigration(ctx, req.GetJobId(), int(req.GetBatchSize()))
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
-}
-
-func (h *HarnessServer) CancelSessionMigration(ctx context.Context, req *mecatlv1.CancelSessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.CancelSessionMigration(ctx, req.GetJobId())
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
-}
-
-func (h *HarnessServer) GetSessionMigrationJob(ctx context.Context, req *mecatlv1.GetSessionMigrationJobRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.SessionMigrationJob(ctx, req.GetJobId())
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
 }
 
 // PlanSessionCleanup returns a caller-bound read-only retention plan.

@@ -1,8 +1,6 @@
 import type {
   ApplySessionCleanupRequest,
-  ApplySessionMigrationRequest,
   CancelSessionCleanupRequest,
-  CancelSessionMigrationRequest,
   CleanupJob,
   DecideDreamPlanRequest,
   DecideDreamPlanResponse,
@@ -19,7 +17,6 @@ import type {
   GetLearningProposalRequest,
   GetLearningProposalResponse,
   GetSessionCleanupJobRequest,
-  GetSessionMigrationJobRequest,
   GetSoulRequest,
   GetSoulResponse,
   GetStorageHealthRequest,
@@ -44,13 +41,9 @@ import type {
   MutateLearningAttemptResponse,
   PlanSessionCleanupRequest,
   PlanSessionCleanupResponse,
-  PlanSessionMigrationRequest,
   ReflectSessionRequest,
   ReflectSessionResponse,
-  ResumeSessionMigrationRequest,
   RollbackLearnedSkillRequest,
-  SessionMigrationJob,
-  SessionMigrationPlan,
   UndoLearningPromotionRequest,
   UndoLearningPromotionResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
@@ -234,38 +227,13 @@ export interface Schedules {
   listFires(request: ListFiresRequest, options?: RequestOptions): Promise<ListFiresResponse>;
 }
 
-/** Storage health, migration, and cleanup operations owned by the server. @public */
+/** Storage health and cleanup operations owned by the server. @public */
 export interface Storage {
   /** Gets the configured session-storage health. */
   getHealth(
     request: GetStorageHealthRequest,
     options?: RequestOptions,
   ): Promise<GetStorageHealthResponse>;
-  /** Previews a session-storage migration. */
-  planMigration(
-    request: PlanSessionMigrationRequest,
-    options?: RequestOptions,
-  ): Promise<SessionMigrationPlan>;
-  /** Starts a planned session-storage migration. */
-  applyMigration(
-    request: ApplySessionMigrationRequest,
-    options?: RequestOptions,
-  ): Promise<SessionMigrationJob>;
-  /** Resumes an interrupted session-storage migration. */
-  resumeMigration(
-    request: ResumeSessionMigrationRequest,
-    options?: RequestOptions,
-  ): Promise<SessionMigrationJob>;
-  /** Cancels a session-storage migration. */
-  cancelMigration(
-    request: CancelSessionMigrationRequest,
-    options?: RequestOptions,
-  ): Promise<SessionMigrationJob>;
-  /** Gets one session-storage migration job. */
-  getMigrationJob(
-    request: GetSessionMigrationJobRequest,
-    options?: RequestOptions,
-  ): Promise<SessionMigrationJob>;
   /** Previews a session-storage cleanup. */
   planCleanup(
     request: PlanSessionCleanupRequest,
@@ -513,21 +481,9 @@ export function createOperationalNamespaces(
           request,
           options,
         ),
-      applyMigration: (request, options) =>
-        operations.unary(
-          RPC_CATALOG["HarnessService.ApplySessionMigration"].grpc.descriptor,
-          request,
-          options,
-        ),
       cancelCleanup: (request, options) =>
         operations.unary(
           RPC_CATALOG["HarnessService.CancelSessionCleanup"].grpc.descriptor,
-          request,
-          options,
-        ),
-      cancelMigration: (request, options) =>
-        operations.unary(
-          RPC_CATALOG["HarnessService.CancelSessionMigration"].grpc.descriptor,
           request,
           options,
         ),
@@ -543,27 +499,9 @@ export function createOperationalNamespaces(
           request,
           options,
         ),
-      getMigrationJob: (request, options) =>
-        operations.unary(
-          RPC_CATALOG["HarnessService.GetSessionMigrationJob"].grpc.descriptor,
-          request,
-          options,
-        ),
       planCleanup: (request, options) =>
         operations.unary(
           RPC_CATALOG["HarnessService.PlanSessionCleanup"].grpc.descriptor,
-          request,
-          options,
-        ),
-      planMigration: (request, options) =>
-        operations.unary(
-          RPC_CATALOG["HarnessService.PlanSessionMigration"].grpc.descriptor,
-          request,
-          options,
-        ),
-      resumeMigration: (request, options) =>
-        operations.unary(
-          RPC_CATALOG["HarnessService.ResumeSessionMigration"].grpc.descriptor,
           request,
           options,
         ),

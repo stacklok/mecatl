@@ -1,5 +1,17 @@
 package session
 
+// RetryMetadata is the provider-neutral terminal retry classification carried
+// through session state, events, and persistence.
+type RetryMetadata struct {
+	Disposition RetryDisposition
+	Progress    StreamProgress
+}
+
+// Valid reports whether both metadata values belong to their closed vocabularies.
+func (m RetryMetadata) Valid() bool {
+	return m.Disposition.Valid() && m.Progress.Valid()
+}
+
 // RetryDisposition is the provider-neutral causal classification of a model
 // stream failure. Its zero value is conservative: unknown is not safe to replay
 // and is not presented as permanent.

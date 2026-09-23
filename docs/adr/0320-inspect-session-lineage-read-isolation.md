@@ -89,4 +89,4 @@ changed until the implementation and acceptance plan land.
 - [ADR 0258](./0258-cryptographic-session-incarnations.md)
 - [Acceptance plan](../acceptance/session-debug-lineage-lock.md)
 - [Architecture overview](../architecture.md)
-- [Production readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

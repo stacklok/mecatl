@@ -212,7 +212,10 @@ precedence.
 
 Supply provider credentials through `auth.yaml` or the documented environment
 variables: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, and
-`OPENCODE_API_KEY`. Keep secrets out of command-line arguments.
+`OPENCODE_API_KEY`. Keep secrets out of command-line arguments. If operator
+settings select `models.router.backend: jev`, also supply `TYPESAFE_API_KEY` in
+the job environment. The Jev credential is environment-only and sends eligible
+delegated task text to Typesafe for classification.
 
 ### Prompt and output
 

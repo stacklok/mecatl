@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +18,7 @@ import (
 // text. Any permission ask is auto-allowed.
 func drainRun(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) string {
 	var final string
 	for ev := range run.Events() {
@@ -110,32 +108,6 @@ func TestUserModelE2E(t *testing.T) {
 		t.Fatalf("RememberUser benign compound name: err=%v isError=%v content=%q", executeErr, got.IsError, got.Content)
 	}
 
-	// Simulate pre-validation legacy records by editing the original flat-file shape
-	// directly. The final profile boundary must omit both a compound secret key and
-	// a compound secret label in a description.
-	memoryPath := filepath.Join(userModelDir, "memory.json")
-	persistedBytes, err := os.ReadFile(memoryPath)
-	if err != nil {
-		t.Fatalf("read legacy memory fixture: %v", err)
-	}
-	var persisted map[string]any
-	if err := json.Unmarshal(persistedBytes, &persisted); err != nil {
-		t.Fatalf("decode legacy memory fixture: %v", err)
-	}
-	entries, ok := persisted["entries"].(map[string]any)
-	if !ok {
-		t.Fatalf("legacy memory fixture has no entries object: %#v", persisted)
-	}
-	entries["user/legacy_service_token"] = map[string]any{"value": "legacysecret0123456789abc", "updated_at": time.Now().UTC()}
-	entries["user/legacy-provider"] = map[string]any{"value": "provider", "description": "client.credentials: legacydescription0123456789", "updated_at": time.Now().UTC()}
-	persistedBytes, err = json.Marshal(persisted)
-	if err != nil {
-		t.Fatalf("encode legacy memory fixture: %v", err)
-	}
-	if err := os.WriteFile(memoryPath, persistedBytes, 0o600); err != nil {
-		t.Fatalf("write legacy memory fixture: %v", err)
-	}
-
 	// Persistence to disk: the write is durable under the dir (storeA released its
 	// lock after the op). The cross-PROCESS round-trip is then proven below by the
 	// SEPARATE store opened over the SAME dir.
@@ -161,7 +133,7 @@ func TestUserModelE2E(t *testing.T) {
 	}
 	// soulSrc + project memStore nil — isolate the user-model block (matches the old
 	// NoSoul:true). The cast mirrors composition (the adapter satisfies the port).
-	asm := buildInstructionAssembler(nil, nil, nil, storeB, false)
+	asm := buildInstructionAssembler(nil, nil, nil, nil, storeB, false)
 
 	obs := &observedReq{}
 	prov := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(obs.observer())}, mockllm.TextTurn("done"))
@@ -184,11 +156,6 @@ func TestUserModelE2E(t *testing.T) {
 		defer obs.mu.Unlock()
 		var foundInReq bool
 		for _, system := range obs.systems {
-			for _, secret := range []string{"legacy_service_token", "legacysecret0123456789abc", "legacy-provider", "legacydescription0123456789"} {
-				if strings.Contains(system, secret) {
-					t.Fatalf("legacy secret-shaped memory %q reached request system suffix: %q", secret, system)
-				}
-			}
 			if strings.Contains(system, "<operator-profile-data") && strings.Contains(system, "comm-style") && strings.Contains(system, "Préfère 日本語 and terse, direct answers — no preamble.") && strings.Contains(system, "token-budget") && strings.Contains(system, "benignvalue0123456789abc") {
 				foundInReq = true
 				break

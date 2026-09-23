@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -21,7 +22,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/remoteenv"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 type resolverPlacementProvider struct {
@@ -193,7 +193,7 @@ func TestEnvironmentResolverReattachesAndRuns(t *testing.T) {
 		mockllm.ToolCallTurn(call("c1", "Read", `{"path":"seed.txt"}`)),
 		mockllm.TextTurn("done"),
 	)
-	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}})
+	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&fstools.ReadTool{}})
 	sess := remoteSessionWithRef(t, store, ref)
 
 	run, err := svc.StartRun(ctx, sess.ID, "go")
@@ -260,7 +260,7 @@ func TestEnvironmentResolverReattachesAndRunsReadAndShell(t *testing.T) {
 		mockllm.ToolCallTurn(call("c2", "Shell", `{"command":"cat seed.txt"}`)),
 		mockllm.TextTurn("done"),
 	)
-	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}, tools.NewShellTool()})
+	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&fstools.ReadTool{}, fstools.NewShellTool()})
 	sess := remoteSessionWithRef(t, store, ref)
 
 	run, err := svc.StartRun(ctx, sess.ID, "go")
@@ -433,7 +433,7 @@ func TestRemoteRefWithSelectorRehydratesEngineAndResolvesEnv(t *testing.T) {
 		mockllm.ToolCallTurn(call("c1", "Read", `{"path":"seed.txt"}`)),
 		mockllm.TextTurn("done"),
 	)
-	svc, store, factoryCalls := newEnvTestServiceWithFactory(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}})
+	svc, store, factoryCalls := newEnvTestServiceWithFactory(t, b.Resolve, llm, []tool.Tool{&fstools.ReadTool{}})
 	sess := remoteSessionWithRefAndSelector(t, store, ref, "openrouter", "anthropic/claude-3.5-sonnet")
 
 	run, err := svc.StartRun(ctx, sess.ID, "go")
@@ -494,7 +494,7 @@ func TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv(t *testing.T) {
 	)
 	// The factory ERRORS if called — exact remote placement alone does not require
 	// a per-session engine, so reattachment must proceed without that rebuild.
-	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}})
+	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&fstools.ReadTool{}})
 	// Persist a remote-ref session with no provider/model selector.
 	sess := session.New("remote-default-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
 	sess.EnvironmentRef = ref

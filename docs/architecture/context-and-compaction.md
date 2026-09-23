@@ -17,19 +17,65 @@ compaction, engine introspection, session echoes, model listings, per-session en
 and provider-bound children. The operator-owned exact-map decision is recorded in
 [ADR 0207](../adr/0207-context-window-overrides.md).
 
-The positive 128K engine fallback is not used speculatively while initial live
-metadata for the effective model is still unsettled. After the service resolves
-the actual shared/per-session and mode-routed engine, run admission invokes a
-composition callback before prompt recording, retry preparation, approval
-resumption, compaction, or inference. `internal/app/livemeta.go` owns a close-once
-settlement channel on the existing live metadata store; admission waits on that
-channel with the caller context and the existing ten-second refresh bound. A
-known override, exact configured value, live value, or catalog value bypasses the
-wait. Discovery failure or an honest empty inventory yields the retryable
-`context_window_unavailable` server error; a later run reuses the bounded stale
-refresh path. A successful listing that omits a passthrough model/window, and a
-provider with no lister, retain the settled unknown-model fallback. This
-pre-compaction safety decision is recorded in [ADR 0342](../adr/0342-context-window-admission.md).
+The Service gates an unresolved context window after resolving the actual shared,
+per-session, or mode-routed engine. Its callback runs before prompt recording,
+failed-step retry preparation, restart approval consumption, compaction, or inference.
+`internal/app/modellister.go` (`awaitContextWindowWithin`) first resolves the exact
+provider/model from one immutable discovery snapshot. If blocked, it requests only
+that provider through the [discovery owner](providers.md) and resolves again, within
+a ten-second caller wait. An unattempted native authenticated provider starts on this
+first demand; concurrent callers join, and failed/empty attempts retry on the next
+eligible demand after the provider-local ten-second cooldown. The gate uses the same
+Build-local owner as bootstrap, startup warming, and ListModels. It admits only after
+the Service has acquired session ownership; a lease conflict reaches no discovery, and
+a rejected holder retains its lease. Replica-local evidence can therefore differ during
+an outage. See [discovery ownership in local and replicated deployments](providers.md#discovery-ownership-in-local-and-replicated-deployments).
+
+Resolution follows this precedence:
+
+| Exact-target evidence | Window and admission |
+|---|---|
+| Positive global override | Use it without discovery |
+| Positive exact provider/model configuration | Use it without discovery; no model-only suffix match |
+| Positive retained live context | Use it, including after failed, unauthorized, or empty discovery |
+| Positive matching catalog context | Use it without discovery |
+| Provider has no lister | Admit the 128000 policy fallback |
+| Latest completed non-empty success omits the selected model/window | Admit the 128000 policy fallback for the passthrough selector |
+| Unattempted, in-flight, failed, or empty, with no evidence above | Start/join/retry as eligible; otherwise reject with `context_window_unavailable` |
+
+An in-flight refresh keeps the preceding completed evidence usable. Once a failed
+or empty outcome publishes, old successful omission evidence cannot admit an unknown
+target. Positive last-good metadata remains usable for the Build's lifetime, with
+its original observation time; a newer non-empty success replaces it. Retention has
+no age TTL and cannot guarantee the provider's current limit or entitlement.
+
+The typed rejection is gRPC `Unavailable` with ErrorInfo domain
+`mecatl.stacklok.com` and reason `context_window_unavailable`, or HTTP 503. It records
+no new prompt or turn and does not consume pending approval/retry data. Existing
+terminal-state reopening/history repair and session-lifetime lease retention still
+apply. Cancellation ends the caller's wait, not the owner's fetch. Another request
+can recover after cooldown without opening the picker. The before-execution boundary
+is recorded in [ADR 0342](../adr/0342-context-window-admission.md); provider-local
+ownership and policy are described in [ADR 0362](../adr/0362-provider-scoped-model-discovery.md).
+
+The engine resolver always returns a positive scalar, using 128000 defensively.
+The server echo resolver returns 0 when admission is blocked; a wired zero replaces
+even a positive seeded default, while a nil resolver leaves the supplied value intact.
+A policy-admitted unknown window echoes 128000. These are resolve-at-use reads, not
+metadata-generation pins. Admission for direct child, utility, and team engine entry
+is deferred: a known-window parent can run while an unknown child override uses the
+defensive floor. Capability and effort generation reconciliation is also deferred;
+session capabilities and effort remain construction-time values.
+
+Mecatui recognizes the exact typed pre-SessionInit rejection through
+`cmd/mecatui/client/admission.go` (`IsContextWindowUnavailable`). It preserves the
+adopted transcript and one session/generation-scoped prepared text/media submission
+plus detached editable paste/image staging. Explicit Retry sends identical prepared
+content without re-expansion or file/clipboard reads. Back restores editing, with
+confirmation before replacing a newer draft. SessionInit, discard, session change,
+exit, or unrelated terminal failure releases the record. Existing limits apply,
+including 10 MiB per media part, 20 MiB aggregate media, and 16 parts. The recovery
+record is client-memory-only; it neither persists a draft nor automatically replays it.
 
 - **`TokenCounter`** (`engine/agent/tokencount.go`) estimates model-visible request
   cost. The default `HeuristicTokenCounter` (about chars/4) needs no dependencies;

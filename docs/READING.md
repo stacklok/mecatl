@@ -5,7 +5,6 @@ organized by audience. Pick the row that fits. Every link points to an existing
 living guide (the code as it exists today) or a reference.
 
 **Living docs** describe **current behavior** (architecture pages, the usage guide).
-**`docs/design/IMPLEMENTATION-NOTES.md`** is the dense per-subsystem reference.
 **ADRs** in `docs/adr/` are **frozen rationale on demand** — reach for them to
 understand a decision's *why*, never as the primary introduction to a feature.
 
@@ -44,9 +43,8 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 ### After the architecture pages
 
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — draft protocol proposal for remote agent capabilities over HTTP/JSON; not a shipped mecatl surface.
-- [Implementation notes](design/IMPLEMENTATION-NOTES.md) — the dense per-subsystem companion to the architecture pages (a reference, not a narrative).
+- [Documentation change review](development-process.md#documentation-change-review) — choose one owner, verify current behavior, and prune obsolete material.
 - [ADR index](adr/README.md) — the frozen *why* archive; reach for it on demand to understand a decision's rationale.
-- [Production readiness tracker](design/PRODUCTION-READINESS.md) — the live shipped/deferred status ledger.
 
 ---
 
@@ -55,11 +53,11 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | Step | Page |
 | --- | --- |
 | 1 | [Project README](../README.md) — feature overview and quick start |
-| 2 | [Build your first agent](https://mecatl.dev/docs/building/getting-started/first-agent) |
-| 3 | [See Mecatl in 60 seconds](https://mecatl.dev/docs/building/getting-started/demo) |
-| 4 | [Run `mecated` standalone](https://mecatl.dev/docs/building/deployment/mecated) |
-| Optional | [Local microVM environments](https://mecatl.dev/docs/building/deployment/microvm-environments) |
-| Then | Choose a task, feature, deployment, or reference from the [public documentation](https://mecatl.dev/docs/) |
+| 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
+| 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
+| 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
+| Optional | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
+| Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
 
 ---
 
@@ -67,7 +65,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 | Step | Page |
 | --- | --- |
-| 1 | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) |
+| 1 | [Building on mecatl](../user-docs/building/index.md) |
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
-| 3 | [Extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) |
+| 3 | [Extension points](../user-docs/building/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |

@@ -33,7 +33,7 @@ func debugTestService(t *testing.T, store port.SessionStore, ownerEnforced bool,
 		Engine: debugTestEngine("shared"), Store: store,
 
 		Now:               func() time.Time { return time.Unix(1700000000, 0).UTC() },
-		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory, DebugMCP: true,
+		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory, DebugMCP: func() bool { return true },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -151,7 +151,8 @@ func TestDebugSessionGRPCProjectionAndCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grpc CreateSession: %v", err)
 	}
-	if !created.GetCapabilities().GetSessionDebug() || !created.GetCapabilities().GetDebugMcp() {
+	caps := svc.CompatibilityInfo(context.Background()).GetCapabilities()
+	if !caps.GetSessionDebug() || !caps.GetDebugMcp() {
 		t.Fatal("session_debug/debug_mcp capability is false with a debug MCP factory")
 	}
 	got, err := h.GetSession(context.Background(), &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})

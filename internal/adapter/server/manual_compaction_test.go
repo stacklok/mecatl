@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +38,17 @@ type serviceCompactCompactor struct {
 
 func (c serviceCompactCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, error) {
 	return c.out, c.summary, nil
+}
+
+type compactOperationKey struct{}
+
+type pinAwareCompactor struct {
+	seen *bool
+}
+
+func (c pinAwareCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+	*c.seen, _ = ctx.Value(compactOperationKey{}).(bool)
+	return []session.Message{session.NewUserMessage("short")}, "pinned", nil
 }
 
 type serviceCompactCounter struct{}
@@ -161,6 +171,31 @@ func compactFixture(t *testing.T, state session.State) (*compactTrackingStore, *
 		t.Fatalf("fixture Save: %v", err)
 	}
 	return store, sess, owner
+}
+
+func TestCompactSessionPinsRuntimeThroughCompactor(t *testing.T) {
+	store, sess, owner := compactFixture(t, session.StateIdle)
+	seen, released := false, false
+	eng := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test",
+		Compactor: pinAwareCompactor{seen: &seen}, TokenCounter: serviceCompactCounter{},
+	})
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng, Store: store, EventLog: store, Now: time.Now, OwnershipEnforced: true,
+		OperationPin: func(ctx context.Context) (context.Context, func(), error) {
+			return context.WithValue(ctx, compactOperationKey{}, true), func() { released = true }, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	if _, err := svc.CompactSession(session.WithPrincipal(context.Background(), owner), sess.ID, owner); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || !released {
+		t.Fatalf("compaction operation pin: seen=%v released=%v", seen, released)
+	}
 }
 
 func TestCompactSessionPersistsBeforeOrderedAttributedEvents(t *testing.T) {
@@ -352,15 +387,11 @@ func TestCompactSessionWireSurfaces(t *testing.T) {
 func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 	store, _, _ := compactFixture(t, session.StateIdle)
 	svc := newCompactService(t, store, serviceCompactCompactor{}, false, nil, nil)
-	resp, err := server.NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	if !resp.GetCapabilities().GetManualCompaction() {
+	if !svc.CompatibilityInfo(context.Background()).GetCapabilities().GetManualCompaction() {
 		t.Fatal("manual_compaction capability is false on a service with an engine")
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodGet, "/v1/compatibility", nil)
 	rr := httptest.NewRecorder()
 	server.NewHTTPHandler(svc).ServeHTTP(rr, req)
 	var body struct {
@@ -368,7 +399,7 @@ func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 			ManualCompaction bool `json:"manual_compaction"`
 		} `json:"capabilities"`
 	}
-	if rr.Code != http.StatusCreated || json.Unmarshal(rr.Body.Bytes(), &body) != nil || !body.Capabilities.ManualCompaction {
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &body) != nil || !body.Capabilities.ManualCompaction {
 		t.Fatalf("HTTP capability status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

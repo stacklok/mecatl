@@ -80,8 +80,8 @@ func parallelArgsJSON(tasks ...string) json.RawMessage {
 // A wired routeTask + factory mints each branch on the ROUTED model.
 func TestParallelRoutesBranchOnClassifiedModel(t *testing.T) {
 	tl := routerParallelTool(true)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("explore A", "explore B")),
@@ -102,8 +102,8 @@ func TestParallelRoutesBranchOnClassifiedModel(t *testing.T) {
 // branch still completes, never errors.
 func TestParallelRouteMissInheritsDefault(t *testing.T) {
 	tl := routerParallelTool(true)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "", "", RouterMissDegenerateInput, false // miss
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{reason: RouterMissDegenerateInput} // miss
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("explore A")),
@@ -136,9 +136,9 @@ func TestParallelOffIsDefaultEngine(t *testing.T) {
 	// routed engine, so classifying would be wasted spend; the gate skips it entirely).
 	var calls int
 	tl2 := routerParallelTool(false) // factory nil
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "big", "", true
+		return modelRoutingResult{category: "large", model: "big", ok: true}
 	}}
 	res2, err := tl2.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p2", "Parallel", parallelArgsJSON("a")),
@@ -162,11 +162,11 @@ func TestParallelRoutesEachBranchExactlyOnce(t *testing.T) {
 		mu    sync.Mutex
 		calls int
 	)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	const branches = 3
 	tasks := make([]string, branches)
@@ -199,11 +199,11 @@ func TestParallelRoutesMultiTurnBranchExactlyOnce(t *testing.T) {
 		mu    sync.Mutex
 		calls int
 	)
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	// Pass an emit closure so the branch's intermediate tool.result is counted — proving the
 	// branch genuinely ran multi-turn (a branch_tool event for the Noop call must appear),
@@ -254,8 +254,8 @@ func TestParallelBranchStartCarriesRoutedMetadata(t *testing.T) {
 		evs = append(evs, ev)
 		mu.Unlock()
 	}
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
@@ -298,8 +298,8 @@ func TestParallelBranchStartEmptyRoutedOnMiss(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "", "", RouterMissDegenerateInput, false
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{reason: RouterMissDegenerateInput}
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
@@ -338,8 +338,8 @@ func TestParallelBranchStartFactoryDeclineIsNotReportedAsRouted(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
@@ -384,12 +384,12 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 		Catalog: tool.NewCatalog(),
 		Policy:  allowAllInt(),
 		Model:   "main",
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
 			mu.Lock()
 			callCount++
 			mu.Unlock()
-			return "", "", session.Usage{}, RouterMissBadVerdict, false // always miss → breaker opens after `max`
-		},
+			return ModelRouteResult{Reason: RouterMissBadVerdict} // always miss → breaker opens after `max`
+		}},
 	})
 	// A parent session so the classifier-usage fold path runs under the breaker mutex.
 	sess := session.New("p-sess", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
@@ -446,8 +446,8 @@ func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big", ok: true}
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("benign task prompt")),

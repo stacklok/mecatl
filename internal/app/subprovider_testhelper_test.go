@@ -3,10 +3,10 @@ package app
 import (
 	"context"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -18,11 +18,14 @@ import (
 // which now take a *providerRegistry + a parent provider id + a parent model. The
 // parent id/model these call sites are exercised with is (id, model).
 func regForTest(provider port.LLMProvider, id, model string) *providerRegistry {
-	return &providerRegistry{
+	reg := &providerRegistry{
 		entries:      map[string]providerEntry{id: {id: id, provider: provider, available: true}},
 		defaultID:    id,
 		defaultModel: model,
 	}
+	reg.discovery = newProviderDiscovery(reg, Config{})
+	reg.meta = &liveMetaStore{owner: reg.discovery}
+	return reg
 }
 
 // twoProviderReg builds a *providerRegistry with TWO distinct mock-backed
@@ -30,7 +33,7 @@ func regForTest(provider port.LLMProvider, id, model string) *providerRegistry {
 // twoProviderFactory's registry, for tests that route a def's pinned provider to a
 // non-default entry.
 func twoProviderReg(aProvider port.LLMProvider, aID, aModel string, bProvider port.LLMProvider, bID string) *providerRegistry {
-	return &providerRegistry{
+	reg := &providerRegistry{
 		entries: map[string]providerEntry{
 			aID: {id: aID, provider: aProvider, available: true},
 			bID: {id: bID, provider: bProvider, available: true},
@@ -38,6 +41,9 @@ func twoProviderReg(aProvider port.LLMProvider, aID, aModel string, bProvider po
 		defaultID:    aID,
 		defaultModel: aModel,
 	}
+	reg.discovery = newProviderDiscovery(reg, Config{})
+	reg.meta = &liveMetaStore{owner: reg.discovery}
+	return reg
 }
 
 // memberFactoryForTest is the OLD-arity buildMemberEngine wrapper for existing

@@ -29,7 +29,7 @@ type reflectionObserver struct {
 	mode             learning.Mode
 	trusted          bool
 	projectWorkspace string
-	admission        *learningAdmission
+	admission        *learningAdmissionGate
 	policy           learning.AdmissionPolicy
 	ledger           learning.AutomaticAdmissionLedger
 	automatic        LearningAutomaticConfig
@@ -801,7 +801,7 @@ func buildReflectionObserver(
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
-	admission *learningAdmission,
+	admission *learningAdmissionGate,
 	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) learning.Observer {
 	if cfg.LearningMode == learning.Off {
@@ -840,7 +840,7 @@ func buildConfiguredReflectionObserver(
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
-	admission *learningAdmission,
+	admission *learningAdmissionGate,
 	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) learning.Observer {
 	if provider == nil || repository == nil {

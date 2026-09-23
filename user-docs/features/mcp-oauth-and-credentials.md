@@ -20,6 +20,11 @@ Global MCP authentication profiles are supported by `mecated`, `mecatequi`,
 project configuration. A project `.mecatl/settings.yaml` cannot install or
 weaken an MCP credential profile.
 
+These direct and global profiles are separate from session-scoped ToolHive
+broker authorization. When a broker tool returns `authorization.required`, use
+the [TypeScript SDK continuation workflow](/building/typescript-sdk/permissions-and-plans.md#continue-after-mcp-authorization)
+instead of the host-local commands on this page.
+
 A server configured with `--mcp-server name=URL` can also use the legacy
 `MCP_<NAME>_TOKEN` bearer-token convention. Use operator `mcp.servers` profiles
 for OAuth, rotation, or deployment-managed credentials.

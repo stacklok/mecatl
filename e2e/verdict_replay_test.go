@@ -101,7 +101,7 @@ func verdictReplaySpecs() {
 				// Drive to the first Write ask (shared drain helper), then resolve it
 				// allow-ALWAYS in-stream: this runs the Write AND learns the path-keyed
 				// rule, logged as a durable EvApproval(allow_always).
-				askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				_, askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
 				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
 					"drive local #1 to the Write permission ask\n--- mecated log tail ---\n"+local1.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on local #1", local1.LogTail(4096))

@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -52,6 +53,63 @@ import (
 
 	"github.com/stacklok/mecatl/engine/learning"
 )
+
+// HarnessContextSection is the strict operator-owned harness source policy.
+type HarnessContextSection struct {
+	// EnabledSources is the unique allowlist of registered IDs. Each ID must be
+	// used by at least one kind; unknown, unused, or unsupported references fail startup.
+	EnabledSources []string `yaml:"enabled_sources"`
+	// Kinds must include all five content kinds, each with an explicit mode.
+	Kinds HarnessContextKinds `yaml:"kinds"`
+}
+
+// HarnessContextKinds contains the five closed harness content kinds.
+type HarnessContextKinds struct {
+	Instructions HarnessContextKind `yaml:"instructions"`
+	Commands     HarnessContextKind `yaml:"commands"`
+	Rules        HarnessContextKind `yaml:"rules"`
+	Skills       HarnessContextKind `yaml:"skills"`
+	AgentDefs    HarnessContextKind `yaml:"agent_defs"`
+}
+
+// HarnessContextKind configures one content kind.
+type HarnessContextKind struct {
+	// Sources lists enabled, kind-compatible IDs in highest-precedence order.
+	// Empty disables this kind without changing execution capabilities.
+	Sources []string `yaml:"sources"`
+	// Mode is required: combine concatenates instructions or unions named entries;
+	// replace takes the complete first nonempty post-exclusion source contribution.
+	Mode string `yaml:"mode"`
+	// Exclude removes exact source/name candidates before resolution. Instructions
+	// have no names and use source-only exclusions.
+	Exclude []HarnessContextExclude `yaml:"exclude"`
+	// Overrides changes exact-name collisions in combine mode only. Forbidden for
+	// instructions and replace mode. Duplicate or structurally no-op declarations fail startup.
+	Overrides []HarnessContextOverride `yaml:"overrides"`
+}
+
+// HarnessContextExclude removes one source contribution. Name is required for
+// named kinds and forbidden for instructions.
+type HarnessContextExclude struct {
+	// Source must occur in this kind's sources list.
+	Source string `yaml:"source"`
+	// Name is an exact, case-sensitive logical name. Required for named kinds;
+	// forbidden for instructions.
+	Name string `yaml:"name"`
+}
+
+// HarnessContextOverride changes one exact-name collision.
+type HarnessContextOverride struct {
+	// Name is the exact, case-sensitive collision name.
+	Name string `yaml:"name"`
+	// Winner is a configured source ID. If it has no post-exclusion candidate,
+	// normal ordered resolution applies without removing any replaced candidates.
+	Winner string `yaml:"winner"`
+	// Replaces is a nonempty unique list of configured source IDs, excluding Winner.
+	// When Winner is present, remove these candidates, then choose the first remaining
+	// candidate in original source order. An earlier non-replaced source still wins.
+	Replaces []string `yaml:"replaces"`
+}
 
 // MaxContextWindowTokens is the sane upper bound for configured and live model
 // context windows. It is deliberately shared with composition's live metadata
@@ -79,6 +137,8 @@ type Config struct {
 	// ProviderOverrides holds strict operator-tier endpoint overrides for eligible
 	// built-in providers. It is never accepted from a project workspace.
 	ProviderOverrides ProviderOverrides `yaml:"provider_overrides"`
+	// HarnessContext is the strict operator-tier harness source policy.
+	HarnessContext *HarnessContextSection `yaml:"harness_context"`
 	// Permissions holds the allow/ask/deny rule-spec lists plus the child-scoped
 	// `subagent:` block.
 	Permissions Permissions `yaml:"permissions"`
@@ -378,7 +438,7 @@ func (s *TemporaryStorageSection) UnmarshalYAML(node ast.Node) error {
 }
 
 // StorageManagementSection is the explicit operator authority for process-wide
-// storage health, migration, and cleanup.
+// storage health and cleanup.
 type StorageManagementSection struct {
 	// Version is the required schema version; the only supported value is 1.
 	Version int `yaml:"version"`
@@ -1260,6 +1320,10 @@ type LearningSection struct {
 	// autonomy. It does not override separately configured maintenance schedules such
 	// as --user-model-consolidate-interval.
 	Mode string `yaml:"mode"`
+	// AdmissionInterval admits every Nth eligible automatic reflection process-wide.
+	// Nil uses the default of 1; zero and one both admit every eligible reflection.
+	// This field is operator-owned; project values do not change admission cadence.
+	AdmissionInterval *int `yaml:"admission_interval"`
 	// Sensitivity controls weighted automatic admission. Empty means balanced.
 	Sensitivity string `yaml:"sensitivity"`
 	// Skills controls learned-skill lifecycle policy.
@@ -1359,8 +1423,11 @@ func (s *LearningAutomaticSection) UnmarshalYAML(node ast.Node) error {
 
 // UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
 func (s *LearningSection) UnmarshalYAML(node ast.Node) error {
-	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "skills": newPermconfigNodePointer(&s.Skills), "automatic": newPermconfigNodePointer(&s.Automatic)}); err != nil {
+	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "admission_interval": newPermconfigNodePointer(&s.AdmissionInterval), "sensitivity": &s.Sensitivity, "skills": newPermconfigNodePointer(&s.Skills), "automatic": newPermconfigNodePointer(&s.Automatic)}); err != nil {
 		return err
+	}
+	if s.AdmissionInterval != nil && *s.AdmissionInterval < 0 {
+		return fmt.Errorf("learning.admission_interval: must be nonnegative")
 	}
 	if s.Mode != "" {
 		if _, err := learning.ParseMode(s.Mode); err != nil {
@@ -1468,6 +1535,74 @@ func (m *OpenRouterModelRoute) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "openrouter.models[]", m.strictFields())
 }
 
+// ModelSlotValue is one scalar slot selector, optionally carrying the operator-only
+// explicit provider route supported by the guardrail slot.
+type ModelSlotValue struct {
+	Model            string
+	Provider         string
+	ExplicitProvider bool
+}
+
+// ModelSlots is the strict models.slots mapping.
+type ModelSlots map[string]ModelSlotValue
+
+// UnmarshalYAML preserves scalar slot compatibility and admits an object only for guardrail.
+func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return fmt.Errorf("models.slots: must be a mapping")
+	}
+	out := make(ModelSlots, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		name, stringKey := permconfigMappingKey(entry.Key)
+		if !stringKey || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("models.slots: slot key must be a non-empty string")
+		}
+		if _, duplicate := out[name]; duplicate {
+			return fmt.Errorf("models.slots.%s: duplicate slot key", name)
+		}
+		if fields, isMapping := permconfigMapping(entry.Value); isMapping {
+			if name != "guardrail" {
+				return fmt.Errorf("models.slots.%s: provider mapping is supported only for guardrail", name)
+			}
+			var value ModelSlotValue
+			seen := map[string]bool{}
+			for _, field := range fields.Values {
+				key, isString := permconfigMappingKey(field.Key)
+				if !isString || (key != "provider" && key != "model") {
+					return fmt.Errorf("models.slots.guardrail: unknown key %q", key)
+				}
+				if seen[key] {
+					return fmt.Errorf("models.slots.guardrail: duplicate key %q", key)
+				}
+				seen[key] = true
+				var scalar string
+				if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(field.Value, &scalar); err != nil {
+					return fmt.Errorf("models.slots.guardrail.%s: must be a string", key)
+				}
+				if key == "provider" {
+					value.Provider = strings.TrimSpace(scalar)
+				} else {
+					value.Model = strings.TrimSpace(scalar)
+				}
+			}
+			if value.Provider == "" || value.Model == "" {
+				return fmt.Errorf("models.slots.guardrail: provider and model are both required and non-empty")
+			}
+			value.ExplicitProvider = true
+			out[name] = value
+			continue
+		}
+		var scalar string
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &scalar); err != nil {
+			return fmt.Errorf("models.slots.%s: selector must be a string", name)
+		}
+		out[name] = ModelSlotValue{Model: scalar}
+	}
+	*s = out
+	return nil
+}
+
 // ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding
 // map, an alias map, a session-default binding, and the operator-tier allowlist cap.
 // The TOP mapping is parsed STRICTLY (unknown keys error); the inner Slots/Aliases
@@ -1483,9 +1618,14 @@ func (m *OpenRouterModelRoute) UnmarshalYAML(node ast.Node) error {
 //     only within the operator Allowlist and only on a TRUSTED workspace. A project
 //     Allowlist: key is IGNORED with a WARN (a project cannot widen its own cap).
 type ModelsSection struct {
-	// Slots binds a slot name (a call-slot "compaction"/"ask-reviewer"/"guardrail" or
-	// a tier "cheap"/"fast"/"reasoning") to a model selector (alias or concrete id).
-	Slots map[string]string `yaml:"slots"`
+	// Slots binds a slot name to a model selector. Call slots include
+	// "compaction", "ask-reviewer", and "guardrail"; tier slots include
+	// "cheap", "fast", and "reasoning". The "plan" slot selects the session model
+	// while the session is in plan mode. In default or accept-edits mode, the session
+	// uses its default model. When "plan" is unset, it falls through to the "reasoning"
+	// tier when configured. The guardrail slot alone also accepts an operator-only
+	// explicit provider route.
+	Slots ModelSlots `yaml:"slots"`
 	// Aliases binds a short alias to a concrete model id (merged onto the CLI
 	// --model-alias map, CLI winning per key).
 	Aliases map[string]string `yaml:"aliases"`
@@ -1597,11 +1737,19 @@ func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// RouterSection is the `models.router:` operator-tier subtree (ADR 0031): the semantic
-// Subagent model-router taxonomy. The classifier reads the category descriptions to
-// choose which category a delegated task belongs to; composition maps the chosen
-// category's Model selector through the alias/slot machinery to a concrete model id.
+// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0352):
+// the semantic delegated-model taxonomy and its explicitly selected classifier backend.
+// Composition maps the backend's exact category choice through the same local
+// category-to-model alias machinery.
 type RouterSection struct {
+	// Backend selects llm or jev. Empty input defaults to llm.
+	Backend string `yaml:"backend"`
+	// Jev configures the explicitly selected Typesafe Jev backend. The block is
+	// rejected with an active llm backend and ignored for active checks while routing
+	// is disabled or has no categories.
+	Jev                *JevRouterSection `yaml:"jev"`
+	classifierSlotSet  bool
+	defaultCategorySet bool
 	// ClassifierSlot names the model slot the CLASSIFIER itself runs on (the tiny,
 	// cheap one-turn classification call). Empty falls through to the `router` slot's
 	// default tier (cheap) — the classifier is housekeeping, not the routed work.
@@ -1638,11 +1786,63 @@ type RouterCategory struct {
 	Model string `yaml:"model"`
 }
 
+// JevRouterSection is the strict configuration for the Jev classifier backend.
+type JevRouterSection struct {
+	// Model is the Typesafe service model. Empty input defaults to jev-1.13.0.
+	Model string `yaml:"model"`
+	// BaseURL optionally overrides the Typesafe endpoint. Active routing accepts HTTPS
+	// or loopback HTTP; omission uses the pinned SDK endpoint.
+	BaseURL string `yaml:"base-url"`
+	// MinimumConfidence makes a valid lower-confidence answer an ordinary routing miss.
+	// Zero disables filtering; values must be finite and in [0,1].
+	MinimumConfidence float64 `yaml:"minimum-confidence"`
+	// MaximumInputBytes bounds the complete rendered textual request before SDK marshalling.
+	// Omission defaults to 16384; explicit values must be integers in [1,65536].
+	MaximumInputBytes int `yaml:"maximum-input-bytes"`
+}
+
+// UnmarshalYAML applies Jev defaults and rejects unknown keys or invalid values.
+func (j *JevRouterSection) UnmarshalYAML(node ast.Node) error {
+	j.Model = "jev-1.13.0"
+	j.MaximumInputBytes = 16384
+	if mapping, ok := permconfigMapping(node); ok {
+		for _, entry := range mapping.Values {
+			key, stringKey := permconfigMappingKey(entry.Key)
+			if stringKey && key == "maximum-input-bytes" {
+				if _, integer := entry.Value.(*ast.IntegerNode); !integer {
+					return fmt.Errorf("models.router.jev.maximum-input-bytes: must be an integer")
+				}
+			}
+		}
+	}
+	if err := decodeStrictMapping(node, "models.router.jev", map[string]any{
+		"model": &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
+		"maximum-input-bytes": &j.MaximumInputBytes,
+	}); err != nil {
+		return err
+	}
+	if math.IsNaN(j.MinimumConfidence) || math.IsInf(j.MinimumConfidence, 0) || j.MinimumConfidence < 0 || j.MinimumConfidence > 1 {
+		return fmt.Errorf("models.router.jev.minimum-confidence: must be finite and between 0 and 1")
+	}
+	if j.MaximumInputBytes < 1 || j.MaximumInputBytes > 65536 {
+		return fmt.Errorf("models.router.jev.maximum-input-bytes: must be between 1 and 65536")
+	}
+	return nil
+}
+
+// ClassifierSlotAuthored reports whether classifier-slot appeared in YAML.
+func (r *RouterSection) ClassifierSlotAuthored() bool { return r.classifierSlotSet }
+
+// DefaultCategoryAuthored reports whether default-category appeared in YAML.
+func (r *RouterSection) DefaultCategoryAuthored() bool { return r.defaultCategorySet }
+
 // strictFields is the single binding map for the models.router: subtree — the ONE
 // authoritative key set both UnmarshalYAML (the parser) and the configgen drift guard
 // (via the test-only KnownKeys accessor) read, so they cannot diverge.
 func (r *RouterSection) strictFields() map[string]any {
 	return map[string]any{
+		"backend":          &r.Backend,
+		"jev":              newPermconfigNodePointer(&r.Jev),
 		"classifier-slot":  &r.ClassifierSlot,
 		"categories":       &r.Categories,
 		"default-category": &r.DefaultCategory,
@@ -1653,7 +1853,17 @@ func (r *RouterSection) strictFields() map[string]any {
 // UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
 func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "models.router", r.strictFields())
+	r.Backend = "llm"
+	if err := decodeStrictMapping(node, "models.router", r.strictFields()); err != nil {
+		return err
+	}
+	r.Backend = strings.TrimSpace(r.Backend)
+	if r.Backend != "llm" && r.Backend != "jev" {
+		return fmt.Errorf("models.router.backend: must be llm or jev")
+	}
+	r.classifierSlotSet = mappingHasKey(node, "classifier-slot")
+	r.defaultCategorySet = mappingHasKey(node, "default-category")
+	return nil
 }
 
 func (c *RouterCategory) strictFields() map[string]any {
@@ -1704,19 +1914,20 @@ type GuardrailsSection struct {
 	// Model is the checker model id / alias. Empty leaves the CLI --guardrails-model
 	// to supply it; a value here is overridden by the CLI flag when both are set.
 	Model string `yaml:"model"`
-	// MinContentBytes skips the checker for content shorter than this. 0 = check all.
-	MinContentBytes int `yaml:"minContentBytes"`
 	// Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it).
 	Disabled bool `yaml:"disabled"`
 	// OnCheckerDown sets the global posture when the checker model is unavailable
-	// (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all
-	// rules). Per-rule failClosed overrides: failClosed:true tightens even under
-	// warn; failClosed:false (explicit) loosens even under fail. Empty = warn.
+	// (error/timeout): "fail" (default, fail-closed) or explicit "warn"
+	// (continue with an operational warning). Per-rule failClosed overrides:
+	// failClosed:true tightens under warn; explicit false loosens under fail.
+	// Empty = fail.
 	OnCheckerDown string `yaml:"onCheckerDown"`
 	// DefaultMode sets the enforcement mode for the built-in default rules when no
-	// explicit rules are configured: "block" (default), "advisory", or "sanitize".
+	// explicit rules are configured: "block" (default) or "advisory".
 	// An explicit rules list replaces the defaults entirely (this key is ignored).
 	DefaultMode string `yaml:"defaultMode"`
+	// TaskWindow selects the last K explicitly authenticated root prompts (default 1, clamped 1..3).
+	TaskWindow int `yaml:"taskWindow"`
 	// Escape is the ADR-0080 escape knob: when true AND a checker model is
 	// configured, an out-of-root FS escape at posture auto routes through the
 	// guardrail checker (an unsafe verdict denies; a checker error fails closed
@@ -1733,11 +1944,12 @@ type GuardrailRuleSpec struct {
 	Match string `yaml:"match"`
 	// Phases lists "pre"/"post"; empty = both.
 	Phases []string `yaml:"phases"`
-	// Mode is "block"/"sanitize"/"advisory"; empty defaults to block.
+	// Mode is "block"/"advisory"; empty defaults to block.
 	Mode string `yaml:"mode"`
-	// Prompt overrides the built-in inspection rubric.
+	// Prompt adds operator task-risk context beneath the fixed harness safety,
+	// provenance, evidence, and structured-output rubric; it cannot replace it.
 	Prompt string `yaml:"prompt"`
-	// FailClosed flips the fail-open default for enforcing modes.
+	// FailClosed optionally overrides the fail-closed global default for this rule.
 	FailClosed bool `yaml:"failClosed"`
 	// FailClosedPresent reports whether the failClosed key was explicitly set in
 	// the YAML — a bool can't distinguish "false" from "not set", so this lets the
@@ -1750,18 +1962,27 @@ type GuardrailRuleSpec struct {
 // inside the guardrails subtree is a parse error — a typo like `moddel:` or `rulez:`
 // must not silently disable a guardrail. Same rationale as Permissions.UnmarshalYAML.
 func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "guardrails", g.strictFields())
+	if err := decodeStrictMapping(node, "guardrails", g.strictFields()); err != nil {
+		return err
+	}
+	if posture := strings.TrimSpace(g.OnCheckerDown); posture != "" && posture != "fail" && posture != "warn" {
+		return fmt.Errorf("guardrails.onCheckerDown: must be fail or warn")
+	}
+	if mode := strings.TrimSpace(g.DefaultMode); mode != "" && mode != "block" && mode != "advisory" {
+		return fmt.Errorf("guardrails.defaultMode: must be block or advisory")
+	}
+	return nil
 }
 
 func (g *GuardrailsSection) strictFields() map[string]any {
 	return map[string]any{
-		"model":           &g.Model,
-		"minContentBytes": &g.MinContentBytes,
-		"disabled":        &g.Disabled,
-		"onCheckerDown":   &g.OnCheckerDown,
-		"defaultMode":     &g.DefaultMode,
-		"escape":          &g.Escape,
-		"rules":           &g.Rules,
+		"model":         &g.Model,
+		"disabled":      &g.Disabled,
+		"onCheckerDown": &g.OnCheckerDown,
+		"defaultMode":   &g.DefaultMode,
+		"taskWindow":    &g.TaskWindow,
+		"escape":        &g.Escape,
+		"rules":         &g.Rules,
 	}
 }
 
@@ -1783,6 +2004,9 @@ func (r *GuardrailRuleSpec) UnmarshalYAML(node ast.Node) error {
 	// Track whether failClosed was explicitly present so the global onCheckerDown
 	// toggle can distinguish a per-rule opt-out from an unset rule.
 	r.FailClosedPresent = mappingHasKey(node, "failClosed")
+	if mode := strings.TrimSpace(r.Mode); mode != "" && mode != "block" && mode != "advisory" {
+		return fmt.Errorf("guardrails.rules[].mode: must be block or advisory")
+	}
 	return nil
 }
 

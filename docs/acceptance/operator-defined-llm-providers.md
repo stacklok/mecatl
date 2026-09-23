@@ -56,7 +56,7 @@ A custom `api_key` provider reads exactly its same-ID API-key record from the
 operator-local strict `auth.yaml`; a no-auth provider needs no record. Environment
 fallbacks, OAuth, arbitrary headers, and n:n credential references remain absent. This
 extends the existing auth-file separation described in
-[provider credential documentation](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) without placing
+[provider credential documentation](../../user-docs/building/deployment/settings.md#configure-provider-credentials) without placing
 secrets in settings, following the value-free credential boundary in
 [ADR 0238](../adr/0238-operator-defined-llm-providers.md).
 
@@ -135,7 +135,7 @@ follows the live-catalog fallback and capability-truth discipline in
   - verify: `TestOperatorDefinedLLMProviders_Scenario4_ListingFallback`
 - AC4.4: unknown live model metadata never overclaims image, audio, reasoning, output, or
   context-window capabilities.
-  - verify: `TestInvariant_custom_provider_live_metadata_conservative`
+  - verify: `TestInvariant_custom_provider_omitted_live_modalities_use_adapter`
 
 ---
 
@@ -145,7 +145,7 @@ Mecated and embedded mecatui use the operator definition and its auth-file key; 
 connect mode remains a pure client of the remote server. Mecatequi and mecak8s receive the
 same custom-provider configuration through shared command wiring where their existing
 provider policy permits it. The default-provider semantics remain server-owned, as
-specified by [`user-docs/reference/configuration.md`](https://mecatl.dev/docs/reference/configuration#models)
+specified by [`user-docs/reference/configuration.md`](../../user-docs/reference/configuration.md#models)
 and [ADR 0238](../adr/0238-operator-defined-llm-providers.md).
 
 **Acceptance:**
@@ -240,7 +240,7 @@ session rehydration.
 - `TestADR_0238_BuiltinOverrideAllowlist`
 - `TestInvariant_custom_provider_authfile_strict`
 - `TestInvariant_custom_provider_has_no_builtin_private_options`
-- `TestInvariant_custom_provider_live_metadata_conservative`
+- `TestInvariant_custom_provider_omitted_live_modalities_use_adapter`
 - `TestOperatorDefinedLLMProviders_Scenario1_ValidDefinition`
 - `TestOperatorDefinedLLMProviders_Scenario2_SeparateAuthFileKeys`
 - `TestOperatorDefinedLLMProviders_Scenario3_DeclaredFlavorSelectsAdapter`

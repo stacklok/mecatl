@@ -104,8 +104,9 @@ type SessionStoreServiceClient interface {
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
 	Delete(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error)
-	// Capabilities negotiates optional additive operations. Old drivers return
-	// UNIMPLEMENTED and are treated as supporting only Save/Load.
+	// Capabilities is mandatory current-contract negotiation. UNIMPLEMENTED,
+	// transport failure, timeout, or a missing/wrong contract marker fails
+	// construction; optional backend operations remain represented by booleans.
 	Capabilities(ctx context.Context, in *SessionStoreCapabilitiesRequest, opts ...grpc.CallOption) (*SessionStoreCapabilitiesResponse, error)
 }
 
@@ -232,8 +233,9 @@ type SessionStoreServiceServer interface {
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
 	Delete(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error)
-	// Capabilities negotiates optional additive operations. Old drivers return
-	// UNIMPLEMENTED and are treated as supporting only Save/Load.
+	// Capabilities is mandatory current-contract negotiation. UNIMPLEMENTED,
+	// transport failure, timeout, or a missing/wrong contract marker fails
+	// construction; optional backend operations remain represented by booleans.
 	Capabilities(context.Context, *SessionStoreCapabilitiesRequest) (*SessionStoreCapabilitiesResponse, error)
 	mustEmbedUnimplementedSessionStoreServiceServer()
 }

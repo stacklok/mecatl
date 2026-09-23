@@ -9,13 +9,13 @@ import (
 	"strings"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
@@ -488,7 +488,7 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 		}
 		t, ok := available[name]
 		if !ok {
-			if name == tools.ShellToolName {
+			if name == tool.ShellToolName {
 				// Shell is a core tool, so a base-set miss is never a typo: it means NO
 				// shell is available at this call site — --no-shell, an empty shell, or
 				// (issue #40) an untrusted workspace withholding the subagent shell.
@@ -515,7 +515,7 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 			// i.e. a read-only member the supervisor isolates in a git worktree, where a
 			// shell is used for inspection (git log/show, build, test) but Edit/Write
 			// would still corrupt nothing shared, so we keep ONLY Shell.
-			if allowShell && name == tools.ShellToolName {
+			if allowShell && name == tool.ShellToolName {
 				kept = append(kept, name)
 				continue
 			}
@@ -885,7 +885,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		// registers as-is. allowShell is true iff runner != nil, so this branch only
 		// fires with a non-nil runner.
 		registered := base[name]
-		if name == tools.ShellToolName && runner != nil {
+		if name == tool.ShellToolName && runner != nil {
 			registered = agent.NewShellTool()
 		}
 		entry, ok := coreToolClassification(registered)
@@ -895,7 +895,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		}
 		classified.mustRegister(registered, &entry)
 	}
-	if _, ok := cat.Lookup(tools.ShellToolName); ok {
+	if _, ok := cat.Lookup(tool.ShellToolName); ok {
 		status := agent.NewShellStatusTool()
 		entry, _ := coreToolClassification(status)
 		classified.mustRegister(status, &entry)
@@ -1273,6 +1273,14 @@ func skillSnapshot(discovered []skills.Skill) []*mecatlv1.SkillInfo {
 // these per session (e.g. against a CreateSession-supplied root), it MUST re-apply the
 // trust decision for that root or the project-tier injection gap silently reopens.
 func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
+	if cfg.harnessAgentDefs != nil {
+		defs, err := cfg.harnessAgentDefs.ListAgentDefs(ctx)
+		if err != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "resolving configured agent definitions failed; none registered", "err", err)
+			return agents.NewRegistry(nil)
+		}
+		return agents.NewRegistry(defs)
+	}
 	// Project-tier agent defs are withheld when the project tier is not admitted
 	// (Phase 2a): untrusted, or the ingestion grant withheld
 	// (projectIngestionAdmitted). The user-tier + explicit defs stay active

@@ -2,6 +2,8 @@
     ifacemethod func (AuthorityResourceResolver).AuthorityResourcePath(path string) (target string, workspace string, err error)
     ifacemethod func (AuthorizationRequester).AbortAuthorization(context.Context, session.ExternalAuthorization) error
     ifacemethod func (AuthorizationRequester).RequestAuthorization(context.Context, session.ToolCall) (authorization session.ExternalAuthorization, required bool, err error)
+    ifacemethod func (BoundedWorkspaceRangeReader).ReadVersionRangeBounded(ctx context.Context, path string, offset int64, maxBytes int64, totalLimit int64) ([]byte, FileVersion, int64, error)
+    ifacemethod func (BoundedWorkspaceReader).ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
     ifacemethod func (CommandEnvironmentRunner).RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error)
     ifacemethod func (CommandEnvironmentStreamer).RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error)
     ifacemethod func (CommandRunner).Run(ctx context.Context, command string) (CommandResult, error)
@@ -15,17 +17,14 @@
     ifacemethod func (FileSystem).Glob(ctx context.Context, pattern string) ([]string, error)
     ifacemethod func (FileSystem).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (FileSystem).Stat(ctx context.Context, path string) (FileInfo, error)
-    ifacemethod func (MemoryConvergenceStore).RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
-    ifacemethod func (MemoryLifecycleStore).ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
-    ifacemethod func (MemoryLifecycleStore).Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
-    ifacemethod func (MemoryLifecycleStore).RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error)
-    ifacemethod func (MemoryLifecycleStore).UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
-    ifacemethod func (MemoryStore).Forget(ctx context.Context, key string) error
+    ifacemethod func (MemoryStore).Forget(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
     ifacemethod func (MemoryStore).Index(ctx context.Context) ([]MemoryEntry, error)
+    ifacemethod func (MemoryStore).Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
     ifacemethod func (MemoryStore).List(ctx context.Context, prefix string) ([]MemoryEntry, error)
     ifacemethod func (MemoryStore).Recall(ctx context.Context, key string) (MemoryEntry, bool, error)
-    ifacemethod func (MemoryStore).RememberEntry(ctx context.Context, e MemoryEntry) error
+    ifacemethod func (MemoryStore).Remember(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
     ifacemethod func (MemoryStore).Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)
+    ifacemethod func (MemoryStore).Undo(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
     ifacemethod func (PlanOnly).PlanOnlyTool()
     ifacemethod func (ReadLedger).RecordRead(ctx context.Context, key string, version FileVersion) error
     ifacemethod func (ReadLedger).RecordedVersion(ctx context.Context, key string) (version FileVersion, ok bool, err error)
@@ -77,7 +76,6 @@ const MaxAgentBodyBytes untyped int = 32768
 const MaxAgentDescriptionBytes untyped int = 2000
 const MemoryOriginConsolidation MemoryOrigin = "consolidation"
 const MemoryOriginExplicit MemoryOrigin = "explicit"
-const MemoryOriginImported MemoryOrigin = "imported"
 const MemoryOriginLearning MemoryOrigin = "learning"
 const MemoryOriginUndo MemoryOrigin = "undo"
 const MemoryStatusActive MemoryStatus = "active"
@@ -99,6 +97,7 @@ func DecodeFileVersion(encoded string) FileVersion
 func DirectiveShapedUserMemory(value string) bool
 func EncodeFileVersion(f FileVersion) (string, error)
 func LedgerKey(root string, path string) string
+func LocalFileOperands(name string, args json.RawMessage) []string
 func MemoryAttributionFromContext(ctx context.Context) (MemoryAttribution, bool)
 func MustEnvironment(ref session.EnvironmentRef, ws Workspace, ledger ReadLedger, runner CommandRunner) Environment
 func NewCatalog() *Catalog
@@ -121,6 +120,8 @@ type AgentMCPServer struct{Name string; URL string; Headers map[string]string}
 type AgentOrigin string
 type AuthorityResourceResolver interface{AuthorityResourcePath(path string) (target string, workspace string, err error)}
 type AuthorizationRequester interface{AbortAuthorization(context.Context, session.ExternalAuthorization) error; RequestAuthorization(context.Context, session.ToolCall) (authorization session.ExternalAuthorization, required bool, err error); Tool}
+type BoundedWorkspaceRangeReader interface{ReadVersionRangeBounded(ctx context.Context, path string, offset int64, maxBytes int64, totalLimit int64) ([]byte, FileVersion, int64, error)}
+type BoundedWorkspaceReader interface{ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)}
 type Catalog struct{}
 type CommandEnvironmentOverlay struct{TempDir string; GoTempDir string; TestHomeMarker string}
 type CommandEnvironmentRunner interface{RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error); CommandRunner}
@@ -140,16 +141,14 @@ type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, e
 type FileVersion struct{}
 type GrepMatch struct{Path string; Line int; Text string}
 type MemoryAttribution struct{Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource}
-type MemoryConvergenceStore interface{RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error); MemoryLifecycleStore}
 type MemoryCurrent struct{Exists bool; Version MemoryVersion}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
-type MemoryLifecycleStore interface{ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error); Inspect(ctx context.Context, key string) (MemoryRecord, bool, error); RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error); UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)}
 type MemoryOrigin string
 type MemoryRecord struct{Current MemoryRevision; Revisions []MemoryRevision}
 type MemoryRevision struct{Key string; Value string; Description string; Version MemoryVersion; Status MemoryStatus; Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource; UpdatedAt time.Time}
 type MemorySource struct{SessionID string; ProposalID string}
 type MemoryStatus string
-type MemoryStore interface{Forget(ctx context.Context, key string) error; Index(ctx context.Context) ([]MemoryEntry, error); List(ctx context.Context, prefix string) ([]MemoryEntry, error); Recall(ctx context.Context, key string) (MemoryEntry, bool, error); RememberEntry(ctx context.Context, e MemoryEntry) error; Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)}
+type MemoryStore interface{Forget(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error); Index(ctx context.Context) ([]MemoryEntry, error); Inspect(ctx context.Context, key string) (MemoryRecord, bool, error); List(ctx context.Context, prefix string) ([]MemoryEntry, error); Recall(ctx context.Context, key string) (MemoryEntry, bool, error); Remember(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error); Search(ctx context.Context, query string, k int) ([]MemoryEntry, error); Undo(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)}
 type MemoryVersion string
 type MemoryVersionConflictError struct{Key string; Expected MemoryVersion; Actual MemoryVersion}
 type MemoryWriter string

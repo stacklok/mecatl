@@ -30,7 +30,7 @@ remote server: that server's operator owns its provider records.
 
 Mecatui reads `status_customization:` only from the client-owned
 `$XDG_CONFIG_HOME/mecatui/settings.yaml`. It composes a UI-agnostic
-`statusline.Source`: the UI submits display-safe `Input` snapshots and listens for
+`customization.Source`: the UI submits display-safe `Input` snapshots and listens for
 latest `Result` semantic spans, while the source owns template evaluation or the
 optional local direct executable, refresh, cancellation, and fallback. The source
 returns no terminal rendering; the UI applies the active theme, preserves its
@@ -67,7 +67,7 @@ shipped default when none exists; the command receives no feedback and
 command output, arguments, paths, or raw failure text. The status-line guide describes
 the command-output and troubleshooting contract.
 
-See [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md)
+See [Status line customization](../user-docs/mecatui/status-line.md)
 for the complete settings schema, input reference, StatusML grammar, safety limits,
 and copyable template and executable examples.
 
@@ -75,14 +75,41 @@ The render packages (`ui`, `theme`) and the `client` package stay a pure client 
 they never import any `engine/...` or `internal/...` package and render solely from the proto
 `Event` envelope. Hosting the embedded server is confined to the `cmd/mecatui`
 main and its `embed` subpackage (which build the same server `mecated` does, via
-`internal/app`). Embedded operational diagnostics go only to the per-user state
-log (`$XDG_STATE_HOME/mecatl/mecatui.log`, with the standard local-state fallback).
-A stable cross-process lock is held for the writer lifetime, so a second instance
-fails closed instead of replacing an active log. On startup, a no-symlink open
-verifies the path is a regular file; an oversized log is atomically retained to a
-recent 10 MiB tail, with the replacement and containing directory synced before
-append. Unsafe paths and failures before replacement preserve the prior log and
-use `io.Discard`, so diagnostics cannot corrupt the terminal.
+`internal/app`). Embedded operational diagnostics use the per-user state log
+(`$XDG_STATE_HOME/mecatl/mecatui.log`, with the standard local-state fallback).
+A stable cross-process lock is held for the writer lifetime. When another
+instance holds the shared log, the new instance writes to a PID-suffixed sibling
+and reports that path on stderr before continuing startup; it never replaces the
+active log. On startup, a no-symlink open verifies the path is a regular file; an
+oversized log is atomically retained to a recent 10 MiB tail, with the
+replacement and containing directory synced before append. Unsafe paths,
+failures before replacement, and failure to open the per-process fallback use
+`io.Discard`, so diagnostics cannot corrupt the terminal.
+
+### Terminal titles
+
+Mecatui also owns the terminal title through the renderer's serialized output
+path. The client renders a plain-text title from the same display-safe status
+input used by status templates, except that the title-specific projection omits
+`Workspace.Path`. It emits OSC 0 only when that title changes. A
+clean exit clears the title after a non-empty title was emitted. The shipped
+default uses the session title and activity state, falls back to `mecatui`, and
+leaves the session handle out unless a custom template includes
+`.Session.Handle`.
+
+The user-global client settings file is
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`. Its strict `terminal_title` section
+contains `enabled` and `template`; it is independent of `status_customization`,
+and command-backed status output cannot influence it. The shared `elide`
+function is width-aware, while title output remains plain text rather than
+StatusML. The client removes terminal controls, normalizes whitespace, and
+bounds the result before OSC 0 construction.
+
+`--terminal-title=off` and `MECATUI_NO_TERMINAL_TITLE=1` disable title writes.
+An explicit `--terminal-title=on` overrides settings disablement. Otherwise the
+settings `enabled` value applies. Terminals and multiplexers decide whether to
+present OSC 0, so the client cannot guarantee a tab or pane label. The complete
+settings schema and precedence are in [Status line customization](../user-docs/mecatui/status-line.md#customize-the-terminal-title).
 
 ## Build
 
@@ -132,7 +159,7 @@ The token is not public API credit and the private backend is not a supported
 third-party contract. mecatui reads one immutable snapshot before hosting its
 embedded server: after replacing an expired/rejected token, quit and relaunch.
 There is no login or refresh. See the [exact schema and plaintext same-UID Shell
-boundary](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
+boundary](../user-docs/building/deployment/settings.md#configure-provider-credentials).
 `mecatui connect` never reads the local file; configure the external `mecated`
 instead.
 
@@ -164,7 +191,7 @@ Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level 
 
 The transport is exactly what the invocation says — there is no implicit probe
 or fallback. For the local-versus-remote configuration ownership and intentional
-default differences, see the [settings guide](https://mecatl.dev/docs/building/deployment/settings):
+default differences, see the [settings guide](../user-docs/building/deployment/settings.md):
 bare mode owns an embedded server, while connect mode is client-only and the remote
 server is authoritative.
 
@@ -184,7 +211,7 @@ server is authoritative.
 
 - **`mecatui debug TARGET [flags]`** — create a separate durable no-filesystem
   analysis session permanently bound to that stored target. `TARGET` may be an exact full opaque
-  ID—including the exact ID printed when mecatui exits—or the displayed 12-column short handle:
+  ID, including the exact ID printed when mecatui exits, or the displayed 12-column short handle:
   safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` becomes `%2D`; every other
   UTF-8 byte is uppercase `%HH`, and only complete atoms that fit are shown. The handle has no
   leading `#` marker. A syntactically valid short target consults the complete caller-visible
@@ -337,7 +364,7 @@ and `--tls-ca` also select verified TLS. `--tls=false` is the explicit plaintext
 downgrade, and a bearer is refused on that remote plaintext transport. Use
 `connect --tls-ca` when the server uses a private CA. The remote server owns
 placement: mecatui sends no local cwd, and `--workspace` is rejected in every connect
-form rather than being treated as a path inside an agent pod. See [Run mecated standalone](https://mecatl.dev/docs/building/deployment/mecated) for the attribution model and its non-tenancy limits.
+form rather than being treated as a path inside an agent pod. See [Run mecated standalone](../user-docs/building/deployment/mecated.md) for the attribution model and its non-tenancy limits.
 
 On later `connect`, a saved target supplies a managed dynamic bearer source: each RPC
 asks for a currently validated access token. Application token demand, rather than RPC
@@ -410,8 +437,7 @@ debug argument. A syntactically valid short target consults the complete caller-
 Exact full-ID equality wins; otherwise one unique projected match resolves. On ambiguity, open
 `/session`, copy the exact full ID, and pass it as `TARGET` through the same command. If inventory
 lookup fails or no projection matches, mecatui sends `TARGET` unchanged and reports the ordinary
-server exact-ID authorization/not-found result. These commands do not attach to or continue the
-target.
+server exact-ID authorization/not-found result. These commands do not attach to or continue the target.
 They authorize it, create a separate durable no-filesystem debug session, keep a visible privacy disclosure in the TUI, and submit one first genuine user turn. That turn is ordered as the diagnosis
 objective, the required status/transcript/pagination workflow, the expected report sections,
 and finally the same sanitized current-client/server report produced by bare `/diagnostics`.
@@ -445,7 +471,8 @@ factory, or an unavailable target fails closed. The ordinary padded header place
 `DEBUG target <handle>` immediately after `mecatui` in every phase. At narrow widths it
 sheds model/mode/server detail before that complete target identity rather than clipping it;
 `/session` displays the safely quoted exact target ID and copies it with `t`. The
-`DEBUG <handle>` terminal title uses the same handle. The TUI hides `/clear`, `/sessions`, `/models`,
+terminal title uses the configured/default template with a `DEBUG` prefix and no
+mandatory handle. The TUI hides `/clear`, `/sessions`, `/models`,
 `/effort`, and `/worktrees`, and blocks the mode/effort shortcuts because those controls
 can replace the launch binding. Schedule and learning controls remain available because
 changing those independent settings does not rebind the debug target; harmless inspection
@@ -532,7 +559,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--version` | – | print the build identity and exit before normal startup |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |
 | `--no-mouse` | off | keep the alt screen but disable mouse capture and in-app mouse gestures, preserving the terminal's **native** click-drag selection; keyboard prompt selection still works (or `MECATUI_NO_MOUSE=1`; see the selection section) |
-| `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> <handle> — <status word> mecatui` (the title is the first prompt, the fixed handle identifies the session, and the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
+| `--terminal-title` | `on` | terminal title controller: `on` enables the configured/default plain-text OSC 0 title; `off` emits no title or cleanup sequence. Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
 | `--no-banner` | off | disable the first-run welcome **splash** (mascot + gradient wordmark); the plain prompt hint + affordance list still show. Auto-forced on under `--quiet` or a non-interactive stdin |
 | `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`; openai-codex → first entitled live model). Overridden per session by the `/models` picker |
 | `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`, experimental `openai-codex`); overrides automatic preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
@@ -542,7 +569,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
-| `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
+| `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](../user-docs/building/deployment/settings.md#configure-provider-credentials) |
 | `--mock` | off | **embedded** server: use the offline mock provider (no network) |
 | `--no-shell` | off | **embedded** server: disable the Shell tool (shell-less) |
 | `--memory-dir` | – (auto) | **embedded** server: per-project memory store dir; empty = a default under `$XDG_DATA_HOME/mecatui/memory` |
@@ -640,7 +667,7 @@ left owned after the bounded shutdown completes.
 |---|---|
 | `MECATUI_THEME` | theme name (same as `--theme`) |
 | `MECATUI_NO_MOUSE` | disable mouse capture and in-app mouse gestures (same as `--no-mouse`) while preserving native terminal selection; keyboard prompt selection still works |
-| `MECATUI_NO_TERMINAL_TITLE` | suppress the dynamic terminal window/tab title (same as `--terminal-title=off`) — collapse to the bare `mecatui` |
+| `MECATUI_NO_TERMINAL_TITLE` | disable all OSC title writes (same as `--terminal-title=off`) |
 | `MECATUI_DEBUG` | set to `1` to enable every client-side debug surface (same as `--debug` when that flag is omitted) |
 | `MECATUI_DEBUG_MOUSE` | legacy narrow alias: enable only the raw mouse-coordinate / click-mapping footer overlay |
 | `MECATUI_DEBUG_STEER` | legacy narrow alias: enable only steer acknowledgement/echo correlation in the status line |
@@ -649,48 +676,11 @@ left owned after the bounded shutdown completes.
 | `MECATUI_FORCE_EMOJI` / `MECATUI_NO_EMOJI` | force / suppress the emoji glyph for the YOLO posture badge (force-on, no-wins-over-force); default is conservative env-based detection (see the posture badge) |
 | `MECATUI_FORCE_KITTY` / `MECATUI_NO_KITTY` | force / suppress the Kitty-graphics mascot on the welcome splash (force-on, no-wins-over-force); default is conservative env-based detection, falling back to the always-correct half-block mascot |
 
-**Dynamic terminal window/tab title.** `mecatui` sets the terminal window/tab title
-to `<session title> <handle> — <status word> mecatui`, so you can tell sessions apart
-in a tab bar. The title is the **first genuine prompt** of the session (clamped to
-~40 runes); `<handle>` is the fixed terminal-safe session handle; the status word
-reflects the TUI phase:
-
-| Phase | Title |
-|---|---|
-| running | `<title> <handle> — Working mecatui` |
-| awaiting approval | `<title> <handle> — ⚠ mecatui` |
-| connecting | `<title> <handle> — Connecting mecatui` |
-| fatal | `<title> <handle> — ✗ mecatui` |
-| idle / replay (title known) | `<title> <handle> — mecatui` |
-| no title yet (session known) | `<handle> — mecatui` |
-| no session yet | `mecatui` |
-
-A session starts with its first genuine prompt as a fallback title; a generated or
-operator title can later replace it. Automatic title generation is opt-in through an
-explicit compatible `models.slots.title` binding, is server-owned and asynchronous,
-and never changes the conversation or main-run budget. Its durable `session_title`
-accounting is governed by [ADR 0307](adr/0307-canonical-durable-token-accounting.md).
-See [ADR 0308](adr/0308-session-title-generation-and-auxiliary-usage.md).
-
-The title leads because tab bars **truncate from the right**; the status is a
-**static word, never an animated spinner** (per-frame title churn trips OS
-attention heuristics — the dock bounces / the taskbar flashes on every change).
-The title self-heals across a session switch / fork / carryover (a refetch adopts
-the server's stored title when this client never saw the first prompt). A dedicated
-debugger instead always starts with `DEBUG <handle>`, followed by its static
-phase label; the persistent amber/bold `DEBUG target <handle>` segment in the ordinary
-padded header carries the same identity through every lifecycle and fatal state.
-
-The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
-can't embed an OSC title-injection), and newlines/tabs collapse to single spaces
-(a window title is one line).
-
-Pass `--terminal-title=off` (or `MECATUI_NO_TERMINAL_TITLE=1`) to suppress it and
-leave the title at the bare `mecatui` — the escape hatch for
-terminals/multiplexers where a set title does more harm than good. **tmux note:**
-by default tmux's `automatic-rename` overrides pane titles; to let `mecatui`'s
-title survive, set `set -g automatic-rename off` (or `set -g allow-set-title on`)
-in your `~/.tmux.conf`.
+**Terminal title compatibility.** Terminal and multiplexer title policies can
+override OSC 0. By default tmux's `automatic-rename` overrides pane titles; to
+let `mecatui`'s configured title survive, set `set -g automatic-rename off` (or
+`set -g allow-set-title on`) in `~/.tmux.conf`. Use `--terminal-title=off` when
+the terminal environment owns title presentation.
 
 **Skill discovery is ON by default**, via conventional discovery (the read-only
 `Skill` tool activates progressive-disclosure `<name>/SKILL.md` units from the
@@ -865,8 +855,7 @@ a wired user-model lister. It fires `GetUserModel` (a **live** read of the
 user-model store's bounded index) and shows count · size · hash over a key/description
 list. Move with `↑`/`↓`; `enter` lazily requests the selected key's exact current
 value and up to 16 recent lifecycle revisions. Every server-derived field is terminal-
-sanitized. Old/base-only stores show the current value and honestly report history as
-unavailable. Proposal-linked revisions show the proposal id beside their existing provenance.
+sanitized. Current stores show the exact current value and up to 16 retained revisions. Proposal-linked revisions show the proposal id beside their existing provenance.
 `esc` returns from detail or closes the panel. The surface is read-only:
 Forget remains an ordinary model tool behind its permission gate.
 
@@ -929,9 +918,13 @@ and a compact context window (e.g. `200K`, `1M`; omitted when unknown). The pick
 opens with a **type-to-filter** input focused: type to narrow the list by a
 substring match (case-insensitive) over `provider_id`, model `id`, and display
 name — at 300+ live models this is how you find one fast. The list **scrolls** in a
-window clipped to the terminal height that follows the cursor (the selected row
-stays visible when you page past the top/bottom edge), so a large catalog never
-overruns the screen. A header line reads **`current: <model> (<provenance>)`** — a
+physical-line window derived from the offered width and height. Keyboard cursor
+movement minimally reveals the selected item. The mouse wheel moves the visible
+window by one line without moving the cursor. A primary click on the marker or
+text of any visible model-row line moves the cursor to that model; it does not
+switch models. Clicks on picker chrome, overflow indicators, and blank trailing
+cells do nothing. Press `enter` to switch to the cursor row. A large catalog never
+overruns the offered area. A header line reads **`current: <model> (<provenance>)`** — a
 best-effort, client-derived hint of where the live model came from (`server default`
 / `--model flag` / `picked this session` / `workspace default` / `global default`);
 it is a hint, not authority (the server owns the resolution). Each row carries a
@@ -1297,7 +1290,8 @@ show the plain prompt-hint card.
 | in the permission modal / plan-review bar / ask-args view: left-click a button | activate it (same as its chord — **alt screen only**). Clicking anywhere else in the modal does nothing (it is a gate, not a form) |
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
-| mouse wheel | scroll the conversation (**alt screen only**; see below) |
+| mouse wheel | scroll the visible body owner by one physical line (**alt screen only**). Agents and `/models` consume wheel input without moving their logical cursor or scrolling the hidden conversation; compact and `vp short` Agents views consume it without changing state. With no overlay owner, the conversation scrolls. |
+| primary click (`/models` row) | move the Models cursor to the clicked visible row without switching models; press `enter` to activate it (**alt screen only**) |
 | mouse click (prompt text) | place the prompt caret; drag from it to select prompt text (**alt screen only**; see below) |
 | mouse drag (left) | select text in the prompt or conversation — dragging in the conversation to an edge auto-scrolls; prompt release does **not** copy (alt screen only; see below) |
 | double / triple-click (left) | select word / whole line in the conversation (copies; alt screen only) |
@@ -1310,7 +1304,7 @@ show the plain prompt-hint card.
 | `shift+tab` | cycle the current session permission mode outside an MCP prompt argument form: **default → plan → accept-edits → default**. In that form, it moves focus to the previous required argument instead. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` / `ctrl+e` | move to the start / end of the current prompt line |
 | `ctrl+p` | move to the previous prompt line |
-| `f6` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
+| `f6` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, and `esc` steps back or closes. The mouse wheel scrolls the visible normal roster or detail without moving its cursor or the hidden conversation. At terminal heights below 24 rows, compact Agents exposes only `esc`; wheel input is consumed without changing state. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `f7` | open the reasoning-effort picker |
 | `f8` | open the MCP prompts picker |
 | `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |
@@ -1380,10 +1374,10 @@ inventory.
 
 ### Remapping keys
 
-Every action in mecatui's keymap is rebindable. Three override layers exist,
-and they resolve to the same map **per action** — a higher layer rebinds only
-the actions it names. Precedence, lowest to highest: the legacy server file
-< the client file < the **CLI flag wins**:
+Every action in mecatui's keymap is rebindable. Two override layers exist,
+and they resolve to the same map **per action**. A higher layer rebinds only
+the actions it names. Precedence, lowest to highest: the client file < the
+**CLI flag wins**:
 
 - **`~/.config/mecatui/settings.yaml`** (client-owned, mecatui's own settings
   file, strictly parsed — an unknown top-level key is a startup error) —
@@ -1398,11 +1392,6 @@ the actions it names. Precedence, lowest to highest: the legacy server file
 
 - **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
   rebinds one action and overrides the YAML entry for that action.
-
-  The `keymap:` setting was migrated from `~/.config/mecatl/settings.yaml`
-  (the server-shared operator file) — the legacy location still works but is
-  **deprecated** (a startup warning names the new home), and the client file
-  wins on conflict.
 
 Settings are read **once at startup** — restart mecatui to apply a change (live
 reload is a planned follow-up, issue #456).
@@ -1699,26 +1688,20 @@ or exact-ID `--resume`; `--resume-latest` considers only active main rows and
 checks each authoritative transcript, falling back to older candidates when one
 is unavailable or empty. A server without that feature keeps the historical
 mixed Chats view and hides Drafts. Delete is explicit and permanent when
-permitted; closing this panel never deletes a draft or any other session. When the server
-advertises authenticated bounded storage health or either maintenance operation, a fifth
-**Maintenance** tab appears. Its status view shows current/reclaimable availability,
-aggregate bytes/files/formats/kinds/corruption, effective retention policy, sweep timing,
-active-job state, and last failure without session IDs, owners, paths, or content.
+permitted; closing this panel never deletes a draft or any other session. When the server advertises authenticated bounded storage health or cleanup, a fifth
+**Maintenance** tab appears. Its status view shows current availability,
+aggregate bytes/files/kinds/corruption, effective retention policy, sweep timing,
+active cleanup state, and the last failure without session IDs, owners, paths, or content.
 
-The two actions are deliberately separate and independently capability-gated. **`o` Optimize
-storage** starts with a read-only v1/v2/invalid/skipped and byte estimate, including required
-temporary space, and states that every session is preserved. Applying starts a durable bounded
-job; its screen supports status, cancel, and resume and shows progress plus bounded sanitized
-per-item failures. **`x` Clean up sessions** is destructive: its read-only plan partitions
-eligible and protected main/child/scheduled/unknown/live/awaiting rows, keeps unknown protected
-by default, and requires typing `CLEAN UP`. The single-row `y`/`enter` delete consent is inert in
-this bulk form. Apply-time stale/skipped/failed counts remain visible; retry begins a fresh dry
-run against the current generation.
+**`x` Clean up sessions** opens a destructive read-only plan. The plan partitions
+eligible and protected main/child/scheduled/unknown/live/awaiting rows, keeps unknown
+protected by default, and requires typing `CLEAN UP`. The single-row `y`/`enter`
+delete consent is inert in this bulk form. Apply-time stale/skipped/failed counts
+remain visible; retry begins a fresh dry run against the current generation.
 
-Closing the panel never cancels a maintenance job. Reopening refetches the server-owned durable
-handle and progress. Explicit cancellation stops future items; completed migrations or deletions
-stay committed. Older or unsupported servers hide unavailable actions rather than showing zero
-impact. The same inventory is
+Closing the panel never cancels a cleanup job. Reopening refetches its status.
+Explicit cancellation stops future deletions; completed deletions stay committed.
+Older or unsupported servers hide cleanup rather than showing zero impact. The same inventory is
 the initial view for `mecatui sessions` and `mecatui connect ADDRESS sessions`;
 those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,
@@ -1728,7 +1711,9 @@ one **`Legacy session — inspect only`**. ADR 0291 removed writable legacy adop
 there is no preflight/adopt action and no way to supply a replacement workspace or
 placement authority.
 `tab` switches tabs; the
-search box filters the current tab. Search matches the title, full session ID,
+search box filters the current tab. The remappable `Up` and `Down` actions move
+one session at a time, while `ScrollU` and `ScrollD` move by a physical page.
+Search matches the title, full session ID,
 its terminal-safe short handle, model, bounded placement label, and the available
 relationship metadata (parent/call, schedule/origin, team/member). This keeps
 scheduled fires and delegation children discoverable without making their IDs
@@ -1751,8 +1736,7 @@ a team member row also identifies its member. The handle is the same fixed
 12-column escaped-prefix literal as the header (no `#`): safe `[A-Za-z0-9._-]`
 bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
 uppercase `%HH`, and only complete atoms that fit are retained. The full opaque ID remains
-what the client sends back to the
-server.
+what the client sends back to the server.
 
 Pressing `enter` follows server-authored capabilities. A public Chat is
 **Continue**: mecatui first loads the authoritative snapshot-derived
@@ -1903,6 +1887,14 @@ stays context-isolated):
     to its roster, then closes. The **default tab is context-sensitive** (precedence:
     team live → Teams; parallel live → Parallel; subagents ran → Subagents; parallel ran →
     Parallel; team ran → Teams). `/team` opens the same overlay pinned to the Teams tab.
+
+  Delegation model lines remain compact. A routing fallback can add one candidate line with
+  its confidence and threshold comparison while `model:` continues to name the model that
+  actually ran. Expanded Subagent cards and focused rows in all three F6 tabs show the
+  configured backend and classifier, candidate, actual model, final reason, threshold, and
+  breaker miss snapshot. Missing LLM confidence reads `unavailable`; an explicit zero Jev
+  threshold reads `disabled (0.00)`. Historical events without a routing decision retain
+  the previous model label without inferred evidence.
 
   A subagent that ended via a non-`end_turn` terminal renders a sensible label — the
   newer Subagent/Team stop reasons (`budget` → "budget", `structured_output` → "schema",
@@ -2317,7 +2309,7 @@ task test:golden     # go test ./cmd/mecatui/ui -update, then re-run
 
 ## See also
 
-- [User documentation](https://mecatl.dev/docs/) — the `mecated` deployment guide, settings, and client reference.
+- [User documentation](../user-docs/intro.md) — the `mecated` deployment guide, settings, and client reference.
 - [Architecture guide](architecture.md) — the event stream and gRPC `Converse` surface this client renders.
 - [UX discoverability design](adr/0025-ux-discoverability.md) — the rationale behind the capability-wiring approach this UI takes.
 - [Clipboard image paste design](adr/0026-clipboard-image-paste.md) — the non-obvious decisions behind `ctrl+v`.

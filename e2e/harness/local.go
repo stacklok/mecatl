@@ -413,8 +413,8 @@ func (l *Local) MetricsURL() string     { return "http://" + l.metricsAddr + "/m
 func (l *Local) IsLocal() bool          { return true }
 
 // HTTPAddr is the host:port the daemon's HTTP/SSE listener is bound to (the
-// --http-addr it was spawned with). The HTTP approve client (ApproveOverHTTP)
-// posts to it; a shared-store second spawn exposes ITS OWN listener here.
+// --http-addr it was spawned with). Exact-run controls and durable event replay
+// use it; a shared-store second spawn exposes ITS OWN listener here.
 func (l *Local) HTTPAddr() string { return l.httpAddr }
 
 func (l *Local) StateDir(kind StateKind) string {

@@ -366,7 +366,7 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
 		attemptRepository: memattempt.New(wallclock.Clock{}), automaticAdmissionLedger: ledger, learningSourceStore: sourceStore,
 	}
-	admission := newLearningAdmission(1)
+	admission := newLearningAdmissionGate(1)
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
 	t.Cleanup(coordinator.Close)
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
@@ -473,9 +473,7 @@ func TestNonLaunchReflectionDoesNotReadLaunchProjectMemory(t *testing.T) {
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{})
 	t.Cleanup(coordinator.Close)
 	project := memmemory.New()
-	if err := project.RememberEntry(context.Background(), tool.MemoryEntry{Key: "project/launch", Value: "launch-only"}); err != nil {
-		t.Fatal(err)
-	}
+	rememberProfile(context.Background(), t, project, tool.MemoryEntry{Key: "project/launch", Value: "launch-only"})
 	inputs := make(chan learning.Input, 1)
 	observer := &reflectionObserver{
 		coordinator: coordinator, reflector: captureReflectionInput{input: inputs}, repository: memproposal.New(),

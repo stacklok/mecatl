@@ -111,14 +111,20 @@ func TestPaletteOpensOnSlash(t *testing.T) {
 		t.Fatalf("filtered = %d, want 10 (7 built-ins + 3 workspace)", len(m.palette.filtered))
 	}
 	view := m.View().Content
-	if !strings.Contains(view, "/fix") || !strings.Contains(view, "fix a failing test") {
-		t.Fatalf("palette view missing command name/description:\n%s", view)
-	}
-	// Built-ins lead and render too.
+	// Built-ins lead and render first.
 	if !strings.Contains(view, "/clear") || !strings.Contains(view, "/help") ||
-		!strings.Contains(view, "/quit") || strings.Contains(view, "/exit") ||
-		!strings.Contains(view, "/diagnostics") || !strings.Contains(view, "send a concise client and server diagnostics report") {
+		!strings.Contains(view, "/quit") || strings.Contains(view, "/exit") {
 		t.Fatalf("palette built-in visibility is wrong (want /quit but no /exit):\n%s", view)
+	}
+	if got := m.palette.filtered[6]; got.Name != "diagnostics" || got.Description != "send a concise client and server diagnostics report" {
+		t.Fatalf("diagnostics command changed: %+v", got)
+	}
+	for range 7 {
+		m.paletteMoveDown()
+	}
+	view = m.View().Content
+	if !strings.Contains(view, "/fix") || !strings.Contains(view, "fix a failing test") {
+		t.Fatalf("palette view missing revealed workspace command name/description:\n%s", view)
 	}
 }
 
@@ -245,8 +251,8 @@ func TestPaletteNavigateAndComplete(t *testing.T) {
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
-	if m.palette.cursor != 8 {
-		t.Fatalf("cursor = %d, want 8 after 8×↓", m.palette.cursor)
+	if m.palette.list.Cursor() != 8 {
+		t.Fatalf("cursor = %d, want 8 after 8×↓", m.palette.list.Cursor())
 	}
 	if m.palette.filtered[8].Name != "review" || m.palette.filtered[8].Builtin {
 		t.Fatalf("row 8 = %+v, want workspace 'review'", m.palette.filtered[8])
@@ -273,8 +279,8 @@ func TestPaletteCompleteWorkspaceWithTab(t *testing.T) {
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
-	if m.palette.filtered[m.palette.cursor].Name != "fix" {
-		t.Fatalf("selected = %q, want 'fix'", m.palette.filtered[m.palette.cursor].Name)
+	if m.palette.selected().Name != "fix" {
+		t.Fatalf("selected = %q, want 'fix'", m.palette.selected().Name)
 	}
 
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -294,7 +300,7 @@ func TestPaletteCompleteTitleForArguments(t *testing.T) {
 		if row.Name != "title" {
 			continue
 		}
-		m.palette.cursor = i
+		m.palette.list.SetCursor(i)
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		m = mm.(Model)
 		if got := m.prompt.Value(); got != "/title " {

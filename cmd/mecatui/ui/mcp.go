@@ -9,12 +9,37 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 func (m Model) runMCP() (tea.Model, tea.Cmd)          { return m.openMCP(mcpPanel) }
 func (m Model) runMCPResources() (tea.Model, tea.Cmd) { return m.openMCP(mcpResources) }
 func (m Model) runMCPPrompts() (tea.Model, tea.Cmd)   { return m.openMCP(mcpPrompts) }
+
+func (m Model) runMCPRefresh() (tea.Model, tea.Cmd) {
+	direct := m.caps.MCPRefresh
+	broker := m.caps.WorkspaceEnrollment
+	if direct == broker {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh is unavailable for this server mode")
+		return m, nil
+	}
+	if broker {
+		if m.deps.WorkspaceEnrollment == nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh collaborator is unavailable")
+			return m, nil
+		}
+		return m.runToolsConnect()
+	}
+	refresher, ok := m.deps.MCP.(client.MCPRefresher)
+	if !ok || refresher == nil || m.sessionID == "" || m.phase != phaseIdle {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh is available only for an idle active session")
+		return m, nil
+	}
+	m.statusMsg = m.deps.Theme.Style("muted").Render("refreshing MCP tools…")
+	m.mcpRefreshRequestToken++
+	return m, client.RefreshMcpSourcesCmd(m.deps.Ctx, refresher, m.sessionID, m.mcpRefreshRequestToken)
+}
 
 // openMCP opens the selected MCP surface and starts its initial RPC.
 func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
@@ -81,10 +106,13 @@ type mcpState struct {
 	errCls  client.MCPErrorClass
 
 	// Inventory panel.
-	sources    []client.MCPSource
-	groups     []string // ToolHive groups (best-effort; see groupsErr)
-	groupsErr  bool     // the groups fetch failed — degrade quietly, panel still works
-	groupsDone bool     // a groups result (success or error) has arrived
+	sources     []client.MCPSource
+	revision    uint64
+	stale       bool
+	reconciling bool
+	groups      []string // ToolHive groups (best-effort; see groupsErr)
+	groupsErr   bool     // the groups fetch failed — degrade quietly, panel still works
+	groupsDone  bool     // a groups result (success or error) has arrived
 
 	// Broker-only panel state. It is intentionally separate from direct MCP sources:
 	// broker capability must never trigger direct source/resource/prompt/group RPCs.
@@ -472,6 +500,9 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 			s.refreshed = true // panel now shows live-re-probed state, not the startup snapshot
 		}
 		s.sources = msg.Sources
+		s.revision = msg.Revision
+		s.stale = msg.Stale
+		s.reconciling = msg.Reconciling
 		return nil, true, false
 	case client.MCPGroupsMsg:
 		s.groups = msg.Groups
@@ -677,18 +708,18 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk he
 			state = "disabled"
 		}
 		head := fmt.Sprintf("%s  [%s]  %s",
-			sanitizeTerminal(s.Name), sanitizeTerminal(s.Kind), state)
+			terminaltext.Sanitize(s.Name), terminaltext.Sanitize(s.Kind), state)
 		if s.Group != "" {
-			head += "  group=" + sanitizeTerminal(s.Group)
+			head += "  group=" + terminaltext.Sanitize(s.Group)
 		}
 		b.WriteString(renderMCPInventoryRow(th, "toolName", head, width) + "\n")
 		for _, srv := range s.Servers {
 			line := fmt.Sprintf("  • %s  %s  %s",
-				sanitizeTerminal(srv.Name), sanitizeTerminal(srv.Transport), sanitizeTerminal(srv.URL))
+				terminaltext.Sanitize(srv.Name), terminaltext.Sanitize(srv.Transport), terminaltext.Sanitize(srv.URL))
 			b.WriteString(renderMCPInventoryRow(th, "toolArgs", line, width) + "\n")
 		}
 		for _, d := range s.Diagnostics {
-			b.WriteString(renderMCPInventoryRow(th, "errorText", "  ! "+sanitizeTerminal(d), width) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "errorText", "  ! "+terminaltext.Sanitize(d), width) + "\n")
 		}
 	}
 	b.WriteString(renderGroupsLine(th, st, width))
@@ -727,7 +758,7 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 			if row.CatalogueState != "declared" && row.CatalogueState != "discovered" {
 				count = "—"
 			}
-			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s", sanitizeTerminal(row.Name), catalogue), width) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s", terminaltext.Sanitize(row.Name), catalogue), width) + "\n")
 			b.WriteString(renderMCPInventoryRow(th, "toolArgs", "  "+count+" tools", width) + "\n")
 		}
 		if st.inventory.Truncated {
@@ -783,21 +814,22 @@ func brokerCatalogueLabel(state string) string {
 	}
 }
 
-// mcpPanelFooter is the panel's footer hint. Before any manual refresh it carries
-// the startup-snapshot caveat; after a successful re-probe it reads "updated" so
-// the user knows the panel reflects LIVE source status. Both forms advertise the
-// r-refresh and esc-close keys, sourced from the LIVE Refresh/Close markings
-// (issue #457). No wall-clock — the wording is state-driven so the View stays
-// golden-stable.
+// mcpPanelFooter reports cached reconciler status. The r key reloads that cache;
+// explicit direct/broker mutation is the separate /mcp-refresh command.
 func mcpPanelFooter(st mcpState, hk helpKeys) string {
-	refreshClose := hk.refresh + " refresh · " + hk.closeOnly + " close"
+	refreshClose := hk.refresh + " reload status · " + hk.closeOnly + " close"
+	prefix := fmt.Sprintf("revision %d · cached", st.revision)
 	switch {
 	case st.refreshing:
-		return "refreshing… · " + refreshClose
+		return "reloading status… · " + refreshClose
+	case st.reconciling:
+		return prefix + " · reconciling… · " + refreshClose
+	case st.stale:
+		return prefix + " · stale · " + refreshClose
 	case st.refreshed:
-		return "updated — live MCP source status · " + refreshClose
+		return prefix + " · updated · " + refreshClose
 	default:
-		return "snapshot from mecated startup — servers started later won't appear · " + refreshClose
+		return prefix + " · " + refreshClose
 	}
 }
 
@@ -819,7 +851,7 @@ func renderGroupsLine(th theme.Theme, st mcpState, widths ...int) string {
 	}
 	clean := make([]string, len(st.groups))
 	for i, g := range st.groups {
-		clean[i] = sanitizeTerminal(g)
+		clean[i] = terminaltext.Sanitize(g)
 	}
 	return "\n" + renderMCPInventoryRow(th, "toolName", "ToolHive groups: "+strings.Join(clean, ", "), width) + "\n"
 }
@@ -838,7 +870,7 @@ func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, h
 		if label == "" {
 			label = r.URI
 		}
-		line := fmt.Sprintf("%s  %s", sanitizeTerminal(label), sanitizeTerminal(r.Server))
+		line := fmt.Sprintf("%s  %s", terminaltext.Sanitize(label), terminaltext.Sanitize(r.Server))
 		b.WriteString(renderRow(th, line, i == st.resCursor, width) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" read · "+hk.closeOnly+" close"))
@@ -878,7 +910,7 @@ func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk 
 		if hasRequiredArgs(p) {
 			marker = "  (args)"
 		}
-		line := fmt.Sprintf("%s  %s%s", sanitizeTerminal(p.Name), sanitizeTerminal(p.Server), marker)
+		line := fmt.Sprintf("%s  %s%s", terminaltext.Sanitize(p.Name), terminaltext.Sanitize(p.Server), marker)
 		b.WriteString(renderRow(th, line, i == st.prCursor, width) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" select · "+hk.closeOnly+" close"))
@@ -889,13 +921,13 @@ func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk 
 func renderPromptArgs(th theme.Theme, st mcpState, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render(
-		"arguments for "+sanitizeTerminal(st.argPrompt.Name)) + "\n")
+		"arguments for "+terminaltext.Sanitize(st.argPrompt.Name)) + "\n")
 	if line := mcpStatusLine(th, st); line != "" {
 		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n")
 	for i, f := range st.argFields {
-		label := th.Style("toolName").Render(sanitizeTerminal(f.name))
+		label := th.Style("toolName").Render(terminaltext.Sanitize(f.name))
 		if i == st.argCursor {
 			label = "› " + label
 		} else {
@@ -930,7 +962,7 @@ func renderRow(th theme.Theme, text string, selected bool, widths ...int) string
 func mcpStatusLine(th theme.Theme, st mcpState) string {
 	if st.errMsg != "" {
 		label := st.errCls.String()
-		return th.Style("errorText").Render("✗ " + label + ": " + sanitizeTerminal(st.errMsg))
+		return th.Style("errorText").Render("✗ " + label + ": " + terminaltext.Sanitize(st.errMsg))
 	}
 	if st.loading {
 		return th.Style("muted").Render("loading…")

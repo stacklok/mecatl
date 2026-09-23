@@ -274,9 +274,10 @@ func (b *syncBuffer) String() string {
 // MECATUI_TEST_SIGNAL_HANDLER mode and blocks until the child prints its
 // "signal-handler ready" handshake (installed AFTER signal.Notify), so the
 // parent's signals always land on an installed handler — never raced by -race
-// startup latency. It returns the running cmd and a synchronized buffer that
-// accumulates the child's merged output from the handshake onward.
-func startSignalChild(t *testing.T, mode string) (*exec.Cmd, *syncBuffer) {
+// startup latency. It returns the running cmd, a synchronized buffer that
+// accumulates the child's merged output from the handshake onward, and a channel
+// closed once that output has been fully drained.
+func startSignalChild(t *testing.T, mode string) (*exec.Cmd, *syncBuffer, <-chan struct{}) {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -318,10 +319,12 @@ func startSignalChild(t *testing.T, mode string) (*exec.Cmd, *syncBuffer) {
 		}
 	}
 	// Keep draining the pipe into out for the rest of the child's life.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		_, _ = io.Copy(out, pr)
 	}()
-	return cmd, out
+	return cmd, out, drained
 }
 
 // TestSignalChildHarness is a no-op in the parent; TestMain routes the child
@@ -333,7 +336,7 @@ func TestSignalChildHarness(*testing.T) {}
 // TestDoubleCtrlCForceExit spawns a child process with
 // MECATUI_TEST_SIGNAL_HANDLER=second, sends two SIGINTs, and asserts exit code 130.
 func TestDoubleCtrlCForceExit(t *testing.T) {
-	cmd, out := startSignalChild(t, "second")
+	cmd, out, drained := startSignalChild(t, "second")
 
 	// First SIGINT — the child goroutine prints the graceful-shutdown line.
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
@@ -359,13 +362,14 @@ func TestDoubleCtrlCForceExit(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 130 {
 		t.Fatalf("expected exit code 130, got %v (output: %q)", err, out.String())
 	}
+	<-drained
 }
 
 // TestSingleSignalGracefulExit spawns a child with
 // MECATUI_TEST_SIGNAL_HANDLER=first, sends one SIGINT, and asserts exit 0 with the
 // graceful-shutdown message on stderr.
 func TestSingleSignalGracefulExit(t *testing.T) {
-	cmd, out := startSignalChild(t, "first")
+	cmd, out, drained := startSignalChild(t, "first")
 
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
 		t.Fatalf("signal: %v", err)
@@ -373,6 +377,12 @@ func TestSingleSignalGracefulExit(t *testing.T) {
 
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("expected exit 0, got %v (output: %q)", err, out.String())
+	}
+
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("child output did not drain after exit: %q", out.String())
 	}
 
 	if !strings.Contains(out.String(), "shutting down gracefully") {

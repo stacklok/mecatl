@@ -8,9 +8,12 @@
 
 **Follow-on:** return to the [reading map](../READING.md) and choose another topic branch. **Related:** [context & compaction](context-and-compaction.md) covers per-run context management, which is independent of memory.
 
-`tool.MemoryStore` (`RememberEntry`/`Recall`/`List`/`Forget`/`Index`/`Search`) is
-the seam for conservative, **per-project** memory (every implementation must pass
-the shared `engine/adapter/memconformance` conformance suite). The file-backed
+`tool.MemoryStore` (`Remember`/`Inspect`/`Recall`/`List`/`Forget`/`Index`/
+`Search`/`Undo`) is the mandatory lifecycle/CAS seam for conservative,
+**per-project** memory (every implementation must pass the shared
+`engine/adapter/memconformance` conformance suite). Remember is create-only for an
+absent expected state or an exact opaque-version update; Forget and Undo also
+require the exact current version. The file-backed
 `internal/adapter/memory` persists entries scoped to a project directory and exposes them to
 the model as the **Remember**, **Recall**, and **SearchMemory** tools (opt-in via
 `memory.Register`, `--memory-dir`). `internal/adapter/dream` supplies both automatic and
@@ -29,8 +32,8 @@ resets on restart. Plans bind the exact inspected lifecycle versions.
 **Automatic maintenance** remains exact-duplicate-only. It requires the local store's internal
 atomic duplicate-retirement operation, compares the survivor and source versions, and
 requires byte-identical active value and description. One source is tombstoned per transaction,
-the survivor is never rewritten, lifecycle history is retained, and base/convergence-only
-remote stores skip application. `--memory-consolidate-interval` and
+the survivor is never rewritten, lifecycle history is retained, and stores without
+the separate atomic duplicate-retirement operation skip application. `--memory-consolidate-interval` and
 `--user-model-consolidate-interval` remain separate opt-in schedules and default to zero.
 Periodic diagnostics contain counts only.
 
@@ -80,19 +83,19 @@ authenticated caller. A multi-tenant deployment must isolate user-model stores
 per-principal user-model isolation. Exact detail is exposed only through the same
 already-authorized user-model surface and does not widen its callers.
 
-`tool.MemoryLifecycleStore` is an additive capability beside the unchanged six-method
-`tool.MemoryStore`. Revisions have opaque versions and active/superseded/deleted
-states. Remember with no expected version remains unconditional last-write-wins; a
-non-empty expected_version enables CAS. Forget and Undo require it: copy the opaque current token verbatim from an exact Recall result, Inspect result, or mutation receipt in the same scope. If none is available or it may be stale, use InspectMemory for project scope or InspectUserMemory for user/user-model scope first. Never guess or interpret. Forget appends a tombstone, and Undo appends compensation. The local adapter lazily materializes legacy `memory.json`
-entries and commits current state plus history under the same flock and atomic rename
-(no sidecar transaction). Driver lifecycle RPCs are additive and advertised through
-a one-time capability negotiation bounded by a fixed five-second ceiling (shorter caller
-deadlines still win); old drivers return a base-only client, retain all
-six ordinary operations and profile loading through `List`, and do not register
-Inspect/Forget/Undo. Both reference stores retain 64 revisions per key. The local store also
-bounds fields to 64 KiB and caps the store at 4096 keys / 8 MiB. Retention records when the
-oldest predecessor was truncated, so Undo stops without mutation at that boundary instead of
-mistaking it for proof that the retained target created the key.
+`tool.MemoryStore` is the mandatory lifecycle/CAS contract. Revisions have opaque
+versions and active/superseded/deleted states. Remember without an expected
+version is create-only; updates require the exact current version. Forget and Undo
+also require the exact current version: copy the opaque token verbatim from an
+exact Recall result, Inspect result, or mutation receipt in the same scope. Never
+guess or interpret it. Forget appends a tombstone, and Undo appends compensation.
+The local adapter stores current state plus history in `memory.json` under the
+same `memory.lock` flock and atomic rename (no sidecar transaction). An
+incompatible document at `memory.json` fails validation and remains unchanged. Both reference stores
+retain 64 revisions per key. The local store also bounds fields to 64 KiB and caps
+the store at 4096 keys / 8 MiB. Retention records when the oldest predecessor was
+truncated, so Undo stops without mutation at that boundary instead of mistaking
+it for proof that the retained target created the key.
 
 Remember is floor-Allow as before; Recall/Search/Inspect/Undo are floor-Allow and
 Forget is floor-Ask. All are config-overridable. Completed-trajectory reflection is

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/gofrs/flock"
@@ -175,6 +177,107 @@ func resolveDiagLogPath(env xdgconfig.ResolveEnv) string {
 	return filepath.Join(base, mecatuiLogSubpath)
 }
 
+// diagLogSink is the resolved destination for the embedded server's operational
+// diagnostics. Path is the file that was ACTUALLY opened (empty when the sink
+// discards), so the caller never has to re-derive it and cannot report a path
+// that differs from the one being written — including under --diagnostics-log
+// and under the per-process fallback below.
+type diagLogSink struct {
+	Writer io.Writer
+	Closer io.Closer
+	// Path is the opened log file, or "" when diagnostics are discarded.
+	Path string
+	// Contended reports that another live process held the intended log's
+	// sibling lock, so Path (when non-empty) is the per-process fallback. It is
+	// the signal the caller needs to tell the operator that this instance's
+	// diagnostics are NOT in the shared log.
+	Contended bool
+}
+
+// errDiagLogLocked reports that another live process holds the sibling lock of
+// the log we tried to open. It is deliberately distinct from every other open
+// failure: lock contention is the one case that EARNS a per-process fallback,
+// while a symlinked sentinel, a failed retention, or a non-regular path must
+// still fail closed to io.Discard.
+var errDiagLogLocked = errors.New("diagnostics log is locked by another process")
+
+// fallbackDiagLogPath derives the per-process sibling of path by inserting
+// ".<pid>" before the extension: <dir>/mecatui.log ⇒ <dir>/mecatui.<pid>.log.
+// The pid is the discriminator because a diagnostics log belongs to exactly one
+// mecatui process for that process's lifetime, and flock is released by the
+// kernel when that process exits, so a pid-named sibling is never orphaned by a
+// crash. Two writers inside ONE process (only reachable from tests) still
+// collide on the same sibling; the second falls through to io.Discard, which is
+// correct — a single process has a single diagnostics stream.
+func fallbackDiagLogPath(path string, pid int) string {
+	ext := filepath.Ext(path)
+	stem := strings.TrimSuffix(filepath.Base(path), ext)
+	return filepath.Join(filepath.Dir(path), stem+"."+strconv.Itoa(pid)+ext)
+}
+
+// openLockedDiagLog takes path's stable sibling lock, applies retention once,
+// and opens path for APPEND. The lock is never renamed and is held until the
+// returned writer closes, so a concurrent process can never retain an inode
+// this one is still appending to.
+//
+// It returns errDiagLogLocked when the lock is held elsewhere, and the
+// underlying error for every other failure, so the caller can fall back only in
+// the former case.
+func openLockedDiagLog(path string, retain func(string) error) (*lockedDiagLog, error) {
+	lock := flock.New(path+".lock",
+		flock.SetFlag(os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW),
+		flock.SetPermissions(0o600),
+	)
+	locked, err := lock.TryLock()
+	if err != nil || !locked {
+		_ = lock.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errDiagLogLocked
+	}
+	if err := retain(path); err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	f, _, err := openRegularNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	return &lockedDiagLog{file: f, lock: lock}, nil
+}
+
+// diagLogContentionNotice returns the one-line operator notice owed for a
+// diagnostics sink, or "" when none is. It exists because lock contention is the
+// ONE sink outcome an operator cannot discover from the log itself: anything we
+// would write about it lands in another instance's file or nowhere at all.
+//
+// It is a pure helper so the wording and the quiet/contended matrix are
+// table-testable without standing up an embedded server (the guardrailsPostureLine
+// idiom). --quiet returns "": that operator asked for no diagnostics, and a
+// stderr line is still a diagnostic.
+func diagLogContentionNotice(sink diagLogSink, quiet bool) string {
+	if quiet || !sink.Contended {
+		return ""
+	}
+	if sink.Path != "" {
+		return "mecatui: another mecatui holds the shared diagnostics log; this instance logs to " + sink.Path
+	}
+	return "mecatui: another mecatui holds the shared diagnostics log and the per-process fallback could not be opened; diagnostics are disabled for this instance"
+}
+
+// openDiagLogWriterAndReport opens the diagnostics sink and immediately reports
+// contention while stderr is still plain terminal output. Reporting here keeps
+// the fallback discoverable even when later startup work blocks or fails.
+func openDiagLogWriterAndReport(env xdgconfig.ResolveEnv, quiet bool, overridePath string, stderr io.Writer) diagLogSink {
+	sink := openDiagLogWriter(env, quiet, overridePath)
+	if notice := diagLogContentionNotice(sink, quiet); notice != "" {
+		_, _ = io.WriteString(stderr, notice+"\n")
+	}
+	return sink
+}
+
 // openDiagLogWriter resolves the destination for the embedded server's operational
 // diagnostics. The contract (and the render-leak fix it exists for):
 //
@@ -184,57 +287,57 @@ func resolveDiagLogPath(env xdgconfig.ResolveEnv) string {
 //     for APPEND, creating the dir 0700. Before opening, an existing regular file
 //     is atomically reduced once to a recent 10 MiB tail; symlinks and non-regular
 //     paths fail closed;
-//   - on ANY failure (no resolvable path, mkdir/retention/open error) ⇒ io.Discard,
-//     so the TUI never crashes on a diagnostics-sink problem.
+//   - when ANOTHER LIVE mecatui holds that log's lock, open the per-process
+//     sibling <stem>.<pid>.log instead and mark the sink Contended. A concurrent
+//     instance therefore keeps a recoverable diagnostics stream rather than
+//     silently discarding it (the shared log is single-writer because the
+//     retention step rewrites the file);
+//   - on ANY other failure (no resolvable path, mkdir/retention/open error, a
+//     symlinked sentinel, or a fallback that cannot be opened either) ⇒
+//     io.Discard, so the TUI never crashes on a diagnostics-sink problem.
 //
 // It NEVER returns os.Stderr/os.Stdout: a diagnostics line on either corrupts the
-// Bubble Tea alt-screen (the bug this whole path fixes). The returned closer is
-// non-nil only when a real file was opened (so the caller closes it on shutdown);
-// for the discard paths it is a no-op closer. The bool reports whether a file was
-// actually opened (logged once by the caller, off the TUI render path).
-func openDiagLogWriter(env xdgconfig.ResolveEnv, quiet bool, overridePath string) (w io.Writer, closer io.Closer, toFile bool) {
+// Bubble Tea alt-screen (the bug this whole path fixes). The returned Closer is a
+// real file closer only when a file was opened (the caller closes it on
+// shutdown); for the discard paths it is a no-op closer.
+func openDiagLogWriter(env xdgconfig.ResolveEnv, quiet bool, overridePath string) diagLogSink {
 	return openDiagLogWriterWithRetainer(env, quiet, overridePath, retainDiagLog)
 }
 
-func openDiagLogWriterWithRetainer(env xdgconfig.ResolveEnv, quiet bool, overridePath string, retain func(string) error) (w io.Writer, closer io.Closer, toFile bool) {
-	noop := io.NopCloser(nil)
+func openDiagLogWriterWithRetainer(env xdgconfig.ResolveEnv, quiet bool, overridePath string, retain func(string) error) diagLogSink {
+	discard := diagLogSink{Writer: io.Discard, Closer: io.NopCloser(nil)}
 	if quiet {
-		return io.Discard, noop, false
+		return discard
 	}
 	path := overridePath
 	if path == "" {
 		path = resolveDiagLogPath(env)
 	}
 	if path == "" {
-		return io.Discard, noop, false
+		return discard
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { //nolint:gosec // operator-selected diagnostics destination.
-		return io.Discard, noop, false
+		return discard
 	}
 
-	// A stable sibling lock is never renamed and remains held until the returned
-	// writer closes. A second mecatui therefore fails safely instead of retaining
-	// an inode to which the first process is still appending.
-	lock := flock.New(path+".lock",
-		flock.SetFlag(os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW),
-		flock.SetPermissions(0o600),
-	)
-	locked, err := lock.TryLock()
-	if err != nil || !locked {
-		_ = lock.Close()
-		return io.Discard, noop, false
+	writer, err := openLockedDiagLog(path, retain)
+	if err == nil {
+		return diagLogSink{Writer: writer, Closer: writer, Path: path}
 	}
-	fail := func() (io.Writer, io.Closer, bool) {
-		_ = lock.Close()
-		return io.Discard, noop, false
+	if !errors.Is(err, errDiagLogLocked) {
+		return discard
 	}
-	if err := retain(path); err != nil {
-		return fail()
-	}
-	f, _, err := openRegularNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+
+	// Another live instance owns the shared log. Its diagnostics are ITS own;
+	// ours go to a per-process sibling so they are not lost with no trace. A
+	// fallback that cannot be opened either still fails closed, but reports the
+	// contention so the caller can say so out loud.
+	contended := diagLogSink{Writer: io.Discard, Closer: io.NopCloser(nil), Contended: true}
+	fallback := fallbackDiagLogPath(path, os.Getpid())
+	writer, err = openLockedDiagLog(fallback, retain)
 	if err != nil {
-		return fail()
+		return contended
 	}
-	writer := &lockedDiagLog{file: f, lock: lock}
-	return writer, writer, true
+	contended.Writer, contended.Closer, contended.Path = writer, writer, fallback
+	return contended
 }

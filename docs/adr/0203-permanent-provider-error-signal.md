@@ -1,9 +1,9 @@
 # ADR 0203 — Neutral permanent-provider-error signal
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-08-05
 - Scope: `engine/port.PermanentError` interface → `session.ResultPayload.Permanent` → `EvRecoverNotice` advisory
-- Superseded by: ADR 0295's HTTP-rejection display exclusion only
+- Superseded by: [ADR 0239](./0239-semantic-stream-retry.md) for typed retry semantics
 
 ## Context
 
@@ -52,7 +52,7 @@ permanently-failed session is recovered for re-entry.
 
 The pieces:
 
-1. **`engine/port/llm.go` (`PermanentError`):** a new interface with a single `Permanent()
+1. **[`PermanentError` in `engine/port/llm.go` at the decision commit](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/engine/port/llm.go):** a new interface with a single `Permanent()
    bool` method, documented as fail-open (a nil target / non-implementing error is NOT
    permanent). It carries no provider detail — the adapter's `Error()` string is the
    human-readable surface.
@@ -132,7 +132,7 @@ The pieces:
 
 ## See also
 
-- [docs/design/IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) — dense
+- [docs/design/IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — dense
   mechanics ("Permanent provider-error signal" section).
 - [docs/architecture/agent-loop.md](../architecture/agent-loop.md) — the `result` event
   now carries `Permanent`.

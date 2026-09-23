@@ -51,7 +51,14 @@ each setting instead of pasting the manifest):
    `assistant:write` if not already present) — `groups:history` covers
    private channels. Also add `users:read` **and** `users:read.email`
    together — Slack requires both to return the `email` field from
-   `users.info`, which the access-control check below depends on.
+   `users.info`, which the access-control check below depends on. Add
+   `im:write` too — the manual-approval flow (see "Permission approvals"
+   below) opens a DM with `conversations.open` to deliver each ask.
+
+   If you already installed this app before #1397 (manual permission
+   approval) shipped, add `im:write` to the manifest and **reinstall the
+   app to your workspace** — Slack doesn't retroactively grant a new scope
+   to an existing install.
 5. **Features → Event Subscriptions → Subscribe to bot events**: add
    `app_home_opened`, `message.im`, `app_mention`, `message.channels`,
    `message.groups`, `agent_session_stopped` (Slack's native stop button —
@@ -81,7 +88,7 @@ task build
 ```
 
 Set a real provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
-`OPENROUTER_API_KEY`) in that shell first. See [Choose models and providers](https://mecatl.dev/docs/features/choose-models).
+`OPENROUTER_API_KEY`) in that shell first. See [Choose models and providers](../../../../user-docs/features/choose-models.md).
 
 ## 3. Configure and run the bot
 
@@ -131,17 +138,18 @@ command-execution access — see below.
 
 ## Security
 
-Every permission ask mecatl raises is auto-approved
-(`onPermissionAsk: () => "allow_once"` in `src/bridge.ts`) — there is no
-human-in-the-loop step before the model runs a shell command or edits a
-file on whatever host `mecated` runs on. That's a deliberate v1 choice
-(#882: "every demo run executes under an auto-approved posture so it never
-blocks on a human"), but it means **whoever can reach the bot can run
-commands unsupervised** — and "reach the bot" is broader than "the person
-who set it up": anyone who can DM it, or who shares a channel it's invited
-into, qualifies.
+Every permission ask mecatl raises is DM'd to the Slack user who started
+that run — see "Permission approvals" below — so a tool call the model
+wants to make (shell command, file edit, …) waits for that person's
+explicit Allow/Deny before it runs. This closes the original v1 gap (#882:
+"every demo run executes under an auto-approved posture") where **whoever
+could reach the bot could run commands unsupervised** — and "reach the
+bot" is broader than "the person who set it up": anyone who can DM it, or
+who shares a channel it's invited into, qualifies. Access control (below)
+still matters independently: it decides *who can start a run at all*, not
+just who approves what it wants to do once started.
 
-Three independent mitigations:
+Three independent mitigations, on top of the approval flow itself:
 
 - **Access control** (`src/access.ts`) — every message resolves the
   sender's Slack identity via `users.info` before it reaches the bridge,
@@ -190,10 +198,34 @@ Three independent mitigations:
   TypeScript SDK doesn't expose it as a per-call option yet (see the
   `TODO` in `src/bridge.ts`).
 
-None of these mitigations touch the auto-approve design itself — that
-trade-off stands as documented above and in `DESIGN.md`. They're
-independent controls: *who* can reach the bot, versus *what* mecatl will
-do once reached.
+These are independent controls: *who* can reach the bot at all, versus
+*what it's allowed to do once reached* (the approval flow above).
+
+## Permission approvals
+
+Every ordinary tool-permission ask mecatl raises is delivered as a DM
+(never posted where a whole channel could see or click it) to the Slack
+user who started that run — the run's Slack session status shows
+`suspended` while it waits. The DM carries the tool name, why it's being
+asked, and the requested arguments, with three buttons:
+
+- **Allow once** — approves just this call.
+- **Allow always (this session)** — approves this call and every
+  matching one for the rest of the mecatl session (the server's normal
+  `allow_always` semantics — the SDK's `run.resolveAsk` passes this
+  through unchanged, so it isn't bot-specific behavior).
+- **Deny** — rejects this call; the model sees the denial and can try a
+  different approach or explain why it couldn't proceed.
+
+Only the person who started the run can act on its buttons; anyone else
+clicking (structurally shouldn't happen, since the card is DM'd to one
+person) is ignored. If the run ends or the ask is otherwise retracted
+before anyone responds, the DM updates itself to say so and the buttons
+stop doing anything. There's no timeout — an unanswered ask just waits.
+
+Plan-approval asks (`PresentPlan`) are a separate SDK hook
+(`onPlanApproval`) this bot doesn't configure, so they aren't covered by
+this flow.
 
 ## 4. Verify it end to end
 
@@ -221,8 +253,9 @@ the event even arrived before the bridge runs anything. Run with
 
 ## What v1 does and doesn't do
 
-- Every permission ask mecatl raises is auto-approved — this bot is meant
-  for a trusted dev workspace, not unattended production use.
+- Every permission ask mecatl raises is DM'd to the run's authorized user
+  for an explicit Allow once / Allow always / Deny decision — see
+  "Permission approvals" above.
 - DM and channel: one `mecated` session per Slack thread
   (`channel:thread_ts`). A top-level DM starts a new session; a channel
   thread starts when the bot is `@mention`ed. Replies in either thread
@@ -240,7 +273,7 @@ the event even arrived before the bridge runs anything. Run with
   way the DM path was. See `DESIGN.md`.
 - Real token streaming (`chat.startStream`/`appendStream`/`stopStream`) and
   Slack's native stop button (`agent_session_stopped` → `run.cancel()`) are
-  both wired now. No approval UI yet. See `DESIGN.md` for why and what's next.
+  both wired. See `DESIGN.md` for why and what's next.
 - Built on raw Slack event handlers, not bolt-js's `Assistant` class — that
   class wraps a different, older Slack feature that never fires for this
   app's configuration. See `DESIGN.md` for the full story.

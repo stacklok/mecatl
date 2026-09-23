@@ -238,12 +238,8 @@ storage health/migration/cleanup namespaces.
 - AC4.3: The batch adds naming and discoverability only — no bespoke retry,
   pagination, cached state, or client-side maintenance job state machine.
   - verify: vitest:sdk/typescript/test/namespaces-ops.test.ts#dGhlIG9wZXJhdGlvbmFsIG5hbWVzcGFjZSBiYXRjaCBhZGRzIG5vIGJlc3Bva2Ugd2lyZSB0eXBlcw — `sdk/typescript/test/namespaces-ops.test.ts :: "the operational namespace batch adds no bespoke wire types"`
-- AC4.4: This batch made all 84 descriptor operations then present callable
-  through the public raw seam. [ADR-0347](../adr/0347-run-id-addressed-prompt-free-controls.md)
-  later added four run-control RPCs, so the current exact catalog proof covers
-  all 88; every non-team unary operation has a discoverable named
-  client/session namespace where #821 calls for one.
-  - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#YWxsIDg4IHJhdyBSUENzIGFyZSBjYWxsYWJsZSB0aHJvdWdoIHRoZSBwdWJsaWMgcmF3IHNlYW0 — `sdk/typescript/test/rpc-catalog.test.ts :: "all 88 raw RPCs are callable through the public raw seam"`
+- AC4.4: The current descriptor set exposes all 83 retained operations through the public raw seam; every non-team unary operation has a discoverable named client/session namespace where #821 calls for one.
+  - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#YWxsIDgzIHJhdyBSUENzIGFyZSBjYWxsYWJsZSB0aHJvdWdoIHRoZSBwdWJsaWMgcmF3IHNlYW0 — `sdk/typescript/test/rpc-catalog.test.ts :: "all 83 raw RPCs are callable through the public raw seam"`
 
 ---
 
@@ -543,7 +539,7 @@ ephemeral-token GitHub Packages publication, GitHub artifact attestation,
   npm-native `dist.attestations` does not exist on GitHub Packages. The publish
   job runs Node >= 22.14.0 with a pinned npm >= 11.5.1 and asserts that floor
   before publishing. No `--access` flag is used.
-  - verify: TestADR_0313_EphemeralJobTokenOnly
+  - verify: TestADR_0328_TrustedPublishingNoStoredCredentials
 - AC11.6: The SDK workflow's `push.tags` is exactly `['sdk/typescript/v*']` and
   the root workflow's is exactly `['v*']`; neither uses `**`. A documented
   matcher implementing GitHub's rule that `*` does not match `/` yields this
@@ -695,15 +691,15 @@ the only external state in the stack.
 - `TestADR_0304_ManualDispatchIsDryRunOnly`
 - `TestSDKTypescriptRelease_Scenario11_TagVersionParity`
 - `TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate`
-- `TestADR_0313_EphemeralJobTokenOnly`
+- `TestADR_0328_TrustedPublishingNoStoredCredentials`
 - `TestADR_0304_TagTriggerIsolation`
 - `TestSDKTypescriptRelease_Scenario11_WorkflowBounding`
 - `TestSDKTypescriptRelease_Scenario11_PackedLicenseProvenance`
 
-Two naming families are deliberate: `TestADR_0304_*` and `TestADR_0313_*` pin
+Two naming families are deliberate: `TestADR_0304_*` and `TestADR_0328_*` pin
 costly-to-reverse ADR decisions as durable invariants (the exact gRPC-only set,
-the plan-approval contract, tag/dispatch isolation, and ephemeral GitHub
-Packages authority), following the repository's existing `TestADR_NNNN_*`
+the plan-approval contract, tag/dispatch isolation, and trusted GitHub
+Packages publishing without stored credentials), following the repository's existing `TestADR_NNNN_*`
 convention; the
 `TestSDKTypescriptRelease_Scenario*` names are scenario parity guards that may
 be renamed with their scenario.

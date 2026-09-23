@@ -14,14 +14,13 @@ import (
 	"google.golang.org/grpc/connectivity"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -396,8 +395,6 @@ func TestBuildCatalogMemoryDriverRegistersTools(t *testing.T) {
 	}
 }
 
-type appBaseOnlyMemory struct{ tool.MemoryStore }
-
 type appBlockingMemoryCapabilities struct {
 	driverv1.UnimplementedMemoryStoreServiceServer
 }
@@ -436,13 +433,13 @@ func TestBuildCatalogMemoryCapabilityTimeoutLeavesNoCatalogOrConnection(t *testi
 	}
 }
 
-func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
+func TestBuildCatalogMemoryDriverIncludesMandatoryLifecycleTools(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := grpc.NewServer()
-	driverv1.RegisterMemoryStoreServiceServer(server, grpcdriver.NewMemoryStoreServer(appBaseOnlyMemory{memmemory.New()}))
+	driverv1.RegisterMemoryStoreServiceServer(server, grpcdriver.NewMemoryStoreServer(memmemory.New()))
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
 
@@ -453,18 +450,40 @@ func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeFn()
-	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName} {
+	for _, name := range []string{memory.SearchMemoryToolName, memory.RecallToolName, memory.RememberToolName, memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName} {
 		if _, ok := cat.Lookup(name); !ok {
-			t.Errorf("base catalog missing %q", name)
+			t.Errorf("catalog missing %q", name)
 		}
 	}
-	for _, name := range []string{memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName} {
-		if _, ok := cat.Lookup(name); ok {
-			t.Errorf("base-only catalog unexpectedly registered %q", name)
-		}
+	if assets.memStore == nil {
+		t.Fatal("memory store missing from catalog assets")
 	}
-	if _, ok := assets.memStore.(tool.MemoryLifecycleStore); ok {
-		t.Fatalf("base-only assets advertise lifecycle: %T", assets.memStore)
+}
+
+func TestRemoteOwnershipRequiresNegotiatedAtomicCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store port.SessionStore
+		want  bool
+	}{
+		{name: "disabled", store: plainSessionStore{inner: memstore.New()}},
+		{name: "enabled", store: memstore.New(), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := startSessionStoreDriver(t, tc.store)
+			store, _, closeFn, err := buildStore(Config{SessionStoreURL: target})
+			if err != nil {
+				t.Fatalf("buildStore: %v", err)
+			}
+			defer closeFn()
+			err = requireAtomicSessionCreate(Config{OwnershipEnforced: true}, store)
+			if tc.want && err != nil {
+				t.Fatalf("capable remote store rejected: %v", err)
+			}
+			if !tc.want && (err == nil || !strings.Contains(err.Error(), "atomic create")) {
+				t.Fatalf("incapable remote store error = %v, want atomic-create rejection", err)
+			}
+		})
 	}
 }
 

@@ -66,7 +66,14 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 	if err := s.cancelAndAwaitClearSource(ctx, source); err != nil {
 		return "", err
 	}
-	return s.createPlacedSuccessorLocked(ctx, req, false, true)
+	successor, err := s.createPlacedSuccessorLocked(ctx, req, false, true)
+	if err != nil {
+		return "", err
+	}
+	if s.cfg.SessionCleared != nil {
+		s.cfg.SessionCleared(source)
+	}
+	return successor, nil
 }
 
 // cancelAndAwaitClearSource captures and cancels the exact lifecycle registered

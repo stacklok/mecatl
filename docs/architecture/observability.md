@@ -165,11 +165,12 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   > survey](../perf-measurement-survey.md) (the technique reference behind that
   > decision).
 - **SessionStore** — `memstore` (default, in-memory), `jsonlstore`
-  (one atomically replaced v2 current snapshot at
-  `<dir>/sid-v1/<versioned-token>.session.json`, with readable historical v1
-  `.session.jsonl` snapshots plus unchanged append-only `.tools.jsonl` and
-  `.events.jsonl` sidecars), and `grpcdriver.SessionStore` (a **remote store
-  driver** — see below). The v2 envelope contains bounded inventory metadata ahead
+  (one atomically replaced current snapshot at
+  `<dir>/sid-v1/<versioned-token>.session.json`, with append-only `.tools.jsonl`
+  and `.events.jsonl` sidecars in that same family), and
+  `grpcdriver.SessionStore` (a **remote store driver** — see below). Distinct
+  root-level artifacts are invisible and left untouched. The current
+  envelope contains bounded inventory metadata ahead
   of the complete `sessnap` payload plus logical modification time. Jsonlstore also
   maintains an adapter-private, atomically replaced metadata catalog containing only
   the session-discovery projection—never messages, tool arguments, or event content.
@@ -179,13 +180,13 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   decodes at most the requested rows plus one lookahead; it does not traverse prior
   pages or open snapshot/transcript payloads. The optional
   `port.SessionStorageHealthProvider` uses that already-ready catalog plus cheap
-  file metadata to report aggregate bytes and format/kind/corruption counts. A
+  file metadata to report aggregate bytes and kind/corruption counts. A
   stale or absent index is `unavailable`, never a measured zero, and unsupported
-  backends do not advertise the management capability. Process-wide health,
-  migration, and cleanup are disabled unless composition has an explicit management
-  authority. Destructive migration/cleanup capability additionally requires a working
-  cross-process `port.SessionLease` for remotely reachable or multi-writer composition;
-  missing or stickily unsupported leasing suppresses both bits and mutations fail closed.
+  backends do not advertise the management capability. Process-wide health and
+  cleanup are disabled unless composition has an explicit management authority.
+  Destructive cleanup capability additionally requires a working cross-process
+  `port.SessionLease` for remotely reachable or multi-writer composition;
+  missing or stickily unsupported leasing suppresses the bit and mutations fail closed.
   The private embedded mecatui Unix-socket server is the sole explicit single-process
   exception: composition marks that proven posture, allowing process-local liveness plus
   family locks. Lease absence by itself never selects the exception. That embedded
@@ -194,19 +195,7 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   `storage_management.principals` issuer/subject pairs. Ordinary authenticated tenants,
   unlisted system principals, anonymous remote callers, and project/request-supplied
   identity data never grant authority, and denial occurs before backend inspection.
-  Authenticated migration
-  planning is a separate read-only scan that reports v1/v2/invalid/skipped family
-  counts, current/reclaimable bytes, and the largest one-family temporary-space
-  requirement. Its opaque plan binds the verified management caller and source
-  generation without writing. Apply creates a durable caller-bound job and processes
-  at most one bounded batch per call; cancel stops future families, while resume after
-  restart retains committed progress. Each family takes run-entry serialization and
-  the maintenance lease before the stable family flock, revalidates owner/kind/state/
-  liveness and source fingerprint, promotes one verified v2 snapshot, and removes v1
-  only after rereading that v2. Sidecars, complete sessnap bytes, unknown kind, owner,
-  and logical modification time are preserved. Public errors contain only stable
-  reason codes, bounded messages, and non-reversible item handles. The authenticated cleanup
-  API runs a non-destructive dry-run over the store-wide generation after the explicit
+  The authenticated cleanup API runs a non-destructive dry run over the store-wide generation after the explicit
   management-authority gate. On a shared store, lease status is sampled at the planning instant
   through sequential bounded trial acquire/immediate-release operations because the lease port has
   no inspect verb; apply makes no future-validity claim and reacquires/revalidates every candidate. It
@@ -221,18 +210,17 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   compares the exact durable metadata again, and keeps all exclusions held while
   deleting sidecars before the snapshot. Partial failures use stable sanitized codes and remain
   retryable; unsupported backends report unsupported, not zero impact. Shared health
-  tracks retention, migration, and cleanup independently, renders concurrent active
-  kinds with counts instead of last-writer-wins, reattaches durable running migration
-  truth on job inspection/resume, clears each terminal job independently, and retains
-  only stable sanitized last-failure text. Cursors retain neutral ordering and
+  tracks retention and cleanup independently, renders concurrent active kinds with
+  counts instead of last-writer-wins, clears each terminal job independently, and
+  retains only stable sanitized last-failure text. Cursors retain neutral ordering and
   bind the catalog fingerprint generation and ownership/filter scope; the backend
   token itself is issued and validated only by the pager. A stale, mismatched, or
   foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart
   rather than mixing generations or owner scopes. Ready-state inventory checks an
-  O(1) source stamp from the authoritative snapshot directories before reading the
+  O(1) source stamp from the authoritative `sid-v1` snapshot directory before reading the
   catalog; the catalog's private child directory keeps its own replacements out of
-  that stamp. Missing, corrupt, or stale catalogs rebuild from
-  v2 metadata headers or bounded v1 tail projections; a fresh directory fingerprint
+  that stamp. Missing, corrupt, or stale catalogs rebuild from current metadata
+  headers; a fresh directory fingerprint
   before and after rebuild detects concurrent and other-`Store` family changes instead
   of trusting process-local state. Catalog rebuild/publication uses a dedicated
   process mutex plus a stable cross-process catalog flock; it never holds a
@@ -245,20 +233,17 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   in global and owner-specific lexicographic indexes. Its pager performs one direct
   exclusive-cursor range read of at most the limit plus one lookahead and never loads
   snapshot blobs. Save and Delete atomically update the snapshot, index membership,
-  owner-scoped generations, and existing event/tool sidecar lifecycle. A Redis store
-  first opened with legacy snapshots but no derivative index reports metadata paging
-  unsupported instead of scanning transcript records per page.
-  For jsonlstore, a successful save lazily promotes only that
-  session; the verified v2 snapshot is authoritative while a v1 file coexists,
-  and first promotion preserves the v1 file's logical modification time and all
-  sidecar bytes. Save, Delete, verified legacy-family promotion/removal,
+  owner-scoped generations, and existing event/tool sidecar lifecycle. Redisstore
+  uses the canonical `mecatl:session:`, `mecatl:events:`, `mecatl:events-gen:`,
+  `mecatl:tools:`, metadata, lineage, and ledger keys. Incompatible values at
+  those keys fail validation; there is no inventory scan, adoption job, or
+  migration path.
+  For jsonlstore, Save, Delete,
   EventLog.Append, and ToolCall all take the same stable per-family flock identity;
   sidecar-first/snapshot-last deletion therefore cannot race a same-family append,
   while unrelated families proceed independently. Snapshot replacement holds that
   owner-only flock from inactive-temp recovery through same-directory write, file
-  sync, atomic rename, and directory sync. An existing canonical snapshot may retain
-  weaker-capability Save behavior, but the first Save of a root-level legacy family
-  fails before migration when directory sync is unavailable. EventLog strict append
+  sync, atomic rename, and directory sync. EventLog strict append
   requires both file and directory sync. ToolCall instead attempts every available sync
   and may leave an unsynced or partially synced best-effort audit record. Event and tool
   sidecars use the same
@@ -288,31 +273,23 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   Snapshot Save retains the weaker-capability behavior for an existing canonical family;
   EventLog append is unavailable without both file and directory sync, and Delete,
   retention, and destructive/move operations fail closed without directory sync.
-  ToolCall avoids forcing legacy migration on such a filesystem: it appends to the
-  readable sidecar or the side matching the authoritative snapshot, attempts every
-  available sync, and may leave an unsynced or partially synced best-effort record.
-  Sidecars opened for append and legacy files selected for migration are tightened
-  through validated no-follow descriptors to `0600`. Failures before rename preserve
-  the prior snapshot; a failure after rename
-  is loud while the new snapshot remains authoritative.
-  The logical session id is an opaque valid-UTF-8 string
-  stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename token is not
-  an operator API. The owner-only `sid-v1/` directory keeps canonical names
-  disjoint from legacy root-level names. Reads prefer verified v2, then canonical
-  v1, then an ownership-verified legacy family. A legacy lossy-name family is
-  used only when its latest snapshot embeds the
-  exact requested id, and a subsequent write migrates that verified family
-  sidecars-first/snapshot-last without rewriting its bytes. Mismatched legacy
-  files are never read or deleted.
+  ToolCall appends within the current namespace, attempts every available sync,
+  and may leave an unsynced or partially synced best-effort record. Sidecars are
+  opened through validated no-follow descriptors at `0600`. Failures before rename
+  preserve the prior snapshot; a failure after rename is loud while the new
+  snapshot remains authoritative. The logical session id is an opaque valid-UTF-8
+  string stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename
+  token is not an operator API. Reads and discovery inspect only the owner-only
+  `sid-v1/` directory; malformed current artifacts fail closed. Distinct
+  root-level artifacts remain untouched and cannot poison current inventory.
   All serialize via **`sessnap`** (`engine/adapter/sessnap`): a `Snapshot` DTO
   that round-trips a `Session` by driving the public state machine on restore
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It
   captures the terminal reason via `RecordedStopReason()` for exact round-trips,
   and (cloud-native Phase 1) the per-session profile, the opaque provider/model
-  selector pair, the title/provenance and title-generation metadata, the canonical
-  auxiliary `token_usage` ledger, and the cumulative token `usage` — additive fields
-  so a restarted process rebuilds the SAME engine and the `MaxRunTokens` budget
-  continues across restart (see `docs/adr/0027-cloud-native.md`).
+  selector pair, the title/provenance and title-generation metadata, and the
+  canonical auxiliary `token_usage` ledger. A restarted process rebuilds the SAME
+  engine and the `MaxRunTokens` budget continues across restart (see `docs/adr/0027-cloud-native.md`).
   A store may additionally implement the optional **`port.PrunableStore`**
   (`List`/`Delete`; `ErrPruneUnsupported` otherwise) — the retention MECHANISM.
   Automatic retention consumes `SessionMetadataPager`, and stale-session
@@ -350,7 +327,10 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
   log also records the log-only **`EvUserPrompt`** and out-of-band
-  **`EvSessionTitle`** events. A title event follows a successful snapshot save and
+  **`EvSessionTitle`** events. The append boundary stamps `Event.Actor` from the
+  verified request-context principal, not the session owner. User prompts and
+  compaction archives contain conversation content; delegation-preview redaction
+  is not blanket secret or PII filtering. A title event follows a successful snapshot save and
   carries only title lifecycle metadata; it contains no title-source prompts or
   provider errors. It is also offered best-effort to gRPC live-session subscribers,
   while HTTP clients reconcile it through the authoritative snapshot or durable
@@ -419,11 +399,19 @@ The session and memory stores have a **wire seam**: an operator can point
 either at a remote, operator-run **driver process** speaking the
 `mecatl.driver.v1` protocol (`contracts/proto/mecatl/driver/v1/` —
 `SessionStoreService` for `port.SessionStore`, `MemoryStoreService` for
-`tool.MemoryStore`). Memory lifecycle is an additive optional capability: the original
-six memory RPCs stay wire-compatible, while RememberVersioned/InspectMemory/
-ForgetVersioned/UndoLatest carry opaque versions and revision history. The profile
-read deliberately uses original `List`, so old drivers retain profile parity;
-destructive lifecycle calls against an old driver return an honest unsupported error.
+`tool.MemoryStore`). Both services require successful bounded capability
+negotiation with the exact current base-contract marker before composition; an
+old peer, an empty response, timeout, or transport failure fails construction.
+Memory's wire surface directly mirrors the mandatory lifecycle/CAS port:
+Remember carries the complete expected presence/version, Inspect returns bounded
+history, and Forget/Undo require exact opaque versions. There is no unconditional
+write/delete RPC and no fallback to an older memory contract. Session capability
+bits remain honest for genuinely optional backend operations such as listing,
+metadata paging, deletion, lineage, create, and activity projection. Metadata
+continuation cursors are accepted only when key, generation, ownership scope, and
+opaque continuation are all present. Remote driver backing stores own their
+namespace; the harness neither scans old driver artifacts nor guesses formats from
+opaque payload bytes.
 The durable **schedule registry** has the same seam:
 `ScheduleStoreService` + `ScheduleOneShotReArmerService` back
 `port.ScheduleStore` + `port.ScheduleOneShotReArmer` (`--schedule-store-url`,

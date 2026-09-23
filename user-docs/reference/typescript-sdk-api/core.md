@@ -13,6 +13,8 @@ import Heading from "@theme/Heading";
 
 This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`.
 
+For entry points and runtime support, see the [SDK API overview](./index.md).
+
 ## Symbol index
 
 | Symbol | Kind |
@@ -38,6 +40,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`ConnectionStatusListener`](#api-connectionstatuslistener-typealias) | Type alias |
 | [`ConnectionStatusStore`](#api-connectionstatusstore-interface) | Interface |
 | [`ConnectOptions`](#api-connectoptions-typealias) | Type alias |
+| [`ControlRefusedEventPayload`](#api-controlrefusedeventpayload-interface) | Interface |
 | [`createHttpTransport`](#api-createhttptransport-function) | Function |
 | [`createRawClient`](#api-createrawclient-function) | Function |
 | [`CreateSessionOptions`](#api-createsessionoptions-interface) | Interface |
@@ -63,6 +66,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`EventUsage`](#api-eventusage-interface) | Interface |
 | [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
 | [`getRawJson`](#api-getrawjson-function) | Function |
+| [`GuardrailApprovalScope`](#api-guardrailapprovalscope-interface) | Interface |
 | [`HookEventPayload`](#api-hookeventpayload-interface) | Interface |
 | [`HttpTransportOptions`](#api-httptransportoptions-interface) | Interface |
 | [`imagePart`](#api-imagepart-function) | Function |
@@ -80,6 +84,12 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`MAX_MEDIA_PART_BYTES`](#api-max-media-part-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_BYTES`](#api-max-prompt-media-bytes-variable) | Variable |
 | [`MAX_PROMPT_MEDIA_PARTS`](#api-max-prompt-media-parts-variable) | Variable |
+| [`McpAuthorization`](#api-mcpauthorization-interface) | Interface |
+| [`McpAuthorizationFlow`](#api-mcpauthorizationflow-interface) | Interface |
+| [`McpAuthorizationFlowOptions`](#api-mcpauthorizationflowoptions-interface) | Interface |
+| [`McpAuthorizationOperation`](#api-mcpauthorizationoperation-typealias) | Type alias |
+| [`McpAuthorizationResult`](#api-mcpauthorizationresult-typealias) | Type alias |
+| [`McpAuthorizationStatus`](#api-mcpauthorizationstatus-typealias) | Type alias |
 | [`McpConnectorAvailability`](#api-mcpconnectoravailability-typealias) | Type alias |
 | [`McpConnectorAvailability`](#api-mcpconnectoravailability-variable) | Variable |
 | [`McpConnectorCatalogueState`](#api-mcpconnectorcataloguestate-typealias) | Type alias |
@@ -106,9 +116,11 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface) | Interface |
 | [`PermissionAskResponder`](#api-permissionaskresponder-typealias) | Type alias |
 | [`PermissionVerdict`](#api-permissionverdict-typealias) | Type alias |
+| [`PermissionVerdict`](#api-permissionverdict-variable) | Variable |
 | [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
 | [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
 | [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
+| [`PlanContinuationFailureEventPayload`](#api-plancontinuationfailureeventpayload-interface) | Interface |
 | [`PlanContinuationStartError`](#api-plancontinuationstarterror-class) | Class |
 | [`PlanResolution`](#api-planresolution-interface) | Interface |
 | [`PlanResolutionResult`](#api-planresolutionresult-interface) | Interface |
@@ -123,9 +135,15 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`RequestOptions`](#api-requestoptions-typealias) | Type alias |
 | [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
 | [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
+| [`RetryDisposition`](#api-retrydisposition-variable) | Variable |
+| [`RoutingDecisionEventPayload`](#api-routingdecisioneventpayload-interface) | Interface |
 | [`Run`](#api-run-interface) | Interface |
+| [`RunAuthorizationRequiredError`](#api-runauthorizationrequirederror-class) | Class |
+| [`RunAuthorizationRequiredOutcome`](#api-runauthorizationrequiredoutcome-interface) | Interface |
+| [`RunCompletedOutcome`](#api-runcompletedoutcome-interface) | Interface |
 | [`RunControls`](#api-runcontrols-interface) | Interface |
 | [`RunOptions`](#api-runoptions-interface) | Interface |
+| [`RunOutcome`](#api-runoutcome-typealias) | Type alias |
 | [`RunResult`](#api-runresult-interface) | Interface |
 | [`RunSteerAcknowledgement`](#api-runsteeracknowledgement-interface) | Interface |
 | [`RunSteerCancellationAcknowledgement`](#api-runsteercancellationacknowledgement-interface) | Interface |
@@ -151,6 +169,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`SessionActivityReplayStatus`](#api-sessionactivityreplaystatus-interface) | Interface |
 | [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
 | [`SessionCapabilities`](#api-sessioncapabilities-interface) | Interface |
+| [`SessionContextOccupancy`](#api-sessioncontextoccupancy-interface) | Interface |
 | [`SessionLimits`](#api-sessionlimits-interface) | Interface |
 | [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
 | [`SessionMode`](#api-sessionmode-typealias) | Type alias |
@@ -173,6 +192,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface) | Interface |
 | [`Storage`](#api-storage-interface) | Interface |
 | [`StreamProgress`](#api-streamprogress-typealias) | Type alias |
+| [`StreamProgress`](#api-streamprogress-variable) | Variable |
 | [`SubagentEventPayload`](#api-subagenteventpayload-interface) | Interface |
 | [`SUPPORTED_API_MAJOR`](#api-supported-api-major-variable) | Variable |
 | [`Team`](#api-team-interface) | Interface |
@@ -204,7 +224,6 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class) | Class |
 | [`UserModel`](#api-usermodel-interface) | Interface |
 | [`UserPromptEventPayload`](#api-userprompteventpayload-interface) | Interface |
-| [`WATCH_SESSION_EVENTS_FEATURE`](#api-watch-session-events-feature-variable) | Variable |
 | [`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface) | Interface |
 | [`WatchEnvelope`](#api-watchenvelope-typealias) | Type alias |
 | [`WatchEventEnvelope`](#api-watcheventenvelope-interface) | Interface |
@@ -553,7 +572,7 @@ readonly reason: PromptValidationReason;
 
 <Heading as="h3" id="api-protocolerror-class"><code>ProtocolError</code></Heading>
 
-A transport response violated the SDK's protocol contract.
+A transport response violated the SDK's protocol contract. Malformed successful HTTP responses and ordinary SSE data frames omit the underlying JSON or protobuf decoder cause. They retain safe correlation metadata such as HTTP status and a response request ID when available. Server errors, authentication failures, and transport or body-read failures keep their separately defined cause behavior.
 
 ```ts
 export declare class ProtocolError extends MecatlError
@@ -573,6 +592,35 @@ Parameters:
 
 - `message` (`string`)
 - `options` (`Omit<MecatlErrorOptions, "code">`)
+
+<Heading as="h3" id="api-runauthorizationrequirederror-class"><code>RunAuthorizationRequiredError</code></Heading>
+
+`Run.result()` consumed a valid authorization handoff instead of a completed result. Read `outcome` to create `Session.mcpAuthorization()` with the exact authorization ID.
+
+```ts
+export declare class RunAuthorizationRequiredError extends InvalidStateError
+```
+
+Callable members: [`constructor`](#api-runauthorizationrequirederror-constructor-constructor)
+
+<Heading as="h4" id="api-runauthorizationrequirederror-constructor-constructor"><code>RunAuthorizationRequiredError.constructor</code></Heading>
+
+Constructs a new instance of the `RunAuthorizationRequiredError` class
+
+```ts
+constructor(outcome: RunAuthorizationRequiredOutcome, options: Omit<MecatlErrorOptions, "code">);
+```
+
+Parameters:
+
+- `outcome` (`RunAuthorizationRequiredOutcome`)
+- `options` (`Omit<MecatlErrorOptions, "code">`)
+
+<Heading as="h4" id="api-runauthorizationrequirederror-outcome-property"><code>RunAuthorizationRequiredError.outcome</code></Heading>
+
+```ts
+readonly outcome: RunAuthorizationRequiredOutcome;
+```
 
 <Heading as="h3" id="api-servererror-class"><code>ServerError</code></Heading>
 
@@ -855,12 +903,6 @@ The payload of an `approval` replay event.
 export interface ApprovalEventPayload
 ```
 
-<Heading as="h4" id="api-approvaleventpayload-allowalways-propertysignature"><code>ApprovalEventPayload.allowAlways</code></Heading>
-
-```ts
-readonly allowAlways: boolean;
-```
-
 <Heading as="h4" id="api-approvaleventpayload-askid-propertysignature"><code>ApprovalEventPayload.askId</code></Heading>
 
 ```ts
@@ -882,7 +924,7 @@ readonly tool: string;
 <Heading as="h4" id="api-approvaleventpayload-verdict-propertysignature"><code>ApprovalEventPayload.verdict</code></Heading>
 
 ```ts
-readonly verdict: string;
+readonly verdict: 0 | 1 | 2 | 3;
 ```
 
 <Heading as="h3" id="api-archivedconversationmessage-interface"><code>ArchivedConversationMessage</code></Heading>
@@ -949,24 +991,7 @@ A durable activity stream bound to one run.
 export interface AttachedRun extends SessionActivity
 ```
 
-Callable members: [`approve()`](#api-attachedrun-approve-methodsignature), [`cancel()`](#api-attachedrun-cancel-methodsignature), [`resolveAsk()`](#api-attachedrun-resolveask-methodsignature), [`steer()`](#api-attachedrun-steer-methodsignature)
-
-<Heading as="h4" id="api-attachedrun-approve-methodsignature"><code>AttachedRun.approve</code></Heading>
-
-Reports that approval controls are unavailable on durable attachments.
-
-```ts
-approve(askId: string, allow: boolean): Promise<never>;
-```
-
-Parameters:
-
-- `askId` (`string`): Permission-ask ID, retained for parity with a live run.
-- `allow` (`boolean`): Boolean verdict, retained for parity with a live run.
-
-Returns: `Promise<never>`: A rejected promise.
-
-Throws: `UnsupportedFeatureError` for every call.
+Callable members: [`cancel()`](#api-attachedrun-cancel-methodsignature), [`resolveAsk()`](#api-attachedrun-resolveask-methodsignature), [`steer()`](#api-attachedrun-steer-methodsignature)
 
 <Heading as="h4" id="api-attachedrun-cancel-methodsignature"><code>AttachedRun.cancel</code></Heading>
 
@@ -980,7 +1005,7 @@ Returns: `Promise<void>`: A promise that resolves after the cancellation request
 
 <Heading as="h4" id="api-attachedrun-live-propertysignature"><code>AttachedRun.live</code></Heading>
 
-True until this attachment observes its run's terminal result.
+True until this attachment observes its run's terminal result or valid authorization park.
 
 ```ts
 readonly live: boolean;
@@ -1338,6 +1363,32 @@ Parameters:
 
 Returns: `() => void`
 
+<Heading as="h3" id="api-controlrefusedeventpayload-interface"><code>ControlRefusedEventPayload</code></Heading>
+
+The normalized, client-visible reason for a refused in-stream control.
+
+```ts
+export interface ControlRefusedEventPayload
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-askid-propertysignature"><code>ControlRefusedEventPayload.askId</code></Heading>
+
+```ts
+readonly askId: string;
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-category-propertysignature"><code>ControlRefusedEventPayload.category</code></Heading>
+
+```ts
+readonly category: string;
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-message-propertysignature"><code>ControlRefusedEventPayload.message</code></Heading>
+
+```ts
+readonly message: string;
+```
+
 <Heading as="h3" id="api-createsessionoptions-interface"><code>CreateSessionOptions</code></Heading>
 
 Session-creation fields map directly onto CreateSessionRequest.
@@ -1636,12 +1687,6 @@ readonly text: string;
 readonly turn: number;
 ```
 
-<Heading as="h4" id="api-eventcommon-usage-propertysignature"><code>EventCommon.usage</code></Heading>
-
-```ts
-readonly usage: EventUsage | undefined;
-```
-
 <Heading as="h3" id="api-eventcontent-interface"><code>EventContent</code></Heading>
 
 One media part as represented on the protobuf event payloads.
@@ -1780,6 +1825,12 @@ readonly "authorization.resolved": AuthorizationEventPayload;
 readonly "compaction.archive": CompactionArchiveEventPayload;
 ```
 
+<Heading as="h4" id="api-eventpayloads-control-refused-propertysignature"><code>EventPayloads["control.refused"]</code></Heading>
+
+```ts
+readonly "control.refused": ControlRefusedEventPayload;
+```
+
 <Heading as="h4" id="api-eventpayloads-message-delta-propertysignature"><code>EventPayloads["message.delta"]</code></Heading>
 
 ```ts
@@ -1826,6 +1877,12 @@ readonly "permission.ask": PermissionAskEventPayload;
 
 ```ts
 readonly "permission.retract": PermissionAskEventPayload;
+```
+
+<Heading as="h4" id="api-eventpayloads-plan-continuation-failed-propertysignature"><code>EventPayloads["plan.continuation_failed"]</code></Heading>
+
+```ts
+readonly "plan.continuation_failed": PlanContinuationFailureEventPayload;
 ```
 
 <Heading as="h4" id="api-eventpayloads-provider-route-propertysignature"><code>EventPayloads["provider.route"]</code></Heading>
@@ -2092,6 +2149,38 @@ Opaque source-scoped selector for an existing worktree.
 
 ```ts
 worktreeSelector?: string;
+```
+
+<Heading as="h3" id="api-guardrailapprovalscope-interface"><code>GuardrailApprovalScope</code></Heading>
+
+A contextual guardrail approval scope carried by a permission ask.
+
+```ts
+export interface GuardrailApprovalScope
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-kind-propertysignature"><code>GuardrailApprovalScope.kind</code></Heading>
+
+```ts
+readonly kind: "action" | "result_release" | "unknown";
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-repeatavailable-propertysignature"><code>GuardrailApprovalScope.repeatAvailable</code></Heading>
+
+```ts
+readonly repeatAvailable: boolean;
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-reviewid-propertysignature"><code>GuardrailApprovalScope.reviewId</code></Heading>
+
+```ts
+readonly reviewId: string;
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-sessiononly-propertysignature"><code>GuardrailApprovalScope.sessionOnly</code></Heading>
+
+```ts
+readonly sessionOnly: boolean;
 ```
 
 <Heading as="h3" id="api-hookeventpayload-interface"><code>HookEventPayload</code></Heading>
@@ -2504,6 +2593,184 @@ readonly projectMemory?: DreamTargetCapability;
 readonly userModel?: DreamTargetCapability;
 ```
 
+<Heading as="h3" id="api-mcpauthorization-interface"><code>McpAuthorization</code></Heading>
+
+A reusable session-bound correlation handle for one server-owned authorization. Construction stores exact correlation only. It performs no I/O and makes no state or authority claim. The handle does not persist credentials or lifecycle truth. Every presentation lookup and control request receives automatic session affinity. It consumes session-scoped ToolHive broker authorization handoffs; it does not administer direct or global MCP profiles or credentials.
+
+```ts
+export interface McpAuthorization
+```
+
+Callable members: [`cancel()`](#api-mcpauthorization-cancel-methodsignature), [`presentation()`](#api-mcpauthorization-presentation-methodsignature), [`recheck()`](#api-mcpauthorization-recheck-methodsignature)
+
+<Heading as="h4" id="api-mcpauthorization-authorizationid-propertysignature"><code>McpAuthorization.authorizationId</code></Heading>
+
+```ts
+readonly authorizationId: string;
+```
+
+<Heading as="h4" id="api-mcpauthorization-cancel-methodsignature"><code>McpAuthorization.cancel</code></Heading>
+
+Creates one lazy authorization cancellation flow.
+
+```ts
+cancel(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
+```
+
+Parameters:
+
+- `options` (`McpAuthorizationFlowOptions`, optional): Permission handling for a possible continuation.
+- `requestOptions` (`RequestOptions`, optional): Options used only when this flow starts.
+
+Returns: `McpAuthorizationFlow`: A distinct, transport-lazy, single-consumption flow.
+
+<Heading as="h4" id="api-mcpauthorization-presentation-methodsignature"><code>McpAuthorization.presentation</code></Heading>
+
+Reads the live presentation URL for this authorization. The application owns display and browser policy. The SDK validates and returns the HTTP(S) string without opening, copying, caching, rendering, or persisting it.
+
+```ts
+presentation(requestOptions?: RequestOptions): Promise<string>;
+```
+
+Parameters:
+
+- `requestOptions` (`RequestOptions`, optional): Request headers, callbacks, cancellation signal, and deadline.
+
+Returns: `Promise<string>`: The server's current absolute HTTP(S) presentation URL.
+
+Throws: `ProtocolError` when the response has no valid absolute HTTP(S) URL.
+
+<Heading as="h4" id="api-mcpauthorization-recheck-methodsignature"><code>McpAuthorization.recheck</code></Heading>
+
+Creates one lazy authorization recheck flow.
+
+```ts
+recheck(options?: McpAuthorizationFlowOptions, requestOptions?: RequestOptions): McpAuthorizationFlow;
+```
+
+Parameters:
+
+- `options` (`McpAuthorizationFlowOptions`, optional): Permission handling for a possible continuation.
+- `requestOptions` (`RequestOptions`, optional): Options used only when this flow starts.
+
+Returns: `McpAuthorizationFlow`: A distinct, transport-lazy, single-consumption flow.
+
+<Heading as="h4" id="api-mcpauthorization-sessionid-propertysignature"><code>McpAuthorization.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-mcpauthorizationflow-interface"><code>McpAuthorizationFlow</code></Heading>
+
+One lazy, single-consumption authorization control and optional continuation. Calling `recheck()` or `cancel()` creates this flow without I/O. The first iterator `next()` or `result()` performs the one control request with exact session affinity. Iteration and `result()` are mutually exclusive. Request cancellation releases SDK-owned resources but does not determine whether the server committed the control. The SDK does not poll, retry, reconnect, or scan durable activity automatically.
+
+```ts
+export interface McpAuthorizationFlow extends AsyncIterable<Event>
+```
+
+Callable members: [`cancelContinuation()`](#api-mcpauthorizationflow-cancelcontinuation-methodsignature), [`resolveAsk()`](#api-mcpauthorizationflow-resolveask-methodsignature), [`result()`](#api-mcpauthorizationflow-result-methodsignature)
+
+<Heading as="h4" id="api-mcpauthorizationflow-authorizationid-propertysignature"><code>McpAuthorizationFlow.authorizationId</code></Heading>
+
+```ts
+readonly authorizationId: string;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflow-cancelcontinuation-methodsignature"><code>McpAuthorizationFlow.cancelContinuation</code></Heading>
+
+Requests cancellation of the exact continuation run already observed by this flow.
+
+```ts
+cancelContinuation(requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `requestOptions` (`RequestOptions`, optional): Options used only for this cancellation mutation.
+
+Returns: `Promise<void>`: A promise that resolves after the server accepts the request.
+
+Throws: `InvalidStateError` before a continuation run is observed.
+
+Throws: `UnsupportedFeatureError` when the server lacks `prompt_free_controls`.
+
+<Heading as="h4" id="api-mcpauthorizationflow-continuationrunid-propertysignature"><code>McpAuthorizationFlow.continuationRunId</code></Heading>
+
+```ts
+readonly continuationRunId: string | undefined;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflow-operation-propertysignature"><code>McpAuthorizationFlow.operation</code></Heading>
+
+```ts
+readonly operation: McpAuthorizationOperation;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflow-resolveask-methodsignature"><code>McpAuthorizationFlow.resolveAsk</code></Heading>
+
+Resolves one observed ordinary permission ask on the exact continuation run.
+
+```ts
+resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): ID of a pending ask already observed on this flow.
+- `verdict` (`PermissionVerdict`): Application-owned permission decision to send unchanged.
+- `requestOptions` (`RequestOptions`, optional): Options used only for this permission mutation.
+
+Returns: `Promise<void>`: A promise that resolves after the server accepts the decision.
+
+Throws: `InvalidStateError` when the ask is unknown, no longer pending, or plan-originated.
+
+Throws: `UnsupportedFeatureError` when the server lacks `prompt_free_controls`.
+
+<Heading as="h4" id="api-mcpauthorizationflow-result-methodsignature"><code>McpAuthorizationFlow.result</code></Heading>
+
+Starts and drains this flow as its single consumption mode.
+
+```ts
+result(): Promise<McpAuthorizationResult>;
+```
+
+Returns: `Promise<McpAuthorizationResult>`: A pending, settled, completed, or chained-authorization result.
+
+Throws: `InvalidStateError` when the flow is already being consumed.
+
+Throws: `ProtocolError` when the server stream violates lifecycle correlation or grammar.
+
+<Heading as="h4" id="api-mcpauthorizationflow-sessionid-propertysignature"><code>McpAuthorizationFlow.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-mcpauthorizationflowoptions-interface"><code>McpAuthorizationFlowOptions</code></Heading>
+
+Application-owned permission behavior for one authorization continuation. These options never choose an authorization status or browser policy. Automatic permission replies use only `permissionRequestOptions`, independently of the flow request options.
+
+```ts
+export interface McpAuthorizationFlowOptions
+```
+
+<Heading as="h4" id="api-mcpauthorizationflowoptions-onpermissionask-propertysignature"><code>McpAuthorizationFlowOptions.onPermissionAsk</code></Heading>
+
+Automatically answers only ordinary permission asks observed on the continuation.
+
+```ts
+onPermissionAsk?: PermissionAskResponder;
+```
+
+<Heading as="h4" id="api-mcpauthorizationflowoptions-permissionrequestoptions-propertysignature"><code>McpAuthorizationFlowOptions.permissionRequestOptions</code></Heading>
+
+Request options used only for automatic permission replies.
+
+```ts
+permissionRequestOptions?: RequestOptions;
+```
+
 <Heading as="h3" id="api-mcpconnectorinventory-interface"><code>McpConnectorInventory</code></Heading>
 
 A current, nonhistorical snapshot of broker connector publication.
@@ -2592,7 +2859,7 @@ MCP resource, prompt, source, and ToolHive-group inventory operations.
 export interface McpInventory
 ```
 
-Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature), [`listPrompts()`](#api-mcpinventory-listprompts-methodsignature), [`listResources()`](#api-mcpinventory-listresources-methodsignature), [`listSources()`](#api-mcpinventory-listsources-methodsignature), [`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature), [`readResource()`](#api-mcpinventory-readresource-methodsignature)
+Callable members: [`getPrompt()`](#api-mcpinventory-getprompt-methodsignature), [`listPrompts()`](#api-mcpinventory-listprompts-methodsignature), [`listResources()`](#api-mcpinventory-listresources-methodsignature), [`listSources()`](#api-mcpinventory-listsources-methodsignature), [`listToolHiveGroups()`](#api-mcpinventory-listtoolhivegroups-methodsignature), [`readResource()`](#api-mcpinventory-readresource-methodsignature), [`refresh()`](#api-mcpinventory-refresh-methodsignature)
 
 <Heading as="h4" id="api-mcpinventory-getprompt-methodsignature"><code>McpInventory.getPrompt</code></Heading>
 
@@ -2683,6 +2950,21 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<ReadMcpResourceResponse>`
+
+<Heading as="h4" id="api-mcpinventory-refresh-methodsignature"><code>McpInventory.refresh</code></Heading>
+
+Refreshes direct MCP sources for one eligible owned session.
+
+```ts
+refresh(request: RefreshMcpSourcesRequest, options?: RequestOptions): Promise<RefreshMcpSourcesResponse>;
+```
+
+Parameters:
+
+- `request` (`RefreshMcpSourcesRequest`)
+- `options` (`RequestOptions`, optional)
+
+Returns: `Promise<RefreshMcpSourcesResponse>`
 
 <Heading as="h3" id="api-mecatlerroroptions-interface"><code>MecatlErrorOptions</code></Heading>
 
@@ -2921,6 +3203,12 @@ readonly routedCategory: string;
 readonly routedModel: string;
 ```
 
+<Heading as="h4" id="api-paralleleventpayload-routingdecision-propertysignature"><code>ParallelEventPayload.routingDecision</code></Heading>
+
+```ts
+readonly routingDecision?: RoutingDecisionEventPayload | undefined;
+```
+
 <Heading as="h4" id="api-paralleleventpayload-routingreason-propertysignature"><code>ParallelEventPayload.routingReason</code></Heading>
 
 ```ts
@@ -2995,6 +3283,20 @@ readonly args: string;
 readonly askId: string;
 ```
 
+<Heading as="h4" id="api-permissionaskeventpayload-callid-propertysignature"><code>PermissionAskEventPayload.callId</code></Heading>
+
+Exact tool-call ID when supplied by the server; presentation correlation only.
+
+```ts
+readonly callId?: string;
+```
+
+<Heading as="h4" id="api-permissionaskeventpayload-guardrail-propertysignature"><code>PermissionAskEventPayload.guardrail</code></Heading>
+
+```ts
+readonly guardrail?: GuardrailApprovalScope | undefined;
+```
+
 <Heading as="h4" id="api-permissionaskeventpayload-reason-propertysignature"><code>PermissionAskEventPayload.reason</code></Heading>
 
 ```ts
@@ -3005,6 +3307,30 @@ readonly reason: string;
 
 ```ts
 readonly tool: string;
+```
+
+<Heading as="h3" id="api-plancontinuationfailureeventpayload-interface"><code>PlanContinuationFailureEventPayload</code></Heading>
+
+Safe correlation for a known failure to start the approved plan's proceed run. The session-scoped event has an empty envelope run ID.
+
+```ts
+export interface PlanContinuationFailureEventPayload
+```
+
+<Heading as="h4" id="api-plancontinuationfailureeventpayload-askid-propertysignature"><code>PlanContinuationFailureEventPayload.askId</code></Heading>
+
+ID of the approved plan ask on that run.
+
+```ts
+readonly askId: string;
+```
+
+<Heading as="h4" id="api-plancontinuationfailureeventpayload-planrunid-propertysignature"><code>PlanContinuationFailureEventPayload.planRunId</code></Heading>
+
+Run ID of the approved plan whose proceed run failed to start.
+
+```ts
+readonly planRunId: string;
 ```
 
 <Heading as="h3" id="api-planresolution-interface"><code>PlanResolution</code></Heading>
@@ -3170,12 +3496,6 @@ export interface ResultEventPayload
 readonly error: string;
 ```
 
-<Heading as="h4" id="api-resulteventpayload-permanent-propertysignature"><code>ResultEventPayload.permanent</code></Heading>
-
-```ts
-readonly permanent: boolean;
-```
-
 <Heading as="h4" id="api-resulteventpayload-retrydisposition-propertysignature"><code>ResultEventPayload.retryDisposition</code></Heading>
 
 ```ts
@@ -3206,6 +3526,74 @@ readonly text: string;
 readonly usage?: EventUsage | undefined;
 ```
 
+<Heading as="h3" id="api-routingdecisioneventpayload-interface"><code>RoutingDecisionEventPayload</code></Heading>
+
+Bounded configured-router evidence on delegation start events.
+
+```ts
+export interface RoutingDecisionEventPayload
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-backend-propertysignature"><code>RoutingDecisionEventPayload.backend</code></Heading>
+
+```ts
+readonly backend: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-breakeropen-propertysignature"><code>RoutingDecisionEventPayload.breakerOpen</code></Heading>
+
+```ts
+readonly breakerOpen: boolean;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-candidatecategory-propertysignature"><code>RoutingDecisionEventPayload.candidateCategory</code></Heading>
+
+```ts
+readonly candidateCategory: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-candidatemodel-propertysignature"><code>RoutingDecisionEventPayload.candidateModel</code></Heading>
+
+```ts
+readonly candidateModel: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-classifiermodel-propertysignature"><code>RoutingDecisionEventPayload.classifierModel</code></Heading>
+
+```ts
+readonly classifierModel: string;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-confidence-propertysignature"><code>RoutingDecisionEventPayload.confidence</code></Heading>
+
+```ts
+readonly confidence?: number | undefined;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-consecutivemisses-propertysignature"><code>RoutingDecisionEventPayload.consecutiveMisses</code></Heading>
+
+```ts
+readonly consecutiveMisses: number;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-minimumconfidence-propertysignature"><code>RoutingDecisionEventPayload.minimumConfidence</code></Heading>
+
+```ts
+readonly minimumConfidence?: number | undefined;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-misslimit-propertysignature"><code>RoutingDecisionEventPayload.missLimit</code></Heading>
+
+```ts
+readonly missLimit: number;
+```
+
+<Heading as="h4" id="api-routingdecisioneventpayload-outcome-propertysignature"><code>RoutingDecisionEventPayload.outcome</code></Heading>
+
+```ts
+readonly outcome: string;
+```
+
 <Heading as="h3" id="api-run-interface"><code>Run</code></Heading>
 
 One accepted server run and its single-consumption event stream.
@@ -3214,24 +3602,7 @@ One accepted server run and its single-consumption event stream.
 export interface Run extends AsyncIterable<Event>
 ```
 
-Callable members: [`approve()`](#api-run-approve-methodsignature), [`cancel()`](#api-run-cancel-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
-
-<Heading as="h4" id="api-run-approve-methodsignature"><code>Run.approve</code></Heading>
-
-Sends a Boolean permission verdict for a `permission.ask` event.
-
-```ts
-approve(askId: string, allow: boolean): Promise<void>;
-```
-
-Parameters:
-
-- `askId` (`string`): ID carried by the permission ask.
-- `allow` (`boolean`): Whether to allow the call once.
-
-Returns: `Promise<void>`: A promise that resolves after the verdict is sent.
-
-Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
+Callable members: [`cancel()`](#api-run-cancel-methodsignature), [`outcome()`](#api-run-outcome-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
 
 <Heading as="h4" id="api-run-cancel-methodsignature"><code>Run.cancel</code></Heading>
 
@@ -3249,6 +3620,18 @@ Returns: `Promise<void>`: A promise that resolves after the cancellation request
 readonly id: string;
 ```
 
+<Heading as="h4" id="api-run-outcome-methodsignature"><code>Run.outcome</code></Heading>
+
+Drains all remaining events and returns either completion or an authorization handoff.
+
+```ts
+outcome(): Promise<RunOutcome>;
+```
+
+Returns: `Promise<RunOutcome>`: The normal terminal outcome for this run.
+
+Throws: `InvalidStateError` when the run is already being consumed.
+
 <Heading as="h4" id="api-run-resolveask-methodsignature"><code>Run.resolveAsk</code></Heading>
 
 Resolves one pending ask on this run with the server's string verdict vocabulary.
@@ -3262,15 +3645,15 @@ Parameters:
 - `askId` (`string`): ID carried by the permission ask.
 - `verdict` (`PermissionVerdict`): Decision to apply to the pending ask.
 
-Returns: `Promise<void>`: A promise that resolves after the server accepts the verdict.
+Returns: `Promise<void>`: A promise that resolves after the verdict frame is handed to the active stream transport. This send-only API does not acknowledge server acceptance; use `Session.controls(runId).resolveAsk()` when an acknowledged control operation is required.
 
 Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
-Throws: `InvalidStateError` when used for a plan-approval ask.
+Throws: `InvalidStateError` when used for a plan-approval ask. An opted-in server-owned run uses `Session.controls(runId).resolvePlanAsk()` instead.
 
 <Heading as="h4" id="api-run-result-methodsignature"><code>Run.result</code></Heading>
 
-Drains all remaining events and returns the typed terminal outcome.
+Drains all remaining events and returns the completed terminal result.
 
 ```ts
 result(): Promise<RunResult>;
@@ -3279,6 +3662,8 @@ result(): Promise<RunResult>;
 Returns: `Promise<RunResult>`: The terminal result for this run.
 
 Throws: `InvalidStateError` when the run is already being consumed.
+
+Throws: `RunAuthorizationRequiredError` when the run parks on external authorization.
 
 <Heading as="h4" id="api-run-sessionid-propertysignature"><code>Run.sessionId</code></Heading>
 
@@ -3300,15 +3685,67 @@ Parameters:
 
 Returns: `Promise<void>`: A promise that resolves after the steering request is sent.
 
+<Heading as="h3" id="api-runauthorizationrequiredoutcome-interface"><code>RunAuthorizationRequiredOutcome</code></Heading>
+
+A run that handed off one pending external authorization. This detached value carries correlation only. The server retains lifecycle ownership.
+
+```ts
+export interface RunAuthorizationRequiredOutcome
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-authorization-propertysignature"><code>RunAuthorizationRequiredOutcome.authorization</code></Heading>
+
+```ts
+readonly authorization: EventOf<"authorization.required">;
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-outcome-propertysignature"><code>RunAuthorizationRequiredOutcome.outcome</code></Heading>
+
+```ts
+readonly outcome: "authorization_required";
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-runid-propertysignature"><code>RunAuthorizationRequiredOutcome.runId</code></Heading>
+
+```ts
+readonly runId: string;
+```
+
+<Heading as="h4" id="api-runauthorizationrequiredoutcome-sessionid-propertysignature"><code>RunAuthorizationRequiredOutcome.sessionId</code></Heading>
+
+```ts
+readonly sessionId: string;
+```
+
+<Heading as="h3" id="api-runcompletedoutcome-interface"><code>RunCompletedOutcome</code></Heading>
+
+A normally completed run outcome returned by `Run.outcome()`.
+
+```ts
+export interface RunCompletedOutcome
+```
+
+<Heading as="h4" id="api-runcompletedoutcome-outcome-propertysignature"><code>RunCompletedOutcome.outcome</code></Heading>
+
+```ts
+readonly outcome: "completed";
+```
+
+<Heading as="h4" id="api-runcompletedoutcome-result-propertysignature"><code>RunCompletedOutcome.result</code></Heading>
+
+```ts
+readonly result: RunResult;
+```
+
 <Heading as="h3" id="api-runcontrols-interface"><code>RunControls</code></Heading>
 
-Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Every method requires the server's `prompt_free_controls` feature, addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
+Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Ordinary controls require the server's `prompt_free_controls` feature; plan review requires `exact_plan_ask_control`. Every method addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
 
 ```ts
 export interface RunControls
 ```
 
-Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
+Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`resolvePlanAsk()`](#api-runcontrols-resolveplanask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
 
 <Heading as="h4" id="api-runcontrols-cancel-methodsignature"><code>RunControls.cancel</code></Heading>
 
@@ -3341,7 +3778,7 @@ Returns: `Promise<RunSteerCancellationAcknowledgement>`: Whether the server retr
 
 <Heading as="h4" id="api-runcontrols-resolveask-methodsignature"><code>RunControls.resolveAsk</code></Heading>
 
-Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `Session.resolvePlan()` and fail with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`.
+Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `resolvePlanAsk()` or `Session.resolvePlan()` and fail here with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`. Unlike the stream-local `Run.resolveAsk()` send-only operation, this control returns only after the server acknowledges acceptance.
 
 ```ts
 resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
@@ -3351,6 +3788,22 @@ Parameters:
 
 - `askId` (`string`): Exact permission ask ID.
 - `verdict` (`PermissionVerdict`): Ordinary permission verdict to apply.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+<Heading as="h4" id="api-runcontrols-resolveplanask-methodsignature"><code>RunControls.resolvePlanAsk</code></Heading>
+
+Resolves one plan-originated ask on this exact run and ask ID. Requires `exact_plan_ask_control`; a stale run or ask fails at the daemon. The acknowledgement must echo both IDs before this promise resolves.
+
+```ts
+resolvePlanAsk(askId: string, verdict: PlanApprovalVerdict, requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): Exact plan ask ID.
+- `verdict` (`PlanApprovalVerdict`): Approve once, accept edits, or iterate.
 - `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<void>`
@@ -3409,6 +3862,14 @@ Automatically answers only plan-originated PresentPlan asks.
 
 ```ts
 onPlanApproval?: PlanApprovalResponder;
+```
+
+<Heading as="h4" id="api-runoptions-serverownedplancontinuation-propertysignature"><code>RunOptions.serverOwnedPlanContinuation</code></Heading>
+
+Lets the server start the proceed run after an exact plan-ask approval. Defaults to false. True requires `exact_plan_ask_control`, excludes `onPlanApproval`, and is rejected by `Session.retry()`.
+
+```ts
+serverOwnedPlanContinuation?: boolean;
 ```
 
 <Heading as="h3" id="api-runresult-interface"><code>RunResult</code></Heading>
@@ -3808,12 +4269,6 @@ readonly agents: boolean;
 readonly audio: boolean;
 ```
 
-<Heading as="h4" id="api-servercapabilities-bash-propertysignature"><code>ServerCapabilities.bash</code></Heading>
-
-```ts
-readonly bash: boolean;
-```
-
 <Heading as="h4" id="api-servercapabilities-debugmcp-propertysignature"><code>ServerCapabilities.debugMcp</code></Heading>
 
 ```ts
@@ -3898,6 +4353,12 @@ readonly scheduling: boolean;
 readonly sessionDebug: boolean;
 ```
 
+<Heading as="h4" id="api-servercapabilities-shell-propertysignature"><code>ServerCapabilities.shell</code></Heading>
+
+```ts
+readonly shell: boolean;
+```
+
 <Heading as="h4" id="api-servercapabilities-skills-propertysignature"><code>ServerCapabilities.skills</code></Heading>
 
 ```ts
@@ -3932,12 +4393,6 @@ readonly storageCleanup: boolean;
 
 ```ts
 readonly storageHealth: boolean;
-```
-
-<Heading as="h4" id="api-servercapabilities-storagemigration-propertysignature"><code>ServerCapabilities.storageMigration</code></Heading>
-
-```ts
-readonly storageMigration: boolean;
 ```
 
 <Heading as="h4" id="api-servercapabilities-teams-propertysignature"><code>ServerCapabilities.teams</code></Heading>
@@ -4060,7 +4515,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`guardrailCoverage()`](#api-session-guardrailcoverage-methodsignature), [`guardrailReviewDetail()`](#api-session-guardrailreviewdetail-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -4201,6 +4656,35 @@ Parameters:
 
 Returns: `Promise<void>`: A promise that resolves after the server removes the session.
 
+<Heading as="h4" id="api-session-guardrailcoverage-methodsignature"><code>Session.guardrailCoverage</code></Heading>
+
+Reads the effective guardrail coverage for this session. The server authorizes this diagnostic for the session owner. This RPC is available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+
+```ts
+guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<ListGuardrailCoverageResponse>`: The effective checker configuration and rule coverage.
+
+<Heading as="h4" id="api-session-guardrailreviewdetail-methodsignature"><code>Session.guardrailReviewDetail</code></Heading>
+
+Reads bounded live detail for one guardrail review in this session. The server authorizes this diagnostic for the session owner. This RPC is available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+
+```ts
+guardrailReviewDetail(reviewId: string, options?: RequestOptions): Promise<GetGuardrailReviewDetailResponse>;
+```
+
+Parameters:
+
+- `reviewId` (`string`): Review ID from the session's guardrail event.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<GetGuardrailReviewDetailResponse>`: The review concern, source display, and next action.
+
 <Heading as="h4" id="api-session-id-propertysignature"><code>Session.id</code></Heading>
 
 ```ts
@@ -4220,6 +4704,20 @@ Parameters:
 - `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<McpConnectorInventory>`: A detached SDK-owned connector inventory projection.
+
+<Heading as="h4" id="api-session-mcpauthorization-methodsignature"><code>Session.mcpAuthorization</code></Heading>
+
+Binds one external authorization ID to this session without performing I/O. This handle consumes session-scoped ToolHive broker authorization handoffs. It does not administer direct or global MCP profiles or their credentials.
+
+```ts
+mcpAuthorization(authorizationId: string): McpAuthorization;
+```
+
+Parameters:
+
+- `authorizationId` (`string`): Exact non-empty ID from an authorization event.
+
+Returns: `McpAuthorization`: A reusable correlation handle that makes no authorization-state assertion.
 
 <Heading as="h4" id="api-session-rename-methodsignature"><code>Session.rename</code></Heading>
 
@@ -4423,6 +4921,26 @@ readonly audio: boolean;
 
 ```ts
 readonly image: boolean;
+```
+
+<Heading as="h3" id="api-sessioncontextoccupancy-interface"><code>SessionContextOccupancy</code></Heading>
+
+Display-only context meter data from the latest completed session turn.
+
+```ts
+export interface SessionContextOccupancy
+```
+
+<Heading as="h4" id="api-sessioncontextoccupancy-estimated-propertysignature"><code>SessionContextOccupancy.estimated</code></Heading>
+
+```ts
+readonly estimated: boolean;
+```
+
+<Heading as="h4" id="api-sessioncontextoccupancy-inputtokens-propertysignature"><code>SessionContextOccupancy.inputTokens</code></Heading>
+
+```ts
+readonly inputTokens: bigint;
 ```
 
 <Heading as="h3" id="api-sessionlimits-interface"><code>SessionLimits</code></Heading>
@@ -4704,12 +5222,6 @@ An authoritative, detached view of one durable session.
 export interface SessionSnapshot
 ```
 
-<Heading as="h4" id="api-sessionsnapshot-capabilities-propertysignature"><code>SessionSnapshot.capabilities</code></Heading>
-
-```ts
-readonly capabilities?: ServerCapabilities;
-```
-
 <Heading as="h4" id="api-sessionsnapshot-createdatunix-propertysignature"><code>SessionSnapshot.createdAtUnix</code></Heading>
 
 ```ts
@@ -4732,6 +5244,12 @@ readonly debugMcpTools: readonly string[];
 
 ```ts
 readonly kind: string;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-latestcontextoccupancy-propertysignature"><code>SessionSnapshot.latestContextOccupancy</code></Heading>
+
+```ts
+readonly latestContextOccupancy?: SessionContextOccupancy;
 ```
 
 <Heading as="h4" id="api-sessionsnapshot-limits-propertysignature"><code>SessionSnapshot.limits</code></Heading>
@@ -5140,13 +5658,13 @@ readonly text: string;
 
 <Heading as="h3" id="api-storage-interface"><code>Storage</code></Heading>
 
-Storage health, migration, and cleanup operations owned by the server.
+Storage health and cleanup operations owned by the server.
 
 ```ts
 export interface Storage
 ```
 
-Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature), [`applyMigration()`](#api-storage-applymigration-methodsignature), [`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature), [`cancelMigration()`](#api-storage-cancelmigration-methodsignature), [`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature), [`getHealth()`](#api-storage-gethealth-methodsignature), [`getMigrationJob()`](#api-storage-getmigrationjob-methodsignature), [`planCleanup()`](#api-storage-plancleanup-methodsignature), [`planMigration()`](#api-storage-planmigration-methodsignature), [`resumeMigration()`](#api-storage-resumemigration-methodsignature)
+Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature), [`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature), [`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature), [`getHealth()`](#api-storage-gethealth-methodsignature), [`planCleanup()`](#api-storage-plancleanup-methodsignature)
 
 <Heading as="h4" id="api-storage-applycleanup-methodsignature"><code>Storage.applyCleanup</code></Heading>
 
@@ -5163,21 +5681,6 @@ Parameters:
 
 Returns: `Promise<CleanupJob>`
 
-<Heading as="h4" id="api-storage-applymigration-methodsignature"><code>Storage.applyMigration</code></Heading>
-
-Starts a planned session-storage migration.
-
-```ts
-applyMigration(request: ApplySessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`ApplySessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
-
 <Heading as="h4" id="api-storage-cancelcleanup-methodsignature"><code>Storage.cancelCleanup</code></Heading>
 
 Cancels a session-storage cleanup.
@@ -5192,21 +5695,6 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<CleanupJob>`
-
-<Heading as="h4" id="api-storage-cancelmigration-methodsignature"><code>Storage.cancelMigration</code></Heading>
-
-Cancels a session-storage migration.
-
-```ts
-cancelMigration(request: CancelSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`CancelSessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
 
 <Heading as="h4" id="api-storage-getcleanupjob-methodsignature"><code>Storage.getCleanupJob</code></Heading>
 
@@ -5238,21 +5726,6 @@ Parameters:
 
 Returns: `Promise<GetStorageHealthResponse>`
 
-<Heading as="h4" id="api-storage-getmigrationjob-methodsignature"><code>Storage.getMigrationJob</code></Heading>
-
-Gets one session-storage migration job.
-
-```ts
-getMigrationJob(request: GetSessionMigrationJobRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`GetSessionMigrationJobRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
-
 <Heading as="h4" id="api-storage-plancleanup-methodsignature"><code>Storage.planCleanup</code></Heading>
 
 Previews a session-storage cleanup.
@@ -5267,36 +5740,6 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<PlanSessionCleanupResponse>`
-
-<Heading as="h4" id="api-storage-planmigration-methodsignature"><code>Storage.planMigration</code></Heading>
-
-Previews a session-storage migration.
-
-```ts
-planMigration(request: PlanSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationPlan>;
-```
-
-Parameters:
-
-- `request` (`PlanSessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationPlan>`
-
-<Heading as="h4" id="api-storage-resumemigration-methodsignature"><code>Storage.resumeMigration</code></Heading>
-
-Resumes an interrupted session-storage migration.
-
-```ts
-resumeMigration(request: ResumeSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`ResumeSessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
 
 <Heading as="h3" id="api-subagenteventpayload-interface"><code>SubagentEventPayload</code></Heading>
 
@@ -5376,6 +5819,12 @@ readonly routedCategory: string;
 
 ```ts
 readonly routedModel: string;
+```
+
+<Heading as="h4" id="api-subagenteventpayload-routingdecision-propertysignature"><code>SubagentEventPayload.routingDecision</code></Heading>
+
+```ts
+readonly routingDecision?: RoutingDecisionEventPayload | undefined;
 ```
 
 <Heading as="h4" id="api-subagenteventpayload-routingreason-propertysignature"><code>SubagentEventPayload.routingReason</code></Heading>
@@ -5795,6 +6244,12 @@ readonly routedCategory: string;
 
 ```ts
 readonly routedModel: string;
+```
+
+<Heading as="h4" id="api-teammemberspeceventpayload-routingdecision-propertysignature"><code>TeamMemberSpecEventPayload.routingDecision</code></Heading>
+
+```ts
+readonly routingDecision?: RoutingDecisionEventPayload | undefined;
 ```
 
 <Heading as="h4" id="api-teammemberspeceventpayload-routingreason-propertysignature"><code>TeamMemberSpecEventPayload.routingReason</code></Heading>
@@ -6471,6 +6926,50 @@ A wire event kind currently understood by this SDK.
 export type KnownEventKind = (typeof MECATL_EVENT_KINDS)[number];
 ```
 
+<Heading as="h3" id="api-mcpauthorizationoperation-typealias"><code>McpAuthorizationOperation</code></Heading>
+
+The one-shot server transition requested by an authorization flow.
+
+```ts
+export type McpAuthorizationOperation = "recheck" | "cancel";
+```
+
+<Heading as="h3" id="api-mcpauthorizationresult-typealias"><code>McpAuthorizationResult</code></Heading>
+
+The authoritative result of one authorization recheck or cancellation. `pending` and `settled` have no continuation. `completed` carries one ordinary run result. `authorization_required` hands off a different authorization parked by the continuation.
+
+```ts
+export type McpAuthorizationResult = {
+    readonly outcome: "pending";
+    readonly status: "pending";
+    readonly authorization: EventOf<"authorization.required">;
+} | {
+    readonly outcome: "settled";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+} | {
+    readonly outcome: "completed";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+    readonly continuationRunId: string;
+    readonly continuation: RunResult;
+} | {
+    readonly outcome: "authorization_required";
+    readonly status: Exclude<McpAuthorizationStatus, "pending">;
+    readonly authorization: EventOf<"authorization.resolved">;
+    readonly continuationRunId: string;
+    readonly nextAuthorization: EventOf<"authorization.required">;
+};
+```
+
+<Heading as="h3" id="api-mcpauthorizationstatus-typealias"><code>McpAuthorizationStatus</code></Heading>
+
+The closed authorization status vocabulary interpreted by the lifecycle helper. The server remains authoritative for every status. An unknown value is a protocol error in this lifecycle even though the general event union keeps raw status strings open.
+
+```ts
+export type McpAuthorizationStatus = "pending" | "granted" | "denied" | "cancelled" | "expired" | "interrupted" | "failed" | "closed";
+```
+
 <Heading as="h3" id="api-mcpconnectoravailability-typealias"><code>McpConnectorAvailability</code></Heading>
 
 One broker-snapshot availability value.
@@ -6513,10 +7012,10 @@ export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: Ab
 
 <Heading as="h3" id="api-permissionverdict-typealias"><code>PermissionVerdict</code></Heading>
 
-A server permission verdict accepted by run.resolveAsk().
+One server permission verdict accepted by run.resolveAsk().
 
 ```ts
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 ```
 
 <Heading as="h3" id="api-planapprovalresponder-typealias"><code>PlanApprovalResponder</code></Heading>
@@ -6569,10 +7068,18 @@ export type RequestOptions = CallOptions;
 
 <Heading as="h3" id="api-retrydisposition-typealias"><code>RetryDisposition</code></Heading>
 
-Retry classification fields carried by model-retry and result payloads.
+One canonical retry-classification value.
 
 ```ts
-export type RetryDisposition = 0 | 1 | 2 | 3;
+export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
+```
+
+<Heading as="h3" id="api-runoutcome-typealias"><code>RunOutcome</code></Heading>
+
+The closed set of completion and authorization-park outcomes from `Run.outcome()`.
+
+```ts
+export type RunOutcome = RunCompletedOutcome | RunAuthorizationRequiredOutcome;
 ```
 
 <Heading as="h3" id="api-sdkcursor-typealias"><code>SdkCursor</code></Heading>
@@ -6625,10 +7132,10 @@ export type SessionMode = (typeof SessionMode)[keyof typeof SessionMode];
 
 <Heading as="h3" id="api-streamprogress-typealias"><code>StreamProgress</code></Heading>
 
-Stream-progress classification carried by model-retry and result payloads.
+One canonical stream-progress value.
 
 ```ts
-export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+export type StreamProgress = (typeof StreamProgress)[keyof typeof StreamProgress];
 ```
 
 <Heading as="h3" id="api-teamevent-typealias"><code>TeamEvent</code></Heading>
@@ -6769,7 +7276,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "environment_logical_root_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -6777,7 +7284,7 @@ MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_c
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
+MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "plan.continuation_failed", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>
@@ -6788,12 +7295,38 @@ Watch phases this SDK understands.
 MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"]
 ```
 
+<Heading as="h3" id="api-permissionverdict-variable"><code>PermissionVerdict</code></Heading>
+
+Canonical server permission verdicts.
+
+```ts
+PermissionVerdict: {
+    readonly AllowOnce: "allow_once";
+    readonly AllowAlways: "allow_always";
+    readonly Deny: "deny";
+}
+```
+
+<Heading as="h3" id="api-retrydisposition-variable"><code>RetryDisposition</code></Heading>
+
+Canonical retry classifications carried by model-retry and result payloads.
+
+```ts
+RetryDisposition: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Retryable: 2;
+    readonly Permanent: 3;
+}
+```
+
 <Heading as="h3" id="api-serverfeature-variable"><code>ServerFeature</code></Heading>
 
 Known server feature identifiers. Unknown identifiers remain observable.
 
 ```ts
 ServerFeature: {
+    readonly ExactPlanAskControl: "exact_plan_ask_control";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";
@@ -6837,20 +7370,26 @@ SessionMode: {
 }
 ```
 
+<Heading as="h3" id="api-streamprogress-variable"><code>StreamProgress</code></Heading>
+
+Canonical stream-progress classifications carried by model-retry and result payloads.
+
+```ts
+StreamProgress: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Precommit: 2;
+    readonly Visible: 3;
+    readonly Complete: 4;
+}
+```
+
 <Heading as="h3" id="api-supported-api-major-variable"><code>SUPPORTED_API_MAJOR</code></Heading>
 
 The API major implemented by this SDK.
 
 ```ts
 SUPPORTED_API_MAJOR = 1
-```
-
-<Heading as="h3" id="api-watch-session-events-feature-variable"><code>WATCH_SESSION_EVENTS_FEATURE</code></Heading>
-
-Known watch-session-events feature identifier.
-
-```ts
-WATCH_SESSION_EVENTS_FEATURE: "watch_session_events"
 ```
 
 <Heading as="h3" id="api-workspaceenrollmentstatus-variable"><code>WorkspaceEnrollmentStatus</code></Heading>

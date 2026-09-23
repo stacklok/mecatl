@@ -88,7 +88,8 @@ func TestAuthorizingSnapshotFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Of: %v", err)
 	}
-	if err := sessnap.RestoreState(session.New("old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Time{}), snap.State, snap.StopReason, snap.Pending, snap.Counters, session.Usage{}, false, ""); err == nil {
+	data := sessnap.RestoreData{State: snap.State, Stop: snap.StopReason, Pending: snap.Pending, Counters: snap.Counters, TokenUsage: map[session.UsageKind]session.TokenUsage{}}
+	if err := sessnap.RestoreState(session.New("old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Time{}), data); err == nil {
 		t.Fatal("public RestoreState accepted authorizing state")
 	}
 	snap.PendingAuthorization = nil

@@ -24,6 +24,10 @@ const APIMajor int32 = 1
 // Identifiers are STABLE ONCE PUBLISHED. Renaming one is a break dressed up as
 // a refactor: a deployed client gates on the exact string.
 const (
+	// FeatureExactPlanAskControl reports both strict ResolvePlanAsk transports
+	// when the deployment can durably record a known continuation failure.
+	FeatureExactPlanAskControl = "exact_plan_ask_control"
+
 	// FeatureHTTPSteer is the unary HTTP steer and cancel-steer control pair
 	// (issue #873, ADR 0252). The engine-level steer capability remains a
 	// separate runtime fact; this identifier reports that the HTTP transport
@@ -74,15 +78,15 @@ const (
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
-// implements. It is the "listener argument" serverFeatures' doc comment
-// anticipated, in the shape ADR 0237 requires: a composition policy value, not
-// an inference the server package makes from its own socket state.
+// implements. It combines composition policy and wired storage capabilities;
+// neither is inferred from a request's socket state.
 //
-// One *Service backs both the gRPC and the HTTP listener, so this is decided
-// ONCE at startup from the deployment's listener topology (mecated's
-// clientMCPOnCreateForListeners) and handed in. A per-connection answer would
-// be a different design needing its own ADR.
+// One *Service backs both the gRPC and HTTP listeners, so each scope value is
+// shared by both compatibility transports.
 type FeatureScope struct {
+	// ExactPlanAskControl requires durable failure recording for accepted
+	// server-owned plan continuations.
+	ExactPlanAskControl bool
 	// ClientMCPOnCreate reports whether this deployment accepts
 	// CreateSessionRequest.mcp_servers.
 	ClientMCPOnCreate bool
@@ -103,6 +107,7 @@ type FeatureScope struct {
 // repeated string and a client must treat it as a set, but a stable order keeps
 // diffs and golden fixtures readable.
 var allFeatures = []string{
+	FeatureExactPlanAskControl,
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeaturePromptFreeControls,
@@ -113,13 +118,15 @@ var allFeatures = []string{
 
 // permittedBy reports whether scope permits the named feature.
 //
-// Only listener-scoped identifiers appear here; everything else is a pure build
-// fact and is always permitted. Keeping the filter as one switch — rather than
+// Only deployment-dependent identifiers appear here; everything else is a pure
+// build fact and is always permitted. Keeping the filter as one switch — rather than
 // each transport testing its own conditions — is what stops the two surfaces
 // from advertising different sets, which is the failure the scope note in
 // serverFeatures warns about.
 func permittedBy(scope FeatureScope, feature string) bool {
 	switch feature {
+	case FeatureExactPlanAskControl:
+		return scope.ExactPlanAskControl
 	case FeatureMCPServersOnCreate:
 		return scope.ClientMCPOnCreate
 	case FeatureSessionActivityInventory:

@@ -14,7 +14,7 @@ The reader shells out to the platform's clipboard binary using direct argv — n
 
 ## Consequences
 
-Shipped. The macOS Chromium/Electron gap (pngpaste does not see the public.png UTI) is a known accepted limitation with no shell-only fix. Current behaviour is in docs/architecture.md. Status is in docs/design/PRODUCTION-READINESS.md. The injected-runner seam keeps all tests offline with no real subprocess.
+Shipped. The macOS Chromium/Electron gap (pngpaste does not see the public.png UTI) is a known accepted limitation with no shell-only fix. Current behaviour is in docs/architecture.md. Status is in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md). The injected-runner seam keeps all tests offline with no real subprocess.
 
 ---
 

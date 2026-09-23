@@ -229,15 +229,19 @@ func TestHTTPApprove(t *testing.T) {
 			events = append(events, &ev)
 			if ev.GetType() == "permission.ask" && !approved {
 				approved = true
-				body, _ := json.Marshal(map[string]any{"ask_id": ev.GetAsk().GetAskId(), "allow": true})
-				ar, aerr := http.Post(srv.URL+"/v1/sessions/"+id+"/approve",
+				body, _ := json.Marshal(map[string]any{
+					"expected_run_id": ev.GetRunId(),
+					"ask_id":          ev.GetAsk().GetAskId(),
+					"verdict":         session.VerdictStringAllowOnce,
+				})
+				ar, aerr := http.Post(srv.URL+"/v1/sessions/"+id+"/controls/resolve-ask",
 					"application/json", bytes.NewReader(body))
 				if aerr != nil {
 					t.Fatalf("POST approve: %v", aerr)
 				}
 				ar.Body.Close()
-				if ar.StatusCode != http.StatusNoContent {
-					t.Fatalf("approve status = %d", ar.StatusCode)
+				if ar.StatusCode != http.StatusOK {
+					t.Fatalf("resolve ask status = %d", ar.StatusCode)
 				}
 			}
 			if ev.GetType() == "result" {
@@ -284,6 +288,41 @@ func TestHTTPGetSession(t *testing.T) {
 	}
 	if out.SessionID != id || out.State != "idle" {
 		t.Fatalf("snapshot = %+v", out)
+	}
+}
+
+func TestHTTPGetSessionContextOccupancyParity(t *testing.T) {
+	svc := newService(t, mockllm.New(mockllm.TextTurn("done")), allowRules())
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+	id := createHTTPSession(t, srv)
+
+	prompt, err := http.Post(srv.URL+"/v1/sessions/"+id+"/prompt", "application/json", strings.NewReader(`{"text":"go"}`))
+	if err != nil {
+		t.Fatalf("POST prompt: %v", err)
+	}
+	_ = parseSSE(t, bufio.NewReader(prompt.Body))
+	_ = prompt.Body.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/sessions/" + id)
+	if err != nil {
+		t.Fatalf("GET session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		LatestContextOccupancy *struct {
+			InputTokens int  `json:"input_tokens"`
+			Estimated   bool `json:"estimated"`
+		} `json:"latest_context_occupancy"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.LatestContextOccupancy == nil || out.LatestContextOccupancy.InputTokens <= 0 || !out.LatestContextOccupancy.Estimated {
+		t.Fatalf("latest_context_occupancy = %+v, want non-zero estimate", out.LatestContextOccupancy)
 	}
 }
 

@@ -12,10 +12,13 @@ const sourceRoot = join(packageRoot, "src");
 const conciseExamples = [
   "browser-bff.ts",
   "callback-tool.ts",
+  "capability-discovery.ts",
   "durable-attachment.ts",
   "deno-local.ts",
   "deno-remote.ts",
   "local-spawn.ts",
+  "mcp-authorization.ts",
+  "mcp-workspace-enrollment.ts",
   "multimodal.ts",
   "one-shot-query.ts",
   "permissions.ts",
@@ -24,6 +27,7 @@ const conciseExamples = [
   "remote-connect.ts",
   "run-events.ts",
   "schedules.ts",
+  "session-lifecycle.ts",
   "teams.ts",
 ] as const;
 const publicImports = new Set([
@@ -131,6 +135,26 @@ test("the Deno examples cover remote connect and Deno.Command-backed local spawn
   expect(local).toContain('from "@stacklok-oss/mecatl-sdk/deno"');
   expect(local).not.toContain("@stacklok-oss/mecatl-sdk/node");
   expect(local).toContain("spawn(");
+});
+
+test("MCP authorization example uses only the public lifecycle", () => {
+  const source = readFileSync(join(examplesRoot, "mcp-authorization.ts"), "utf8");
+  expect(importSpecifiers(source)).toEqual(["@stacklok-oss/mecatl-sdk/node"]);
+  expect(source).toContain("await run.outcome()");
+  expect(source).toContain("authorization.presentation(");
+  expect(source).toContain("const flow = authorization.recheck(");
+  expect(source).toContain("onPermissionAsk:");
+  expect(source).toContain('case "pending"');
+  expect(source).toContain('case "settled"');
+  expect(source).toContain('case "completed"');
+  expect(source).toContain('case "authorization_required"');
+  expect(source).toContain("nextAuthorization.payload.authorizationId");
+  expect(source).toContain("A lost control response is ambiguous");
+  expect(source).not.toMatch(/\b(?:globalThis\.)?open\s*\(/u);
+  expect(source).not.toMatch(/\bwindow\./u);
+  expect(source).not.toContain("process.exit(");
+  expect(source).not.toMatch(/mecatui|setTimeout|setInterval/u);
+  expect(source).not.toMatch(/(?:^|\/)src\//u);
 });
 
 test("the Deno gate runs the local Deno.Command lifecycle", () => {

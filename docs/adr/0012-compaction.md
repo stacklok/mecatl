@@ -15,13 +15,13 @@ Implement compaction as a turn-boundary check at 80% of the context window, appl
 
 ## Consequences
 
-The agent survives long coding sessions without losing its goal or the most-recent user instruction. Middle instructions (between the goal and the recent tail) are best-effort: summarised verbatim by tier 4 when an LLM is wired, dropped otherwise. The unpaired-history invariant is enforced by three independent layers (forward-snap, ValidateToolPairing, ReplaceHistory). The archive event grows the event log super-linearly across many compactions; the deferred delta-archive optimization is recorded in docs/adr/0027-cloud-native.md. Current behaviour: docs/architecture.md. Shipped/deferred state: docs/design/PRODUCTION-READINESS.md.
+The agent survives long coding sessions without losing its goal or the most-recent user instruction. Middle instructions (between the goal and the recent tail) are best-effort: summarised verbatim by tier 4 when an LLM is wired, dropped otherwise. The unpaired-history invariant is enforced by three independent layers (forward-snap, ValidateToolPairing, ReplaceHistory). The archive event grows the event log super-linearly across many compactions; the deferred delta-archive optimization is recorded in docs/adr/0027-cloud-native.md. Current behaviour: docs/architecture.md. Shipped/deferred state: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 
 This is the deep reference for how mecatl compresses a
 conversation that has grown past the context window. The terse per-subsystem status
-detail lives in `docs/design/IMPLEMENTATION-NOTES.md` ("Compaction never emits
+detail lives in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) ("Compaction never emits
 unpaired history"); the cloud-native non-destructive archive is owned by
 `docs/adr/0027-cloud-native.md` (Phase 3b). This doc is the rationale and the full
 mechanics; those two stay the status/inventory channels and cross-link back here.
@@ -352,7 +352,7 @@ prompt text only, and the model may overshoot (fail-open).
 
 ## 6. Safety invariants
 
-These have tests that fail if regressed (see `docs/design/IMPLEMENTATION-NOTES.md`,
+These have tests that fail if regressed (see [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md),
 "Compaction never emits unpaired history").
 
 ### Never emit unpaired history

@@ -76,7 +76,7 @@ func TestOwnerSnapshotRejectsNULDelimitedIdentity(t *testing.T) {
 		`{"issuer":"a","subject":"b\u0000c","grant_type":"user"}`,
 	} {
 		line := []byte(`{"id":"s1","state":"idle","mode":"default","limits":{},` +
-			`"counters":{},"environment_ref":{"Kind":"local","ID":"/w","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:00Z",` +
+			`"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/w","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:00Z",` +
 			`"owner":` + owner + `,"authority":"must-not-apply","messages":[]}`)
 		if _, err := sessnap.Unmarshal(line); err == nil {
 			t.Fatalf("Unmarshal accepted unsafe owner %s", owner)
@@ -91,7 +91,7 @@ func TestCallerIdentity_Scenario0_PreShipSnapshotRestores(t *testing.T) {
 	t.Parallel()
 
 	const preShip = `{"id":"s1","state":"idle","mode":"default","limits":{},` +
-		`"counters":{},"environment_ref":{"Kind":"local","ID":"/w","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:00Z","messages":[]}`
+		`"counters":{},"token_usage":{},"environment_ref":{"Kind":"local","ID":"/w","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:00Z","messages":[]}`
 
 	got, err := sessnap.Unmarshal([]byte(preShip))
 	if err != nil {
@@ -122,27 +122,18 @@ func TestCallerIdentity_Scenario0_PreShipSnapshotRestores(t *testing.T) {
 	}
 }
 
-// TestCallerIdentity_Scenario0_APICompatAdditive pins AC0.3: a consumer
-// compiled against the new engine/session reads Owner and Authority with NO
-// RestoreState call-site change — the additive-field, not-widened-signature
-// contract (a trailing RestoreState parameter would be a Changed/breaking entry
-// under engine/COMPATIBILITY.md).
-func TestCallerIdentity_Scenario0_APICompatAdditive(t *testing.T) {
+// TestCallerIdentity_Scenario0_RestoreDataIsolation pins that restoring lifecycle
+// data does not alter caller identity labels.
+func TestCallerIdentity_Scenario0_RestoreDataIsolation(t *testing.T) {
 	t.Parallel()
 
-	// The pre-existing eight-parameter call site, verbatim. If RestoreState's
-	// signature widened, this file stops compiling — that is the assertion.
 	s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
-	if err := sessnap.RestoreState(
-		s,
-		session.StateIdle,
-		session.StopNone,
-		nil,
-		session.Counters{},
-		session.Usage{},
-		false,
-		"",
-	); err != nil {
+	if err := sessnap.RestoreState(s, sessnap.RestoreData{
+		State:      session.StateIdle,
+		Stop:       session.StopNone,
+		Counters:   session.Counters{},
+		TokenUsage: map[session.UsageKind]session.TokenUsage{},
+	}); err != nil {
 		t.Fatalf("RestoreState: %v", err)
 	}
 	// RestoreState touches neither label: they are restored by the aggregate

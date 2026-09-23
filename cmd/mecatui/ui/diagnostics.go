@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
 // ServerInfoGetter reads safe identity and sanitized diagnostic display data for the
@@ -39,7 +39,7 @@ func (m Model) diagnosticsCmd(diagnosis string) tea.Cmd {
 func (m Model) runDiagnostics() (tea.Model, tea.Cmd) {
 	m.palette.open = false
 	m.palette.filtered = nil
-	m.palette.cursor = 0
+	m.palette.syncList()
 	m.prompt.Reset()
 	if m.deps.Embedded {
 		m.prompt.Rewrite(m.diagnosticsReport(m.deps.ClientBuild, m.deps.ServerImpl, m.deps.Server, "", "embedded"))
@@ -81,7 +81,7 @@ func (m Model) diagnosticsReport(serverBuild, serverImplementation, displayServe
 }
 
 func (m Model) statusCommandDiagnosticsReport() string {
-	source, ok := m.deps.StatusSource.(statusline.CommandDiagnosticsSource)
+	source, ok := m.deps.StatusSource.(customization.CommandDiagnosticsSource)
 	if !ok {
 		return ""
 	}
@@ -93,19 +93,19 @@ func (m Model) statusCommandDiagnosticsReport() string {
 
 func safeCommandSurfaceState(state string) string {
 	switch state {
-	case statusline.CommandSurfaceDefault, statusline.CommandSurfaceCustom, statusline.CommandSurfaceStale:
+	case customization.CommandSurfaceDefault, customization.CommandSurfaceCustom, customization.CommandSurfaceStale:
 		return state
 	default:
-		return statusline.CommandSurfaceDefault
+		return customization.CommandSurfaceDefault
 	}
 }
 
 func safeCommandErrorState(state string) string {
 	switch state {
-	case statusline.CommandErrorNone, statusline.CommandErrorUnsupported, statusline.CommandErrorTimeout, statusline.CommandErrorOutputLimit, statusline.CommandErrorInvalidStatusML, statusline.CommandErrorExit, statusline.CommandErrorFailed:
+	case customization.CommandErrorNone, customization.CommandErrorUnsupported, customization.CommandErrorTimeout, customization.CommandErrorOutputLimit, customization.CommandErrorInvalidStatusML, customization.CommandErrorExit, customization.CommandErrorFailed:
 		return state
 	default:
-		return statusline.CommandErrorFailed
+		return customization.CommandErrorFailed
 	}
 }
 

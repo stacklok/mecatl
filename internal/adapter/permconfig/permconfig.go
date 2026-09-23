@@ -47,6 +47,10 @@ func ValidateYAML(data []byte) error {
 // error the caller surfaces (a config file that cannot be parsed must not be
 // silently ignored — that would hide a typo that disables a deny rule).
 func parseYAML(data []byte) (Config, error) {
+	return parseYAMLForTier(data, false)
+}
+
+func parseYAMLForTier(data []byte, project bool) (Config, error) {
 	if len(data) > maxConfigBytes {
 		return Config{}, errConfigTooLarge(len(data))
 	}
@@ -72,6 +76,16 @@ func parseYAML(data []byte) (Config, error) {
 		return Config{}, fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
 	}
 
+	if project {
+		entries := root.Values[:0]
+		for _, entry := range root.Values {
+			key, _ := permconfigMappingKey(entry.Key)
+			if key != "harness_context" {
+				entries = append(entries, entry)
+			}
+		}
+		root.Values = entries
+	}
 	var cfg Config
 	if err := cfg.UnmarshalYAML(root); err != nil {
 		return Config{}, safePermconfigSchemaError(err)
@@ -160,6 +174,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		"credential_store":       newPermconfigNodePointer(&c.CredentialStore),
 		"providers":              &c.Providers,
 		"provider_overrides":     &c.ProviderOverrides,
+		"harness_context":        newPermconfigNodePointer(&c.HarnessContext),
 		"permissions":            &c.Permissions,
 		"guardrails":             newPermconfigNodePointer(&c.Guardrails),
 		"posture":                &c.Posture,
@@ -185,6 +200,11 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		target, known := known[key]
 		if !known {
 			continue
+		}
+		if key == "harness_context" {
+			if _, mapping := permconfigMapping(entry.Value); !mapping {
+				return &permconfigSchemaError{section: key, err: errors.New("expected mapping")}
+			}
 		}
 		if err := yaml.NodeToValue(entry.Value, target); err != nil {
 			return &permconfigSchemaError{

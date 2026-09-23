@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/prompt"
-	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // PromptExpander implements prompt.CommandExpander by recognizing an input of
@@ -46,7 +45,7 @@ var _ prompt.CommandExpander = (*PromptExpander)(nil)
 const promptPrefix = "/mcp__"
 
 // Expand implements prompt.CommandExpander. See the type doc for the grammar.
-func (e *PromptExpander) Expand(ctx context.Context, _ tool.Workspace, input string) (string, bool, error) {
+func (e *PromptExpander) Expand(ctx context.Context, input string) (string, bool, error) {
 	server, name, args, ok := parsePromptInvocation(input)
 	if !ok {
 		return input, false, nil

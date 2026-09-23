@@ -25,7 +25,9 @@ import (
 	"context"
 	"strings"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	search "github.com/stacklok/mecatl/engine/adapter/search"
 	coreskillfs "github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -33,7 +35,6 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -72,21 +73,28 @@ import (
 //     tool, so ForkPreservedCap stays a PROCESS bound (a per-session reaper would
 //     multiply the cap by the number of sessions).
 type catalogAssets struct {
-	globalMgr        *mcp.Manager
-	agentReg         *agents.Registry
-	memStore         tool.MemoryStore
-	userModelStore   tool.MemoryStore
-	memoryDream      *dream.Consolidator
-	userModelDream   *dream.Consolidator
-	skills           []tool.SkillMeta
-	skillSource      tool.SkillSource
-	skillIndex       skillIndex
-	liveSkills       *coreskillfs.AtomicCatalog
-	learnedSkills    learning.SkillRepository
-	skillPublication *learnedSkillPublication
-	skillPartition   learning.SkillPartition
-	skillOwner       string
-	forkReaper       *agent.LRUForkReaper
+	globalMgr *mcp.Manager
+	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
+	// Catalog copies select the operation-pinned manager before assembly; cached
+	// engines retain only the returned revision tag.
+	mcpRuntimes          *mcpRuntimeSet
+	mcpReconciler        *mcpSourceReconciler
+	sharedEngineRevision uint64
+	buildRuntimeRelease  func()
+	agentReg             *agents.Registry
+	memStore             tool.MemoryStore
+	userModelStore       tool.MemoryStore
+	memoryDream          *dream.Consolidator
+	userModelDream       *dream.Consolidator
+	skills               []tool.SkillMeta
+	skillSource          tool.SkillSource
+	skillIndex           skillIndex
+	liveSkills           *coreskillfs.AtomicCatalog
+	learnedSkills        learning.SkillRepository
+	skillPublication     *learnedSkillPublication
+	skillPartition       learning.SkillPartition
+	skillOwner           string
+	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
 	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a
@@ -130,17 +138,19 @@ type catalogAssets struct {
 	// no-delivery path). It is the SAME instance across main + per-session
 	// engines so a note queued during one run drains on the next.
 	deliveryQueue port.DeliveryQueue
-	// learningAdmission is the ONE process-wide completion counter shared by the
+	// learningAdmissionGate is the ONE process-wide completion counter shared by the
 	// default and every per-session/provider reviewer.
-	learningAdmission        *learningAdmission
+	learningAdmissionGate    *learningAdmissionGate
 	reflectionLifecycle      *materializationLifecycle
 	reflectionCoordinator    *reflectionCoordinator
 	reflectionRepository     learning.ProposalRepository
 	attemptRepository        learning.AttemptRepository
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
-	modelInventory           *resolvedModelInventory
+	modelInventory           server.ModelInventory
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
+	guardrailGrants          interface{ ClearSession(string) }
+	sessionContextFactory    server.SessionContextEngineFactory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -680,7 +690,7 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 		// WebSearch (issue #26) for read-only-discovery parity with WebFetch: a no-FS
 		// explorer's natural workflow is search-then-fetch, so it carries both. Built
 		// over the SAME process-wide provider as the main catalog (a.searchProvider).
-		cat.MustRegister(tools.NewWebSearchTool(a.searchProvider))
+		cat.MustRegister(search.NewWebSearchTool(a.searchProvider))
 	})
 	classified.capture(server.ClassificationEntry{Kind: server.KindSharedInfrastructure,
 		Rationale: "server-global MCP tools are process-wide configured infrastructure shared by every caller"}, func() {

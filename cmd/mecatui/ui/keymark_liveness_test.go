@@ -726,10 +726,10 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	}
 	t.Run("panel footer", func(t *testing.T) {
 		got := render(mcpState{view: mcpPanel})
-		if !strings.Contains(got, "ctrl+f24 refresh · ctrl+f16 close") {
-			t.Errorf("panel footer should carry live refresh+close: %q", got)
+		if !strings.Contains(got, "ctrl+f24 reload status · ctrl+f16 close") {
+			t.Errorf("panel footer should carry live status-reload+close: %q", got)
 		}
-		if strings.Contains(got, "r refresh · esc close") {
+		if strings.Contains(got, "r reload status · esc close") {
 			t.Errorf("panel footer still shows defaults: %q", got)
 		}
 	})
@@ -780,8 +780,9 @@ func TestModelsOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	catalog := modelCatalog{models: []client.ModelInfo{{ID: "m1"}}}
-	picker := modelsState{view: modelsPanel, filtered: []client.ModelInfo{{ID: "m1"}}}
-	got := stripANSIstr(renderModelsPanel(th, catalog, picker, client.Capabilities{ModelSelection: true}, "", hk, modelsRowBudgetFor(30, modelsPanelFixedRows(picker, "", hk))))
+	picker := modelsState{view: modelsPanel, catalog: catalog, filtered: catalog.models, deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk, caps: client.Capabilities{ModelSelection: true}}}
+	rendered, _ := picker.Render(200, 30)
+	got := stripANSIstr(rendered)
 	if !strings.Contains(got, "↑/↓/ctrl+f14 move · ctrl+f17 use · ctrl+f25 set global default · ctrl+f16 clear filter / close") {
 		t.Errorf("models hint should carry live page/use/set/close: %q", got)
 	}

@@ -73,7 +73,7 @@ opt-in `e2e:k8s` live variant. The fixture remains an ADR 0048 disposable
 Redis-backed deployment, rather than a new provider runtime
 ([ADR-0048](../adr/0048-mecak8s.md)). The chart's raw `EnvVar` projection is the
 existing deployment seam; credential values are never chart values or command
-arguments ([`user-docs/building/deployment/mecak8s.md`](https://mecatl.dev/docs/building/deployment/mecak8s)).
+arguments ([`user-docs/building/deployment/mecak8s.md`](../../user-docs/building/deployment/mecak8s.md)).
 
 **Acceptance:**
 - AC2.1: Without `OPENROUTER_API_KEY`, `mecak8s:kind-setup` renders the canned

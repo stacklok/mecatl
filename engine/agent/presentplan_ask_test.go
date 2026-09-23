@@ -71,17 +71,14 @@ func TestPresentPlanSurfacesPlanOriginatedAsk(t *testing.T) {
 	if ask == nil {
 		t.Fatal("an interactive plan-mode PresentPlan call must surface a permission ask")
 	}
-	if !ask.PlanOriginated {
-		t.Fatal("the surfaced ask must carry PlanOriginated=true (cross-process load-bearing)")
+	if ask.Origin != session.ApprovalOriginPlan {
+		t.Fatalf("ask.Origin = %v, want ApprovalOriginPlan", ask.Origin)
 	}
 	if ask.Tool != "PresentPlan" {
 		t.Fatalf("ask.Tool = %q, want %q", ask.Tool, "PresentPlan")
 	}
 	if ask.Reason == "" {
 		t.Fatal("the ask must carry a human-readable reason")
-	}
-	if ask.Origin() != session.AskOriginPlan {
-		t.Fatalf("ask.Origin() = %v, want AskOriginPlan", ask.Origin())
 	}
 }
 
@@ -246,8 +243,8 @@ func TestResumePlanApprovalAfterRestartExecutesAndFlips(t *testing.T) {
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
-			if !ev.Ask.PlanOriginated {
-				t.Fatal("the awaiting plan ask must be PlanOriginated")
+			if ev.Ask.Origin != session.ApprovalOriginPlan {
+				t.Fatal("the awaiting plan ask must carry plan origin")
 			}
 			snap, snapErr = sessnap.Of(sess)
 			r.Cancel()
@@ -268,8 +265,8 @@ func TestResumePlanApprovalAfterRestartExecutesAndFlips(t *testing.T) {
 	}
 	// The PlanOriginated marker must survive the snapshot round-trip.
 	ra, ok := restored.PendingAsk()
-	if !ok || !ra.PlanOriginated {
-		t.Fatalf("PlanOriginated must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
+	if !ok || ra.Origin != session.ApprovalOriginPlan {
+		t.Fatalf("plan origin must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
 	}
 
 	// Fresh engine (a new process): resume the ask with AllowOnce. The run must
@@ -311,8 +308,8 @@ func TestResumePlanApprovalDenyIteratesTerminates(t *testing.T) {
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
-			if !ev.Ask.PlanOriginated {
-				t.Fatal("the awaiting plan ask must be PlanOriginated")
+			if ev.Ask.Origin != session.ApprovalOriginPlan {
+				t.Fatal("the awaiting plan ask must carry plan origin")
 			}
 			snap, snapErr = sessnap.Of(sess)
 			r.Cancel()
@@ -329,8 +326,8 @@ func TestResumePlanApprovalDenyIteratesTerminates(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 	ra, ok := restored.PendingAsk()
-	if !ok || !ra.PlanOriginated {
-		t.Fatalf("PlanOriginated must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
+	if !ok || ra.Origin != session.ApprovalOriginPlan {
+		t.Fatalf("plan origin must round-trip the snapshot; ok=%v ask=%+v", ok, ra)
 	}
 
 	// Fresh engine (a new process): resume the ask with Deny. The run must
@@ -376,7 +373,7 @@ func TestPlanApprovalDoesNotFlipMidTurn(t *testing.T) {
 	}
 
 	// PauseForApproval drives to StateAwaiting; SetMode must be rejected there too.
-	if err := sess.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "PresentPlan", PlanOriginated: true}); err != nil {
+	if err := sess.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "PresentPlan", Origin: session.ApprovalOriginPlan}); err != nil {
 		t.Fatalf("PauseForApproval: %v", err)
 	}
 	if sess.State != session.StateAwaiting {

@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/schedparse"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -177,7 +178,7 @@ func (m Model) onSchedulePanelActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		m.schedule.cursor = 0
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollBottom):
-		m.schedule.cursor = clampModelsCursor(len(m.schedule.filtered)-1, len(m.schedule.filtered))
+		m.schedule.cursor = clampBounded(len(m.schedule.filtered)-1, len(m.schedule.filtered))
 		return m, nil, true
 	case key.Matches(msg, m.keys.Choose):
 		return m.openScheduleInspect()
@@ -553,7 +554,7 @@ func (m Model) updateScheduleMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.schedule.actionErr = ""
 		// On a successful fire, surface the fire id in the status line.
 		if msg.Action == "fired" && msg.FireID != "" {
-			m.statusMsg = m.deps.Theme.Style("muted").Render("fired " + msg.Name + " — fire id: " + sanitizeTerminal(msg.FireID))
+			m.statusMsg = m.deps.Theme.Style("muted").Render("fired " + msg.Name + " — fire id: " + terminaltext.Sanitize(msg.FireID))
 		}
 		// Re-list to reflect the new state (enabled toggle, fire count, next fire).
 		return m, client.ListSchedulesCmd(m.deps.Ctx, m.deps.Sched), true
@@ -602,19 +603,19 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 	case st.filter.Focused():
 		b.WriteString(st.filter.View() + "\n\n")
 	case st.filter.Value() != "":
-		b.WriteString(th.Style("muted").Render("filter: "+sanitizeTerminal(st.filter.Value())) + "\n\n")
+		b.WriteString(th.Style("muted").Render("filter: "+terminaltext.Sanitize(st.filter.Value())) + "\n\n")
 	}
 	if st.loading {
 		b.WriteString(th.Style("muted").Render("loading…"))
 		return b.String()
 	}
 	if st.err != nil {
-		b.WriteString(th.Style("errorText").Render("could not list schedules: " + sanitizeTerminal(st.err.Error())))
+		b.WriteString(th.Style("errorText").Render("could not list schedules: " + terminaltext.Sanitize(st.err.Error())))
 		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
 	if st.actionErr != "" {
-		b.WriteString(th.Style("errorText").Render("action failed: "+sanitizeTerminal(st.actionErr)) + "\n\n")
+		b.WriteString(th.Style("errorText").Render("action failed: "+terminaltext.Sanitize(st.actionErr)) + "\n\n")
 	}
 	if len(st.filtered) == 0 {
 		if st.filter.Value() != "" {
@@ -642,8 +643,8 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 		} else if s.State.LastFireSessionID == "pending" {
 			inFlight = "  claimed"
 		}
-		line := marker + sanitizeTerminal(s.Spec.Name) +
-			"  " + sanitizeTerminal(triggerSummary(s.Spec)) +
+		line := marker + terminaltext.Sanitize(s.Spec.Name) +
+			"  " + terminaltext.Sanitize(triggerSummary(s.Spec)) +
 			"  " + state +
 			"  next:" + formatScheduleTime(s.State.NextFireAt) +
 			"  last:" + formatScheduleTime(s.State.LastFireAt) +
@@ -666,7 +667,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("delete schedule") + "\n\n")
-	b.WriteString("delete " + th.Style("accent").Render(sanitizeTerminal(st.confirm.Spec.Name)) + "? This cannot be undone.\n")
+	b.WriteString("delete " + th.Style("accent").Render(terminaltext.Sanitize(st.confirm.Spec.Name)) + "? This cannot be undone.\n")
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": delete  "+hk.closeOnly+": back"))
 	return b.String()
 }
@@ -686,7 +687,7 @@ func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ i
 func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool, hk helpKeys, _, _ int) string {
 	s := st.inspect
 	var b strings.Builder
-	b.WriteString(th.Style("title").Render("schedule — "+sanitizeTerminal(s.Spec.Name)) + "\n\n")
+	b.WriteString(th.Style("title").Render("schedule — "+terminaltext.Sanitize(s.Spec.Name)) + "\n\n")
 	muted := th.Style("muted")
 	renderScheduleSpecBlock(&b, muted, s.Spec)
 	b.WriteString("\n" + muted.Render("state") + "\n")
@@ -699,7 +700,7 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 	b.WriteString(muted.Render("next run: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
 	b.WriteString(muted.Render("last run: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
 	if s.State.LastFireSessionID != "" {
-		b.WriteString(muted.Render("last run session: ") + sanitizeTerminal(s.State.LastFireSessionID) + "\n")
+		b.WriteString(muted.Render("last run session: ") + terminaltext.Sanitize(s.State.LastFireSessionID) + "\n")
 	}
 	if !s.State.LastFireStartedAt.IsZero() || !s.State.LastFireProgressAt.IsZero() || !s.State.FireDeadline.IsZero() {
 		b.WriteString(muted.Render("running:") +
@@ -711,7 +712,7 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 	if st.firesLoading {
 		b.WriteString(muted.Render("loading…"))
 	} else if st.firesErr != nil {
-		b.WriteString(th.Style("errorText").Render("could not list fires: " + sanitizeTerminal(st.firesErr.Error())))
+		b.WriteString(th.Style("errorText").Render("could not list fires: " + terminaltext.Sanitize(st.firesErr.Error())))
 	} else if len(st.fires) == 0 {
 		// A CLAIMED fire (LastFireSessionID == "pending", no run started) is
 		// NOT the same as "no fires recorded" — render it explicitly so a
@@ -746,25 +747,25 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 // view. Extracted from renderScheduleInspect to keep its cyclomatic complexity
 // in check (#386 added the fire_timeout branch).
 func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec client.ScheduleSpec) {
-	b.WriteString(muted.Render("trigger: ") + sanitizeTerminal(triggerSummary(spec)) + "\n")
+	b.WriteString(muted.Render("trigger: ") + terminaltext.Sanitize(triggerSummary(spec)) + "\n")
 	if spec.Prompt != "" {
-		b.WriteString(muted.Render("prompt: ") + sanitizeTerminal(truncate(spec.Prompt, 120)) + "\n")
+		b.WriteString(muted.Render("prompt: ") + terminaltext.Sanitize(truncate(spec.Prompt, 120)) + "\n")
 	}
 	if spec.Selector.ProviderID != "" || spec.Selector.ModelID != "" {
-		b.WriteString(muted.Render("model: ") + sanitizeTerminal(spec.Selector.ProviderID+"/"+spec.Selector.ModelID) + "\n")
+		b.WriteString(muted.Render("model: ") + terminaltext.Sanitize(spec.Selector.ProviderID+"/"+spec.Selector.ModelID) + "\n")
 	}
 	if spec.Profile != "" {
 		b.WriteString(muted.Render("workspace access: ") + scheduleWorkspaceAccessText(spec.Profile) + "\n")
 	}
 	if spec.Mode != "" {
-		b.WriteString(muted.Render("permission mode: ") + sanitizeTerminal(spec.Mode) + "\n")
+		b.WriteString(muted.Render("permission mode: ") + terminaltext.Sanitize(spec.Mode) + "\n")
 	}
 	b.WriteString(muted.Render("may change workspace: ") + boolStr(spec.Mutating) +
 		"  run overlap: " + scheduleOverlapText(spec.Singleton) + "\n")
 	b.WriteString(muted.Render("missed run: ") + scheduleMisfireText(spec.Misfire) +
 		"  run limit: " + scheduleRunLimitText(spec) + "\n")
 	if spec.Timezone != "" {
-		b.WriteString(muted.Render("timezone: ") + sanitizeTerminal(spec.Timezone) + "\n")
+		b.WriteString(muted.Render("timezone: ") + terminaltext.Sanitize(spec.Timezone) + "\n")
 	}
 	if spec.FireTimeout > 0 {
 		b.WriteString(muted.Render("run timeout: ") + spec.FireTimeout.String() + "\n")
@@ -775,7 +776,7 @@ func scheduleWorkspaceAccessText(profile string) string {
 	if profile == "no-fs" {
 		return "no workspace files (no-fs)"
 	}
-	return sanitizeTerminal(profile)
+	return terminaltext.Sanitize(profile)
 }
 
 func scheduleOverlapText(singleton bool) string {
@@ -811,11 +812,11 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 	if selected {
 		marker = "▶ "
 	}
-	stop := sanitizeTerminal(f.Stop)
+	stop := terminaltext.Sanitize(f.Stop)
 	if stop == "" {
 		stop = "in-flight"
 	}
-	line := marker + sanitizeTerminal(f.ID) +
+	line := marker + terminaltext.Sanitize(f.ID) +
 		"  " + formatScheduleTime(f.FiredAt) +
 		"  " + stop
 	if f.Stop == "" {
@@ -823,7 +824,7 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 			"  last update " + formatScheduleTime(f.ProgressAt) +
 			"  deadline " + formatScheduleTime(f.Deadline)
 	} else if f.Err != "" {
-		line += "  err: " + sanitizeTerminal(f.Err)
+		line += "  err: " + terminaltext.Sanitize(f.Err)
 	}
 	return line
 }
@@ -871,9 +872,9 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ in
 	}
 	b.WriteString(mutLine + "\n")
 	if st.actionErr != "" {
-		// sanitizeTerminal for defense-in-depth parity with the panel sink — a
+		// terminaltext.Sanitize for defense-in-depth parity with the panel sink — a
 		// server-sourced actionErr (e.g. a rejected cron) could carry control runes.
-		b.WriteString("\n" + th.Style("errorText").Render(sanitizeTerminal(st.actionErr)) + "\n")
+		b.WriteString("\n" + th.Style("errorText").Render(terminaltext.Sanitize(st.actionErr)) + "\n")
 	}
 	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
 	// tab/↑↓/y/n are BARE keys via msg.String (NOT keyMap bindings), so they

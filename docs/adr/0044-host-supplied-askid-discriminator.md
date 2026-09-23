@@ -134,4 +134,4 @@ The change must hold four invariants:
 - [ADR 0077 — Direct-write writable Subagent](./0077-direct-write-subagent.md) — the
   run-scoped `RunOptions` opt-in seam pattern.
 - [ADR 0005 — Driver seams](./0005-driver-seams.md) — the opt-in seam convention.
-- The living grammar/correlation reference in `docs/design/IMPLEMENTATION-NOTES.md`.
+- The living grammar/correlation reference in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md).

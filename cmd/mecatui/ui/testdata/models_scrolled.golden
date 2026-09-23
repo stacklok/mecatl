@@ -2,17 +2,18 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
-┃  Models  (28–30 of 30)                                                                              ┃
+┃  Models  (30)                                                                                       ┃
 ┃  current: gpt-5 (server default)                                                                    ┃
 ┃  > filter models…                                                                                   ┃
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃       prov · model-027                                                                              ┃
-┃       prov · model-028                                                                              ┃
-┃  ╭─────────────────────────╮                                                                        ┃
-┃  │  ›    prov · model-029  │                                                                        ┃
-┃  ╰─────────────────────────╯                                                                        ┃
+┃  ↑ 26 items                                                                                         ┃
+┃      prov · model-026                                                                               ┃
+┃      prov · model-027                                                                               ┃
+┃      prov · model-028                                                                               ┃
+┃  ▶   prov · wrapped model label wrapped model label wrapped model label wrapped model label wra     ┃
+┃      pped model label wrapped model label wrapped model label wrapped model label                   ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃

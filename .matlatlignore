@@ -52,15 +52,7 @@ e2e/fixtures/
 # compatibility. It is not a separate corpus document.
 CLAUDE.md
 
-# user-docs/ is the mecatl.dev Docusaurus site content and canonical user-facing
-# documentation. Excluded until the
-# content is reviewed and stable; links use Docusaurus content-root-relative
-# paths that matlatl doesn't understand anyway (no content-root aliasing).
-user-docs/
-
-# website/AGENTS.md is agent guidance for the Docusaurus site, not product docs.
-# website/CLAUDE.md is a compatibility symlink to that canonical file.
-website/AGENTS.md
+# website/CLAUDE.md is a compatibility symlink to website/AGENTS.md.
 website/CLAUDE.md
 
 # API Extractor reports are review artifacts, not navigational documentation.

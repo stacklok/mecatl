@@ -518,8 +518,8 @@ func TestLoopAccountsRetriedUsageInSessionResultAndBudget(t *testing.T) {
 	if result.Stop != session.StopBudget {
 		t.Fatalf("stop = %q, want budget", result.Stop)
 	}
-	if result.Usage != want || sess.Usage != want {
-		t.Fatalf("result usage=%+v session usage=%+v, want %+v", result.Usage, sess.Usage, want)
+	if result.Usage != want || sess.UsageFor(session.UsageKindMain) != want {
+		t.Fatalf("result usage=%+v session usage=%+v, want %+v", result.Usage, sess.UsageFor(session.UsageKindMain), want)
 	}
 	if inner.calls.Load() != 2 || counter.executions.Load() != 1 {
 		t.Fatalf("provider calls=%d tool executions=%d, want 2 and 1", inner.calls.Load(), counter.executions.Load())
@@ -536,8 +536,8 @@ func TestLoopRecordsUsageOnExhaustedStream(t *testing.T) {
 	result := lastResult(t, drain(e.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"})))
 
 	want := session.Usage{InputTokens: 5, OutputTokens: 1}
-	if result.Stop != session.StopError || result.Usage != want || sess.Usage != want {
-		t.Fatalf("stop=%q result usage=%+v session usage=%+v, want error and %+v", result.Stop, result.Usage, sess.Usage, want)
+	if result.Stop != session.StopError || result.Usage != want || sess.UsageFor(session.UsageKindMain) != want {
+		t.Fatalf("stop=%q result usage=%+v session usage=%+v, want error and %+v", result.Stop, result.Usage, sess.UsageFor(session.UsageKindMain), want)
 	}
 }
 

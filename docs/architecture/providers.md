@@ -82,16 +82,22 @@ directly from recorded fixtures by `decodeSSE` in tests):
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported
 as a stream error.
 
-**Per-request session correlation.** The shared run-entry path binds the exact active
-`session.SessionID` to the context passed through `LLMProvider.Stream`. The OpenAI
-Responses, OpenAI Chat Completions, and Anthropic adapters project it as
-`X-Mecatl-Session-ID` on each HTTP request. It is correlation-only: child/member/
-auxiliary engines bind their own IDs, while compaction inherits the parent run's ID.
-Provider clients never hold it globally, so concurrent sessions cannot cross-stamp.
-An absent or Go-illegal HTTP field value omits the header without failing inference;
-the value is otherwise byte-exact. It is not auth, tracing, idempotency, provider
-state, safety/user identity, or a cache key. See
-[ADR 0216](../adr/0216-provider-session-correlation-header.md).
+**Per-request session correlation.** The shared run-entry path binds two identities to
+provider request context. `X-Mecatl-Session-ID` carries the exact active
+`session.SessionID`; child, member, and auxiliary engines therefore carry their own IDs,
+while compaction inherits the parent run's ID. `X-Mecatl-Root-Session-ID` carries the
+causal root across nested runs, so provider logs can group delegated work without erasing
+the active child identity. Main-run requests carry the same value in both fields.
+
+OpenAI Responses, OpenAI Chat Completions, and Anthropic requests receive the root field
+through the final composition-owned HTTP transport. The transport accepts 1–256 bytes of
+printable ASCII without boundary spaces, removes any caller-supplied root field, and omits
+an absent or invalid value without failing inference. Provider clients never hold either
+identity globally, so concurrent sessions cannot cross-stamp. The active field remains the
+only client/server affinity hint; the root field is outbound-only. Neither field grants
+authentication, authorization, tracing, idempotency, provider state, safety/user identity,
+or cache identity. See [ADR 0216](../adr/0216-provider-session-correlation-header.md) and
+[ADR 0360](../adr/0360-root-session-provider-correlation.md).
 
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,
@@ -203,7 +209,7 @@ floating semantics and follows the deployment default after restart. The manual
 credential is read once at startup; every request rechecks that snapshot's expiry,
 but there is no refresh, login, or auth-file writer. Replacing an expired/rejected
 token requires restarting the process. The plaintext and same-UID threat boundary
-is documented in the [operator setup](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
+is documented in the [operator setup](../../user-docs/building/deployment/settings.md#configure-provider-credentials).
 
 **OpenCode Go (`provider/openaichat`)** is the Chat Completions wire adapter —
 the sibling of the openai Responses adapter, built on the same `openai-go` SDK via
@@ -238,7 +244,7 @@ entries — all the same Responses wire protocol) carries the guard as well as t
 terminal event, so a truncated turn is never promoted to a successful
 `StopEndTurn`. See
 [`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md)
-and `docs/design/IMPLEMENTATION-NOTES.md` for the exact mechanics.
+for the transport rationale; `provider/ssefilter/ssefilter.go` owns frame filtering.
 `buildProvider` returns the registry **and** its default provider so the shared engine
 + every child/fork/team engine keep receiving the single default provider exactly as
 before (the default path is byte-identical). A composition-only `providerConstructor`
@@ -354,15 +360,15 @@ catalog). The widened `SessionEngineFactory func(ctx, sel, specs)` is the ONE se
 a per-session engine — it serves BOTH a non-default provider/model AND client-provided
 MCP servers (orthogonal inputs → ONE engine over ONE catalog). The composition factory
 resolves the selector against the registry and builds Deps via
-**`engineDepsForProvider`**, which re-derives EVERY provider/model-closing field
-(LLM, Compactor, Model, model-keyed TokenCounter, `PromptConfig.Env.Model`, and the
-**context-window resolver** `Deps.ContextWindow` — a `func() int` built by
-`reg.windowResolver` (override→live→catalog→128k floor) and read live at the point of
-use, so the compaction trigger AGREES with the `ListModels`-advertised `context_limit`
-and self-corrects after a live-catalog swap with no rebuild; only a genuinely
-uncatalogued passthrough model falls back to the 128k default). The DEFAULT model
-resolves through the SAME resolver (`baseEngineDeps`, issue #63) — it is no longer
-pinned to the 128k floor.
+**`engineDepsForProvider`**, which re-derives the LLM, Compactor, Model, model-keyed
+TokenCounter, `PromptConfig.Env.Model`, and context-window resolver.
+`Deps.ContextWindow` is a `func() int` built by
+`reg.windowResolver` (global override → exact configuration → retained live metadata
+→ catalog → defensive 128000 floor), read at the point of use. An accepted metadata
+publication therefore updates context resolution without rebuilding the engine. The
+[Service admission gate](context-and-compaction.md) separately decides whether that
+floor is permitted before execution; the resolver's positive scalar alone is not
+admission evidence. The default model uses the same resolver.
 This is the contamination fix: a shallow clone swapping only the
 LLM would compact/count through the wrong model. The resolution table:
 
@@ -387,30 +393,125 @@ cap, `createSession` returns `ErrTooManySessionEngines` (gRPC `ResourceExhausted
 HTTP 429); `CloseSession`/`EndSession` frees a slot. (Keys are NEVER on the wire — only
 the provider id.)
 
-**Model inventory (`ListModels` / `internal/app/modelsnapshot.go`).** `modelSnapshot`
-joins the registry's AVAILABLE providers to the embedded catalog and projects each
-model into the proto `ModelInfo` (public metadata only — id, provider_id, display_name,
-image/reasoning flags, context_limit — never a key/env/base-URL). Composition stores
-that projection in one atomic resolved inventory shared by `ListModels` and the
-read-only `DiscoverModels` tool. Live refresh swaps that same inventory, so both views
-retain the existing floor/last-known-good/empty semantics without a second lister or
-probe. `DiscoverModels` exact-filters only `provider_id` and `model_id`, returns at most
-50 complete provider/model handles (20 by default), and has a 32 KiB output ceiling.
-The pair is the exact selection handle; a model id never implies its provider. The tool
-is registered through the common catalog assembly, including no-FS sessions, and
-receives no workspace or shell input. The `mock` provider advertises no selectable
-models. `ServerCapabilities.model_selection` is true iff the inventory is non-empty or
-a refresh source is available, gating the client's model picker. Provider key/base-URL
-flags landed in `cmd/mecated` earlier; the picker UX is a client concern.
+**Model inventory.** `internal/app/provider_discovery.go` (`providerDiscovery`)
+is the Build-owned listing and publication owner. It borrows the registry's frozen
+provider-to-lister set; registry membership, credentials, adapter construction, and
+default selection remain separate responsibilities. Bootstrap, one-shot startup,
+ListModels, and Service context admission all request or join provider-local attempts
+through `request`. Protocol wrappers in `internal/app/modellister.go` translate
+responses but do not coordinate refresh or publish metadata.
 
-**Capability single-source (`internal/app/capability.go`).** A model's true input
-capability is the INTERSECTION `catalog-per-model-modalities ∩ adapter-Capabilities()`,
-computed by `modelCapability` in composition (the only layer holding both inputs). That
-ONE neutral `port.ProviderCapabilities` feeds three sinks so they cannot disagree:
-`ModelInfo.image` (ListModels), the `CreateSessionResponse.session_capabilities` echo
-(per-session), and the ACP gate (`Service.ProviderCapabilities()`, the default caps).
-The server/acp adapters receive only the computed value — no catalog/registry type
-crosses inward. Keys are never on the wire — only the provider id.
+### Discovery ownership in local and replicated deployments
+
+Each `app.Build` owns one discovery domain. In the usual deployment that is one server
+or pod. Embedded mecatui uses its embedded server's owner, and connected clients share
+the owner of the server they connect to. Every mecak8s replica has an independent owner,
+even when Redis shares durable sessions, events, and schedules. A registry owns provider
+credentials, adapters, and defaults; discovery owns attempts, evidence, and publication;
+the Service owns execution-target resolution and admission; and `Built.Close` owns
+cancellation and cleanup of discovery work.
+
+Bootstrap, startup warming, ListModels, and admission use that same owner. Startup
+warming is useful but is not a safety prerequisite, except for the existing ToolHive and
+Codex bootstrap requirements. A native demand-only provider obtains evidence on its first
+unknown-window prompt, and a cold replacement Build obtains its own evidence. The rules
+apply to the same selected target and its evidence, not to simultaneous agreement between
+replicas. A warm replica can retain positive evidence during an outage while a cold
+replica rejects; each Build has its own listing traffic and cooldowns.
+
+Service acquisition of an existing session lease precedes admission and remains held when
+admission rejects. A lease conflict stops the request before discovery, and deployments do
+not provide owner routing or transparent takeover. Mecak8s readiness describes drain and
+storage readiness, not model admissibility or inference health. Schedule validation reads
+local inventory without listing; the replica that fires a schedule performs its own Service
+admission. Scheduler leadership does not make discovery global.
+
+The owner projects public model metadata only—ID, provider ID, display name,
+image/reasoning flags, and context limit, never a key, environment value, or base
+URL. Publication and reads deep-copy every `ModelInfo`, and each `DiscoverModels`
+call captures its own canonically sorted scalar projection, so publisher or reader
+mutation cannot change a page or its inventory digest.
+
+An unfiltered first call returns a complete selectable-provider facet alongside the
+bounded model page. Optional byte-exact provider/model filters compose with a bounded
+literal-term query over provider ID, model ID, and display name. Omission of the
+provider searches all selectable providers. Results return at most 50 complete handles
+(20 by default) within a 32 KiB ceiling. When more matches remain, `next_cursor` is a
+canonical unpadded base64url envelope bound by SHA-256 to the complete captured safe
+inventory. A continuation restores its filters, normalized terms, limit, and next
+offset without retained server state; changed inventory returns a restart instruction.
+The pair remains the exact selection handle, and discovery never probes, refreshes,
+routes, or selects. The tool is registered through the common catalog assembly,
+including no-FS sessions, and receives no workspace or shell input. The `mock`
+provider advertises no selectable models. `ServerCapabilities.model_selection` is true
+when inventory is non-empty or a refresh source is available, including a demand-only
+native source.
+
+An ordinary attempt has a ten-second deadline. Concurrent requests for one provider
+join that attempt; other providers start and publish independently. A ten-second
+provider-local cooldown starts when the owner publishes the terminal outcome.
+Timeout publishes failure and wakes waiters even if the lister has not returned;
+the slot remains occupied until return, and late results cannot replace the outcome.
+A request during cooldown or while a timed-out fetch still occupies the slot returns
+the current snapshot without sleeping or starting a replacement. Cancelling a waiter
+ends only its wait: the owner keeps the bounded fetch for other readers and publication.
+
+Native authenticated providers are demand-only. Their first unknown-window prompt
+starts discovery without a picker visit. Eligible non-native providers receive one
+startup refresh, with completed bootstrap attempts skipped. ToolHive's parallel
+protocol probes retain their 1.5-second budgets and default-selection rules; Codex's
+required default lookup retains its five-second budget. Any ListModels demand,
+including client startup or an SDK call, can refresh available listers after cooldown,
+including healthy providers. ListModels fans out under one ten-second wait bound;
+admission requests only its selected provider. There is no periodic refresh or
+durable metadata cache.
+
+Accepted non-empty observations replace that provider's list. Failure, unauthorized,
+and empty outcomes retain its last non-empty observations and original observation
+time for the Build's lifetime, while reporting the latest safe outcome. A provider
+without retained observations uses `providerInventoryFloor`; a successful live list
+uses its returned membership plus the custom provider's configured-default floor.
+The Codex floor never invents entitlements. Its lister leaves absent context windows
+absent, and pure resolution applies the matching OpenAI catalog window as catalog
+provenance. Positive retained metadata can age; listing is evidence for resolution,
+not authorization for inference.
+
+Publication holds a local completion-tail lock across candidate acceptance,
+registry-owned default healing, capture of default provider/model/auto-selected facts,
+projection, and commit. Healing and reminting use candidate capabilities outside the
+short publication lock. `internal/app/provider_discovery_projection.go` projects from
+that candidate and captured defaults. The owner atomically publishes observations,
+outcomes, and model/status rows and notifies waiters before delivering synchronous
+diagnostics outside the completion tail. Timeout and Close serialize with that tail. Lister entries are cloned
+on acceptance, and `CurrentModelSnapshot` returns detached protobuf messages and slices.
+
+`internal/adapter/server/service.go` (`ListModelSnapshot`) refreshes once and captures
+one combined read-only `ModelSnapshot` for either HTTP or gRPC. The models-only
+`ListModels` projection remains available to Go callers. `DiscoverModels`, capability
+and context reads, and schedule selector validation are pure reads; they do not list
+or acquire credentials. Service binds the same inventory into its schedule manager,
+including an injected manager. Only standalone Services without an inventory reader
+use the `SetModels`/`SetProviderStatus` fallback; neither setter can write a wired
+Build's inventory.
+
+Entering drain stops or cancels run admissions but leaves discovery lifecycle intact.
+On Build failure and normal `Built.Close`, the owner prohibits new work, cancels
+attempts, and joins fetch/startup workers and deadline callbacks before borrowed
+credential resources close. Physical shutdown requires listers to honor cancellation
+and synchronous diagnostics delivery to return: Close joins the worker delivering those
+records even though admission waiters have already been notified. Attempt/admission deadlines
+do not bound a blocked collaborator's cleanup. Attempts, cooldowns, and observations reset at the
+next Build. See the [resource and fidelity inventory](../adr/0027-cloud-native.md) and
+[context admission boundary](context-and-compaction.md).
+
+**Capability intersection (`internal/app/capability.go`).** `modelCapability` combines
+live-first model modalities (catalog fallback, then adapter-only for unknown models)
+with adapter capabilities in composition. Inventory projection uses the explicit
+candidate snapshot through `modelCapabilityCandidate`. Already-built session engines
+retain their construction-time capabilities and effort configuration; publication
+does not rebuild them or pin all collaborators to a metadata generation. Context
+windows separately resolve at use. Provider credentials and raw listing errors are
+never part of public model/status projections.
 
 **Per-sub-agent provider (shipped).** A Subagent agent def or team member may pin a
 `provider:` (orthogonal to `model:`) to run its child engine on a DIFFERENT provider
@@ -556,8 +657,38 @@ turn routing off, set `disabled: true` in the subtree or pass
 `--subagent-model-router` / `=true` is a harmless no-op (it still parses but neither
 enables nor disables — the router stays governed by the taxonomy). A project-tier
 `models.router:` is **stripped with a WARN**
-(operator-tier only). The classifier itself runs on the `router` model slot (default
-`cheap` tier; an operator `classifier-slot` overrides) — a tiny one-turn call.
+(operator-tier only). The default `backend: llm` classifier itself runs on the
+`router` model slot (default `cheap` tier; an operator `classifier-slot`
+overrides) as a tiny one-turn call.
+
+**Jev backend (ADR 0352).** An operator can instead set `backend: jev`. Composition
+constructs one `internal/adapter/jevrouter` Typesafe client and one eight-slot
+semaphore per Build, then shares them across the shared and per-session engine
+paths. Jev receives the delegated task as System One state and one fixed Choice
+question whose criteria are the operator's category names and descriptions. The
+adapter accepts only an exact offered category and maps that category through the
+same local alias-to-model resolver as the LLM classifier. It does not enter the
+provider registry. Both backends return the engine-owned `ModelRouteResult`, while
+the configured `SubagentModelRouter` wrapper retains backend, classifier model, and
+optional threshold for skipped decisions.
+
+Active Jev requires the environment-only `TYPESAFE_API_KEY`. Its defaults are
+model `jev-1.13.0` and no confidence filter. A configured confidence threshold
+makes lower-confidence choices ordinary misses. Requests queue for at most 10
+seconds, run with a 10-second request deadline and no SDK retries, carry at most
+the operator-configured `maximum-input-bytes` of measured text and 255 categories,
+and accept at most 1 MiB of response data. The input limit defaults to 16384 bytes,
+accepts values from 1 through 65536, and remains capped at 64 KiB in the adapter.
+HTTPS is required except for loopback HTTP endpoints, and redirects are
+disabled. These transport bounds do not bound arbitrary CPU time in SDK JSON
+processing. Every failure remains fail-soft. The adapter returns only a small
+adapter-local typed status; composition maps it to the engine-owned common outcomes
+`classifier-error`, `bad-verdict`, `unknown-category`, `low-confidence`,
+`input-over-limit`, `capacity-timeout`, `cancelled`, or `timeout` before returning the
+shared typed router result. Caller cancellation is distinct from caller, request, and typed SDK
+deadlines, and arbitrary SDK error text is never classified. Reported
+input and output usage survives hits, low-confidence misses, mapping misses, and
+protocol errors that contain validated usage.
 
 **How it fires.** For a default delegation with no per-call `model`, `fork`, or `resume`,
 the `Subagent` `run()` hook calls a composition-built classifier (`RunModelRouter`, role
@@ -617,17 +748,31 @@ deployments (it is orthogonal to the ask-review path).
 gauntlet-#7 safe) when routed; a per-classification INFO rides the existing child
 diagnostic chokepoint and a Build-once "router ACTIVE" fact narrates the config. Every
 MISS logs an INFO naming the reason (`degenerate-input`/`classifier-error`/`cancelled`/
-`bad-verdict`/`unknown-category`/`category-selector-empty`/`category-target-unresolvable`/
+`timeout`/`bad-verdict`/`unknown-category`/`low-confidence`/`input-over-limit`/
+`capacity-timeout`/`category-selector-empty`/`category-target-unresolvable`/
 `empty-model` — metadata only, issue #287); the breaker-open INFO is unchanged. The
 routed fields surface end-to-end: the session struct + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload), relayed through
 the gRPC + HTTP relays and rendered by mecatui (inline card + f6 fleet roster).
 
+A configured router also attaches one optional `RoutingDecision` snapshot to each
+Subagent, Parallel branch, or Team member start projection. The snapshot carries the
+configured backend and classifier, locally validated candidate, optional confidence
+and threshold, `routed|fallback|skipped` outcome, and the post-decision breaker
+state. Existing `model`, `routed_category`, `routed_model`, and `routing_reason`
+remain authoritative for the model that ran and the final reason. Start events take
+independent copies, and later tool/end events do not clear them. Historical events
+without the snapshot remain absent. Mecatui keeps the compact model cue, adds a
+candidate/confidence line for a fallback, and shows all decision fields in expanded
+Subagent and Team cards (including completed Subagents) and all three F6 focus panes.
+`InspectSession` reads the same persisted start evidence in
+its `delegation` view without reconstructing it from display fields.
+
 The structured miss/gate half of this observability surface is described below under the
 per-delegation routing-reason surface ([ADR 0083](../adr/0083-routing-reason-on-delegation-start.md)).
 
 **Team members + Parallel branches (ADR 0034).** The same router governs the other two
-delegation families, reusing the one `parentCaps.routeTask` closure the dispatcher binds per
+delegation families, reusing the one typed `parentCaps.routeDecision` closure the dispatcher binds per
 run (so a mixed turn shares ONE breaker / miss-counter / classifier-usage fold across all
 families). The per-family seam respects each family's engine lifetime:
 
@@ -638,7 +783,7 @@ families). The per-family seam respects each family's engine lifetime:
   Team-tool goroutine, so members classify one at a time. The routed model id threads
   through the `MemberEngine` factory's new `routedModel` parameter; the
   `EvTeamStart` roster entry carries `RoutedCategory`/`RoutedModel`. The gRPC `RunTeam`
-  direct path is **zero-caps** (no `routeTask`), so it never routes — byte-identical.
+  direct path is **zero-caps** (no `routeDecision`), so it never routes — byte-identical.
 - A **Parallel branch** is classified **per-branch in `runBranch`** (each branch routes at
   most once) over an OPTIONAL `engineFactory` (the `WithSubagentEngineFactory` shape); on a
   hit the branch runs on the routed engine, on a miss/unwired the shared branch child. The

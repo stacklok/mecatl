@@ -215,7 +215,7 @@ func (p *subagentSpammerProvider) Stream(ctx context.Context, _ port.LLMRequest)
 // The parent provider delegates a plain Subagent every turn with ZERO parent usage; a wired
 // SubagentModelRouter (the Deps closure the composition builds) classifies each delegation,
 // returning a fixed non-zero classifier usage that the dispatch-path routeTask folds into the
-// parent sess.Usage. With no other parent spend, the run must terminate StopBudget purely from
+// parent sess.UsageFor(session.UsageKindMain). With no other parent spend, the run must terminate StopBudget purely from
 // accumulated classifier cost — COMPLETED + Reopen-recoverable, the clean-terminal contract.
 //
 // A regression that dropped the fold (routeTask not folding, or RunModelRouter/
@@ -239,10 +239,10 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 		Catalog:      catalogWith(t, subagentTool),
 		MaxRunTokens: budget,
 		// The composition-built router closure stand-in: classify (hit) and report spend.
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &agent.SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) agent.ModelRouteResult {
 			routeCalls.Add(1)
-			return "large", "", classifierUsage, "", true // empty model → inherit default child; the FOLD is what matters
-		},
+			return agent.ModelRouteResult{Category: "large", Usage: classifierUsage, OK: true} // empty model → inherit default child; the FOLD is what matters
+		}},
 	})
 	sess := newSession(t, session.Limits{}) // no turn/tool limits: the budget is the only brake
 	ws := memfs.NewWorkspace("/ws")
@@ -266,7 +266,7 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 	if got := routeCalls.Load(); got < 3 {
 		t.Fatalf("router classified %d time(s), want >= 3 (the budget should trip after repeated folds)", got)
 	}
-	if got := sess.Usage.TotalTokens(); got < budget {
+	if got := sess.UsageFor(session.UsageKindMain).TotalTokens(); got < budget {
 		t.Fatalf("cumulative parent usage = %d, want >= budget %d (folded classifier spend only)", got, budget)
 	}
 	_ = classifierPerCall
@@ -293,8 +293,8 @@ func (p *countingProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 // fresh budget. Internal cleanup/synthesis baselines must never leak into this
 // public run entry point.
 // The budget brake is evaluated against the AGGREGATE's cumulative Usage
-// (sess.Usage), NOT a fresh-from-zero per-run total; there is no loop seed. Mutation:
-// changing the budget check from `budgetExhausted(r, sess.Usage)` to
+// (sess.UsageFor(session.UsageKindMain)), NOT a fresh-from-zero per-run total; there is no loop seed. Mutation:
+// changing the budget check from `budgetExhausted(r, sess.UsageFor(session.UsageKindMain))` to
 // `budgetExhausted(r, total)` makes the run proceed and the model gets called.
 func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 	const budget = 350
@@ -305,7 +305,9 @@ func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 
 	// A session reloaded mid-conversation with prior spend already over the ceiling.
 	sess := newSession(t, session.Limits{})
-	sess.Usage = session.Usage{InputTokens: 300, OutputTokens: 100} // 400 >= 350
+	sess.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+		session.UsageKindMain: {Models: map[string]session.Usage{"unknown": {InputTokens: 300, OutputTokens: 100}}},
+	}) // 400 >= 350
 
 	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "continue"}))
 
@@ -318,7 +320,7 @@ func TestOrdinaryRunUsesZeroBudgetBaseline(t *testing.T) {
 	}
 	// The aggregate's cumulative usage still reflects the loaded prior spend (the
 	// per-run EvResult.Usage is zero here — no turn ran this run — which is correct).
-	if got := sess.Usage.TotalTokens(); got < budget {
+	if got := sess.UsageFor(session.UsageKindMain).TotalTokens(); got < budget {
 		t.Fatalf("aggregate usage = %d, want >= prior spend %d", got, budget)
 	}
 	// Clean terminal, Reopen-recoverable.

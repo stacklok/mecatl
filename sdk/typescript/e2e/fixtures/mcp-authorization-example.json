@@ -1,0 +1,10 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        { "id": "example-auth-call", "name": "mcp__fixture__one", "args": { "case": "grant" } }
+      ]
+    },
+    { "text": "authorization example completed" }
+  ]
+}

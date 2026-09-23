@@ -22,7 +22,7 @@ func (f fakeSoulSource) Load(context.Context) (string, error) { return f.body, f
 
 func TestSoulAssemblerRendersUserMessage(t *testing.T) {
 	const body = "You are a terse, dry-witted engineer who prefers Go and hates ceremony."
-	got, err := prompt.SoulAssembler{Src: fakeSoulSource{body: body}}.Assemble(context.Background(), nil)
+	got, err := prompt.SoulAssembler{Src: fakeSoulSource{body: body}}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestSoulAssemblerFailSoft(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := prompt.SoulAssembler{Src: tc.src}.Assemble(context.Background(), nil)
+			got, err := prompt.SoulAssembler{Src: tc.src}.Assemble(context.Background())
 			if err != nil {
 				t.Errorf("soul faults must fail soft (persona is best-effort), got err=%v", err)
 			}
@@ -82,7 +82,7 @@ func TestSoulNotInStablePrefix(t *testing.T) {
 	cfg := prompt.Config{Role: "You are a test harness."}
 	base := prompt.Build(cfg).StablePrefix
 
-	soulMsg, _ := prompt.SoulAssembler{Src: fakeSoulSource{body: "secret-persona-marker"}}.Assemble(context.Background(), nil)
+	soulMsg, _ := prompt.SoulAssembler{Src: fakeSoulSource{body: "secret-persona-marker"}}.Assemble(context.Background())
 	if len(soulMsg) != 1 {
 		t.Fatalf("want a soul message to test against")
 	}
@@ -103,11 +103,11 @@ func TestMultiAssemblerSoulBeforeMemory(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	multi := prompt.NewMultiAssembler(
-		prompt.RootAssembler{},
+		prompt.RootAssembler{Source: ws},
 		prompt.SoulAssembler{Src: fakeSoulSource{body: "persona-body"}},
 		prompt.MemoryIndexAssembler{Src: fakeIndexSource{entries: []tool.MemoryEntry{{Key: "pref/x", Description: "a pref"}}}},
 	)
-	got, err := multi.Assemble(context.Background(), ws)
+	got, err := multi.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}

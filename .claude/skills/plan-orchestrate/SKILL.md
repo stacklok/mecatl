@@ -6,7 +6,7 @@ description: >-
   TDD workers, aggregate gates, strict AC tracing, panel review, and an Implementation
   PR. Split work requires a merged approved plan and recorded baseline. Combined work
   requires an explicit no-interface rationale. Never drafts contracts, merges, or runs
-  beyond the PR.
+  beyond the PR. NOT for direct Routine or Cleanup work.
 ---
 
 # plan-orchestrate
@@ -20,6 +20,9 @@ explicit user request before creating a worktree or branch, committing, pushing,
 a PR. Without that request, stop before the first such side effect.
 
 ## Entry gate
+
+Route Routine and approved compatibility Cleanup directly under `docs/development-process.md`;
+this skill's plan gate does not apply to them.
 
 Read `docs/acceptance/<slug>.md` and the documents it cites. Run its bundled acceptance-plan
 checker before delivery-specific validation; any failure blocks entry. Accept supported
@@ -122,28 +125,40 @@ Attempt / task branch / fallback worktree: <values>
 Task title and scope: <text>
 Acceptance criteria and verify lines: <verbatim text>
 Exact approved interface clauses this task implements: <verbatim text>
+Task-local verification: <commands, owning modules, direct integration boundaries, scoped lint>
+Aggregate verification owner: orchestrator in the integration worktree
 ```
 
-The worker uses strict red-green-refactor TDD, applicable Taskfile gates, offline fakes,
-and no push. It reports branch, worktree, commits, AC proof, and interface conformance.
+The worker uses strict red-green-refactor TDD, task-local verification, offline fakes,
+and no push. It reports branch, worktree, commits, commands with exit codes, AC proof,
+and interface conformance. Follow [verification ownership](../../../docs/development-process.md#verification-gates):
+workers do not run repository-wide test or lint gates, including on retries and repairs.
 
-If a worker discovers that a human judgment needed to implement the approved contract was
-not resolved and recorded, or that the contract is otherwise materially wrong or incomplete,
-it must stop as `contract-drift`; it never makes the missing decision or repairs around it.
-Stop all dispatch and return
-`blocked-contract-drift`. Orchestration must not draft, open, commit, or push an amendment,
-and the blocked run cannot authorize one. Resumption requires a separately and explicitly
-authorized `/to-acceptance-plan` amendment-mode invocation using the **Split** Plan /
-Interface PR flow, including checker and task-doc verification, human review and merge. Merging is
-the approval event; no separate status edit is required. Orchestration proves approval by git
-ancestry and may correct a lagging `proposed` label to `approved` on entry. Before resuming,
-record that amendment PR and its full merged commit
-in `run.md`. If no attempt has integrated, the accumulator may fast-forward or rebase onto
-the newly merged amendment baseline. Once any attempt has integrated, merge the amendment
-commit into the accumulator; never rebase or rewrite integrated commits. In either
-case, the amendment commit must be an ancestor afterward. Invalidate and regenerate all
-pending briefs and decomposition, and revalidate already integrated work against every
-amended acceptance criterion and interface clause before dispatch continues.
+If a worker discovers that the approved contract needs an amendment, it reports
+`contract-drift`; it never makes the change or repairs around it. Stop all dispatch and
+return `blocked-contract-drift`. The agent assesses the amendment, recommends a direct,
+Split, or superseding-ADR route, and explains the risks. The directing human may
+explicitly authorize one or more identified amendments and override that recommendation.
+Each authorization identifies the affected plan or ADR, exact change, scope, and source;
+it does not cover unrelated later deviations.
+
+For an authorized direct amendment, quarantine all unintegrated attempts. Record the
+verbatim authorization, source, recommendation, and override decision, if any, in
+`run.md`; update the plan, ADR, and affected living/task docs on the accumulator as
+authorized; run the acceptance checker and `task docs`; and commit the amendment
+separately. Regenerate pending briefs/decomposition, dispatch fresh attempts, and
+revalidate integrated work against every amended acceptance criterion and interface
+clause before resuming.
+
+The default for a material or uncertain plan amendment is the Split Plan / Interface PR
+flow through a separately and explicitly authorized `/to-acceptance-plan` amendment-mode
+invocation. Its merged commit must become an ancestor of the accumulator: fast-forward
+or rebase only before integration; otherwise merge it without rewriting integrated
+commits. Quarantine all unintegrated attempts, invalidate and regenerate pending briefs
+and decomposition, and revalidate integrated work before dispatch resumes. The default
+for an ADR decision or rationale change is a new or superseding ADR.
+The directing human may explicitly authorize a different route, including an in-place ADR
+update; record that override and its rationale in `run.md`.
 
 ## Integrate and retry
 
@@ -160,24 +175,33 @@ accumulator. Workers never edit the shared plan.
 
 ## Aggregate gates and final review
 
-After all tasks integrate, run from the integration worktree and preserve exit codes:
+After all tasks integrate, finish applicable API generation (`task api:update` and the
+changelog entry), then run the aggregate gates once from the integration worktree.
+Generate documentation before testing so generated inputs are included. Preserve every
+exit code; a failure blocks completion.
 
 ```sh
-task lint; LINT_RC=$?
-task test; TEST_RC=$?
 task docs; DOCS_RC=$?
+task test; TEST_RC=$?
+task lint; LINT_RC=$?
+task test:race; RACE_RC=$?
 go run ./cmd/mecademo; DEMO_RC=$?
 ```
 
-Run `task api:update` plus the required changelog update for intentional engine API changes.
+Record the candidate commit, any uncommitted changes, commands, and exit codes in `run.md`.
 Review and commit generated deliverables explicitly. Only after every implementation and
 verification gate passes does the implementation/Combined candidate set the plan to
 `landed` in its PR diff, regenerate docs, and run `task ac-trace-strict`. That edit is the
 candidate branch's proposed state transition, not the target branch's current state:
 `landed` becomes authoritative only when the PR merges. Until then, the target branch
 remains `approved` or `in-progress`. Do not create a cleanup or status-only follow-up PR.
+After that status edit and regeneration, rerun gates whose inputs changed and update the
+candidate/gate record before review. This includes document-reading tests; a status-only
+edit is not automatically irrelevant to verification.
 
-Run `/panel-review` in orchestrator mode. Its final line must be:
+Run `/panel-review` in orchestrator mode with the candidate identity and gate results.
+Reviewers use that evidence rather than launching another aggregate verification run.
+Its final line must be:
 
 ```text
 PANEL: ship_blockers=<n> important=<n> advisory=<n> reviewer_failures=<n>
@@ -185,8 +209,12 @@ PANEL: ship_blockers=<n> important=<n> advisory=<n> reviewer_failures=<n>
 
 Malformed/missing output or reviewer failures block unless a human explicitly waives the
 named reviewer failure. Ship blockers may receive at most two repair rounds using fresh
-run-local tasks/attempts and the same TDD/isolation rules. A repair that changes the
-contract is contract drift and requires a plan amendment.
+run-local tasks/attempts and the same TDD/isolation rules. Integrate the round's repairs
+before rerunning aggregate gates whose inputs changed, once on the repaired candidate.
+Update the candidate and gate record, then have the relevant panel reviewers validate the
+repairs and resulting diff before reporting blockers resolved. Earlier results cannot
+certify changed inputs. A repair that changes the contract is contract drift and requires
+a plan amendment.
 
 ## Open the PR and stop
 
@@ -197,7 +225,8 @@ The body must state:
 - Plan / Interface PR and full approved commit baseline (Split), or the Combined rationale;
 - ACs completed and gate/panel results;
 - **Interfaces match approved contract: Yes**, or link every human-approved amendment;
-- any non-material implementation deviations; and
+- confirmation that no implementation deviation required an amendment, or links to every
+  human-authorized amendment; and
 - issue reference semantics.
 
 Use `Closes #N`/`Fixes #N` only when this PR fully completes the issue. Otherwise use
@@ -208,7 +237,7 @@ Stop after opening/updating the PR. Do not merge, tag, deploy, or run beyond it.
 
 ## Cleanup and terminal states
 
-There is no cleanup PR. Tracked feature-scoped cleanup belongs in the implementation PR.
+Tracked feature-scoped cleanup belongs in the implementation PR, not a follow-up cleanup PR.
 Ignored scratch/worktrees are removed only by their owning workflow and only when safe.
 Remove a successful fallback worktree only if this orchestrator created it; never remove a
 harness-owned or primary checkout. Retain failed attempts.

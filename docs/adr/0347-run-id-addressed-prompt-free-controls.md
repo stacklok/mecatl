@@ -4,7 +4,7 @@
 - Date: 2026-09-16
 - Scope: `engine/agent.Run` ask resolution, `HarnessService`, the HTTP session-control routes, and the TypeScript SDK's session/run-control surface
 - Supersedes: ADR 0288 Decision 6; ADR 0304 Decision 3 only for its teams-alone ergonomic-resource constraint
-- Superseded by: none
+- Superseded by: ADR 0366 Decision 1 for Decision 8's exclusion of plan-originated asks from run-addressed controls
 
 ## Context
 
@@ -160,4 +160,4 @@ atomic result rather than attempting a racy inspection around `Run.Approve`.
 - [ADR 0288 — TypeScript SDK durable attachment](./0288-typescript-sdk-durable-attachment.md)
 - [ADR 0304 — TypeScript SDK public surface completeness](./0304-typescript-sdk-public-surface-and-release.md)
 - [TypeScript SDK architecture](../architecture.md#typescript-sdk)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md#typescript-sdk--sdktypescript-m1m4-public-surface-and-post-v010-deno-integration-adrs-0279-0288-0292-0304-0328-0337-0338-and-0339)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md#typescript-sdk--sdktypescript-m1m4-public-surface-and-post-v010-deno-integration-adrs-0279-0288-0292-0304-0328-0337-0338-and-0339)

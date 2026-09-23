@@ -68,10 +68,11 @@ type ScheduleManagerConfig struct {
 	// session store's own accessor, so the in-chat Schedule tool + the tick
 	// loop + the fire path all share the ONE resolveScheduleStore resolution.
 	// When nil, behaviour is byte-identical to the accessor discovery.
-	ScheduleStore port.ScheduleStore
-	Now           func() time.Time
-	Models        *atomic.Pointer[[]*mecatlv1.ModelInfo]
-	Diagnostics   port.Diagnostics
+	ScheduleStore  port.ScheduleStore
+	Now            func() time.Time
+	ModelInventory ModelInventory
+	Models         *atomic.Pointer[[]*mecatlv1.ModelInfo]
+	Diagnostics    port.Diagnostics
 	// OwnershipEnforced mirrors server.Config.OwnershipEnforced (true only when
 	// the request edge has a verifier wired). It gates whether the manager
 	// namespaces the store-facing schedule key by verified caller (issue #368,
@@ -129,14 +130,10 @@ type scheduleManager struct {
 	scheduler atomic.Pointer[scheduler.Scheduler]
 	// diag is the operational diagnostics sink. nil-safe.
 	diag port.Diagnostics
-	// models is the SHARED selectable-model inventory pointer (the SAME
-	// atomic.Pointer the Service holds and SetModels swaps). Selector
-	// validation reads *models.Load() so a live-catalog swap is reflected on
-	// the next create without a second copy. Never nil on a manager built by
-	// the Service (it passes its own pointer); nil on a standalone-constructed
-	// manager (NewScheduleManager without Models) — selector validation then
-	// admits only the empty selector (an empty inventory).
-	models *atomic.Pointer[[]*mecatlv1.ModelInfo]
+	// inventory is the pure Build-owned reader. models is used only by
+	// standalone fixtures without an inventory; it is never a mirrored writer.
+	inventory ModelInventory
+	models    *atomic.Pointer[[]*mecatlv1.ModelInfo]
 	// ownershipEnforced mirrors ScheduleManagerConfig.OwnershipEnforced — see
 	// its doc. Gates physicalScheduleName's owner-prefixing.
 	ownershipEnforced bool
@@ -227,6 +224,7 @@ func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
 		schedStore:        schedStore,
 		now:               now,
 		diag:              cfg.Diagnostics,
+		inventory:         cfg.ModelInventory,
 		models:            cfg.Models,
 		ownershipEnforced: cfg.OwnershipEnforced,
 	}
@@ -777,7 +775,13 @@ func (m *scheduleManager) validateScheduleSelector(sel port.ScheduleProviderSele
 	if sel.ProviderID == "" && sel.ModelID == "" {
 		return nil
 	}
-	for _, mod := range *m.models.Load() {
+	var models []*mecatlv1.ModelInfo
+	if m.inventory != nil {
+		models = m.inventory.CurrentModelSnapshot().Models
+	} else if p := m.models.Load(); p != nil {
+		models = *p
+	}
+	for _, mod := range models {
 		if mod.GetProviderId() == sel.ProviderID && mod.GetId() == sel.ModelID {
 			return nil
 		}

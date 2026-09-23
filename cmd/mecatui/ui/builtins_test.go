@@ -123,7 +123,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"sessions not wired", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"workspace enrollment cap but not wired", client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"workspace enrollment wired but no cap", client.Capabilities{}, wiredCollaborators{Workspace: true}, []string{"clear", "help"}},
-		{"workspace enrollment cap and wired", client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}, []string{"clear", "help", "tools-connect", "tools-cancel"}},
+		{"workspace enrollment cap and wired", client.Capabilities{WorkspaceEnrollment: true}, wiredCollaborators{Workspace: true}, []string{"clear", "help", "mcp-refresh", "tools-connect", "tools-cancel"}},
 		{"posture empty omits the builtin", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"posture set adds the builtin", client.Capabilities{Posture: "yolo"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},
 		{"posture strict still shows (chrome is reportable)", client.Capabilities{Posture: "strict"}, wiredCollaborators{}, []string{"clear", "help", "posture"}},

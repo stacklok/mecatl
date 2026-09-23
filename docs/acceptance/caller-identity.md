@@ -8,7 +8,7 @@ Caller identity is optional OIDC authentication and durable attribution. A verif
 principal is carried in the request context, sessions and schedules retain their
 owner, and durable events record the caller that acted. Current behavior and operator
 configuration belong in the [architecture guide](../architecture.md) and
-[`mecated` deployment guide](https://mecatl.dev/docs/building/deployment/mecated).
+[`mecated` deployment guide](../../user-docs/building/deployment/mecated.md).
 
 ## Acceptance criteria and verification mapping
 

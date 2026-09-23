@@ -12,8 +12,8 @@ import (
 // pure function of (cursor, n, limit) — the window FOLLOWS the cursor (no stored
 // offset to drift), so the selected row stays in view when paging past the top or
 // bottom edge. Shared by the slash palette (renderPalette), the @-mention menu
-// (renderMention), and the /models picker (renderModelsPanel); lifted from
-// palette.go (was paletteWindow) so the call sites can't diverge.
+// (renderMention); retained for those fixed-row consumers while modelsState.Render
+// uses bounded.List for item-aware geometry.
 func scrollWindow(cursor, n, limit int) (start, end int) {
 	if n <= limit {
 		return 0, n
@@ -53,6 +53,15 @@ func clampScroll(want, total, window int) int {
 	return want
 }
 
+// clampBounded constrains an index to a possibly empty collection. It remains a
+// generic UI helper for fixed-row surface state.
+func clampBounded(value, count int) int {
+	if count <= 0 || value < 0 {
+		return 0
+	}
+	return min(value, count-1)
+}
+
 type renderedLineWindowBounds struct {
 	start, end, total, window int
 }
@@ -70,7 +79,7 @@ func renderedLineWindow(scroll, total, window int) renderedLineWindowBounds {
 // the content overflows the window. Each input line must be a COMPLETE styled
 // line (lipgloss renders multi-line strings with per-line SGR sequences — the
 // same property capRenderedLines relies on), so slicing never severs an escape.
-// Like capRenderedLines it must NOT sanitizeTerminal its input (that would strip
+// Like capRenderedLines it must NOT terminaltext.Sanitize its input (that would strip
 // the embedded styling); the line TEXT is sanitized by the callers at render
 // time. Every emitted line carries a trailing newline so the callers' footer
 // concatenation stays uniform across the scrolled and unscrolled cases.

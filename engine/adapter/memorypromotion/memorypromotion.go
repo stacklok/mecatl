@@ -118,10 +118,7 @@ func (p Promoter) Process(ctx context.Context, part learning.ProposalPartition, 
 	if r.Status != learning.ProposalStaged {
 		return r, learning.ErrProposalTransition
 	}
-	life, ok := p.Memory.(tool.MemoryConvergenceStore)
-	if !ok {
-		return r, errors.New("memorypromotion: target lacks atomic convergence lifecycle")
-	}
+	life := p.Memory
 	mr, mfound, err := life.Inspect(ctx, r.Candidate.Key)
 	if err != nil {
 		return r, err
@@ -169,7 +166,7 @@ func (p Promoter) Process(ctx context.Context, part learning.ProposalPartition, 
 		cur.Version = mr.Current.Version
 	}
 	wctx := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterModel, Origin: tool.MemoryOriginLearning, Source: tool.MemorySource{SessionID: string(r.Candidate.Evidence[0].SessionID), ProposalID: string(id)}})
-	written, err := life.RememberIfCurrent(wctx, tool.MemoryEntry{Key: r.Candidate.Key, Value: r.Candidate.Value, Description: r.Candidate.Description}, cur)
+	written, err := life.Remember(wctx, tool.MemoryEntry{Key: r.Candidate.Key, Value: r.Candidate.Value, Description: r.Candidate.Description}, cur)
 	if err != nil {
 		var conflict *tool.MemoryVersionConflictError
 		if errors.As(err, &conflict) {
@@ -181,11 +178,7 @@ func (p Promoter) Process(ctx context.Context, part learning.ProposalPartition, 
 	return p.Proposals.Finalize(ctx, part, id, claimed.Version, learning.ProposalPromoted, &rec, learning.Decision{Kind: learning.DecisionApprove, Actor: "standard-policy", Reason: result.Reason})
 }
 func (p Promoter) reconcile(ctx context.Context, r learning.ProposalRecord) (learning.ProposalRecord, error) {
-	life, ok := p.Memory.(tool.MemoryLifecycleStore)
-	if !ok {
-		return r, errors.New("memorypromotion: lifecycle required")
-	}
-	mr, found, err := life.Inspect(ctx, r.Candidate.Key)
+	mr, found, err := p.Memory.Inspect(ctx, r.Candidate.Key)
 	if err != nil {
 		return r, err
 	}
@@ -206,11 +199,7 @@ func (p Promoter) Undo(ctx context.Context, part learning.ProposalPartition, id 
 	if r.Version != expected || r.Status != learning.ProposalPromoted || r.Receipt == nil {
 		return r, learning.ErrProposalTransition
 	}
-	life, ok := p.Memory.(tool.MemoryLifecycleStore)
-	if !ok {
-		return r, errors.New("memorypromotion: lifecycle required")
-	}
-	mr, found, err := life.Inspect(ctx, r.Receipt.MemoryKey)
+	mr, found, err := p.Memory.Inspect(ctx, r.Receipt.MemoryKey)
 	if err != nil {
 		return r, err
 	}
@@ -218,7 +207,7 @@ func (p Promoter) Undo(ctx context.Context, part learning.ProposalPartition, id 
 		return p.Proposals.Finalize(ctx, part, id, expected, learning.ProposalConflicted, nil, learning.Decision{Kind: learning.DecisionDefer, Actor: "undo", Reason: "promoted revision is no longer current"})
 	}
 	uctx := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginUndo, Source: tool.MemorySource{ProposalID: string(id)}})
-	done, err := life.UndoLatest(uctx, r.Receipt.MemoryKey, mr.Current.Version)
+	done, err := p.Memory.Undo(uctx, r.Receipt.MemoryKey, mr.Current.Version)
 	if err != nil {
 		return r, fmt.Errorf("memorypromotion: undo: %w", err)
 	}

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-27
 - Scope: provider stream semantics, retry classification, durable failure metadata, failed-step retry APIs, and mecatui recovery
-- Supersedes: ADR 0203 for retry classification and client retry behavior; its compatibility fields remain supported
+- Supersedes: ADR 0203 for retry classification and client retry behavior
 
 ## Context
 
@@ -54,7 +54,7 @@ Emit one structured diagnostic for every failed attempt decision. Include attemp
 
 - [ADR 0203](./0203-permanent-provider-error-signal.md)
 - [Architecture](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [gRPC API](../usage/grpc-api.md)
 - [HTTP/SSE API](../usage/http-sse-api.md)
 - [TUI behavior](../tui.md)

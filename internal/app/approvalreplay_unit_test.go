@@ -60,6 +60,7 @@ func seedReplayFixture(t *testing.T, callID session.ToolCallID, inHistory bool) 
 		Tool:        "Write",
 		Call:        callID,
 		AllowAlways: true,
+		Origin:      session.ApprovalOriginPermission,
 	}}
 	if err := log.Append(context.Background(), sess.ID, ev); err != nil {
 		t.Fatalf("log append: %v", err)
@@ -122,7 +123,7 @@ func TestReplayApprovalsIdempotent(t *testing.T) {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := log.Append(context.Background(), sess.ID, session.Event{Type: session.EvApproval, Approval: &session.ApprovalPayload{
-		AskID: "s-dup:0:dup1:r1", Verdict: session.VerdictStringAllowAlways, Tool: "Write", Call: "dup1", AllowAlways: true,
+		AskID: "s-dup:0:dup1:r1", Verdict: session.VerdictStringAllowAlways, Tool: "Write", Call: "dup1", AllowAlways: true, Origin: session.ApprovalOriginPermission,
 	}}); err != nil {
 		t.Fatalf("log append: %v", err)
 	}

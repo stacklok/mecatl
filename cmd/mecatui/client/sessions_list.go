@@ -226,19 +226,11 @@ func activityFromSummary(activity string) SessionActivityState {
 }
 
 func titleFromSummary(s *mecatlv1.SessionSummary) string {
-	if title := s.GetTitleMetadata().GetTitle(); title != "" {
-		return title
-	}
-	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
-	return s.GetTitle()
+	return s.GetTitleMetadata().GetTitle()
 }
 
 func titleProvenanceFromSummary(s *mecatlv1.SessionSummary) string {
-	if provenance := s.GetTitleMetadata().GetProvenance(); provenance != "" {
-		return provenance
-	}
-	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
-	return s.GetTitleProvenance()
+	return s.GetTitleMetadata().GetProvenance()
 }
 
 // SessionPager fetches one bounded stored-session inventory page.

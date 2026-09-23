@@ -15,8 +15,7 @@ const (
 	UndoUserMemoryToolName    = "UndoUserMemory"
 )
 
-// NewUserModelTools returns the user-scoped portable family. Lifecycle tools are
-// included only when store implements tool.MemoryLifecycleStore.
+// NewUserModelTools returns the mandatory user-scoped portable family.
 func NewUserModelTools(store tool.MemoryStore) []tool.Tool {
 	return memorytools.UserTools(store)
 }

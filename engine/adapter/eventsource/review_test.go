@@ -238,7 +238,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	// Every EXPORTED field of session.Session the reconstruction contract considers.
 	// Classification (kept in sync with COMPATIBILITY.md "Session reconstruction
 	// contract"):
-	//   reconstructed-from-events: Conversation, State, Usage; legacy Title and
+	//   reconstructed-from-events: Conversation, State, canonical token usage; legacy Title and
 	//     TitleProvenance fallback (seeded from the first genuine EvUserPrompt via
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
@@ -250,7 +250,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     validating helper rather than direct assignment): Owner, Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Usage": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
+		"Counters": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "TitleRevision": {}, "Owner": {}, "Authority": {},
@@ -266,7 +266,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   (ToolCall.ItemID is on ToolCall, asserted separately below)
 	wantMessageFields := map[string]struct{}{
 		"Role": {}, "Text": {}, "ToolCalls": {}, "ToolResult": {},
-		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {},
+		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {}, "UserPromptProvenance": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Message{}), wantMessageFields,
 		"session.Message — classify the new field in COMPATIBILITY.md's reconstruction contract")

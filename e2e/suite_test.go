@@ -198,10 +198,11 @@ func trackUsage(res *harness.RunResult) {
 	}
 }
 
-// modelPricing is the per-token USD price table for the two default lanes
-// (verified against OpenRouter's /models at implementation time). Unknown
-// models report tokens only.
+// modelPricing is the per-token USD price table for the default and dedicated
+// e2e lanes (verified against OpenRouter's /models at implementation time).
+// Unknown models report tokens only.
 var modelPricing = map[string][2]float64{ // {prompt, completion} USD per token
+	"google/gemini-2.5-flash":    {0.30e-6, 2.50e-6},
 	"openai/gpt-4.1-mini":        {0.40e-6, 1.60e-6},
 	"openai/gpt-4o-mini":         {0.15e-6, 0.60e-6},
 	"anthropic/claude-haiku-4.5": {1.00e-6, 5.00e-6},

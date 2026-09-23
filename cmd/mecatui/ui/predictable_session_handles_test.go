@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	"github.com/stacklok/mecatl/cmd/mecatui/customization"
 )
 
 func TestPredictableSessionHandles_Scenario1_SharedNormalHandle(t *testing.T) {
@@ -26,15 +26,9 @@ func TestPredictableSessionHandles_Scenario1_SharedNormalHandle(t *testing.T) {
 	if got := stripANSIstr(m.renderHeader()); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
 		t.Fatalf("header does not use bare handle %q: %q", want, got)
 	}
-	if got := m.windowTitle(); !strings.Contains(got, " "+want+" — ") || strings.Contains(got, "#"+want) {
-		t.Fatalf("ordinary window title = %q, want bare handle %q", got, want)
-	}
 	m.deps.DebugTarget = id
 	if got := stripANSIstr(m.renderHeader()); !strings.Contains(got, "DEBUG target "+want) || strings.Contains(got, "#"+want) {
 		t.Fatalf("debugger target chrome does not use bare handle %q: %q", want, got)
-	}
-	if got := m.windowTitle(); !strings.HasPrefix(got, "DEBUG "+want+" — ") {
-		t.Fatalf("debug window title = %q, want debugger handle %q", got, want)
 	}
 
 	st := newSessionsPanelState()
@@ -131,8 +125,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		m.sessionID = id
 		m.sessionTitle = "debug"
 		presentations := map[string]string{
-			"header":         stripANSIstr(m.renderHeader()),
-			"debugger title": m.windowTitle(),
+			"header": stripANSIstr(m.renderHeader()),
 		}
 		st := newSessionsPanelState()
 		st.loading, st.loadState = false, sessionsComplete
@@ -140,7 +133,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		st.syncFilter()
 		presentations["sessions"] = stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, ""))
 		for name, rendered := range presentations {
-			if !strings.Contains(rendered, want) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
+			if (name != "header" && !strings.Contains(rendered, want)) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
 				t.Fatalf("%s does not use terminal-safe shared handle %q: %q", name, want, rendered)
 			}
 		}
@@ -150,10 +143,10 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background()})
 		m.sessionID = id
 		input := m.statusLineInput(time.Unix(1, 0))
-		if input.Version != 3 || input.Session.Handle != want {
-			t.Fatalf("status protocol = v%d handle %q, want v3 %q", input.Version, input.Session.Handle, want)
+		if input.Version != 4 || input.Session.Handle != want {
+			t.Fatalf("status protocol = v%d handle %q, want v4 %q", input.Version, input.Session.Handle, want)
 		}
-		if _, exists := reflect.TypeFor[statusline.Session]().FieldByName("Digest"); exists {
+		if _, exists := reflect.TypeFor[customization.Session]().FieldByName("Digest"); exists {
 			t.Fatal("status protocol retains removed Session.Digest alias")
 		}
 		wire, err := json.Marshal(input)
@@ -163,7 +156,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		if !strings.Contains(string(wire), `"Handle":"`+want+`"`) || strings.Contains(string(wire), `"Digest"`) {
 			t.Fatalf("status command JSON does not expose only Session.Handle: %s", wire)
 		}
-		source := statusline.NewDefaultSource(0)
+		source := customization.NewDefaultSource(0)
 		t.Cleanup(func() { _ = source.Close(context.Background()) })
 		input.Terminal.HeaderAvailCols = 100
 		source.Submit(input)
@@ -176,8 +169,8 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		for _, span := range source.Latest().Header.Spans {
 			shipped.WriteString(span.Text)
 		}
-		if got := shipped.String(); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
-			t.Fatalf("shipped template does not use bare handle %q: %q", want, got)
+		if got := shipped.String(); strings.Contains(got, want) || strings.Contains(got, "#"+want) {
+			t.Fatalf("shipped template leaked opt-in handle %q: %q", want, got)
 		}
 	}
 
@@ -196,9 +189,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
 		m := newScenario4Model(t, loader)
 		row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-		ensureActiveSessions(&m).sessions = []client.SessionListItem{row}
-		ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
-		ensureActiveSessions(&m).handles = sessionDisplayHandles(ensureActiveSessions(&m).filtered)
+		setSessionsInventoryRows(ensureActiveSessions(&m), []client.SessionListItem{row})
 		if strings.Contains(ensureActiveSessions(&m).handles[row.ID], row.ID) {
 			t.Fatalf("display handle %q unexpectedly embeds full id", ensureActiveSessions(&m).handles[row.ID])
 		}

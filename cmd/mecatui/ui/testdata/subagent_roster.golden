@@ -15,11 +15,11 @@
   ┃    ✓ map test coverage #r-d0c4                                                               ┃
   ┃      done · 9 tools · ↑15K ↓4K                                                               ┃
   ┃    ✗ check error handling #r-e9b5                                                            ┃
-  ┃      error · 2 tools · ↑3K ↓500                                                              ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close         ┃
   ┃                                                                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

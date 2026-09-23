@@ -30,6 +30,7 @@ type builtin struct {
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
 	MCP          bool
+	MCPRefresh   bool
 	MCPConnector bool
 	Agents       bool
 	Skills       bool
@@ -39,6 +40,7 @@ type wiredCollaborators struct {
 	Dream        bool
 	Compactor    bool
 	Models       bool // mirrors client.Capabilities.ModelSelection
+	Guardrails   bool
 	Worktrees    bool
 	Scheduling   bool
 	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
@@ -58,10 +60,12 @@ type wiredCollaborators struct {
 // though the actual dispatch path built it correctly).
 func (m Model) wiredCollaborators() wiredCollaborators {
 	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
+	_, mcpRefresh := m.deps.MCP.(client.MCPRefresher)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, MCPConnector: mcpConnector,
+		MCP: m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
+		Guardrails:  m.deps.Guardrails != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
 		Compactor:   m.deps.Compactor != nil,
@@ -154,6 +158,15 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runMCP,
 		})
 	}
+	directRefresh := caps.MCPRefresh && !caps.WorkspaceEnrollment && w.MCPRefresh
+	brokerRefresh := caps.WorkspaceEnrollment && !caps.MCPRefresh && w.Workspace
+	if directRefresh || brokerRefresh {
+		out = append(out, builtin{
+			name: "mcp-refresh",
+			desc: "refresh MCP tools for this session",
+			run:  Model.runMCPRefresh,
+		})
+	}
 	if caps.Agents && w.Agents {
 		out = append(out, builtin{
 			name: "agents",
@@ -198,6 +211,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	if caps.ManualDream != nil && w.Dream {
 		out = append(out, builtin{name: "dream", desc: "manually consolidate project memory or the user model", run: Model.runDream})
 	}
+	if w.Guardrails {
+		out = append(out, builtin{name: "guardrails", desc: "show contextual guardrail coverage and checker health", run: Model.runGuardrails})
+	}
 	if caps.ModelSelection && w.Models {
 		out = append(out, builtin{
 			name: "models",
@@ -241,8 +257,8 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.WorkspaceEnrollment && w.Workspace {
 		out = append(out,
-			builtin{name: "tools-connect", desc: "connect workspace tools that require your approval", run: Model.runToolsConnect},
-			builtin{name: "tools-cancel", desc: "cancel a workspace tool connection", run: Model.runToolsCancel},
+			builtin{name: "tools-connect", desc: "deprecated alias for /mcp-refresh in broker mode", run: Model.runToolsConnect},
+			builtin{name: "tools-cancel", desc: "cancel a pending workspace-services connection", run: Model.runToolsCancel},
 		)
 	}
 	out = appendLearningBuiltin(out, w)
@@ -542,8 +558,14 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture))
-	return m, nil
+	base := postureSummary(m.caps.Posture)
+	if m.deps.Guardrails == nil || m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
+		return m, nil
+	}
+	m.guardrailStatusRequest++
+	m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (loading effective status)")
+	return m, client.ListGuardrailCoverageCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, m.guardrailStatusRequest, true)
 }
 
 // debugAskPayloads are the three canned long-args Shell commands /debug-ask
@@ -740,7 +762,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		// derived palette state too. This path serves both idle and running input.
 		m.palette.open = false
 		m.palette.filtered = nil
-		m.palette.cursor = 0
+		m.palette.syncList()
 		m.prompt.Reset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true

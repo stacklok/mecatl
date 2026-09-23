@@ -72,7 +72,7 @@ function httpHarness(options: HttpHarnessOptions = {}): {
     if (url.pathname === `/v1/sessions/${sessionId}` && method === "GET") {
       return Response.json({ session_id: sessionId });
     }
-    if (url.pathname === `/v1/sessions/${sessionId}/cancel` && method === "POST") {
+    if (url.pathname === `/v1/sessions/${sessionId}/controls/cancel` && method === "POST") {
       return options.cancel?.(body) ?? new Response(null, { status: 204 });
     }
     if (url.pathname === `/v1/sessions/${sessionId}/watch` && method === "GET") {
@@ -168,7 +168,7 @@ describe("attached controls", () => {
       {
         body: { expected_run_id: runId },
         method: "POST",
-        path: `/v1/sessions/${sessionId}/cancel`,
+        path: `/v1/sessions/${sessionId}/controls/cancel`,
       },
     ]);
     expect(requests.some((request) => request.path.endsWith("/prompt"))).toBe(false);
@@ -279,12 +279,9 @@ describe("attached controls", () => {
     await client.close();
   });
 
-  it("attached approval keeps the local compatibility deferral on both transports", async () => {
+  it("attached ask resolution keeps the local compatibility deferral on both transports", async () => {
     const grpc = await attachGrpc();
-    for (const control of [
-      () => grpc.attached.approve("ask-1", true),
-      () => grpc.attached.resolveAsk("ask-1", "allow_once"),
-    ]) {
+    for (const control of [() => grpc.attached.resolveAsk("ask-1", "allow_once")]) {
       await expect(control()).rejects.toMatchObject({
         code: "unsupported_feature",
         feature: "attached_run_controls",
@@ -296,10 +293,7 @@ describe("attached controls", () => {
     await grpc.client.close();
 
     const http = await attachHttp();
-    for (const control of [
-      () => http.attached.approve("ask-1", true),
-      () => http.attached.resolveAsk("ask-1", "allow_once"),
-    ]) {
+    for (const control of [() => http.attached.resolveAsk("ask-1", "allow_once")]) {
       await expect(control()).rejects.toMatchObject({
         code: "unsupported_feature",
         feature: "attached_run_controls",

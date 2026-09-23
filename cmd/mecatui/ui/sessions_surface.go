@@ -16,7 +16,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 type sessionsTab int
@@ -71,22 +73,10 @@ type maintenanceView int
 
 const (
 	maintenanceNone maintenanceView = iota
-	maintenanceOptimizePlan
-	maintenanceOptimizeJob
 	maintenanceCleanupPlan
 	maintenanceCleanupJob
 )
 
-const maintenanceBatchSize int32 = 25
-
-type migrationPlanMsg struct {
-	plan client.SessionMigrationPlan
-	err  error
-}
-type migrationJobMsg struct {
-	job client.SessionMigrationJob
-	err error
-}
 type cleanupPlanMsg struct {
 	plan client.CleanupPlan
 	err  error
@@ -96,36 +86,6 @@ type cleanupJobMsg struct {
 	err error
 }
 
-func migrationPlanCmd(ctx context.Context, svc client.SessionMigrator) tea.Cmd {
-	return func() tea.Msg {
-		plan, err := svc.PlanSessionMigration(ctx)
-		return migrationPlanMsg{plan: plan, err: err}
-	}
-}
-func migrationApplyCmd(ctx context.Context, svc client.SessionMigrator, planID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.ApplySessionMigration(ctx, planID, maintenanceBatchSize)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
-func migrationResumeCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.ResumeSessionMigration(ctx, jobID, maintenanceBatchSize)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
-func migrationCancelCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.CancelSessionMigration(ctx, jobID)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
-func migrationStatusCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
-	return func() tea.Msg {
-		job, err := svc.GetSessionMigrationJob(ctx, jobID)
-		return migrationJobMsg{job: job, err: err}
-	}
-}
 func cleanupPlanCmd(ctx context.Context, svc client.SessionCleaner) tea.Cmd {
 	scope := client.CleanupScope{Kinds: []string{"main", "subagent", "parallel_branch", "team_member", "scheduled"}}
 	return func() tea.Msg {
@@ -175,13 +135,6 @@ type sessionsPhaseIntent struct {
 
 func (sessionsPhaseIntent) isSurfaceIntent() {}
 
-// Maintenance intents retain durable job IDs in the Model for later surface instances.
-type sessionsMigrationJobIntent struct {
-	jobID string
-}
-
-func (sessionsMigrationJobIntent) isSurfaceIntent() {}
-
 type sessionsCleanupJobIntent struct {
 	jobID string
 }
@@ -190,11 +143,9 @@ func (sessionsCleanupJobIntent) isSurfaceIntent() {}
 
 // Transcript adoption replaces the Model's active chat with authoritative surface data.
 type sessionsTranscriptAdoptionIntent struct {
-	row          client.SessionListItem
-	transcript   conversation
-	capabilities client.Capabilities
-	model        client.ResolvedModel
-	mode         string
+	row        client.SessionListItem
+	transcript conversation
+	snapshot   client.SessionSnapshot
 }
 
 func (sessionsTranscriptAdoptionIntent) isSurfaceIntent() {}
@@ -238,6 +189,7 @@ type sessionTranscriptLoadedMsg struct {
 	surfaceRequestToken uint64
 	requestToken        uint64
 	transcript          client.SessionTranscript
+	snapshot            client.SessionSnapshot
 	err                 error
 }
 
@@ -246,11 +198,15 @@ func (s *sessionsState) loadTranscriptCmd() tea.Cmd {
 	requestToken := s.transcriptRequestToken
 	surfaceRequestToken := s.transcriptSurfaceRequestToken
 	id := s.selected.ID
-	loader := s.transcripter
+	loader, getter := s.transcripter, s.forker
 	s.loading, s.loadErr = true, nil
 	return func() tea.Msg {
 		transcript, err := loader.GetSessionTranscript(s.deps.ctx, id)
-		return sessionTranscriptLoadedMsg{sessionID: id, surfaceRequestToken: surfaceRequestToken, requestToken: requestToken, transcript: transcript, err: err}
+		if err != nil || getter == nil {
+			return sessionTranscriptLoadedMsg{sessionID: id, surfaceRequestToken: surfaceRequestToken, requestToken: requestToken, transcript: transcript, err: err}
+		}
+		snapshot, err := getter.GetSession(s.deps.ctx, id)
+		return sessionTranscriptLoadedMsg{sessionID: id, surfaceRequestToken: surfaceRequestToken, requestToken: requestToken, transcript: transcript, snapshot: snapshot, err: err}
 	}
 }
 
@@ -262,6 +218,7 @@ func (s *sessionsState) openTranscript(row client.SessionListItem, inspect bool)
 	}
 	s.loadErr = nil
 	s.transcript = conversation{}
+	s.snapshot = client.SessionSnapshot{}
 	s.transcriptRend = nil
 	s.transcriptStuck = true
 	s.view = sessionsTranscript
@@ -301,10 +258,14 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:
-		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
+		c.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
-			c.addError(msg.Error)
+			if msg.Permanent {
+				c.addPermanentError(msg.Error)
+			} else {
+				c.addError(msg.Error)
+			}
 		}
 	default:
 		s.applyReplayEventSecondary(msg)
@@ -333,7 +294,7 @@ func (s *sessionsState) applyReplayEventSecondary(msg tea.Msg) {
 
 type sessionForker interface {
 	ForkSession(context.Context, string, string) (string, error)
-	client.SessionGetter
+	GetSession(context.Context, string) (client.SessionSnapshot, error)
 }
 
 type sessionsState struct {
@@ -347,7 +308,9 @@ type sessionsState struct {
 	filtered          []client.SessionListItem
 	handles           map[string]string
 	filter            textinput.Model
-	cursor            int
+	list              *bounded.List
+	rowBudget         int
+	compact           bool
 	selected          client.SessionListItem
 	inspect           bool
 	loadErr           error
@@ -356,8 +319,6 @@ type sessionsState struct {
 
 	maintenance    maintenanceView
 	maintenanceErr bool
-	migrationPlan  client.SessionMigrationPlan
-	migrationJob   client.SessionMigrationJob
 	cleanupPlan    client.CleanupPlan
 	cleanupJob     client.CleanupJob
 	cleanupConfirm textinput.Model
@@ -377,6 +338,7 @@ type sessionsState struct {
 	deps                          surfaceDeps
 	activeSessionID               string
 	transcript                    conversation
+	snapshot                      client.SessionSnapshot
 	transcriptVP                  viewport.Model
 	transcriptRend                *renderer
 	transcriptStuck               bool
@@ -385,7 +347,6 @@ type sessionsState struct {
 	pager                         client.SessionPager
 	transcripter                  client.SessionTranscripter
 	healthFetcher                 client.StorageHealthFetcher
-	migration                     client.SessionMigrator
 	cleanup                       client.SessionCleaner
 	forker                        sessionForker
 	manager                       client.SessionManager
@@ -399,8 +360,13 @@ func (*sessionsState) modalPlacement() modalPlacement {
 }
 
 func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.rowBudget, s.compact = 0, true
+		return "", nil
+	}
 	vpContent := ""
 	if s.view == sessionsTranscript {
+		s.compact = false
 		if s.transcriptRend == nil {
 			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks)
 		}
@@ -412,8 +378,9 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 			s.transcriptVP.GotoBottom()
 		}
 		vpContent = s.transcriptVP.View()
+		return renderSessionsTranscript(s.deps.theme, *s, s.activeSessionID, vpContent, s.deps.marks, width, height), nil
 	}
-	return renderSessionsOverlay(s.deps.theme, *s, s.deps.caps, s.activeSessionID, vpContent, s.deps.marks, width, height), nil
+	return renderSessionsPanelSized(s.deps.theme, s, s.deps.caps, s.deps.marks, width, height, s.activeSessionID), nil
 }
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
@@ -441,6 +408,12 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		s.transcriptStuck = s.transcriptVP.AtBottom()
 		return cmd, true, false
 	}
+	if s.compact {
+		if key.Matches(msg, s.deps.keys.Close) {
+			return nil, true, true
+		}
+		return nil, true, false
+	}
 	if cmd, handled := s.handleActionKey(msg); handled {
 		return cmd, true, false
 	}
@@ -462,11 +435,44 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	return cmd, true, false
 }
 
+func (s *sessionsState) normalInventory() bool {
+	return s.tab != tabStorageHealth && s.maintenance == maintenanceNone && !s.renaming && !s.confirmDelete && !s.actionLoading &&
+		(!s.loading || s.loadState != sessionsInitialLoading && s.loadState != 0) && s.loadState != sessionsInitialPageError &&
+		(s.err == nil || len(s.sessions) > 0) && len(s.filtered) > 0
+}
+
+func (s *sessionsState) listControl() *bounded.List {
+	if s.list == nil {
+		s.list = new(bounded.List)
+	}
+	return s.list
+}
+
+func (s *sessionsState) syncList(current string) *bounded.List {
+	list := s.listControl()
+	items := make([]bounded.ListItem, 0, len(s.filtered))
+	for _, row := range s.filtered {
+		items = append(items, bounded.ListItem{
+			ID:          row.ID,
+			Text:        sessionRowText(row, s.handles[row.ID], row.ID == current, s.activityInventory),
+			StatusCells: [2]string{stateBadge(row.State)},
+		})
+	}
+	list.SetItems(items)
+	return list
+}
+
 func (s *sessionsState) selectedRow() (client.SessionListItem, bool) {
-	if s.cursor < 0 || s.cursor >= len(s.filtered) {
+	if len(s.filtered) == 0 {
 		return client.SessionListItem{}, false
 	}
-	return s.filtered[s.cursor], true
+	id := s.syncList(s.activeSessionID).CursorID()
+	for _, row := range s.filtered {
+		if row.ID == id {
+			return row, true
+		}
+	}
+	return client.SessionListItem{}, false
 }
 
 func (s *sessionsState) setNotice(reason client.CapabilityReason) {
@@ -490,6 +496,9 @@ func (s *sessionsState) handleActionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	if s.actionLoading || s.maintenance != maintenanceNone || s.tab == tabStorageHealth {
+		return nil, false
+	}
+	if !s.normalInventory() {
 		return nil, false
 	}
 	if msg.String() == "r" && (s.loadState == sessionsLaterPageError || s.loadState == sessionsInitialPageError || s.loadState == sessionsCancelled) {
@@ -663,33 +672,33 @@ func (s *sessionsState) handleNavigationKey(msg tea.KeyPressMsg) (handled bool, 
 	}
 	if key.Matches(msg, s.deps.keys.NextTab) {
 		s.nextTab()
-		s.cursor = 0
 		s.syncFilter()
+		if len(s.filtered) > 0 {
+			s.syncList(s.activeSessionID).SetCursor(0)
+		}
 		return true, false
 	}
-	switch msg.String() {
-	case keyMenuUp:
-		if s.cursor > 0 {
-			s.cursor--
-		}
-		return true, false
-	case keyMenuDown:
-		if s.cursor < len(s.filtered)-1 {
-			s.cursor++
-		}
-		return true, false
-	case "home":
-		if key.Matches(msg, s.deps.keys.ScrollTop) {
-			s.cursor = 0
-			return true, false
-		}
-	case "end":
-		if key.Matches(msg, s.deps.keys.ScrollBottom) {
-			s.cursor = clampModelsCursor(len(s.filtered)-1, len(s.filtered))
-			return true, false
-		}
+	if !s.normalInventory() {
+		return false, false
 	}
-	return false, false
+	list := s.syncList(s.activeSessionID)
+	switch {
+	case key.Matches(msg, s.deps.keys.Up):
+		list.Move(bounded.LineUp)
+	case key.Matches(msg, s.deps.keys.Down):
+		list.Move(bounded.LineDown)
+	case key.Matches(msg, s.deps.keys.ScrollU):
+		list.Move(bounded.PageUp)
+	case key.Matches(msg, s.deps.keys.ScrollD):
+		list.Move(bounded.PageDown)
+	case key.Matches(msg, s.deps.keys.ScrollTop):
+		list.Move(bounded.Top)
+	case key.Matches(msg, s.deps.keys.ScrollBottom):
+		list.Move(bounded.End)
+	default:
+		return false, false
+	}
+	return true, false
 }
 
 func (s *sessionsState) nextTab() {
@@ -699,7 +708,6 @@ func (s *sessionsState) nextTab() {
 	}
 	tabs = append(tabs, tabScheduledRuns, tabChildRuns, tabOtherRuns)
 	if (s.deps.caps.StorageHealth && s.healthFetcher != nil) ||
-		(s.deps.caps.StorageMigration && s.migration != nil) ||
 		(s.deps.caps.StorageCleanup && s.cleanup != nil) {
 		tabs = append(tabs, tabStorageHealth)
 	}
@@ -718,7 +726,7 @@ func (s *sessionsState) handleRenamed(msg client.SessionRenamedMsg) (tea.Cmd, bo
 	}
 	s.actionLoading = false
 	if msg.Err != nil {
-		s.intent = sessionsStatusNoticeIntent{text: "could not rename session: " + sanitizeTerminal(msg.Err.Error())}
+		s.intent = sessionsStatusNoticeIntent{text: "could not rename session: " + terminaltext.Sanitize(msg.Err.Error())}
 		return nil, true, false
 	}
 	for i := range s.sessions {
@@ -742,7 +750,7 @@ func (s *sessionsState) handleDeleted(msg client.SessionDeletedMsg) (tea.Cmd, bo
 	}
 	s.actionLoading = false
 	if msg.Err != nil {
-		s.intent = sessionsStatusNoticeIntent{text: "could not delete session: " + sanitizeTerminal(msg.Err.Error())}
+		s.intent = sessionsStatusNoticeIntent{text: "could not delete session: " + terminaltext.Sanitize(msg.Err.Error())}
 		return nil, true, false
 	}
 	kept := s.sessions[:0]
@@ -763,7 +771,7 @@ func (s *sessionsState) handleForked(msg sessionForkedMsg) {
 	}
 	s.actionLoading = false
 	if msg.err != nil {
-		s.intent = sessionsStatusNoticeIntent{text: "could not fork session: " + sanitizeTerminal(msg.err.Error())}
+		s.intent = sessionsStatusNoticeIntent{text: "could not fork session: " + terminaltext.Sanitize(msg.err.Error())}
 		return
 	}
 	s.selected = client.SessionListItem{
@@ -772,9 +780,10 @@ func (s *sessionsState) handleForked(msg sessionForkedMsg) {
 		Kind: msg.transcript.Kind, Relationship: msg.transcript.Relationship,
 	}
 	s.transcript = conversationFromTranscript(msg.transcript.Messages)
+	s.snapshot = msg.snapshot
 	s.transcriptRend = nil
 	s.inspect = false
-	s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript}
+	s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript, snapshot: s.snapshot}
 }
 
 func (s *sessionsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
@@ -793,10 +802,6 @@ func (s *sessionsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		s.handleSessionsListed(msg)
 	case storageHealthLoadedMsg:
 		s.handleStorageHealthLoaded(msg)
-	case migrationPlanMsg:
-		s.handleMigrationPlan(msg)
-	case migrationJobMsg:
-		s.handleMigrationJob(msg)
 	case cleanupPlanMsg:
 		s.handleCleanupPlan(msg)
 	case cleanupJobMsg:
@@ -820,16 +825,17 @@ func (s *sessionsState) handleTranscriptLoaded(msg sessionTranscriptLoadedMsg) {
 		return
 	}
 	s.transcript = conversationFromTranscript(msg.transcript.Messages)
+	s.snapshot = msg.snapshot
 	s.transcriptRend = nil
 	s.transcriptStuck = true
 	if !s.inspect {
-		s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript}
+		s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript, snapshot: s.snapshot}
 	}
 }
 
 func (s *sessionsState) handleSessionsListed(msg client.SessionsListedMsg) {
 	s.loading, s.loadState = false, sessionsComplete
-	selectedID := selectedSessionID(*s)
+	selectedID := selectedSessionID(s)
 	if msg.Err != nil {
 		s.err, s.loadState, s.sessions, s.filtered = msg.Err, sessionsInitialPageError, nil, nil
 		return
@@ -839,12 +845,7 @@ func (s *sessionsState) handleSessionsListed(msg client.SessionsListedMsg) {
 		selectedID = s.actionID
 	}
 	s.syncFilter()
-	for i := range s.filtered {
-		if s.filtered[i].ID == selectedID {
-			s.cursor = i
-			break
-		}
-	}
+	s.selectSessionID(selectedID)
 	s.actionID = ""
 }
 
@@ -852,21 +853,6 @@ func (s *sessionsState) handleStorageHealthLoaded(msg storageHealthLoadedMsg) {
 	s.healthErr = msg.err
 	if msg.err == nil {
 		s.health = &msg.health
-	}
-}
-
-func (s *sessionsState) handleMigrationPlan(msg migrationPlanMsg) {
-	s.actionLoading, s.maintenanceErr = false, msg.err != nil
-	if msg.err == nil {
-		s.migrationPlan, s.maintenance = msg.plan, maintenanceOptimizePlan
-	}
-}
-
-func (s *sessionsState) handleMigrationJob(msg migrationJobMsg) {
-	s.actionLoading, s.maintenanceErr = false, msg.err != nil
-	if msg.err == nil {
-		s.migrationJob, s.maintenance = msg.job, maintenanceOptimizeJob
-		s.intent = sessionsMigrationJobIntent{jobID: msg.job.ID}
 	}
 }
 
@@ -928,8 +914,20 @@ func (s *sessionsState) syncFilter() {
 	tabbed := filterSessionsByTabWithActivity(s.sessions, s.tab, s.activityInventory)
 	s.handles = sessionDisplayHandles(tabbed)
 	s.filtered = filterSessions(tabbed, s.handles, s.filter.Value())
-	if s.cursor >= len(s.filtered) {
-		s.cursor = 0
+	if s.list != nil {
+		s.syncList(s.activeSessionID)
+	}
+}
+
+func (s *sessionsState) selectSessionID(id string) {
+	if s.list == nil || id == "" {
+		return
+	}
+	for i := range s.filtered {
+		if s.filtered[i].ID == id {
+			s.list.SetCursor(i)
+			return
+		}
 	}
 }
 
@@ -975,7 +973,7 @@ func (s *sessionsState) applyPage(msg client.SessionInventoryPageMsg) tea.Cmd {
 		}
 		return nil
 	}
-	selectedID := selectedSessionID(*s)
+	selectedID := selectedSessionID(s)
 	if s.actionID != "" {
 		selectedID = s.actionID
 	}
@@ -985,12 +983,7 @@ func (s *sessionsState) applyPage(msg client.SessionInventoryPageMsg) tea.Cmd {
 	}
 	s.sessions, s.err, s.loading = mergeSessionPages(s.sessions, msg.Page.Sessions, replace), nil, false
 	s.syncFilter()
-	for i := range s.filtered {
-		if s.filtered[i].ID == selectedID {
-			s.cursor = i
-			break
-		}
-	}
+	s.selectSessionID(selectedID)
 	s.nextCursor, s.actionID = msg.Page.NextCursor, ""
 	if s.nextCursor == "" {
 		s.loadState = sessionsComplete
@@ -1018,8 +1011,6 @@ func (s *sessionsState) handleMaintenanceKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch s.maintenance {
 	case maintenanceNone:
 		return s.handleMaintenanceMenuKey(msg)
-	case maintenanceOptimizePlan, maintenanceOptimizeJob:
-		return s.handleMigrationKey(msg)
 	case maintenanceCleanupPlan:
 		return s.handleCleanupPlanKey(msg)
 	case maintenanceCleanupJob:
@@ -1029,42 +1020,12 @@ func (s *sessionsState) handleMaintenanceKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (s *sessionsState) handleMaintenanceMenuKey(msg tea.KeyPressMsg) tea.Cmd {
-	if msg.String() == "o" && s.deps.caps.StorageMigration && s.migration != nil {
-		s.actionLoading = true
-		s.maintenanceErr = false
-		return migrationPlanCmd(s.deps.ctx, s.migration)
-	}
 	if msg.String() == "x" && s.deps.caps.StorageCleanup && s.cleanup != nil {
 		s.actionLoading = true
 		s.maintenanceErr = false
 		return cleanupPlanCmd(s.deps.ctx, s.cleanup)
 	}
 	return nil
-}
-
-func (s *sessionsState) handleMigrationKey(msg tea.KeyPressMsg) tea.Cmd {
-	if s.maintenance == maintenanceOptimizePlan {
-		if key.Matches(msg, s.deps.keys.Choose) && s.migrationPlan.Available && s.migration != nil {
-			s.actionLoading = true
-			return migrationApplyCmd(s.deps.ctx, s.migration, s.migrationPlan.ID)
-		}
-		return nil
-	}
-	if s.migration == nil {
-		return nil
-	}
-	s.actionLoading = true
-	switch msg.String() {
-	case "r":
-		return migrationResumeCmd(s.deps.ctx, s.migration, s.migrationJob.ID)
-	case "c":
-		return migrationCancelCmd(s.deps.ctx, s.migration, s.migrationJob.ID)
-	case "s":
-		return migrationStatusCmd(s.deps.ctx, s.migration, s.migrationJob.ID)
-	default:
-		s.actionLoading = false
-		return nil
-	}
 }
 
 func (s *sessionsState) handleCleanupPlanKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -1103,8 +1064,6 @@ func (s *sessionsState) pageCmd() tea.Cmd {
 	}
 	return client.ListSessionsPageCmd(s.pageCtx, s.pager, s.nextCursor, s.pageRequestToken)
 }
-
-const sessionsVisibleRows = 12
 
 func filterSessionsByTabWithActivity(sessions []client.SessionListItem, tab sessionsTab, activityInventory bool) []client.SessionListItem {
 	out := make([]client.SessionListItem, 0, len(sessions))
@@ -1180,9 +1139,12 @@ func capabilityReasonText(reason client.CapabilityReason) string {
 		return "this action is unavailable"
 	}
 }
-func selectedSessionID(st sessionsState) string {
-	if st.cursor >= 0 && st.cursor < len(st.filtered) {
-		return st.filtered[st.cursor].ID
+func selectedSessionID(st *sessionsState) string {
+	if st.list != nil {
+		return st.list.CursorID()
+	}
+	if len(st.filtered) > 0 {
+		return st.filtered[0].ID
 	}
 	return ""
 }
@@ -1302,28 +1264,80 @@ func sessionsTabBar(th theme.Theme, tab sessionsTab, activityInventory, storageH
 	return strings.Join(parts, th.Style("muted").Render("  "))
 }
 
-func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, width, _ int, currentID ...string) string {
+func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, width, height int, currentID ...string) string {
 	current := ""
 	if len(currentID) > 0 {
 		current = currentID[0]
 	}
-	var b strings.Builder
-	maintenance := caps.StorageHealth || caps.StorageMigration || caps.StorageCleanup
-	b.WriteString(sessionsTabBar(th, st.tab, st.activityInventory, maintenance) + "\n\n")
+	return renderSessionsPanelSized(th, &st, caps, hk, width, height, current)
+}
+
+func renderSessionsPanelSized(th theme.Theme, st *sessionsState, caps client.Capabilities, hk helpKeys, width, height int, current string) string {
+	if width <= 0 || height <= 0 {
+		st.rowBudget, st.compact = 0, true
+		return ""
+	}
+	maintenance := caps.StorageHealth || caps.StorageCleanup
+	tab := sessionsTabBar(th, st.tab, st.activityInventory, maintenance)
 	if st.tab == tabStorageHealth {
-		b.WriteString(renderStorageHealth(th, st, caps, hk))
-		return b.String()
+		st.rowBudget, st.compact = 0, false
+		return boundedSessionsPanel([]string{tab, "", renderStorageHealth(th, *st, caps, hk)}, width, height)
 	}
-	if rendered, ok := renderSessionsPanelState(th, st, hk); ok {
-		b.WriteString(rendered)
-		return b.String()
+	if rendered, ok := renderSessionsPanelState(th, *st, hk); ok {
+		st.rowBudget, st.compact = 0, false
+		return boundedSessionsPanel([]string{tab, "", rendered}, width, height)
 	}
-	renderSessionRows(&b, th, st, current, width)
-	if status := sessionsPaginationStatus(st); status != "" {
-		b.WriteString(th.Style("muted").Render(status) + "\n")
+
+	status := sessionsPaginationStatus(*st)
+	fixed := 4
+	if status != "" {
+		fixed++
 	}
-	b.WriteString("\n" + th.Style("muted").Render(sessionActionsHint(st, hk)))
-	return b.String()
+	st.rowBudget = height - fixed
+	if st.rowBudget < 1 || width < 4 {
+		st.rowBudget, st.compact = 0, true
+		closeHint := hk.closeOnly
+		if closeHint == "" {
+			closeHint = "esc"
+		}
+		return boundedDisplayLine(closeHint+": close", width)
+	}
+	st.compact = false
+	list := st.syncList(current)
+	list.SetGeometry(width, st.rowBudget, 2, bounded.Wrap)
+	view := list.ViewWithIndicators(st.rowBudget, list.RevealPending())
+	lines := []string{tab, ""}
+	if view.Above > 0 {
+		lines = append(lines, th.Style("muted").Render(fmt.Sprintf("↑ %d items", view.Above)))
+	}
+	for _, row := range view.Rows {
+		presentation := presentListRow(row, th.Style("accent"), th.Style("muted"))
+		lines = append(lines, presentation.Style.Render(presentation.Text))
+	}
+	if view.Below > 0 {
+		lines = append(lines, th.Style("muted").Render(fmt.Sprintf("↓ %d items", view.Below)))
+	}
+	if status != "" {
+		lines = append(lines, th.Style("muted").Render(status))
+	}
+	lines = append(lines, "", th.Style("muted").Render(sessionActionsHint(st, hk)))
+	return boundedSessionsPanel(lines, width, height)
+}
+
+func boundedSessionsPanel(parts []string, width, height int) string {
+	lines := make([]string, 0, height)
+	for _, part := range parts {
+		for _, line := range strings.Split(part, "\n") {
+			if len(lines) == height {
+				return strings.Join(lines, "\n")
+			}
+			lines = append(lines, boundedDisplayLine(line, width))
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 const unavailableText = "unavailable"
@@ -1336,10 +1350,6 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 		return th.Style("muted").Render("loading maintenance status…")
 	}
 	switch st.maintenance {
-	case maintenanceOptimizePlan:
-		return renderMigrationPlan(th, st.migrationPlan, hk)
-	case maintenanceOptimizeJob:
-		return renderMigrationJob(th, st.migrationJob, hk)
 	case maintenanceCleanupPlan:
 		return renderCleanupPlan(th, st, hk)
 	case maintenanceCleanupJob:
@@ -1373,11 +1383,11 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 			}
 			job := "none"
 			if h.ActiveJob != "" {
-				job = sanitizeTerminal(h.ActiveJob)
+				job = terminaltext.Sanitize(h.ActiveJob)
 			}
 			failure := "none"
 			if h.LastFailure != "" {
-				failure = sanitizeTerminal(h.LastFailure)
+				failure = terminaltext.Sanitize(h.LastFailure)
 			}
 			lines = append(lines,
 				"Stored: "+bytesText+"  Recoverable: "+reclaimable,
@@ -1389,9 +1399,6 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 		}
 	}
 	var actions []string
-	if caps.StorageMigration {
-		actions = append(actions, "o: Optimize storage (sessions preserved)")
-	}
 	if caps.StorageCleanup {
 		actions = append(actions, "x: Clean up sessions (destructive)")
 	}
@@ -1400,47 +1407,6 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 	}
 	lines = append(lines, "", th.Style("muted").Render(strings.Join(actions, "  ")+"  "+hk.nextTab+": switch  "+hk.closeOnly+": close"))
 	return strings.Join(lines, "\n")
-}
-
-func renderMigrationPlan(th theme.Theme, plan client.SessionMigrationPlan, hk helpKeys) string {
-	if !plan.Available {
-		return th.Style("askTitle").Render("Optimize storage") + "\n\n" + th.Style("muted").Render("Optimization is unavailable on this backend.  "+hk.closeOnly+": back")
-	}
-	return strings.Join([]string{
-		th.Style("askTitle").Render("Preview storage optimization"), "",
-		"Sessions are preserved; this only updates how they are stored.",
-		fmt.Sprintf("Legacy format: %d  Current format: %d  Invalid: %d  Skipped: %d", plan.V1Families, plan.V2Families, plan.InvalidFamilies, plan.SkippedFamilies),
-		"Stored: " + humanizeBytes(plan.CurrentBytes) + "  Recoverable: " + humanizeBytes(plan.ReclaimableBytes),
-		"Temporary space needed: " + humanizeBytes(plan.TemporaryBytes), "",
-		th.Style("muted").Render(hk.choose + ": start optimization  " + hk.closeOnly + ": back"),
-	}, "\n")
-}
-
-func renderMigrationJob(th theme.Theme, job client.SessionMigrationJob, hk helpKeys) string {
-	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + sanitizeTerminal(job.ID) + "  Status: " + sanitizeTerminal(job.State),
-		fmt.Sprintf("Processed: %d/%d  Updated: %d  Skipped: %d  Failed: %d", job.Processed, job.V1Families, job.Migrated, job.SkippedFamilies, job.Failed),
-		"Sessions are preserved; completed updates are kept."}
-	lines = append(lines, renderMigrationErrors(job.Errors)...)
-	if job.State == teamStopReasonCancelled {
-		lines = append(lines, "Cancellation stops remaining items; completed updates are kept.")
-	}
-	lines = append(lines, "", th.Style("muted").Render("r: resume  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
-	return strings.Join(lines, "\n")
-}
-
-func renderMigrationErrors(items []client.SessionMigrationItemError) []string {
-	if len(items) == 0 {
-		return nil
-	}
-	lines := []string{"Item failures:"}
-	for i, item := range items {
-		if i == 5 {
-			lines = append(lines, fmt.Sprintf("… and %d more", len(items)-i))
-			break
-		}
-		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
-	}
-	return lines
 }
 
 func cleanupKindCount(counts client.CleanupCounts, keys ...string) int {
@@ -1469,7 +1435,7 @@ func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
 }
 
 func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string {
-	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + sanitizeTerminal(job.ID) + "  Status: " + sanitizeTerminal(job.State),
+	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + terminaltext.Sanitize(job.ID) + "  Status: " + terminaltext.Sanitize(job.State),
 		fmt.Sprintf("Checked: %d  Deleted: %d  Skipped: %d  Changed: %d  Failed: %d", job.Processed, job.Deleted, job.Skipped, job.Stale, job.Failed),
 		"Sessions changed since the preview are skipped. Review partial results, then create a new preview to retry."}
 	for i, item := range job.Errors {
@@ -1477,7 +1443,7 @@ func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string
 			lines = append(lines, fmt.Sprintf("… and %d more", len(job.Errors)-i))
 			break
 		}
-		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
+		lines = append(lines, "- "+terminaltext.Sanitize(item.ItemHandle)+" ["+terminaltext.Sanitize(item.ReasonCode)+"] "+terminaltext.Sanitize(item.Message))
 	}
 	if job.State == teamStopReasonCancelled {
 		lines = append(lines, "Cancellation stops remaining items; completed deletions cannot be undone.")
@@ -1512,7 +1478,7 @@ func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (st
 		}
 		return th.Style("errorText").Render("could not list sessions") + "\n" + th.Style("muted").Render(hint), true
 	case len(st.filtered) == 0:
-		message := "no " + []string{"chats", "scheduled runs", "child runs", "other sessions"}[st.tab] + " found"
+		message := "no " + []string{"chats", "drafts", "scheduled runs", "child runs", "other sessions"}[st.tab] + " found"
 		if st.filter.Value() != "" {
 			message = "no matches — clear search to see all"
 		}
@@ -1537,49 +1503,34 @@ func sessionsPaginationStatus(st sessionsState) string {
 	}
 }
 
-func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string, width int) {
-	start, end := scrollWindow(st.cursor, len(st.filtered), sessionsVisibleRows)
-	for i := start; i < end; i++ {
-		s := st.filtered[i]
-		marker := "  "
-		if i == st.cursor {
-			marker = "▶ "
-		}
-		label := s.Title
-		if st.activityInventory && s.UsageState == client.SessionActivityDraft {
-			label = "New — no messages"
-		} else if label == "" {
-			label = "untitled"
-		}
-		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + sanitizeTerminal(label)
-		if handle := st.handles[s.ID]; handle != "" {
-			line += "  " + handle
-		}
-		if s.ModelID != "" {
-			line += "  (" + sanitizeTerminal(s.ModelID) + ")"
-		}
-		if s.Kind == client.SessionKindUnknown {
-			line += "  [Legacy session — inspect only]"
-		}
-		if s.ID == current {
-			line += "  [current]"
-		}
-		if s.Kind == client.SessionKindTeamMember && s.Relationship.MemberName != "" {
-			line += "  [member " + sanitizeTerminal(s.Relationship.MemberName) + "]"
-		}
-		style := th.Style("muted")
-		if i == st.cursor {
-			style = th.Style("accent")
-		}
-		b.WriteString(renderToolCardText(style, line, width) + "\n")
+func sessionRowText(s client.SessionListItem, handle string, current, activityInventory bool) string {
+	label := s.Title
+	if activityInventory && s.UsageState == client.SessionActivityDraft {
+		label = "New — no messages"
+	} else if label == "" {
+		label = "untitled"
 	}
+	line := relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + terminaltext.SanitizeSingleLine(label)
+	if handle != "" {
+		line += "  " + handle
+	}
+	if s.ModelID != "" {
+		line += "  (" + terminaltext.SanitizeSingleLine(s.ModelID) + ")"
+	}
+	if s.Kind == client.SessionKindUnknown {
+		line += "  [Legacy session — inspect only]"
+	}
+	if current {
+		line += "  [current]"
+	}
+	if s.Kind == client.SessionKindTeamMember && s.Relationship.MemberName != "" {
+		line += "  [member " + terminaltext.SanitizeSingleLine(s.Relationship.MemberName) + "]"
+	}
+	return line
 }
 
-func sessionActionsHint(st sessionsState, hk helpKeys) string {
-	selected := client.SessionListItem{}
-	if st.cursor >= 0 && st.cursor < len(st.filtered) {
-		selected = st.filtered[st.cursor]
-	}
+func sessionActionsHint(st *sessionsState, hk helpKeys) string {
+	selected, _ := st.selectedRow()
 	action := "unavailable"
 	if selected.Capabilities.PublicChat {
 		action = "continue"
@@ -1619,7 +1570,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, _ string, vpCont
 	}
 	if st.loading {
 		b.WriteString(th.Style("title").Render("loading conversation") + "\n\n")
-		b.WriteString(th.Style("muted").Render("Loading " + sanitizeTerminal(label) + "…"))
+		b.WriteString(th.Style("muted").Render("Loading " + terminaltext.Sanitize(label) + "…"))
 		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": Back"))
 		return b.String()
 	}
@@ -1629,7 +1580,7 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, _ string, vpCont
 		b.WriteString("\n" + th.Style("muted").Render("r: Retry  "+hk.closeOnly+": Back"))
 		return b.String()
 	}
-	b.WriteString(th.Style("muted").Render("Inspecting "+sanitizeTerminal(label)+" · read-only") + "\n")
+	b.WriteString(th.Style("muted").Render("Inspecting "+terminaltext.Sanitize(label)+" · read-only") + "\n")
 	if st.transcript.isEmpty() {
 		b.WriteString(th.Style("muted").Render("(empty conversation)"))
 	} else {

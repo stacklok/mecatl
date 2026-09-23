@@ -127,6 +127,9 @@ type Resolver struct {
 	// computed once at construction. Always fully trusted.
 	userRules []governance.Rule
 
+	operatorHarnessContext    *HarnessContextSection
+	operatorHarnessContextErr error
+
 	// operatorGuardrails is the OPERATOR-TIER guardrails config (issue #27), read
 	// ONCE at construction from the user-global + explicit (CLI) tiers ONLY. A
 	// project-tier file's guardrails: block is deliberately IGNORED (a project repo
@@ -332,6 +335,22 @@ func (r *Resolver) OperatorExecution() (*ExecutionSection, error) {
 		return nil, nil
 	}
 	return r.operatorExecution, r.operatorExecutionErr
+}
+
+// HarnessContextError reports an explicit operator policy that could not be parsed.
+func (r *Resolver) HarnessContextError() error {
+	if r == nil {
+		return nil
+	}
+	return r.operatorHarnessContextErr
+}
+
+// OperatorHarnessContext returns the strict operator-tier harness source policy.
+func (r *Resolver) OperatorHarnessContext() *HarnessContextSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorHarnessContext
 }
 
 // OperatorGuardrails returns the operator-tier guardrails config (user-global + CLI
@@ -696,7 +715,8 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 			rules = append(rules, imported...)
 			continue
 		}
-		cfg, perr := parseYAML(data)
+		r.warnProjectHarnessContext(data, src.path, ws.Root())
+		cfg, perr := parseYAMLForTier(data, true)
 		if perr != nil {
 			// The skip drops the WHOLE file — its DENY/ASK rules included, so a
 			// typo LOOSENS policy. Name the lost per-effect counts (best-effort
@@ -819,6 +839,13 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 	return rules, projectModels
 }
 
+func (r *Resolver) warnProjectHarnessContext(data []byte, file, root string) {
+	if !hasTopLevelKey(data, "harness_context") {
+		return
+	}
+	r.diag.Log(context.Background(), port.LevelWarn, "harness_context: IGNORING project-tier block (operator-tier only)", "file", file, "root", root)
+}
+
 func (r *Resolver) warnProjectCommandRunner(section *CommandRunnerSection, file, root string) {
 	if section == nil {
 		return
@@ -894,6 +921,12 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 			"file", file, "root", ws.Root())
 	}
 
+	if value, ok := block.Slots["guardrail"]; ok && value.ExplicitProvider {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models: IGNORING project-tier models.slots.guardrail provider object (operator-tier only)",
+			"file", file, "root", ws.Root())
+	}
+
 	// (2) Opt-in by operator allowlist, then trust-gated.
 	op := r.operatorModels
 	if op == nil || len(op.Allowlist) == 0 {
@@ -917,9 +950,24 @@ func (r *Resolver) captureProjectModels(ws tool.WorkspaceReader, file string, bl
 	if block.Default != "" && acc.Default == "" {
 		acc.Default = block.Default
 	}
-	acc.Slots = mergeFirstWins(acc.Slots, block.Slots)
+	acc.Slots = mergeFirstWinsSlots(acc.Slots, block.Slots)
 	acc.Aliases = mergeFirstWins(acc.Aliases, block.Aliases)
 	return acc
+}
+
+func mergeFirstWinsSlots(dst, src ModelSlots) ModelSlots {
+	if dst == nil && len(src) > 0 {
+		dst = make(ModelSlots, len(src))
+	}
+	for key, value := range src {
+		if value.ExplicitProvider {
+			continue
+		}
+		if _, exists := dst[key]; !exists {
+			dst[key] = value
+		}
+	}
+	return dst
 }
 
 // mergeFirstWins copies src entries into dst, keeping any key dst already holds (the
@@ -965,6 +1013,9 @@ func (r *Resolver) applyTrustGate(rules []governance.Rule, report *Report) []gov
 // Read from the host filesystem via the injectable env (NOT a workspace — these
 // live outside any session root). Fail-soft per file.
 func (r *Resolver) captureOperatorParseError(data []byte, err error) {
+	if hasTopLevelKey(data, "harness_context") && r.operatorHarnessContextErr == nil {
+		r.operatorHarnessContextErr = errors.New("operator harness_context configuration is invalid")
+	}
 	if (hasTopLevelKey(data, "providers") || hasTopLevelKey(data, "provider_overrides") || hasTopLevelKey(data, "credential_store")) && r.operatorProviderConfigErr == nil {
 		r.operatorProviderConfigErr = errors.New("operator provider configuration is invalid")
 	}
@@ -1012,6 +1063,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		rules = append(rules, rulesFromConfig(cfg, governance.ScopeCLI, report)...)
 		// Operator-tier guardrails (issue #27): CLI files out-rank user-global, so the
 		// FIRST CLI file with a guardrails: block wins (first-non-nil keeps CLI).
+		r.captureHarnessContext(cfg.HarnessContext)
 		r.captureGuardrails(cfg.Guardrails)
 		// Operator-tier posture: same first-non-empty-keeps-CLI discipline as guardrails.
 		r.capturePosture(cfg.Posture)
@@ -1056,6 +1108,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 			} else {
 				rules = append(rules, rulesFromConfig(cfg, governance.ScopeUser, report)...)
 				// User-global guardrails: captured only if no higher CLI file already did.
+				r.captureHarnessContext(cfg.HarnessContext)
 				r.captureGuardrails(cfg.Guardrails)
 				// User-global posture: captured only if no higher CLI file already did.
 				r.capturePosture(cfg.Posture)
@@ -1122,6 +1175,13 @@ func (r *Resolver) captureProviders(definitions ProviderDefinitions, overrides P
 	if r.operatorCredentialStore == nil && store != nil {
 		r.operatorCredentialStore = store
 	}
+}
+
+func (r *Resolver) captureHarnessContext(s *HarnessContextSection) {
+	if s == nil || r.operatorHarnessContext != nil {
+		return
+	}
+	r.operatorHarnessContext = s
 }
 
 // captureGuardrails records the FIRST operator-tier guardrails: block seen during

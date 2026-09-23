@@ -4,7 +4,7 @@
 - Date: 2026-06-26
 - Scope: the built-in default guardrail rule set — `internal/app/guardrails.go` (`defaultGuardrailSpecs`) — plus a new per-rule `SkipReadOnlyBash` pre-filter AND a Bash-specific inspection rubric (`modelhook.DefaultBashPrePrompt`) in the `internal/adapter/modelhook` adapter (`matcher.go`, `modelhook.go`). No engine/port/proto/wire change.
 - Supersedes: the "Local tools (Read/Edit/Write/Bash/Grep/Glob) are deliberately NOT matched" clause of [ADR 0021](./0021-guardrails.md) ONLY — as it applies to `Bash`. 0021's threat model, modes, matcher, enforcement, recursion guard, fail-open/closed, and cost guards carry over unchanged, as does the exclusion of the other local tools.
-- Superseded by: none
+- Superseded by: [ADR 0363](./0363-contextual-investigative-guardrails.md) for contextual coverage and fixed-rubric/additive-policy behavior
 
 ## Context
 
@@ -34,7 +34,7 @@ An explicit operator `rules:` list still replaces the defaults entirely (the def
 
 So Bash gets a rubric that flags only **concrete dangerous categories** — (1) data sent off the machine to a network destination (curl/wget/scp/nc upload, piping into a network request), especially secrets; (2) fetching and executing remote code (`curl … | sh`); (3) an irreversible action on a remote you may not control (force-push, push/merge to a remote, `gh pr merge`, publishing a release, deleting a remote branch/repo); (4) a destructive hard-to-reverse local operation (recursive tree deletion, overwriting a disk device, mass recursive chmod/chown); (5) a **local-persistence** write to a credential / SSH-key / shell-startup / scheduler (cron/systemd) / git-hook target in a way that grants later off-machine access or persistent code execution (e.g. appending to an authorized_keys file, a shell rc/profile, a crontab or systemd unit, or a repository's git-hooks directory) — and **explicitly declares ORDINARY local writes (source/config/build output/notes, including to sibling repos), builds, tests, local file moves/copies, and routine origin-remote git operations SAFE.** Category (5) and the local-write carve-out **coexist**: a normal source-file write to a sibling repo stays SAFE; only the named sensitive targets are UNSAFE — closing the gap where a local privilege-persistence write (which never leaves the machine, so categories 1-4 miss it) would otherwise be waved through. The blanket "if uncertain, judge unsafe" is replaced, for Bash specifically, with **"judge SAFE unless you can identify one of the specific dangerous actions above"** — a deliberate rubric-level posture choice: the named categories still catch the genuinely dangerous cases (incl. `gh pr merge`), and the one-shot `/guardrail-allow` human override (ADR 0061) covers any residual a checker still over-flags. Web/MCP rules keep `defaultPrePrompt` — they *are* network boundaries, where the exfiltration rubric is correct.
 
-The wiring is the existing per-rule `Prompt` override: `defaultGuardrailSpecs`' Bash entry sets `Prompt: modelhook.DefaultBashPrePrompt`, and the Runner's `rubric()` already prefers a rule's non-empty prompt over the built-in default. An operator's explicit `Bash` rule with no `prompt:` falls back to `defaultPrePrompt` (least-surprising — an explicit rule opts out of the default-set conveniences).
+ADR 0363 retains per-rule `Prompt` only as additive operator task-risk context beneath the fixed harness safety, authority, provenance, evidence, and structured-output rubric. It no longer replaces the rubric, and the broader contextual default set now covers local action and inbound boundaries.
 
 ## Consequences
 
@@ -57,5 +57,5 @@ The wiring is the existing per-rule `Prompt` override: `defaultGuardrailSpecs`' 
 - [ADR 0021](./0021-guardrails.md) — the guardrails feature whose "local tools deliberately not matched" clause this supersedes (for `Bash`).
 - [ADR 0053](./0053-guardrails-default-block.md) — flipped the default rule set to block; this ADR mirrors its supersede-don't-edit precedent against 0021.
 - [ADR 0061](./0061-guardrails-human-override.md) — the one-shot `/guardrail-allow` human override that recovers a residual false-positive the Bash rubric's strict posture still leaves.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the living per-subsystem guardrails reference (the "Default-on with no rules" paragraph).
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the living per-subsystem guardrails reference (the "Default-on with no rules" paragraph).
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

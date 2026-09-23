@@ -134,5 +134,5 @@ engine-factory seam, so they inherit the new enable model with no further change
 - Living docs: [`docs/usage.md`](../usage.md) (the `--subagent-model-router` kill-switch
   + the `models.router:` YAML block with `disabled:`),
   [`docs/architecture/providers.md`](../architecture/providers.md) (the router section),
-  [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) (router
+  [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (router
   enable mechanics).

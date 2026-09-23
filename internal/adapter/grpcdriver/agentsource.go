@@ -8,9 +8,9 @@ import (
 	"google.golang.org/grpc"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 

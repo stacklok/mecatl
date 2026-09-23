@@ -3,17 +3,94 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+func TestRedisWorkspaceSlashCommandDiscoveryDoesNotImplicitlyUseExecutionWorkspace(t *testing.T) {
+	mr := miniredis.RunT(t)
+	built, err := buildIsolated(t, t.Context(), Config{
+		RedisURL:            mr.Addr(),
+		RedisAllowPlaintext: true,
+		RedisFilesystem:     true,
+		EnableCommands:      true,
+		UseMock:             true,
+		NoSoul:              true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "command-owner", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(t.Context(), principal)
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list := func() (int, *mecatlv1.ListCommandsResponse) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/commands?session_id="+string(sess.ID), nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		server.NewHTTPHandler(built.Service).ServeHTTP(rec, req)
+		var body mecatlv1.ListCommandsResponse
+		if rec.Code == http.StatusOK {
+			if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+				t.Fatalf("decode ListCommands response: %v", err)
+			}
+		}
+		return rec.Code, &body
+	}
+
+	// Missing command directories are a normal empty discovery result, including
+	// on a virtual workspace whose Root is not a pod-local filesystem path.
+	if status, got := list(); status != http.StatusOK || len(got.GetCommands()) != 0 {
+		t.Fatalf("empty Redis command discovery = status %d, commands %+v; want 200 and empty", status, got.GetCommands())
+	}
+
+	storage, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	ws, err := storage.OpenWorkspace(ctx, redisPrincipalScope(principal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		".mecatl/commands/zeta.md":  "---\ndescription: native zeta\n---\nNative zeta body",
+		".claude/commands/alpha.md": "---\ndescription: alpha\n---\nAlpha body",
+		".claude/commands/zeta.md":  "---\ndescription: shadowed zeta\n---\nShadowed body",
+	} {
+		if _, err := ws.CreateFile(ctx, path, []byte(body)); err != nil {
+			t.Fatalf("create %s: %v", path, err)
+		}
+	}
+
+	status, got := list()
+	if status != http.StatusOK {
+		t.Fatalf("Redis command discovery status = %d, want 200", status)
+	}
+	commands := got.GetCommands()
+	if len(commands) != 0 {
+		t.Fatalf("Redis execution files implicitly entered command discovery: %+v", commands)
+	}
+}
 
 func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessions(t *testing.T) {
 	mr := miniredis.RunT(t)
@@ -131,6 +208,52 @@ func TestRedisWorkspaceRootListDirIsNotDeniedByAuthority(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("root ListDir was denied before execution: %s", result.Content)
+	}
+}
+
+func TestRedisWorkspaceExternalLookingListDirNeverFallsBackToHost(t *testing.T) {
+	mr := miniredis.RunT(t)
+	hostDir := t.TempDir()
+	const sentinel = "host-only-listdir-sentinel.txt"
+	if err := os.WriteFile(filepath.Join(hostDir, sentinel), []byte("host-only"), 0o600); err != nil {
+		t.Fatalf("write host sentinel: %v", err)
+	}
+	args, err := json.Marshal(map[string]string{"path": hostDir})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("list-external", "ListDir", args)),
+		mockllm.TextTurn("done"),
+	)
+	built, err := buildIsolated(t, context.Background(), Config{
+		RedisURL:            mr.Addr(),
+		RedisAllowPlaintext: true,
+		RedisFilesystem:     true,
+		RedisReadLedger:     true,
+		MockProvider:        provider,
+		NoSoul:              true,
+		Posture:             PostureYolo,
+		PostureFlagSet:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "redis-external-listdir", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(context.Background(), principal)
+	sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := runRedisWorkspaceE2E(ctx, t, built.Service, sess.ID, "list an external-looking directory")
+	result, ok := results["list-external"]
+	if !ok {
+		t.Fatal("missing ToolResult for list-external")
+	}
+	if strings.Contains(result.Content, sentinel) {
+		t.Fatalf("Redis ListDir exposed host sentinel: %q", result.Content)
 	}
 }
 

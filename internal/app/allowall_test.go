@@ -171,13 +171,13 @@ func TestYoloChildSubstitutionStillFailsSafe(t *testing.T) {
 
 	badArgs, _ := json.Marshal(map[string]string{"command": "cat $(zap)"}) // non-read-only inner
 	badCall := session.NewToolCall("c1", "Shell", badArgs)
-	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, badCall, nil); got.Effect != governance.Ask || got.FlooredConfiguredAllow || got.ConfiguredAsk {
+	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, badCall, nil); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceUnknown {
 		t.Fatalf("--yolo child substitution (bad inner) must Ask with no Floored/Configured bits; got %+v", got)
 	}
 
 	goodArgs, _ := json.Marshal(map[string]string{"command": "go test $(git rev-parse HEAD)"}) // read-only inner
 	goodCall := session.NewToolCall("c2", "Shell", goodArgs)
-	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, goodCall, nil); got.Effect != governance.Ask || !got.FlooredConfiguredAllow {
+	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, goodCall, nil); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfiguredAllowFloor {
 		t.Fatalf("--yolo child substitution (read-only inner) must Ask with FlooredConfiguredAllow; got %+v", got)
 	}
 }

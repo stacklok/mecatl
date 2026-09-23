@@ -77,10 +77,12 @@ while the root module runs through a fail-closed **reachable-vuln gate**
 (`.github/scripts/govulncheck-gate.go`: it parses `govulncheck -format json` and
 fails on any reachable finding whose OSV id is not on a dated accepted-risk
 allowlist — govulncheck has no native ignore mechanism, and the wrapper runs
-under `pipefail` so a broken scan cannot pass vacuously). **`dependabot`**
-(`.github/dependabot.yml`) tracks both Go modules independently plus the
-SHA-pinned GitHub Actions (grouping minor+patch, isolating majors); every action
-is **SHA-pinned** with a `# vX.Y.Z` comment that dependabot preserves.
+under `pipefail` so a broken scan cannot pass vacuously). **Renovate**
+(`renovate.json`) tracks every Go module, the npm workspaces (TypeScript SDK,
+Studio, website), Docker images, and the GitHub Actions, grouping related
+minor+patch updates and isolating majors; in-repo module pins are left to the
+release process. Every action is **SHA-pinned** with a `# vX.Y.Z` comment that
+Renovate keeps in step with the digest.
 
 ### Server-owned session placement
 
@@ -119,8 +121,12 @@ lease ownership, authorization, and every durable-state check remain independent
 
 Ingress metadata is never forwarded blindly. `engine/agent` binds the loaded session ID
 to the authoritative run context, and every provider attempt and fallback derives its
-provider ID from that context. If the run binding is absent or illegal, providers omit
-the field and continue inference. Official clients add the field to representable
+active session ID from that context. Nested run trees also carry an outbound-only
+`X-Mecatl-Root-Session-ID`, initialized from the authoritative top-level session and
+preserved across delegated engines. Provider requests therefore retain both active-child
+attribution and root-conversation grouping. The root field is never ingress affinity and
+grants no authority. If either outbound binding is absent or illegal, providers omit that
+field and continue inference. Official clients add only the active field to representable
 session-bound calls. The TypeScript raw `withSessionAffinity` helper rejects an illegal
 explicit ID synchronously instead of silently deleting a caller header; a high-level
 session ID received from the server remains usable without affinity when it cannot be

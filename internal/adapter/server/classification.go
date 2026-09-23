@@ -28,9 +28,7 @@ const (
 	// namespace) on every call, denying a foreign caller as absence.
 	//
 	// MANAGEMENT-AUTHORITY SUB-CASE (the storage-maintenance boundaries:
-	// StorageHealth, Plan/Apply/Resume/CancelSessionMigration,
-	// SessionMigrationJob, Plan/Apply/CancelSessionCleanup,
-	// SessionCleanupJob): the boundary still resolves a real per-caller
+	// StorageHealth, Plan/Apply/CancelSessionCleanup, SessionCleanupJob): the
 	// identity decision — "is this the verified management principal", and
 	// for the ones that mint a job/plan/token, "does this handle belong to
 	// THIS caller" — so KindCallerOwned's structural contract (a real ctx
@@ -276,11 +274,6 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},
 	"StorageHealth":             {KindCallerOwned, "gates on the trusted-context management authorizer, NOT caller ownership — the aggregate it reads is store-wide (every session), never scoped to the caller's own rows; see the AccessKind doc comment note on management-authority boundaries"},
-	"PlanSessionMigration":      {KindCallerOwned, "gates on management authorization over the ENTIRE store, not the caller's own sessions; only the returned generation handle is bound to the verified caller for later Apply/Resume/Cancel binding"},
-	"ApplySessionMigration":     {KindCallerOwned, "gates on management authorization over the entire store; only the created job is caller-bound, so a foreign-caller job lookup is denied identically to a missing job"},
-	"ResumeSessionMigration":    {KindCallerOwned, "gates on management authorization; the same caller-bound job-handle check applies before processing another bounded batch — the underlying migration data remains store-wide, never caller-owned"},
-	"CancelSessionMigration":    {KindCallerOwned, "gates on management authorization; the same caller-bound job-handle check applies before stopping future items — the underlying migration data remains store-wide, never caller-owned"},
-	"SessionMigrationJob":       {KindCallerOwned, "gates on management authorization and conceals missing and cross-caller job handles identically; the underlying migration data is store-wide, not the caller's own sessions"},
 	"PlanSessionCleanup":        {KindCallerOwned, "gates on management authority, NOT caller ownership — the metadata pager plans over the ENTIRE store (owner scope is nil); the decision resolved here is 'is this caller a management principal', never per-session ownership"},
 	"ApplySessionCleanup":       {KindCallerOwned, "gates on management authority over the entire store; only the confirmation token/plan is bound to the verified caller, so a stolen or foreign token is rejected before any deletion"},
 	"CancelSessionCleanup":      {KindCallerOwned, "gates on management authority; matches the verified principal against the bounded job registry — the underlying cleanup scope is store-wide, never caller-owned"},
@@ -290,14 +283,20 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
 	// --- caller-owned: live run verbs ---
-	"RetryFailedRun":               {KindCallerOwned, "authorizes and reloads under runEntryMu before failed-step retry eligibility and launch"},
-	"StartRun":                     {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
-	"StartRunContent":              {KindCallerOwned, "authorizes before the public chat-purpose kind gate and shared run-entry path"},
-	"StartInteractiveRunContent":   {KindCallerOwned, "same owner-checked run-entry path with browser-authorization presentation enabled for HTTP/gRPC"},
+	"RetryFailedRun":             {KindCallerOwned, "authorizes and reloads under runEntryMu before failed-step retry eligibility and launch"},
+	"StartRun":                   {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
+	"StartRunContent":            {KindCallerOwned, "authorizes before the public chat-purpose kind gate and shared run-entry path"},
+	"StartInteractiveRunContent": {KindCallerOwned, "same owner-checked run-entry path with browser-authorization presentation enabled for HTTP/gRPC"},
+
+	"StartInteractiveRunContentWithPlanContinuation": {KindCallerOwned, "same owner-checked public run-entry path with explicit daemon-owned plan continuation"},
+
 	"StartScheduledRunContent":     {KindCallerOwned, "trusted scheduler-purpose entry; authorizes the schedule owner before its kind gate and shared run-entry path"},
 	"Approve":                      {KindCallerOwned, "delegates to ApproveRun's authorization"},
 	"ApproveRun":                   {KindCallerOwned, "same-process path authorizes via the registered run's owning session; the cross-process resumeFromAwaiting path authorizes via loadAndReopen"},
 	"ResolveRunAsk":                {KindCallerOwned, "authorizes via GetSession before resolving or rehydrating the exact addressed ordinary ask"},
+	"ResolveScopedRunAsk":          {KindCallerOwned, "authorizes via GetSession before resolving or rehydrating the exact addressed contextual ask"},
+	"ResolveApprovalRun":           {KindCallerOwned, "same owner checks as ApproveRun, with atomic pending-purpose validation before verdict submission"},
+	"ResolvePlanAsk":               {KindCallerOwned, "authorizes via GetSession before resolving or rehydrating the exact addressed plan-originated ask"},
 	"ApprovePlan":                  {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
 	"Cancel":                       {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
 	"CancelRun":                    {KindCallerOwned, "authorizes via GetSession before cancelling the exact addressed live run"},
@@ -311,9 +310,12 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"RecheckMCPAuthorization":      {KindCallerOwned, "authorizes the session owner before caller-selected run-entry locking, then claims the exact broker outcome under the mutation lease"},
 	"CancelMCPAuthorization":       {KindCallerOwned, "authorizes the session owner before caller-selected run-entry locking, then cancels and settles the exact pending authorization under the mutation lease"},
 	"ListSessionMcpConnectors":     {KindCallerOwned, "requires enforced ownership and a verified matching session owner before inspecting the exact broker binding"},
+	"ListGuardrailCoverage":        {KindCallerOwned, "authorizes the exact session owner before projecting its assembled authority and checker rules"},
+	"GetGuardrailReviewDetail":     {KindCallerOwned, "resolves only a live registered root/child reference and authorizes the root session owner before transient disclosure"},
 	"ConnectWorkspaceServices":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before beginning or observing its broker enrollment"},
 	"RetryWorkspaceEnrollment":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before replacing the exact enrollment correlation"},
 	"CancelWorkspaceEnrollment":    {KindCallerOwned, "authorizes and locks the owned pre-prompt session before cancelling the exact enrollment correlation"},
+	"RefreshMcpSources":            {KindCallerOwned, "owner preflight precedes shared reconciliation; run-entry and mutation lease guard any exact-name authority union"},
 
 	// --- caller-owned: schedules ---
 	"CreateSchedule": {KindCallerOwned, "the schedule manager binds the verified context principal as owner atomically with visibility"},
@@ -359,10 +361,11 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ReadMcpResource":         {KindSharedInfrastructure, "reads a resource off a process-wide MCP server registration, not a caller-owned record"},
 	"ListMcpPrompts":          {KindSharedInfrastructure, "reads prompt snapshots off a process-wide MCP server registration"},
 	"GetMcpPrompt":            {KindSharedInfrastructure, "expands a prompt on a process-wide MCP server registration"},
-	"ListMcpSources":          {KindSharedInfrastructure, "the deployment-wide MCP source inventory, identical for every caller"},
+	"ListMcpSources":          {KindSharedInfrastructure, "the cached deployment-wide MCP source inventory, identical for every caller and never an independent probe"},
 	"ListToolHiveGroups":      {KindSharedInfrastructure, "derives group names from the same deployment-wide MCP source inventory as ListMcpSources"},
 	"ListAgents":              {KindSharedInfrastructure, "the deployment's configured agent-definition catalog, identical for every caller"},
 	"ListSkills":              {KindSharedInfrastructure, "the deployment's configured skill catalog, identical for every caller"},
+	"ListModelSnapshot":       {KindSharedInfrastructure, "the deployment's combined model/status publication, identical for every caller"},
 	"ListModels":              {KindSharedInfrastructure, "the deployment's model catalog/live listing, identical for every caller"},
 	"GetSoul":                 {KindSharedInfrastructure, "the deployment's configured soul, identical for every caller"},
 	"ManualDreamCapabilities": {KindSharedInfrastructure, "process-wide ownerless-only capability snapshot for authenticated gRPC/HTTP clients; forced unavailable when ownership enforcement is enabled"},
@@ -422,24 +425,24 @@ var serviceAccessTable = map[string]ClassificationEntry{
 
 // callerStoreAccessTable classifies memory.CallerStore's exported methods —
 // the "cache/index" boundary ADR 0212 decision 2 names (the local backing
-// store, search/index, and delete for the caller-partitioned user-model and
-// project memory kinds). Every method derives its namespace from the
-// context-carried verified principal (session.PrincipalFromContext), so all
-// six are caller-owned by construction: a request with no verified principal
-// is rejected (memory: verified caller is required), never silently
-// namespaced to a shared/default bucket.
-// callerStoreScopedRationale is shared by every CallerStore method except
-// RememberEntry (which additionally notes the project workspace bind) —
-// factored out so the repeated literal doesn't trip goconst.
+// store operations for caller-partitioned user-model and project memory. Every
+// method derives its namespace from the context-carried verified principal
+// (session.PrincipalFromContext), so all are caller-owned by construction: a
+// request with no verified principal is rejected (memory: verified caller is
+// required), never silently namespaced to a shared/default bucket.
+// callerStoreScopedRationale is shared by every CallerStore method.
+// It is factored out so the repeated literal doesn't trip goconst.
 const callerStoreScopedRationale = "scoped() derives the namespace from the context principal on every call"
 
 var callerStoreAccessTable = map[string]ClassificationEntry{
-	"RememberEntry": {KindCallerOwned, "scoped() derives the namespace from the context principal (+ workspace for project memory) on every call"},
-	"Recall":        {KindCallerOwned, callerStoreScopedRationale},
-	"List":          {KindCallerOwned, callerStoreScopedRationale},
-	"Index":         {KindCallerOwned, callerStoreScopedRationale},
-	"Search":        {KindCallerOwned, callerStoreScopedRationale},
-	"Forget":        {KindCallerOwned, callerStoreScopedRationale},
+	"Remember": {KindCallerOwned, callerStoreScopedRationale},
+	"Inspect":  {KindCallerOwned, callerStoreScopedRationale},
+	"Recall":   {KindCallerOwned, callerStoreScopedRationale},
+	"List":     {KindCallerOwned, callerStoreScopedRationale},
+	"Index":    {KindCallerOwned, callerStoreScopedRationale},
+	"Search":   {KindCallerOwned, callerStoreScopedRationale},
+	"Forget":   {KindCallerOwned, callerStoreScopedRationale},
+	"Undo":     {KindCallerOwned, callerStoreScopedRationale},
 }
 
 // systemAccessTable classifies each internal/syscaller.Root's explicit

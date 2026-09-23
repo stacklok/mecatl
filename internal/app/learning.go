@@ -48,6 +48,9 @@ func foldLearningMode(cfg Config) (Config, error) {
 	operatorToken := ""
 	if operator != nil {
 		operatorToken = operator.Mode
+		if !cfg.LearningAdmissionIntervalSet && operator.AdmissionInterval != nil {
+			cfg.LearningAdmissionInterval = *operator.AdmissionInterval
+		}
 		if operator.Sensitivity != "" {
 			parsed, err := learning.ParseSensitivity(operator.Sensitivity)
 			if err != nil {
@@ -76,13 +79,8 @@ func foldLearningMode(cfg Config) (Config, error) {
 		}
 		mode = parsed
 	}
-	if cfg.UserModelReview {
-		if operatorToken != "" && mode != learning.Auto {
-			return cfg, fmt.Errorf("learning: legacy --user-model-review conflicts with learning.mode=%s; remove the legacy flag or set learning.mode: auto", mode)
-		}
-		mode = learning.Auto
-		cfg.diag().Log(context.Background(), port.LevelWarn,
-			"--user-model-review is deprecated; use learning.mode: auto in operator settings.yaml")
+	if cfg.LearningAdmissionInterval < 0 {
+		return cfg, fmt.Errorf("learning admission interval must be nonnegative")
 	}
 	if !activationExplicit && mode == learning.Auto {
 		activation = learning.SkillActivationValidated
@@ -101,9 +99,6 @@ func foldLearningMode(cfg Config) (Config, error) {
 		"max_reflections", automatic.MaxReflections, "max_tokens", automatic.MaxTokens,
 		"max_reflections_per_principal", automatic.MaxReflectionsPerPrincipal,
 		"max_tokens_per_principal", automatic.MaxTokensPerPrincipal)
-	if cfg.UserModelReviewInterval > 1 {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "--user-model-review-interval is deprecated; it now down-samples only admitted weighted reflections", "interval", cfg.UserModelReviewInterval)
-	}
 	return cfg, nil
 }
 

@@ -60,7 +60,7 @@ introspection endpoint, repetition cache, or legacy-snapshot read path is introd
    `Service.GetSession` path with the existing injected diagnostics and telemetry
    seams; add the scenario tests and redaction assertions; then update the living
    [observability architecture](../architecture/observability.md), relevant
-   design notes, and user-facing [observability documentation](https://mecatl.dev/docs/building/what-you-get/observability).
+   design notes, and user-facing [observability documentation](../../user-docs/building/what-you-get/observability.md).
    If the exported port changes, refresh the engine API baseline and add the required
    `engine/CHANGELOG.md` entry. Do not add retained repetition state, an admin
    introspection endpoint, or legacy-session reading in this task.

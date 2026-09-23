@@ -182,6 +182,24 @@ func TestApprovalCycleTwoButtons(t *testing.T) {
 	}
 }
 
+func TestControlRefusedRestoresByExactAskIDAcrossRunMismatch(t *testing.T) {
+	ask := pendingAsk{AskID: "ask-current", Tool: "Shell", expectedRunID: "run-old"}
+	m := approvalModel(t, ask)
+	intent := &approvalResolvedIntent{ask: ask, askID: ask.AskID, expectedRunID: ask.expectedRunID, resume: phaseRunning}
+	m.pendingApproval = intent
+	approvalSurfaceOf(t, m).ask = pendingAsk{}
+
+	if m.restoreControlRefused(client.ControlRefusedMsg{AskID: "ask-other", RunID: "run-new", Text: "stale"}) {
+		t.Fatal("unrelated refusal restored the pending approval")
+	}
+	if !m.restoreControlRefused(client.ControlRefusedMsg{AskID: ask.AskID, RunID: "run-new", Text: "stale"}) {
+		t.Fatal("matching refusal was dropped because the active run changed")
+	}
+	if got := approvalSurfaceOf(t, m).ask.AskID; got != ask.AskID {
+		t.Fatalf("restored ask = %q, want %q", got, ask.AskID)
+	}
+}
+
 func TestApprovalClickResolvesMappedVerdict(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Shell", offerAlways: true})
 	s := approvalSurfaceOf(t, m)

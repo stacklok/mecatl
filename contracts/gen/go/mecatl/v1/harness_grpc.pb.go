@@ -46,6 +46,8 @@ const (
 	HarnessService_CreateSession_FullMethodName                   = "/mecatl.v1.HarnessService/CreateSession"
 	HarnessService_GetServerInfo_FullMethodName                   = "/mecatl.v1.HarnessService/GetServerInfo"
 	HarnessService_GetSession_FullMethodName                      = "/mecatl.v1.HarnessService/GetSession"
+	HarnessService_ListGuardrailCoverage_FullMethodName           = "/mecatl.v1.HarnessService/ListGuardrailCoverage"
+	HarnessService_GetGuardrailReviewDetail_FullMethodName        = "/mecatl.v1.HarnessService/GetGuardrailReviewDetail"
 	HarnessService_GetSessionTranscript_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionTranscript"
 	HarnessService_SetMode_FullMethodName                         = "/mecatl.v1.HarnessService/SetMode"
 	HarnessService_CloseSession_FullMethodName                    = "/mecatl.v1.HarnessService/CloseSession"
@@ -56,6 +58,7 @@ const (
 	HarnessService_ForkSession_FullMethodName                     = "/mecatl.v1.HarnessService/ForkSession"
 	HarnessService_Converse_FullMethodName                        = "/mecatl.v1.HarnessService/Converse"
 	HarnessService_ResolveRunAsk_FullMethodName                   = "/mecatl.v1.HarnessService/ResolveRunAsk"
+	HarnessService_ResolvePlanAsk_FullMethodName                  = "/mecatl.v1.HarnessService/ResolvePlanAsk"
 	HarnessService_CancelRun_FullMethodName                       = "/mecatl.v1.HarnessService/CancelRun"
 	HarnessService_SteerRun_FullMethodName                        = "/mecatl.v1.HarnessService/SteerRun"
 	HarnessService_CancelRunSteer_FullMethodName                  = "/mecatl.v1.HarnessService/CancelRunSteer"
@@ -64,6 +67,7 @@ const (
 	HarnessService_ListMcpPrompts_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpPrompts"
 	HarnessService_GetMcpPrompt_FullMethodName                    = "/mecatl.v1.HarnessService/GetMcpPrompt"
 	HarnessService_ListMcpSources_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpSources"
+	HarnessService_RefreshMcpSources_FullMethodName               = "/mecatl.v1.HarnessService/RefreshMcpSources"
 	HarnessService_ListSessionMcpConnectors_FullMethodName        = "/mecatl.v1.HarnessService/ListSessionMcpConnectors"
 	HarnessService_ListToolHiveGroups_FullMethodName              = "/mecatl.v1.HarnessService/ListToolHiveGroups"
 	HarnessService_ListAgents_FullMethodName                      = "/mecatl.v1.HarnessService/ListAgents"
@@ -77,11 +81,6 @@ const (
 	HarnessService_CancelMcpAuthorization_FullMethodName          = "/mecatl.v1.HarnessService/CancelMcpAuthorization"
 	HarnessService_ListSessions_FullMethodName                    = "/mecatl.v1.HarnessService/ListSessions"
 	HarnessService_GetStorageHealth_FullMethodName                = "/mecatl.v1.HarnessService/GetStorageHealth"
-	HarnessService_PlanSessionMigration_FullMethodName            = "/mecatl.v1.HarnessService/PlanSessionMigration"
-	HarnessService_ApplySessionMigration_FullMethodName           = "/mecatl.v1.HarnessService/ApplySessionMigration"
-	HarnessService_ResumeSessionMigration_FullMethodName          = "/mecatl.v1.HarnessService/ResumeSessionMigration"
-	HarnessService_CancelSessionMigration_FullMethodName          = "/mecatl.v1.HarnessService/CancelSessionMigration"
-	HarnessService_GetSessionMigrationJob_FullMethodName          = "/mecatl.v1.HarnessService/GetSessionMigrationJob"
 	HarnessService_PlanSessionCleanup_FullMethodName              = "/mecatl.v1.HarnessService/PlanSessionCleanup"
 	HarnessService_ApplySessionCleanup_FullMethodName             = "/mecatl.v1.HarnessService/ApplySessionCleanup"
 	HarnessService_CancelSessionCleanup_FullMethodName            = "/mecatl.v1.HarnessService/CancelSessionCleanup"
@@ -156,6 +155,8 @@ type HarnessServiceClient interface {
 	GetServerInfo(ctx context.Context, in *GetServerInfoRequest, opts ...grpc.CallOption) (*GetServerInfoResponse, error)
 	// GetSession returns a snapshot of an existing session.
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
+	ListGuardrailCoverage(ctx context.Context, in *ListGuardrailCoverageRequest, opts ...grpc.CallOption) (*ListGuardrailCoverageResponse, error)
+	GetGuardrailReviewDetail(ctx context.Context, in *GetGuardrailReviewDetailRequest, opts ...grpc.CallOption) (*GetGuardrailReviewDetailResponse, error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
 	// transcript for one owned session. It is read-only and does not use EventLog.
 	GetSessionTranscript(ctx context.Context, in *GetSessionTranscriptRequest, opts ...grpc.CallOption) (*GetSessionTranscriptResponse, error)
@@ -191,6 +192,8 @@ type HarnessServiceClient interface {
 	// ResolveRunAsk resolves one ordinary permission ask on the exact addressed
 	// run without opening or owning its event stream.
 	ResolveRunAsk(ctx context.Context, in *ResolveRunAskRequest, opts ...grpc.CallOption) (*ResolveRunAskResponse, error)
+	// ResolvePlanAsk acknowledges a verdict for one exact plan-originated ask.
+	ResolvePlanAsk(ctx context.Context, in *ResolvePlanAskRequest, opts ...grpc.CallOption) (*ResolvePlanAskResponse, error)
 	// CancelRun cancels the exact addressed live run without opening Converse.
 	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*CancelRunResponse, error)
 	// SteerRun injects an instruction into the exact addressed live run. Unlike
@@ -212,11 +215,12 @@ type HarnessServiceClient interface {
 	// GetMcpPrompt expands a named prompt with the given arguments on the named
 	// server and returns the rendered messages.
 	GetMcpPrompt(ctx context.Context, in *GetMcpPromptRequest, opts ...grpc.CallOption) (*GetMcpPromptResponse, error)
-	// ListMcpSources returns the resolved MCP source inventory snapshot: each
-	// configured source (static / ToolHive), the servers it contributed, and any
-	// diagnostics it raised. Derived from the resolution snapshot taken at
-	// startup; it performs no live discovery.
+	// ListMcpSources returns the cached published/pre-shadow source inventory and
+	// reconciler status. It performs no independent upstream probe.
 	ListMcpSources(ctx context.Context, in *ListMcpSourcesRequest, opts ...grpc.CallOption) (*ListMcpSourcesResponse, error)
+	// RefreshMcpSources explicitly reconciles direct MCP sources for an owned
+	// eligible ordinary-root session and unions newly active direct names.
+	RefreshMcpSources(ctx context.Context, in *RefreshMcpSourcesRequest, opts ...grpc.CallOption) (*RefreshMcpSourcesResponse, error)
 	// ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
 	// This read neither probes upstreams nor progresses enrollment.
 	ListSessionMcpConnectors(ctx context.Context, in *ListSessionMcpConnectorsRequest, opts ...grpc.CallOption) (*ListSessionMcpConnectorsResponse, error)
@@ -385,13 +389,6 @@ type HarnessServiceClient interface {
 	// GetStorageHealth returns authenticated, content-free aggregate storage
 	// status. It never returns session ids, owners, paths, or transcript content.
 	GetStorageHealth(ctx context.Context, in *GetStorageHealthRequest, opts ...grpc.CallOption) (*GetStorageHealthResponse, error)
-	// Session migration is authenticated, semantics-preserving physical
-	// maintenance. Plan is read-only; apply/resume process bounded batches.
-	PlanSessionMigration(ctx context.Context, in *PlanSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationPlan, error)
-	ApplySessionMigration(ctx context.Context, in *ApplySessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
-	ResumeSessionMigration(ctx context.Context, in *ResumeSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
-	CancelSessionMigration(ctx context.Context, in *CancelSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
-	GetSessionMigrationJob(ctx context.Context, in *GetSessionMigrationJobRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
 	// Session cleanup is an authenticated plan/apply maintenance workflow. Plan is
 	// read-only; apply requires its caller-bound opaque confirmation token.
 	PlanSessionCleanup(ctx context.Context, in *PlanSessionCleanupRequest, opts ...grpc.CallOption) (*PlanSessionCleanupResponse, error)
@@ -574,6 +571,26 @@ func (c *harnessServiceClient) GetSession(ctx context.Context, in *GetSessionReq
 	return out, nil
 }
 
+func (c *harnessServiceClient) ListGuardrailCoverage(ctx context.Context, in *ListGuardrailCoverageRequest, opts ...grpc.CallOption) (*ListGuardrailCoverageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListGuardrailCoverageResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListGuardrailCoverage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GetGuardrailReviewDetail(ctx context.Context, in *GetGuardrailReviewDetailRequest, opts ...grpc.CallOption) (*GetGuardrailReviewDetailResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGuardrailReviewDetailResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetGuardrailReviewDetail_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *harnessServiceClient) GetSessionTranscript(ctx context.Context, in *GetSessionTranscriptRequest, opts ...grpc.CallOption) (*GetSessionTranscriptResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetSessionTranscriptResponse)
@@ -677,6 +694,16 @@ func (c *harnessServiceClient) ResolveRunAsk(ctx context.Context, in *ResolveRun
 	return out, nil
 }
 
+func (c *harnessServiceClient) ResolvePlanAsk(ctx context.Context, in *ResolvePlanAskRequest, opts ...grpc.CallOption) (*ResolvePlanAskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolvePlanAskResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ResolvePlanAsk_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *harnessServiceClient) CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*CancelRunResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CancelRunResponse)
@@ -751,6 +778,16 @@ func (c *harnessServiceClient) ListMcpSources(ctx context.Context, in *ListMcpSo
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListMcpSourcesResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ListMcpSources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RefreshMcpSources(ctx context.Context, in *RefreshMcpSourcesRequest, opts ...grpc.CallOption) (*RefreshMcpSourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefreshMcpSourcesResponse)
+	err := c.cc.Invoke(ctx, HarnessService_RefreshMcpSources_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -914,56 +951,6 @@ func (c *harnessServiceClient) GetStorageHealth(ctx context.Context, in *GetStor
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetStorageHealthResponse)
 	err := c.cc.Invoke(ctx, HarnessService_GetStorageHealth_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) PlanSessionMigration(ctx context.Context, in *PlanSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationPlan, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SessionMigrationPlan)
-	err := c.cc.Invoke(ctx, HarnessService_PlanSessionMigration_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) ApplySessionMigration(ctx context.Context, in *ApplySessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SessionMigrationJob)
-	err := c.cc.Invoke(ctx, HarnessService_ApplySessionMigration_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) ResumeSessionMigration(ctx context.Context, in *ResumeSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SessionMigrationJob)
-	err := c.cc.Invoke(ctx, HarnessService_ResumeSessionMigration_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) CancelSessionMigration(ctx context.Context, in *CancelSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SessionMigrationJob)
-	err := c.cc.Invoke(ctx, HarnessService_CancelSessionMigration_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *harnessServiceClient) GetSessionMigrationJob(ctx context.Context, in *GetSessionMigrationJobRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SessionMigrationJob)
-	err := c.cc.Invoke(ctx, HarnessService_GetSessionMigrationJob_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1402,6 +1389,8 @@ type HarnessServiceServer interface {
 	GetServerInfo(context.Context, *GetServerInfoRequest) (*GetServerInfoResponse, error)
 	// GetSession returns a snapshot of an existing session.
 	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
+	ListGuardrailCoverage(context.Context, *ListGuardrailCoverageRequest) (*ListGuardrailCoverageResponse, error)
+	GetGuardrailReviewDetail(context.Context, *GetGuardrailReviewDetailRequest) (*GetGuardrailReviewDetailResponse, error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
 	// transcript for one owned session. It is read-only and does not use EventLog.
 	GetSessionTranscript(context.Context, *GetSessionTranscriptRequest) (*GetSessionTranscriptResponse, error)
@@ -1437,6 +1426,8 @@ type HarnessServiceServer interface {
 	// ResolveRunAsk resolves one ordinary permission ask on the exact addressed
 	// run without opening or owning its event stream.
 	ResolveRunAsk(context.Context, *ResolveRunAskRequest) (*ResolveRunAskResponse, error)
+	// ResolvePlanAsk acknowledges a verdict for one exact plan-originated ask.
+	ResolvePlanAsk(context.Context, *ResolvePlanAskRequest) (*ResolvePlanAskResponse, error)
 	// CancelRun cancels the exact addressed live run without opening Converse.
 	CancelRun(context.Context, *CancelRunRequest) (*CancelRunResponse, error)
 	// SteerRun injects an instruction into the exact addressed live run. Unlike
@@ -1458,11 +1449,12 @@ type HarnessServiceServer interface {
 	// GetMcpPrompt expands a named prompt with the given arguments on the named
 	// server and returns the rendered messages.
 	GetMcpPrompt(context.Context, *GetMcpPromptRequest) (*GetMcpPromptResponse, error)
-	// ListMcpSources returns the resolved MCP source inventory snapshot: each
-	// configured source (static / ToolHive), the servers it contributed, and any
-	// diagnostics it raised. Derived from the resolution snapshot taken at
-	// startup; it performs no live discovery.
+	// ListMcpSources returns the cached published/pre-shadow source inventory and
+	// reconciler status. It performs no independent upstream probe.
 	ListMcpSources(context.Context, *ListMcpSourcesRequest) (*ListMcpSourcesResponse, error)
+	// RefreshMcpSources explicitly reconciles direct MCP sources for an owned
+	// eligible ordinary-root session and unions newly active direct names.
+	RefreshMcpSources(context.Context, *RefreshMcpSourcesRequest) (*RefreshMcpSourcesResponse, error)
 	// ListSessionMcpConnectors inspects the owned session's broker-local catalogue.
 	// This read neither probes upstreams nor progresses enrollment.
 	ListSessionMcpConnectors(context.Context, *ListSessionMcpConnectorsRequest) (*ListSessionMcpConnectorsResponse, error)
@@ -1631,13 +1623,6 @@ type HarnessServiceServer interface {
 	// GetStorageHealth returns authenticated, content-free aggregate storage
 	// status. It never returns session ids, owners, paths, or transcript content.
 	GetStorageHealth(context.Context, *GetStorageHealthRequest) (*GetStorageHealthResponse, error)
-	// Session migration is authenticated, semantics-preserving physical
-	// maintenance. Plan is read-only; apply/resume process bounded batches.
-	PlanSessionMigration(context.Context, *PlanSessionMigrationRequest) (*SessionMigrationPlan, error)
-	ApplySessionMigration(context.Context, *ApplySessionMigrationRequest) (*SessionMigrationJob, error)
-	ResumeSessionMigration(context.Context, *ResumeSessionMigrationRequest) (*SessionMigrationJob, error)
-	CancelSessionMigration(context.Context, *CancelSessionMigrationRequest) (*SessionMigrationJob, error)
-	GetSessionMigrationJob(context.Context, *GetSessionMigrationJobRequest) (*SessionMigrationJob, error)
 	// Session cleanup is an authenticated plan/apply maintenance workflow. Plan is
 	// read-only; apply requires its caller-bound opaque confirmation token.
 	PlanSessionCleanup(context.Context, *PlanSessionCleanupRequest) (*PlanSessionCleanupResponse, error)
@@ -1792,6 +1777,12 @@ func (UnimplementedHarnessServiceServer) GetServerInfo(context.Context, *GetServ
 func (UnimplementedHarnessServiceServer) GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSession not implemented")
 }
+func (UnimplementedHarnessServiceServer) ListGuardrailCoverage(context.Context, *ListGuardrailCoverageRequest) (*ListGuardrailCoverageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListGuardrailCoverage not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetGuardrailReviewDetail(context.Context, *GetGuardrailReviewDetailRequest) (*GetGuardrailReviewDetailResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetGuardrailReviewDetail not implemented")
+}
 func (UnimplementedHarnessServiceServer) GetSessionTranscript(context.Context, *GetSessionTranscriptRequest) (*GetSessionTranscriptResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSessionTranscript not implemented")
 }
@@ -1822,6 +1813,9 @@ func (UnimplementedHarnessServiceServer) Converse(grpc.BidiStreamingServer[Conve
 func (UnimplementedHarnessServiceServer) ResolveRunAsk(context.Context, *ResolveRunAskRequest) (*ResolveRunAskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ResolveRunAsk not implemented")
 }
+func (UnimplementedHarnessServiceServer) ResolvePlanAsk(context.Context, *ResolvePlanAskRequest) (*ResolvePlanAskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolvePlanAsk not implemented")
+}
 func (UnimplementedHarnessServiceServer) CancelRun(context.Context, *CancelRunRequest) (*CancelRunResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelRun not implemented")
 }
@@ -1845,6 +1839,9 @@ func (UnimplementedHarnessServiceServer) GetMcpPrompt(context.Context, *GetMcpPr
 }
 func (UnimplementedHarnessServiceServer) ListMcpSources(context.Context, *ListMcpSourcesRequest) (*ListMcpSourcesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListMcpSources not implemented")
+}
+func (UnimplementedHarnessServiceServer) RefreshMcpSources(context.Context, *RefreshMcpSourcesRequest) (*RefreshMcpSourcesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshMcpSources not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSessionMcpConnectors(context.Context, *ListSessionMcpConnectorsRequest) (*ListSessionMcpConnectorsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSessionMcpConnectors not implemented")
@@ -1884,21 +1881,6 @@ func (UnimplementedHarnessServiceServer) ListSessions(context.Context, *ListSess
 }
 func (UnimplementedHarnessServiceServer) GetStorageHealth(context.Context, *GetStorageHealthRequest) (*GetStorageHealthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetStorageHealth not implemented")
-}
-func (UnimplementedHarnessServiceServer) PlanSessionMigration(context.Context, *PlanSessionMigrationRequest) (*SessionMigrationPlan, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PlanSessionMigration not implemented")
-}
-func (UnimplementedHarnessServiceServer) ApplySessionMigration(context.Context, *ApplySessionMigrationRequest) (*SessionMigrationJob, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ApplySessionMigration not implemented")
-}
-func (UnimplementedHarnessServiceServer) ResumeSessionMigration(context.Context, *ResumeSessionMigrationRequest) (*SessionMigrationJob, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ResumeSessionMigration not implemented")
-}
-func (UnimplementedHarnessServiceServer) CancelSessionMigration(context.Context, *CancelSessionMigrationRequest) (*SessionMigrationJob, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CancelSessionMigration not implemented")
-}
-func (UnimplementedHarnessServiceServer) GetSessionMigrationJob(context.Context, *GetSessionMigrationJobRequest) (*SessionMigrationJob, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetSessionMigrationJob not implemented")
 }
 func (UnimplementedHarnessServiceServer) PlanSessionCleanup(context.Context, *PlanSessionCleanupRequest) (*PlanSessionCleanupResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PlanSessionCleanup not implemented")
@@ -2107,6 +2089,42 @@ func _HarnessService_GetSession_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_ListGuardrailCoverage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListGuardrailCoverageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListGuardrailCoverage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListGuardrailCoverage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListGuardrailCoverage(ctx, req.(*ListGuardrailCoverageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_GetGuardrailReviewDetail_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGuardrailReviewDetailRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetGuardrailReviewDetail(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetGuardrailReviewDetail_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetGuardrailReviewDetail(ctx, req.(*GetGuardrailReviewDetailRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_GetSessionTranscript_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetSessionTranscriptRequest)
 	if err := dec(in); err != nil {
@@ -2276,6 +2294,24 @@ func _HarnessService_ResolveRunAsk_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_ResolvePlanAsk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolvePlanAskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ResolvePlanAsk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ResolvePlanAsk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ResolvePlanAsk(ctx, req.(*ResolvePlanAskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_CancelRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CancelRunRequest)
 	if err := dec(in); err != nil {
@@ -2416,6 +2452,24 @@ func _HarnessService_ListMcpSources_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).ListMcpSources(ctx, req.(*ListMcpSourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RefreshMcpSources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshMcpSourcesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).RefreshMcpSources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_RefreshMcpSources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).RefreshMcpSources(ctx, req.(*RefreshMcpSourcesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2607,96 +2661,6 @@ func _HarnessService_GetStorageHealth_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).GetStorageHealth(ctx, req.(*GetStorageHealthRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_PlanSessionMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PlanSessionMigrationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).PlanSessionMigration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_PlanSessionMigration_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).PlanSessionMigration(ctx, req.(*PlanSessionMigrationRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_ApplySessionMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ApplySessionMigrationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).ApplySessionMigration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_ApplySessionMigration_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).ApplySessionMigration(ctx, req.(*ApplySessionMigrationRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_ResumeSessionMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ResumeSessionMigrationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).ResumeSessionMigration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_ResumeSessionMigration_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).ResumeSessionMigration(ctx, req.(*ResumeSessionMigrationRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_CancelSessionMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CancelSessionMigrationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).CancelSessionMigration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_CancelSessionMigration_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).CancelSessionMigration(ctx, req.(*CancelSessionMigrationRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HarnessService_GetSessionMigrationJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetSessionMigrationJobRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HarnessServiceServer).GetSessionMigrationJob(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HarnessService_GetSessionMigrationJob_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HarnessServiceServer).GetSessionMigrationJob(ctx, req.(*GetSessionMigrationJobRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3395,6 +3359,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HarnessService_GetSession_Handler,
 		},
 		{
+			MethodName: "ListGuardrailCoverage",
+			Handler:    _HarnessService_ListGuardrailCoverage_Handler,
+		},
+		{
+			MethodName: "GetGuardrailReviewDetail",
+			Handler:    _HarnessService_GetGuardrailReviewDetail_Handler,
+		},
+		{
 			MethodName: "GetSessionTranscript",
 			Handler:    _HarnessService_GetSessionTranscript_Handler,
 		},
@@ -3431,6 +3403,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HarnessService_ResolveRunAsk_Handler,
 		},
 		{
+			MethodName: "ResolvePlanAsk",
+			Handler:    _HarnessService_ResolvePlanAsk_Handler,
+		},
+		{
 			MethodName: "CancelRun",
 			Handler:    _HarnessService_CancelRun_Handler,
 		},
@@ -3463,6 +3439,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HarnessService_ListMcpSources_Handler,
 		},
 		{
+			MethodName: "RefreshMcpSources",
+			Handler:    _HarnessService_RefreshMcpSources_Handler,
+		},
+		{
 			MethodName: "ListSessionMcpConnectors",
 			Handler:    _HarnessService_ListSessionMcpConnectors_Handler,
 		},
@@ -3493,26 +3473,6 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetStorageHealth",
 			Handler:    _HarnessService_GetStorageHealth_Handler,
-		},
-		{
-			MethodName: "PlanSessionMigration",
-			Handler:    _HarnessService_PlanSessionMigration_Handler,
-		},
-		{
-			MethodName: "ApplySessionMigration",
-			Handler:    _HarnessService_ApplySessionMigration_Handler,
-		},
-		{
-			MethodName: "ResumeSessionMigration",
-			Handler:    _HarnessService_ResumeSessionMigration_Handler,
-		},
-		{
-			MethodName: "CancelSessionMigration",
-			Handler:    _HarnessService_CancelSessionMigration_Handler,
-		},
-		{
-			MethodName: "GetSessionMigrationJob",
-			Handler:    _HarnessService_GetSessionMigrationJob_Handler,
 		},
 		{
 			MethodName: "PlanSessionCleanup",

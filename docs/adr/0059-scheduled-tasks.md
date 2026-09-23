@@ -46,7 +46,7 @@ nightly digest, an hourly heartbeat, a one-shot reminder. The forces at play:
 The design went through ten resolved decisions (the issue thread). This ADR
 records them as a frozen point-in-time record; current behaviour lives in
 `docs/architecture.md` and the shipped/deferred status in
-`docs/design/PRODUCTION-READINESS.md`.
+[Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ## Decision
 
@@ -258,5 +258,5 @@ misfire".
   the API-compat gate that governs changes to the `ScheduleStore` surface.
 - [`docs/architecture.md`](../architecture.md) — the living architecture
   reference (a scheduled-tasks section is added when Phase 1f ships).
-- [`docs/design/PRODUCTION-READINESS.md`](../design/PRODUCTION-READINESS.md) —
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) —
   the status tracker (a scheduled-tasks row is added when implementation ships).

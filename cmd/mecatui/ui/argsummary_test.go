@@ -314,7 +314,7 @@ func TestMCPTitleHyphenatedServerNotMangled(t *testing.T) {
 func TestSummarizeArgsSanitizes(t *testing.T) {
 	r := newTestRenderer()
 	// A value carrying raw escapes (ESC [ 2 J = clear screen; ESC [ 31 m = colour)
-	// must be stripped by sanitizeTerminal BEFORE styling, so the injected sequences
+	// must be stripped by terminaltext.Sanitize BEFORE styling, so the injected sequences
 	// never reach the terminal — neither in the COLLAPSED summary nor the EXPANDED
 	// full JSON. lipgloss emits its OWN SGR escapes, so we assert the *injected*
 	// sequences are absent rather than "no ESC at all".
@@ -341,21 +341,21 @@ func TestSummarizeArgsSanitizes(t *testing.T) {
 
 	// DIRECT-CALL assertions (the de-vacuuming, #3). The assertions above route
 	// through valStyle.Render / the themed render path, and lipgloss .Render strips
-	// \x1b itself — so they'd pass even if sanitizeTerminal were deleted from these
+	// \x1b itself — so they'd pass even if terminaltext.Sanitize were deleted from these
 	// paths (they measure lipgloss, not the harness). These call mcpTitle DIRECTLY
 	// (NOT through any styled render) and assert the returned string is escape-free,
-	// so the guard actually exercises sanitizeTerminal.
+	// so the guard actually exercises terminaltext.Sanitize.
 	//
 	// mcpTitle is the security-critical path: it builds its title by '+'
 	// concatenation (NO %q / strconv.Quote), over server/tool tokens that are
 	// MCP-SERVER-NAMED — attacker-controllable — and that path was previously
 	// untested. (The value paths — summarizeStringValue / summarizeValue scalars —
 	// are %q/strconv.Quote-rendered, which itself escapes a raw ESC into the literal
-	// text "\\x1b"; sanitizeTerminal there is defence-in-depth, not the load-bearing
+	// text "\\x1b"; terminaltext.Sanitize there is defence-in-depth, not the load-bearing
 	// guard, and a raw ESC inside an array element is invalid JSON that never reaches
 	// the inline-join. So mcpTitle is where a direct-call guard has real teeth.)
 	//
-	// MUTATION-VERIFIED: deleting sanitizeTerminal from mcpTitle fails BOTH
+	// MUTATION-VERIFIED: deleting terminaltext.Sanitize from mcpTitle fails BOTH
 	// assertions below (boundary ESC and mid-token ESC) — they bypass lipgloss.
 	const esc = "\x1b"
 	if got, _ := mcpTitle("mcp__\x1b[2Jevil__\x1b[31mtool"); strings.Contains(got, esc) {
