@@ -103,8 +103,8 @@ func (denyPolicy) Learn(session.SessionID, session.ToolCall) {}
 // diagnostics emitter and confirm the run still completes uncompacted.
 type failingCompactor struct{ err error }
 
-func (f failingCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, error) {
-	return nil, "", f.err
+func (f failingCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
+	return nil, "", session.AuxiliaryUsage{}, f.err
 }
 
 // --- helpers ----------------------------------------------------------------

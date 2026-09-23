@@ -36,8 +36,8 @@ type serviceCompactCompactor struct {
 	summary string
 }
 
-func (c serviceCompactCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, error) {
-	return c.out, c.summary, nil
+func (c serviceCompactCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
+	return c.out, c.summary, session.AuxiliaryUsage{}, nil
 }
 
 type compactOperationKey struct{}
@@ -46,9 +46,9 @@ type pinAwareCompactor struct {
 	seen *bool
 }
 
-func (c pinAwareCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+func (c pinAwareCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	*c.seen, _ = ctx.Value(compactOperationKey{}).(bool)
-	return []session.Message{session.NewUserMessage("short")}, "pinned", nil
+	return []session.Message{session.NewUserMessage("short")}, "pinned", session.AuxiliaryUsage{}, nil
 }
 
 type serviceCompactCounter struct{}
@@ -472,12 +472,12 @@ type countingServiceCompactor struct {
 	wait  bool
 }
 
-func (c *countingServiceCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+func (c *countingServiceCompactor) Compact(ctx context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	c.calls++
 	if c.wait {
 		<-ctx.Done()
 	}
-	return []session.Message{session.NewUserMessage("short")}, "summary", nil
+	return []session.Message{session.NewUserMessage("short")}, "summary", session.AuxiliaryUsage{}, nil
 }
 
 func TestCompactSessionReloadsAuthoritativeStateAfterLeaseAcquire(t *testing.T) {

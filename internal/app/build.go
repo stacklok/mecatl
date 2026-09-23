@@ -152,8 +152,11 @@ type Config struct {
 	// closed, so a composition root that never sets it refuses the field.
 	ClientMCPOnCreate bool
 	Model             string
-	UseOpenAI         bool
-	OpenAIKey         string
+	// auxiliaryProviderID is the composition-resolved provider attribution for
+	// direct auxiliary calls; it is never a selector or client-facing control.
+	auxiliaryProviderID string
+	UseOpenAI           bool
+	OpenAIKey           string
 	// OpenAIBearerTokenFile is a rotating credential source for only the OpenAI
 	// registry entry. The adapter reads it for every request.
 	OpenAIBearerTokenFile string
@@ -2498,6 +2501,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			reflectionCfg.Workspace = workspace
 			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 			reflectionCfg.Model = sess.ModelID
+			reflectionCfg.auxiliaryProviderID = sess.ProviderID
+			if reflectionCfg.auxiliaryProviderID == "" {
+				reflectionCfg.auxiliaryProviderID = reg.Default()
+			}
 			reflectionCfg.attemptRepository = assets.attemptRepository
 			reflectionCfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 			reflectionCfg.learningSourceStore = store
@@ -2536,6 +2543,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
 				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
 			}
+			sess.RecordAuxiliaryUsage(r.Usage)
 			return server.ReflectionReceipt{ID: r.ID, Disposition: string(r.Disposition), Reason: r.Err, Queued: r.Queued, Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted}, explicitReflectionServiceError(err)
 		},
 		PromoteProposal: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion, approved bool) (learning.ProposalRecord, error) {
@@ -3059,7 +3067,9 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 			policy = permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 		}
 		policy = sessiondebug.NewPermissionPolicy(policy, store, target, expectedFingerprint, expectedOwner, cfg.OwnershipEnforced, cfg.Headless, mounted)
-		deps := engineDepsForProvider(cfg, provider, model, reg.windowResolver(cfg, providerID, model), store, policy, hookexec.New(nil), nil, prompt.NewMultiAssembler())
+		debugCfg := cfg
+		debugCfg.auxiliaryProviderID = providerID
+		deps := engineDepsForProvider(debugCfg, provider, model, reg.windowResolver(cfg, providerID, model), store, policy, hookexec.New(nil), nil, prompt.NewMultiAssembler())
 		deps.Catalog = cat
 		deps.CommandExpander = nil
 		deps.OperatorProfileSource = nil
@@ -3316,10 +3326,13 @@ func sessionEngineFactoryWithTools(
 		learningCfg.Workspace = workspace
 		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
+		learningCfg.auxiliaryProviderID = resolvedProviderID
 		learningCfg.attemptRepository = runtimeAssets.attemptRepository
 		learningCfg.automaticAdmissionLedger = runtimeAssets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
-		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
+		engineCfg := cfg
+		engineCfg.auxiliaryProviderID = resolvedProviderID
+		deps := engineDepsForProvider(engineCfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, runtimeAssets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
 		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, runtimeAssets.userModelStore, runtimeAssets.memStore, runtimeAssets.reflectionRepository, runtimeAssets.reflectionCoordinator, runtimeAssets.learningAdmissionGate, buildProcedureProcessor(learningCfg, runtimeAssets)), runtimeAssets.reflectionLifecycle)
@@ -4241,6 +4254,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	cfg.attemptRepository = assets.attemptRepository
 	cfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 	cfg.learningSourceStore = store
+	cfg.auxiliaryProviderID = reg.Default()
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
@@ -5404,6 +5418,10 @@ func buildCompactor(cfg Config, provider port.LLMProvider, counter agent.TokenCo
 			BudgetTokens: int(float64(defaultContextWindowTokens) * defaultCompactionTargetRatio),
 			LLM:          provider,
 			Model:        cfg.Model,
+			ProviderModel: session.ProviderModelID{
+				ProviderID: cfg.auxiliaryProviderID,
+				ModelID:    cfg.Model,
+			},
 		}
 	default:
 		return agent.HeuristicCompactor{}

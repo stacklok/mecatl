@@ -439,6 +439,6 @@ type cascadeCompactorWrapper struct {
 	inner agent.Compactor
 }
 
-func (w *cascadeCompactorWrapper) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (w *cascadeCompactorWrapper) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	return w.inner.Compact(ctx, conv)
 }

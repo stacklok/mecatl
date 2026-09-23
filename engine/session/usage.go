@@ -87,6 +87,22 @@ func modelAttribution(providerID, modelID string) string {
 	return providerID + "/" + modelID
 }
 
+// RecordAuxiliaryUsage adds every valid returned auxiliary bucket to the ledger.
+// Bucket totals are derived from their model entries.
+func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
+	if s == nil {
+		return
+	}
+	for kind, bucket := range usage.Buckets {
+		if kind == "" {
+			continue
+		}
+		for attribution, value := range bucket.Models {
+			s.recordTokenUsage(kind, attribution, value)
+		}
+	}
+}
+
 // RecordTokenUsage adds usage to a canonical bucket under the opaque provider/model
 // attribution. Empty kinds are invalid; all non-empty kinds are preserved so a
 // newer writer's bucket can round-trip through older readers.

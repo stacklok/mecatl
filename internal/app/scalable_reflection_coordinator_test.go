@@ -13,8 +13,9 @@ import (
 
 type coordinatorReflectorFunc func(context.Context, learning.Input) (learning.Outcome, error)
 
-func (f coordinatorReflectorFunc) Reflect(ctx context.Context, input learning.Input) (learning.Outcome, error) {
-	return f(ctx, input)
+func (f coordinatorReflectorFunc) Reflect(ctx context.Context, input learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
+	outcome, err := f(ctx, input)
+	return outcome, session.AuxiliaryUsage{}, err
 }
 
 func TestScalableReflectionEvidence_Scenario2_SelectedEvidenceIdentityBoundary(t *testing.T) {

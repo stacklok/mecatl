@@ -262,6 +262,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Direct auxiliary usage results** — `agent.Compactor.Compact`,
+  `agent.EvidenceReflector.Reflect` / `ReflectProjection`, and the
+  `learning.Reflector` seam now return `session.AuxiliaryUsage`; direct compaction
+  and reflection callers record it only while they retain current session
+  ownership. Changed (minor).
+
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits
   that optional value only with a valid parent lifetime. The exported

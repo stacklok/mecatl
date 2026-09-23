@@ -26,7 +26,7 @@
     ifacemethod func (ProposalRepository).LinkSkillDraft(context.Context, ProposalPartition, ProposalID, ProposalVersion, SkillID, Decision) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error)
     ifacemethod func (ProposalRepository).StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)
-    ifacemethod func (Reflector).Reflect(context.Context, Input) (Outcome, error)
+    ifacemethod func (Reflector).Reflect(context.Context, Input) (Outcome, session.AuxiliaryUsage, error)
     ifacemethod func (SkillEvaluator).Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)
     ifacemethod func (SkillReceiptRepository).ListSkillReceipts(context.Context, SkillPartition, SkillReceiptList) (SkillReceiptPage, error)
     ifacemethod func (SkillRepository).Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
@@ -397,7 +397,7 @@ type ProposalRepository interface{ClaimDecision(context.Context, ProposalPartiti
 type ProposalStatus string
 type ProposalVersion string
 type ProvenanceBinding string
-type Reflector interface{Reflect(context.Context, Input) (Outcome, error)}
+type Reflector interface{Reflect(context.Context, Input) (Outcome, session.AuxiliaryUsage, error)}
 type ResultProjection struct{CallID session.ToolCallID "json:\"call_id\""; Content string "json:\"content,omitempty\""; IsError bool "json:\"is_error,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
 type Revision string
 type Sensitivity uint8
