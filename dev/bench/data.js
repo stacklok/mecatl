@@ -238770,6 +238770,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790197286130,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "466aff22abbf1343db6374583ddc5b6b016f8f20",
+          "message": "feat(mecatui): bound slash command palette (#1820)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T13:50:42-07:00",
+          "tree_id": "bad9be127d86afddb8eef701cb2f32c6bb40a6ba",
+          "url": "https://github.com/stacklok/mecatl/commit/466aff22abbf1343db6374583ddc5b6b016f8f20"
+        },
+        "date": 1790197951252,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -346828,6 +346862,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790197948259,
+  "lastUpdate": 1790197952202,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
