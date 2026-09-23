@@ -6,12 +6,14 @@ description: Run filesystem and shell tools in a repository-scoped local microVM
 
 # Local microVM environments
 
-Use `microvm-local` on Linux amd64 with KVM to run model-controlled filesystem and
-shell tools in a local microVM. Providers, MCP, hooks, credentials, memory, and the
-mecatl server remain on the host. It is for one local operator and Git repository;
-Linux arm64, macOS, remote placement, multi-user sharing, and non-Git
-sources are not available. Recurring and one-shot schedules are supported on the
-same repository-scoped VM and use durable logical worktrees.
+Use the released `microvm-local` path on Linux amd64 with KVM to run model-controlled
+filesystem and shell tools in a local microVM. Providers, MCP, hooks, credentials, memory,
+and the Mecatl server remain on the host. It is for one local operator and Git repository.
+The unmerged Darwin arm64 implementation admits Apple Silicon macOS 15 or newer with
+Hypervisor.framework, but it has not completed a native real-VM or signed-release
+qualification and is not released support. Linux arm64, remote placement, multi-user
+sharing, and non-Git sources are not available. Recurring and one-shot schedules are
+supported on the same repository-scoped VM and use durable logical worktrees.
 
 Install and verify published, release-stamped `mecatui` **and** `mecated` binaries before
 use. `mecatui` runs the embedded server; `mecated` supplies the local `microvm doctor`,
@@ -21,13 +23,114 @@ installation. Git, Python 3, read-write `/dev/kvm`, and unprivileged user namesp
 required. The full [operator runbook](https://github.com/stacklok/mecatl/blob/main/docs/usage/microvm-environments.md)
 includes verification and developer workflow instructions.
 
-> **Evidence boundary:** `task e2e:microvm` is the opt-in automated Linux amd64 KVM gate
-> and uses the deterministic mock provider; it never contacts OpenRouter. Separately, on
-> 2026-09-10, a manual qualification used OpenRouter `openai/gpt-5-mini` through the public
+> **Evidence boundary:** `task e2e:microvm` is the opt-in deterministic
+> production-composed journey for Linux amd64 KVM and experimental Darwin arm64
+> HVF. It uses the mock provider and never contacts OpenRouter. Linux has
+> automated gate evidence. The Darwin command is executable but has not yet run
+> on physical Apple Silicon. Separately, on 2026-09-10, a manual qualification
+> used OpenRouter `openai/gpt-5-mini` through the public
 > HTTP create and prompt APIs. Write, Read, and Bash ran in the Wolfi guest as UID 65532, the
 > marker stayed out of the source checkout, and the same session reattached after restarting
 > only mecated while microvmd remained alive. Doctor and status were healthy. No credential,
 > private placement ref, socket, or host path was retained; this is not a microvmd-restart claim.
+>
+> The Darwin unit, ownership-xattr, and launch-lifecycle tests have only been cross-compiled
+> locally on Linux for this unmerged implementation. The macOS CI job has not run for the
+> change, and no native Apple Silicon real-VM or signed-candidate journey has run.
+
+## Qualify the experimental Darwin source path
+
+Repository developers can exercise the implemented Darwin path on a non-root Apple Silicon
+host running macOS 15 or newer with Hypervisor.framework. Artifact preparation uses the
+current-platform development descriptor and pinned go-microvm v0.0.41 runtime and firmware.
+The following agent run is offline and uses no provider credential or paid model.
+
+The provider-offline production-composed journey prepares the current-platform
+release fixture and runs the scripted mock-provider checks:
+
+```sh
+task e2e:microvm
+```
+
+This journey requires artifact-network access during preparation. It exercises guest Read,
+Write, and Shell operations, fixed UID 65532, host-path and source isolation, isolated-child
+merge and conflict handling, graceful microvmd restart, and exact reattachment. It does not
+contact an LLM provider.
+
+For an interactive developer check through the public HTTP API, prepare the artifacts and
+source binaries:
+
+```sh
+task microvm:dev:prepare
+task microvm:dev:build
+QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
+mkdir -p "$QUAL_ROOT/config" "$QUAL_ROOT/runtime" "$QUAL_ROOT/state"
+cat >"$QUAL_ROOT/mock.json" <<'JSON'
+{"turns":[
+  {"tool_calls":[{"id":"shell-uid","name":"Shell","args":{"command":"id -u && pwd"}}]},
+  {"tool_calls":[{"id":"write-proof","name":"Write","args":{"path":"darwin-vm-proof.txt","content":"darwin microvm proof\n"}}]},
+  {"tool_calls":[{"id":"read-proof","name":"Read","args":{"path":"darwin-vm-proof.txt"}}]},
+  {"text":"offline Darwin microVM check complete"}
+]}
+JSON
+```
+
+Start the development server from the repository root:
+
+```sh
+QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
+export XDG_STATE_HOME="$QUAL_ROOT/state"
+export XDG_CONFIG_HOME="$QUAL_ROOT/config"
+export XDG_RUNTIME_DIR="$QUAL_ROOT/runtime"
+.scratch/microvm-dev/bin/mecated serve --headless --posture auto \
+  --store-dir="$QUAL_ROOT/sessions" \
+  --default-placement microvm-local \
+  --mock-script="$QUAL_ROOT/mock.json" \
+  --microvm-dev-release="$(pwd)/.scratch/microvm-dev/darwin-arm64/release.json" \
+  --microvm-dev-acknowledge-untrusted-local-artifacts
+```
+
+In a second terminal, create and prompt a session through the public HTTP API. Set the same
+private XDG roots so local administration inspects the server's state:
+
+```sh
+QUAL_ROOT="$(pwd)/.scratch/microvm-darwin-check"
+export XDG_STATE_HOME="$QUAL_ROOT/state"
+export XDG_CONFIG_HOME="$QUAL_ROOT/config"
+export XDG_RUNTIME_DIR="$QUAL_ROOT/runtime"
+curl -sS -X POST http://127.0.0.1:8081/v1/sessions \
+  -H 'Content-Type: application/json' -d '{}'
+SESSION_ID=copy-from-create-response
+curl -sS -N -X POST \
+  "http://127.0.0.1:8081/v1/sessions/${SESSION_ID}/prompt" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Run the scripted offline Darwin microVM check."}'
+test ! -e darwin-vm-proof.txt
+.scratch/microvm-dev/bin/mecated microvm doctor
+.scratch/microvm-dev/bin/mecated microvm status
+```
+
+Confirm that Shell reports UID 65532, Write and Read use the logical worktree, the marker is
+absent from the source checkout, and doctor/status are healthy. To check exact normal restart
+reattachment, replace the mock script before restarting:
+
+```sh
+cat >"$QUAL_ROOT/mock.json" <<'JSON'
+{"turns":[
+  {"tool_calls":[{"id":"read-after-restart","name":"Read","args":{"path":"darwin-vm-proof.txt"}}]},
+  {"text":"offline Darwin microVM restart check complete"}
+]}
+JSON
+```
+
+Stop and restart only the `mecated serve` command with the same XDG roots and store directory,
+then prompt the same `SESSION_ID` to read `darwin-vm-proof.txt`.
+
+This procedure is qualification work, not an installation path. Released support still
+requires the native journey and a non-publishing signed-candidate journey. If the Darwin
+launch supervisor dies while its runner retains the ownership lock, replacement fails closed
+and reports that operator recovery is required. Mecatl does not signal a stored PID or fall
+back to host execution.
 
 Install and verify both host binaries (set `VERSION` to the release tag):
 
@@ -89,6 +192,9 @@ resume starts a fresh VM boot around the retained rootfs and logical worktrees. 
 `EnvironmentRef`, including its revision, stays unchanged. Installed packages, guest home,
 caches, branches, indexes, and dirty or untracked files remain available. A command that was
 running when the process stopped is interrupted and is never replayed automatically.
+On the experimental Darwin path, an ordinary daemon restart retains the exact ref. If the
+launch-owner supervisor dies while its runner survives with the inherited ownership lock,
+replacement fails closed and requires operator recovery instead of signaling a stored PID.
 `mecatui connect ADDRESS` is a pure remote client and never resolves, starts, or forwards
 local MicroVM placement.
 
@@ -159,6 +265,14 @@ configuration cannot set or weaken this policy. Host provider, MCP, web, hook, a
 and telemetry traffic is outside guest egress policy.
 
 Sessions and isolated children receive separate Git worktrees in a repository VM.
+The guest workload identity is fixed at UID/GID 65532. Linux maps it through an
+unprivileged user namespace. The experimental Darwin path prepares go-microvm VirtioFS
+ownership xattrs for the same identity on rootfs writable trees, logical worktrees, and the
+read-only Git-object snapshot; it does not copy the host account identity or widen owner-only
+host modes. Host-side child merge-back applies the patch before refreshing ownership, so a
+reported ownership-refresh failure means the patch was already applied and must be inspected
+before retrying.
+
 Creating those worktrees captures repository state under fixed host-safety ceilings. At most
 two captures run at once per daemon process. An initial capture has a cumulative 256 MiB
 accounting budget across Git path listings, tracked and untracked content, staged and

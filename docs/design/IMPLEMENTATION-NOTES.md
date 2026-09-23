@@ -142,20 +142,31 @@ idempotent direct-delete path. The MicroVM
 provider deletes only the logical attachment; `environment/microvm/repository_logical.go`
 (`DeletePreservingDirty`) leaves dirty records exact-reattachable and never removes the repository VM/rootfs or siblings.
 
-The runtime consumes admitted Brood Linux amd64 bytes directly, independently verifies and
+The runtime consumes admitted current-platform Brood bytes directly, independently verifies and
 injects the guest agent into the singleton rootfs, and creates no session/child rootfs copy.
-On Linux the backend supplies namespace-side UID/GID 65532 through go-microvm's
-`WithUserNamespaceUID`; go-microvm maps those IDs to the daemon's host UID/GID when it
-creates the unprivileged user namespace, without world-mode widening. The built-in hosted
-network provides unrestricted IPv4; the guest IPv6 stack remains enabled but external IPv6
-is unrouted and unsupported. Optional deny-all or allowlist tightening filters IPv4,
-disables IPv6, and is fail-closed. Linux amd64 KVM is the sole live claim. Qualification used
-OpenRouter `openai/gpt-5-mini` through the public HTTP create/prompt path and observed normal
-Write, Read, and Bash in the Wolfi guest as UID 65532, source isolation, exact same-session
-reattachment after only mecated restarted, and healthy doctor/status results. Microvmd remained
-alive throughout that manual qualification. Offline composition and launch-ownership tests
-separately cover daemon restart, cold-host-boot equivalence, retained mutable state, and exact
-runner reconciliation.
+The fixed guest identity remains UID/GID 65532. Linux supplies it through go-microvm's
+`WithUserNamespaceUID`; go-microvm maps those IDs to the daemon host identity without
+world-mode widening. Darwin instead uses
+`environment/microvm/repository_ownership_darwin.go` (`prepareRepositoryOwnership`) and
+strict startup mount overrides to project go-microvm ownership xattrs onto the rootfs writable
+trees, every logical root, and the private read-only Git-object snapshot. Host-side merge-back
+applies the patch before refreshing the same preparation, so a refresh error is explicitly
+post-apply and not transactional. `environment/microvm/launch_ownership_darwin.go`
+(`ownDirectChild`) makes one helper the direct runner parent and sole `Wait4`/signal owner;
+the daemon-liveness pipe stops the runner, while the runner's inherited attempt flock blocks
+replacement if the supervisor dies. Darwin reconciliation never signals a stored PID.
+
+The built-in hosted network provides unrestricted IPv4; the guest IPv6 stack remains enabled
+but external IPv6 is unrouted and unsupported. Optional deny-all or allowlist tightening filters
+IPv4, disables IPv6, and is fail-closed. Linux amd64 KVM is the sole qualified live claim.
+Qualification used OpenRouter `openai/gpt-5-mini` through the public HTTP create/prompt path
+and observed normal Write, Read, and Bash in the Wolfi guest as UID 65532, source isolation,
+exact same-session reattachment after only mecated restarted, and healthy doctor/status
+results. Microvmd remained alive throughout that manual qualification. Offline composition
+and launch-ownership tests separately cover daemon restart, cold-host-boot equivalence,
+retained mutable state, and exact runner reconciliation. Darwin arm64 admission, development
+artifacts, ownership, and launch lifecycle are implemented, but local evidence is cross-compile
+only; native Apple Silicon and signed-candidate qualification remain pending.
 
 Two defects found during qualification are fixed at their owning seams. The development descriptor
 check in `internal/adapter/microvmmanager/development_release_microvm_dev.go`
@@ -169,7 +180,8 @@ paths.
 
 Status uses deterministic owner-scoped pages of at most 64 entries with opaque continuation
 tokens. Explicit deferrals are repository-VM deletion UX, sophisticated retention,
-crash-durable/cross-process merge, Linux arm64 and macOS live support, upstream Brood
+crash-durable/cross-process merge, Linux arm64 admission, released Darwin support and its
+native/signed qualification, upstream Brood
 signing, independent refresh channels, per-session fairness/quotas, dashboards, and
 exhaustive cache-poisoning controls.
 
@@ -180,7 +192,7 @@ The unsupported source workflow is compile-time absent unless both local roots a
 the flags must appear together, are local-context-only, and are rejected when release stamp
 state is present. `internal/adapter/microvmmanager/development_release_microvm_dev.go`
 (`ReadyRequestFromDevelopmentDescriptor`) strictly decodes the owner-only descriptor and
-binds its Linux-amd64 platform, source identity, local bundle/key paths, outer digest,
+binds the current supported host platform (Linux amd64 or Darwin arm64), source identity, local bundle/key paths, outer digest,
 public-key identity, and policy revision before readiness. Its result enters
 `internal/adapter/microvmmanager/manager.go` (`EnsureReady`) as the same release/policy
 shape used by embedded production defaults. The only acquisition delta is the private local

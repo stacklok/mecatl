@@ -3,9 +3,7 @@
 > Part of the [mecatl architecture guide](../architecture.md) and listed in
 > [`docs/READING.md`](../READING.md).
 
-**What this covers:** the Linux amd64 repository-scoped microVM MVP: singleton VM/rootfs
-identity, logical worktree routing, artifact admission, Linux ownership, networking, and
-attachment.
+**What this covers:** the repository-scoped local microVM backend on qualified Linux amd64 and the experimental Darwin arm64 implementation: singleton VM/rootfs identity, logical worktree routing, artifact admission, platform ownership, networking, and attachment.
 
 **Prerequisites:** [the ports](ports.md), especially `tool.Environment`, `Workspace`, bound
 `CommandRunner`, and durable `EnvironmentRef` reattachment.
@@ -16,8 +14,12 @@ The backend is opt-in and lives outside the engine. Root composition talks to lo
 microvmd; go-microvm/libkrun and artifact machinery do not enter the importable engine.
 Providers, permissions, hooks, MCP, memory, identity, and credentials remain on the host.
 
-> **MVP status:** the repository-scoped backend is implemented for Linux amd64 KVM.
-> Compile/static coverage on other platforms is not a live-support claim.
+> **Platform status:** Linux amd64 KVM has automated and manual qualification evidence. The
+> Darwin arm64 code path admits macOS 15+ with Hypervisor.framework, and the same deterministic
+> mock-provider `task e2e:microvm` production-composed journey is executable there. Only
+> cross-compilation evidence is available in this unmerged change; no physical Apple Silicon run
+> has completed. Native Apple Silicon and signed-release qualification remain pending, so Darwin
+> is experimental rather than released support. Linux arm64 is not admitted.
 
 ## Repository identity and singleton lifecycle
 
@@ -40,6 +42,20 @@ attempt through its durable ownership lock and exact process receipt. Only then 
 publish a new boot intent and start hosted networking and the VM around the retained rootfs.
 A live or uncertain prior runner blocks replacement. Missing, corrupt, or incompatible state
 fails without deleting user data, creating empty state, or falling back to host execution.
+On Linux, exact reconciliation uses the existing pidfd path. On Darwin, a private helper is
+the runner's direct parent and owns the only nonblocking `Wait4` loop plus bounded TERM/KILL
+signaling. The manager and microvmd use real service flocks on both Unix platforms; the shared
+Unix implementations replace the former Linux-only lock files. Manager-initiated stop keeps
+Linux's pidfd signaling. On Darwin it instead authenticates the owner-only control socket,
+requires the serving daemon's exact installed identity, sends that identity in a private
+graceful-shutdown request, and waits for the acknowledgement before microvmd cancels its server
+and removes the socket. No Darwin manager path signals a recorded PID.
+Daemon-pipe EOF stops and reaps the runner. The runner inherits the attempt flock,
+so supervisor death leaves replacement fail-closed; a restarted daemon waits on the lock,
+never signals a stored PID, and reports that operator recovery is required while it remains
+busy. The repository's exact logical ref is retained through an ordinary restart. The Darwin
+implementation is `environment/microvm/launch_ownership_darwin.go` (`ownDirectChild`); Linux
+remains in `environment/microvm/launch_ownership_linux.go` (`Reconcile`).
 
 The VM's rootfs, installed packages, guest home, and declared caches are deliberately
 shared within the repository key. Code in one session can influence a later same-repository
@@ -116,24 +132,43 @@ worktree. The MVP uses the existing isolated-child merge path: a non-conflicting
 applies and a conflict preserves the child. Daemon-wide multi-client merge serialization
 and crash-durable merge recovery are explicitly not claimed.
 
-## Base image, guest agent, and Linux ownership
+## Base image, guest agent, and platform ownership
 
-Brood `latest` is discovery only. Controlled admission resolves Linux amd64 platform bytes
+Brood `latest` is discovery only. Controlled admission resolves current-platform bytes
 to an immutable digest and records a downstream mecatl endorsement. Runtime verifies that
 endorsement in process through `toolhive-core/container/verifier` and fails before boot for
-wrong, stale, missing, or corrupted evidence.
+wrong, stale, missing, or corrupted evidence. Runtime and firmware archives are pinned to
+go-microvm v0.0.41 with platform-specific SHA-256 values. The Darwin arm64 runtime
+archive is pinned to `2641838c11064cd9b896825eeee263aab35e6cca9a2d7b3cfddd649ae4c5125d`
+and firmware to `02ff1ca992c3b104cf6c4d0c2995fac5aa8646e7f7cafa0ee72b734b69fc5216`.
 
 Mecatl neither rebuilds Brood nor publishes a derived guest-tools image. It independently
 verifies and injects the guest agent into the one private repository rootfs. Static setup
 establishes workload UID/GID 65532, `HOME`, `PATH`, default workdir, writable home, and
-declared caches. Session and child creation do not copy the rootfs.
+declared caches. Session and child creation do not copy the rootfs. The repository registry
+uses initial schema version 1; unknown versions preserve state and fail closed.
 
 On Linux, the backend passes `WithUserNamespaceUID(65532, 65532)` to go-microvm.
 Those arguments name the namespace-side UID/GID; go-microvm maps them to the daemon's
-host UID/GID when it creates the unprivileged user namespace. Host worktrees retain their
-private modes; the backend never widens them to world-readable, world-writable, or
-world-traversable. Model commands run unprivileged. Linux arm64 live support and macOS
-ownership parity are deferred, regardless of compile/static coverage.
+host UID/GID when it creates the unprivileged user namespace. Linux does not prepare
+ownership xattrs.
+
+On Darwin, the backend uses go-microvm ownership preparation to project the same fixed
+UID/GID 65532 through VirtioFS. Both read-write and read-only mounts require strict ownership
+preparation. The private rootfs home and workspace are prepared before publication, and every
+logical subtree is prepared before guest registration. Git objects are copied with private
+`0600` file modes, prepared, and then sealed to `0400`; directories remain owner-only and
+traversable. Host-side merge-back runs `git apply` and then refreshes ownership preparation
+across the parent logical root. New inodes get host-derived modes, and surviving guest chmod
+metadata remains intact. A preparation failure after apply explicitly reports that the patch
+was already applied; merge-back is not transactional with concurrent Bash and does not promise
+cache invalidation. Platform projection is selected in
+`environment/microvm/repository_ownership_darwin.go` (`prepareRepositoryOwnership`), and
+merge-back refresh is in `environment/microvm/operational.go` (`mergeRepositoryWorktreesWithOwnership`).
+
+Host worktrees retain private modes on both platforms. The backend never widens them to
+world-readable, world-writable, or world-traversable. Model commands run unprivileged.
+Linux arm64 remains outside normal admission.
 
 ## Networking
 
@@ -163,7 +198,7 @@ discovery, or telemetry.
 Selecting the `execution.default_placement` value `microvm-local` (or the mecated serve flag override)
 configures the provider without provisioning. Actual default session creation calls the completed
 idempotent
-`EnsureReady` flow from the signed Linux-amd64 release binary; service startup and explicit
+`EnsureReady` flow from the release binary for the current admitted platform; service startup and explicit
 `no-fs` creation bypass it. A readiness failure occurs before placement creation and session
 persistence, with no host-local fallback. Composition attaches one bounded readiness observer
 used by diagnostics and the embedded TUI; the first-session connecting screen therefore reports
@@ -172,10 +207,10 @@ IPv4 default is disclosed before readiness starts. Embedded failures expose only
 `mecated microvm doctor`, and the diagnostics-log location; detailed manager errors remain in the
 operator log. Ordinary source builds do
 not embed authenticated release defaults and fail closed. Before release download or
-repository provisioning, readiness checks Git, Python 3, read-write KVM access, the Linux
-user-namespace controls, and an actual ephemeral namespace creation to detect disabled or
-exhausted quota. Doctor repeats those non-destructive host checks. Neither path changes
-ACLs, groups, sysctls, or quota. The manager lock serializes concurrent startup across
+repository provisioning, readiness checks Git and Python 3. Linux additionally requires
+read-write KVM access, user-namespace controls, and an actual ephemeral namespace creation.
+Darwin requires Apple Silicon macOS 15 or newer and available Hypervisor.framework. Doctor
+repeats those non-destructive host checks. Neither path changes ACLs, groups, sysctls, or quota. The manager lock serializes concurrent startup across
 sessions and host processes. Only genuinely fresh state is installed. Compatible callers
 reuse the repository daemon. If its configured process has stopped, ordinary readiness starts
 it again under the same manager lock; process identity checks refuse a duplicate while a
@@ -200,8 +235,10 @@ perform recovery lazily when a retained runtime is unavailable.
 
 ## Required live journey and limits
 
-The automated `task e2e:microvm` Linux-amd64 KVM gate uses the deterministic mock provider and
-does not contact OpenRouter. Separately, a manual qualification executed on 2026-09-10 used
+The automated `task e2e:microvm` journey supports Linux-amd64 KVM and Darwin-arm64 HVF and
+uses the deterministic mock provider without contacting OpenRouter. Linux is the automated
+qualified gate; the Darwin path is executable but still awaits a physical Apple Silicon run.
+Separately, a manual qualification executed on 2026-09-10 used
 OpenRouter `openai/gpt-5-mini` through public HTTP session creation and prompting. Normal Write,
 Read, and Bash ran in the Wolfi guest as UID 65532, with a proof marker absent from the source
 checkout. The same session reattached after mecated restarted while microvmd remained alive;
@@ -214,9 +251,17 @@ exact process reconciliation, repository-VM reuse across sessions, and delegatio
 Optional fail-closed network tightening is proven by AC6.2's deterministic app/profile and
 network-enforcement tests rather than a second live VM.
 
+The Darwin implementation has local Linux-host cross-compilation evidence for its unit,
+ownership-xattr, and lifecycle tests. The proposed CI job runs the complete nested module with
+`-race` on macOS, but this change has not been pushed and therefore has no CI result. No native
+Apple Silicon VM journey or signed-candidate journey has run. Darwin remains an experimental
+code path until those qualifications prove real guest filesystem/Shell behavior, source
+isolation, normal restart reattachment, and release admission. A runner surviving supervisor
+death remains fail-closed and requires operator recovery; it is not an automatic-restart case.
+
 Deferred after the MVP: repository-VM deletion UX, sophisticated retention,
-crash-durable and cross-process merge, Linux arm64 and macOS live support, upstream Brood
-signing, independent refresh channels, per-session fairness and quotas, dashboards, and
+crash-durable and cross-process merge, Linux arm64 support, released Darwin support, upstream
+Brood signing, independent refresh channels, per-session fairness and quotas, dashboards, and
 exhaustive cache-poisoning controls. Non-Git, remote, multi-user, and cross-principal placement remain out of scope.
 Scheduled tasks are supported through the existing server-owned placement contract: origin-backed
 schedules borrow their exact logical attachment, while independent schedules allocate one logical
