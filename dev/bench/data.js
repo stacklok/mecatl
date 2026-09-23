@@ -232866,6 +232866,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790149688309,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0cf03a423df907e07269e085105fda2dc81ea47",
+          "message": "refactor: remove obsolete alpha compatibility paths (#1725)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T10:53:53+03:00",
+          "tree_id": "05fb4868543c3e5f87a6de39d8980f2d5b661de7",
+          "url": "https://github.com/stacklok/mecatl/commit/b0cf03a423df907e07269e085105fda2dc81ea47"
+        },
+        "date": 1790150716974,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -338170,6 +338204,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790150713945,
+  "lastUpdate": 1790150717787,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
