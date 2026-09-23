@@ -259011,6 +259011,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790161635583,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "485e173082f52dbd8eb873ae4b308845e4812ee0",
+          "message": "build: separate fast tests from pre-review race verification (#1801)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T15:53:09+03:00",
+          "tree_id": "610276a6456df0f310210aaa1729d9ff9de0048a",
+          "url": "https://github.com/stacklok/mecatl/commit/485e173082f52dbd8eb873ae4b308845e4812ee0"
+        },
+        "date": 1790168680252,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3309,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 102,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -339647,6 +339686,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790168677412,
+  "lastUpdate": 1790168680953,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
