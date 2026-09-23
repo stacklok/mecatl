@@ -14,7 +14,7 @@ A team is modelled as "Parallel, but long-lived and talking." The coordination k
 
 ## Consequences
 
-Teams are linearly more expensive than a single session; a per-engine and per-team token budget bound runaway costs. Join strategies for mutating-member forks and a `TeamStore` for restart durability remain deferred. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in `docs/design/PRODUCTION-READINESS.md`.
+Teams are linearly more expensive than a single session; a per-engine and per-team token budget bound runaway costs. Join strategies for mutating-member forks and a `TeamStore` for restart durability remain deferred. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

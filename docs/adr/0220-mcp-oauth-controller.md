@@ -88,4 +88,4 @@ login are unsupported. Operator-facing deployment remains deferred.
 - [ADR 0219 — Qualified official SDK profile](./0219-mcp-oauth-sdk-profile.md)
 - [ADR 0218 — Internal encrypted credential store](./0218-credential-store.md)
 - [Extensibility architecture](../architecture/extensibility.md)
-- [Production-readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

@@ -13,9 +13,11 @@ Each ADR records *why* a thing is shaped the way it is at a point in time and is
 supersession in this living index; never edit the landed record. Copy
 [`template.md`](./template.md) to start one. Number monotonically.
 
-Current behaviour lives in [`docs/architecture.md`](../architecture.md) (the living
-reference); shipped/deferred status lives in
-[PRODUCTION-READINESS.md](../design/PRODUCTION-READINESS.md) (the single tracker).
+Current behavior belongs in the owning [architecture topic](../READING.md) and
+public guide. Track actionable work in issues and PRs rather than a second
+hand-maintained status ledger. Follow the [documentation change review](../development-process.md#documentation-change-review)
+for current ownership; historical references in ADRs do not require recreating
+retired trackers or completed execution plans.
 Documentation/citation conventions are in [`docs/design/README.md`](../design/README.md).
 
 > History: ADRs 0004–0029 were the former `docs/design/*` design records, consolidated
@@ -154,6 +156,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*
+- [0353 — Session-scoped agent identity](./0353-session-scoped-agent-identity.md) *(proposed)*
 - [0013 — Agent definitions](./0013-agent-definitions.md)
 - [0014 — Agent teams](./0014-agent-teams.md)
 - [0015 — Background subagents](./0015-background-subagents.md)

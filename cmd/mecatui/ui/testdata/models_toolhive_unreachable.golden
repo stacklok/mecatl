@@ -8,12 +8,10 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ╭────────────────────────────────────────────────╮                                                 ┃
-┃  │  › ●  openai · GPT-5  image input reason 200K  │                                                 ┃
-┃  ╰────────────────────────────────────────────────╯                                                 ┃
-┃       openai · GPT-5 mini  reason 128K                                                              ┃
-┃       openai · text-embed                                                                           ┃
-┃       openrouter · Claude  image input reason 1M                                                    ┃
+┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
+┃      openai · GPT-5 mini  reason 128K                                                               ┃
+┃      openai · text-embed                                                                            ┃
+┃      openrouter · Claude  image input reason 1M                                                     ┃
 ┃                                                                                                     ┃
 ┃  toolhive: gateway not reachable — start it with `thv llm proxy start`                              ┃
 ┃                                                                                                     ┃

@@ -131,4 +131,4 @@ overlay never runs on that path.
   isolation this overlay completes.
 - `docs/architecture/parallelism.md`: the forker section (the living "how it works").
 - [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md): the forker/subagent worktree subsystem notes.
-- `docs/design/PRODUCTION-READINESS.md`: the fork-join / worktree shipped-status row.
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md): the fork-join / worktree shipped-status row.

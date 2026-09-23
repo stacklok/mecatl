@@ -49,5 +49,5 @@ general OAuth interoperability or ACP-supplied OAuth profile/authorization suppo
 
 - [Extensibility architecture](../architecture/extensibility.md)
 - [Configuration guide](../usage/configuration.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - [ADR 0112](./0112-mcp-oauth-loopback-runtime.md)

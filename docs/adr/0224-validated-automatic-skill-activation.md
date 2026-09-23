@@ -61,5 +61,5 @@ bound that risk.
 
 - [Architecture](../architecture.md)
 - [Learning and skills usage](../usage/skills-soul-usermodel.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - [ADR 0111](./0111-hardened-agent-owned-skill-publication.md)

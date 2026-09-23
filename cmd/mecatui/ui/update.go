@@ -1740,6 +1740,7 @@ func noticeLine(msg tea.Msg) string {
 // subagent event only costs the trace, never correctness or isolation.
 func (m *Model) applySubagent(msg client.SubagentMsg) {
 	applySubagentTo(&m.conv, msg)
+	m.reconcileAgentsLists()
 	// A BACKGROUND child finishing is otherwise invisible (its Subagent card
 	// resolved long ago with the started-result), so surface a brief transient
 	// footer notice — the same advisory channel as team-done / no-progress, never
@@ -1784,6 +1785,7 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 // are bounded/scrubbed/client-only (gauntlet #7).
 func (m *Model) applyParallel(msg client.ParallelMsg) {
 	applyParallelTo(&m.conv, msg)
+	m.reconcileAgentsLists()
 }
 
 // applyParallelTo is the pure conversation-projection half of applyParallel: it
@@ -1822,6 +1824,7 @@ func (m *Model) applyTeam(msg client.TeamMsg) {
 		// the team card + the run's ResultMsg.
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("team done · %s", plural(msg.Rounds, "round")))
 	}
+	m.reconcileAgentsLists()
 }
 
 // applyTeamTo is the pure conversation-projection half of applyTeam: it routes a
@@ -4022,6 +4025,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd
+	}
+	if m.team.view != teamNone {
+		return m.onAgentsWheel(msg)
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)

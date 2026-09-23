@@ -174,4 +174,4 @@ would ship at scale.
   — the guardrail rules a background start inherits unchanged (D5).
 - Living behaviour: `docs/architecture/ports.md` (the command-execution seam),
   `docs/architecture/subagents-and-teams.md` (the registry families);
-  status in `docs/design/PRODUCTION-READINESS.md`.
+  status in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).

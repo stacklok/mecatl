@@ -82,4 +82,4 @@ See `internal/adapter/mcp/reconnect.go` (classifier, `liveSession`,
 ## See also
 
 - [Extensibility — MCP, tools & progressive disclosure](../architecture/extensibility.md)
-- [Production Readiness — status & roadmap](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

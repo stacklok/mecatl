@@ -74,6 +74,6 @@ frequency does not influence planning because no recall counters are collected.
 - [gRPC API](../usage/grpc-api.md)
 - [HTTP API](../usage/http-sse-api.md)
 - [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - [Cloud-native resource inventory](./0027-cloud-native.md)
 - [ADR 0227 — Dream consolidation safety boundary](./0227-dream-consolidation-safety-boundary.md)

@@ -44,7 +44,6 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — draft protocol proposal for remote agent capabilities over HTTP/JSON; not a shipped mecatl surface.
 - [Documentation change review](development-process.md#documentation-change-review) — choose one owner, verify current behavior, and prune obsolete material.
 - [ADR index](adr/README.md) — the frozen *why* archive; reach for it on demand to understand a decision's rationale.
-- [Production readiness tracker](design/PRODUCTION-READINESS.md) — the live shipped/deferred status ledger.
 
 ---
 
