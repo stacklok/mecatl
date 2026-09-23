@@ -260112,6 +260112,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790171895004,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23380eec1a52dcb6c2118e6d817810eb918ec5c5",
+          "message": "build: remove brittle aggregate task wiring check (#1806)\n\nCo-authored-by: Mecatl <mecatl@users.noreply.github.com>",
+          "timestamp": "2026-09-23T17:03:26+03:00",
+          "tree_id": "fc5bcc6cdf3ae405b20b70d0af1b16c9abc88025",
+          "url": "https://github.com/stacklok/mecatl/commit/23380eec1a52dcb6c2118e6d817810eb918ec5c5"
+        },
+        "date": 1790172895989,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -341090,6 +341129,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790172892695,
+  "lastUpdate": 1790172897098,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
