@@ -232210,6 +232210,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790146739751,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f54c85c6d31b8443ac5c3c958f0f9a4328d56f17",
+          "message": "fix(osfs): cancel no-match Glob and Grep traversal (#1723)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T10:23:45+03:00",
+          "tree_id": "b7865d00bfdcd8d5c138016047c555a4cf30fb6d",
+          "url": "https://github.com/stacklok/mecatl/commit/f54c85c6d31b8443ac5c3c958f0f9a4328d56f17"
+        },
+        "date": 1790148901517,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -337208,6 +337242,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790148898162,
+  "lastUpdate": 1790148902720,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
