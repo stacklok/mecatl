@@ -69,11 +69,13 @@ func (s *Service) RefreshMcpSources(ctx context.Context, id session.SessionID) (
 
 	snapshot, reconcileErr := s.cfg.MCPRefresh(ctx)
 	if reconcileErr != nil {
-		if errors.Is(reconcileErr, ErrInternal) {
-			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "direct MCP source reconciliation failed", "session", string(id), "err", reconcileErr.Error())
-			return MCPRefreshResult{}, fmt.Errorf("%w: reconcile direct MCP sources", ErrInternal)
+		if errors.Is(reconcileErr, context.Canceled) || errors.Is(reconcileErr, context.DeadlineExceeded) {
+			return MCPRefreshResult{}, reconcileErr
 		}
-		return MCPRefreshResult{}, reconcileErr
+		// The reconcile error can carry upstream server names, addresses, and
+		// response text. Log it for the operator; never return it to the caller.
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "direct MCP source reconciliation failed", "session", string(id), "err", reconcileErr.Error())
+		return MCPRefreshResult{}, fmt.Errorf("%w: reconcile direct MCP sources", ErrInternal)
 	}
 	result := MCPRefreshResult{Revision: snapshot.Revision, Changed: snapshot.Changed}
 	if len(snapshot.ToolNames) > maxMCPRefreshGrantNames {

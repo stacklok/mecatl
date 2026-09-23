@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,7 +101,7 @@ func TestMCPRefreshPrivateFailuresAreRedactedByTransports(t *testing.T) {
 					store.reset(2, nil)
 				case "reconcile":
 					store.reset(0, nil)
-					reconcileErr = fmt.Errorf("%w: %s", server.ErrInternal, private)
+					reconcileErr = errors.New(private)
 				case "save":
 					store.reset(0, errors.New(private))
 				}
