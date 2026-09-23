@@ -414,7 +414,7 @@ func (failingRepositoryGuest) Unregister(context.Context, RepositoryVMRecord, co
 
 func newLogicalRepositoryFixture(t *testing.T) *logicalRepositoryFixture {
 	t.Helper()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
 	if err := os.Chmod(filepath.Join(repository, "README.md"), 0o644); err != nil {
 		t.Fatal(err)

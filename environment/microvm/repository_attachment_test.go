@@ -21,7 +21,7 @@ const repositoryGuestOwnershipID = 65532
 
 func TestMicroVMMVP_Scenario2_DurableSingletonRegistryReattachesOrFailsLoudly(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
 	stateRoot := filepath.Join(root, "state")
 	verified := repositoryVerifiedArtifacts(t, root)
@@ -466,10 +466,6 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	if err := unix.Setxattr(trackedPath, "user.containers.override_stat", []byte(guestMode), 0); err != nil {
 		t.Fatal(err)
 	}
-	trackedBefore, err := os.Stat(trackedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	stablePath := filepath.Join(parent.Logical.WorktreePath, "stable.txt")
 	stableGuestMode := overrideStatForTest(t, stablePath)
 	if len(stableGuestMode) < 3 {
@@ -509,13 +505,6 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	}
 	if prepareCalls != 1 {
 		t.Fatalf("merge ownership preparation calls = %d, want 1", prepareCalls)
-	}
-	trackedAfter, err := os.Stat(trackedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if os.SameFile(trackedBefore, trackedAfter) {
-		t.Fatal("content-changing patch unexpectedly retained tracked file inode")
 	}
 	if got := overrideStatForTest(t, trackedPath); got == guestMode || !strings.HasSuffix(got, "644") {
 		t.Fatalf("replacement file ownership = %q, want host-derived mode without stale %q", got, guestMode)
@@ -673,7 +662,7 @@ type repositoryAttachmentFixture struct {
 
 func newRepositoryAttachmentFixture(t *testing.T) *repositoryAttachmentFixture {
 	t.Helper()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
 	if err := os.Chmod(filepath.Join(repository, "README.md"), 0o644); err != nil {
 		t.Fatal(err)

@@ -30,11 +30,11 @@ func RunWithEnv(ctx context.Context, dir string, stdin []byte, environment []str
 	return run(ctx, dir, stdin, environment, args...)
 }
 
-// RunInDir invokes Git with an inherited directory descriptor selected through
-// /dev/fd/3 after process start. This binds cleanup to an already-open directory
-// identity even if an attacker renames a logical ancestor concurrently.
+// RunInDir invokes Git with an inherited directory descriptor selected after
+// process start. This binds cleanup to an already-open directory identity even
+// if an attacker renames a logical ancestor concurrently.
 func RunInDir(ctx context.Context, dir *os.File, stdin []byte, args ...string) ([]byte, error) {
-	return runCommand(ctx, "/", []*os.File{dir}, []string{"-C", "/dev/fd/3"}, stdin, nil, args...)
+	return runInDir(ctx, dir, stdin, args...)
 }
 
 func run(ctx context.Context, dir string, stdin []byte, environment []string, args ...string) ([]byte, error) {

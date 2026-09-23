@@ -14,7 +14,7 @@ import (
 
 func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository := filepath.Join(root, "repository")
 	if err := os.Mkdir(repository, 0o700); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 
 func TestRepositoryObjectSnapshotRejectsNestedSymlink(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	common := filepath.Join(root, "repository.git")
 	if err := os.MkdirAll(filepath.Join(common, "objects", "pack"), 0o700); err != nil {
 		t.Fatal(err)

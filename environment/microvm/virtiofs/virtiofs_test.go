@@ -13,9 +13,9 @@ import (
 var errFakeReadOnlyMount = errors.New("fake guest: host-read-only mount")
 
 func TestMicroVMEnvironments_Scenario3_WorktreeIsBidirectionallyVisible(t *testing.T) {
-	worktreeRoot := t.TempDir()
-	metadataRoot := t.TempDir()
-	objectsRoot := t.TempDir()
+	worktreeRoot := canonicalTestTempDir(t)
+	metadataRoot := canonicalTestTempDir(t)
+	objectsRoot := canonicalTestTempDir(t)
 	for _, root := range []string{worktreeRoot, metadataRoot} {
 		if err := os.Chmod(root, 0o700); err != nil {
 			t.Fatal(err)
@@ -80,7 +80,7 @@ func TestMicroVMEnvironments_Scenario3_WorktreeIsBidirectionallyVisible(t *testi
 }
 
 func TestMicroVMEnvironments_Scenario3_SkillAssetsAreExplicitAndReadOnly(t *testing.T) {
-	home := t.TempDir()
+	home := canonicalTestTempDir(t)
 	secret := filepath.Join(home, ".config", "credentials")
 	writeFile(t, secret, []byte("do-not-mount\n"))
 	assetSource := filepath.Join(home, ".claude", "skills", "review", "references", "guide.txt")
@@ -89,20 +89,20 @@ func TestMicroVMEnvironments_Scenario3_SkillAssetsAreExplicitAndReadOnly(t *test
 	if err := os.Symlink(secret, symlinkAsset); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MaterializeAssets(filepath.Join(t.TempDir(), "linked"), []Asset{{Name: "secret", SourcePath: symlinkAsset}}); err == nil {
+	if _, err := MaterializeAssets(filepath.Join(canonicalTestTempDir(t), "linked"), []Asset{{Name: "secret", SourcePath: symlinkAsset}}); err == nil {
 		t.Fatal("MaterializeAssets accepted a symlink source")
 	}
 
-	materialized, err := MaterializeAssets(filepath.Join(t.TempDir(), "materialized"), []Asset{
+	materialized, err := MaterializeAssets(filepath.Join(canonicalTestTempDir(t), "materialized"), []Asset{
 		{Name: "review/references/guide.txt", SourcePath: assetSource},
 	})
 	if err != nil {
 		t.Fatalf("MaterializeAssets: %v", err)
 	}
 	prepared := &worktree.Prepared{
-		WorktreePath:      t.TempDir(),
-		MetadataPath:      t.TempDir(),
-		CommonObjectStore: t.TempDir(),
+		WorktreePath:      canonicalTestTempDir(t),
+		MetadataPath:      canonicalTestTempDir(t),
+		CommonObjectStore: canonicalTestTempDir(t),
 	}
 	plan, err := Plan(prepared, materialized)
 	if err != nil {
@@ -133,6 +133,15 @@ func TestMicroVMEnvironments_Scenario3_SkillAssetsAreExplicitAndReadOnly(t *test
 	}) {
 		t.Fatalf("calls = %#v, want libkrun host-enforced read-only API", guest.calls)
 	}
+}
+
+func canonicalTestTempDir(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
+	return root
 }
 
 func writeFile(t *testing.T, path string, data []byte) {

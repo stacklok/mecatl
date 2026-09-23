@@ -28,7 +28,7 @@ import (
 
 func TestRepositoryGuestAuthenticationRejectsCompetingConnectorBeforeDisclosure(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
 	if err := os.Chmod(filepath.Join(repository, "README.md"), 0o644); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestRepositoryGuestAuthenticationRejectsCompetingConnectorBeforeDisclosure(
 
 func TestRepositoryProductionCompositionBootsOnceAndRoutesGuestMounts(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
 	if err := os.Chmod(filepath.Join(repository, "README.md"), 0o644); err != nil {
 		t.Fatal(err)
@@ -340,7 +340,7 @@ func TestRepositoryAttachmentInventoryAndDeleteSurviveRestart(t *testing.T) {
 }
 
 func TestRepositoryProductionInventoryPaginationAndLogicalDelete(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
 	if err := os.Chmod(filepath.Join(repository, "README.md"), 0o644); err != nil {
 		t.Fatal(err)
@@ -473,7 +473,7 @@ func (b *retainedRootFSBackend) Start(context.Context, hypervisor.VMConfig) (hyp
 }
 
 func TestLibkrunStopThenBootCleanupPreservesPersistentRootFS(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	rootfs := filepath.Join(root, "retained-rootfs")
 	dataDir := filepath.Join(root, "data-boot")
 	artifacts := filepath.Join(root, "artifacts-boot")
@@ -519,7 +519,7 @@ func TestLibkrunStopThenBootCleanupPreservesPersistentRootFS(t *testing.T) {
 }
 
 func TestRepositoryHealthDoesNotClaimOrRemoveEndpoint(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	t.Chdir(root)
 	endpoint := "guest.sock"
 	if err := os.WriteFile(endpoint, []byte("stale-owned-endpoint"), 0o600); err != nil {
@@ -561,7 +561,7 @@ func TestRepositoryHealthDoesNotClaimOrRemoveEndpoint(t *testing.T) {
 }
 
 func TestRepositoryRuntimeAbortRejectsDifferentGeneration(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	runtime, err := NewRepositoryRuntime(RepositoryRuntimeConfig{
 		Backend:     &rollbackRuntimeBackend{},
 		Network:     NewNetworkController(func() gomicrovmnet.Provider { return &fakeNetworkProvider{socket: filepath.Join(root, "network.sock")} }, &fakeGuestNetwork{}),
@@ -596,7 +596,7 @@ func TestRepositoryRuntimeStartRejectsUnsafeObjectStoreBeforeBackend(t *testing.
 		{name: "replacement race", replaceLate: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := canonicalTempDir(t)
 			common := filepath.Join(root, "repository.git")
 			objects := filepath.Join(common, "objects")
 			if err := os.MkdirAll(objects, 0o700); err != nil {
@@ -682,7 +682,7 @@ func TestRepositoryRuntimeStartRollsBackEveryOwnedAcquisition(t *testing.T) {
 		{stage: "cancelled-rollback"},
 	} {
 		t.Run(tc.stage, func(t *testing.T) {
-			root := t.TempDir()
+			root := canonicalTempDir(t)
 			t.Chdir(root)
 			endpoint := "guest.sock"
 			provider := &fakeNetworkProvider{socket: filepath.Join(root, "network.sock")}
@@ -850,7 +850,7 @@ func (i *rollbackRuntimeInstance) CleanupBoot(ctx context.Context) error {
 
 func TestRepositoryProductionReadinessRequiresAuthenticatedGuestStartupAfterIPv6Disablement(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	backend := &repositoryCompositionBackend{omitGuestServer: true}
 	provider := &fakeNetworkProvider{socket: filepath.Join(root, "network.sock")}
 	runtime, err := NewRepositoryRuntime(RepositoryRuntimeConfig{

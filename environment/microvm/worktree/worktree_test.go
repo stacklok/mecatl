@@ -21,7 +21,7 @@ func TestPrepareExtractsCommittedDirectories(t *testing.T) {
 	writeTestFile(t, filepath.Join(source, "nested", "fact.txt"), []byte("nested\n"), 0o644)
 	gitTest(t, source, nil, "add", "nested/fact.txt")
 	gitTest(t, source, nil, "commit", "-qm", "add nested file")
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	prepared, err := New().Prepare(context.Background(), Request{
 		Source: source, WorktreePath: filepath.Join(root, "worktree"),
 		MetadataPath: filepath.Join(root, "metadata"), Branch: "mecatl/nested",
@@ -40,7 +40,7 @@ func TestCleanupRejectsLogicalAncestorSymlinkSubstitution(t *testing.T) {
 	requireGit(t)
 	attackerSource := newRepository(t)
 	victimSource := newRepository(t)
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	attackerRoot := filepath.Join(root, "attacker")
 	victimRoot := filepath.Join(root, "victim")
 	if err := os.MkdirAll(attackerRoot, 0o700); err != nil {
@@ -89,7 +89,7 @@ func TestCleanupRejectsLogicalAncestorSymlinkSubstitution(t *testing.T) {
 func TestCleanupBindsRemovalBeforeAncestorSwap(t *testing.T) {
 	requireGit(t)
 	source := newRepository(t)
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	owned := filepath.Join(root, "owned")
 	victim := filepath.Join(root, "victim")
 	if err := os.MkdirAll(owned, 0o700); err != nil {
@@ -127,7 +127,7 @@ func TestCleanupBindsRemovalBeforeAncestorSwap(t *testing.T) {
 func TestPrepareRollbackUsesBoundRemovalAfterAncestorSwap(t *testing.T) {
 	requireGit(t)
 	source := newRepository(t)
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	owned := filepath.Join(root, "owned")
 	victim := filepath.Join(root, "victim")
 	if err := os.MkdirAll(owned, 0o700); err != nil {
@@ -188,8 +188,8 @@ func TestMicroVMEnvironments_Scenario3_SourceStateCaptureIsExactOrFails(t *testi
 
 	prepared, err := New().Prepare(context.Background(), Request{
 		Source:       source,
-		WorktreePath: filepath.Join(t.TempDir(), "session-worktree"),
-		MetadataPath: filepath.Join(t.TempDir(), "guest-git"),
+		WorktreePath: filepath.Join(canonicalTestTempDir(t), "session-worktree"),
+		MetadataPath: filepath.Join(canonicalTestTempDir(t), "guest-git"),
 		Branch:       "mecatl/session-test",
 	})
 	if err != nil {
@@ -220,8 +220,8 @@ func TestMicroVMEnvironments_Scenario3_SourceStateCaptureIsExactOrFails(t *testi
 	p.afterCapture = func() error {
 		return os.WriteFile(filepath.Join(racy, "tracked.txt"), []byte("changed during capture\n"), 0o644)
 	}
-	racyWorktree := filepath.Join(t.TempDir(), "racy-worktree")
-	racyMetadata := filepath.Join(t.TempDir(), "racy-git")
+	racyWorktree := filepath.Join(canonicalTestTempDir(t), "racy-worktree")
+	racyMetadata := filepath.Join(canonicalTestTempDir(t), "racy-git")
 	_, err = p.Prepare(context.Background(), Request{
 		Source:       racy,
 		WorktreePath: racyWorktree,
@@ -293,7 +293,7 @@ func TestSourceCaptureLimitsAndCleanup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			source := newRepository(t)
 			tc.prepare(t, source)
-			root := t.TempDir()
+			root := canonicalTestTempDir(t)
 			p := New()
 			p.byteLimit = tc.byteLimit
 			p.entryLimit = tc.entryLimit
@@ -314,7 +314,7 @@ func TestSourceCaptureLimitsAndCleanup(t *testing.T) {
 func TestSourceCaptureVerificationLimitCleansProvisionalWorktree(t *testing.T) {
 	requireGit(t)
 	source := newRepository(t)
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	p := New()
 	p.byteLimit = 24 << 10
 	p.afterCapture = func() error {
@@ -335,7 +335,7 @@ func TestSourceCaptureVerificationLimitCleansProvisionalWorktree(t *testing.T) {
 func TestSourceCaptureCancellationCleansTemporaryState(t *testing.T) {
 	requireGit(t)
 	source := newRepository(t)
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	p := New()
 	p.afterCapture = func() error {
@@ -377,7 +377,7 @@ func TestSourceCaptureConcurrencyIsProcessBounded(t *testing.T) {
 	results := make(chan result, captureConcurrency+1)
 	for i := 0; i < captureConcurrency+1; i++ {
 		source := newRepository(t)
-		root := t.TempDir()
+		root := canonicalTestTempDir(t)
 		go func(i int) {
 			prepared, err := p.Prepare(context.Background(), Request{
 				Source: source, WorktreePath: filepath.Join(root, "worktree"),
@@ -443,7 +443,7 @@ func TestMicroVMEnvironments_Scenario3_WorktreeGitMetadataIsConfined(t *testing.
 	requireGit(t)
 	t.Run("reconstructed metadata and read-only alternates mount", func(t *testing.T) {
 		source := newRepository(t)
-		hookSentinel := filepath.Join(t.TempDir(), "hook-fired")
+		hookSentinel := filepath.Join(canonicalTestTempDir(t), "hook-fired")
 		hooks := filepath.Join(source, ".git", "hooks")
 		if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte("#!/bin/sh\ntouch \""+hookSentinel+"\"\n"), 0o755); err != nil {
 			t.Fatalf("write hostile hook: %v", err)
@@ -451,8 +451,8 @@ func TestMicroVMEnvironments_Scenario3_WorktreeGitMetadataIsConfined(t *testing.
 		gitTest(t, source, nil, "config", "core.pager", "false")
 		prepared, err := New().Prepare(context.Background(), Request{
 			Source:       source,
-			WorktreePath: filepath.Join(t.TempDir(), "session-worktree"),
-			MetadataPath: filepath.Join(t.TempDir(), "guest-git"),
+			WorktreePath: filepath.Join(canonicalTestTempDir(t), "session-worktree"),
+			MetadataPath: filepath.Join(canonicalTestTempDir(t), "guest-git"),
 			Branch:       "mecatl/confined",
 		})
 		if err != nil {
@@ -504,8 +504,8 @@ func TestMicroVMEnvironments_Scenario3_WorktreeGitMetadataIsConfined(t *testing.
 		}
 		_, err := New().Prepare(context.Background(), Request{
 			Source:       source,
-			WorktreePath: filepath.Join(t.TempDir(), "session-worktree"),
-			MetadataPath: filepath.Join(t.TempDir(), "guest-git"),
+			WorktreePath: filepath.Join(canonicalTestTempDir(t), "session-worktree"),
+			MetadataPath: filepath.Join(canonicalTestTempDir(t), "guest-git"),
 			Branch:       "mecatl/external-alternate",
 		})
 		if err == nil || !strings.Contains(err.Error(), "external object-store alternates") {
@@ -563,8 +563,8 @@ func TestMicroVMEnvironments_Scenario3_WorktreeGitMetadataIsConfined(t *testing.
 			p.afterWorktree = tc.tamper
 			prepared, err := p.Prepare(context.Background(), Request{
 				Source:       source,
-				WorktreePath: filepath.Join(t.TempDir(), "session-worktree"),
-				MetadataPath: filepath.Join(t.TempDir(), "guest-git"),
+				WorktreePath: filepath.Join(canonicalTestTempDir(t), "session-worktree"),
+				MetadataPath: filepath.Join(canonicalTestTempDir(t), "guest-git"),
 				Branch:       "mecatl/hostile-" + strings.ReplaceAll(tc.name, " ", "-"),
 			})
 			if prepared != nil {
@@ -577,6 +577,15 @@ func TestMicroVMEnvironments_Scenario3_WorktreeGitMetadataIsConfined(t *testing.
 	}
 }
 
+func canonicalTestTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
+	return dir
+}
+
 func requireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -586,7 +595,7 @@ func requireGit(t *testing.T) {
 
 func newRepository(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := canonicalTestTempDir(t)
 	gitTest(t, dir, nil, "init", "-q")
 	gitTest(t, dir, nil, "config", "user.email", "test@example.invalid")
 	gitTest(t, dir, nil, "config", "user.name", "Test")
