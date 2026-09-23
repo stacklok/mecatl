@@ -4,7 +4,7 @@
 **Work classification:** Bounded — the existing inline mention menu adopts the established package-private bounded-list interaction contract, changing candidate selection, physical-row geometry, and phase-specific key ownership without changing a public API, persistence boundary, protocol, or system architecture.
 **Decision record:** None — this is a focused application of the landed Mecatui bounded-control contract; its surface-local behavior belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-list adoption, mention palette slice
-**Status:** in-progress, 2026-09-23. Implementation is underway against approved Plan / Interface PR [#1828](https://github.com/stacklok/mecatl/pull/1828).
+**Status:** landed, 2026-09-23. The implementation candidate passed its gates and review; this transition becomes authoritative when its implementation PR merges.
 **Delivery:** Split. The mention palette has distinct local filesystem discovery, path completion, literal-prose fallback, and streaming interaction behavior that need their interaction contract reviewed before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1742](https://github.com/stacklok/mecatl/issues/1742).
