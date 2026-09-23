@@ -237786,6 +237786,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790192110666,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cb70893ae36e284c3bf28e92c3a5a49888f0d7b3",
+          "message": "feat(mcp): reconcile sources and refresh session tools (#1673)\n\nCo-authored-by: mecatl <noreply@stacklok.com>\nCo-authored-by: OpenAI <noreply@openai.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>\nCo-authored-by: OpenAI Codex <codex@openai.com>\nCo-authored-by: Mecatl <mecatl@users.noreply.github.com>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-09-23T21:49:05+02:00",
+          "tree_id": "d23dae486a801da9fca723008f84c4ba338ed89a",
+          "url": "https://github.com/stacklok/mecatl/commit/cb70893ae36e284c3bf28e92c3a5a49888f0d7b3"
+        },
+        "date": 1790193615145,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -345385,6 +345419,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790193610570,
+  "lastUpdate": 1790193616316,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
