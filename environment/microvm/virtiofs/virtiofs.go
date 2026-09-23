@@ -113,7 +113,7 @@ func Plan(prepared *worktree.Prepared, assets *MaterializedAssets) (MountPlan, e
 // necessary nor permitted.
 func (MountPlan) PrepareWorkloadAccess() error { return nil }
 
-// GoMicroVMMounts projects the validated plan onto go-microvm v0.0.40's
+// GoMicroVMMounts projects the validated plan onto go-microvm v0.0.41's
 // host-enforced ReadOnly mount contract.
 func (p MountPlan) GoMicroVMMounts() []gomicrovm.VirtioFSMount {
 	mounts := make([]gomicrovm.VirtioFSMount, 0, len(p.mounts))

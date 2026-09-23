@@ -375,10 +375,16 @@ tasks:
       - tar -C bin/microvm/guest-agent-artifact -cf bin/microvm/mecatl-guest-agent-artifact.tar mecatl-guest-agent
 
   microvm:dev:prepare:
-    desc: Prepare an unsupported signed local development release under .scratch (Linux amd64; network/tooling required).
+    desc: Prepare an unsupported signed local development release under .scratch for the current supported host (network/tooling required).
     cmds:
       - .github/scripts/prepare-microvm-development-release.sh "{{.BUILD_ID}}"
-      - MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/linux-amd64/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
+      - |
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) platform=linux-amd64 ;;
+            Darwin-arm64) platform=darwin-arm64 ;;
+            *) echo "unsupported microVM development platform: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
+          esac
+          MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/${platform}/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
 
   microvm:dev:build:
     desc: Build microvm_dev-tagged mecated and mecatui binaries under .scratch; ordinary task build is unchanged.
@@ -388,7 +394,7 @@ tasks:
       - go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecatui ./cmd/mecatui
 
   microvm:dev:e2e:
-    desc: Run the local-development descriptor/tag gate, then the existing Linux amd64 KVM journey (network/KVM required).
+    desc: Run the local-development descriptor/tag gate, then the current-host Linux KVM or Darwin HVF journey (network and hypervisor required).
     deps: [microvm:dev:prepare, microvm:dev:build]
     cmds:
       - task: test:microvm-dev-tag
@@ -403,7 +409,7 @@ tasks:
       - GOTMPDIR="$(pwd)/.scratch/go-build" go build -trimpath -o "{{.MECATL_MICROVM_E2E_MECATUI_BIN}}" -ldflags "-X main.version={{.MECATL_MICROVM_E2E_VERSION}} -X main.microVMReleaseDefaultsB64={{.MECATL_MICROVM_E2E_DEFAULTS_B64}}" ./cmd/mecatui
 
   e2e:microvm:
-    desc: Run the deterministic mock-provider Linux amd64 KVM microVM MVP journey (artifact network required; no live LLM; never part of task test).
+    desc: Run the deterministic mock-provider Linux amd64 KVM or Darwin arm64 HVF production-composed journey (artifact network required; no live LLM; never part of task test).
     cmds:
       - cmd: |
           set -eu
@@ -412,7 +418,8 @@ tasks:
           fi
           case "$(uname -s)-$(uname -m)" in
             Linux-x86_64) PLATFORM=linux-amd64 ;;
-            *) echo "microVM MVP E2E requires Linux amd64 KVM; got $(uname -s)/$(uname -m)" >&2; exit 1 ;;
+            Darwin-arm64) PLATFORM=darwin-arm64 ;;
+            *) echo "microVM production E2E requires Linux amd64 KVM or Darwin arm64 macOS 15+ HVF; got $(uname -s)/$(uname -m)" >&2; exit 1 ;;
           esac
           E2E_ROOT="$(pwd)/.scratch/microvm-e2e/${PLATFORM}"
           RUN_ROOT_BASE="$(pwd)/.scratch/microvm-e2e/run"
@@ -428,11 +435,9 @@ tasks:
           trap 'rm -rf "${INSTALL_ROOT}"' EXIT
           (cd environment/microvm && GOWORK=off go build -o "${MICROVMD_BIN}" ./cmd/mecatl-microvmd)
           # The focused live test crosses ordinary first-use readiness and the
-          # production UDS through the server-owned microVM default. It then drives
-          # one normal CreateSession agent loop whose Bash call reads and changes the
-          # isolated guest worktree, and proves that change cannot reach the source.
-          # Multi-session sharing, restart, and delegation routing are deterministic
-          # composition tests in the ordinary offline gate below.
+          # production UDS through the server-owned microVM default. It drives
+          # filesystem Read/Write/Shell, source and host-path isolation, logical-child
+          # merge/conflict behavior, graceful daemon restart, and exact reattachment.
           DEFAULT_LIVE_TEST_NAMES='TestMicroVMDefaultPlacementDailyHarnessJourney'
           run_live_tests() {
             LIVE_TESTS=$1

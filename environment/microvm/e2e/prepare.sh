@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-release=v0.0.40
+release=v0.0.41
 alpine_version=3.22.1
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 
@@ -24,18 +24,18 @@ esac
 
 case "$platform" in
   linux-amd64)
-    runtime_sha=4de717eba0c2fcfbce564fc4296536b78644b50772f3682c9be9e8809ec76165
-    firmware_sha=8c036287c6689bec9e8a01697a5b2f646d21bf6af276a7a02b04b83830461441
+    runtime_sha=01371a0149ca39065f73d0c78d480f40236714a314bf7bef8ea292bacbfdf483
+    firmware_sha=df7fb76e31ccbd9709e04ccc1a9d33546ad07100e8c4650d90b939553dd20007
     rootfs_sha=0e5cc5702ad72a4e151f219976ba946d50161c3acce210ef3b122a529aba1270
     ;;
   linux-arm64)
-    runtime_sha=2f1c9f0db4c549158f3b253d6b121f4a705ebfce08dad211ec1438838f064c73
-    firmware_sha=f7c1ccbc2a71de96883ccabbd5bff40ea1a553948365e102309a652326fbaf8f
+    runtime_sha=4731386229166040b9b8eab54f38ecf27ce229c8c723e212354e271a5e684588
+    firmware_sha=cf851c509aaa8eafc77c4df28947cd1bfaf083d8ee4ece9cc0f87c6451969f9d
     rootfs_sha=188416d41f9f0c9a6e9427b75149e43ccf3a89587b2d27c9ad506e7ffca78d1c
     ;;
   darwin-arm64)
-    runtime_sha=c7442f2e6cd6916a5058432a4e2447622b4b509786bb1e636eda90f9dd2facce
-    firmware_sha=434e803ab08d84b525bb1addfeb8c590d3550d726141fe2c87d906df3e596ffa
+    runtime_sha=2641838c11064cd9b896825eeee263aab35e6cca9a2d7b3cfddd649ae4c5125d
+    firmware_sha=02ff1ca992c3b104cf6c4d0c2995fac5aa8646e7f7cafa0ee72b734b69fc5216
     rootfs_sha=188416d41f9f0c9a6e9427b75149e43ccf3a89587b2d27c9ad506e7ffca78d1c
     ;;
 esac

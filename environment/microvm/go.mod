@@ -8,7 +8,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-containerregistry v0.22.1
-	github.com/stacklok/go-microvm v0.0.40
+	github.com/stacklok/go-microvm v0.0.41
 	github.com/stacklok/mecatl/engine v0.10.0
 	github.com/stacklok/toolhive-core v0.0.46
 	golang.org/x/sys v0.48.0

@@ -51,7 +51,7 @@ type GuestEgressPolicy struct {
 }
 
 // GuestNetworkConfigurator applies guest-side settings required by tightening
-// modes because go-microvm v0.0.40's frame filter is IPv4-only.
+// modes because go-microvm v0.0.41's frame filter is IPv4-only.
 type GuestNetworkConfigurator interface {
 	DisableIPv6(context.Context) error
 }

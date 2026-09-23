@@ -106,7 +106,7 @@ jobs:
           docker builder prune --all --force
           docker image prune --all --force
 
-      - name: Run pinned v0.0.40 real-hypervisor journey
+      - name: Run pinned v0.0.41 real-hypervisor journey
         env:
           MECATL_MICROVM_E2E_PREPARED: "1"
           MECATL_MICROVM_E2E_REFRESH_KVM_ACL: "1"
@@ -154,10 +154,11 @@ jobs:
           cache-dependency-path: |
             engine/go.sum
             environment/microvm/go.sum
-      - name: Compile production daemon and tagged E2E
+      - name: Run nested module unit/race coverage and compile tagged E2E
         run: |
           cd environment/microvm
-          GOWORK=off go test ./cmd/mecatl-microvmd
+          GOWORK=off go test -race ./...
           GOWORK=off go build ./cmd/mecatl-microvmd
           cd ../..
+          go test -race ./internal/adapter/microvm ./internal/adapter/microvmmanager
           go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'

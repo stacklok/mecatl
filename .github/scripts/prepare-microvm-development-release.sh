@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 umask 022
+export COPYFILE_DISABLE=1
 
 if [ "$#" -ne 1 ] || [ -z "$1" ]; then
   echo "usage: $0 SOURCE_BUILD_IDENTITY" >&2
@@ -10,7 +11,8 @@ source_build_identity=$1
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) platform=linux-amd64 ;;
-  *) echo "microVM development releases require Linux amd64" >&2; exit 1 ;;
+  Darwin-arm64) platform=darwin-arm64 ;;
+  *) echo "microVM development releases require Linux amd64 or Darwin arm64" >&2; exit 1 ;;
 esac
 
 "$repo_root/environment/microvm/e2e/prepare.sh"
@@ -19,10 +21,55 @@ output="$repo_root/.scratch/microvm-dev/$platform"
 rm -rf "$output"
 mkdir -p "$output"
 bundle="$output/mecatl-microvm-development-$platform.tar.gz"
-members="$output/bundle-members"
-find "$prepared/package" -mindepth 1 -printf '%P\0' | LC_ALL=C sort -z >"$members"
-tar --no-recursion -C "$prepared/package" --null --verbatim-files-from --files-from="$members" -cf - | gzip -n >"$bundle"
-rm -f "$members"
+if ! python3 - "$prepared/package" "$bundle" <<'PY'
+import gzip
+import os
+import sys
+import tarfile
+import tempfile
+
+root, output = map(os.path.abspath, sys.argv[1:])
+if not os.path.isdir(root):
+    raise SystemExit(f"archive root is not a directory: {root}")
+
+def traversal_error(error):
+    raise error
+
+def names():
+    for current, dirs, files in os.walk(root, topdown=True, onerror=traversal_error, followlinks=False):
+        dirs.sort()
+        files.sort()
+        for name in sorted(dirs + files):
+            yield os.path.relpath(os.path.join(current, name), root).replace(os.sep, "/")
+
+fd, temporary = tempfile.mkstemp(prefix=".microvm-development-", dir=os.path.dirname(output))
+os.close(fd)
+try:
+    with open(temporary, "wb") as stream:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                for name in names():
+                    source = os.path.join(root, *name.split("/"))
+                    info = archive.gettarinfo(source, arcname=name)
+                    if not (info.isdir() or info.isreg() or info.issym()):
+                        raise SystemExit(f"unsupported archive member type: {name}")
+                    info.pax_headers = {}
+                    if info.isreg():
+                        with open(source, "rb") as member:
+                            archive.addfile(info, member)
+                    else:
+                        archive.addfile(info)
+    os.replace(temporary, output)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+then
+  exit 1
+fi
 chmod 0600 "$bundle"
 key="$output/publisher.pub"
 cp "$prepared/release-fixture/publisher.pub" "$key"
@@ -34,12 +81,12 @@ sha256_file() {
 bundle_sha=$(sha256_file "$bundle")
 key_sha=$(sha256_file "$key")
 descriptor="$output/release.json"
-python3 - "$descriptor" "$source_build_identity" "$bundle" "$bundle_sha" "$key" "$key_sha" <<'PY'
+python3 - "$descriptor" "$source_build_identity" "$bundle" "$bundle_sha" "$key" "$key_sha" "$platform" <<'PY'
 import json, sys
-path, source, bundle, bundle_sha, key, key_sha = sys.argv[1:]
+path, source, bundle, bundle_sha, key, key_sha, platform = sys.argv[1:]
 value = {
     "schema": "mecatl-microvm-development-release/v1",
-    "platform": "linux-amd64",
+    "platform": platform,
     "source_build_identity": source,
     "bundle_path": bundle,
     "bundle_sha256": bundle_sha,

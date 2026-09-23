@@ -7,6 +7,7 @@ ci="$repo_root/.github/workflows/ci.yml"
 e2e="$repo_root/.github/workflows/microvm-e2e.yml"
 release="$repo_root/.github/workflows/release.yml"
 package="$repo_root/.github/scripts/package-microvm-release.sh"
+prepare_dev="$repo_root/.github/scripts/prepare-microvm-development-release.sh"
 sign="$repo_root/.github/scripts/sign-microvm-release-evidence.sh"
 install="$repo_root/.github/scripts/install-microvm-release.sh"
 validate_release_ref="$repo_root/.github/scripts/validate-release-ref.sh"
@@ -30,6 +31,18 @@ forbid() {
     exit 1
   fi
 }
+
+# Release archive creation must stay portable across GNU and BSD hosts.
+forbid 'find "$prepared/package" -mindepth 1 -printf' "$prepare_dev"
+forbid 'sort -z' "$prepare_dev"
+forbid 'tar --sort=name' "$package"
+forbid 'tar --no-recursion' "$prepare_dev"
+require 'export COPYFILE_DISABLE=1' "$package"
+require 'export COPYFILE_DISABLE=1' "$prepare_dev"
+require 'if not os.path.isdir(root):' "$package"
+require 'if not os.path.isdir(root):' "$prepare_dev"
+require 'onerror=traversal_error' "$package"
+require 'onerror=traversal_error' "$prepare_dev"
 
 # Ordinary PR CI must cross the nested-module boundary at every relevant gate.
 require 'environment/microvm/go.sum' "$ci"
@@ -68,7 +81,7 @@ preflight_line=$(grep -n '^      - name: Explicit artifact preparation preflight
 prepare_line=$(grep -n '^      - name: Prepare packaged microVM artifacts$' "$e2e" | cut -d: -f1)
 refresh_line=$(grep -n '^      - name: Refresh KVM access after artifact preparation$' "$e2e" | cut -d: -f1)
 cleanup_line=$(grep -n '^      - name: Reclaim preparation-only disk$' "$e2e" | cut -d: -f1)
-live_line=$(grep -n '^      - name: Run pinned v0.0.40 real-hypervisor journey$' "$e2e" | cut -d: -f1)
+live_line=$(grep -n '^      - name: Run pinned v0.0.41 real-hypervisor journey$' "$e2e" | cut -d: -f1)
 test "$preflight_line" -lt "$prepare_line"
 test "$prepare_line" -lt "$refresh_line"
 test "$refresh_line" -lt "$cleanup_line"
@@ -293,6 +306,13 @@ mkdir -p "$scratch/fixture/runtime" "$scratch/fixture/firmware" "$scratch/fixtur
 printf 'microvmd-fixture\n' >"$scratch/fixture/mecatl-microvmd"
 printf 'guest-agent-fixture\n' >"$scratch/fixture/mecatl-guest-agent"
 printf 'runtime-fixture\n' >"$scratch/fixture/runtime/libkrun.so"
+printf 'leading-dash-fixture\n' >"$scratch/fixture/runtime/-leading"
+printf 'legitimate-dot-underscore-fixture\n' >"$scratch/fixture/runtime/._legitimate"
+python3 - "$scratch/fixture/runtime" <<'PY'
+import pathlib
+import sys
+pathlib.Path(sys.argv[1], "line\nbreak").write_text("newline-fixture\n", encoding="utf-8")
+PY
 printf 'firmware-fixture\n' >"$scratch/fixture/firmware/libkrunfw.so"
 printf 'guest-agent-fixture\n' >"$scratch/fixture/execution-image/usr/local/bin/mecatl-guest-agent"
 ln -s /bin/busybox "$scratch/fixture/execution-image/bin/arch"
@@ -321,7 +341,83 @@ MICROVM_RELEASE_FIXTURE_DIR="$scratch/fixture" SOURCE_DATE_EPOCH=0 \
   "$package" "$scratch/two" linux-amd64 v0.0.0-test
 
 diff -ru "$scratch/one" "$scratch/two"
-require 'go-microvm/releases/download/v0.0.40' "$scratch/one/microvm-release-linux-amd64.json"
+python3 - "$scratch/one/mecatl-runtime-linux-amd64.tar.gz" <<'PY'
+import sys
+import tarfile
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    members = archive.getmembers()
+    names = {member.name for member in members}
+    expected = {
+        "-leading": b"leading-dash-fixture\n",
+        "line\nbreak": b"newline-fixture\n",
+        "._legitimate": b"legitimate-dot-underscore-fixture\n",
+        "libkrun.so": b"runtime-fixture\n",
+    }
+    if not expected.keys() <= names:
+        raise SystemExit(f"archive omitted fixture filenames: {expected.keys() - names}")
+    for name, content in expected.items():
+        member = archive.extractfile(name)
+        if member is None or member.read() != content:
+            raise SystemExit(f"archive changed fixture contents: {name!r}")
+    if any(member.uid != 0 or member.gid != 0 or int(member.mtime) != 0 for member in members):
+        raise SystemExit("archive metadata is not normalized")
+PY
+mkdir -p "$scratch/failure/mecatl-runtime-linux-amd64.tar.gz"
+if MICROVM_RELEASE_FIXTURE_DIR="$scratch/fixture" SOURCE_DATE_EPOCH=0 \
+  MICROVM_RELEASE_EXECUTION_IMAGE_REF="$fixture_ref" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_MANIFEST_DIGEST="$fixture_manifest" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_TREE_DIGEST="$fixture_tree" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_DISCOVERY_REFERENCE="$discovery_ref" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_RESOLUTION_EVIDENCE="$resolution_evidence" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_PLATFORM="$execution_platform" \
+  "$package" "$scratch/failure" linux-amd64 v0.0.0-test >/dev/null 2>&1; then
+  echo "package script swallowed archive creation failure" >&2
+  exit 1
+fi
+
+test ! -e "$scratch/failure/microvm-release-linux-amd64.json"
+missing_output="$scratch/missing-source"
+if MICROVM_RELEASE_FIXTURE_DIR="$scratch/fixture" \
+  MICROVM_RELEASE_RUNTIME_DIR="$scratch/does-not-exist" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_REF="$fixture_ref" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_MANIFEST_DIGEST="$fixture_manifest" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_TREE_DIGEST="$fixture_tree" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_DISCOVERY_REFERENCE="$discovery_ref" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_RESOLUTION_EVIDENCE="$resolution_evidence" \
+  MICROVM_RELEASE_EXECUTION_IMAGE_PLATFORM="$execution_platform" \
+  "$package" "$missing_output" linux-amd64 v0.0.0-test >/dev/null 2>&1; then
+  echo "package script accepted a missing package source" >&2
+  exit 1
+fi
+test ! -e "$missing_output/mecatl-runtime-linux-amd64.tar.gz"
+test ! -e "$missing_output/microvm-release-linux-amd64.json"
+
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir -p "$scratch/unreadable-source"
+  printf 'unreadable\n' >"$scratch/unreadable-source/member"
+  chmod 000 "$scratch/unreadable-source"
+  unreadable_output="$scratch/unreadable-output"
+  unreadable_succeeded=false
+  if MICROVM_RELEASE_FIXTURE_DIR="$scratch/fixture" \
+    MICROVM_RELEASE_RUNTIME_DIR="$scratch/unreadable-source" \
+    MICROVM_RELEASE_EXECUTION_IMAGE_REF="$fixture_ref" \
+    MICROVM_RELEASE_EXECUTION_IMAGE_MANIFEST_DIGEST="$fixture_manifest" \
+    MICROVM_RELEASE_EXECUTION_IMAGE_TREE_DIGEST="$fixture_tree" \
+    MICROVM_RELEASE_EXECUTION_IMAGE_DISCOVERY_REFERENCE="$discovery_ref" \
+    MICROVM_RELEASE_EXECUTION_IMAGE_RESOLUTION_EVIDENCE="$resolution_evidence" \
+    MICROVM_RELEASE_EXECUTION_IMAGE_PLATFORM="$execution_platform" \
+    "$package" "$unreadable_output" linux-amd64 v0.0.0-test >/dev/null 2>&1; then
+    unreadable_succeeded=true
+  fi
+  chmod 700 "$scratch/unreadable-source"
+  if [ "$unreadable_succeeded" = true ]; then
+    echo "package script accepted an unreadable package source" >&2
+    exit 1
+  fi
+  test ! -e "$unreadable_output/mecatl-runtime-linux-amd64.tar.gz"
+  test ! -e "$unreadable_output/microvm-release-linux-amd64.json"
+fi
+require 'go-microvm/releases/download/v0.0.41' "$scratch/one/microvm-release-linux-amd64.json"
 for kind in runtime firmware; do
   require "\"kind\":\"$kind\"" "$scratch/one/microvm-release-linux-amd64.json"
   require "mecatl-$kind-linux-amd64.tar.gz" "$scratch/one/microvm-release-linux-amd64.json"
@@ -379,6 +475,20 @@ for kind in runtime firmware guest-agent; do
   require "$evidence.provenance.json" "$scratch/install/microvmd-artifacts.json"
   require "$evidence.provenance.sigstore.json" "$scratch/install/microvmd-artifacts.json"
 done
+python3 - "$scratch/install/artifacts/runtime" <<'PY'
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+expected = {
+    "-leading": b"leading-dash-fixture\n",
+    "line\nbreak": b"newline-fixture\n",
+    "._legitimate": b"legitimate-dot-underscore-fixture\n",
+}
+for name, content in expected.items():
+    path = root / name
+    if path.read_bytes() != content:
+        raise SystemExit(f"installed archive changed fixture contents: {name!r}")
+PY
 test ! -e "$scratch/install/artifacts/execution-image"
 require "\"reference\":\"$fixture_ref\"" "$scratch/install/microvmd-artifacts.json"
 require "\"manifest_digest\":\"$fixture_manifest\"" "$scratch/install/microvmd-artifacts.json"

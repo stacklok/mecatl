@@ -16,7 +16,7 @@ func TestADR_0224_MicroVMDependenciesStayOutOfEngineAndRoot(t *testing.T) {
 	repo := repoRoot(t)
 	microvmMod := filepath.Join(repo, "environment", "microvm", "go.mod")
 	mustContain(t, microvmMod, "module github.com/stacklok/mecatl/environment/microvm")
-	mustContain(t, microvmMod, "github.com/stacklok/go-microvm v0.0.40")
+	mustContain(t, microvmMod, "github.com/stacklok/go-microvm v0.0.41")
 	mustContain(t, filepath.Join(repo, "go.work"), "use ./environment/microvm")
 
 	for _, path := range []string{

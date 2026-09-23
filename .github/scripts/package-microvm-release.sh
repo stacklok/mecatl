@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+export COPYFILE_DISABLE=1
 
 if [ "$#" -ne 3 ]; then
   echo "usage: $0 OUTPUT_DIR PLATFORM VERSION" >&2
@@ -10,9 +11,9 @@ output=$1
 platform=$2
 version=$3
 case "$platform" in
-  linux-amd64) host_os=linux; arch=amd64; runtime_digest=4de717eba0c2fcfbce564fc4296536b78644b50772f3682c9be9e8809ec76165; firmware_digest=8c036287c6689bec9e8a01697a5b2f646d21bf6af276a7a02b04b83830461441 ;;
-  linux-arm64) host_os=linux; arch=arm64; runtime_digest=2f1c9f0db4c549158f3b253d6b121f4a705ebfce08dad211ec1438838f064c73; firmware_digest=f7c1ccbc2a71de96883ccabbd5bff40ea1a553948365e102309a652326fbaf8f ;;
-  darwin-arm64) host_os=darwin; arch=arm64; runtime_digest=c7442f2e6cd6916a5058432a4e2447622b4b509786bb1e636eda90f9dd2facce; firmware_digest=434e803ab08d84b525bb1addfeb8c590d3550d726141fe2c87d906df3e596ffa ;;
+  linux-amd64) host_os=linux; arch=amd64; runtime_digest=01371a0149ca39065f73d0c78d480f40236714a314bf7bef8ea292bacbfdf483; firmware_digest=df7fb76e31ccbd9709e04ccc1a9d33546ad07100e8c4650d90b939553dd20007 ;;
+  linux-arm64) host_os=linux; arch=arm64; runtime_digest=4731386229166040b9b8eab54f38ecf27ce229c8c723e212354e271a5e684588; firmware_digest=cf851c509aaa8eafc77c4df28947cd1bfaf083d8ee4ece9cc0f87c6451969f9d ;;
+  darwin-arm64) host_os=darwin; arch=arm64; runtime_digest=2641838c11064cd9b896825eeee263aab35e6cca9a2d7b3cfddd649ae4c5125d; firmware_digest=02ff1ca992c3b104cf6c4d0c2995fac5aa8646e7f7cafa0ee72b734b69fc5216 ;;
   *) echo "unsupported microVM release platform: $platform" >&2; exit 2 ;;
 esac
 case "$version" in
@@ -55,6 +56,70 @@ sha256_file() {
   fi
 }
 
+reproducible_tar() {
+  tree=$1
+  archive=$2
+  epoch=${SOURCE_DATE_EPOCH:-0}
+  if ! python3 - "$tree" "$archive" "$epoch" <<'PY'
+import gzip
+import os
+import sys
+import tarfile
+import tempfile
+
+root, output, raw_epoch = sys.argv[1:]
+epoch = int(raw_epoch)
+if epoch < 0:
+    raise SystemExit("SOURCE_DATE_EPOCH must be non-negative")
+root = os.path.abspath(root)
+output = os.path.abspath(output)
+if not os.path.isdir(root):
+    raise SystemExit(f"archive root is not a directory: {root}")
+
+def traversal_error(error):
+    raise error
+
+def names():
+    yield "."
+    for current, dirs, files in os.walk(root, topdown=True, onerror=traversal_error, followlinks=False):
+        dirs.sort()
+        files.sort()
+        for name in sorted(dirs + files):
+            yield os.path.relpath(os.path.join(current, name), root).replace(os.sep, "/")
+
+fd, temporary = tempfile.mkstemp(prefix=".microvm-archive-", dir=os.path.dirname(output))
+os.close(fd)
+try:
+    with open(temporary, "wb") as stream:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                for name in names():
+                    source = root if name == "." else os.path.join(root, *name.split("/"))
+                    info = archive.gettarinfo(source, arcname=name)
+                    if not (info.isdir() or info.isreg() or info.issym()):
+                        raise SystemExit(f"unsupported archive member type: {name}")
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""
+                    info.mtime = epoch
+                    info.pax_headers = {}
+                    if info.isreg():
+                        with open(source, "rb") as member:
+                            archive.addfile(info, member)
+                    else:
+                        archive.addfile(info)
+    os.replace(temporary, output)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+  then
+    return 1
+  fi
+}
+
 download_verified() {
   url=$1
   destination=$2
@@ -78,8 +143,8 @@ if [ -n "${MICROVM_RELEASE_FIXTURE_DIR:-}" ]; then
   cp -R "$runtime_source/." "$artifact_work/runtime/"
   cp -R "$firmware_source/." "$artifact_work/firmware/"
 else
-  download_verified "https://github.com/stacklok/go-microvm/releases/download/v0.0.40/go-microvm-runtime-$platform.tar.gz" "$artifact_work/runtime.tar.gz" "$runtime_digest"
-  download_verified "https://github.com/stacklok/go-microvm/releases/download/v0.0.40/go-microvm-firmware-$platform.tar.gz" "$artifact_work/firmware.tar.gz" "$firmware_digest"
+  download_verified "https://github.com/stacklok/go-microvm/releases/download/v0.0.41/go-microvm-runtime-$platform.tar.gz" "$artifact_work/runtime.tar.gz" "$runtime_digest"
+  download_verified "https://github.com/stacklok/go-microvm/releases/download/v0.0.41/go-microvm-firmware-$platform.tar.gz" "$artifact_work/firmware.tar.gz" "$firmware_digest"
   tar -xzf "$artifact_work/runtime.tar.gz" -C "$artifact_work/runtime" --strip-components=1
   tar -xzf "$artifact_work/firmware.tar.gz" -C "$artifact_work/firmware" --strip-components=1
 fi
@@ -121,7 +186,9 @@ write_artifact() {
     artifact_name="mecatl-$artifact_kind-$platform"
   fi
   artifact_tree_digest=$(artifact_digest "$artifact_tree")
-  tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-0}" --owner=0 --group=0 --numeric-owner -C "$artifact_tree" -cf - . | gzip -n >"$output/$artifact_name.tar.gz"
+  if ! reproducible_tar "$artifact_tree" "$output/$artifact_name.tar.gz"; then
+    return 1
+  fi
   write_metadata "$artifact_name" "${artifact_tree_digest#sha256:}"
   printf '%s\t%s\t%s\n' "$artifact_kind" "$artifact_name" "$artifact_tree_digest"
 }
@@ -135,7 +202,7 @@ write_metadata() {
   metadata_name=$1
   metadata_digest=$2
   cat >"$output/$metadata_name.provenance.json" <<EOF
-{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"$metadata_name","digest":{"sha256":"$metadata_digest"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://github.com/stacklok/mecatl/microvm-release/v1","externalParameters":{"platform":"$platform","version":"$version"},"resolvedDependencies":[{"uri":"pkg:golang/github.com/stacklok/go-microvm@v0.0.40"}]},"runDetails":{"builder":{"id":"https://github.com/stacklok/mecatl/.github/workflows/release.yml"}}}}
+{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"$metadata_name","digest":{"sha256":"$metadata_digest"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://github.com/stacklok/mecatl/microvm-release/v1","externalParameters":{"platform":"$platform","version":"$version"},"resolvedDependencies":[{"uri":"pkg:golang/github.com/stacklok/go-microvm@v0.0.41"}]},"runDetails":{"builder":{"id":"https://github.com/stacklok/mecatl/.github/workflows/release.yml"}}}}
 EOF
 }
 write_metadata "$microvmd" "$microvmd_digest"
@@ -147,7 +214,7 @@ firmware_record=$(write_artifact firmware "$artifact_work/firmware")
 guest_agent_record=$(write_artifact guest-agent "$artifact_work/guest-agent")
 image_name="mecatl-execution-image-$platform"
 cat >"$output/$image_name.provenance.json" <<EOF
-{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"$image_name","digest":{"sha256":"${execution_tree_digest#sha256:}"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://github.com/stacklok/mecatl/microvm-release/v1","externalParameters":{"platform":"$platform","version":"$version"},"resolvedDependencies":[{"uri":"pkg:golang/github.com/stacklok/go-microvm@v0.0.40"},{"uri":"$execution_discovery_ref","digest":{"sha256":"${execution_manifest#sha256:}","resolutionEvidence":"${execution_resolution_evidence#sha256:}"},"platform":"$execution_platform"}]},"runDetails":{"builder":{"id":"https://github.com/stacklok/mecatl/.github/workflows/release.yml"}}}}
+{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"$image_name","digest":{"sha256":"${execution_tree_digest#sha256:}"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://github.com/stacklok/mecatl/microvm-release/v1","externalParameters":{"platform":"$platform","version":"$version"},"resolvedDependencies":[{"uri":"pkg:golang/github.com/stacklok/go-microvm@v0.0.41"},{"uri":"$execution_discovery_ref","digest":{"sha256":"${execution_manifest#sha256:}","resolutionEvidence":"${execution_resolution_evidence#sha256:}"},"platform":"$execution_platform"}]},"runDetails":{"builder":{"id":"https://github.com/stacklok/mecatl/.github/workflows/release.yml"}}}}
 EOF
 runtime_name=$(printf '%s' "$runtime_record" | cut -f2)
 firmware_name=$(printf '%s' "$firmware_record" | cut -f2)
@@ -161,6 +228,6 @@ guest_agent_payload_digest=$(sha256_file "$output/$guest_agent_name.tar.gz")
 printf '%s  %s\n%s  %s\n%s  %s\n' "$runtime_payload_digest" "$runtime_name.tar.gz" "$firmware_payload_digest" "$firmware_name.tar.gz" "$guest_agent_payload_digest" "$guest_agent_name.tar.gz" >>"$output/SHA256SUMS-$platform"
 
 cat >"$output/microvm-release-$platform.json" <<EOF
-{"schema":"mecatl-microvm-release/v2","version":"$version","platform":"$platform","admission_artifacts":[{"kind":"runtime","payload":"$runtime_name.tar.gz","payload_digest":"sha256:$runtime_payload_digest","reference":"$runtime_name.tar.gz@$runtime_tree_digest","digest":"$runtime_tree_digest","provenance":"$runtime_name.provenance.json","sigstore_bundle":"$runtime_name.provenance.sigstore.json","upstream":"https://github.com/stacklok/go-microvm/releases/download/v0.0.40/go-microvm-runtime-$platform.tar.gz"},{"kind":"firmware","payload":"$firmware_name.tar.gz","payload_digest":"sha256:$firmware_payload_digest","reference":"$firmware_name.tar.gz@$firmware_tree_digest","digest":"$firmware_tree_digest","provenance":"$firmware_name.provenance.json","sigstore_bundle":"$firmware_name.provenance.sigstore.json","upstream":"https://github.com/stacklok/go-microvm/releases/download/v0.0.40/go-microvm-firmware-$platform.tar.gz"},{"kind":"guest-agent","payload":"$guest_agent_name.tar.gz","payload_digest":"sha256:$guest_agent_payload_digest","reference":"$guest_agent_name.tar.gz@$guest_agent_tree_digest","digest":"$guest_agent_tree_digest","provenance":"$guest_agent_name.provenance.json","sigstore_bundle":"$guest_agent_name.provenance.sigstore.json"},{"kind":"execution-image","reference":"$execution_ref","manifest_digest":"$execution_manifest","digest":"$execution_tree_digest","discovery_reference":"$execution_discovery_ref","resolution_evidence":"$execution_resolution_evidence","platform":"$execution_platform","provenance":"$image_name.provenance.json","sigstore_bundle":"$image_name.provenance.sigstore.json"}],"artifacts":[{"name":"$microvmd","digest":"sha256:$microvmd_digest","sbom":"$microvmd.spdx.json","evidence":"$microvmd.provenance.sigstore.json","provenance":"$microvmd.provenance.json"},{"name":"$guest","digest":"sha256:$guest_digest","sbom":"$guest.spdx.json","evidence":"$guest.provenance.sigstore.json","provenance":"$guest.provenance.json"},{"name":"$digest_tool","digest":"sha256:$digest_tool_digest","sbom":"$digest_tool.spdx.json","evidence":"$digest_tool.provenance.sigstore.json","provenance":"$digest_tool.provenance.json"}]}
+{"schema":"mecatl-microvm-release/v2","version":"$version","platform":"$platform","admission_artifacts":[{"kind":"runtime","payload":"$runtime_name.tar.gz","payload_digest":"sha256:$runtime_payload_digest","reference":"$runtime_name.tar.gz@$runtime_tree_digest","digest":"$runtime_tree_digest","provenance":"$runtime_name.provenance.json","sigstore_bundle":"$runtime_name.provenance.sigstore.json","upstream":"https://github.com/stacklok/go-microvm/releases/download/v0.0.41/go-microvm-runtime-$platform.tar.gz"},{"kind":"firmware","payload":"$firmware_name.tar.gz","payload_digest":"sha256:$firmware_payload_digest","reference":"$firmware_name.tar.gz@$firmware_tree_digest","digest":"$firmware_tree_digest","provenance":"$firmware_name.provenance.json","sigstore_bundle":"$firmware_name.provenance.sigstore.json","upstream":"https://github.com/stacklok/go-microvm/releases/download/v0.0.41/go-microvm-firmware-$platform.tar.gz"},{"kind":"guest-agent","payload":"$guest_agent_name.tar.gz","payload_digest":"sha256:$guest_agent_payload_digest","reference":"$guest_agent_name.tar.gz@$guest_agent_tree_digest","digest":"$guest_agent_tree_digest","provenance":"$guest_agent_name.provenance.json","sigstore_bundle":"$guest_agent_name.provenance.sigstore.json"},{"kind":"execution-image","reference":"$execution_ref","manifest_digest":"$execution_manifest","digest":"$execution_tree_digest","discovery_reference":"$execution_discovery_ref","resolution_evidence":"$execution_resolution_evidence","platform":"$execution_platform","provenance":"$image_name.provenance.json","sigstore_bundle":"$image_name.provenance.sigstore.json"}],"artifacts":[{"name":"$microvmd","digest":"sha256:$microvmd_digest","sbom":"$microvmd.spdx.json","evidence":"$microvmd.provenance.sigstore.json","provenance":"$microvmd.provenance.json"},{"name":"$guest","digest":"sha256:$guest_digest","sbom":"$guest.spdx.json","evidence":"$guest.provenance.sigstore.json","provenance":"$guest.provenance.json"},{"name":"$digest_tool","digest":"sha256:$digest_tool_digest","sbom":"$digest_tool.spdx.json","evidence":"$digest_tool.provenance.sigstore.json","provenance":"$digest_tool.provenance.json"}]}
 EOF
 rm -rf "$artifact_work"
