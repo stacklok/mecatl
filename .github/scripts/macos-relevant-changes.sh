@@ -40,10 +40,12 @@ irrelevant() {
     *) return 1 ;;
   esac
 
-  # Common to both categories: documentation, the docs/user-facing site, and the
-  # terminal leaf packages that no macOS-job binary or test imports.
+  # Common to both categories: documentation, the docs/user-facing site, the
+  # Mecatl Studio workspace (apps/ holds no Go package and depends on the
+  # PUBLISHED SDK, so it can reach neither a macOS Go job nor the SDK spawn job),
+  # and the terminal leaf packages that no macOS-job binary or test imports.
   case "$1" in
-    README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*)
+    README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|apps/*)
       return 0 ;;
     cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|examples/*|perf/*|e2e/*|deploy/*|docs/lint/*)
       return 0 ;;

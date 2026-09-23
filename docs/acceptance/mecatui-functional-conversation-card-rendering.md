@@ -4,7 +4,7 @@
 **Work classification:** Bounded — restructures the client-local conversation presentation pipeline and its cache contract without changing public APIs, persistence, authority, or deployment behavior.
 **Decision record:** None — the mecatui-internal rendering boundary and its migration rationale are local to `cmd/mecatui/ui`.
 **Phase:** conversation-card rendering convergence after the landed card-layout correction
-**Status:** proposed, 2026-09-21. Operator-directed follow-up to the landed [Mecatui card layout plan](mecatui-card-layout.md).
+**Status:** landed, 2026-09-21. Implementation candidate; authoritative when its implementation PR merges. Plan / Interface PR [#1739](https://github.com/stacklok/mecatl/pull/1739) merged at `183bd78f02a0021c1eecb22368cf257e26950249`; the operator authorized the targeted permanent-error replay parity amendment on this implementation branch.
 **Delivery:** Split. The internal intra-UI API, card-family migration boundary, deterministic cache-key contract, and preserved scrollback invariants require interface review before implementation.
 **Expected tasks:** deferred to orchestration after the Plan / Interface review.
 
@@ -24,7 +24,7 @@ None — the operator selected the main-conversation scope, excluded modal/surfa
 - **CLI / config:** None — no flags, settings, theme selection policy, or keybindings change; existing Ctrl+t expansion remains the control for complete tool output.
 - **Events / persistence:** None — conversation block IDs, card inputs, prepared output, cache entries, and keys are process-local UI state; no session snapshot, event log, or restart contract changes.
 - **Security / authority:** None — existing plain-text terminal sanitization and the separate Glamour Markdown path remain mandatory; this introduces no new input source, permission, secret, or authority path.
-- **Compatibility / migration:** Client-internal, source-compatible migration. Existing rendering output, wrapping semantics, card expansion, selection, logical-anchor restoration, and cache fast paths remain compatible except that padding-derived double wraps/blank rows are corrected.
+- **Compatibility / migration:** Client-internal, source-compatible migration. Existing rendering output, wrapping semantics, card expansion, selection, logical-anchor restoration, and cache fast paths remain compatible except that padding-derived double wraps/blank rows are corrected and persisted permanent provider failures replay with the same permanent-error presentation as their live result.
 
 ## In scope — 3 scenarios, in implementation order
 
@@ -35,12 +35,12 @@ The presentation boundary must be functional rather than receive mutable `block`
 **Acceptance:**
 - AC1.1: A UI-internal conversation-card package defines immutable per-family input values, an explicit layout containing every render-relevant geometry, appearance/frame, hint, and rendering-dialect snapshot, and prepared output containing final card-local decorated lines plus an equal-length structural-row slice. The row slice carries every field needed to construct a `renderedRow` without parsing styled output or retaining semantic source text.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructuralProvenance`
-- AC1.2: Card preparation and cache-identity derivation from an input snapshot and layout are deterministic and neither retain nor observe subsequent mutation of caller-owned input, nested slices/maps, callbacks, conversation, renderer, viewport, terminal, clock, or process environment state.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_PrepareAndKeyOwnImmutableSnapshots`
-- AC1.3: Each card family derives one opaque 32-byte cache identity from a canonical explicit encoding of every render-relevant input and layout value, including width, expansion, visible hints, concrete appearance/frame data, and rendering-format version. A changed render-relevant value produces a different identity and re-prepared output; unchanged snapshots are byte-identical. Digest equality is the accepted identity for this local, non-persistent, non-adversarial in-memory cache.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_CacheKeyTracksRenderInputs`
+- AC1.2: Card preparation from an input snapshot and layout is deterministic and neither retains nor observes subsequent mutation of caller-owned input, nested slices/maps, callbacks, conversation, renderer, viewport, terminal, clock, or process environment state.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_PrepareOwnsImmutableSnapshots`
+- AC1.3: Each render-visible block mutation advances that block's conversation-owned content revision through one mutation gateway. The renderer compares that revision with one explicit shared render-context key containing width, expanded state, theme/palette generation, visible-hint/keymap generation, and rendering dialect; a changed content or context member re-prepares output, while a settled matching entry performs no snapshot, preparation, or hash work.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksContentAndContext`
 - AC1.4: The card-preparation package owns neither cache storage/lifetime nor transcript/block identity, selection, viewport, or Bubble Tea state; it imports only the mecatui UI/theme/client dependency closure and no engine, host `internal`, or protobuf package.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_CardsPackageDependencyBoundary`
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_BlocksPackageDependencyBoundary`
 
 ### Scenario 2 — one functional path for structured conversation cards
 
@@ -51,8 +51,8 @@ The main conversation's structured non-Markdown presentations migrate to the sha
   - verify: `TestMecatuiFunctionalConversationCards_Scenario2_ReadCardWrapsExactlyOnce`
 - AC2.2: Tool-card headers, arguments, results, typed artifacts, Edit/Write diffs, and Subagent/Team/Parallel projections preserve their current collapsed/expanded content and fit their final outer-card width at zero, tiny frameless-fallback, narrow, normal, and capped layouts, including unbreakable text.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario2_ToolVariantsPreserveWidthAndExpansion`
-- AC2.3: Notice, hook, permanent/non-permanent error, delivery, turn-stat, and user-prompt presentations preserve their existing labels, prefixes, collapsed/error transformations, recognized-fence handling, media placeholders, terminal-safety treatment, and width behavior through per-family preparation functions; no generic structured-block input or mode flags replace those rules.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPreserveSemantics`
+- AC2.3: Notice, hook, permanent/non-permanent error, delivery, turn-stat, and user-prompt presentations preserve their existing labels, prefixes, collapsed/error transformations, recognized-fence handling, media placeholders, terminal-safety treatment, and width behavior through per-family preparation functions; no generic structured-block input or mode flags replace those rules. A persisted `ResultMsg` with `Permanent == true` replays as the same permanent-error presentation as its live result, including the collapsed summary and expanded raw-payload behavior.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPreserveSemantics`, `TestMecatuiFunctionalConversationCards_Scenario2_PermanentErrorReplayMatchesLive`
 - AC2.4: Representative plain structured inputs containing C0/C1/ESC/DEL/control-format bytes render no unsafe terminal sequence while retaining permitted layout newlines/tabs; the Glamour Markdown path is not passed through this plain-text policy.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario2_PlainCardsRemainTerminalSafe`
 - AC2.5: Assistant Markdown, reasoning-summary rendering, and the input rail remain outside the cards package and retain their existing Glamour, emoji-width, and intentional fixed-background behavior.
@@ -63,8 +63,8 @@ The main conversation's structured non-Markdown presentations migrate to the sha
 The existing renderer and rendered frame remain the adapters between prepared cards and the viewport. ADR 0301 requires frame lines and row provenance to remain lockstep, retains cached settled blocks and prefix reuse, and prohibits introducing a second full transcript or a virtualization redesign ([ADR 0301](../adr/0301-logical-conversation-anchors.md#2-render-line-provenance-with-the-existing-frame)).
 
 **Acceptance:**
-- AC3.1: `block.rev` remains the renderer-owned cheap generation/admission guard. Only on a changed generation or cache miss does the renderer snapshot a card input, derive its canonical 32-byte cache identity, and prepare output; the stored identity is the prepared-output identity rather than a second set of parallel cache dimensions.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardRehash`
+- AC3.1: The renderer caches each block by one composite key: the conversation-owned content revision plus the shared render-context key. It snapshots and prepares a card only on a changed content revision or context key/cache miss; settled matching entries reuse cached output without snapshotting, preparing, or hashing.
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardPreparation`
 - AC3.2: The renderer adapts `Prepared.Rows` atomically into rendered-frame provenance without parsing decorated output or retaining a second semantic-text copy; every cached frame has line/provenance lockstep.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario3_FrameProvenanceMatchesPreparedRows`
 - AC3.3: Selection in a prepared tool argument or result retains its exact visible text and endpoint context after an unrelated append and width reflow; it clears when the selected source changes or collapse hides the selected row. Expand/collapse, a late tool result, and terminal-width changes preserve the ADR 0301 logical reading position.

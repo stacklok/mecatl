@@ -355,7 +355,6 @@ class HttpTransport implements Transport {
       case "resumeApproval":
         route = sessionControlRoute("approve", sessionId);
         body = {
-          allow: kind.value.allow,
           ask_id: kind.value.askId,
           expected_run_id: kind.value.expectedRunId,
           verdict: approvalVerdict(kind.value.verdict),

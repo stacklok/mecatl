@@ -183,7 +183,7 @@ func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
 	for _, required := range []string{
 		"return r.prepareToolCard(b, expand).render()",
 		"head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style(\"toolName\"), bodyWidth)",
-		"renderToolCardText(r.th.Style(\"muted\"), sanitizeTerminal(b.toolName), bodyWidth)",
+		"renderToolCardText(r.th.Style(\"muted\"), terminaltext.Sanitize(b.toolName), bodyWidth)",
 		"r.renderToolArgs(b, expand, bodyWidth)",
 		"r.renderToolResult(b, expand, bodyWidth)",
 		"sections = append(sections, preparedToolSection",

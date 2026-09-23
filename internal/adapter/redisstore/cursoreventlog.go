@@ -18,23 +18,8 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// This file is the Redis half of ADR 0250: durable cursors over a per-session
-// event log, and the LIST -> STREAM migration that makes them possible.
-//
-// WHY THE DATATYPE CHANGED. The log was a LIST (RPUSH / LRANGE 0 -1). A LIST
-// gives ordering and nothing else a durable follower needs: there is no blocking
-// read, so follow degenerates to LLEN polling per watcher; and there is no
-// stable per-entry identity, so a position can only be an INDEX — stable today
-// only because nothing is ever trimmed from the head, which also means the log
-// grows without bound and that the day anyone adds retention every outstanding
-// cursor silently addresses a different event. Not an error: wrong data.
-//
-// A STREAM answers all three. XADD IDs are opaque, monotonic and durable, so
-// they ARE cursors with nothing invented. XREAD BLOCK is a durable,
-// cross-process blocking follow, which is the capability a multi-replica
-// deployment requires and a LIST structurally cannot provide. XRANGE/XREAD
-// COUNT give bounded paging the unbounded LRANGE 0 -1 never could. And XTRIM
-// MINID makes future retention safe precisely BECAUSE IDs are not positional.
+// This file implements durable cursors over the current per-session Redis
+// STREAM event log. Old Redis datatypes are rejected without conversion.
 //
 // CONNECTION COST — the honest one. A blocking XREAD occupies a pooled
 // connection for the duration of its block. Follow uses an isolated, bounded
@@ -81,12 +66,8 @@ const (
 	//
 	// ReadOptions.Limit == 0 means "yield until the log ends or the context is
 	// cancelled" — an unbounded SEQUENCE, not permission to pull an unbounded
-	// response out of Redis in one reply. Passing the caller's zero straight
-	// through to XREAD/LRANGE is the natural reading and the wrong one: a
-	// follower attaching to a long transcript would have Redis materialise every
-	// entry server-side and go-redis decode the lot before a single record is
-	// yielded. The read loops already page, so capping each call costs one round
-	// trip per page and bounds peak memory. Raised in review on #868.
+	// response out of Redis in one reply. The read loop pages so each XREAD
+	// remains bounded.
 	readPageSize = 256
 
 	// noBlock omits the BLOCK argument entirely. It is NOT zero: go-redis maps
@@ -110,28 +91,12 @@ func newLogGeneration() string {
 	return hex.EncodeToString(b[:])
 }
 
-// appendRecordScript migrates a legacy LIST in place, mints the generation if
-// absent, appends one record, and returns the generation with the new entry's
-// ID — atomically.
-//
-// Atomic because the three steps are only safe TOGETHER. A migration that ran
-// separately from the append could interleave with a concurrent appender and
-// either lose entries (two migrations both reading the pre-migration LIST) or
-// mint two generations for one log. Doing it inside one EVAL makes the whole
-// transition invisible to every other client: they see a LIST, or they see the
-// finished stream.
-//
-// The in-place migration keeps the key NAME, which is what lets the existing
-// delete/rebuild Lua scripts keep working: DEL is datatype-agnostic, so those
-// scripts needed only the generation key added, not a new events key shape.
+// appendRecordScript appends only to a current Redis STREAM. Unsupported old
+// LIST logs fail before any key is changed.
 var appendRecordScript = redis.NewScript(`
 local kind = redis.call('TYPE', KEYS[1])['ok']
-if kind == 'list' then
-  local items = redis.call('LRANGE', KEYS[1], 0, -1)
-  redis.call('DEL', KEYS[1])
-  for i = 1, #items do
-    redis.call('XADD', KEYS[1], '*', ARGV[3], items[i])
-  end
+if kind ~= 'none' and kind ~= 'stream' then
+  return redis.error_reply('MECATL_UNSUPPORTED_EVENT_LOG_TYPE_' .. kind)
 end
 if redis.call('EXISTS', KEYS[2]) == 0 then
   redis.call('SET', KEYS[2], ARGV[2])
@@ -185,6 +150,9 @@ func (st *Store) appendRecord(ctx context.Context, id session.SessionID, rec []b
 		rec, newLogGeneration(), recordField,
 	).Slice()
 	if err != nil {
+		if strings.Contains(err.Error(), "MECATL_UNSUPPORTED_EVENT_LOG_TYPE_") {
+			return "", fmt.Errorf("redisstore: unsupported old event log type for %q; data was left unchanged", id)
+		}
 		return "", fmt.Errorf("redisstore: append event %q: %w", id, err)
 	}
 	generation, entryID, err := appendResult(out)
@@ -231,23 +199,12 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			readCtx = followCtx
 		}
 
-		basis, legacy, position, err := st.readAfterBasis(readCtx, id, after, opts.Follow)
+		basis, position, err := st.readAfterBasis(readCtx, id, after, opts.Follow)
 		if err != nil {
 			if readCtx.Err() != nil {
 				return
 			}
 			yield(port.LogRecord{}, err)
-			return
-		}
-
-		if legacy {
-			// A log written before the Stream migration and not appended to
-			// since. It is read WITHOUT migrating: a read must not mutate, and
-			// the next append performs the migration anyway. Its basis is the
-			// empty generation, so a cursor issued here expires the moment that
-			// append mints a real one — which is correct, because the positions
-			// change from list indices to stream IDs.
-			st.readLegacyListAfter(readCtx, id, position, opts, yield)
 			return
 		}
 
@@ -268,26 +225,26 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 // iterator pins a retired credential generation open — clientGenerations cannot
 // close a client while its refs are non-zero — so a credential rotation never
 // completes for as long as anyone is watching. Raised in review on #869.
-func (st *Store) readAfterBasis(ctx context.Context, id session.SessionID, after port.Cursor, follow bool) (basis logBasis, legacy bool, position string, err error) {
+func (st *Store) readAfterBasis(ctx context.Context, id session.SessionID, after port.Cursor, follow bool) (basis logBasis, position string, err error) {
 	client, release, err := st.acquireReadClient(follow)
 	if err != nil {
-		return logBasis{}, false, "", err
+		return logBasis{}, "", err
 	}
 	defer release()
 
-	generation, present, legacy, err := logGeneration(ctx, client, id)
+	generation, present, err := logGeneration(ctx, client, id)
 	if err != nil {
-		return logBasis{}, false, "", err
+		return logBasis{}, "", err
 	}
 	position, err = port.DecodeCursor(after, id, generation)
 	if err != nil {
-		return logBasis{}, false, "", err
+		return logBasis{}, "", err
 	}
 	// A non-zero cursor ANCHORS the basis even when the stored generation is
 	// empty: DecodeCursor has just verified the two agree, so the caller is
 	// resuming a real position and any later basis is a replacement, not a
 	// creation.
-	return logBasis{generation: generation, known: present || after != ""}, legacy, position, nil
+	return logBasis{generation: generation, known: present || after != ""}, position, nil
 }
 
 func (st *Store) acquireReadClient(follow bool) (redis.UniversalClient, func(), error) {
@@ -311,29 +268,23 @@ func yieldReadError(id session.SessionID, err error, yield func(port.LogRecord, 
 	yield(port.LogRecord{}, fmt.Errorf("redisstore: read events %q: %w", id, err))
 }
 
-// logGeneration reports the log's positional basis, and whether the log is still
-// an unmigrated legacy LIST.
-func logGeneration(ctx context.Context, client redis.UniversalClient, id session.SessionID) (generation string, present, legacy bool, err error) {
+// logGeneration reports the current STREAM log's positional basis.
+func logGeneration(ctx context.Context, client redis.UniversalClient, id session.SessionID) (generation string, present bool, err error) {
 	kind, err := client.Type(ctx, eventsKey(id)).Result()
 	if err != nil {
-		return "", false, false, fmt.Errorf("redisstore: type of event key %q: %w", id, err)
+		return "", false, fmt.Errorf("redisstore: type of event key %q: %w", id, err)
 	}
-	if kind == "list" {
-		return "", false, true, nil
+	if kind != "none" && kind != "stream" {
+		return "", false, fmt.Errorf("redisstore: unsupported old event log type %q for %q; data was left unchanged", kind, id)
 	}
 	generation, err = client.Get(ctx, eventsGenerationKey(id)).Result()
 	if errors.Is(err, redis.Nil) {
-		// No log yet (or a stream with no basis, which only a hand-edited
-		// keyspace produces). The empty generation is the honest answer: a
-		// first-attach cursor is the zero cursor, which needs no basis. present
-		// is what keeps this DISTINGUISHABLE from a real basis that happens to be
-		// empty — see logBasis.
-		return "", false, false, nil
+		return "", false, nil
 	}
 	if err != nil {
-		return "", false, false, fmt.Errorf("redisstore: read event generation %q: %w", id, err)
+		return "", false, fmt.Errorf("redisstore: read event generation %q: %w", id, err)
 	}
-	return generation, true, false, nil
+	return generation, true, nil
 }
 
 // logBasis is the generation a read is anchored to, plus whether it is anchored
@@ -355,13 +306,8 @@ type logBasis struct {
 
 // observe folds the currently-stored basis into b, reporting ErrCursorExpired if
 // it REPLACED an anchored one.
-func (b *logBasis) observe(current string, legacy bool) error {
+func (b *logBasis) observe(current string) error {
 	switch {
-	case legacy:
-		// A stream read finding a list means the log it was following is gone and
-		// something unmigrated stands in its place. Positions are not comparable
-		// across that boundary.
-		return fmt.Errorf("%w: the log was replaced by an unmigrated list while following", port.ErrCursorExpired)
 	case !b.known:
 		if current != "" {
 			b.generation, b.known = current, true
@@ -527,11 +473,11 @@ func (st *Store) streamCycle(
 	// written, so this read observes it and refuses. A reset landing after the
 	// check is harmless — the record yielded was genuinely from the log being
 	// followed at the time it was read.
-	current, _, legacy, err := logGeneration(ctx, client, id)
+	current, _, err := logGeneration(ctx, client, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := basis.observe(current, legacy); err != nil {
+	if err := basis.observe(current); err != nil {
 		return nil, err
 	}
 
@@ -591,109 +537,4 @@ func decodeEventLogRecord(raw []byte) (rec port.LogRecord, ok bool, err error) {
 	default:
 		return port.LogRecord{}, false, fmt.Errorf("redisstore: unknown event-log format %q (want %q)", envelope.V, EventLogFormat)
 	}
-}
-
-// readLegacyListAfter serves a cursor read over an unmigrated LIST, where the
-// position is a 0-based index.
-//
-// Follow is honoured by re-reading the index on an interval. It is deliberately
-// simple: this path exists only until the session's next append migrates it, so
-// optimising it would be work spent on a state the log leaves permanently.
-func (st *Store) readLegacyListAfter(
-	ctx context.Context,
-	id session.SessionID,
-	position string,
-	opts port.ReadOptions,
-	yield func(port.LogRecord, error) bool,
-) {
-	next := int64(0)
-	if position != "" {
-		parsed, err := strconv.ParseInt(position, 10, 64)
-		if err != nil || parsed < 0 {
-			yield(port.LogRecord{}, fmt.Errorf("%w: %q is not a legacy log index", port.ErrCursorMalformed, position))
-			return
-		}
-		next = parsed
-	}
-	sent := 0
-	live := false
-	for {
-		page := readCount(opts, sent)
-		records, err := st.legacyCycle(ctx, id, next, page, opts.Follow)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			yieldReadError(id, err, yield)
-			return
-		}
-		// A full page may not be the end of the list, so drain before parking —
-		// and stay in replay while draining, since a record already present when
-		// the read started is replay however many pages in it lands.
-		full := int64(len(records)) == page
-
-		for _, raw := range records {
-			rec, ok, err := decodeEventLogRecord([]byte(raw))
-			if err != nil {
-				yield(port.LogRecord{}, err)
-				return
-			}
-			next++
-			if !ok {
-				continue
-			}
-			rec.Cursor = port.EncodeCursor(id, "", strconv.FormatInt(next, 10))
-			rec.Live = live
-			if !yield(rec, nil) {
-				return
-			}
-			sent++
-			if opts.Limit > 0 && sent >= opts.Limit {
-				return
-			}
-		}
-		if full {
-			continue
-		}
-		if !opts.Follow {
-			return
-		}
-		live = true
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(followBlock):
-		}
-	}
-}
-
-// legacyCycle performs one bounded LRANGE, re-verifying that the log is STILL an
-// unmigrated LIST before reading it.
-//
-// The re-check is the legacy half of streamCycle's basis guard, and it is the
-// MORE reachable half. A delete-and-recreate under a live follower is unlikely;
-// this log being migrated to a Stream is GUARANTEED to happen on its next
-// append, which is precisely the upgrade window this path exists to serve.
-// Without the check, LRANGE against the migrated key returns WRONGTYPE, which
-// reaches the consumer as an infrastructure fault — leaving it unable to tell
-// "your basis moved, restart from the beginning" from "Redis is broken, retry".
-// Both readings are wrong: the positions changed from list indices to stream
-// IDs, so the only correct answer is ErrCursorExpired.
-//
-// Raised in review on #869 for the stream path; the list path had the same shape
-// with a worse trigger. It is also the same WRONGTYPE that broke the k8s e2e
-// earlier in this stack — code holding a datatype assumption across a migration.
-func (st *Store) legacyCycle(ctx context.Context, id session.SessionID, next, page int64, follow bool) ([]string, error) {
-	client, release, err := st.acquireReadClient(follow)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	if _, _, legacy, err := logGeneration(ctx, client, id); err != nil {
-		return nil, err
-	} else if !legacy {
-		return nil, fmt.Errorf("%w: the log was migrated to a stream while following, so list indices no longer address it", port.ErrCursorExpired)
-	}
-	return client.LRange(ctx, eventsKey(id), next, next+page-1).Result()
 }

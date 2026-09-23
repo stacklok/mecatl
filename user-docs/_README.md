@@ -58,6 +58,7 @@ feature guide.
 |`mecated` operation and flags|`building/deployment/mecated.md`|Feature pages explain shared behavior and link to the deployment guide for flags.|
 |`mecak8s` operation and Helm values|`building/deployment/mecak8s.md`|Feature pages describe shared behavior without restating chart values.|
 |`mecatequi` and GitHub Actions|`building/deployment/mecatequi.md`|Workflow maintainers keep implementation notes in `.github/workflows/README.md`.|
+|Mecatl Studio web UI|`building/deployment/studio.md`|Feature pages describe shared behavior; the Studio page owns the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
 |Provider and model selection|`features/choose-models.md`|`building/deployment/mecated.md` owns daemon-specific credential and flag details.|
 |Workspace trust|`features/permissions-and-posture.md`|`features/project-instructions-and-rules.md` describes the project-content consequence.|
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `building/what-you-get/memory.md`|Extension-point pages document the importable interfaces.|

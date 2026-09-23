@@ -373,27 +373,26 @@ func TestListDecodesRealIDAndMtime(t *testing.T) {
 	}
 }
 
-// TestListSkipsUndecodableFiles pins the best-effort posture: a corrupt or
-// empty .session.jsonl (whose Load would fail identically) is skipped, not a
-// List error.
-func TestListSkipsUndecodableFiles(t *testing.T) {
+// TestListIgnoresOldSnapshotArtifacts pins current-only discovery: old files
+// are invisible and remain untouched.
+func TestListIgnoresOldSnapshotArtifacts(t *testing.T) {
 	ctx := context.Background()
 	st, dir := newStore(t)
 	if err := st.Save(ctx, driven(t)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "junk.session.jsonl"), []byte("{not json\n"), 0o644); err != nil {
-		t.Fatalf("write junk: %v", err)
+	path := filepath.Join(dir, "old.session.jsonl")
+	original := []byte("{not json\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("write old artifact: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "empty.session.jsonl"), nil, 0o644); err != nil {
-		t.Fatalf("write empty: %v", err)
+	rows, err := st.List(ctx)
+	if err != nil || len(rows) != 1 || rows[0].ID != "sess-1" {
+		t.Fatalf("List = (%+v, %v), want current session only", rows, err)
 	}
-	entries, err := st.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(entries) != 1 || entries[0].ID != "sess-1" {
-		t.Errorf("List = %+v, want exactly the one decodable session", entries)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("old artifact changed: bytes=%q err=%v", got, err)
 	}
 }
 

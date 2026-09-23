@@ -169,7 +169,7 @@ describe("MCP authorization continuation controls", () => {
     expect(cancel?.input).toEqual({ expectedRunId: continuationRunId, sessionId });
 
     const unsupported = await harness({
-      features: [],
+      features: ["watch_session_events"],
       streams: [
         { events: [authorization("authorization.resolved", "granted")] },
         { events: continuation(result()) },

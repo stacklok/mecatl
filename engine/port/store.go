@@ -42,10 +42,8 @@ var (
 //     Conversation (the user/assistant/tool message sequence, tool-pairing-valid —
 //     user-role turns INCLUDED, since the loop emits the log-only EvUserPrompt at every
 //     user-message record site), State, the recorded stop reason, the pending ask (when
-//     awaiting), the failure permanence flag (ResultPayload.Permanent — so a
-//     permanently-failed session reconstructs with FailurePermanence()==true and the
-//     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
-//     — the budget brake reads it), and the metadata the events do not carry (id, mode,
+//     awaiting), typed retry metadata (ResultPayload.Disposition and Progress),
+//     cumulative main token usage (the SUM of every per-run ResultPayload.Usage —
 //     limits, exact EnvironmentRef, display-only placement metadata, profile,
 //     provider/model selector, reasoning effort, authoritative title/provenance,
 //     session kind/relationship, and createdAt — supplied out-of-band, e.g.
@@ -86,6 +84,55 @@ type SessionStore interface {
 // a snapshot whose initial Create succeeded.
 type SessionCreator interface {
 	Create(ctx context.Context, s *session.Session) error
+}
+
+// SessionCapabilitySupport is the authoritative optional-operation signal for
+// adapters that retain optional interfaces even when their negotiated backend
+// does not provide every operation. Stores without this signal advertise
+// optional operations by implementing their interfaces.
+//
+// A decorator around a SessionStore MUST preserve every optional operation and
+// capability signal it forwards. In particular, forwarding SessionCreator while
+// dropping SessionCapabilitySupport changes a negotiated false into the legacy
+// interface-presence default of true; no probe can recover a method hidden by an
+// arbitrary decorator.
+type SessionCapabilitySupport interface {
+	SupportsSessionCreate() bool
+	SupportsSessionMetadataPaging() bool
+	SupportsSessionLineage() bool
+}
+
+// SupportsSessionCreate reports whether store can atomically create sessions.
+func SupportsSessionCreate(store any) bool {
+	if _, ok := store.(SessionCreator); !ok {
+		return false
+	}
+	if support, ok := store.(SessionCapabilitySupport); ok {
+		return support.SupportsSessionCreate()
+	}
+	return true
+}
+
+// SupportsSessionMetadataPaging reports whether store can page session metadata.
+func SupportsSessionMetadataPaging(store any) bool {
+	if _, ok := store.(SessionMetadataPager); !ok {
+		return false
+	}
+	if support, ok := store.(SessionCapabilitySupport); ok {
+		return support.SupportsSessionMetadataPaging()
+	}
+	return true
+}
+
+// SupportsSessionLineage reports whether store can read session lineage.
+func SupportsSessionLineage(store any) bool {
+	if _, ok := store.(SessionLineageReader); !ok {
+		return false
+	}
+	if support, ok := store.(SessionCapabilitySupport); ok {
+		return support.SupportsSessionLineage()
+	}
+	return true
 }
 
 // StoredSession is one stored session's retention-relevant identity: its id

@@ -22,6 +22,31 @@ func (s *durableEvidenceSink) Emit(_ context.Context, ev session.Event) {
 	}
 }
 
+func TestBuildRemoteStoreWithoutAtomicCreateUsesSaveWhenOwnershipDisabled(t *testing.T) {
+	ctx := context.Background()
+	backend := memstore.New()
+	cfg := Config{
+		Workspace: t.TempDir(), NoSoul: true, MemoryDir: t.TempDir(),
+		SessionStoreURL: startSessionStoreDriver(t, plainSessionStore{inner: backend}),
+		envDetector:     fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}), liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("done"))
+		},
+	}
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	created, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := backend.Load(ctx, created.ID); err != nil {
+		t.Fatalf("fallback Save did not persist session: %v", err)
+	}
+}
+
 func TestBuildDisablesDurableEvidenceWithoutEventLog(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()

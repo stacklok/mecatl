@@ -10,11 +10,11 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	rules "github.com/stacklok/mecatl/engine/adapter/rulesfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/rules"
 )
 
 // fakeRulesEnv installs a faked XDG/home path-resolution env for the duration of

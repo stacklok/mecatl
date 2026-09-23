@@ -140,10 +140,18 @@ regression. `_ = err` is not verification.
 
 ### Step 5: Verify with the Taskfile
 
+Use three verification stages:
+
 ```bash
-task test          # both modules + the engine-standalone hygiene proof
-cd engine && go test ./agent/ -run TestYourNewTest   # a single engine test
+(cd engine && go test ./agent/ -run TestYourNewTest) # focused iteration
+# For concurrency changes, add -race to the targeted package command.
+task test                                            # complete fast worker gate
+task test:race                                       # integrated/pre-PR aggregate gate
 ```
+
+`task test` and `task test:race` cover the root, engine, authn, and provider modules plus
+all standalone hygiene proofs. The only difference is whether the shared module suite uses
+the race detector.
 
 Then check whether the implementation contradicts its declared work classification or
 introduces an unplanned durable decision. Stop as contract drift rather than silently

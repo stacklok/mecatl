@@ -3,7 +3,6 @@ package sessnap_test
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -49,29 +48,31 @@ func TestADR_0291_SessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
 	}
 }
 
-func TestADR_0291_LegacyDuplicatePlacementStateIsUnsupported(t *testing.T) {
+func TestADR_0291_UnknownPlacementFieldsAreIgnored(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/root", Revision: "inventory-v7"}
-	line := mustMarshal(t, session.New("legacy-placement", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0).UTC()))
+	line := mustMarshal(t, session.New("placement", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0).UTC()))
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(line, &object); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, legacy := range []string{"workspace", "adoption_source_id", "adoption_request_digest"} {
-		t.Run(legacy, func(t *testing.T) {
-			duplicate := make(map[string]json.RawMessage, len(object)+1)
-			for key, value := range object {
-				duplicate[key] = value
-			}
-			duplicate[legacy] = json.RawMessage(`"/attacker/legacy-root"`)
-			wire, err := json.Marshal(duplicate)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := sessnap.Unmarshal(wire); err == nil || !strings.Contains(err.Error(), "unsupported legacy duplicate placement field") {
-				t.Fatalf("Unmarshal(%s) = %v, want explicit unsupported duplicate-placement error", legacy, err)
-			}
-		})
+	for name, value := range map[string]json.RawMessage{
+		"workspace":               json.RawMessage(`{"Kind":false}`),
+		"adoption_source_id":      json.RawMessage(`["malformed-shaped"]`),
+		"adoption_request_digest": json.RawMessage(`true`),
+	} {
+		object[name] = value
+	}
+	wire, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := sessnap.Unmarshal(wire)
+	if err != nil {
+		t.Fatalf("Unmarshal with unknown fields: %v", err)
+	}
+	if got.EnvironmentRef != ref {
+		t.Fatalf("restored ref = %+v, want canonical %+v", got.EnvironmentRef, ref)
 	}
 
 	delete(object, "environment_ref")

@@ -135,7 +135,7 @@ func TestSessionAffinityAndHandoff_Scenario5_MutationLeaseInventory(t *testing.T
 		"DeleteSessionForRetentionCandidate", "DeleteSessionForRetention", "SetMode",
 		"repairTerminalState", "prepareFailedStepRetry", "startRunContent", "Persist",
 		"appendEvent", "engine/agent/dispatch.go:ToolCall", "adapter:family-derivatives",
-		"SettleIfStale", "migrateOneFamily", "createPlacedSuccessor", "persistPlacedCreatedSession",
+		"SettleIfStale", "createPlacedSuccessor", "persistPlacedCreatedSession",
 	} {
 		entry, ok := sessionMutationInventory[name]
 		if !ok || !entry.mutatesDurableFamily() {
@@ -152,7 +152,7 @@ func discoveredSessionMutationBoundaries(t *testing.T) []string {
 	}
 	mutatingCalls := map[string]bool{
 		"Save": true, "Create": true, "Delete": true, "Append": true, "AppendEvent": true,
-		"ToolCall": true, "MigrateSessionFamily": true, "DeleteSessionIfUnchanged": true,
+		"ToolCall": true, "DeleteSessionIfUnchanged": true,
 		"SetMode": true, "RenameTitle": true, "CompactSession": true, "Reopen": true,
 		"Interrupt": true, "Recover": true, "Abandon": true, "PrepareFailedStepRetry": true,
 		"persistNewSession": true, "persistCreatedSession": true, "repairTerminalState": true,

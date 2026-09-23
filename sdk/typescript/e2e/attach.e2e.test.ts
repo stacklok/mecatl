@@ -164,7 +164,7 @@ describe("offline durable attachment wire", () => {
             throw new Error("restarted mecated omitted HTTP readiness");
           }
           const response = await fetch(
-            `http://${daemon.ready.http_address}/v1/sessions/${encodeURIComponent(session.id)}/approve`,
+            `http://${daemon.ready.http_address}/v1/sessions/${encodeURIComponent(session.id)}/controls/resolve-ask`,
             {
               body: JSON.stringify({
                 ask_id: askId,
@@ -177,8 +177,8 @@ describe("offline durable attachment wire", () => {
             },
           );
           expect(response.status).toBe(200);
-          expect(response.headers.get("content-type")).toContain("text/event-stream");
-          await response.arrayBuffer();
+          expect(response.headers.get("content-type")).toContain("application/json");
+          await response.json();
           await drainIterator(iterator, envelopes);
 
           const terminal = envelopes.find(

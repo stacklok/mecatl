@@ -46,7 +46,7 @@ func TestListSessionsFromProto(t *testing.T) {
 		{
 			"populated",
 			[]*mecatlv1.SessionSummary{
-				{SessionId: "s1", ModifiedAtUnix: 1700000000, State: "completed", Turns: 5, ModelId: "openai/gpt-4.5", CreatedAtUnix: 1699999000, Title: "Fix the CI", TitleProvenance: "operator", Capabilities: &mecatlv1.SessionInventoryCapabilities{PublicChat: true, Inspect: true, AuthoritativeTranscript: true, ActivityReplay: true, CopyId: true, ViewTranscript: true, Fork: true, Rename: true, Delete: true}},
+				{SessionId: "s1", ModifiedAtUnix: 1700000000, State: "completed", Turns: 5, ModelId: "openai/gpt-4.5", CreatedAtUnix: 1699999000, TitleMetadata: &mecatlv1.SessionTitle{Title: "Fix the CI", Provenance: "operator"}, Capabilities: &mecatlv1.SessionInventoryCapabilities{PublicChat: true, Inspect: true, AuthoritativeTranscript: true, ActivityReplay: true, CopyId: true, ViewTranscript: true, Fork: true, Rename: true, Delete: true}},
 				{SessionId: "s2", ModifiedAtUnix: 1700000001, State: "idle", Turns: 0, ModelId: "anthropic/claude-3.5"},
 			},
 			[]SessionListItem{
@@ -120,7 +120,7 @@ func TestListSessionsWrapper(t *testing.T) {
 // onto the SessionListItem (nil-safe for an absent/empty field).
 func TestListSessionsWrapperCarriesTitle(t *testing.T) {
 	fake := &fakeListSessionsClient{resp: &mecatlv1.ListSessionsResponse{Sessions: []*mecatlv1.SessionSummary{
-		{SessionId: "s1", Title: "My session title"},
+		{SessionId: "s1", TitleMetadata: &mecatlv1.SessionTitle{Title: "My session title"}},
 		{SessionId: "s2"}, // no title — stays empty
 	}}}
 	cl := newFakeClient(fake)

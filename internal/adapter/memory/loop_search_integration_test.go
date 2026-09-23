@@ -37,7 +37,7 @@ func TestSearchMemoryToolThroughLoop(t *testing.T) {
 		{"pref/editor", "favourite editor", "vim"},
 		{"project/tracker", "issue tracker", "issues live in Linear"},
 	} {
-		if err := store.RememberEntry(ctx, tool.MemoryEntry{Key: kv[0], Description: kv[1], Value: kv[2]}); err != nil {
+		if _, err := store.Remember(ctx, tool.MemoryEntry{Key: kv[0], Description: kv[1], Value: kv[2]}, tool.MemoryCurrent{}); err != nil {
 			t.Fatalf("seed %q: %v", kv[0], err)
 		}
 	}

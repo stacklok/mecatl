@@ -20,11 +20,6 @@ const signatureAllowlist = new Set(["Promise", "RequestOptions"]);
 const batchBCatalogKeys = [
   "HarnessService.ListSessions",
   "HarnessService.GetStorageHealth",
-  "HarnessService.PlanSessionMigration",
-  "HarnessService.ApplySessionMigration",
-  "HarnessService.ResumeSessionMigration",
-  "HarnessService.CancelSessionMigration",
-  "HarnessService.GetSessionMigrationJob",
   "HarnessService.PlanSessionCleanup",
   "HarnessService.ApplySessionCleanup",
   "HarnessService.CancelSessionCleanup",
@@ -120,15 +115,10 @@ const expectedSignatures = {
   Soul: ["get(request: GetSoulRequest, options?: RequestOptions): Promise<GetSoulResponse>;"],
   Storage: [
     "applyCleanup(request: ApplySessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;",
-    "applyMigration(request: ApplySessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;",
     "cancelCleanup(request: CancelSessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;",
-    "cancelMigration(request: CancelSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;",
     "getCleanupJob(request: GetSessionCleanupJobRequest, options?: RequestOptions): Promise<CleanupJob>;",
     "getHealth(request: GetStorageHealthRequest, options?: RequestOptions): Promise<GetStorageHealthResponse>;",
-    "getMigrationJob(request: GetSessionMigrationJobRequest, options?: RequestOptions): Promise<SessionMigrationJob>;",
     "planCleanup(request: PlanSessionCleanupRequest, options?: RequestOptions): Promise<PlanSessionCleanupResponse>;",
-    "planMigration(request: PlanSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationPlan>;",
-    "resumeMigration(request: ResumeSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;",
   ],
   UserModel: [
     "get(request: GetUserModelRequest, options?: RequestOptions): Promise<GetUserModelResponse>;",
@@ -217,15 +207,6 @@ class OperationalTransport implements Transport {
           fires: [{ id: "fire-2", scheduleName: "nightly", sessionId: "fire-2" }],
         });
         break;
-      case "PlanSessionMigration":
-        init = responseInit({ available: true, planId: "migration-plan" });
-        break;
-      case "ApplySessionMigration":
-      case "ResumeSessionMigration":
-      case "CancelSessionMigration":
-      case "GetSessionMigrationJob":
-        init = responseInit({ jobId: method.name, state: "future_migration_state" });
-        break;
       case "PlanSessionCleanup":
         init = responseInit({
           confirmationToken: "cleanup-token",
@@ -292,11 +273,6 @@ describe("operational typed namespaces", () => {
     const calls = [
       () => client.sessions.list(request("HarnessService.ListSessions")),
       () => client.storage.getHealth(request("HarnessService.GetStorageHealth")),
-      () => client.storage.planMigration(request("HarnessService.PlanSessionMigration")),
-      () => client.storage.applyMigration(request("HarnessService.ApplySessionMigration")),
-      () => client.storage.resumeMigration(request("HarnessService.ResumeSessionMigration")),
-      () => client.storage.cancelMigration(request("HarnessService.CancelSessionMigration")),
-      () => client.storage.getMigrationJob(request("HarnessService.GetSessionMigrationJob")),
       () => client.storage.planCleanup(request("HarnessService.PlanSessionCleanup")),
       () => client.storage.applyCleanup(request("HarnessService.ApplySessionCleanup")),
       () => client.storage.cancelCleanup(request("HarnessService.CancelSessionCleanup")),
@@ -361,26 +337,6 @@ describe("operational typed namespaces", () => {
 
     const storageCalls = [
       [
-        "PlanSessionMigration",
-        client.storage.planMigration(request("HarnessService.PlanSessionMigration")),
-      ],
-      [
-        "ApplySessionMigration",
-        client.storage.applyMigration(request("HarnessService.ApplySessionMigration")),
-      ],
-      [
-        "ResumeSessionMigration",
-        client.storage.resumeMigration(request("HarnessService.ResumeSessionMigration")),
-      ],
-      [
-        "CancelSessionMigration",
-        client.storage.cancelMigration(request("HarnessService.CancelSessionMigration")),
-      ],
-      [
-        "GetSessionMigrationJob",
-        client.storage.getMigrationJob(request("HarnessService.GetSessionMigrationJob")),
-      ],
-      [
         "PlanSessionCleanup",
         client.storage.planCleanup(request("HarnessService.PlanSessionCleanup")),
       ],
@@ -400,9 +356,8 @@ describe("operational typed namespaces", () => {
     for (const [method, pending] of storageCalls) {
       expect(await pending).toBe(transport.responses.get(method));
     }
-    expect((await storageCalls[1][1]).state).toBe("future_migration_state");
-    expect((await storageCalls[5][1]).eligibleCounts?.total).toBe(2);
-    expect((await storageCalls[6][1]).state).toBe("future_cleanup_state");
+    expect((await storageCalls[0][1]).eligibleCounts?.total).toBe(2);
+    expect((await storageCalls[1][1]).state).toBe("future_cleanup_state");
     await client.close();
   });
 

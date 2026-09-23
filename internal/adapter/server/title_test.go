@@ -347,13 +347,15 @@ func TestGetSessionCarriesTitle(t *testing.T) {
 			t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
 		}
 		var out struct {
-			Title string `json:"title"`
+			TitleMetadata struct {
+				Title string `json:"title"`
+			} `json:"title_metadata"`
 		}
 		if err := json.Unmarshal(body, &out); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if out.Title != "Seeded title prompt" {
-			t.Errorf("HTTP seeded Title = %q, want %q", out.Title, "Seeded title prompt")
+		if out.TitleMetadata.Title != "Seeded title prompt" {
+			t.Errorf("HTTP seeded Title = %q, want %q", out.TitleMetadata.Title, "Seeded title prompt")
 		}
 	})
 	t.Run("HTTP lazy fallback", func(t *testing.T) {
@@ -369,13 +371,15 @@ func TestGetSessionCarriesTitle(t *testing.T) {
 			t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
 		}
 		var out struct {
-			Title string `json:"title"`
+			TitleMetadata struct {
+				Title string `json:"title"`
+			} `json:"title_metadata"`
 		}
 		if err := json.Unmarshal(body, &out); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if out.Title != "Lazy fallback prompt" {
-			t.Errorf("HTTP lazy Title = %q, want %q (derived fallback)", out.Title, "Lazy fallback prompt")
+		if out.TitleMetadata.Title != "Lazy fallback prompt" {
+			t.Errorf("HTTP lazy Title = %q, want %q (derived fallback)", out.TitleMetadata.Title, "Lazy fallback prompt")
 		}
 	})
 }

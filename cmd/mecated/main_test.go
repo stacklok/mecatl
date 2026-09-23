@@ -157,14 +157,30 @@ func TestRunSkillsPromote(t *testing.T) {
 // defaults to 1m (NOT 0/off), so an on-by-default scheduler + the floor-Allow
 // Schedule tool cannot mint an unbounded tight-cadence recurring fire out of
 // the box. An operator can still set it explicitly (tighter, or 0 to disable).
-func TestLegacyUserModelReviewFlagsMapToAppConfig(t *testing.T) {
-	parsed, err := parseFlags([]string{"--user-model-review", "--user-model-review-interval=7"})
+func TestRemovedNoBashFlagIsRejected(t *testing.T) {
+	if _, err := parseFlags([]string{"--no-bash"}); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("parseFlags(--no-bash) error = %v, want unknown-flag rejection", err)
+	}
+	parsed, err := parseFlags([]string{"--no-shell"})
+	if err != nil || !parsed.noShell {
+		t.Fatalf("parseFlags(--no-shell) = noShell:%t err:%v", parsed.noShell, err)
+	}
+}
+
+func TestLearningAdmissionFlagMapsToAppConfig(t *testing.T) {
+	parsed, err := parseFlags([]string{"--learning-admission-interval=7"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	got := appConfig(parsed, nil, nil, nil, nil, nil)
-	if !got.UserModelReview || got.UserModelReviewInterval != 7 {
-		t.Fatalf("legacy learning wiring = enabled:%t interval:%d, want true/7", got.UserModelReview, got.UserModelReviewInterval)
+	if got.LearningAdmissionInterval != 7 || !got.LearningAdmissionIntervalSet {
+		t.Fatalf("learning admission wiring = interval:%d set:%t, want 7/true", got.LearningAdmissionInterval, got.LearningAdmissionIntervalSet)
+	}
+
+	for _, legacy := range []string{"--user-model-review", "--user-model-review-interval=7"} {
+		if _, err := parseFlags([]string{legacy}); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("parseFlags(%s) error = %v, want unknown-flag rejection", legacy, err)
+		}
 	}
 }
 

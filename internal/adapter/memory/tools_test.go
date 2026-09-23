@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -15,22 +16,40 @@ import (
 
 // fakeStore is an in-memory tool.MemoryStore for tool tests — no filesystem.
 type fakeStore struct {
-	mu sync.Mutex
-	m  map[string]tool.MemoryEntry
+	mu      sync.Mutex
+	m       map[string]tool.MemoryEntry
+	records map[string]tool.MemoryRecord
 }
 
-func newFakeStore() *fakeStore { return &fakeStore{m: map[string]tool.MemoryEntry{}} }
+func newFakeStore() *fakeStore {
+	return &fakeStore{m: map[string]tool.MemoryEntry{}, records: map[string]tool.MemoryRecord{}}
+}
 
-func (f *fakeStore) RememberEntry(_ context.Context, e tool.MemoryEntry) error {
+func (f *fakeStore) Remember(_ context.Context, e tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	current, exists := f.records[e.Key]
+	if exists != expected.Exists || exists && current.Current.Version != expected.Version {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: e.Key, Expected: expected.Version, Actual: current.Current.Version}
+	}
 	e.UpdatedAt = time.Now()
+	version := tool.MemoryVersion("fake-v1")
+	if exists {
+		version = "fake-v2"
+	}
+	revision := tool.MemoryRevision{Key: e.Key, Value: e.Value, Description: e.Description, Version: version, Status: tool.MemoryStatusActive, UpdatedAt: e.UpdatedAt}
+	current.Current = revision
+	current.Revisions = append(current.Revisions, revision)
 	f.m[e.Key] = e
-	return nil
+	f.records[e.Key] = current
+	return current, nil
 }
 
-func (f *fakeStore) Remember(ctx context.Context, key, value string) error {
-	return f.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: value})
+func (f *fakeStore) Inspect(_ context.Context, key string) (tool.MemoryRecord, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	record, ok := f.records[key]
+	return record, ok, nil
 }
 
 func (f *fakeStore) Index(_ context.Context) ([]tool.MemoryEntry, error) {
@@ -87,14 +106,33 @@ func (f *fakeStore) Search(_ context.Context, query string, k int) ([]tool.Memor
 	return bm25Rank(entries, query, k), nil
 }
 
-func (f *fakeStore) Forget(_ context.Context, key string) error {
+func (f *fakeStore) Forget(_ context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	record, ok := f.records[key]
+	if !ok || record.Current.Version != expected {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: key, Expected: expected, Actual: record.Current.Version}
+	}
 	delete(f.m, key)
-	return nil
+	revision := tool.MemoryRevision{Key: key, Version: "fake-deleted", Status: tool.MemoryStatusDeleted}
+	record.Current = revision
+	record.Revisions = append(record.Revisions, revision)
+	f.records[key] = record
+	return record, nil
+}
+
+func (*fakeStore) Undo(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return tool.MemoryRecord{}, errors.New("not implemented")
 }
 
 var _ tool.MemoryStore = (*fakeStore)(nil)
+
+func seedFake(t *testing.T, store *fakeStore, entry tool.MemoryEntry) {
+	t.Helper()
+	if _, err := store.Remember(context.Background(), entry, tool.MemoryCurrent{}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // call builds a ToolCall with JSON args marshalled from m.
 func call(t *testing.T, name string, m map[string]any) session.ToolCall {
@@ -132,7 +170,7 @@ func TestRememberToolWrites(t *testing.T) {
 
 func TestRecallToolReturnsValue(t *testing.T) {
 	fs := newFakeStore()
-	_ = fs.Remember(context.Background(), "pref/editor", "vim")
+	seedFake(t, fs, tool.MemoryEntry{Key: "pref/editor", Value: "vim"})
 	res := exec(t, NewRecallTool(fs), call(t, "Recall", map[string]any{"key": "pref/editor"}))
 	if res.IsError {
 		t.Fatalf("Recall errored: %s", res.Content)
@@ -155,10 +193,9 @@ func TestRecallToolMissingKeyIsNotError(t *testing.T) {
 
 func TestRecallToolPrefixLists(t *testing.T) {
 	fs := newFakeStore()
-	ctx := context.Background()
-	_ = fs.Remember(ctx, "pref/a", "1")
-	_ = fs.Remember(ctx, "pref/b", "2")
-	_ = fs.Remember(ctx, "other/x", "9")
+	seedFake(t, fs, tool.MemoryEntry{Key: "pref/a", Value: "1"})
+	seedFake(t, fs, tool.MemoryEntry{Key: "pref/b", Value: "2"})
+	seedFake(t, fs, tool.MemoryEntry{Key: "other/x", Value: "9"})
 	res := exec(t, NewRecallTool(fs), call(t, "Recall", map[string]any{"key": "pref/"}))
 	if res.IsError {
 		t.Fatalf("Recall prefix errored: %s", res.Content)
@@ -205,7 +242,7 @@ func TestRememberWithoutDescriptionDoesNotEchoValue(t *testing.T) {
 
 func TestRecallStillFetchesFullValue(t *testing.T) {
 	fs := newFakeStore()
-	_ = fs.RememberEntry(context.Background(), tool.MemoryEntry{
+	seedFake(t, fs, tool.MemoryEntry{
 		Key: "pref/editor", Value: "vim, with a long full body", Description: "short",
 	})
 	res := exec(t, NewRecallTool(fs), call(t, "Recall", map[string]any{"key": "pref/editor"}))
@@ -250,14 +287,14 @@ func TestMemoryToolsMalformedArgs(t *testing.T) {
 
 func TestMemoryToolsRegistration(t *testing.T) {
 	fs := newFakeStore()
-	if len(Tools(fs)) != 3 {
-		t.Fatalf("Tools() = %d, want 3", len(Tools(fs)))
+	if len(Tools(fs)) != 6 {
+		t.Fatalf("Tools() = %d, want 6", len(Tools(fs)))
 	}
 	cat := tool.NewCatalog()
 	if err := Register(cat, fs); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	for _, name := range []string{"Recall", "Remember", "SearchMemory"} {
+	for _, name := range []string{"Recall", "Remember", "SearchMemory", "InspectMemory", "ForgetMemory", "UndoMemory"} {
 		if _, ok := cat.Lookup(name); !ok {
 			t.Errorf("catalog missing %q after Register", name)
 		}
@@ -271,8 +308,8 @@ func TestMemoryToolSpecsHaveDocs(t *testing.T) {
 		if len(s.Description) < 80 {
 			t.Errorf("%s: description too short to be onboarding docs", s.Name)
 		}
-		// The descriptions must steer against the over-eager-memory anti-pattern.
-		if !strings.Contains(strings.ToLower(s.Description), "when not to use") {
+		// The discovery tools steer against the over-eager-memory anti-pattern.
+		if (s.Name == RememberToolName || s.Name == RecallToolName || s.Name == SearchMemoryToolName) && !strings.Contains(strings.ToLower(s.Description), "when not to use") {
 			t.Errorf("%s: description lacks a 'when NOT to use' section", s.Name)
 		}
 		var js any
@@ -284,14 +321,13 @@ func TestMemoryToolSpecsHaveDocs(t *testing.T) {
 
 func TestSearchMemoryRanksRelevantFirst(t *testing.T) {
 	fs := newFakeStore()
-	ctx := context.Background()
-	_ = fs.RememberEntry(ctx, tool.MemoryEntry{
+	seedFake(t, fs, tool.MemoryEntry{
 		Key: "pref/test-runner", Value: "Run tests with gotestsum", Description: "preferred test runner",
 	})
-	_ = fs.RememberEntry(ctx, tool.MemoryEntry{
+	seedFake(t, fs, tool.MemoryEntry{
 		Key: "project/deploy-gate", Value: "staging deploy needs manual approval", Description: "deploy gate",
 	})
-	_ = fs.RememberEntry(ctx, tool.MemoryEntry{
+	seedFake(t, fs, tool.MemoryEntry{
 		Key: "pref/editor", Value: "vim", Description: "favourite editor",
 	})
 
@@ -316,7 +352,7 @@ func TestSearchMemoryRanksRelevantFirst(t *testing.T) {
 func TestSearchMemoryOmitsValues(t *testing.T) {
 	fs := newFakeStore()
 	const secret = "SECRET-VALUE-SHOULD-NOT-RENDER"
-	_ = fs.RememberEntry(context.Background(), tool.MemoryEntry{
+	seedFake(t, fs, tool.MemoryEntry{
 		Key: "pref/test-runner", Value: secret, Description: "preferred test runner",
 	})
 	res := exec(t, NewSearchMemoryTool(fs), call(t, "SearchMemory", map[string]any{
@@ -343,7 +379,7 @@ func TestSearchMemoryEmptyQueryIsError(t *testing.T) {
 
 func TestSearchMemoryNoHitIsNotError(t *testing.T) {
 	fs := newFakeStore()
-	_ = fs.Remember(context.Background(), "pref/editor", "vim")
+	seedFake(t, fs, tool.MemoryEntry{Key: "pref/editor", Value: "vim"})
 	res := exec(t, NewSearchMemoryTool(fs), call(t, "SearchMemory", map[string]any{
 		"query": "kubernetes deployment topology",
 	}))

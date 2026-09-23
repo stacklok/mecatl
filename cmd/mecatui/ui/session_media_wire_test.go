@@ -20,14 +20,17 @@ type sessionMediaFixture struct {
 func (f *sessionMediaFixture) CreateSession(_ context.Context, _ *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
 	return &mecatlv1.CreateSessionResponse{
 		SessionId:           "sess-test-0001",
-		Capabilities:        &mecatlv1.ServerCapabilities{Teams: true},
 		SessionCapabilities: &mecatlv1.SessionCapabilities{Image: f.createdImage},
 	}, nil
 }
 
+func (*sessionMediaFixture) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: &mecatlv1.ServerCapabilities{Teams: true}}, nil
+}
+
 func (f *sessionMediaFixture) GetSession(_ context.Context, _ *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
 	return &mecatlv1.GetSessionResponse{Session: &mecatlv1.Session{
-		SessionId: "sess-test-0001", Capabilities: &mecatlv1.ServerCapabilities{Teams: true},
+		SessionId:           "sess-test-0001",
 		SessionCapabilities: &mecatlv1.SessionCapabilities{Image: f.refetchImage},
 	}}, nil
 }

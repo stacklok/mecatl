@@ -394,7 +394,7 @@ func TestGRPCConversePermissionApprove(t *testing.T) {
 			sawAsk = true
 			if err := stream.Send(&mecatlv1.ConverseRequest{
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
-					ResumeApproval: &mecatlv1.ResumeApproval{AskId: ev.GetAsk().GetAskId(), Allow: true},
+					ResumeApproval: &mecatlv1.ResumeApproval{AskId: ev.GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE},
 				},
 			}); err != nil {
 				t.Fatalf("Send approve: %v", err)
@@ -509,7 +509,6 @@ func TestGRPCConverseAllowAlwaysLearns(t *testing.T) {
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},

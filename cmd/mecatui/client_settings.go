@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
-	"github.com/goccy/go-yaml/parser"
 
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
@@ -27,13 +26,37 @@ import (
 type clientSettings struct {
 	Keymap              map[string]string    `yaml:"keymap"`
 	StatusCustomization *statusCustomization `yaml:"status_customization"`
+	TerminalTitle       terminalTitleSettings
+}
+
+type terminalTitleSettings struct {
+	Enabled  bool
+	Template string
+}
+
+type terminalTitleSettingsYAML struct {
+	Enabled  *bool  `yaml:"enabled"`
+	Template string `yaml:"template"`
+}
+
+func shippedTerminalTitleSettings() terminalTitleSettings {
+	return terminalTitleSettings{Enabled: true, Template: customization.DefaultTitleTemplate()}
+}
+
+func newTitleRenderer(settings terminalTitleSettings) (*customization.TitleRenderer, error) {
+	return customization.NewTitleRenderer(settings.Template)
+}
+
+func defaultClientSettings() clientSettings {
+	return clientSettings{TerminalTitle: shippedTerminalTitleSettings()}
 }
 
 // clientSettingsYAML is the strict decode shape. A duration stays textual until
 // after the strict YAML decode so the accepted duration syntax is explicit.
 type clientSettingsYAML struct {
-	Keymap              map[string]string        `yaml:"keymap"`
-	StatusCustomization *statusCustomizationYAML `yaml:"status_customization"`
+	Keymap              map[string]string          `yaml:"keymap"`
+	StatusCustomization *statusCustomizationYAML   `yaml:"status_customization"`
+	TerminalTitle       *terminalTitleSettingsYAML `yaml:"terminal_title"`
 }
 
 type statusCustomizationYAML struct {
@@ -72,15 +95,6 @@ type statusCommand struct {
 	PassthroughEnv []string `yaml:"passthrough_env"`
 }
 
-// legacySettings mirrors the keymap: key out of the SERVER-owned operator-tier
-// settings file (~/.config/mecatl/settings.yaml). That file is shared with
-// mecated and carries permissions:/guardrails:/models:/… sibling keys, so it
-// is decoded LENIENTLY (plain Unmarshal) — the legacy reader must tolerate
-// every server key, not reject them.
-type legacySettings struct {
-	Keymap map[string]string `yaml:"keymap"`
-}
-
 // clientSettingsPath is the single source of the client settings file
 // location: <XDG config base>/mecatui/settings.yaml. It returns "" when the
 // base is unresolvable (the caller then treats the file as absent).
@@ -93,9 +107,7 @@ func clientSettingsPath(env xdgconfig.ResolveEnv) string {
 }
 
 // splitChords splits a comma-separated chord value into trimmed chords,
-// skipping empties. Shared by the legacy and client keymap readers so both
-// parse the byte-compatible `keymap: {Action: "ctrl+a, ctrl+f12"}` format
-// identically.
+// skipping empties.
 func splitChords(val string) []string {
 	parts := make([]string, 0, 1)
 	for _, p := range strings.Split(val, ",") {
@@ -127,12 +139,12 @@ func splitKeymap(raw map[string]string) map[string][]string {
 func readClientSettings() (clientSettings, error) {
 	path := clientSettingsPath(xdgconfig.OSEnv)
 	if path == "" {
-		return clientSettings{}, nil
+		return defaultClientSettings(), nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return clientSettings{}, nil
+			return defaultClientSettings(), nil
 		}
 		return clientSettings{}, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -149,13 +161,34 @@ func readClientSettings() (clientSettings, error) {
 	}
 	status, err := decodeStatusCustomization(raw.StatusCustomization)
 	if err != nil {
-		var passthroughErr *statusline.PassthroughEnvError
+		var passthroughErr *customization.PassthroughEnvError
 		if errors.As(err, &passthroughErr) {
 			return clientSettings{}, fmt.Errorf("parsing %s: %w", path, err)
 		}
 		return clientSettings{}, fmt.Errorf("parsing %s: invalid status_customization configuration", path)
 	}
-	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status}, nil
+	title, err := decodeTerminalTitle(raw.TerminalTitle)
+	if err != nil {
+		return clientSettings{}, fmt.Errorf("parsing %s: terminal_title.template: %w", path, err)
+	}
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title}, nil
+}
+
+func decodeTerminalTitle(raw *terminalTitleSettingsYAML) (terminalTitleSettings, error) {
+	if raw == nil {
+		return shippedTerminalTitleSettings(), nil
+	}
+	out := shippedTerminalTitleSettings()
+	if raw.Enabled != nil {
+		out.Enabled = *raw.Enabled
+	}
+	if raw.Template != "" {
+		out.Template = raw.Template
+	}
+	if _, err := newTitleRenderer(out); err != nil {
+		return terminalTitleSettings{}, err
+	}
+	return out, nil
 }
 
 func clientSettingsSchemaError(path string, err error) error {
@@ -163,16 +196,16 @@ func clientSettingsSchemaError(path string, err error) error {
 
 	diagnostic := yamldiag.Classify("parse client settings", err)
 	if diagnostic.HasLocation {
-		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
+		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type, including terminal_title; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
 	}
-	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type; %s)", path, guidance)
+	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type, including terminal_title; %s)", path, guidance)
 }
 func clientKeymapSyntaxError(path string, err error) error {
 	var documentError *yamldiag.DocumentError
 	if errors.As(err, &documentError) && documentError.Location.HasLocation {
-		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema)", path, documentError.Location.Line, documentError.Location.Column)
+		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema, including terminal_title)", path, documentError.Location.Line, documentError.Location.Column)
 	}
-	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema)", path)
+	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema, including terminal_title)", path)
 }
 
 // readClientKeymap reads the CLIENT-owned settings file
@@ -196,27 +229,27 @@ func readClientKeymap() (map[string][]string, bool, error) {
 func shippedStatusCustomization() statusCustomization { return statusCustomization{} }
 
 // newSource adapts validated settings into the source.
-func newSource(customization statusCustomization) statusline.Source {
-	if customization.Command != nil {
+func newSource(statusConfig statusCustomization) customization.Source {
+	if statusConfig.Command != nil {
 		launchDir, _ := os.Getwd()
-		return statusline.NewCommandSource(statusline.Command{
-			Path: customization.Command.Path, Args: customization.Command.Args, PassthroughEnv: customization.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: customization.Interval,
+		return customization.NewCommandSource(customization.Command{
+			Path: statusConfig.Command.Path, Args: statusConfig.Command.Args, PassthroughEnv: statusConfig.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: statusConfig.Interval,
 		})
 	}
-	if customization.Templates == nil {
-		return statusline.NewDefaultSource(customization.Interval)
+	if statusConfig.Templates == nil {
+		return customization.NewDefaultSource(statusConfig.Interval)
 	}
-	return statusline.NewTemplateSource(statusline.TemplateSet{
-		Header: toSurfaceTemplates(customization.Templates.Header),
-		Footer: toSurfaceTemplates(customization.Templates.Footer),
-	}, customization.Interval)
+	return customization.NewTemplateSource(customization.TemplateSet{
+		Header: toSurfaceTemplates(statusConfig.Templates.Header),
+		Footer: toSurfaceTemplates(statusConfig.Templates.Footer),
+	}, statusConfig.Interval)
 }
 
-func toSurfaceTemplates(value *statusSurfaceTemplates) statusline.SurfaceTemplates {
+func toSurfaceTemplates(value *statusSurfaceTemplates) customization.SurfaceTemplates {
 	if value == nil {
-		return statusline.SurfaceTemplates{}
+		return customization.SurfaceTemplates{}
 	}
-	return statusline.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
+	return customization.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
 }
 
 // readStatusCustomization reads only the strict mecatui client settings file.
@@ -243,7 +276,7 @@ func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomizati
 		return nil, errors.New("template source has no surface")
 	}
 	if raw.Command != nil {
-		command := statusline.Command{
+		command := customization.Command{
 			Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
 		}
 		if err := command.ValidatePassthroughEnv(); err != nil {
@@ -274,43 +307,6 @@ func validStatusSurfaceTemplates(value *statusSurfaceTemplates) bool {
 	return strings.TrimSpace(value.Full) != "" && strings.TrimSpace(value.Compact) != "" && strings.TrimSpace(value.Minimal) != ""
 }
 
-// readLegacyKeymap reads the keymap: key out of the SERVER-owned operator-tier
-// settings file (~/.config/mecatl/settings.yaml) — the DEPRECATED location.
-// The file is shared with mecated, so the decode is LENIENT (plain Unmarshal):
-// permissions:/guardrails:/models:/… sibling keys are tolerated and ignored.
-// An absent file (or unresolvable config base, or no keymap: key) returns
-// (nil, false, nil). The bool reports "the legacy file contributed a keymap"
-// and drives the deprecation WARN in applyKeyOverridesToDeps.
-func readLegacyKeymap() (map[string][]string, bool, error) {
-	cfgBase := xdgconfig.UserConfigDir(xdgconfig.OSEnv)
-	if cfgBase == "" {
-		return nil, false, nil
-	}
-	path := filepath.Join(cfgBase, "mecatl", "settings.yaml")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
-	}
-	var s legacySettings
-	if err := yaml.Unmarshal(b, &s); err != nil {
-		// Parser failures and decode failures remain opaque: parser-rendered
-		// messages can contain YAML-derived content. A successful parse proves
-		// this is the historical wrong-keymap-shape path; otherwise it is syntax.
-		if _, parseErr := parser.ParseBytes(b, 0); parseErr != nil {
-			return nil, false, fmt.Errorf("parse %s: invalid YAML syntax (check the file's line structure)", path)
-		}
-		return nil, false, fmt.Errorf("parse %s: the keymap: key must be a mapping of action -> chord(s) (wrong type under keymap)", path)
-	}
-	out := splitKeymap(s.Keymap)
-	if out == nil {
-		return nil, false, nil
-	}
-	return out, true, nil
-}
-
 // mergeKeymaps returns a new map with b overlaying a (b wins on conflicts).
 func mergeKeymaps(a, b map[string][]string) map[string][]string {
 	if a == nil && b == nil {
@@ -329,37 +325,19 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 // applyKeyOverridesToDeps parses and validates CLI/YAML keymap overrides and applies them to deps.
 // Lives in package main to avoid adding imports to main.go; this file imports keymap.
 //
-// THREE layers merge PER ACTION (a higher layer rebinds only the actions it
+// TWO layers merge PER ACTION (a higher layer rebinds only the actions it
 // names), lowest to highest precedence:
 //
-//	legacy server file (~/.config/mecatl/settings.yaml, DEPRECATED — still
-//	    honoured, but a keymap: there fires a stderr deprecation WARN each
-//	    startup until the operator moves it)
-//	  < client file (~/.config/mecatui/settings.yaml, the client-owned home)
+//	client file (~/.config/mecatui/settings.yaml)
 //	  < CLI --keymap flags (highest).
 //
 // The merged map then goes through keymap.Parse + keymap.Validate unchanged:
 // an invalid override still fails startup.
-func applyKeyOverridesToDeps(cfg config, deps *ui.Deps) error {
-	legacyMap, legacySet, err := readLegacyKeymap()
-	if err != nil {
-		return err
-	}
-	clientMap, _, err := readClientKeymap()
-	if err != nil {
-		return err
-	}
+func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
+	clientMap := splitKeymap(settings.Keymap)
 	cliMap := keyOverridesFromConfig(cfg)
-	merged := mergeKeymaps(mergeKeymaps(legacyMap, clientMap), cliMap)
-	if legacySet {
-		// Deprecation WARN: a direct stderr line, NOT slog — the baseline-slog
-		// redirect (main.go installBaselineSlog) discards slog, and this runs
-		// BEFORE tea.NewProgram so the line lands in scrollback ahead of the
-		// alt-screen. XDG-relative paths, not a possibly-wrong absolute path.
-		fmt.Fprintln(os.Stderr, "mecatui: WARNING: the keymap: key in ~/.config/mecatl/settings.yaml is deprecated; move it to ~/.config/mecatui/settings.yaml (the client settings file). The legacy key still works but will be removed in a future release.")
-	}
+	merged := mergeKeymaps(clientMap, cliMap)
 	if cfg.debugKeymap {
-		fmt.Fprintf(os.Stderr, "mecatui keymap (legacy YAML): %v\n", legacyMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (client YAML): %v\n", clientMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (CLI): %v\n", cliMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (merged): %v\n", merged)

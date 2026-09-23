@@ -22,9 +22,8 @@
 //
 // The event log is a STREAM, not a LIST (ADR 0250): XADD IDs are opaque,
 // monotonic and durable, so they serve as cursors directly, and XREAD BLOCK is a
-// cross-process blocking follow a LIST cannot express. A LIST written before that
-// change stays readable and is migrated in place, atomically, by the next append
-// — see cursoreventlog.go.
+// cross-process blocking follow a LIST cannot express. Older Redis namespaces
+// are not inspected or migrated.
 //
 // DURABILITY CAVEAT: Append/Save call XADD/HSET synchronously and return only
 // once Redis acknowledges the command, but Redis's own persistence config
@@ -56,9 +55,9 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// Key layout under a single Redis keyspace. The session id is the raw string
-// after the sessionKeyPrefix (Redis keys are arbitrary strings, so no
-// sanitization is needed — unlike jsonlstore's filename-safe safeName).
+// Key layout. The session id is the raw string after each entity prefix
+// (Redis keys are arbitrary strings, so no sanitization is needed — unlike
+// jsonlstore's filename-safe token).
 const (
 	sessionKeyPrefix = "mecatl:session:"
 	eventsKeyPrefix  = "mecatl:events:"
@@ -70,6 +69,23 @@ const (
 	fieldMetadataEntry = "metadata_entry"
 	fieldMetadataOwner = "metadata_owner"
 )
+
+func keyPrefixExists(ctx context.Context, client redis.UniversalClient, prefix string) (bool, error) {
+	var cursor uint64
+	for {
+		keys, next, err := client.Scan(ctx, cursor, prefix+"*", 1).Result()
+		if err != nil {
+			return false, err
+		}
+		if len(keys) != 0 {
+			return true, nil
+		}
+		if next == 0 {
+			return false, nil
+		}
+		cursor = next
+	}
+}
 
 // ErrNotFound is returned by Load when no snapshot exists for the id. It wraps
 // port.ErrSessionNotFound so a consumer that may not import this adapter can
@@ -118,9 +134,7 @@ type Store struct {
 	closeGrace  time.Duration
 	closeOnce   sync.Once
 
-	metadataWorkObserver        func(metadataWorkKind)
-	migrationInspectionObserver func()
-	migrationMutationObserver   func()
+	metadataWorkObserver func(metadataWorkKind)
 }
 
 // Config configures a Redis connection using Kubernetes Secret-mounted files.
@@ -498,7 +512,7 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 }
 
 // List returns every stored session's id and SAVE-time mtime. It SCANs the
-// keyspace for session keys (MATCH mecatl:session:*), then HGETs the mtime
+// keyspace for current session keys, then HGETs the mtime
 // field for each. The mtime is the value written at Save time, so two Lists
 // with no intervening Save agree exactly (the stable-across-reads invariant).
 // SCAN is cursor-based and non-blocking; a corrupt mtime field (absent or
@@ -604,11 +618,8 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 // tag, or a Redis error — is yielded as the error on a zero-value event and the
 // consumer stops (the standard iter.Seq2 error idiom).
 //
-// It reads a STREAM (XRANGE) or, for a log written before the Stream migration
-// and not appended to since, a LIST (LRANGE) — chosen by the key's actual type
-// rather than by a stored flag, so no migration bookkeeping can disagree with
-// the keyspace. Reading does NOT migrate: a read must not mutate, and the
-// session's next append migrates it anyway.
+// It reads only the current STREAM representation. Unsupported old datatypes
+// are rejected without mutation.
 //
 // GAP MARKERS ARE SKIPPED. This port's shipped contract is that it returns
 // EVENTS, and a gap is a delivery envelope (ADR 0250 decision 5) that the
@@ -644,24 +655,15 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 	}
 }
 
-// rawEventRecords returns the session's raw envelopes in append order from
-// whichever datatype currently holds the log.
+// rawEventRecords returns the current STREAM's raw envelopes in append order.
 func rawEventRecords(ctx context.Context, client redis.UniversalClient, id session.SessionID) ([][]byte, error) {
 	key := eventsKey(id)
 	kind, err := client.Type(ctx, key).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redisstore: type of event key %q: %w", id, err)
 	}
-	if kind == "list" {
-		records, err := client.LRange(ctx, key, 0, -1).Result()
-		if err != nil {
-			return nil, fmt.Errorf("redisstore: read events %q: %w", id, err)
-		}
-		out := make([][]byte, 0, len(records))
-		for _, rec := range records {
-			out = append(out, []byte(rec))
-		}
-		return out, nil
+	if kind != "none" && kind != "stream" {
+		return nil, fmt.Errorf("redisstore: unsupported old event log type %q for %q; data was left unchanged", kind, id)
 	}
 	// A missing key is not an error in Redis (XRANGE on a missing key returns an
 	// empty slice), so any error here is a genuine fault.

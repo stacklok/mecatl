@@ -40,7 +40,8 @@ binaries and is the wrong workflow.
 
 ```sh
 task build              # → bin/mecated, bin/mecademo, bin/mecatui  (NEVER `go build` to repo root)
-task test               # full suite, -race (root module + engine module + the GOWORK=off engine-standalone hygiene proof)
+task test               # complete offline suite without -race (root + all modules + standalone hygiene proofs)
+task test:race          # same complete suite with -race; run before a PR is ready
 task test:golden        # refresh mecatui View/teatest goldens (-update) then re-run
 task api:check          # api-compat gate: fail if the engine public surface drifts from engine/api/*.txt (also under task test)
 task api:update         # regenerate engine/api/*.txt after an INTENTIONAL core-API change (commit + engine/CHANGELOG.md note)
@@ -56,7 +57,7 @@ cd engine && go test ./agent/ -run TestFullCycle   # a single engine test (engin
 go run ./cmd/mecademo    # end-to-end demo, fully offline (mock provider)
 ```
 
-> **Timeouts:** `task test` and `task lint` are full-repository gates and can run well beyond two minutes. When invoking them through an agent or other timeout-bound runner, start with a **600-second timeout**; the default 120 seconds will almost certainly time out.
+> **Timeouts:** `task test`, `task test:race`, and `task lint` are full-repository gates and can run well beyond two minutes. When invoking them through an agent or other timeout-bound runner, start with a **600-second timeout**; the default 120 seconds will almost certainly time out. `task test` is the faster iteration and worker gate.
 
 > `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in
 > this repo as a MONOREPO via the committed `go.work` (`use ./` + `use ./engine`).
@@ -95,6 +96,7 @@ the opt-in `provider/*` submodules (ADR 0093), and the root module all move in l
 - `contracts/proto/mecatl/v1/` — gRPC contract (source of truth); `contracts/proto/mecatl/driver/v1/` — the driver protocol (SessionStoreService/MemoryStoreService stores; SkillSourceService/SoulSourceService/AgentSourceService/CommandSourceService content sources) a remote driver process implements; `contracts/gen/` is generated, **never hand-edit**.
 - `cmd/mecated/` — standalone server (composition root): flags, TLS/auth/rate-limit, HTTP + metrics listeners. `cmd/mecademo/` — the offline demo. `cmd/mecatequi/` — single-shot HEADLESS composition root (peer of mecademo over `app.Build`): one prompt → a git-diff patch + a JSON Summary + an optional JSONL log + an exit code. It is **FORGE-AGNOSTIC** — knows nothing about GitHub; the glue that turns an issue into a PR lives ONLY in `.github/` + shell, NEVER the binary or `engine/`, and keeps a **split-privilege token boundary** (the agent job holds NO GitHub write token; the publish job runs NO agent code, applies the patch as DATA). See `docs/adr/0028-mecatequi.md`. `cmd/mecak8s/` — storage-free k8s-native agent (ADR 0048), a thin peer of mecated that composes `app.Build` with k8s-native defaults (Redis store + k8s lease + drain gate); no PVC, no local state — state is a managed service (Redis + k8s API server). The four real-provider mains share credential/base-URL wiring via `internal/cliconfig`.
 - `cmd/mecatui/` — optional gRPC **client** TUI; by default hosts a `mecated` in-process over a UNIX socket. `ui`/`theme`/`client` import no `engine/...` or `internal/...` and no proto directly — they render from relayed proto `Event`s. See `docs/tui.md`.
+- `apps/` — **Mecatl Studio**, the browser UI (ADR 0351): a SELF-CONTAINED pnpm workspace (own lockfile, pnpm 12 pin, Biome config, `apps/Taskfile.yml` included as `studio:*` — `task studio:check` = lint + typecheck + test + generated-check; `task studio:dev` runs spawn mode against `bin/mecated`) holding `apps/server` (a Hono BFF that holds the user's credential and forwards it per request), `apps/web` (Vite + React; calls ONLY the BFF's `/api/v1`, imports neither the SDK nor daemon protocol types), and `apps/contracts` (Zod + committed, drift-gated `openapi.json` and generated client). It consumes ONLY the PUBLISHED `@stacklok-oss/mecatl-sdk` from npm — never `sdk/typescript` by path or `workspace:` (Biome `noRestrictedImports` enforces it), so a UI change needing an unreleased SDK change waits for the SDK release, and the Docker build context is `apps/` alone. Published as `ghcr.io/stacklok/mecatl/studio` (multi-stage `apps/Dockerfile`, Chainguard node by digest, `STUDIO_IMAGE=1`, `publish-studio` in release.yml, label `org.stacklok.mecatl.studio.stability=early-access`); CI gates it with the `studio` job over its own `studio_relevant` path category. No Go source, no proto, no model-facing affordance. See `docs/adr/0351-mecatl-studio-in-repo-web-ui.md`.
 - `perf/` — the OFFLINE scenario perf harness (perf-tracking Phase 2, `task perf:scenarios`, NOT part of `task test`): `perf/kpi` (stdlib-ONLY KPI capture — `ScenarioResult`/`Capture`/`/proc` RSS sampler; never imports `engine/...` or `internal/...`) + `perf/scenarios` (external-test `testing.B` whole-loop benchmarks over `engine/...` + `engine/adapter/*`, never `internal/...`). The TUI scrollback render bench lives in `cmd/mecatui/ui/scrollback_bench_test.go` (perf/kpi imported in the `_test` file only). `perf/cmd/perfconvert` (Phase 3; stdlib + `perf/kpi` only) reshapes the scenario JSON into the two github-action-benchmark suites the CI gate consumes; `perf/cmd/benchtrend` (stdlib only, tested, FAIL-CLOSED) median-aggregates Go benchmark samples and compacts the commit-keyed dashboard history; and `perf/cmd/allocsgate` (stdlib only, tested, FAIL-CLOSED) is the deterministic allocs/op gate over `task bench` — the gate DECISION (benchstat is the local human A/B tool only, never the CI gate); the gate is `.github/workflows/perf.yml` (split: allocsgate over `task bench` + github-action-benchmark over the scenarios; PR fails-but-never-pushes, main pushes the `gh-pages` trend store). See `docs/adr/0019-perf-tracking.md`.
 
 ## The layering rule (the thing to get right)
@@ -167,7 +169,7 @@ This section is a contract for **changing mecatl's code**. Preserve the document
 
 ## Verification
 
-After changes: `task lint && task test` must be green, and `go run ./cmd/mecademo` must still
+After changes: use `task test` during iteration and for worker completion. Before a PR is ready, `task lint && task test:race` must be green, and `go run ./cmd/mecademo` must still
 print a full offline session (turn → tool.call → permission.ask + approval → result).
 
 ## Workflow

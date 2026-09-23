@@ -28,9 +28,7 @@ const (
 	// namespace) on every call, denying a foreign caller as absence.
 	//
 	// MANAGEMENT-AUTHORITY SUB-CASE (the storage-maintenance boundaries:
-	// StorageHealth, Plan/Apply/Resume/CancelSessionMigration,
-	// SessionMigrationJob, Plan/Apply/CancelSessionCleanup,
-	// SessionCleanupJob): the boundary still resolves a real per-caller
+	// StorageHealth, Plan/Apply/CancelSessionCleanup, SessionCleanupJob): the
 	// identity decision — "is this the verified management principal", and
 	// for the ones that mint a job/plan/token, "does this handle belong to
 	// THIS caller" — so KindCallerOwned's structural contract (a real ctx
@@ -276,11 +274,6 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},
 	"StorageHealth":             {KindCallerOwned, "gates on the trusted-context management authorizer, NOT caller ownership — the aggregate it reads is store-wide (every session), never scoped to the caller's own rows; see the AccessKind doc comment note on management-authority boundaries"},
-	"PlanSessionMigration":      {KindCallerOwned, "gates on management authorization over the ENTIRE store, not the caller's own sessions; only the returned generation handle is bound to the verified caller for later Apply/Resume/Cancel binding"},
-	"ApplySessionMigration":     {KindCallerOwned, "gates on management authorization over the entire store; only the created job is caller-bound, so a foreign-caller job lookup is denied identically to a missing job"},
-	"ResumeSessionMigration":    {KindCallerOwned, "gates on management authorization; the same caller-bound job-handle check applies before processing another bounded batch — the underlying migration data remains store-wide, never caller-owned"},
-	"CancelSessionMigration":    {KindCallerOwned, "gates on management authorization; the same caller-bound job-handle check applies before stopping future items — the underlying migration data remains store-wide, never caller-owned"},
-	"SessionMigrationJob":       {KindCallerOwned, "gates on management authorization and conceals missing and cross-caller job handles identically; the underlying migration data is store-wide, not the caller's own sessions"},
 	"PlanSessionCleanup":        {KindCallerOwned, "gates on management authority, NOT caller ownership — the metadata pager plans over the ENTIRE store (owner scope is nil); the decision resolved here is 'is this caller a management principal', never per-session ownership"},
 	"ApplySessionCleanup":       {KindCallerOwned, "gates on management authority over the entire store; only the confirmation token/plan is bound to the verified caller, so a stolen or foreign token is rejected before any deletion"},
 	"CancelSessionCleanup":      {KindCallerOwned, "gates on management authority; matches the verified principal against the bounded job registry — the underlying cleanup scope is store-wide, never caller-owned"},
@@ -422,24 +415,24 @@ var serviceAccessTable = map[string]ClassificationEntry{
 
 // callerStoreAccessTable classifies memory.CallerStore's exported methods —
 // the "cache/index" boundary ADR 0212 decision 2 names (the local backing
-// store, search/index, and delete for the caller-partitioned user-model and
-// project memory kinds). Every method derives its namespace from the
-// context-carried verified principal (session.PrincipalFromContext), so all
-// six are caller-owned by construction: a request with no verified principal
-// is rejected (memory: verified caller is required), never silently
-// namespaced to a shared/default bucket.
-// callerStoreScopedRationale is shared by every CallerStore method except
-// RememberEntry (which additionally notes the project workspace bind) —
-// factored out so the repeated literal doesn't trip goconst.
+// store operations for caller-partitioned user-model and project memory. Every
+// method derives its namespace from the context-carried verified principal
+// (session.PrincipalFromContext), so all are caller-owned by construction: a
+// request with no verified principal is rejected (memory: verified caller is
+// required), never silently namespaced to a shared/default bucket.
+// callerStoreScopedRationale is shared by every CallerStore method.
+// It is factored out so the repeated literal doesn't trip goconst.
 const callerStoreScopedRationale = "scoped() derives the namespace from the context principal on every call"
 
 var callerStoreAccessTable = map[string]ClassificationEntry{
-	"RememberEntry": {KindCallerOwned, "scoped() derives the namespace from the context principal (+ workspace for project memory) on every call"},
-	"Recall":        {KindCallerOwned, callerStoreScopedRationale},
-	"List":          {KindCallerOwned, callerStoreScopedRationale},
-	"Index":         {KindCallerOwned, callerStoreScopedRationale},
-	"Search":        {KindCallerOwned, callerStoreScopedRationale},
-	"Forget":        {KindCallerOwned, callerStoreScopedRationale},
+	"Remember": {KindCallerOwned, callerStoreScopedRationale},
+	"Inspect":  {KindCallerOwned, callerStoreScopedRationale},
+	"Recall":   {KindCallerOwned, callerStoreScopedRationale},
+	"List":     {KindCallerOwned, callerStoreScopedRationale},
+	"Index":    {KindCallerOwned, callerStoreScopedRationale},
+	"Search":   {KindCallerOwned, callerStoreScopedRationale},
+	"Forget":   {KindCallerOwned, callerStoreScopedRationale},
+	"Undo":     {KindCallerOwned, callerStoreScopedRationale},
 }
 
 // systemAccessTable classifies each internal/syscaller.Root's explicit

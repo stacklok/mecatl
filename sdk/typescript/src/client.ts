@@ -911,7 +911,7 @@ class SessionImpl implements Session {
         transport: this.#operations.transportKind,
       });
     }
-    const refreshed = promptCapabilities(snapshot.sessionCapabilities, snapshot.capabilities);
+    const refreshed = promptCapabilities(snapshot.sessionCapabilities, this.#promptCapabilities);
     if (refreshed !== undefined) this.#promptCapabilities = refreshed;
     return snapshot;
   }
@@ -1097,6 +1097,7 @@ class ClientImpl implements Client {
               mcpServers: [...(input.mcpServers ?? []), mcpServer],
             };
           }
+          const compatibility = await this.#compatibility(requestOptions, false);
           const response = await this.#unary(
             HarnessService.method.createSession,
             request,
@@ -1106,7 +1107,7 @@ class ClientImpl implements Client {
           return this.#session(
             response.sessionId,
             "CreateSession",
-            promptCapabilities(response.sessionCapabilities, response.capabilities),
+            promptCapabilities(response.sessionCapabilities, compatibility.capabilities),
           );
         } catch (error) {
           lease?.finish(false);
@@ -1125,6 +1126,7 @@ class ClientImpl implements Client {
         return this.#session(response.sessionId, "ForkSession", undefined);
       },
       get: async (sessionId, options) => {
+        const compatibility = await this.#compatibility(options, false);
         const response = await this.#unary(
           HarnessService.method.getSession,
           { sessionId },
@@ -1142,7 +1144,7 @@ class ClientImpl implements Client {
         return new SessionImpl(
           snapshot.sessionId,
           this.#operations,
-          promptCapabilities(snapshot.sessionCapabilities, snapshot.capabilities),
+          promptCapabilities(snapshot.sessionCapabilities, compatibility.capabilities),
         );
       },
       list: operational.sessionInventory.list,

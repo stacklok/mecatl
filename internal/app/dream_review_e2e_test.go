@@ -28,7 +28,7 @@ func TestManualDreamBufconnEndToEnd(t *testing.T) {
 		{Key: "a", Value: "old survivor", Description: "old description"},
 		{Key: "b", Value: "source", Description: "source description"},
 	} {
-		if err := store.RememberEntry(ctx, entry); err != nil {
+		if _, err := store.Remember(ctx, entry, tool.MemoryCurrent{}); err != nil {
 			t.Fatal(err)
 		}
 	}

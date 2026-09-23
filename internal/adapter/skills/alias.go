@@ -125,9 +125,6 @@ func Register(cat *tool.Catalog, dir string) ([]Skill, []SkipError, error) {
 	return skillfs.Register(cat, dir)
 }
 
-// Discover scans dir for skills. See skillfs.Discover.
-func Discover(dir string) ([]Skill, []SkipError, error) { return skillfs.Discover(dir) }
-
 // ResolveSources builds the ORDERED, highest-precedence-first Source list from
 // the conventional locations plus any explicit paths. See skillfs.ResolveSources.
 func ResolveSources(opts ResolveOptions) []Source { return skillfs.ResolveSources(opts) }

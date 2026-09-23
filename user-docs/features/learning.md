@@ -31,6 +31,7 @@ Configure learning in the operator-tier `settings.yaml`:
 ```yaml
 learning:
   mode: review # off | review | auto
+  admission_interval: 1 # 0 or 1 admits every eligible reflection
   sensitivity: balanced # conservative | balanced | eager
   skills:
     activation: validated # validated | evaluated
@@ -56,9 +57,11 @@ The modes provide increasing levels of automation:
 A project settings file can lower autonomy or require `evaluated` activation. It
 cannot enable learning, raise autonomy, or weaken assurance.
 
-The deprecated `--user-model-review` flag maps to `learning.mode: auto`.
-`--user-model-review-interval` down-samples admitted reflections. Prefer the
-`learning` settings for new deployments.
+`learning.admission_interval` down-samples eligible automatic reflections with
+one process-wide counter. A value of `N` admits every Nth reflection. Values `0`
+and `1` admit every eligible reflection. The
+`--learning-admission-interval` flag overrides the settings value, including
+when you set the flag to `0`.
 
 ## What can be learned
 

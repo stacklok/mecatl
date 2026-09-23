@@ -42,8 +42,7 @@ func projectTool(store tool.MemoryStore, name string) tool.Tool {
 	panic("memory: portable tool missing " + name)
 }
 
-// Tools returns the project family. Lifecycle tools are included only when the
-// store advertises tool.MemoryLifecycleStore.
+// Tools returns the mandatory six-tool project family.
 func Tools(store tool.MemoryStore) []tool.Tool { return memorytools.ProjectTools(store) }
 
 // Register adds the applicable project family to cat.

@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 )
 
 // TestRoutableAgentNamesMatrix pins the composition-side routable-set rules (issue #286):

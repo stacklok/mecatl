@@ -112,6 +112,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface) | Interface |
 | [`PermissionAskResponder`](#api-permissionaskresponder-typealias) | Type alias |
 | [`PermissionVerdict`](#api-permissionverdict-typealias) | Type alias |
+| [`PermissionVerdict`](#api-permissionverdict-variable) | Variable |
 | [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
 | [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
 | [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
@@ -129,6 +130,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`RequestOptions`](#api-requestoptions-typealias) | Type alias |
 | [`ResultEventPayload`](#api-resulteventpayload-interface) | Interface |
 | [`RetryDisposition`](#api-retrydisposition-typealias) | Type alias |
+| [`RetryDisposition`](#api-retrydisposition-variable) | Variable |
 | [`Run`](#api-run-interface) | Interface |
 | [`RunAuthorizationRequiredError`](#api-runauthorizationrequirederror-class) | Class |
 | [`RunAuthorizationRequiredOutcome`](#api-runauthorizationrequiredoutcome-interface) | Interface |
@@ -183,6 +185,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`SteerOutcomeEventPayload`](#api-steeroutcomeeventpayload-interface) | Interface |
 | [`Storage`](#api-storage-interface) | Interface |
 | [`StreamProgress`](#api-streamprogress-typealias) | Type alias |
+| [`StreamProgress`](#api-streamprogress-variable) | Variable |
 | [`SubagentEventPayload`](#api-subagenteventpayload-interface) | Interface |
 | [`SUPPORTED_API_MAJOR`](#api-supported-api-major-variable) | Variable |
 | [`Team`](#api-team-interface) | Interface |
@@ -214,7 +217,6 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class) | Class |
 | [`UserModel`](#api-usermodel-interface) | Interface |
 | [`UserPromptEventPayload`](#api-userprompteventpayload-interface) | Interface |
-| [`WATCH_SESSION_EVENTS_FEATURE`](#api-watch-session-events-feature-variable) | Variable |
 | [`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface) | Interface |
 | [`WatchEnvelope`](#api-watchenvelope-typealias) | Type alias |
 | [`WatchEventEnvelope`](#api-watcheventenvelope-interface) | Interface |
@@ -894,12 +896,6 @@ The payload of an `approval` replay event.
 export interface ApprovalEventPayload
 ```
 
-<Heading as="h4" id="api-approvaleventpayload-allowalways-propertysignature"><code>ApprovalEventPayload.allowAlways</code></Heading>
-
-```ts
-readonly allowAlways: boolean;
-```
-
 <Heading as="h4" id="api-approvaleventpayload-askid-propertysignature"><code>ApprovalEventPayload.askId</code></Heading>
 
 ```ts
@@ -921,7 +917,7 @@ readonly tool: string;
 <Heading as="h4" id="api-approvaleventpayload-verdict-propertysignature"><code>ApprovalEventPayload.verdict</code></Heading>
 
 ```ts
-readonly verdict: string;
+readonly verdict: 0 | 1 | 2 | 3;
 ```
 
 <Heading as="h3" id="api-archivedconversationmessage-interface"><code>ArchivedConversationMessage</code></Heading>
@@ -988,24 +984,7 @@ A durable activity stream bound to one run.
 export interface AttachedRun extends SessionActivity
 ```
 
-Callable members: [`approve()`](#api-attachedrun-approve-methodsignature), [`cancel()`](#api-attachedrun-cancel-methodsignature), [`resolveAsk()`](#api-attachedrun-resolveask-methodsignature), [`steer()`](#api-attachedrun-steer-methodsignature)
-
-<Heading as="h4" id="api-attachedrun-approve-methodsignature"><code>AttachedRun.approve</code></Heading>
-
-Reports that approval controls are unavailable on durable attachments.
-
-```ts
-approve(askId: string, allow: boolean): Promise<never>;
-```
-
-Parameters:
-
-- `askId` (`string`): Permission-ask ID, retained for parity with a live run.
-- `allow` (`boolean`): Boolean verdict, retained for parity with a live run.
-
-Returns: `Promise<never>`: A rejected promise.
-
-Throws: `UnsupportedFeatureError` for every call.
+Callable members: [`cancel()`](#api-attachedrun-cancel-methodsignature), [`resolveAsk()`](#api-attachedrun-resolveask-methodsignature), [`steer()`](#api-attachedrun-steer-methodsignature)
 
 <Heading as="h4" id="api-attachedrun-cancel-methodsignature"><code>AttachedRun.cancel</code></Heading>
 
@@ -1673,12 +1652,6 @@ readonly text: string;
 
 ```ts
 readonly turn: number;
-```
-
-<Heading as="h4" id="api-eventcommon-usage-propertysignature"><code>EventCommon.usage</code></Heading>
-
-```ts
-readonly usage: EventUsage | undefined;
 ```
 
 <Heading as="h3" id="api-eventcontent-interface"><code>EventContent</code></Heading>
@@ -3387,12 +3360,6 @@ export interface ResultEventPayload
 readonly error: string;
 ```
 
-<Heading as="h4" id="api-resulteventpayload-permanent-propertysignature"><code>ResultEventPayload.permanent</code></Heading>
-
-```ts
-readonly permanent: boolean;
-```
-
 <Heading as="h4" id="api-resulteventpayload-retrydisposition-propertysignature"><code>ResultEventPayload.retryDisposition</code></Heading>
 
 ```ts
@@ -3431,24 +3398,7 @@ One accepted server run and its single-consumption event stream.
 export interface Run extends AsyncIterable<Event>
 ```
 
-Callable members: [`approve()`](#api-run-approve-methodsignature), [`cancel()`](#api-run-cancel-methodsignature), [`outcome()`](#api-run-outcome-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
-
-<Heading as="h4" id="api-run-approve-methodsignature"><code>Run.approve</code></Heading>
-
-Sends a Boolean permission verdict for a `permission.ask` event.
-
-```ts
-approve(askId: string, allow: boolean): Promise<void>;
-```
-
-Parameters:
-
-- `askId` (`string`): ID carried by the permission ask.
-- `allow` (`boolean`): Whether to allow the call once.
-
-Returns: `Promise<void>`: A promise that resolves after the verdict is sent.
-
-Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
+Callable members: [`cancel()`](#api-run-cancel-methodsignature), [`outcome()`](#api-run-outcome-methodsignature), [`resolveAsk()`](#api-run-resolveask-methodsignature), [`result()`](#api-run-result-methodsignature), [`steer()`](#api-run-steer-methodsignature)
 
 <Heading as="h4" id="api-run-cancel-methodsignature"><code>Run.cancel</code></Heading>
 
@@ -3491,7 +3441,7 @@ Parameters:
 - `askId` (`string`): ID carried by the permission ask.
 - `verdict` (`PermissionVerdict`): Decision to apply to the pending ask.
 
-Returns: `Promise<void>`: A promise that resolves after the server accepts the verdict.
+Returns: `Promise<void>`: A promise that resolves after the verdict frame is handed to the active stream transport. This send-only API does not acknowledge server acceptance; use `Session.controls(runId).resolveAsk()` when an acknowledged control operation is required.
 
 Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
@@ -3624,7 +3574,7 @@ Returns: `Promise<RunSteerCancellationAcknowledgement>`: Whether the server retr
 
 <Heading as="h4" id="api-runcontrols-resolveask-methodsignature"><code>RunControls.resolveAsk</code></Heading>
 
-Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `Session.resolvePlan()` and fail with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`.
+Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `Session.resolvePlan()` and fail with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`. Unlike the stream-local `Run.resolveAsk()` send-only operation, this control returns only after the server acknowledges acceptance.
 
 ```ts
 resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
@@ -4091,12 +4041,6 @@ readonly agents: boolean;
 readonly audio: boolean;
 ```
 
-<Heading as="h4" id="api-servercapabilities-bash-propertysignature"><code>ServerCapabilities.bash</code></Heading>
-
-```ts
-readonly bash: boolean;
-```
-
 <Heading as="h4" id="api-servercapabilities-debugmcp-propertysignature"><code>ServerCapabilities.debugMcp</code></Heading>
 
 ```ts
@@ -4181,6 +4125,12 @@ readonly scheduling: boolean;
 readonly sessionDebug: boolean;
 ```
 
+<Heading as="h4" id="api-servercapabilities-shell-propertysignature"><code>ServerCapabilities.shell</code></Heading>
+
+```ts
+readonly shell: boolean;
+```
+
 <Heading as="h4" id="api-servercapabilities-skills-propertysignature"><code>ServerCapabilities.skills</code></Heading>
 
 ```ts
@@ -4215,12 +4165,6 @@ readonly storageCleanup: boolean;
 
 ```ts
 readonly storageHealth: boolean;
-```
-
-<Heading as="h4" id="api-servercapabilities-storagemigration-propertysignature"><code>ServerCapabilities.storageMigration</code></Heading>
-
-```ts
-readonly storageMigration: boolean;
 ```
 
 <Heading as="h4" id="api-servercapabilities-teams-propertysignature"><code>ServerCapabilities.teams</code></Heading>
@@ -5001,12 +4945,6 @@ An authoritative, detached view of one durable session.
 export interface SessionSnapshot
 ```
 
-<Heading as="h4" id="api-sessionsnapshot-capabilities-propertysignature"><code>SessionSnapshot.capabilities</code></Heading>
-
-```ts
-readonly capabilities?: ServerCapabilities;
-```
-
 <Heading as="h4" id="api-sessionsnapshot-createdatunix-propertysignature"><code>SessionSnapshot.createdAtUnix</code></Heading>
 
 ```ts
@@ -5437,13 +5375,13 @@ readonly text: string;
 
 <Heading as="h3" id="api-storage-interface"><code>Storage</code></Heading>
 
-Storage health, migration, and cleanup operations owned by the server.
+Storage health and cleanup operations owned by the server.
 
 ```ts
 export interface Storage
 ```
 
-Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature), [`applyMigration()`](#api-storage-applymigration-methodsignature), [`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature), [`cancelMigration()`](#api-storage-cancelmigration-methodsignature), [`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature), [`getHealth()`](#api-storage-gethealth-methodsignature), [`getMigrationJob()`](#api-storage-getmigrationjob-methodsignature), [`planCleanup()`](#api-storage-plancleanup-methodsignature), [`planMigration()`](#api-storage-planmigration-methodsignature), [`resumeMigration()`](#api-storage-resumemigration-methodsignature)
+Callable members: [`applyCleanup()`](#api-storage-applycleanup-methodsignature), [`cancelCleanup()`](#api-storage-cancelcleanup-methodsignature), [`getCleanupJob()`](#api-storage-getcleanupjob-methodsignature), [`getHealth()`](#api-storage-gethealth-methodsignature), [`planCleanup()`](#api-storage-plancleanup-methodsignature)
 
 <Heading as="h4" id="api-storage-applycleanup-methodsignature"><code>Storage.applyCleanup</code></Heading>
 
@@ -5460,21 +5398,6 @@ Parameters:
 
 Returns: `Promise<CleanupJob>`
 
-<Heading as="h4" id="api-storage-applymigration-methodsignature"><code>Storage.applyMigration</code></Heading>
-
-Starts a planned session-storage migration.
-
-```ts
-applyMigration(request: ApplySessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`ApplySessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
-
 <Heading as="h4" id="api-storage-cancelcleanup-methodsignature"><code>Storage.cancelCleanup</code></Heading>
 
 Cancels a session-storage cleanup.
@@ -5489,21 +5412,6 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<CleanupJob>`
-
-<Heading as="h4" id="api-storage-cancelmigration-methodsignature"><code>Storage.cancelMigration</code></Heading>
-
-Cancels a session-storage migration.
-
-```ts
-cancelMigration(request: CancelSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`CancelSessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
 
 <Heading as="h4" id="api-storage-getcleanupjob-methodsignature"><code>Storage.getCleanupJob</code></Heading>
 
@@ -5535,21 +5443,6 @@ Parameters:
 
 Returns: `Promise<GetStorageHealthResponse>`
 
-<Heading as="h4" id="api-storage-getmigrationjob-methodsignature"><code>Storage.getMigrationJob</code></Heading>
-
-Gets one session-storage migration job.
-
-```ts
-getMigrationJob(request: GetSessionMigrationJobRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`GetSessionMigrationJobRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
-
 <Heading as="h4" id="api-storage-plancleanup-methodsignature"><code>Storage.planCleanup</code></Heading>
 
 Previews a session-storage cleanup.
@@ -5564,36 +5457,6 @@ Parameters:
 - `options` (`RequestOptions`, optional)
 
 Returns: `Promise<PlanSessionCleanupResponse>`
-
-<Heading as="h4" id="api-storage-planmigration-methodsignature"><code>Storage.planMigration</code></Heading>
-
-Previews a session-storage migration.
-
-```ts
-planMigration(request: PlanSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationPlan>;
-```
-
-Parameters:
-
-- `request` (`PlanSessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationPlan>`
-
-<Heading as="h4" id="api-storage-resumemigration-methodsignature"><code>Storage.resumeMigration</code></Heading>
-
-Resumes an interrupted session-storage migration.
-
-```ts
-resumeMigration(request: ResumeSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
-```
-
-Parameters:
-
-- `request` (`ResumeSessionMigrationRequest`)
-- `options` (`RequestOptions`, optional)
-
-Returns: `Promise<SessionMigrationJob>`
 
 <Heading as="h3" id="api-subagenteventpayload-interface"><code>SubagentEventPayload</code></Heading>
 
@@ -6854,10 +6717,10 @@ export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: Ab
 
 <Heading as="h3" id="api-permissionverdict-typealias"><code>PermissionVerdict</code></Heading>
 
-A server permission verdict accepted by run.resolveAsk().
+One server permission verdict accepted by run.resolveAsk().
 
 ```ts
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 ```
 
 <Heading as="h3" id="api-planapprovalresponder-typealias"><code>PlanApprovalResponder</code></Heading>
@@ -6910,10 +6773,10 @@ export type RequestOptions = CallOptions;
 
 <Heading as="h3" id="api-retrydisposition-typealias"><code>RetryDisposition</code></Heading>
 
-Retry classification fields carried by model-retry and result payloads.
+One canonical retry-classification value.
 
 ```ts
-export type RetryDisposition = 0 | 1 | 2 | 3;
+export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
 ```
 
 <Heading as="h3" id="api-runoutcome-typealias"><code>RunOutcome</code></Heading>
@@ -6974,10 +6837,10 @@ export type SessionMode = (typeof SessionMode)[keyof typeof SessionMode];
 
 <Heading as="h3" id="api-streamprogress-typealias"><code>StreamProgress</code></Heading>
 
-Stream-progress classification carried by model-retry and result payloads.
+One canonical stream-progress value.
 
 ```ts
-export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+export type StreamProgress = (typeof StreamProgress)[keyof typeof StreamProgress];
 ```
 
 <Heading as="h3" id="api-teamevent-typealias"><code>TeamEvent</code></Heading>
@@ -7118,7 +6981,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -7135,6 +6998,31 @@ Watch phases this SDK understands.
 
 ```ts
 MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"]
+```
+
+<Heading as="h3" id="api-permissionverdict-variable"><code>PermissionVerdict</code></Heading>
+
+Canonical server permission verdicts.
+
+```ts
+PermissionVerdict: {
+    readonly AllowOnce: "allow_once";
+    readonly AllowAlways: "allow_always";
+    readonly Deny: "deny";
+}
+```
+
+<Heading as="h3" id="api-retrydisposition-variable"><code>RetryDisposition</code></Heading>
+
+Canonical retry classifications carried by model-retry and result payloads.
+
+```ts
+RetryDisposition: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Retryable: 2;
+    readonly Permanent: 3;
+}
 ```
 
 <Heading as="h3" id="api-serverfeature-variable"><code>ServerFeature</code></Heading>
@@ -7186,20 +7074,26 @@ SessionMode: {
 }
 ```
 
+<Heading as="h3" id="api-streamprogress-variable"><code>StreamProgress</code></Heading>
+
+Canonical stream-progress classifications carried by model-retry and result payloads.
+
+```ts
+StreamProgress: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Precommit: 2;
+    readonly Visible: 3;
+    readonly Complete: 4;
+}
+```
+
 <Heading as="h3" id="api-supported-api-major-variable"><code>SUPPORTED_API_MAJOR</code></Heading>
 
 The API major implemented by this SDK.
 
 ```ts
 SUPPORTED_API_MAJOR = 1
-```
-
-<Heading as="h3" id="api-watch-session-events-feature-variable"><code>WATCH_SESSION_EVENTS_FEATURE</code></Heading>
-
-Known watch-session-events feature identifier.
-
-```ts
-WATCH_SESSION_EVENTS_FEATURE: "watch_session_events"
 ```
 
 <Heading as="h3" id="api-workspaceenrollmentstatus-variable"><code>WorkspaceEnrollmentStatus</code></Heading>

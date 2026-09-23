@@ -619,6 +619,115 @@ steer, retraction, strict stale/error results, request cancellation and deadline
 acknowledgement-only rehydration across gRPC TCP, UDS, and HTTP. The attachment suites retain their
 stale-guarded cancellation, terminal SSE cursor errors, and default log-only filtering proofs.
 
+### Mecatl Studio
+
+Mecatl Studio is the browser UI, kept in the repository as the self-contained pnpm
+workspace `apps/` (`apps/web`, `apps/server`, `apps/contracts`; its own lockfile, pnpm
+12 pin, Biome config, and `apps/Taskfile.yml`, included in the root Taskfile as
+`studio:*`). It is a **client** of mecatl in the same sense the TypeScript SDK is, one
+layer further out: `apps/server` is a Hono backend for frontend (BFF) that depends on the
+**published** `@stacklok-oss/mecatl-sdk` from npm by a semver range — never on
+`sdk/typescript` by path or `workspace:` link — so Studio builds without a Go toolchain
+or the SDK's build, its Docker build context is `apps/` alone, and the UI lags the daemon
+by one SDK release on purpose. The boundary has three sides: the **browser** runs the
+Vite + React SPA in `apps/web` and calls only the BFF's `/api/v1` product API, importing
+`@mecatl-studio/contracts` and its generated query client but neither the SDK nor any
+daemon protocol type; the **BFF** holds the user's credential and forwards it per request
+through the SDK credential provider bound to the request's `AsyncLocalStorage` context,
+serving the SPA and `/api` from one origin; **mecatl** is reached only by the BFF. The
+BFF's `/api/v1` routes describe product capabilities rather than mirroring daemon
+endpoints, and `apps/contracts` (Zod schemas, the generated `openapi.json`, the generated
+Hey API client) is committed and drift-gated like `contracts/gen` and `engine/api/*.txt`.
+
+At startup the BFF resolves exactly one **runtime mode** from the environment:
+`external` (`MECATL_BASE_URL`, an existing gRPC listener), `spawn` (a local `mecated`
+from `MECATED_BIN` or `PATH`), or `mock` (`MECATL_DEV_MOCK=1`, `mecated --mock`); a
+conflicting combination exits non-zero before listening. Configuration is split by
+ownership — `MECATL_*` describes the target, `STUDIO_*` is Studio's own. Interactive
+login is Authorization Code + PKCE against the single issuer named by the target's
+RFC 9728 protected-resource document (fetched for `MECATL_RESOURCE_URL`, or derived
+from `MECATL_BASE_URL`); a `404` from discovery disables interactive login, any other
+discovery failure is a startup error, and a static token (`MECATL_AUTH_TOKEN`) or an
+issuer-less target yields the `static` / `none` auth modes, which WARN because every
+browser then acts as one principal. The **session model** is stateless: no server-side
+store, four `SameSite=Lax` cookies (`studio_access` and `studio_refresh` HttpOnly and
+sealed with AES-256-GCM under a key derived from `STUDIO_SESSION_SECRET`, `studio_login`
+for the in-flight PKCE transaction, and `studio_csrf` as the double-submit token), so
+every replica shares one secret and scales horizontally behind mecak8s with no new
+infrastructure. `Secure` flags and the callback origin derive from `STUDIO_PUBLIC_URL`,
+never from the request scheme, because production TLS terminates at an Ingress.
+
+The **image** is one origin: a multi-stage `Dockerfile` compiles `apps/web` and
+`apps/server` to `dist`, prunes the server to production dependencies with
+`pnpm deploy --prod`, and copies them onto `cgr.dev/chainguard/node` pinned by digest
+(the `.ko.yaml` posture), running `node dist/index.js` as the base's non-root user with
+`STUDIO_IMAGE=1` set — which refuses the spawn and mock modes and requires
+`STUDIO_ALLOW_UNAUTHENTICATED=1` for static/none auth. It is published as
+`ghcr.io/stacklok/mecatl/studio` by the `publish-studio` release job with the same sign,
+SBOM, and provenance steps as the Slack bot image, labelled
+`org.stacklok.mecatl.studio.stability=early-access` because Studio can change without
+notice between versions; `apps/docker-compose.yml` runs it against a locally built `mecated` for
+development. CI gates it with its own `studio` job and path-relevance category
+(`apps/*|.github/*|Taskfile.yml`), separate from the Go and SDK families because
+neither can change it. The bootstrap shipped health, runtime status, auth, and the shell;
+each feature port is a Bounded follow-up with its own acceptance plan, since new
+`/api/v1` routes and contract schemas are a public BFF interface. **Chat** is the first
+feature: `/api/v1/sessions…` carries the session inventory (paged through the SDK,
+`inspect_only_kind` rows filtered, delete/rename capabilities relayed from the daemon),
+creation with mode / model / reasoning effort / `toolAccess` (`noFilesystem` → the
+`no-fs` profile), detail with cumulative usage, rename, delete, mode, compaction, fork,
+clear, and the transcript; runs, replays (`…/activity`), and retries stream as
+Server-Sent Events carrying Studio's own `type`-discriminated union — `run.started`,
+`run.event`, `run.truncated`, `run.error` — where `run.event` wraps the SDK event with `bigint` counters
+as decimal strings and an SDK kind the SDK does not model forwarded as `unknown: true`
+with its wire kind and raw payload, so protocol drift stays visible instead of being
+dropped. Replay is bounded and resumable rather than unconditional: every `run.event`
+frame carries its durable cursor in the SSE `id` field, a request resumes exactly after
+the cursor in `Last-Event-ID` (or the `resumeFrom` query parameter), a no-cursor replay
+stops after `STUDIO_ACTIVITY_REPLAY_MAX` durable replay events with a
+`run.truncated` frame that points the client at the authoritative transcript, a durable
+gap ends the stream rather than streaming across the hole, an unusable cursor is `400`,
+and a session admits `STUDIO_ACTIVITY_MAX_STREAMS` concurrent streams per replica so one
+browser cannot impose unbounded historical reads. Live events stay unbounded; cancel, steer, and permission verdicts address the exact durable run through the
+SDK's control handle and answer `409 stale_run_control` for an ended one. Every mutation
+sits behind the bootstrap's same-origin + double-submit CSRF check and, with interactive
+login active, the `401` session gate. **Schedules** is the second feature:
+`/api/v1/schedules…` projects the daemon's ScheduleService (cron or one-shot trigger,
+permission mode, tool profile, fire history) through a contract that is capability-gated
+live on the negotiated snapshot's `scheduling` flag — the list answers `supported: false`
+with a reason instead of failing, every mutation answers `501 schedule_unsupported` — and
+whose updates re-send only the exposed fields while carrying the daemon's unexposed spec
+fields (`limits`, `selector`, `parts`, …) over untouched; the browser adds a cron builder
+and a natural-language phrase parser as pure functions. **Knowledge** is the third:
+`/api/v1/skills`, `/learned-skills…`, `/learning-proposals…`, `/sessions/{id}/reflection`,
+and `/user-memory…` project configured skills, versioned learned skills (detail, unified
+diff, lifecycle history, and `activate`/`archive`/`reject`/`rollback` carrying the daemon's
+`expectedRevision`), the evidence-backed learning queue (decide, undo promotion), session
+reflection receipts, and the user model with its daemon-curated consolidation plans
+(generate, then apply or dismiss by plan id); each surface is gated live on its own snapshot
+capability (`skills`, `learnedSkills`, `learningProposals`, `reflection`, `userModel`,
+`manualDream.userModel`) with a surface-specific `501` code, the two inventory lists degrade
+to `supported: false` instead, and the daemon's conflict on a stale token is relayed, never
+retried. **Settings** is the fourth: `GET /api/v1/settings/runtime` is a read-only,
+allowlisted projection — build id, server implementation, the provider's *display* endpoint,
+the model and provider inventory (with provider rows synthesised for models whose provider
+reports no status), and fixed `management` flags saying provider and routing configuration are
+deployment-managed — calling `server.info` only when the snapshot advertises `server_info` and
+`models.list` only under `modelSelection`; `GET /api/v1/storage/health` maps the daemon's
+storage health with counts as decimal strings and byte figures `null` unless marked available,
+gated on `storageHealth`. Never a credential, key, or raw base URL. Two **browser-only**
+surfaces complete the set with no BFF change: a global search palette whose index is a pure
+function over the inventories the BFF already served this user (titles, names, descriptions,
+and ids only, matched client-side with accent folding, never sent upstream), and a
+keyboard-shortcuts reference page over a closed static registry (bindings pinned to
+preventable primary-modifier combos) that lists only the deployment capabilities with a
+reachable spot in Studio's UI, each read off the same snapshot gate the owning component uses.
+See
+[ADR 0351](adr/0351-mecatl-studio-in-repo-web-ui.md), the
+[Studio bootstrap](acceptance/studio-bootstrap.md) and
+[Studio chat](acceptance/studio-chat.md) acceptance plans, and the workspace's own
+[README](../apps/README.md) for running and configuring it.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:
@@ -807,17 +916,16 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat.
 The sibling `mecatui debug TARGET` and
 `mecatui connect ADDRESS debug TARGET` forms create a separate durable `debug` session whose trusted relationship metadata binds
-one authorized target. The proto-free UI uses the same fixed 12-column,
-terminal-safe handle as the header: safe `[A-Za-z0-9._-]` bytes are literal except that
-a leading `-` is encoded as `%2D`; all other UTF-8 bytes are uppercase `%HH`, with only
-complete atoms that fit. The displayed literal has no leading `#`. A syntactically valid
-short target is resolved against the complete caller-filtered inventory: exact full-ID equality
-wins automatically, otherwise one unique projected match resolves. Multiple projections fail
-with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or no match
-passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path. Longer
-or malformed targets likewise remain exact-ID inputs automatically. Only the resolved exact ID
-crosses the real `Client.CreateDebugSession` request boundary, and the server remains the final
-authority.
+one authorized target. The proto-free UI uses the same fixed 12-column, terminal-safe handle as the header: safe
+`[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; all other UTF-8
+bytes are uppercase `%HH`, with only complete atoms that fit. The displayed literal has no leading
+`#`. A syntactically valid short target is resolved against the complete caller-filtered inventory:
+exact full-ID equality wins automatically, otherwise one unique projected match resolves. Multiple
+projections fail with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or
+no match passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path.
+Longer or malformed targets likewise remain exact-ID inputs automatically.
+Only the resolved exact ID crosses the real `Client.CreateDebugSession` request boundary, and the
+server remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
 contract, and always exposes the target-bound `InspectSession` tool; the model cannot
 choose another target or submit a raw session ID. A create request may additionally name
@@ -902,9 +1010,10 @@ first user turn ordered as objective, required InspectSession workflow, expected
 structure, then a delimited sanitized debugger-runtime context. The runtime block is
 compatibility/transport context, never target evidence; a custom `--prompt` changes only the
 objective. Durable safety, authority, and source hierarchy stay in the stable system Role.
-Its normal padded header keeps amber/bold `DEBUG target <handle>`
-ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title uses the same handle. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
+Its normal padded header keeps amber/bold `DEBUG target <handle>` ahead of lower-priority details,
+and `/session` exposes and copies the safely quoted exact target. The configured/default terminal
+title has a `DEBUG` prefix and no mandatory handle; a custom title template may include the handle.
+See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. Unknown legacy/custom rows remain inspect-only:
@@ -928,7 +1037,7 @@ unclaimed events reach the Bubbles textarea. The default action map therefore le
 previous line; Agents, Effort, and MCP Prompts use `f6`, `f7`, and `f8`.
 
 Its local status customization is a separate
-client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
+client-owned seam: `cmd/mecatui/customization.Source` receives display-safe `Input`
 snapshots from the UI and publishes latest semantic `Result` spans. It owns
 responsive template evaluation or a direct local executable, refresh and
 cancellation; the UI owns theme resolution, renderer chrome, clipping, and

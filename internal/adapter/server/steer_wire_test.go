@@ -289,10 +289,8 @@ func TestSteer_CapabilityAdvertised(t *testing.T) {
 	}
 }
 
-// TestSteer_CapabilitySingleSource is AC5.2 half two: the SAME computed bit
-// reaches every sink that surfaces it — the CreateSession echo AND the Session
-// snapshot re-hydration path (GetSession) — because both read the ONE
-// Service.capabilities() value; nothing recomputes per sink.
+// TestSteer_CapabilitySingleSource verifies the compatibility handler relays the
+// service's single composition-computed capability projection.
 func TestSteer_CapabilitySingleSource(t *testing.T) {
 	svcs := map[string]*server.Service{
 		"enabled":  newSteerService(t, mockllm.New(mockllm.TextTurn("x")), nil),
@@ -305,22 +303,13 @@ func TestSteer_CapabilitySingleSource(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+			wire, err := client.GetCompatibilityInfo(ctx, &mecatlv1.GetCompatibilityInfoRequest{})
 			if err != nil {
-				t.Fatalf("CreateSession: %v", err)
+				t.Fatalf("GetCompatibilityInfo: %v", err)
 			}
-			createCaps := cs.GetCapabilities().GetSteer()
-
-			// The re-hydration sink: GetSession's Session snapshot carries the
-			// SAME capabilities value CreateSession echoed.
-			gs, err := client.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: cs.GetSessionId()})
-			if err != nil {
-				t.Fatalf("GetSession: %v", err)
-			}
-			snapCaps := gs.GetSession().GetCapabilities().GetSteer()
-
-			if snapCaps != createCaps {
-				t.Fatalf("GetSession steer cap = %v, CreateSession said %v — the bit must be ONE composition-computed value, never recomputed per sink", snapCaps, createCaps)
+			want := svc.CompatibilityInfo(ctx).GetCapabilities().GetSteer()
+			if got := wire.GetCapabilities().GetSteer(); got != want {
+				t.Fatalf("wire steer cap = %v, service projection = %v", got, want)
 			}
 		})
 	}

@@ -394,10 +394,10 @@ atoms that fit. It has no leading `#`. A syntactically valid short target consul
 caller-visible inventory: exact full-ID equality wins, otherwise one unique projected match
 resolves. Multiple projected matches stop before create and direct the operator to copy the exact
 ID from `/session` and pass it as `TARGET` through the same command. A zero match or inventory
-failure passes `TARGET` unchanged to the server's existing exact-ID authorization/not-found path.
-Width pressure removes
+failure passes `TARGET` unchanged to the server's existing exact-ID authorization/not-found path. Width pressure removes
 model/mode/server detail before that complete identity, `/session` shows and copies the
-safely quoted exact target ID, and the target-derived title uses the same handle. Binding-breaking
+safely quoted exact target ID, and the configured/default terminal title has a `DEBUG` prefix
+without a mandatory handle; a custom title template may include one. Binding-breaking
 controls stay disabled. Live target following, raw audit/tool-record inspection, packet capture,
 raw logs/pprof, and support bundles remain out of scope. See [ADR 0254](../adr/0254-session-debugger-admin-transport.md) and [ADR 0255](../adr/0255-sanitized-network-attempt-evidence.md).
 
@@ -622,16 +622,11 @@ tools (`InspectSubagent`/`InspectMember`/`SubagentStatus`) carry the same floor-
 (issue #37 — see the Subagent-inspection section below for the rationale; guarded by
 `internal/app/inspect_perm_test.go`).
 
-The optional `tool.MemoryLifecycleStore` capability adds versioned `Inspect*`, compare-version
-`Forget*`, and compensating `Undo*` tools through the portable
-`engine/adapter/memorytools/memorytools.go` implementation. The flocked local adapter keeps the
-legacy active projection and revision history in the same atomically-renamed `memory.json`:
-old files are read without rewrite and their imported baseline is materialized by the first
-mutation. The format is current-value compatible with older binaries, but a one-way downgrade
-caveat applies: an older binary that writes the file does not know the additive `history` field
-and discards revision/undo history (not the active values). Lifecycle mutation tools are not
-added to the built-in allow floor; the existing permission fold therefore governs them without
-loosening policy.
+The mandatory `tool.MemoryStore` contract carries exact lifecycle/CAS semantics through the
+portable `engine/adapter/memorytools/memorytools.go` implementation. The flocked local adapter
+stores revision history in the atomically-renamed `memory.json` document under the
+stable `memory.lock`. Incompatible records at that path fail closed without being overwritten.
+The six model-facing memory tools retain their existing permission posture.
 
 
 ## Delegated authority
@@ -710,10 +705,9 @@ the key.
 
 ## Semantic stream retry and failed-step retry transport (issue #409, ADR 0239)
 
-ADR 0239 supersedes ADR 0203's binary retry decision. The compatibility
-`PermanentError`, `ResultPayload.Permanent`, snapshot `permanent` field, aggregate
-permanence methods, and `recover_notice` remain, but all new decisions use two typed
-facts plus two independent policy axes.
+ADR 0239 supersedes ADR 0203's binary retry decision. Current behavior uses two
+typed facts plus two independent policy axes; the former permanence compatibility
+projection has been removed.
 
 **Four independent axes.** `engine/session/retry.go` owns the durable
 `RetryDisposition` vocabulary (`Unknown`, `Retryable`, `Permanent`) and
@@ -743,11 +737,10 @@ Unknown future chunk kinds fail safe by committing.
 **Typed terminal facts and reconstruction.** `engine/agent/loop.go`
 (`failureFacts`) extracts the two interfaces at the terminal choke point. `terminate`
 stamps them through `engine/session/session.go` (`RecordFailureMetadata`) and emits
-them on `engine/session/event.go` (`ResultPayload`). `Permanent` remains the
-compatibility projection of a permanent disposition. `engine/adapter/sessnap/sessnap.go`
+them on `engine/session/event.go` (`ResultPayload`).
+`engine/adapter/sessnap/sessnap.go`
 (`Snapshot`) persists failed-state disposition/progress and failed-step retry intent;
-missing legacy fields decode to Unknown, while a legacy `permanent=true` upgrades the
-disposition to Permanent. `internal/adapter/server/mapper.go` (`toProtoResult`) sets
+missing fields decode to Unknown. `internal/adapter/server/mapper.go` (`toProtoResult`) sets
 the optional proto fields on every new terminal result, so field absence means an old
 server and explicit Unknown remains conservative data.
 
@@ -979,14 +972,15 @@ was observed announcing actions without emitting the tool calls). `EvNoProgress`
 **Token budget — the per-engine loop-level ceiling (`StopBudget`).** `agent.Deps.MaxRunTokens`
 (0 = disabled) is a cumulative token ceiling checked at each turn BOUNDARY in
 `Engine.drive` (Step 2, after the existing `sess.StopReason()` and `ctx.Err()` checks, before
-`BeginTurn`) against lifetime main usage since the run's immutable baseline. The
-baseline is zero for ordinary runs, so persisted `session.Usage` — the deprecated
-compatibility mirror of canonical `token_usage[main].Total` — keeps the ceiling cumulative
-across `Reopen`/`Interrupt`/`Recover` and restart. The team lead's final synthesis run
-and exactly one cleanup re-drive for a free-text Subagent that stopped at `StopBudget`
-capture the current main total as their baseline, giving each bounded deliverable phase a
-fresh allowance without resetting durable accounting. All ordinary calls, other retries,
-and auxiliary operations retain the zero baseline. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
+`BeginTurn`) against authoritative lifetime main usage returned by
+`Session.UsageFor(session.UsageKindMain)` since the run's immutable baseline. The
+baseline is zero for ordinary runs, so the canonical durable `main` bucket keeps the
+ceiling cumulative across `Reopen`/`Interrupt`/`Recover` and restart. The team lead's
+final synthesis run and exactly one cleanup re-drive for a free-text Subagent that
+stopped at `StopBudget` capture the current main total as their baseline, giving each
+bounded deliverable phase a fresh allowance without resetting durable accounting. All
+ordinary calls, other retries, and auxiliary operations retain the zero baseline.
+Input+output count; cache tokens are excluded because `CacheReadTokens` is a
 subset of `InputTokens`, `CacheWriteTokens` is a side cost, and `ReasoningTokens` is likewise a
 subset of `OutputTokens` (providers bill reasoning as part of the inclusive output total, so
 adding it would double-count). The subset invariant holds CROSS-PROVIDER because the
@@ -998,7 +992,7 @@ UNDERCOUNTED Anthropic runs (cache-served prompt tokens never hit the budget). T
 breakdown is surfaced the same way: OpenAI's `output_tokens_details.reasoning_tokens` and
 Anthropic's `output_tokens_details.thinking_tokens` map to `ReasoningTokens` at the same two
 adapter mapping sites, as an additive observability field (NOT a budget-semantics change).
-When `sess.Usage.TotalTokens() >= MaxRunTokens` the loop ends via
+When `sess.UsageFor(session.UsageKindMain).TotalTokens() >= MaxRunTokens` the loop ends via
 `terminateComplete(…, session.StopBudget, …)` — a NON-error completed-state terminal
 (Reopen-recoverable), not a promise that a delegated deliverable is complete. The boundary check
 means an in-flight turn always COMPLETES (no mid-stream abort → no-replay-after-first-chunk holds);
@@ -1020,6 +1014,23 @@ baseline. `StopBudget` is a
 STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
 Guards: `agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
 `server.TestServiceBudgetSurfacesAndReopens`, `app.TestMaxRunTokensPropagatesToParentAndChild`.
+
+**Purpose-attributed auxiliary usage (ADR 0350).** `Session.tokenUsage` is the canonical
+purpose ledger, while `Session.Usage`, normal `EvResult.Usage`, and Team budgets remain
+`main`-only. `router` is the narrow exception for the existing classifier spend-safety rule:
+its separate bucket contributes to the internal `MaxRunTokens` calculation without rolling into
+`main` or client-visible run usage. Direct and ephemeral session-associated auxiliary calls record
+provider-reported usage under `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`,
+or `parallel_judge`, alongside the existing `session_title` kind. These are recognized current
+writer purposes, not a closed reader vocabulary: non-empty unrecognized kinds round-trip as
+opaque buckets and remain budget-neutral. Composition owns the exact
+provider/model attribution and source-session binding. A slot may select a model for a matching
+purpose, but it is not the ledger's identity; `parallel_judge` has no dedicated slot. Partial
+usage observed before terminal errors is retained, but accounting is forward-only best effort:
+implementation never replays an uncertain provider call solely to repair usage. No prompts,
+outputs, raw provider errors, request IDs, credentials, or client-selected billing controls enter
+the ledger. Source-less dream and consolidation planning remains outside session accounting
+([#1791](https://github.com/stacklok/mecatl/issues/1791)).
 
 **Team-aggregate token budget — the supervisor-level ceiling (`WithTeamTokenBudget`).** The
 team-AGGREGATE companion to the per-engine `MaxRunTokens` closes the residual 4A item.
@@ -1360,7 +1371,8 @@ the `category:`/`categories:`/`task to classify:` headers added to `framingHeade
 is the issue-#31 hardened parse — the WHOLE trimmed output (after `StripLoneCodeFence`) must BE a
 single `{"category":"<name>"}` object, and the category is VALIDATED against the offered list (a
 hallucinated category is a miss). The engine stays MODEL-STRING-ONLY: it returns a category NAME;
-composition owns the mapping. `usage` is the classifier's `sess.Usage`, returned on EVERY path
+composition owns the mapping. `usage` is the classifier's authoritative main-bucket
+usage, returned on EVERY path
 (including early-return degenerate inputs and fail-soft misses) so the caller can fold it
 unconditionally (#92 fix). FAIL-SOFT: a `StopError`/`StopCancelled`, an unparseable verdict, or a
 degenerate input (nil engine / no categories / blank prompt) → `("", zero, <reason>, false)`.
@@ -1379,10 +1391,12 @@ holds the mutex across the whole classification, skips on an open breaker or a f
 notes misses (one-time breaker-opened INFO via `r.diag`), resets on a success, and emits the
 per-classification INFO — all at the **dispatch-time `routeTask` closure** (like the
 policy-deny INFO), never the `resolveChildAsk` child chokepoint, never a fourth loop line.
-The closure also folds the classifier's `session.Usage` into the parent `sess.Usage`
-UNCONDITIONALLY (hit OR miss) via `_ = sess.RecordUsage(classifierUsage)` BEFORE the
-miss/hit branch (#92 fix): classifier spend is now visible to `budgetExhausted` (which
-reads `sess.Usage.TotalTokens()`), bounding CWE-770 unbounded accumulation.
+The closure also folds the classifier's main `session.Usage` value into the parent
+canonical bucket UNCONDITIONALLY (hit OR miss) via
+`_ = sess.RecordUsage(classifierUsage)` BEFORE the miss/hit branch (#92 fix):
+classifier spend is visible to `budgetExhausted`, which reads
+`sess.UsageFor(session.UsageKindMain).TotalTokens()`, bounding CWE-770 unbounded
+accumulation.
 
 MISS OBSERVABILITY (issue #287). On a miss (`!ok || model==""`) the closure logs — BEFORE
 the breaker-open check — one INFO `"subagent model router: classification MISSED; child
@@ -4272,13 +4286,13 @@ displayed in the ui.
 ### `memory` (operator profile + lifecycle, ADR 0107)
 
 The unchanged `tool.MemoryStore` base remains the six ordinary operations. The optional
-`tool.MemoryLifecycleStore` adds compare-version Remember, exact Inspect, tombstone Forget,
-and compensating Undo. Portable bodies live in `engine/adapter/memorytools`; both project and
-user families register through the same catalog path, with lifecycle tools conditional on the
-capability. The local adapter keeps legacy entries plus revision history in ONE `memory.json`
-document. `internal/adapter/memory/store.go` (`withExclusiveLock`) holds the in-process mutex
-and stable-sentinel flock across load→mutate→atomic-save; `materializeLegacy` migrates a key
-lazily inside that transaction. No history sidecar exists.
+`tool.MemoryStore` is the indivisible lifecycle/CAS contract: compare-current Remember,
+exact Inspect, Recall/List/Index/Search reads, tombstone Forget, and compensating Undo. Portable
+bodies live in `engine/adapter/memorytools`; project and user families register through the
+same catalog path. The local adapter stores the current lifecycle document in `memory.json`
+with revision history. `internal/adapter/memory/store.go` holds the in-process mutex and
+stable-sentinel flock across load→mutate→atomic-save. Incompatible records at the addressed
+path fail closed without being overwritten, and no migration or adoption scan runs.
 
 The user-scoped store also satisfies `prompt.OperatorProfileSource`. Standard composition sets
 `agent.Deps.OperatorProfileSource`; `engine/agent/loop.go` (`refreshOperatorProfile`) reloads it
@@ -4288,11 +4302,16 @@ the volatile system suffix. The cache-stable prefix and persisted conversation s
 `prompt.UserModelAssembler` is retained as a public compatibility surface but is no longer in
 standard turn-0 assembly; the project `MemoryIndexAssembler` remains and never carries values.
 
-The original six `MemoryStoreService` RPCs remain unchanged. Four additive lifecycle RPCs
-preserve opaque versions/history. The grpc client uses original `List` for operator-profile
-parity with old drivers; destructive lifecycle calls never downgrade on `UNIMPLEMENTED`. The
-capability RPC is bounded by a fixed five-second ceiling while retaining any shorter caller
-deadline, and a failed probe closes the partially assembled catalog connection.
+The gRPC memory service mirrors that canonical port directly: Remember carries a complete
+expected presence/version, Inspect returns bounded history, and Forget/Undo carry exact opaque
+versions. Unconditional and alpha compatibility RPCs are absent. Memory and session drivers
+must return the exact current contract marker from the mandatory capability RPC within the
+fixed five-second ceiling (or a shorter caller deadline); UNIMPLEMENTED, empty/wrong markers,
+timeouts, and transport failures fail construction. Session capability booleans are retained
+only for genuinely optional backend operations. Metadata continuation cursors require a valid
+key plus non-empty generation, ownership scope, and opaque continuation on both sides of the
+wire. A remote backing store owns its namespace: the harness does not inspect old driver
+artifacts or infer a format from opaque blobs, while malformed current responses fail closed.
 `GetUserModel{key}` is a read-only, lazy exact-detail extension. It exposes no mutation method,
 so Forget/Undo still pass through the normal dispatcher, hooks, and permission evaluator.
 Remember/Recall/Search/Inspect/Undo are built-in floor Allows; Forget is a floor Ask; all lose
@@ -4302,7 +4321,7 @@ New lifecycle writes reject invalid keys and high-confidence credential shapes. 
 profile, driver, server, and TUI projections all use `engine/tool/memorylifecycle.go`
 (`CanonicalMemoryText`) before classification: malformed UTF-8 is repaired and the same Unicode
 format/control set is removed before directive/secret checks and rendering. This applies equally
-to imported, legacy-migrated, local, and remote records without suppressing ordinary Unicode or
+to current local and remote records without suppressing ordinary Unicode or
 instruction-like prose. Both reference stores retain 64 revisions per key and persist an
 origin-known/truncated marker; Undo may remove a value only when retained history proves the target
 was its creation, and fails without mutation at a truncated predecessor boundary.
@@ -6598,42 +6617,35 @@ unpersisted selectors, and relist-after-restart.
 
 ### Snapshot fidelity — persisted per-session facts (cloud-native Phase 1)
 
-Three per-session facts are persisted so a restarted process is indistinguishable
-mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
+The aggregate persists placement labels and canonical token usage so a restarted
+process preserves session behavior (`docs/adr/0027-cloud-native.md` ledger rows
+1/2/3):
 
-- **The aggregate gained four inert, opaque fields** on `session.Session`: `Usage`
-  (cumulative run tokens), `Profile`, `ProviderID`, `ModelID`. The domain STORES the three
-  labels but never interprets them — the `ProviderSelector` type and all resolution stay in
-  composition; only the opaque strings cross into `engine/` (the same posture as
-  `Workspace`). They are write-once creation labels set by the composition root
-  (`setSessionLabels` in `internal/adapter/server/service.go`, after `session.New`); a
-  default session writes the zero values, so its snapshot stays byte-identical to a
-  pre-Phase-1 one.
-- **`Usage` is mutated through `RecordUsage`** (running-only guard, mirroring
-  `RecordToolResults`); it remains the deprecated lifetime compatibility mirror of
-  `TokenUsage[main].Total`. The loop calls it alongside its own per-run total, and the
-  `MaxRunTokens` budget brake (`budgetExhausted`) measures each engine's own canonical
-  main usage since an immutable per-run baseline. Ordinary runs use zero, preserving
+- **The aggregate stores three inert, opaque labels** on `session.Session`:
+  `Profile`, `ProviderID`, and `ModelID`. The domain stores the labels but never
+  interprets them. The `ProviderSelector` type and all resolution stay in
+  composition; only the opaque strings cross into `engine/`. They are write-once
+  creation labels set by the composition root (`setSessionLabels` in
+  `internal/adapter/server/service.go`, after `session.New`).
+- **Main usage is mutated through `RecordUsage`** (running-only guard, mirroring
+  `RecordToolResults`) and read through `UsageFor(UsageKindMain)`. The
+  `MaxRunTokens` budget brake (`budgetExhausted`) measures that canonical durable
+  bucket since an immutable per-run baseline. Ordinary runs use zero, preserving
   cumulative budget enforcement across reopen/restart independently for every child;
   only the team-lead synthesis and the single `StopBudget` free-text Subagent cleanup
   re-drive capture their starting main total. `EvResult.Usage` remains the per-run delta.
-- **`resetToIdle` DELIBERATELY preserves `Usage`** (the divergence from `Counters`, which it
-  still zeroes) so the budget survives the Reopen/Interrupt/Recover seams — pinned by
-  `TestResetToIdlePreservesUsage` (mutation-verified: adding `s.Usage = Usage{}` fails it).
+- **`resetToIdle` deliberately preserves the canonical token-usage ledger** while it
+  zeroes `Counters`, so the budget survives the Reopen/Interrupt/Recover seams.
   A reused child/member session's per-engine `MaxRunTokens` brake is CUMULATIVE across
   `Reopen` (team rounds, structured-output validation retries), which is the intended
   "cap the whole call" reading. The team lead's synthesis run and exactly one
   budget-stopped free-text Subagent cleanup re-drive are the only exceptions: each private
   run baseline preserves lifetime accounting while allowing its bounded deliverable.
   The team-AGGREGATE budget is unchanged (it sums per-round `EvResult.Usage`, the per-run delta).
-- **The snapshot (`sessnap.Snapshot`) gained `profile,omitempty` + `provider_id,omitempty`
-  + `model_id,omitempty` (strings) + `usage` (a `*session.Usage` POINTER for true
-  omitempty, the `Pending` precedent).** Populated in `Of`, restored by direct field
-  assignment in `Restore` (exported authoritative values like `Counters`, no transition).
-  Additive: they ride `sessnap-json/1` unchanged, no driver/proto change — a v1 snapshot
-  with none of the keys loads with an empty profile/selector and a zero Usage. Guarded by
-  the round-trip tests, the v1-downgrade test, and the `storeconformance` suite (every store
-  driver proves the round-trip).
+- **The snapshot (`sessnap.Snapshot`) stores the canonical `token_usage` ledger plus
+  `profile,omitempty`, `provider_id,omitempty`, and `model_id,omitempty`.** `Of`
+  projects those values and `Restore` restores them through the aggregate's trusted
+  restoration seams.
 - **`Session.Title`** is an additive snapshot field (`sessnap.Snapshot.Title`, `json:"title,omitempty"`)
   — a human-readable session label seeded ONCE from the first genuine user prompt (clamped to
   120 runes) by the loop (`recordPrompt` → `session.SetTitle`, set-once), persisted like
@@ -6798,59 +6810,42 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   mutation-verifies this (a Subagent child's secret-shaped arg never appears in any
   logged event body).
 - **The jsonlstore adapter (the local reference).**
-  `internal/adapter/store/jsonlstore/jsonlstore.go` (`Store`) — the ONE instance that
-  serves `SessionStore` + `ToolCallRecorder` + `EventLog` — stores one family as
-  `<store>/sid-v1/<sid-v1-token>.session.json` (one v2 current snapshot), an
-  optional readable `.session.jsonl` v1 history, and parallel `.tools.jsonl` /
-  `.events.jsonl` sidecars. Save writes a same-directory owner-only temporary,
-  syncs it, atomically renames it over the v2 current snapshot, and syncs the
-  directory. Every snapshot family has a stable owner-only `.family.lock` flock
-  sentinel. Save holds that cross-process lock from orphan-temp cleanup through
-  legacy preparation, file sync, atomic rename, and directory sync. Temporaries
-  carry a random process-owner token plus a monotonic generation; startup takes
-  each discovered family's lock non-blockingly and reaps only names that validate
-  against that protocol, while a successful Save takes the lock and reaps every
-  prior inactive generation before creating its own. A live holder therefore keeps
-  its active temp, committed snapshots are never cleanup candidates, and repeated
-  crashes converge to at most the current in-progress temp on the next startup/save.
-  The v2 envelope carries a format tag, complete `sessnap` JSON, and logical
-  modification time; first lazy promotion preserves the v1 mtime, aggregate bytes
-  after restore, and sidecars, while later saves replace only the v2 current file.
-  `Store.SnapshotDurability` exposes the three verified replacement primitives;
-  unsupported sync primitives are an explicit weaker snapshot capability rather than
-  a host-crash-safety claim. The capability probes prove syscall support, not media
-  persistence; the guarantee still depends on storage honoring successful sync and
-  atomic rename. The configured store path and every ancestor must be physical,
-  non-symlink directories; on macOS use `/private/...` rather than a `/var/...` path
-  traversing the `/var` symlink. An existing canonical snapshot Save may retain weaker
-  behavior, but the first Save of a root-level legacy family fails before migration when
-  directory sync is unavailable. EventLog strict append requires file and directory sync.
-  Delete, retention, and other destructive operations fail closed without directory sync,
-  reducing availability. ToolCall appends to an existing readable sidecar (or the sidecar
-  matching the authoritative snapshot family) without forcing migration when directory sync
-  is unavailable, attempts every available sync, and may leave an unsynced or partially synced
-  best-effort record. Sidecars opened for append and regular legacy family files selected for
-  migration are tightened to `0600` through their validated, no-follow descriptor before data
-  handling or rename. A write, file-sync, or rename failure leaves the
-  prior snapshot authoritative and fails loudly; a directory-sync failure after rename
-  reports an error with the new snapshot already authoritative. Partial destructive
-  progress is synced before an error returns so retry converges.
-  The owner-only version directory makes canonical names physically disjoint
-  from root-level legacy and schedule names.
+  `internal/adapter/store/jsonlstore/jsonlstore.go` (`Store`) is the one instance
+  that serves `SessionStore`, `ToolCallRecorder`, and `EventLog`. Each family uses
+  one bounded injective stem under the owner-only `sid-v1` directory: a current
+  `.session.json` snapshot plus cumulative `.tools.jsonl` and `.events.jsonl`
+  sidecars. Distinct root-level artifacts are invisible and left untouched. Save writes an owner-only same-directory temporary, syncs it,
+  atomically renames it over the current snapshot, and syncs the directory.
+  Every snapshot family has a stable owner-only `.family.lock` flock sentinel.
+  Save holds that cross-process lock from inactive-temp cleanup through file sync,
+  atomic rename, and directory sync. Delete and sidecar append use the same family
+  lock, so sidecar-first/snapshot-last deletion cannot race a cooperating append
+  while unrelated families proceed independently. Temporaries carry a random
+  process-owner token plus a monotonic generation; startup takes each discovered
+  family lock non-blockingly and reaps only names that validate against that
+  protocol, while a successful Save waits for the lock and reaps prior inactive
+  generations before creating its own.
+
+  The current envelope carries the format tag, bounded inventory metadata, the
+  complete `sessnap` JSON, and logical modification time.
+  `Store.SnapshotDurability` exposes the verified replacement primitives;
+  successful syscall probes do not claim that the underlying storage honors sync
+  or survives host loss. The configured store path and every ancestor must be
+  physical, non-symlink directories. On macOS, use `/private/...` rather than a
+  `/var/...` path that traverses the `/var` symlink. EventLog strict append
+  requires file and directory sync. Delete, retention, and other destructive
+  operations fail closed without directory sync. ToolCall append is best-effort:
+  it attempts every available sync and can report an error after a partial audit
+  write. A write, file-sync, or rename failure leaves the prior snapshot
+  authoritative; a directory-sync failure after rename reports an error while the
+  new snapshot remains authoritative.
+
   `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single
-  physical-name authority: its bounded hash-suffixed token maps the complete
-  opaque valid-UTF-8 id, while the logical id is always read from stored snapshot
-  data, never inferred from a filename. Reads are v2-first and read-only; a
-  present invalid v2 fails loudly rather than falling back to stale v1. A lossy
-  legacy-name family is eligible for snapshot/event fallback, migration, or
-  deletion only when its latest snapshot embeds the exact requested id;
-  mismatches leave every legacy byte untouched. The first write migrates a
-  verified root-level legacy family by renaming tools/events first and its v1
-  snapshot last, then commits v2. V2+v1 coexistence never concatenates histories:
-  v2 is authoritative; List/MetaList deduplicate by embedded logical id and use
-  v2 metadata/logical time; Delete removes canonical sidecars and both snapshot
-  generations, and additionally removes only an ownership-verified legacy family,
-  preventing resurrection without deleting a colliding session.
+  physical-name authority. Its bounded hash-suffixed token maps the complete
+  opaque valid-UTF-8 ID, while the logical ID is read from snapshot data and never
+  inferred from a filename. Reads inspect only `sid-v1`; a malformed current
+  artifact fails loudly. There is no legacy fallback, promotion, adoption, or
+  migration path.
 
   `internal/adapter/store/jsonlstore/inventory_catalog.go` owns the derivative
   inventory catalog's physical format and persistence. The catalog contains only
@@ -6864,23 +6859,17 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   plus neutral ordering, source-fingerprint generation, and exact ownership/filter
   scope bindings. A changed generation, scope, or foreign/malformed pager token returns `port.ErrSessionMetadataCursorRestart`; generations are never
   mixed and foreign-owner rows never enter page formation or `TotalCount`.
-  `MetaList` may consume the complete global derivative projection for its legacy
-  all-rows contract. Ready calls validate an O(1) source stamp from the two
-  authoritative snapshot directories and the durable marker advanced by current
-  Save/Delete mutations under the family lock. A v2-only store therefore stays on
-  the O(1) validation fast path. Manifests additionally record each historical v1
-  snapshot's size, modification time, and mode; while v1 compatibility files
-  remain, ready reads stat those bounded sources without reading or decoding their
-  transcript tails. This detects latest-line-wins appends that do not alter parent
-  directory metadata. Catalog files live in a private child directory, so their atomic replacement does not perturb
-  that stamp; snapshot creation/removal/replacement and promotion do. Missing,
-  malformed, semantically invalid, or fingerprint-stale catalogs rebuild from the v2 envelope's top-level `metadata`
-  projection or the existing bounded v1 tail reader. Fingerprinting before and
-  after rebuild rejects a view changed concurrently by another `Store`; every
-  later read revalidates the shared directory rather than trusting an unchecked
-  process-local cache. Older v2 envelopes without the additive header remain
-  readable and are projected once through their bounded current payload during
-  rebuild. Catalog manifests and scope files are owner-only atomic replacements
+  `MetaList` may consume the complete global derivative projection for its
+  all-rows contract. Ready calls validate an O(1) source stamp from the
+  authoritative `sid-v1` snapshot directory and the durable marker advanced by
+  current Save/Delete mutations under the family lock. Catalog files live in a
+  private child directory, so their atomic replacement does not perturb
+  that stamp. Missing, malformed, semantically invalid, or fingerprint-stale
+  catalogs rebuild from the current envelope's top-level `metadata`
+  projection. Fingerprinting before and after rebuild rejects a view changed
+  concurrently by another `Store`; every later read revalidates the shared
+  directory rather than trusting an unchecked process-local cache. Catalog
+  manifests and scope files are owner-only atomic replacements
   and can always be discarded and reconstructed. Rebuild/publication is serialized
   by a dedicated process mutex and stable cross-process catalog flock, never the
   session-operation path; blocked inventory work therefore does not delay unrelated
@@ -6889,48 +6878,6 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   temporaries. Composition consumes this same cheap projection for both automatic
   retention (`SessionMetadataPager`) and stale-session reconciliation (`MetaList`),
   while preserving their downstream state, liveness, and lease rechecks.
-
-  `engine/port/sessionmigration.go` defines the OPTIONAL physical-maintenance
-  capability consumed only by the authenticated server. `PlanSessionMigration`
-  performs a read-only physical scan and returns a principal+generation-bound opaque
-  plan with format/error counts and byte estimates. Apply mints a separate random
-  durable job under the adapter-private `sid-v1/migration-jobs/` registry; records
-  contain one-way principal/item handles, bounded counters, and stable sanitized
-  errors—never session ids, paths, backend errors, or content. Every apply/resume/cancel
-  load-to-checkpoint sequence holds a stable job-ID-scoped cross-process exclusion;
-  overlapping resumes compare their pre-lock checkpoint with the locked durable record,
-  so one advances and a stale peer receives a closed conflict instead of replaying a
-  batch. Every apply/resume call processes at most 100 families (25 by default),
-  checkpointing after each committed family. Redis reuses this server-owned job
-  lifecycle to adopt metadata indexes on upgrade: only an explicit plan scans legacy
-  snapshot keys, each batch CAS-installs derivative rows, and a stable source-generation
-  check atomically publishes `ready` only after every extant snapshot is covered.
-  Redis inspection deduplicates `SCAN` output and retries boundedly until its before/after
-  rebuild generation agrees; sustained drift returns `inventory_changed_restart` with no
-  mixed counters or candidates. The base migration port requires a context-carrying,
-  ownership-checking acquisition; jsonlstore binds its stable flock and Redis binds a
-  per-acquisition monotonic fence plus nonce. Redis renews the expiring lock and cancels the
-  bound operation context on renewal/token loss. Checkpoint, family repair, readiness
-  publication, ownership checks, and release bind that exact acquisition. Both mutation Lua
-  scripts compare the exact lock key/token before any write, so loss between the server's
-  precheck and Lua has zero side effects and cannot affect a successor.
-  Stable inspection derives each valid snapshot's exact metadata member and verifies its
-  hash metadata plus expected global/owner index memberships. Missing or stale coverage
-  becomes a bounded repair candidate; inspection remains read-only, while repair removes
-  stale memberships and atomically installs the derived row. Invalid snapshots are not
-  countable coverage: they complete the job with a failure count while keeping paging
-  unavailable, and operator repair requires a fresh plan. After every candidate is processed,
-  finalization re-derives the complete expected global and per-owner member sets from snapshots
-  and compares them in both directions against every index using bounded client-side
-  `SCAN`/`ZSCAN` commands. An orphan, malformed, or wrong-owner membership is therefore an
-  explicit coverage failure rather than an implicit planning mutation. The final readiness
-  Lua script remains constant-work: it atomically rechecks the exact lock token, stable rebuild
-  generation, and global cardinality before setting ready, and never receives an O(total-store)
-  key or member list. Concurrent Redis Save/Delete operations update their indexes and advance
-  that generation in one script, so mutation after the proof makes publication fail closed
-  while paging and cleanup remain unsupported.
-  Cancellation is monotonic: once persisted,
-  resume conflicts and no stale checkpoint can restore `running`. Completed jobs are idempotent.
 
   Per-family lock order is `Service.runEntryMu` → mandatory maintenance
   `SessionLease` (unless the store is genuinely process-private) → jsonlstore
@@ -6941,11 +6888,8 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   lease beneath its root; two local processes sharing that root consequently
   contend on the same per-session lease. Under those exclusions the service and
   adapter revalidate liveness, owner identity digest, durable kind (including
-  `unknown`), state, and source fingerprint. Jsonlstore moves legacy sidecars first,
-  writes one same-directory v2 replacement temp, verifies the complete v2 envelope and
-  sessnap payload by rereading it, and only then removes v1. An ENOSPC/write/sync/rename
-  failure therefore leaves canonical v1 or an already-readable v2 authoritative; a
-  lost checkpoint converges on resume. Logical mtime and sidecar bytes are preserved.
+  `unknown`), state, and source fingerprint. Cleanup deletes current sidecars
+  before the current snapshot under the same family lock.
 
   **Retention planner invariant (`retention-requires-durable-taxonomy`).**
   `internal/sessionretention/planner.go` is the one deterministic, side-effect-free
@@ -6982,22 +6926,21 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   never consults request owner fields, display/grant claims, or system-principal
   status. The private embedded mecatui Unix-socket server explicitly selects the
   principal-less local-operator path; no remotely reachable root does. The one gate
-  applies before health, migration plan/apply/resume/cancel/status, and cleanup
-  plan/apply/cancel/status can inspect support or store scope. Cleanup is store-wide
-  only after that gate and revalidates each candidate's indexed owner against the
-  authoritative snapshot under the mutation exclusions.
+  applies before health and cleanup plan/apply/cancel/status can inspect support
+  or store scope. Cleanup is store-wide only after that gate and revalidates
+  each candidate's indexed owner against the authoritative snapshot under the
+  mutation exclusions.
 
   `internal/app/storage_health.go` owns a mutex-protected active-key map shared by
-  retention, migration, and cleanup lifecycle callbacks. Health renders sorted
-  closed job kinds, adding counts for same-kind concurrency instead of silently
-  overwriting one string. Durable running migration jobs reattach on inspection or
-  resume; each terminal transition removes only its own key. Retention records
+  retention and cleanup lifecycle callbacks. Health renders sorted closed job
+  kinds, adding counts for same-kind concurrency instead of silently overwriting
+  one string. Each terminal transition removes only its own key. Retention records
   `LastSweep` only after a completed pass. A transient failure keeps the worker's
   next retry visible, while runtime unsupported metadata disables the worker,
   clears active/next-sweep availability, and reports `retention sweep unavailable`
   through `LastFailure`; cancellation and shutdown clear active/next without
-  overwriting the last success or failure. Stable sanitized
-  migration/cleanup/health failures replace and retain `LastFailure`; backend errors,
+  overwriting the last success or failure. Stable sanitized cleanup and health
+  failures replace and retain `LastFailure`; backend errors,
   paths, ids, and content never enter the state.
 
   **Versioned automatic retention configuration (issue #591).** The strict
@@ -7033,12 +6976,9 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   stable family flock. Newline is the commit marker. Strict EventLog append requires
   file and directory sync, repairs only an unterminated EOF tail, then writes and syncs
   one complete record. ToolCall uses the same append transaction but, because its port cannot
-  return an error, avoids legacy-family migration on a filesystem without directory sync:
-  it appends to the existing readable sidecar or the side matching the authoritative snapshot,
-  attempts every available sync, and may leave an unsynced or partially synced best-effort
-  append. A later capable operation migrates that complete history without reordering it.
-  Save, Delete, legacy promotion/removal, EventLog.Append,
-  and ToolCall share that one cross-process mutation identity; the family lock covers
+  return an error, attempts every available sync and may leave an unsynced or
+  partially synced best-effort append. Save, Delete, EventLog.Append, and
+  ToolCall share that one cross-process mutation identity; the family lock covers
   the full sidecar-first/snapshot-last operation, while unrelated families remain
   independent. `Read` captures a bounded complete-record prefix under the flock, then
   releases the lock while retaining its descriptor/section view until iteration ends;
@@ -7827,9 +7767,11 @@ The settled decisions, condensed:
   conformance run exercises encode→wire→decode→state-machine→encode→wire→decode.
 - **C — Error mapping.** Load miss: `NOT_FOUND` → `grpcdriver.ErrNotFound` wrapping
   `port.ErrSessionNotFound` (id in message). Save(nil): client-side `sessnap.ErrNilSession`,
-  zero RPCs. Recall miss: `found=false`, NEVER `NOT_FOUND`. Forget(missing): OK (idempotent).
-  Blank RememberEntry key: `INVALID_ARGUMENT` (server wrapper pre-validates; the in-process
-  store's own rejection stays conformance-tested). Failed RPC with a done caller ctx: rewrap
+  zero RPCs. Recall miss: `found=false`, NEVER `NOT_FOUND`. Missing-memory Forget/Undo:
+  `NOT_FOUND` maps to `tool.ErrMemoryNotFound`; stale CAS maps through a structured version
+  conflict. Remember requires an entry plus a complete absent-or-present expected state; blank
+  keys, absent expected versions for updates/deletes, and malformed returned lifecycle records
+  fail closed. Failed RPC with a done caller ctx: rewrap
   `ctx.Err()` so `errors.Is(_, context.Canceled/DeadlineExceeded)` holds harness-side.
   Everything else: `"grpcdriver: <op>: %w"` — NO transient/permanent classification. Server
   wrapper: `ErrSessionNotFound`→`NotFound`, ctx errors→`Canceled`/`DeadlineExceeded`, else
@@ -7887,15 +7829,11 @@ grew without bound. Split mechanism from policy:
   graceful degradation without a recurring WARN, verified by test on both sides. The
   harness client maps a Delete NOT_FOUND to success.
 - **Adapters.** memstore: `savedAt` map + injectable `WithNow` clock. jsonlstore:
-  List/MetaList scan canonical snapshots under `sid-v1/` plus legacy snapshots at the
-  root, decode opaque logical ids from each latest line, sort bytewise, deduplicate
-  canonical/legacy coexistence, and prefer canonical metadata/mtime; filenames are never
-  the identity source. Delete removes canonical tools/events before the snapshot, then
-  removes a legacy family in the same order only after its latest snapshot proves exact
-  id ownership. A mismatch is idempotent success and leaves the colliding legacy family
-  byte-exact; deleting both matching families prevents legacy resurrection. A
-  pre-existing sidecar with no ownership-proving snapshot remains unreachable and is
-  never claimed. grpcdriver client+server wrapper round trip the seam;
+  List/MetaList enumerate current snapshots under `sid-v1/`, decode opaque logical ids
+  from snapshot data rather than filenames, and sort bytewise. Sidecars are never
+  inventory authority. Delete removes the addressed current family's tool/event
+  sidecars before its snapshot; unrelated root artifacts are neither discovered nor
+  removed. grpcdriver client+server wrapper round trip the seam;
   the wrapper type-asserts its backend (UNIMPLEMENTED for plain stores). Conformance:
   `storeconformance.RunPrunable` (mechanism only — including ModifiedAt STABILITY
   across reads, killing a stamp-Now()-at-List adapter that would neuter the age pass),

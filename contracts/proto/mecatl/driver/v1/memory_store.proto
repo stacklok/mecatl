@@ -3,29 +3,11 @@
 
 // mecatl driver API: the remote memory-store protocol.
 //
-// MemoryStoreService is the wire seam behind the harness's `tool.MemoryStore`
-// (engine/tool/tool.go): an operator-run driver process holds the
-// cross-session ("tiered") memory entries in place of the in-process flock
-// store (internal/adapter/memory). The driver sits at the SAME trust tier as
-// an on-disk memory directory — operator-configured infrastructure, not a
-// model-facing surface. Sanitization of model-written values stays
-// HARNESS-SIDE (the memory tools); a driver is never trusted to sanitize.
-//
-// The six RPCs mirror the tool.MemoryStore interface one-for-one. Behavioral
-// contract (pinned by the engine/adapter/memconformance suite, which remote
-// drivers run over their client):
-//   - RememberEntry overwrites by key and bumps updated_at; a blank or
-//     whitespace-only key is INVALID_ARGUMENT.
-//   - Recall of a missing key is found=false — NEVER NOT_FOUND.
-//   - List/Index results are key-sorted; Search is best-first and
-//     deterministic for identical store state and query.
-//   - Index/Search results OMIT values (the tier-0 routing table); List and
-//     Recall return them.
-//   - Forget of a missing key succeeds (idempotent).
-//
-// Validation: required-field annotations are authored with `buf.validate.field`
-// for documentation and future runtime enforcement; V1 enforces them in the Go
-// client/server wrappers (internal/adapter/grpcdriver).
+// MemoryStoreService is the wire seam behind the harness's `tool.MemoryStore`.
+// A configured driver is operator-trusted infrastructure, but it is not trusted
+// to sanitize model-written values. The harness and driver negotiate this
+// CURRENT contract before the store is exposed; there is no old-peer fallback.
+// Every mutation is a lifecycle CAS operation.
 
 syntax = "proto3";
 
@@ -34,151 +16,109 @@ package mecatl.driver.v1;
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 
-// MemoryStoreService holds cross-session memory entries keyed by an opaque
-// string key. It is the remote analogue of tool.MemoryStore's six methods.
 service MemoryStoreService {
-  // RememberEntry stores the entry, overwriting any existing entry under the
-  // same key and bumping its updated_at. A blank or whitespace-only key is
-  // INVALID_ARGUMENT.
-  rpc RememberEntry(RememberEntryRequest) returns (RememberEntryResponse);
-
-  // Recall returns the entry for the exact key. A miss is found=false with an
-  // unset entry — NEVER NOT_FOUND.
-  rpc Recall(RecallRequest) returns (RecallResponse);
-
-  // List returns all entries whose key has the given prefix, key-sorted, with
-  // values PRESENT. An empty prefix returns every entry.
-  rpc List(ListRequest) returns (ListResponse);
-
-  // Forget deletes the entry for the key. Deleting a missing key succeeds
-  // (idempotent).
-  rpc Forget(ForgetRequest) returns (ForgetResponse);
-
-  // Index returns the tier-0 routing table: every entry key-sorted with the
-  // value OMITTED and description filled (explicit, else derived from the
-  // value's first non-empty line).
-  rpc Index(IndexRequest) returns (IndexResponse);
-
-  // Search returns up to k entries relevant to the query, best-first and
-  // deterministic, with values OMITTED. A blank query yields an empty result,
-  // not an error; k <= 0 selects the driver's default page size.
-  rpc Search(SearchRequest) returns (SearchResponse);
-
-  // Capabilities negotiates optional additive operations. Old drivers return
-  // UNIMPLEMENTED and are treated as base-only.
+  // Capabilities is mandatory. Success with the exact current contract marker
+  // confirms that every RPC below has the documented lifecycle/CAS semantics.
   rpc Capabilities(MemoryStoreCapabilitiesRequest) returns (MemoryStoreCapabilitiesResponse);
 
-  // RememberVersioned atomically appends a revision when expected_version
-  // matches the current revision. Added after the six base RPCs so old drivers
-  // remain wire-compatible and report UNIMPLEMENTED.
-  rpc RememberVersioned(RememberVersionedRequest) returns (MemoryRecordResponse);
+  // Remember atomically appends a revision only when current exactly matches
+  // the stored presence and opaque version.
+  rpc Remember(RememberRequest) returns (MemoryRecordResponse);
 
-  // InspectMemory returns the current revision and bounded history for one key.
-  rpc InspectMemory(InspectMemoryRequest) returns (InspectMemoryResponse);
+  // Inspect returns the current revision and bounded oldest-to-newest history.
+  rpc Inspect(InspectRequest) returns (InspectResponse);
 
-  // ForgetVersioned appends a tombstone when expected_version matches.
-  rpc ForgetVersioned(ForgetVersionedRequest) returns (MemoryRecordResponse);
+  // Recall returns the active entry for the exact key. A miss is found=false.
+  rpc Recall(RecallRequest) returns (RecallResponse);
 
-  // UndoLatest appends a compensating revision when expected_version matches.
-  rpc UndoLatest(UndoLatestRequest) returns (MemoryRecordResponse);
+  // List returns active entries matching prefix, key-sorted, values present.
+  rpc List(ListRequest) returns (ListResponse);
 
-  // RememberIfCurrent compares presence and version atomically before appending.
-  rpc RememberIfCurrent(RememberIfCurrentRequest) returns (MemoryRecordResponse);
+  // Forget appends a tombstone only when expected_version exactly matches.
+  rpc Forget(ForgetRequest) returns (MemoryRecordResponse);
+
+  // Index returns the key-sorted tier-0 routing table with values omitted.
+  rpc Index(IndexRequest) returns (IndexResponse);
+
+  // Search returns deterministic best-first active matches with values omitted.
+  rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Undo appends a compensating revision only when expected_version matches.
+  rpc Undo(UndoRequest) returns (MemoryRecordResponse);
 }
 
-// MemoryEntry is one cross-session memory record, mirroring tool.MemoryEntry.
 message MemoryEntry {
-  // key is the opaque lookup key (e.g. "pref/test-runner").
   string key = 1;
-
-  // value is the stored text. It MUST be present in List and Recall results
-  // and EMPTY in Index and Search results (which omit values by design).
   string value = 2;
-
-  // description is the optional one-line tier-0 index hook. Index results
-  // always carry one (explicit, else derived from the value's first non-empty
-  // line).
   string description = 3;
-
-  // updated_at is the wall-clock time the entry was last written. It is
-  // stamped by the DRIVER on write; on input (RememberEntry) it is advisory
-  // and may be ignored.
   google.protobuf.Timestamp updated_at = 4;
 }
 
-// RememberEntryRequest carries the entry to store.
-message RememberEntryRequest {
-  // entry is the record to store; entry.key blank/whitespace-only is
-  // INVALID_ARGUMENT.
+// MemoryCurrent is the complete expected state for Remember. A create-only
+// write uses exists=false and an empty version. An update uses exists=true and
+// the exact opaque current version; every other combination is invalid.
+message MemoryCurrent {
+  bool exists = 1;
+  string version = 2 [(buf.validate.field).string.max_len = 128];
+}
+
+message RememberRequest {
   MemoryEntry entry = 1 [(buf.validate.field).required = true];
+  MemoryCurrent current = 2 [(buf.validate.field).required = true];
+  MemoryAttribution attribution = 3 [(buf.validate.field).required = true];
 }
 
-// RememberEntryResponse is empty: a successful write has no payload.
-message RememberEntryResponse {}
-
-// RecallRequest asks for the entry under an exact key.
-message RecallRequest {
-  // key is the exact key to look up.
-  string key = 1;
+message InspectRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
 }
 
-// RecallResponse reports the lookup outcome. A miss is found=false with entry
-// unset — never a NOT_FOUND error.
-message RecallResponse {
-  // entry is the found record (value present); unset on a miss.
-  MemoryEntry entry = 1;
-
-  // found reports whether an entry exists under the key.
+message InspectResponse {
+  MemoryRecord record = 1;
   bool found = 2;
 }
 
-// ListRequest selects entries by key prefix.
+message RecallRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message RecallResponse {
+  MemoryEntry entry = 1;
+  bool found = 2;
+}
+
 message ListRequest {
-  // prefix filters entries to those whose key starts with it; empty selects
-  // every entry.
   string prefix = 1;
 }
 
-// ListResponse carries the matching entries, key-sorted, values present.
 message ListResponse {
-  // entries are the matching records in key order, values PRESENT.
   repeated MemoryEntry entries = 1;
 }
 
-// ForgetRequest names the key to delete.
 message ForgetRequest {
-  // key is the entry to delete; a missing key is not an error.
-  string key = 1;
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_version = 2 [(buf.validate.field).string.min_len = 1, (buf.validate.field).string.max_len = 128];
+  MemoryAttribution attribution = 3 [(buf.validate.field).required = true];
 }
 
-// ForgetResponse is empty: Forget is idempotent and has no payload.
-message ForgetResponse {}
-
-// IndexRequest is empty: Index always returns the full routing table.
 message IndexRequest {}
 
-// IndexResponse carries the tier-0 routing table.
 message IndexResponse {
-  // entries are every record key-sorted, values OMITTED, descriptions filled.
   repeated MemoryEntry entries = 1;
 }
 
-// SearchRequest is a relevance query over the stored entries.
 message SearchRequest {
-  // query is the free-text query; blank/whitespace-only yields an empty
-  // result, not an error.
   string query = 1;
-
-  // k caps the number of results; k <= 0 selects the driver's default page
-  // size.
   int32 k = 2;
 }
 
-// SearchResponse carries the best-first matches.
 message SearchResponse {
-  // entries are the matches best-first (deterministic for identical store
-  // state and query), values OMITTED.
   repeated MemoryEntry entries = 1;
+}
+
+message UndoRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_version = 2 [(buf.validate.field).string.min_len = 1, (buf.validate.field).string.max_len = 128];
+  MemoryAttribution attribution = 3 [(buf.validate.field).required = true];
 }
 
 // MemorySource carries optional durable provenance handles. Empty means absent.
@@ -189,8 +129,16 @@ message MemorySource {
   string proposal_id = 4;
 }
 
+// MemoryAttribution is informational write provenance and grants no authority.
+message MemoryAttribution {
+  string writer = 1;
+  string origin = 2;
+  MemorySource source = 3;
+}
+
 // MemoryRevision is one immutable lifecycle revision. Status, writer, origin,
-// and version are open string vocabularies so newer drivers remain compatible.
+// and version use strings on the wire; the negotiated current contract fixes
+// their accepted lifecycle semantics, and malformed current values fail closed.
 message MemoryRevision {
   string key = 1;
   string value = 2;
@@ -203,52 +151,22 @@ message MemoryRevision {
   google.protobuf.Timestamp updated_at = 9;
 }
 
-// MemoryRecord carries the current revision and oldest-to-newest history.
 message MemoryRecord {
   MemoryRevision current = 1;
   repeated MemoryRevision revisions = 2;
 }
 
+message MemoryRecordResponse {
+  MemoryRecord record = 1 [(buf.validate.field).required = true];
+}
+
 message MemoryStoreCapabilitiesRequest {}
+
 message MemoryStoreCapabilitiesResponse {
-  // lifecycle is true only when all four lifecycle RPCs are implemented with
-  // their documented atomic semantics.
-  bool lifecycle = 1;
-  bool convergence = 2;
+  // Removed alpha capability booleans must never be reused. The current
+  // contract is indivisible: a peer either speaks all mandatory operations or
+  // construction fails.
+  reserved 1, 2;
+  reserved "lifecycle", "convergence";
+  string contract = 3 [(buf.validate.field).string.min_len = 1];
 }
-
-message RememberVersionedRequest {
-  MemoryEntry entry = 1 [(buf.validate.field).required = true];
-  string expected_version = 2;
-  MemoryAttribution attribution = 3;
-}
-
-// MemoryAttribution is informational write provenance and grants no authority.
-message MemoryAttribution {
-  string writer = 1;
-  string origin = 2;
-  MemorySource source = 3;
-}
-
-message InspectMemoryRequest { string key = 1; }
-message InspectMemoryResponse {
-  MemoryRecord record = 1;
-  bool found = 2;
-}
-message ForgetVersionedRequest {
-  string key = 1;
-  string expected_version = 2;
-  MemoryAttribution attribution = 3;
-}
-message UndoLatestRequest {
-  string key = 1;
-  string expected_version = 2;
-  MemoryAttribution attribution = 3;
-}
-message RememberIfCurrentRequest {
-  MemoryEntry entry = 1 [(buf.validate.field).required = true];
-  bool expected_exists = 2;
-  string expected_version = 3;
-  MemoryAttribution attribution = 4;
-}
-message MemoryRecordResponse { MemoryRecord record = 1; }

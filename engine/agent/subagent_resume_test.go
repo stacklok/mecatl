@@ -954,7 +954,7 @@ func TestSubagentResumeBudgetCarriesPriorSpend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resumed child not re-persisted: %v", err)
 	}
-	if reloaded.Usage.TotalTokens() < budget {
-		t.Fatalf("re-persisted resumed child usage = %d, want >= prior spend %d (the budget did not carry)", reloaded.Usage.TotalTokens(), budget)
+	if got := reloaded.UsageFor(session.UsageKindMain).TotalTokens(); got < budget {
+		t.Fatalf("re-persisted resumed child usage = %d, want >= prior spend %d (the budget did not carry)", got, budget)
 	}
 }

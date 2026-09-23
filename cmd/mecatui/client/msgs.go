@@ -145,8 +145,10 @@ type MCPAuthorizationMsg struct {
 }
 
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
-// echoed back in ResumeApproval — never inferred from the tool name.
+// echoed back in ResumeApproval. RunID is the opaque exact-run identity used by
+// out-of-band run controls.
 type PermissionAskMsg struct {
+	RunID  string
 	AskID  string
 	Tool   string
 	Args   string // raw JSON
@@ -700,14 +702,12 @@ type LiveReconnectedMsg struct{}
 
 // ApprovalMsg is the verdict half of a permission ask (EvApproval), relayed
 // only by the replay (log-only on the live wire). Metadata-only (gauntlet #7):
-// tool NAME + verdict string + askID + callID + the allow-always flag. NEVER raw
-// args.
+// tool name + typed verdict + ask ID + call ID. NEVER raw args.
 type ApprovalMsg struct {
-	AskID       string
-	Verdict     string
-	Tool        string
-	CallID      string
-	AllowAlways bool
+	AskID   string
+	Verdict string
+	Tool    string
+	CallID  string
 }
 
 // UserPromptMsg is the recorded user message (EvUserPrompt), relayed only by the
@@ -1118,7 +1118,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
 		a := ev.GetAsk()
-		return PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+		return PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
 	case "permission.retract":
 		// The retraction payload rides the same ask field, carrying the AskID only
 		// (server-authored; no tool/args/reason).
@@ -1334,11 +1334,23 @@ func contentPartsFromProto(in []*mecatlv1.Content) []ContentBlock {
 // log-only "approval" event kind.
 func approvalMsg(a *mecatlv1.Approval) ApprovalMsg {
 	return ApprovalMsg{
-		AskID:       a.GetAskId(),
-		Verdict:     a.GetVerdict(),
-		Tool:        a.GetTool(),
-		CallID:      a.GetCallId(),
-		AllowAlways: a.GetAllowAlways(),
+		AskID:   a.GetAskId(),
+		Verdict: approvalVerdictString(a.GetVerdict()),
+		Tool:    a.GetTool(),
+		CallID:  a.GetCallId(),
+	}
+}
+
+func approvalVerdictString(verdict mecatlv1.ApprovalVerdict) string {
+	switch verdict {
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY:
+		return "deny"
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE:
+		return "allow_once"
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
+		return "allow_always"
+	default:
+		return ""
 	}
 }
 
@@ -1419,15 +1431,8 @@ func resultMsg(r *mecatlv1.Result) ResultMsg {
 	progressPresent := r.StreamProgress != nil
 	disposition := retryDispositionFromProto(r.GetRetryDisposition())
 
-	transient := false
-	permanent := false
-	if dispositionPresent {
-		transient = r.GetStop() == resultStopError && disposition == RetryDispositionRetryable
-		permanent = r.GetStop() == resultStopError && disposition == RetryDispositionPermanent
-	} else {
-		permanent = r.GetPermanent()
-		transient = r.GetStop() == resultStopError && TransientResultError(r.GetError()) && !permanent
-	}
+	transient := r.GetStop() == resultStopError && disposition == RetryDispositionRetryable
+	permanent := r.GetStop() == resultStopError && disposition == RetryDispositionPermanent
 
 	return ResultMsg{
 		Stop:                    r.GetStop(),

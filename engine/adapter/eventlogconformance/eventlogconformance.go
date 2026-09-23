@@ -263,8 +263,9 @@ func representativeEvents() []session.Event {
 			AllowAlways: true,
 		}},
 		{Type: session.EvResult, Seq: 4, Turn: 0, Result: &session.ResultPayload{
-			Stop: session.StopEndTurn,
-		}, Usage: &session.Usage{InputTokens: 100, OutputTokens: 20}},
+			Stop:  session.StopEndTurn,
+			Usage: session.Usage{InputTokens: 100, OutputTokens: 20},
+		}},
 	}
 }
 

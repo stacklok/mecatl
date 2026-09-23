@@ -8,8 +8,9 @@
 //     terminal result.
 //   - HTTP/SSE (pragmatic): HTTPHandler serves POST /v1/sessions,
 //     GET /v1/sessions/{id}, POST /v1/sessions/{id}/prompt (text/event-stream),
-//     POST /v1/sessions/{id}/approve and POST /v1/sessions/{id}/cancel over the
-//     same *agent.Engine and the same session.Event.
+//     POST /v1/sessions/{id}/controls/resolve-ask and
+//     POST /v1/sessions/{id}/controls/cancel over the same *agent.Engine and the
+//     same session.Event; every control names its exact run.
 //
 // Both surfaces translate session.Event into the proto Event with the pure
 // toProto mapper; neither surface ever sees an OpenAI type. As an adapter this

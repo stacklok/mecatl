@@ -2,16 +2,29 @@ import { create, type JsonValue } from "@bufbuild/protobuf";
 import { WireType } from "@bufbuild/protobuf/wire";
 import { createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, expectTypeOf, it } from "vitest";
-
 import type {
   Event,
   SessionTitleEventPayload,
   TeamEventPayload,
   ToolCallEventPayload,
 } from "../src/events.js";
+import { RetryDisposition, StreamProgress } from "../src/events.js";
 import { EventSchema, HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import { connect } from "../src/index.js";
 import { sseResponse } from "./scripted-state.js";
+
+describe("canonical event enum values", () => {
+  it("exports retry and progress constants", () => {
+    expect(RetryDisposition).toEqual({ Unspecified: 0, Unknown: 1, Retryable: 2, Permanent: 3 });
+    expect(StreamProgress).toEqual({
+      Unspecified: 0,
+      Unknown: 1,
+      Precommit: 2,
+      Visible: 3,
+      Complete: 4,
+    });
+  });
+});
 
 function terminal(runId: string) {
   return {

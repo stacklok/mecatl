@@ -114,8 +114,12 @@ func TestPhase3ReconstructFromStoreAndLog(t *testing.T) {
 		if ev.Type != "permission.ask" {
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"ask_id": ev.Ask.AskID, "verdict": verdictFor(asks)})
-		ar, aerr := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/approve",
+		body, _ := json.Marshal(map[string]any{
+			"expected_run_id": ev.RunID,
+			"ask_id":          ev.Ask.AskID,
+			"verdict":         verdictFor(asks),
+		})
+		ar, aerr := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/controls/resolve-ask",
 			"application/json", strings.NewReader(string(body)))
 		if aerr != nil {
 			t.Errorf("POST approve #%d: %v", asks+1, aerr)

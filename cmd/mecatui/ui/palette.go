@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -252,8 +253,8 @@ func renderPalette(th theme.Theme, st paletteState, caps client.Capabilities, in
 	b.WriteString(th.Style("muted").Render("commands") + "\n")
 	for i := start; i < end; i++ {
 		c := st.filtered[i]
-		name := sanitizeTerminal("/" + c.Name)
-		desc := sanitizeTerminal(c.Description)
+		name := terminaltext.Sanitize("/" + c.Name)
+		desc := terminaltext.Sanitize(c.Description)
 		row := name
 		if desc != "" {
 			row += "  " + th.Style("muted").Render(desc)

@@ -145,28 +145,11 @@ func TestGRPCMemoryStoreConformance(t *testing.T) {
 		conn := dialBufconn(t, func(gs *grpc.Server) {
 			driverv1.RegisterMemoryStoreServiceServer(gs, NewMemoryStoreServer(backend))
 		})
-		return NewMemoryStore(conn)
-	})
-}
-
-func TestGRPCMemoryLifecycleConformance(t *testing.T) {
-	memconformance.RunLifecycle(t, func(t *testing.T) (tool.MemoryStore, tool.MemoryLifecycleStore) {
-		backend, err := memory.New(t.TempDir())
-		if err != nil {
-			t.Fatalf("memory.New: %v", err)
-		}
-		conn := dialBufconn(t, func(gs *grpc.Server) {
-			driverv1.RegisterMemoryStoreServiceServer(gs, NewMemoryStoreServer(backend))
-		})
-		store, err := NegotiateMemoryStore(context.Background(), conn)
+		store, err := NegotiateMemoryStore(t.Context(), conn)
 		if err != nil {
 			t.Fatalf("NegotiateMemoryStore: %v", err)
 		}
-		lifecycle, ok := store.(tool.MemoryLifecycleStore)
-		if !ok {
-			t.Fatal("negotiated store lacks lifecycle capability")
-		}
-		return store, lifecycle
+		return store
 	})
 }
 

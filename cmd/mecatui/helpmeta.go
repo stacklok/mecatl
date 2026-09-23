@@ -135,14 +135,13 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"acknowledge-main-retention":        {group: groupStorage, common: false, local: true, connect: false},
 
 	// ── Memory & knowledge (embedded-only) ────────────────────────────────
-	"soul-file":                  {group: groupKnowledge, common: false, local: true, connect: false},
-	"no-soul":                    {group: groupKnowledge, common: false, local: true, connect: false},
-	"approve-soul":               {group: groupKnowledge, common: false, local: true, connect: false},
-	"soul-strict":                {group: groupKnowledge, common: false, local: true, connect: false},
-	"user-model-dir":             {group: groupKnowledge, common: false, local: true, connect: false},
-	"no-user-model":              {group: groupKnowledge, common: false, local: true, connect: false},
-	"user-model-review":          {group: groupKnowledge, common: false, local: true, connect: false},
-	"user-model-review-interval": {group: groupKnowledge, common: false, local: true, connect: false},
+	"soul-file":                   {group: groupKnowledge, common: false, local: true, connect: false},
+	"no-soul":                     {group: groupKnowledge, common: false, local: true, connect: false},
+	"approve-soul":                {group: groupKnowledge, common: false, local: true, connect: false},
+	"soul-strict":                 {group: groupKnowledge, common: false, local: true, connect: false},
+	"user-model-dir":              {group: groupKnowledge, common: false, local: true, connect: false},
+	"no-user-model":               {group: groupKnowledge, common: false, local: true, connect: false},
+	"learning-admission-interval": {group: groupKnowledge, common: false, local: true, connect: false},
 
 	// ── Skills & commands (embedded-only) ─────────────────────────────────
 	"skills-dir":   {group: groupSkillsCommands, common: false, local: true, connect: false},

@@ -33,7 +33,7 @@ describe("offline control wire", () => {
         const nextRun = await nextSession.run("keep the next run active");
 
         const response = await fetch(
-          `http://${ready.http_address}/v1/sessions/${encodeURIComponent(oldSession.id)}/cancel`,
+          `http://${ready.http_address}/v1/sessions/${encodeURIComponent(oldSession.id)}/controls/cancel`,
           {
             body: JSON.stringify({ expected_run_id: oldRun.id }),
             headers: { "content-type": "application/json" },

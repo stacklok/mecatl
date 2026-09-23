@@ -166,6 +166,7 @@ Optional completed-trajectory observation policy. Off means no automatic complet
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `learning.mode` | `string` | `off` | Mode controls automatic completed-trajectory observation: off (default; no automatic reflection), review (signal-gated reflection stages durable proposals without memory writes), or auto (stage first, then conservatively promote only eligible non-conflicting facts). Operator settings establish the ceiling; project settings may only tighten it under off < review < auto and never raise autonomy. It does not override separately configured maintenance schedules such as --user-model-consolidate-interval. |
+| `learning.admission_interval` | `int` | `1` | AdmissionInterval admits every Nth eligible automatic reflection process-wide. Nil uses the default of 1; zero and one both admit every eligible reflection. This field is operator-owned; project values do not change admission cadence. |
 | `learning.sensitivity` | `string` | `balanced` | Sensitivity controls weighted automatic admission. Empty means balanced. |
 | `learning.skills` | `learningskillssection` | `(absent)` | Skills controls learned-skill lifecycle policy. |
 | `learning.skills.activation` | `string` | `validated when mode is explicitly auto; evaluated otherwise` | Activation is validated (default for Auto) or evaluated. Project settings may only tighten validated to evaluated. |
@@ -230,7 +231,7 @@ Managed command temporary-storage policy. Read only from user-global settings.ya
 
 Tier: **operator**
 
-Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.
+Exact verified OIDC issuer/subject pairs authorized for process-wide storage health and cleanup. Empty grants nobody; project values are ignored.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -363,7 +364,7 @@ for the full flag tables. The pointers below are the starting points:
 | Feature | How it is configured | See |
 | --- | --- | --- |
 | Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
-| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and knowledge](/building/what-you-get/memory.md) |
+| User-model storage | `--user-model-dir` | [Memory and knowledge](/building/what-you-get/memory.md) |
 | Memory | `--memory-dir` / `--memory-store-url` | [Memory and knowledge](/building/what-you-get/memory.md) |
 | Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |
 | Session leasing | `--session-lease-*` | [Run mecated standalone](/building/deployment/mecated.md#multi-replica) |

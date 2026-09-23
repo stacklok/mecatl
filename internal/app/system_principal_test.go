@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
@@ -93,9 +94,9 @@ func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 			t.Cleanup(closeFn)
 		}},
 		syscaller.RootMemoryConsolidation: {paths: []string{"memory.List"}, run: func(ctx context.Context, _ *testing.T, seen observe) {
-			app.StartMemoryConsolidationForTest(ctx,
+			app.StartMemoryConsolidatorForTest(ctx,
 				app.Config{MemoryConsolidateInterval: time.Millisecond},
-				probeMemoryStore{seen: seen}, nil)
+				dream.New(probeMemoryStore{seen: seen}, nil, dream.Config{}))
 		}},
 		syscaller.RootUserModelConsolidation: {paths: []string{"memory.List"}, run: func(ctx context.Context, _ *testing.T, seen observe) {
 			app.StartUserModelConsolidationForTest(ctx,

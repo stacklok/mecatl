@@ -221,11 +221,11 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 				if rec.Code != http.StatusOK {
 					t.Fatalf("compatibility HTTP: %d", rec.Code)
 				}
-				var compatibility mecatlv1.GetCompatibilityInfoResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &compatibility); err != nil {
+				var httpCompatibility mecatlv1.GetCompatibilityInfoResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &httpCompatibility); err != nil {
 					t.Fatal(err)
 				}
-				if compatibility.GetCapabilities().GetMcpConnectorStatus() != want {
+				if httpCompatibility.GetCapabilities().GetMcpConnectorStatus() != want {
 					t.Fatal("HTTP compatibility capability mismatch")
 				}
 				req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
@@ -242,34 +242,35 @@ func TestBrokerMCPStatus_Scenario1_Capabilities(t *testing.T) {
 				if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 					t.Fatal(err)
 				}
-				if created.Capabilities.Connector != want {
-					t.Fatalf("create HTTP capability=%v want %v", created.Capabilities.Connector, want)
+				if created.Capabilities.Connector {
+					t.Fatal("create HTTP response unexpectedly echoed deployment capabilities")
 				}
 				h := NewHarnessServer(svc)
 				grpcCreated, err := h.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if grpcCreated.GetCapabilities().GetMcpConnectorStatus() != want {
-					t.Fatal("gRPC create capability mismatch")
+				grpcCompatibilityResponse, err := h.GetCompatibilityInfo(ctx, &mecatlv1.GetCompatibilityInfoRequest{})
+				if err != nil || grpcCompatibilityResponse.GetCapabilities().GetMcpConnectorStatus() != want {
+					t.Fatalf("gRPC compatibility capability mismatch: %v", err)
 				}
 				if enabled && principal == nil {
 					continue
 				}
 				id := grpcCreated.GetSessionId()
-				got, err := h.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: id})
+				_, err = h.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: id})
 				if err != nil {
 					t.Fatal(err)
 				}
-				renamed, err := h.RenameSession(ctx, &mecatlv1.RenameSessionRequest{SessionId: id, Title: "renamed"})
+				_, err = h.RenameSession(ctx, &mecatlv1.RenameSessionRequest{SessionId: id, Title: "renamed"})
 				if err != nil {
 					t.Fatal(err)
 				}
-				mode, err := h.SetMode(ctx, &mecatlv1.SetModeRequest{SessionId: id, Mode: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT})
+				_, err = h.SetMode(ctx, &mecatlv1.SetModeRequest{SessionId: id, Mode: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT})
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, caps := range []*mecatlv1.ServerCapabilities{got.GetSession().GetCapabilities(), renamed.GetSession().GetCapabilities(), mode.GetSession().GetCapabilities()} {
+				for _, caps := range []*mecatlv1.ServerCapabilities{grpcCompatibilityResponse.GetCapabilities()} {
 					if caps.GetMcpConnectorStatus() != want {
 						t.Fatal("session response capability mismatch")
 					}

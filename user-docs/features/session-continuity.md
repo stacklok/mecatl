@@ -113,14 +113,13 @@ retention:
 ```
 
 Use the server or `mecatui` maintenance commands to inspect storage health and
-produce a dry-run plan before optimizing or deleting. Do not delete files under
-the store with `find`, cron, filesystem age rules, or a shell loop. The
-management path understands session families, sidecars, leases, active runs, and
-snapshot generations; filename matching does not.
+produce a dry-run plan before deleting. Do not delete files under the store
+with `find`, cron, filesystem age rules, or a shell loop. The management path
+understands session families, sidecars, leases, active runs, and snapshot
+generations; filename matching does not.
 
-Optimization is non-destructive. Cleanup is destructive and protects unknown,
-active, awaiting, live, and leased sessions. A stale plan must be discarded and
-planned again. See
+Cleanup is destructive and protects unknown, active, awaiting, live, and leased
+sessions. A stale plan must be discarded and planned again. See
 [Operate local session storage](/building/deployment/session-storage-operations.md)
 for the platform runbooks and authorization requirements.
 

@@ -223,7 +223,6 @@ const (
 // resumeApproval builds the shared wire payload used by Converse and both
 // authorization-control request envelopes.
 func resumeApproval(askID string, v Verdict) *mecatlv1.ResumeApproval {
-	allow := v == VerdictAllowOnce || v == VerdictAllowAlways
 	var verdict mecatlv1.ApprovalVerdict
 	switch v {
 	case VerdictAllowOnce:
@@ -233,11 +232,10 @@ func resumeApproval(askID string, v Verdict) *mecatlv1.ResumeApproval {
 	case VerdictDeny:
 		verdict = mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY
 	}
-	return &mecatlv1.ResumeApproval{AskId: askID, Allow: allow, Verdict: verdict}
+	return &mecatlv1.ResumeApproval{AskId: askID, Verdict: verdict}
 }
 
-// SendApproval resolves a paused permission.ask. The server prefers the
-// three-way verdict and retains the legacy allow bool as fallback.
+// SendApproval resolves a paused permission.ask with an explicit verdict.
 func (s *Stream) SendApproval(askID string, v Verdict) error {
 	return s.sendFrame(&mecatlv1.ConverseRequest{
 		Kind: &mecatlv1.ConverseRequest_ResumeApproval{

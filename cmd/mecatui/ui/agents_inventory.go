@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -192,15 +193,15 @@ func agentsInvEmptyCopy(caps client.Capabilities) string {
 func agentMetaLine(a client.Agent) string {
 	var segs []string
 	if a.Model != "" {
-		segs = append(segs, "model:"+sanitizeTerminal(a.Model))
+		segs = append(segs, "model:"+terminaltext.Sanitize(a.Model))
 	}
 	if a.PermissionMode != "" {
-		segs = append(segs, "perm:"+sanitizeTerminal(a.PermissionMode))
+		segs = append(segs, "perm:"+terminaltext.Sanitize(a.PermissionMode))
 	}
 	if len(a.Tools) > 0 {
 		sane := make([]string, 0, len(a.Tools))
 		for _, t := range a.Tools {
-			sane = append(sane, sanitizeTerminal(t))
+			sane = append(sane, terminaltext.Sanitize(t))
 		}
 		segs = append(segs, "tools:"+strings.Join(sane, ","))
 	}
@@ -219,9 +220,9 @@ func agentMetaLine(a client.Agent) string {
 func agentsInvRowLines(th theme.Theme, agents []client.Agent, budget int) []string {
 	var lines []string
 	for _, a := range agents {
-		lines = append(lines, renderToolCardText(agentNameStyle(th, a.Color), sanitizeTerminal(a.Name), budget))
+		lines = append(lines, renderToolCardText(agentNameStyle(th, a.Color), terminaltext.Sanitize(a.Name), budget))
 		if a.Description != "" {
-			desc := th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(a.Description), budget))
+			desc := th.Style("toolArgs").Render(indentWrap(terminaltext.Sanitize(a.Description), budget))
 			lines = append(lines, strings.Split(desc, "\n")...)
 		}
 		if meta := agentMetaLine(a); meta != "" {
@@ -247,7 +248,7 @@ func renderAgentsInvPanel(th theme.Theme, st agentsInvState, caps client.Capabil
 	case st.loading:
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")
 	case st.err != nil:
-		line := "list agents: " + sanitizeTerminal(st.err.Error())
+		line := "list agents: " + terminaltext.Sanitize(st.err.Error())
 		if budget > 0 {
 			line = ansi.Wrap(line, budget, "")
 		}

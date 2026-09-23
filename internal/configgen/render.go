@@ -375,7 +375,7 @@ const flagDrivenSection = "## Flag- / file-configured features (NOT in `settings
 	"| Feature | How it is configured | See |\n" +
 	"| --- | --- | --- |\n" +
 	"| Soul (operator persona) | `--soul-file` / `--no-soul` (+ its own `soul.md` file) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |\n" +
-	"| User-model learning | `--user-model-dir` / `--user-model-review` | [Memory and knowledge](/building/what-you-get/memory.md) |\n" +
+	"| User-model storage | `--user-model-dir` | [Memory and knowledge](/building/what-you-get/memory.md) |\n" +
 	"| Memory | `--memory-dir` / `--memory-store-url` | [Memory and knowledge](/building/what-you-get/memory.md) |\n" +
 	"| Slash commands | `--commands-dir` (+ the command `.md` files) | [Skills, commands, and soul](/features/skills-commands-and-soul.md) |\n" +
 	"| Session leasing | `--session-lease-*` | [Run mecated standalone](/building/deployment/mecated.md#multi-replica) |\n" +

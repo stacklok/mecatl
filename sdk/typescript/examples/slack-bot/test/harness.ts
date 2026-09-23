@@ -42,7 +42,9 @@ export async function withMockDaemon<T>(
   const runtimeDirectory = await mkdtemp(join(tmpdir(), "mecatl-slack-bot-test-"));
   const readyFile = join(runtimeDirectory, "ready.json");
   const workspace = join(runtimeDirectory, "workspace");
-  await mkdir(workspace);
+  const configHome = join(runtimeDirectory, "config");
+  const stateHome = join(runtimeDirectory, "state");
+  await Promise.all([mkdir(workspace), mkdir(configHome), mkdir(stateHome)]);
   const args = [
     "serve",
     "--mock",
@@ -58,12 +60,16 @@ export async function withMockDaemon<T>(
     "",
     "--no-soul",
     "--no-user-model",
+    "--permissions-conventional=false",
     "--no-scheduler",
     "--flight-recorder=false",
   ];
   if (options.script !== undefined) args.push("--mock-script", options.script);
 
   const environment = { ...process.env };
+  environment.HOME = runtimeDirectory;
+  environment.XDG_CONFIG_HOME = configHome;
+  environment.XDG_STATE_HOME = stateHome;
   delete environment.ANTHROPIC_API_KEY;
   delete environment.OPENAI_API_KEY;
   delete environment.OPENROUTER_API_KEY;

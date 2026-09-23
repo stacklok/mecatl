@@ -103,11 +103,28 @@ export interface PermissionAskEventPayload {
   readonly tool: string;
 }
 
-/** Retry classification fields carried by model-retry and result payloads. @public */
-export type RetryDisposition = 0 | 1 | 2 | 3;
+/** Canonical retry classifications carried by model-retry and result payloads. @public */
+export const RetryDisposition = {
+  Unspecified: 0,
+  Unknown: 1,
+  Retryable: 2,
+  Permanent: 3,
+} as const;
 
-/** Stream-progress classification carried by model-retry and result payloads. @public */
-export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+/** One canonical retry-classification value. @public */
+export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
+
+/** Canonical stream-progress classifications carried by model-retry and result payloads. @public */
+export const StreamProgress = {
+  Unspecified: 0,
+  Unknown: 1,
+  Precommit: 2,
+  Visible: 3,
+  Complete: 4,
+} as const;
+
+/** One canonical stream-progress value. @public */
+export type StreamProgress = (typeof StreamProgress)[keyof typeof StreamProgress];
 
 /** The payload of a `model.retry` event. @public */
 export interface ModelRetryEventPayload {
@@ -118,7 +135,6 @@ export interface ModelRetryEventPayload {
 /** The payload of a terminal `result` event. @public */
 export interface ResultEventPayload {
   readonly error: string;
-  readonly permanent: boolean;
   readonly retryDisposition?: RetryDisposition | undefined;
   readonly stop: string;
   readonly streamProgress?: StreamProgress | undefined;
@@ -142,11 +158,10 @@ export interface HookEventPayload {
 
 /** The payload of an `approval` replay event. @public */
 export interface ApprovalEventPayload {
-  readonly allowAlways: boolean;
   readonly askId: string;
   readonly callId: string;
   readonly tool: string;
-  readonly verdict: string;
+  readonly verdict: 0 | 1 | 2 | 3;
 }
 
 /** The safe correlation payload of an external-authorization lifecycle event. @public */
@@ -344,7 +359,6 @@ export interface EventCommon {
   readonly seq: bigint;
   readonly text: string;
   readonly turn: number;
-  readonly usage: EventUsage | undefined;
 }
 
 /** Maps every supported event kind to its typed payload. @public */
@@ -441,7 +455,6 @@ export function decodeEvent(event: ProtoEvent, transport: TransportKind): Event 
     seq: event.seq,
     text: event.text,
     turn: event.turn,
-    usage: event.usage,
   };
   if (!knownKinds.has(event.type)) {
     if (transport === "http") {

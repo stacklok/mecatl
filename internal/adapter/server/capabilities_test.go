@@ -6,6 +6,7 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -16,7 +17,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // noopRunner is a do-nothing tool.CommandRunner used only to construct a real
@@ -31,14 +31,23 @@ import (
 // Remember tool, so it registers under its real catalog name ("Remember").
 type noopMemStore struct{}
 
-func (noopMemStore) RememberEntry(context.Context, tool.MemoryEntry) error { return nil }
-func (noopMemStore) Remember(context.Context, string, string) error        { return nil }
+func (noopMemStore) Remember(context.Context, tool.MemoryEntry, tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	return tool.MemoryRecord{}, nil
+}
+func (noopMemStore) Inspect(context.Context, string) (tool.MemoryRecord, bool, error) {
+	return tool.MemoryRecord{}, false, nil
+}
 func (noopMemStore) Recall(context.Context, string) (tool.MemoryEntry, bool, error) {
 	return tool.MemoryEntry{}, false, nil
 }
 func (noopMemStore) List(context.Context, string) ([]tool.MemoryEntry, error) { return nil, nil }
-func (noopMemStore) Forget(context.Context, string) error                     { return nil }
-func (noopMemStore) Index(context.Context) ([]tool.MemoryEntry, error)        { return nil, nil }
+func (noopMemStore) Forget(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return tool.MemoryRecord{}, nil
+}
+func (noopMemStore) Undo(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return tool.MemoryRecord{}, nil
+}
+func (noopMemStore) Index(context.Context) ([]tool.MemoryEntry, error) { return nil, nil }
 func (noopMemStore) Search(context.Context, string, int) ([]tool.MemoryEntry, error) {
 	return nil, nil
 }
@@ -99,18 +108,16 @@ func buildCapsService(
 	return svc
 }
 
-// capsFromCreate drives CreateSession over gRPC and returns the relayed proto
-// capabilities. Going through the wire confirms the shared create path populates
-// them (design test #2).
+// capsFromCreate reads the canonical deployment-wide compatibility projection.
 func capsFromCreate(t *testing.T, svc *server.Service) *mecatlv1.ServerCapabilities {
 	t.Helper()
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+	resp, err := client.GetCompatibilityInfo(ctx, &mecatlv1.GetCompatibilityInfoRequest{})
 	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
+		t.Fatalf("GetCompatibilityInfo: %v", err)
 	}
 	return resp.GetCapabilities()
 }
@@ -202,7 +209,7 @@ func TestCapabilitiesAgentsFromSnapshot(t *testing.T) {
 func TestCanonicalShellTool_Scenario1_CapabilityCompatibility(t *testing.T) {
 	remember := memory.NewRememberTool(noopMemStore{})
 	skill := skills.NewTool(nil, nil)
-	bash := tools.NewShellTool()
+	bash := fstools.NewShellTool()
 
 	tests := []struct {
 		name  string
@@ -228,7 +235,7 @@ func TestCanonicalShellTool_Scenario1_CapabilityCompatibility(t *testing.T) {
 				Memory:        true,
 				Skills:        true,
 				Teams:         true,
-				Bash:          true,
+				Shell:         true,
 			},
 		},
 		{
@@ -237,7 +244,7 @@ func TestCanonicalShellTool_Scenario1_CapabilityCompatibility(t *testing.T) {
 			teams: true,
 			want: &mecatlv1.ServerCapabilities{
 				Memory: true,
-				Bash:   true,
+				Shell:  true,
 				Teams:  true,
 			},
 		},
@@ -277,10 +284,10 @@ func TestCanonicalShellTool_Scenario1_CapabilityCompatibility(t *testing.T) {
 				got.GetMemory() != tc.want.GetMemory() ||
 				got.GetSkills() != tc.want.GetSkills() ||
 				got.GetTeams() != tc.want.GetTeams() ||
-				got.GetBash() != tc.want.GetBash() {
+				got.GetShell() != tc.want.GetShell() {
 				t.Fatalf("capabilities mismatch\n got: mcp=%v cmds=%v mem=%v skills=%v teams=%v bash=%v\nwant: mcp=%v cmds=%v mem=%v skills=%v teams=%v bash=%v",
-					got.GetMcp(), got.GetSlashCommands(), got.GetMemory(), got.GetSkills(), got.GetTeams(), got.GetBash(),
-					tc.want.GetMcp(), tc.want.GetSlashCommands(), tc.want.GetMemory(), tc.want.GetSkills(), tc.want.GetTeams(), tc.want.GetBash())
+					got.GetMcp(), got.GetSlashCommands(), got.GetMemory(), got.GetSkills(), got.GetTeams(), got.GetShell(),
+					tc.want.GetMcp(), tc.want.GetSlashCommands(), tc.want.GetMemory(), tc.want.GetSkills(), tc.want.GetTeams(), tc.want.GetShell())
 			}
 		})
 	}

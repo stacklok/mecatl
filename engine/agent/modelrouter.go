@@ -195,13 +195,13 @@ func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) 
 		// Run did not complete: fail-soft, inherit the default model. Return whatever
 		// was spent so far (the fail-soft path may have still consumed tokens before
 		// the failure).
-		return "", sess.Usage, RouterMissClassifierError, false
+		return "", sess.UsageFor(session.UsageKindMain), RouterMissClassifierError, false
 	case session.StopCancelled:
 		// Cancelled (incl. the 30s modelRouterTimeout): fail-soft, inherit; return spend.
-		return "", sess.Usage, RouterMissCancelled, false
+		return "", sess.UsageFor(session.UsageKindMain), RouterMissCancelled, false
 	}
 	cat, reason, catOK := parseRouterVerdict(final, req.Categories)
-	return cat, sess.Usage, reason, catOK
+	return cat, sess.UsageFor(session.UsageKindMain), reason, catOK
 }
 
 // parseRouterVerdict requires the classifier's WHOLE trimmed output to be a single JSON

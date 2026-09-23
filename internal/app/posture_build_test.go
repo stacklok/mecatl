@@ -9,9 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
@@ -28,17 +26,11 @@ func writeOperatorPostureFile(t *testing.T, tier string) string {
 	return path
 }
 
-// postureEchoFromBuild creates a session against the built Service via the gRPC
-// CreateSession handler and returns the server-wide posture echoed on
-// ServerCapabilities — the SAME projection a real client reads (cfg.Posture.String()).
+// postureEchoFromBuild returns the server-wide posture from the canonical
+// deployment compatibility descriptor.
 func postureEchoFromBuild(t *testing.T, built *Built) string {
 	t.Helper()
-	resp, err := server.NewHarnessServer(built.Service).CreateSession(context.Background(),
-		&mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	return resp.GetCapabilities().GetPosture()
+	return built.Service.CompatibilityInfo(context.Background()).GetCapabilities().GetPosture()
 }
 
 // TestBuildOperatorYAMLPostureSeam is the HEADLINE seam guard: it drives the REAL

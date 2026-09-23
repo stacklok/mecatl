@@ -197,26 +197,6 @@ func (c *AtomicCatalog) RevokePartition(partition learning.SkillPartition, name 
 	c.partitions[partition] = partitionSnapshot{generation: c.generation, entries: entries}
 }
 
-// RevokeLearned is retained for compatibility and revokes matching learned names
-// in all retained partitions. New publication code must use RevokePartition.
-func (c *AtomicCatalog) RevokeLearned(name string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for partition, current := range c.partitions {
-		if !current.entries[name].learned {
-			continue
-		}
-		entries := make(map[string]catalogEntry, len(current.entries)-1)
-		for key, entry := range current.entries {
-			if key != name {
-				entries[key] = entry
-			}
-		}
-		c.generation++
-		c.partitions[partition] = partitionSnapshot{generation: c.generation, entries: entries}
-	}
-}
-
 // View returns one immutable caller-bound snapshot. Later publications cannot
 // change List/Spec/Execute consistency for a request already holding the view.
 func (c *AtomicCatalog) View(partitions ...learning.SkillPartition) CatalogSnapshot {

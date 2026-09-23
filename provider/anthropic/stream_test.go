@@ -516,37 +516,37 @@ func TestStreamBufferCap(t *testing.T) {
 	}
 }
 
-// TestAnthropicStreamErrorPermanent exercises Permanent() on anthropicStreamError.
+// TestAnthropicStreamErrorRetryDisposition exercises typed retry classification.
 // Non-retryable 4xx (≠408/429) and context-overflow messages are permanent;
 // transient codes (408, 429, 5xx) and unknown (0) are NOT permanent (fail-open).
-func TestAnthropicStreamErrorPermanent(t *testing.T) {
+func TestAnthropicStreamErrorRetryDisposition(t *testing.T) {
 	tests := []struct {
 		msg    string
 		status int
-		want   bool
+		want   session.RetryDisposition
 	}{
 		// Non-retryable 4xx — permanent client-side rejections.
-		{"stream error: invalid_request_error: bad request", 400, true},
-		{"stream error: permission_error: forbidden", 403, true},
-		{"stream error: not_found_error: not found", 404, true},
-		// Retryable codes — transient, NOT permanent.
-		{"stream error: rate_limit_error: too many requests", 429, false},
-		{"stream error: overloaded_error: server overloaded", 503, false},
-		{"head error: api_error: internal error", 500, false},
-		// Status 0 (unknown) — NOT permanent, fail-open.
-		{"stream error: unknown error", 0, false},
-		{"", 0, false},
-		// Context overflow — permanent even with transient-looking status.
-		{"stream error: api_error: Your input exceeds the context window of this model.", 500, true},
-		{"stream error: api_error: input exceeds the context length", 500, true},
-		{"stream error: api_error: maximum context length exceeded", 500, true},
-		{"stream error: api_error: prompt exceeds the token limit", 500, true},
-		{"stream error: api_error: request exceeded the token limit for this model", 500, true},
+		{"stream error: invalid_request_error: bad request", 400, session.RetryDispositionPermanent},
+		{"stream error: permission_error: forbidden", 403, session.RetryDispositionPermanent},
+		{"stream error: not_found_error: not found", 404, session.RetryDispositionPermanent},
+		// Retryable codes.
+		{"stream error: rate_limit_error: too many requests", 429, session.RetryDispositionRetryable},
+		{"stream error: overloaded_error: server overloaded", 503, session.RetryDispositionRetryable},
+		{"head error: api_error: internal error", 500, session.RetryDispositionRetryable},
+		// Status 0 is conservatively unknown.
+		{"stream error: unknown error", 0, session.RetryDispositionUnknown},
+		{"", 0, session.RetryDispositionUnknown},
+		// Context overflow is permanent even with a transient-looking status.
+		{"stream error: api_error: Your input exceeds the context window of this model.", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: input exceeds the context length", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: maximum context length exceeded", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: prompt exceeds the token limit", 500, session.RetryDispositionPermanent},
+		{"stream error: api_error: request exceeded the token limit for this model", 500, session.RetryDispositionPermanent},
 	}
 	for _, tt := range tests {
 		e := &anthropicStreamError{msg: tt.msg, status: tt.status}
-		if got := e.Permanent(); got != tt.want {
-			t.Errorf("Permanent() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
+		if got := e.RetryDisposition(); got != tt.want {
+			t.Errorf("RetryDisposition() = %v for msg=%q status=%d, want %v", got, tt.msg, tt.status, tt.want)
 		}
 	}
 }

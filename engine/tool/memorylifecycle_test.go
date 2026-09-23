@@ -183,20 +183,3 @@ func TestValidateMemoryEntryRejectsSecretDescription(t *testing.T) {
 		t.Fatalf("secret description = %v, want ErrSecretMemoryValue", err)
 	}
 }
-
-type lifecycleShape struct{}
-
-func (lifecycleShape) RememberVersioned(context.Context, tool.MemoryEntry, tool.MemoryVersion) (tool.MemoryRecord, error) {
-	return tool.MemoryRecord{}, nil
-}
-func (lifecycleShape) Inspect(context.Context, string) (tool.MemoryRecord, bool, error) {
-	return tool.MemoryRecord{}, false, nil
-}
-func (lifecycleShape) ForgetVersioned(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
-	return tool.MemoryRecord{}, nil
-}
-func (lifecycleShape) UndoLatest(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
-	return tool.MemoryRecord{}, nil
-}
-
-var _ tool.MemoryLifecycleStore = lifecycleShape{}

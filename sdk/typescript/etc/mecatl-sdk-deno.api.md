@@ -39,15 +39,13 @@ export interface Agents {
 // @public
 export interface ApprovalEventPayload {
     // (undocumented)
-    readonly allowAlways: boolean;
-    // (undocumented)
     readonly askId: string;
     // (undocumented)
     readonly callId: string;
     // (undocumented)
     readonly tool: string;
     // (undocumented)
-    readonly verdict: string;
+    readonly verdict: 0 | 1 | 2 | 3;
 }
 
 // @public
@@ -72,7 +70,6 @@ export interface ArchivedConversationMessage {
 
 // @public
 export interface AttachedRun extends SessionActivity {
-    approve(askId: string, allow: boolean): Promise<never>;
     cancel(): Promise<void>;
     readonly live: boolean;
     resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
@@ -315,8 +312,6 @@ export interface EventCommon {
     readonly text: string;
     // (undocumented)
     readonly turn: number;
-    // (undocumented)
-    readonly usage: EventUsage | undefined;
 }
 
 // @public
@@ -748,7 +743,7 @@ export interface McpInventory {
 export const MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "network.attempt", "request.manifest", "user_prompt"];
 
 // @public
-export const MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "migration_backend", "migration_conflict", "migration_unsupported", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"];
+export const MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"];
 
 // @public
 export const MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"];
@@ -904,7 +899,14 @@ export interface PermissionAskEventPayload {
 export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
 
 // @public
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+export const PermissionVerdict: {
+    readonly AllowOnce: "allow_once";
+    readonly AllowAlways: "allow_always";
+    readonly Deny: "deny";
+};
+
+// @public
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 
 // @public
 export class PlanApprovalRequiredError extends InvalidStateError {
@@ -1003,8 +1005,6 @@ export interface ResultEventPayload {
     // (undocumented)
     readonly error: string;
     // (undocumented)
-    readonly permanent: boolean;
-    // (undocumented)
     readonly retryDisposition?: RetryDisposition | undefined;
     // (undocumented)
     readonly stop: string;
@@ -1017,11 +1017,18 @@ export interface ResultEventPayload {
 }
 
 // @public
-export type RetryDisposition = 0 | 1 | 2 | 3;
+export const RetryDisposition: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Retryable: 2;
+    readonly Permanent: 3;
+};
+
+// @public
+export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
 
 // @public
 export interface Run extends AsyncIterable<Event_2> {
-    approve(askId: string, allow: boolean): Promise<void>;
     cancel(): Promise<void>;
     // (undocumented)
     readonly id: string;
@@ -1183,8 +1190,6 @@ export interface ServerCapabilities {
     // (undocumented)
     readonly audio: boolean;
     // (undocumented)
-    readonly bash: boolean;
-    // (undocumented)
     readonly debugMcp: boolean;
     // (undocumented)
     readonly image: boolean;
@@ -1213,6 +1218,8 @@ export interface ServerCapabilities {
     // (undocumented)
     readonly sessionDebug: boolean;
     // (undocumented)
+    readonly shell: boolean;
+    // (undocumented)
     readonly skills: boolean;
     // (undocumented)
     readonly slashCommands: boolean;
@@ -1224,8 +1231,6 @@ export interface ServerCapabilities {
     readonly storageCleanup: boolean;
     // (undocumented)
     readonly storageHealth: boolean;
-    // (undocumented)
-    readonly storageMigration: boolean;
     // (undocumented)
     readonly teams: boolean;
     // (undocumented)
@@ -1433,8 +1438,6 @@ export interface Sessions {
 // @public
 export interface SessionSnapshot {
     // (undocumented)
-    readonly capabilities?: ServerCapabilities;
-    // (undocumented)
     readonly createdAtUnix: bigint;
     // (undocumented)
     readonly debugMcpServers: readonly string[];
@@ -1610,33 +1613,30 @@ interface Storage_2 {
     // Warning: (ae-forgotten-export) The symbol "ApplySessionCleanupRequest" needs to be exported by the entry point deno.d.ts
     // Warning: (ae-forgotten-export) The symbol "CleanupJob" needs to be exported by the entry point deno.d.ts
     applyCleanup(request: ApplySessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;
-    // Warning: (ae-forgotten-export) The symbol "ApplySessionMigrationRequest" needs to be exported by the entry point deno.d.ts
-    // Warning: (ae-forgotten-export) The symbol "SessionMigrationJob" needs to be exported by the entry point deno.d.ts
-    applyMigration(request: ApplySessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
     // Warning: (ae-forgotten-export) The symbol "CancelSessionCleanupRequest" needs to be exported by the entry point deno.d.ts
     cancelCleanup(request: CancelSessionCleanupRequest, options?: RequestOptions): Promise<CleanupJob>;
-    // Warning: (ae-forgotten-export) The symbol "CancelSessionMigrationRequest" needs to be exported by the entry point deno.d.ts
-    cancelMigration(request: CancelSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
     // Warning: (ae-forgotten-export) The symbol "GetSessionCleanupJobRequest" needs to be exported by the entry point deno.d.ts
     getCleanupJob(request: GetSessionCleanupJobRequest, options?: RequestOptions): Promise<CleanupJob>;
     // Warning: (ae-forgotten-export) The symbol "GetStorageHealthRequest" needs to be exported by the entry point deno.d.ts
     // Warning: (ae-forgotten-export) The symbol "GetStorageHealthResponse" needs to be exported by the entry point deno.d.ts
     getHealth(request: GetStorageHealthRequest, options?: RequestOptions): Promise<GetStorageHealthResponse>;
-    // Warning: (ae-forgotten-export) The symbol "GetSessionMigrationJobRequest" needs to be exported by the entry point deno.d.ts
-    getMigrationJob(request: GetSessionMigrationJobRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
     // Warning: (ae-forgotten-export) The symbol "PlanSessionCleanupRequest" needs to be exported by the entry point deno.d.ts
     // Warning: (ae-forgotten-export) The symbol "PlanSessionCleanupResponse" needs to be exported by the entry point deno.d.ts
     planCleanup(request: PlanSessionCleanupRequest, options?: RequestOptions): Promise<PlanSessionCleanupResponse>;
-    // Warning: (ae-forgotten-export) The symbol "PlanSessionMigrationRequest" needs to be exported by the entry point deno.d.ts
-    // Warning: (ae-forgotten-export) The symbol "SessionMigrationPlan" needs to be exported by the entry point deno.d.ts
-    planMigration(request: PlanSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationPlan>;
-    // Warning: (ae-forgotten-export) The symbol "ResumeSessionMigrationRequest" needs to be exported by the entry point deno.d.ts
-    resumeMigration(request: ResumeSessionMigrationRequest, options?: RequestOptions): Promise<SessionMigrationJob>;
 }
 export { Storage_2 as Storage }
 
 // @public
-export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+export const StreamProgress: {
+    readonly Unspecified: 0;
+    readonly Unknown: 1;
+    readonly Precommit: 2;
+    readonly Visible: 3;
+    readonly Complete: 4;
+};
+
+// @public
+export type StreamProgress = (typeof StreamProgress)[keyof typeof StreamProgress];
 
 // @public
 export interface SubagentEventPayload {
@@ -1966,9 +1966,6 @@ export interface UserPromptEventPayload {
     // (undocumented)
     readonly text: string;
 }
-
-// @public @deprecated
-export const WATCH_SESSION_EVENTS_FEATURE: "watch_session_events";
 
 // @public
 export interface WatchBoundaryEnvelope {

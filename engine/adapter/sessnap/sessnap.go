@@ -96,22 +96,11 @@ type Snapshot struct {
 	TitleGeneration    session.TitleGenerationState `json:"title_generation,omitempty"`
 	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
 	TitleAttempts      []session.TitleAttempt       `json:"title_attempts,omitempty"`
-	// TokenUsage is the canonical durable usage ledger. A missing map is legacy;
-	// restore derives honest unknown attribution from deprecated projections.
-	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage,omitempty"`
-	// Usage is the deprecated cumulative run-token accounting, a POINTER for true omitempty
-	// (matching the Pending precedent): a zero Usage marshals nothing and a v1
-	// snapshot with no "usage" key decodes to a nil pointer => the zero Usage on
-	// restore. It is what the MaxRunTokens budget brake is evaluated against, so
-	// persisting it lets the budget survive restart.
-	Usage *session.Usage `json:"usage,omitempty"`
-	// Permanent records whether a StateFailed session's failure was flagged as
-	// permanent (session.RecordFailurePermanence). omitempty keeps a pre-flag
-	// snapshot with no "permanent" key decoding to false — purely additive, no
-	// format-tag bump.
-	Permanent bool `json:"permanent,omitempty"`
+	// TokenUsage is the canonical durable usage ledger. The writer always emits it;
+	// an omitted empty ledger decodes to the zero value.
+	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage"`
 	// RetryDisposition and StreamProgress are the typed terminal facts for a failed
-	// model stream. Missing legacy fields decode conservatively to unknown.
+	// model stream. Missing fields decode conservatively to unknown.
 	RetryDisposition session.RetryDisposition `json:"retry_disposition,omitempty"`
 	StreamProgress   session.StreamProgress   `json:"stream_progress,omitempty"`
 	// RetryPending persists the consumed failed-step retry intent across the crash window
@@ -324,12 +313,6 @@ func Of(s *session.Session) (Snapshot, error) {
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
 	}
-	// Usage is a pointer for true omitempty: only emit the key when there is spend
-	// to persist, so a zero-usage snapshot stays byte-identical to a pre-Usage one.
-	if s.Usage != (session.Usage{}) {
-		u := s.Usage
-		snap.Usage = &u
-	}
 	if s.Conversation != nil {
 		snap.Messages = make([]messageDTO, len(s.Conversation.Messages))
 		for i, m := range s.Conversation.Messages {
@@ -352,9 +335,10 @@ func Of(s *session.Session) (Snapshot, error) {
 	if r, ok := s.RecordedStopReason(); ok {
 		snap.StopReason = r
 	}
-	snap.Permanent = s.FailurePermanence()
-	snap.RetryDisposition, snap.StreamProgress = s.FailureMetadata()
-	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = s.FailedStepRetryPending()
+	failure := s.FailureMetadata()
+	snap.RetryDisposition, snap.StreamProgress = failure.Disposition, failure.Progress
+	pendingRetry, pending := s.FailedStepRetryPending()
+	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = pendingRetry.Disposition, pendingRetry.Progress, pending
 	snap.LastError = s.LastError()
 	snap.RunID = s.RunID()
 	return snap, nil
@@ -363,93 +347,71 @@ func Of(s *session.Session) (Snapshot, error) {
 // Restore reconstructs a Session from a Snapshot by driving the session state
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
-func (snap Snapshot) Restore() (*session.Session, error) {
-	if !snap.EnvironmentRef.Valid() {
+func (s Snapshot) Restore() (*session.Session, error) {
+	if !s.EnvironmentRef.Valid() {
 		return nil, errors.New("sessnap: missing or invalid environment_ref")
 	}
-	s := session.New(snap.ID, snap.Mode, snap.EnvironmentRef, snap.Limits, snap.CreatedAt)
-	if err := s.RestoreSessionMetadata(snap.Kind, snap.Relationship); err != nil {
+	restored := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
+	if err := restored.RestoreSessionMetadata(s.Kind, s.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
 
-	if err := restoreAuthority(s, snap.Authority); err != nil {
+	if err := restoreAuthority(restored, s.Authority); err != nil {
 		return nil, err
 	}
 
 	// Rebuild the conversation history verbatim.
-	for _, dto := range snap.Messages {
-		s.Conversation.Append(fromDTO(dto))
+	for _, dto := range s.Messages {
+		restored.Conversation.Append(fromDTO(dto))
 	}
 	// Restore opaque creation labels by direct assignment. Title-specific metadata
 	// restores atomically through RestoreTitleMetadata below.
-	s.Profile = snap.Profile
-	s.ProviderID = snap.ProviderID
-	s.ModelID = snap.ModelID
-	s.ReasoningEffort = snap.ReasoningEffort
-	s.Placement = snap.Placement
-	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
-	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
-	s.DebugTargetFingerprint = snap.DebugTargetFingerprint
-	s.ExternalBinding = snap.ExternalBinding
+	restored.Profile = s.Profile
+	restored.ProviderID = s.ProviderID
+	restored.ModelID = s.ModelID
+	restored.ReasoningEffort = s.ReasoningEffort
+	restored.Placement = s.Placement
+	restored.DebugMCPServers = append([]string(nil), s.DebugMCPServers...)
+	restored.DebugMCPTools = append([]string(nil), s.DebugMCPTools...)
+	restored.DebugTargetFingerprint = s.DebugTargetFingerprint
+	restored.ExternalBinding = s.ExternalBinding
 	// RunID restores by direct assignment, like Profile/Title above: it is an
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.
-	s.BeginRun(snap.RunID)
-	s.RestoreTitleMetadata(snap.Title, snap.TitleProvenance, snap.TitleRevision, snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
+	restored.BeginRun(s.RunID)
+	restored.RestoreTitleMetadata(s.Title, s.TitleProvenance, s.TitleRevision, s.TitleGeneration, s.TitleSourcePrompts, s.TitleAttempts)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).
-	if err := s.RestoreLabels(snap.Owner, session.Authority{}); err != nil {
+	if err := restored.RestoreLabels(s.Owner, session.Authority{}); err != nil {
 		return nil, fmt.Errorf("sessnap: restore labels: %w", err)
 	}
-	if err := s.RestoreIncarnation(snap.Incarnation); err != nil {
+	if err := restored.RestoreIncarnation(s.Incarnation); err != nil {
 		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
 	}
 
-	// The cumulative usage to seed (a nil pointer => the zero Usage, the pre-Usage
-	// default), passed to RestoreState alongside the counters so it seeds the budget
-	// AFTER the state machine advances (Usage must survive the BeginTurn the
-	// running/awaiting restore performs).
-	var usage session.Usage
-	if snap.Usage != nil {
-		usage = *snap.Usage
+	pendingAuthorization := fromPendingAuthorizationDTO(s.PendingAuthorization)
+	data := RestoreData{
+		State:                s.State,
+		Stop:                 s.StopReason,
+		Pending:              s.Pending,
+		PendingAuthorization: pendingAuthorization,
+		Counters:             s.Counters,
+		TokenUsage:           s.TokenUsage,
+		Failure:              session.RetryMetadata{Disposition: s.RetryDisposition, Progress: s.StreamProgress},
+		RetryPending:         s.RetryPending,
+		Retry:                session.RetryMetadata{Disposition: s.RetryPendingDisposition, Progress: s.RetryPendingProgress},
+		LastError:            s.LastError,
 	}
-
-	// Drive the state machine to the recorded lifecycle state, seed the running
-	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
-	pendingAuthorization := fromPendingAuthorizationDTO(snap.PendingAuthorization)
-	if err := restoreState(s, snap.State, snap.StopReason, snap.Pending, pendingAuthorization, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
+	if err := RestoreState(restored, data); err != nil {
 		return nil, err
 	}
-	// Canonical token usage wins whenever it is present; legacy snapshots derive the
-	// main bucket from their deprecated compatibility projection.
-	if snap.TokenUsage != nil {
-		s.RestoreTokenUsage(snap.TokenUsage)
-	} else if usage != (session.Usage{}) {
-		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
-			session.UsageKindMain: {Total: usage, Models: map[string]session.Usage{"unknown": usage}},
-		})
-	}
-	if snap.State == session.StateFailed {
-		disposition := snap.RetryDisposition
-		if disposition == session.RetryDispositionUnknown && snap.Permanent {
-			disposition = session.RetryDispositionPermanent
-		}
-		if err := s.RecordFailureMetadata(disposition, snap.StreamProgress); err != nil {
-			return nil, fmt.Errorf("sessnap: restore failure metadata: %w", err)
-		}
-	}
-	if snap.RetryPending {
-		if err := s.RestoreFailedStepRetryPending(snap.RetryPendingDisposition, snap.RetryPendingProgress); err != nil {
-			return nil, fmt.Errorf("sessnap: restore failed-step retry intent: %w", err)
-		}
-	}
-	if snap.PendingWorkspaceEnrollment != nil {
-		if err := s.BeginWorkspaceEnrollment(*snap.PendingWorkspaceEnrollment); err != nil {
+	if s.PendingWorkspaceEnrollment != nil {
+		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {
 			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
 		}
 	}
-	return s, nil
+	return restored, nil
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
@@ -482,92 +444,57 @@ func ValidatePersistedAuthority(authority *session.Authority) error {
 	return nil
 }
 
-// RestoreState drives a freshly-constructed (StateIdle) Session through the state
-// machine to the target lifecycle state, seeding the running totals (counters) and
-// cumulative usage. It is the SINGLE place the terminal/awaiting transition
-// vocabulary lives, shared by Snapshot.Restore (snapshot rehydration) and the
-// event-sourced fold (engine/adapter/eventsource) so the state-driving logic is
-// never copy-pasted.
-//
-// s MUST be a fresh StateIdle session (e.g. straight from session.New) with its
-// conversation already seeded; RestoreState only advances the lifecycle. stop is the
-// recorded terminal stop reason (used for the completed-vs-stop distinction); pending
-// is the parked ask (used only for StateAwaiting). counters seed the running totals
-// (preserved across the BeginTurn that running/awaiting restore performs); usage
-// seeds the cumulative budget figure; permanent records a permanence flag on
-// StateFailed (meaningful only when state==StateFailed and permanent==true);
-// lastError records the terminal failure cause on StateFailed (the Permanent-analog
-// for the failure detail, issue #332 — meaningful only when state==StateFailed and
-// lastError!=""). It returns an error on an unknown state or a transition the
-// aggregate rejects.
-func RestoreState(
-	s *session.Session,
-	state session.State,
-	stop session.StopReason,
-	pending *session.PendingAsk,
-	counters session.Counters,
-	usage session.Usage,
-	permanent bool,
-	lastError string,
-) error {
-	return restoreState(s, state, stop, pending, nil, counters, usage, permanent, lastError)
+// RestoreData is the adapter-owned complete lifecycle state used to rehydrate a
+// freshly constructed session without positional compatibility parameters.
+type RestoreData struct {
+	State                session.State
+	Stop                 session.StopReason
+	Pending              *session.PendingAsk
+	PendingAuthorization *session.PendingAuthorization
+	Counters             session.Counters
+	TokenUsage           map[session.UsageKind]session.TokenUsage
+	Failure              session.RetryMetadata
+	RetryPending         bool
+	Retry                session.RetryMetadata
+	LastError            string
 }
 
-// restoreState is the snapshot-only extension of RestoreState for additive
-// external-authorization continuation state. Keeping it private preserves the
-// existing public restore API.
+// RestoreState drives a fresh idle Session to the supplied current state.
 //
 //nolint:gocyclo // The switch mirrors the complete session lifecycle state machine.
-func restoreState(
-	s *session.Session,
-	state session.State,
-	stop session.StopReason,
-	pending *session.PendingAsk,
-	pendingAuthorization *session.PendingAuthorization,
-	counters session.Counters,
-	usage session.Usage,
-	permanent bool,
-	lastError string,
-) error {
-	if err := validateRestorePendingState(s, state, pending, pendingAuthorization); err != nil {
+func RestoreState(s *session.Session, data RestoreData) error {
+	if err := validateRestorePendingState(s, data.State, data.Pending, data.PendingAuthorization); err != nil {
 		return err
 	}
-	// Restore running totals directly; these are exported and authoritative.
-	s.Counters = counters
-	// Usage seeds the budget so it survives restart.
-	s.Usage = usage
+	s.Counters = data.Counters
+	s.RestoreTokenUsage(data.TokenUsage)
 
-	switch state {
+	switch data.State {
 	case session.StateIdle:
-		// already idle
 	case session.StateRunning:
-		if err := beginTurnPreservingCounters(s, counters); err != nil {
+		if err := beginTurnPreservingCounters(s, data.Counters); err != nil {
 			return err
 		}
 	case session.StateAwaiting:
-		if err := beginTurnPreservingCounters(s, counters); err != nil {
+		if err := beginTurnPreservingCounters(s, data.Counters); err != nil {
 			return err
 		}
-		if err := s.PauseForApproval(*pending); err != nil {
+		if err := s.PauseForApproval(*data.Pending); err != nil {
 			return fmt.Errorf("sessnap: restore awaiting: %w", err)
 		}
 	case session.StateAuthorizing:
-		if err := beginTurnPreservingCounters(s, counters); err != nil {
+		if err := beginTurnPreservingCounters(s, data.Counters); err != nil {
 			return err
 		}
-		if err := s.PauseForAuthorization(*pendingAuthorization); err != nil {
+		if err := s.PauseForAuthorization(*data.PendingAuthorization); err != nil {
 			return fmt.Errorf("sessnap: restore authorizing: %w", err)
 		}
 	case session.StateCompleted:
-		// Stop(reason) records the exact captured reason; Complete is the special
-		// case for a plain end-of-turn (StopEndTurn, or StopNone for an older
-		// snapshot that predates the recorded reason). Because RecordedStopReason
-		// captured the value faithfully, there is no inference here.
-		if stop == session.StopNone || stop == session.StopEndTurn {
+		if data.Stop == session.StopNone || data.Stop == session.StopEndTurn {
 			if err := s.Complete(); err != nil {
 				return fmt.Errorf("sessnap: restore completed: %w", err)
 			}
-		} else if err := s.Stop(stop); err != nil {
+		} else if err := s.Stop(data.Stop); err != nil {
 			return fmt.Errorf("sessnap: restore completed: %w", err)
 		}
 	case session.StateCancelled:
@@ -578,11 +505,21 @@ func restoreState(
 		if err := s.Fail(); err != nil {
 			return fmt.Errorf("sessnap: restore failed: %w", err)
 		}
-		if err := recordFailedStateFlags(s, permanent, lastError); err != nil {
-			return err
+		if err := s.RecordFailureMetadata(data.Failure); err != nil {
+			return fmt.Errorf("sessnap: restore failure metadata: %w", err)
+		}
+		if data.LastError != "" {
+			if err := s.RecordLastError(data.LastError); err != nil {
+				return fmt.Errorf("sessnap: record last error: %w", err)
+			}
 		}
 	default:
-		return fmt.Errorf("sessnap: unknown state %q", state)
+		return fmt.Errorf("sessnap: unknown state %q", data.State)
+	}
+	if data.RetryPending {
+		if err := s.RestoreFailedStepRetryPending(data.Retry); err != nil {
+			return fmt.Errorf("sessnap: restore failed-step retry intent: %w", err)
+		}
 	}
 	return nil
 }
@@ -614,24 +551,6 @@ func validateRestorePendingState(s *session.Session, state session.State, pendin
 	return nil
 }
 
-// recordFailedStateFlags stamps the optional StateFailed metadata (permanence +
-// terminal cause) after the Fail() transition. Extracted from RestoreState so the
-// state-machine switch stays under the gocyclo budget; each flag is independently
-// guarded (meaningful only when non-zero/non-empty).
-func recordFailedStateFlags(s *session.Session, permanent bool, lastError string) error {
-	if permanent {
-		if err := s.RecordFailurePermanence(true); err != nil {
-			return fmt.Errorf("sessnap: record failure permanence: %w", err)
-		}
-	}
-	if lastError != "" {
-		if err := s.RecordLastError(lastError); err != nil {
-			return fmt.Errorf("sessnap: record last error: %w", err)
-		}
-	}
-	return nil
-}
-
 // beginTurnPreservingCounters enters StateRunning without letting BeginTurn's
 // turn increment clobber the restored counters.
 func beginTurnPreservingCounters(s *session.Session, want session.Counters) error {
@@ -653,15 +572,6 @@ func Marshal(s *session.Session) ([]byte, error) {
 
 // Unmarshal decodes a JSON snapshot line and restores it into a Session.
 func Unmarshal(line []byte) (*session.Session, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(line, &fields); err != nil {
-		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
-	}
-	for _, legacy := range []string{"workspace", "adoption_source_id", "adoption_request_digest"} {
-		if _, ok := fields[legacy]; ok {
-			return nil, fmt.Errorf("sessnap: unsupported legacy duplicate placement field %q", legacy)
-		}
-	}
 	var wire struct {
 		Authority json.RawMessage `json:"authority"`
 	}

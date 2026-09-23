@@ -2,9 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-09-04
-- Scope: durable session token accounting, model attribution, compatibility projections, and `MaxRunTokens` budget semantics
+- Scope: durable session token accounting, model attribution, and `MaxRunTokens` budget semantics
 - Supersedes: none
-- Superseded by: none
 
 ## Context
 

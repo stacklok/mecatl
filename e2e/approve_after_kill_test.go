@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -99,9 +100,10 @@ func approveAfterKillSpecs() {
 				// it does not depend on the resumed SSE replaying the pre-restart call.
 				// DO NOT approve — the run stays parked awaiting; the live gRPC relay
 				// persists a durable awaiting snapshot on the ask (Persist-on-ask).
-				askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				runID, askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
 				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
 					"drive local #1 to the Write permission ask\n--- mecated log tail ---\n"+local1.LogTail(4096))
+				expectNonEmpty(runID, "the exact run id on local #1", local1.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on local #1", local1.LogTail(4096))
 				expectNonEmpty(writeCallID, "a Write tool.call on local #1 (card-before-the-gate)", local1.LogTail(4096))
 
@@ -121,33 +123,45 @@ func approveAfterKillSpecs() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawn local #2 sharing local #1 store")
 				defer func() { _ = local2.Close() }()
 
-				// POST approve to local #2's HTTP listener. The process that parked the
-				// ask is dead, so this re-enters the loop AT the ask (rehydrate) and the
-				// resumed run's events relay back as SSE on this response. Drain it so
-				// the run drives to its terminal state in-band.
+				// Resolve the exact parked run on local #2. This control is an ACK-only
+				// request; completion is observed from the finite durable event replay.
 				approveCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 				defer cancel()
-				body, err := harness.ApproveOverHTTP(approveCtx, local2.HTTPAddr(), sessionID, askID, "allow_once")
+				_, err = harness.ResolveAskOverHTTP(approveCtx, local2.HTTPAddr(), sessionID, runID, askID, "allow_once")
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(),
-					"approve over HTTP on local #2\n--- mecated log tail ---\n"+local2.LogTail(4096))
-				sse, err := harness.DrainSSE(body)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "drain the resumed run's SSE")
-				events := parseSSEEvents(sse)
-				sseDump := "\n--- SSE ---\n" + truncate(string(sse), 2048) + "\n--- mecated log tail ---\n" + local2.LogTail(4096)
+					"resolve ask over HTTP on local #2\n--- mecated log tail ---\n"+local2.LogTail(4096))
+
+				var sse []byte
+				var events []sseEvent
+				gomega.Eventually(func() error {
+					var replayErr error
+					sse, replayErr = harness.ReplaySessionEventsOverHTTP(approveCtx, local2.HTTPAddr(), sessionID)
+					if replayErr != nil {
+						return replayErr
+					}
+					events, replayErr = parseSSEEvents(sse)
+					if replayErr != nil {
+						return replayErr
+					}
+					if !sseHasEndTurn(events, runID) {
+						return fmt.Errorf("run %s has not reached end_turn\n--- durable events ---\n%s", runID, truncate(string(sse), 2048))
+					}
+					return nil
+				}, 60*time.Second, 500*time.Millisecond).Should(gomega.Succeed(),
+					"the resumed run did not reach a clean end_turn\n--- mecated log tail ---\n"+local2.LogTail(4096))
+				sseDump := "\n--- durable events ---\n" + truncate(string(sse), 2048) + "\n--- mecated log tail ---\n" + local2.LogTail(4096)
 
 				// ASSERT exactly-once AT THE EVENT LAYER — the core of Phase 2. The
-				// resumed run relays its event stream as SSE (relayRunSSE encodes every
-				// event). Count tool.result frames for the PENDING Write call id (captured
-				// from local #1's pre-restart stream, so the assertion does not depend on
-				// the resumed SSE replaying the original tool.call): assert EXACTLY ONE,
-				// and that the one result is NOT an error. A double-dispatch of the
-				// pending Write (the regression Phase 2 prevents) would relay TWO
-				// tool.result frames for the call id — which content-equality + end_turn
+				// detached resumed run is appended to the durable event log. Count
+				// tool.result frames for the PENDING Write call id (captured from local
+				// #1's pre-restart stream): assert EXACTLY ONE, and that the one result
+				// is NOT an error. A double-dispatch of the pending Write (the regression
+				// Phase 2 prevents) would append TWO tool.result frames for the call id — which content-equality + end_turn
 				// alone cannot see (a re-Write writes identical bytes; end_turn rides any
 				// clean end). Mirrors the offline twin's EvToolResult==1 count.
 				var total, nonError int
 				for _, ev := range events {
-					if ev.Type == "tool.result" && ev.ToolResult != nil && ev.ToolResult.CallID == writeCallID {
+					if ev.RunID == runID && ev.Type == "tool.result" && ev.ToolResult != nil && ev.ToolResult.CallID == writeCallID {
 						total++
 						if !ev.ToolResult.IsError {
 							nonError++
@@ -159,21 +173,16 @@ func approveAfterKillSpecs() {
 				gomega.Expect(nonError).To(gomega.Equal(1),
 					"expected the one Write tool.result to be non-error; got non-error="+plural(nonError)+sseDump)
 
-				// Soundness backstop: if the resumed SSE DOES replay Write tool.call
+				// Soundness backstop: if the durable replay contains Write tool.call
 				// frames, none may introduce a SECOND, distinct Write call id (that would
 				// be a different double-dispatch shape). Any replayed Write call must be
 				// the same pending id.
 				for _, ev := range events {
-					if ev.Type == "tool.call" && ev.ToolCall != nil && ev.ToolCall.Name == "Write" {
+					if ev.RunID == runID && ev.Type == "tool.call" && ev.ToolCall != nil && ev.ToolCall.Name == "Write" {
 						gomega.Expect(ev.ToolCall.ID).To(gomega.Equal(writeCallID),
 							"the resumed stream introduced a second distinct Write tool.call id "+ev.ToolCall.ID+sseDump)
 					}
 				}
-
-				// ASSERT the resumed run completed cleanly: a terminal result frame with
-				// stop=end_turn.
-				gomega.Expect(sseHasEndTurn(events)).To(gomega.BeTrue(),
-					"the resumed run did not reach a clean end_turn terminal"+sseDump)
 
 				// ASSERT the filesystem side effect: note.txt exists with the expected
 				// content. (The workspace is the SHARED state tree, so reading via either
@@ -199,6 +208,7 @@ func approveAfterKillSpecs() {
 // false — never substring-match "is_error".
 type sseEvent struct {
 	Type     string `json:"type"`
+	RunID    string `json:"run_id"`
 	ToolCall *struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
@@ -212,10 +222,11 @@ type sseEvent struct {
 	} `json:"result"`
 }
 
-// parseSSEEvents extracts the decoded proto Events from the `data: ` frames of an
+// parseSSEEvents extracts decoded proto Events from the `data: ` frames of an
 // SSE body. Mirrors the server-test parseSSE helper (internal/adapter/server/
-// http_test.go); a frame that fails to decode is skipped (it is not a data event).
-func parseSSEEvents(body []byte) []sseEvent {
+// http_test.go). A malformed data frame or oversized line fails the observation:
+// skipping either could hide a duplicate tool.result from the exactly-once oracle.
+func parseSSEEvents(body []byte) ([]sseEvent, error) {
 	var out []sseEvent
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tool.result content can be large
@@ -227,17 +238,20 @@ func parseSSEEvents(body []byte) []sseEvent {
 		}
 		var ev sseEvent
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			continue
+			return nil, fmt.Errorf("decode SSE data frame: %w", err)
 		}
 		out = append(out, ev)
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("scan SSE event replay: %w", err)
+	}
+	return out, nil
 }
 
-// sseHasEndTurn reports whether any relayed result frame carries stop=end_turn.
-func sseHasEndTurn(events []sseEvent) bool {
+// sseHasEndTurn reports whether the exact run's durable events carry stop=end_turn.
+func sseHasEndTurn(events []sseEvent, runID string) bool {
 	for _, ev := range events {
-		if ev.Type == "result" && ev.Result != nil && ev.Result.Stop == "end_turn" {
+		if ev.RunID == runID && ev.Type == "result" && ev.Result != nil && ev.Result.Stop == "end_turn" {
 			return true
 		}
 	}

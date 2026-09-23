@@ -46,24 +46,16 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		Title:           titleFromProto(s),
 		TitleProvenance: titleProvenanceFromProto(s),
 		TitleRevision:   s.GetTitleMetadata().GetRevision(),
-		Capabilities:    capabilitiesWithSessionMedia(s.GetCapabilities(), s.GetSessionCapabilities()),
+		Capabilities:    capabilitiesWithSessionMedia(nil, s.GetSessionCapabilities()),
 	}
 }
 
 func titleFromProto(s *mecatlv1.Session) string {
-	if title := s.GetTitleMetadata().GetTitle(); title != "" {
-		return title
-	}
-	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
-	return s.GetTitle()
+	return s.GetTitleMetadata().GetTitle()
 }
 
 func titleProvenanceFromProto(s *mecatlv1.Session) string {
-	if provenance := s.GetTitleMetadata().GetProvenance(); provenance != "" {
-		return provenance
-	}
-	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
-	return s.GetTitleProvenance()
+	return s.GetTitleMetadata().GetProvenance()
 }
 
 // GetSession looks up an existing session by id and returns the server-authored

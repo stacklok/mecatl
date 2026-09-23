@@ -187,7 +187,7 @@ func parseFlags(argv []string) (flags, error) {
 	var f flags
 	configureFlags(fs, &f)
 
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return flags{}, err
 	}
 

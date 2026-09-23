@@ -85,12 +85,12 @@ in [ADR-0212](../adr/0212-caller-ownership-enforcement.md).
 - AC2.1: Alice and Bob can each store and retrieve a user-model-memory entry using the
   same logical key without observing the other's value; the local user-model store is
   caller-partitioned and is not silently treated as a remote driver store.
-  - verify: `TestCallerSeparation_Scenario2_UserModelMemoryIsCallerPartitioned`
+  - verify: `TestCallerStorePartitionsUserMemoryByVerifiedPrincipal`
 - AC2.2: Project memory is partitioned by verified owner and workspace, so equal logical
   keys in the same project are caller-isolated while a caller retains its own project
   memory across sessions. Its backing store, search/index, cache, consolidation, and
   delete operations stay within that owner/workspace namespace.
-  - verify: `TestCallerSeparation_Scenario2_ProjectMemoryIsCallerPartitioned`
+  - verify: `TestCallerStorePartitionsProjectMemoryByWorkspace`
 - AC2.3: A list of sessions, schedules, teams, or schedule fires contains all and only
   resources owned by the requesting caller; its count, cursor, page boundary, and
   empty-page behaviour are computed from that caller-owned set, not a globally paginated
@@ -134,7 +134,7 @@ coverage required by issue #368 and [ADR-0212](../adr/0212-caller-ownership-enfo
 - AC3.4: The real Remember, Recall, search, and forget memory-tool paths keep Alice's
   and Bob's same-key user/project memory isolated; a foreign read is absent and a
   foreign write or delete cannot alter the owner's value.
-  - verify: `TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked`
+  - verify: `TestCallerStorePartitionsUserMemoryByVerifiedPrincipal`, `TestCallerStorePartitionsProjectMemoryByWorkspace`, `TestRememberToolWrites`, `TestRecallToolReturnsValue`
 - AC3.5: The enforcement decision is evaluated for every request rather than cached at
   session creation or lease acquisition; repeated foreign live-run verbs before and
   after the owner's run completes make no mutation and remain indistinguishable from
@@ -277,7 +277,8 @@ concrete task split.
 - `TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner`
 - `TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped`
 - `TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked`
-- `TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked`
+- `TestCallerStorePartitionsUserMemoryByVerifiedPrincipal`
+- `TestCallerStorePartitionsProjectMemoryByWorkspace`
 - `TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked`
 - `TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess`
 - `TestCallerSeparation_Scenario5_UnclassifiedAccessFailsGuard`

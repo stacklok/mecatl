@@ -126,13 +126,12 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
 	return &mecatlv1.CreateSessionResponse{
-		SessionId:    string(sess.ID),
-		Capabilities: h.svc.capabilitiesFor(ctx),
+		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: scaps.Image,
 			Audio: scaps.Audio,
 		},
-		ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID)),
+		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),
 	}, nil
 }
@@ -198,15 +197,12 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
+	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
 	if sess.Title == "" {
-		derived := DeriveTitle(sess)
-		//nolint:staticcheck // dual-write compatibility title alongside canonical metadata.
-		proto.Title = derived
-		proto.TitleMetadata.Title = derived
+		proto.TitleMetadata.Title = DeriveTitle(sess)
 	}
 	return &mecatlv1.GetSessionResponse{Session: proto}, nil
 }
@@ -238,7 +234,7 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
@@ -278,7 +274,7 @@ func (h *HarnessServer) ResolveRunAsk(ctx context.Context, req *mecatlv1.Resolve
 		session.SessionID(req.GetSessionId()),
 		req.GetExpectedRunId(),
 		req.GetAskId(),
-		verdictFromResumeApproval(req.GetVerdict(), false),
+		verdictFromResumeApproval(req.GetVerdict()),
 	)
 	if err != nil {
 		return nil, toStatus(err)
@@ -371,7 +367,7 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
 }
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.
@@ -947,10 +943,14 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 		case *mecatlv1.ConverseRequest_ResumeApproval:
 			if k.ResumeApproval != nil {
 				ra := k.ResumeApproval
+				if ra.GetVerdict() == mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED {
+					h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", "verdict is required")
+					break
+				}
 				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
 					break
 				}
-				if err := h.svc.approveLiveRun(id, ct.active(), ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()), ra.GetExpectedRunId()); err != nil {
+				if err := h.svc.approveLiveRun(id, ct.active(), ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict()), ra.GetExpectedRunId()); err != nil {
 					h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
 				}
 			}
@@ -1720,8 +1720,12 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				}
 				if frame.approval != nil {
 					ra := frame.approval
+					if ra.GetVerdict() == mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED {
+						controlDone <- status.Error(codes.InvalidArgument, "verdict is required")
+						return
+					}
 					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
-						result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+						result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict()))
 					}
 				} else if frame.cancel != nil {
 					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
@@ -2074,69 +2078,6 @@ func toProtoStorageHealth(h StorageHealth) *mecatlv1.GetStorageHealthResponse {
 		resp.NextSweepUnix = h.NextSweep.Unix()
 	}
 	return resp
-}
-
-func toProtoMigrationPlan(plan MigrationPlan) *mecatlv1.SessionMigrationPlan {
-	return &mecatlv1.SessionMigrationPlan{
-		PlanId: plan.ID, Available: plan.Available, UnavailableReason: plan.UnavailableReason,
-		V1Families: plan.V1Families, V2Families: plan.V2Families, InvalidFamilies: plan.InvalidFamilies,
-		SkippedFamilies: plan.SkippedFamilies, CurrentBytes: plan.CurrentBytes,
-		ReclaimableBytes: plan.ReclaimableBytes, TemporaryBytes: plan.TemporaryBytes,
-	}
-}
-
-func toProtoMigrationJob(job MigrationJob) *mecatlv1.SessionMigrationJob {
-	out := &mecatlv1.SessionMigrationJob{
-		JobId: job.ID, State: job.State, V1Families: job.V1Families, V2Families: job.V2Families,
-		InvalidFamilies: job.InvalidFamilies, SkippedFamilies: job.SkippedFamilies,
-		CurrentBytes: job.CurrentBytes, ReclaimableBytes: job.ReclaimableBytes, TemporaryBytes: job.TemporaryBytes,
-		Processed: job.Processed, Migrated: job.Migrated, Failed: job.Failed,
-		Errors: make([]*mecatlv1.SessionMigrationItemError, 0, len(job.Errors)),
-	}
-	for _, item := range job.Errors {
-		out.Errors = append(out.Errors, &mecatlv1.SessionMigrationItemError{ItemHandle: item.ItemHandle, ReasonCode: item.ReasonCode, Message: item.Message})
-	}
-	return out
-}
-
-func (h *HarnessServer) PlanSessionMigration(ctx context.Context, _ *mecatlv1.PlanSessionMigrationRequest) (*mecatlv1.SessionMigrationPlan, error) {
-	plan, err := h.svc.PlanSessionMigration(ctx)
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationPlan(plan), nil
-}
-
-func (h *HarnessServer) ApplySessionMigration(ctx context.Context, req *mecatlv1.ApplySessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.ApplySessionMigration(ctx, req.GetPlanId(), int(req.GetBatchSize()))
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
-}
-
-func (h *HarnessServer) ResumeSessionMigration(ctx context.Context, req *mecatlv1.ResumeSessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.ResumeSessionMigration(ctx, req.GetJobId(), int(req.GetBatchSize()))
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
-}
-
-func (h *HarnessServer) CancelSessionMigration(ctx context.Context, req *mecatlv1.CancelSessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.CancelSessionMigration(ctx, req.GetJobId())
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
-}
-
-func (h *HarnessServer) GetSessionMigrationJob(ctx context.Context, req *mecatlv1.GetSessionMigrationJobRequest) (*mecatlv1.SessionMigrationJob, error) {
-	job, err := h.svc.SessionMigrationJob(ctx, req.GetJobId())
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	return toProtoMigrationJob(job), nil
 }
 
 // PlanSessionCleanup returns a caller-bound read-only retention plan.

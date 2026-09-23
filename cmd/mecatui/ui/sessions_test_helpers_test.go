@@ -15,7 +15,6 @@ func setActiveSessions(m *Model, state sessionsState) {
 	pager := initialized.pager
 	transcripter := initialized.transcripter
 	healthFetcher := initialized.healthFetcher
-	migration := initialized.migration
 	cleanup := initialized.cleanup
 	forker := initialized.forker
 	manager := initialized.manager
@@ -29,10 +28,16 @@ func setActiveSessions(m *Model, state sessionsState) {
 	initialized.pager = pager
 	initialized.transcripter = transcripter
 	initialized.healthFetcher = healthFetcher
-	initialized.migration = migration
 	initialized.cleanup = cleanup
 	initialized.forker = forker
 	initialized.manager = manager
 	initialized.clipboard = clipboard
 	initialized.actionRequestToken = actionRequestToken
+}
+
+func ensureActiveSessions(m *Model) *sessionsState {
+	if m.modal == nil {
+		setActiveSessions(m, newSessionsPanelState())
+	}
+	return sessionsSurface(m)
 }

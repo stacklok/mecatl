@@ -38,7 +38,10 @@ func TestSDKTypescriptAttach_Scenario1_WatchFeatureIdParity(t *testing.T) {
 	paths := sdkTypescriptAttachParityPaths(t)
 	typescript := readParitySource(t, paths.watchManifest)
 	server := readParitySource(t, paths.featureSource)
-	typed := singleSourceValue(t, typescript, regexp.MustCompile(`(?m)^export const WATCH_SESSION_EVENTS_FEATURE = "([a-z0-9_]+)";$`), "TypeScript watch feature")
+	typed := singleSourceValue(t, typescript, regexp.MustCompile(`(?m)^const watchSessionEventsFeature = "([a-z0-9_]+)";$`), "TypeScript watch feature")
+	if strings.Contains(typescript, "WATCH_SESSION_EVENTS_FEATURE") {
+		t.Fatal("deprecated WATCH_SESSION_EVENTS_FEATURE alias remains")
+	}
 	wire := singleSourceValue(t, server, regexp.MustCompile(`(?m)^\s*FeatureWatchSessionEvents = "([a-z0-9_]+)"$`), "server watch feature")
 	if typed != wire {
 		t.Fatalf("Go/TypeScript watch-feature drift: TypeScript=%q Go=%q", typed, wire)

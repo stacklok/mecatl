@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -293,7 +294,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 	case picker.loading:
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")
 	case picker.err != nil:
-		b.WriteString(th.Style("errorText").Render("✗ list models: "+sanitizeTerminal(picker.err.Error())) + "\n")
+		b.WriteString(th.Style("errorText").Render("✗ list models: "+terminaltext.Sanitize(picker.err.Error())) + "\n")
 		b.WriteString(th.Style("muted").Render(modelsErrorHint) + "\n")
 	case len(catalog.models) == 0:
 		b.WriteString(th.Style("muted").Render(modelsEmptyCopy(caps, catalog.statuses)) + "\n")
@@ -312,7 +313,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 			b.WriteString("\n")
 		}
 		for _, line := range statuses {
-			b.WriteString(renderToolCardText(th.Style("errorText"), sanitizeTerminal(line), width) + "\n")
+			b.WriteString(renderToolCardText(th.Style("errorText"), terminaltext.Sanitize(line), width) + "\n")
 		}
 	}
 	b.WriteString("\n" + th.Style("muted").Render("type to filter · ↑/↓/"+hk.scrollUp+" move · "+hk.choose+" use · "+hk.setGlobalDefault+" set global default · "+hk.closeOnly+" clear filter / close"))
@@ -345,7 +346,7 @@ func modelRowText(active, globalDefault client.ModelSelection, configProvenanceP
 	if configProvenanceProviderIDs != nil && configProvenanceProviderIDs[mi.ProviderID] {
 		segs = append([]string{"org"}, segs...)
 	}
-	line := activeMark + defMark + " " + sanitizeTerminal(mi.ProviderID) + " · " + sanitizeTerminal(modelLabel(mi))
+	line := activeMark + defMark + " " + terminaltext.Sanitize(mi.ProviderID) + " · " + terminaltext.Sanitize(modelLabel(mi))
 	if len(segs) > 0 {
 		line += "  " + strings.Join(segs, " ")
 	}

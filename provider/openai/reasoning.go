@@ -78,51 +78,28 @@ func packReasoningItems(items []reasoningItem) string {
 }
 
 // unpackReasoningItems parses the opaque blob stored on session.Message.Reasoning
-// back into the ordered reasoning items to replay.
+// back into the ordered reasoning items to replay. Only the current versioned
+// envelope is accepted. Historical bare ciphertext, malformed JSON, unsupported
+// versions, and incomplete envelopes all yield no replay items; in particular,
+// envelope bytes are never reinterpreted as encrypted_content.
 //
-// It is FAIL-SOFT in the LEGACY direction, which is the whole point: a blob
-// written before this adapter packed anything is a bare encrypted_content string
-// (base64-ish ciphertext, never valid envelope JSON), so anything that does not
-// parse as a current-version envelope is treated as exactly one item carrying
-// that blob under legacyID — the caller's session.Message.ReasoningItemID. That
-// reproduces the pre-packing behaviour byte-for-byte, so sessions already on disk
-// replay exactly as they did before, including the single-item case that was
-// always correct.
-//
-// An empty blob yields no items (replay no-op). An item missing either half is
-// dropped: an id-less item serialises as `"id":""`, which strict gateways reject
-// outright, so the D1a degrade applies — lose that item's reasoning continuity,
-// never 400. It never panics on arbitrary input (fuzzed).
-func unpackReasoningItems(blob, legacyID string) []reasoningItem {
+// Validation is all-or-nothing. Replaying only the valid subset of a damaged
+// envelope would silently rewrite a meaningful prior output sequence, so one
+// invalid item rejects the complete envelope. It never panics on arbitrary input
+// (fuzzed).
+func unpackReasoningItems(blob string) []reasoningItem {
 	if blob == "" {
 		return nil
 	}
 	var env reasoningEnvelope
-	if err := json.Unmarshal([]byte(blob), &env); err != nil || env.V != reasoningEnvelopeVersion {
-		return legacyReasoningItems(blob, legacyID)
+	if err := json.Unmarshal([]byte(blob), &env); err != nil ||
+		env.V != reasoningEnvelopeVersion || len(env.Items) == 0 {
+		return nil
 	}
-	out := make([]reasoningItem, 0, len(env.Items))
 	for _, it := range env.Items {
-		if it.ID == "" || it.Blob == "" {
-			continue
+		if it.ID == "" || it.Blob == "" || it.After < 0 {
+			return nil
 		}
-		out = append(out, it)
 	}
-	if len(out) == 0 {
-		// A well-formed envelope carrying nothing replayable is NOT a legacy blob —
-		// falling back here would resend the envelope JSON itself as ciphertext.
-		return nil
-	}
-	return out
-}
-
-// legacyReasoningItems renders a pre-packing blob — a bare encrypted_content
-// string paired with the message's own ReasoningItemID — as the single-item list
-// the current replay path consumes. An id-less legacy blob yields nothing (the
-// D1a degrade: dropping the item beats emitting `"id":""`).
-func legacyReasoningItems(blob, legacyID string) []reasoningItem {
-	if legacyID == "" {
-		return nil
-	}
-	return []reasoningItem{{ID: legacyID, Blob: blob}}
+	return env.Items
 }

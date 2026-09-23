@@ -11,17 +11,17 @@ import (
 )
 
 // embeddedCaps is the embedded-default server's capability set: memory + teams +
-// bash on; mcp + slash-commands + skills off. It is the most important fixture —
+// shell on; mcp + slash-commands + skills off. It is the most important fixture —
 // it is what a user running the single `mecatui` binary sees, and it exercises
 // both the available and the [not enabled] annotation paths.
 func embeddedCaps() client.Capabilities {
-	return client.Capabilities{Memory: true, Teams: true, Bash: true}
+	return client.Capabilities{Memory: true, Teams: true, Shell: true}
 }
 
 // allOnCaps is an external mecated with every optional feature wired.
 func allOnCaps() client.Capabilities {
 	return client.Capabilities{
-		MCP: true, SlashCommands: true, Memory: true, Skills: true, Teams: true, Bash: true,
+		MCP: true, SlashCommands: true, Memory: true, Skills: true, Teams: true, Shell: true,
 		ModelSelection: true, Scheduling: true,
 	}
 }
@@ -69,7 +69,7 @@ func helpModel(t *testing.T, caps client.Capabilities, tweak ...func(*Deps)) Mod
 func qmark() tea.KeyPressMsg { return tea.KeyPressMsg{Code: '?', Text: "?"} }
 
 // TestHelpOverlayEmbeddedGolden locks the help overlay under embedded defaults:
-// mcp/commands/skills rows carry [not enabled]; memory/teams/bash are available.
+// mcp/commands/skills rows carry [not enabled]; memory/teams/shell are available.
 func TestHelpOverlayEmbeddedGolden(t *testing.T) {
 	m := helpModel(t, embeddedCaps())
 	got := stripANSI([]byte(m.View().Content))

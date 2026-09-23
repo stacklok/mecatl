@@ -386,7 +386,7 @@ func TestFullCycleProgram(t *testing.T) {
 	for _, fr := range pd.send.frames() {
 		if ra := fr.GetResumeApproval(); ra != nil {
 			sawApproval = true
-			if ra.GetAskId() != "ask-write-1" || !ra.GetAllow() {
+			if ra.GetAskId() != "ask-write-1" || ra.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE {
 				t.Errorf("ResumeApproval = %#v, want {ask-write-1, allow}", ra)
 			}
 		}

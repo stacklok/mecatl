@@ -207,17 +207,16 @@ API:
 
 ### Inspect the event log
 
-The durable event log at `mecatl:events:<SESSION_ID>` is a Redis Stream. Read it
-with:
+The durable event log at `mecatl:events:<SESSION_ID>` is a Redis
+Stream. Read it with:
 
 ```sh
 redis-cli XRANGE "mecatl:events:<SESSION_ID>" - +
 ```
 
 Each entry's `r` field contains the event envelope, including its `Actor`
-metadata. Mecatl migrates a legacy event-log LIST to a Stream on the next
-append, after which `LRANGE` returns `WRONGTYPE`. Do not modify the sibling
-cursor key, `mecatl:events-gen:<SESSION_ID>`, independently of the event log.
+metadata. Do not modify the sibling cursor key,
+`mecatl:events-gen:<SESSION_ID>`, independently of the event log.
 
 ### Size durable event followers
 

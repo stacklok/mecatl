@@ -76,12 +76,10 @@ export type {
   ParallelEventPayload,
   PermissionAskEventPayload,
   ResultEventPayload,
-  RetryDisposition,
   ScheduleEventPayload,
   SessionTitleEventPayload,
   SteerEventPayload,
   SteerOutcomeEventPayload,
-  StreamProgress,
   SubagentEventPayload,
   TeamEvent,
   TeamEventPayload,
@@ -98,7 +96,7 @@ export type {
   UnknownHttpEvent,
   UserPromptEventPayload,
 } from "./events.js";
-export { MECATL_EVENT_KINDS } from "./events.js";
+export { MECATL_EVENT_KINDS, RetryDisposition, StreamProgress } from "./events.js";
 export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
 export type {
@@ -175,7 +173,6 @@ export {
 } from "./raw.js";
 export type {
   PermissionAskResponder,
-  PermissionVerdict,
   Run,
   RunAuthorizationRequiredOutcome,
   RunCompletedOutcome,
@@ -183,7 +180,7 @@ export type {
   RunOutcome,
   RunResult,
 } from "./run.js";
-export { RunAuthorizationRequiredError } from "./run.js";
+export { PermissionVerdict, RunAuthorizationRequiredError } from "./run.js";
 export type {
   RunControls,
   RunSteerAcknowledgement,
@@ -196,11 +193,7 @@ export type {
   ServerInfo,
   ServerInfoOptions,
 } from "./server.js";
-export {
-  ServerFeature,
-  ServerPosture,
-  WATCH_SESSION_EVENTS_FEATURE,
-} from "./server.js";
+export { ServerFeature, ServerPosture } from "./server.js";
 export type {
   DreamTargetCapability,
   ManualDreamCapabilities,

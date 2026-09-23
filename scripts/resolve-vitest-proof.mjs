@@ -22,14 +22,28 @@ if (separator <= 0 || separator === proof.length - 1) {
   reject("expected vitest:<repo-relative-path>#<base64url-title>");
 }
 
+// Each Node workspace that may hold a `vitest:` proof owns its own TypeScript
+// compiler: the SDK's under sdk/typescript/node_modules, Studio's hoisted to
+// apps/node_modules (typescript is a devDependency of the apps/ root
+// package.json). The proof path selects which one parses it.
+const workspaces = [
+  {
+    prefix: `sdk${sep}typescript${sep}`,
+    compiler: "sdk/typescript/node_modules/typescript/lib/typescript.js",
+  },
+  {
+    prefix: `apps${sep}`,
+    compiler: "apps/node_modules/typescript/lib/typescript.js",
+  },
+];
+
 const relativePath = normalize(proof.slice(0, separator));
-if (
-  isAbsolute(relativePath) ||
-  relativePath === ".." ||
-  relativePath.startsWith(`..${sep}`) ||
-  !relativePath.startsWith(`sdk${sep}typescript${sep}`)
-) {
-  reject("test path must stay under sdk/typescript/");
+const workspace =
+  isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)
+    ? undefined
+    : workspaces.find((candidate) => relativePath.startsWith(candidate.prefix));
+if (workspace === undefined) {
+  reject("test path must stay under sdk/typescript/ or apps/");
 }
 
 const encodedTitle = proof.slice(separator + 1);
@@ -43,11 +57,11 @@ if (expectedTitle.length === 0) {
 
 let ts;
 try {
-  const compilerPath = resolve("sdk/typescript/node_modules/typescript/lib/typescript.js");
+  const compilerPath = resolve(workspace.compiler);
   ts = (await import(pathToFileURL(compilerPath).href)).default;
 } catch (error) {
   reject(
-    `TypeScript is unavailable; run task sdk:install first (${error instanceof Error ? error.message : String(error)})`,
+    `TypeScript is unavailable; run task sdk:install or task studio:install first (${error instanceof Error ? error.message : String(error)})`,
   );
 }
 
@@ -59,12 +73,15 @@ try {
   reject(`cannot read ${relativePath}: ${error instanceof Error ? error.message : String(error)}`);
 }
 
+// React test files under apps/web are .tsx; parsing them as plain TS would
+// misread JSX as type assertions and miss (or miscount) the titles.
+const scriptKind = relativePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 const source = ts.createSourceFile(
   testPath,
   sourceText,
   ts.ScriptTarget.Latest,
   true,
-  ts.ScriptKind.TS,
+  scriptKind,
 );
 let matches = 0;
 

@@ -179,8 +179,15 @@ function rpc<
 }
 
 export const HTTP_ONLY_CONTROLS = {
-  approve: http("POST", "/v1/sessions/{id}/approve", ["id=session_id"], [], "json", "json"),
-  cancel: http("POST", "/v1/sessions/{id}/cancel", ["id=session_id"], [], "optional-json", "json"),
+  approve: http(
+    "POST",
+    "/v1/sessions/{id}/controls/resolve-ask",
+    ["id=session_id"],
+    [],
+    "json",
+    "json",
+  ),
+  cancel: http("POST", "/v1/sessions/{id}/controls/cancel", ["id=session_id"], [], "json", "json"),
   cancelChild: http(
     "POST",
     "/v1/sessions/{id}/cancel-child",
@@ -191,15 +198,15 @@ export const HTTP_ONLY_CONTROLS = {
   ),
   cancelSteer: http(
     "POST",
-    "/v1/sessions/{id}/cancel-steer",
+    "/v1/sessions/{id}/controls/cancel-steer",
     ["id=session_id"],
     [],
-    "optional-json",
+    "json",
     "json",
   ),
   prompt: http("POST", "/v1/sessions/{id}/prompt", ["id=session_id"], [], "json", "sse"),
   retry: http("POST", "/v1/sessions/{id}/retry", ["id=session_id"], [], "none", "sse"),
-  steer: http("POST", "/v1/sessions/{id}/steer", ["id=session_id"], [], "json", "json"),
+  steer: http("POST", "/v1/sessions/{id}/controls/steer", ["id=session_id"], [], "json", "json"),
 } as const;
 
 export type HTTPOnlyControlName = keyof typeof HTTP_ONLY_CONTROLS;
@@ -687,58 +694,6 @@ const rpcCatalogRows = [
     backingService: "StorageHealth",
     grpc: grpc(HarnessService.method.getStorageHealth),
     http: http("GET", "/v1/storage/health", [], [], "none", "json"),
-  }),
-  rpc({
-    key: "HarnessService.PlanSessionMigration",
-    service: "HarnessService",
-    method: "PlanSessionMigration",
-    shape: "unary",
-    backingService: "PlanSessionMigration",
-    grpc: grpc(HarnessService.method.planSessionMigration),
-    http: http("POST", "/v1/storage/migrations/plan", [], [], "none", "json"),
-  }),
-  rpc({
-    key: "HarnessService.ApplySessionMigration",
-    service: "HarnessService",
-    method: "ApplySessionMigration",
-    shape: "unary",
-    backingService: "ApplySessionMigration",
-    grpc: grpc(HarnessService.method.applySessionMigration),
-    http: http("POST", "/v1/storage/migrations/apply", [], [], "json", "json"),
-  }),
-  rpc({
-    key: "HarnessService.ResumeSessionMigration",
-    service: "HarnessService",
-    method: "ResumeSessionMigration",
-    shape: "unary",
-    backingService: "ResumeSessionMigration",
-    grpc: grpc(HarnessService.method.resumeSessionMigration),
-    http: http(
-      "POST",
-      "/v1/storage/migrations/{id}/resume",
-      ["id=job_id"],
-      [],
-      "optional-json",
-      "json",
-    ),
-  }),
-  rpc({
-    key: "HarnessService.CancelSessionMigration",
-    service: "HarnessService",
-    method: "CancelSessionMigration",
-    shape: "unary",
-    backingService: "CancelSessionMigration",
-    grpc: grpc(HarnessService.method.cancelSessionMigration),
-    http: http("POST", "/v1/storage/migrations/{id}/cancel", ["id=job_id"], [], "none", "json"),
-  }),
-  rpc({
-    key: "HarnessService.GetSessionMigrationJob",
-    service: "HarnessService",
-    method: "GetSessionMigrationJob",
-    shape: "unary",
-    backingService: "SessionMigrationJob",
-    grpc: grpc(HarnessService.method.getSessionMigrationJob),
-    http: http("GET", "/v1/storage/migrations/{id}", ["id=job_id"], [], "none", "json"),
   }),
   rpc({
     key: "HarnessService.PlanSessionCleanup",

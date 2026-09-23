@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -25,7 +26,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
@@ -297,7 +297,7 @@ func TestRunNonEmptyDiffWhenAgentWritesFile(t *testing.T) {
 	readCall := session.NewToolCall("r1", "Read", []byte(`{"path":"f.txt"}`))
 	writeCall := session.NewToolCall("w1", "Write", []byte(`{"path":"f.txt","content":"CHANGED BY THE AGENT\n"}`))
 	svc := scriptedServiceAtRoot(t, repo,
-		[]tool.Tool{tools.ReadTool{}, tools.WriteTool{}},
+		[]tool.Tool{fstools.ReadTool{}, fstools.WriteTool{}},
 		func(root string) tool.Workspace {
 			ws, err := osfs.NewWorkspace(root)
 			if err != nil {
@@ -420,7 +420,7 @@ func TestRunCancelOnMainAskBoundsAndExits(t *testing.T) {
 	writeCall := session.NewToolCall("w1", "Write", []byte(`{"path":"x.txt","content":"hi\n"}`))
 	llm := mockllm.New(mockllm.ToolCallTurn(writeCall), mockllm.TextTurn("done"))
 	cat := tool.NewCatalog()
-	cat.MustRegister(tools.WriteTool{})
+	cat.MustRegister(fstools.WriteTool{})
 	// The built-in default policy (no allow rules): a mutate (Write) floors to ASK.
 	engine := agent.NewEngine(agent.Deps{
 		LLM:     llm,

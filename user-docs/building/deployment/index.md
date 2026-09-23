@@ -35,3 +35,4 @@ To see the Kubernetes model locally, follow
 - [Operate local session storage](./session-storage-operations.md)
 - [Connect clients through gRPC or HTTP/SSE](./grpc-http.md)
 - [Run the `mecatui` container image](./mecatui.md)
+- [Run the Mecatl Studio web UI](./studio.md) (early access)

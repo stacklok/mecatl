@@ -2,6 +2,9 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -390,9 +393,129 @@ func TestGRPCCreateSessionEchoesResolvedModel(t *testing.T) {
 	})
 }
 
+func TestGRPCGetSessionAfterRestartEchoesPersistedResolvedModel(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	const (
+		provider = "gateway"
+		model    = "terra-1"
+		window   = int64(1_100_000)
+	)
+	var factoryCalls int
+	var builtWindow int
+	resolvedWindow := window
+	factory := func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
+		factoryCalls++
+		eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: sel.ModelID, ContextWindow: func() int { return int(window) }})
+		builtWindow = eng.ContextWindow()
+		return server.SessionEngineResult{
+			Engine:       eng,
+			ProviderID:   sel.ProviderID,
+			ModelID:      sel.ModelID,
+			BuiltForMode: mode,
+			Close:        func() error { return nil },
+		}, nil
+	}
+	newService := func() *server.Service {
+		t.Helper()
+		svc, err := newPlacementTestService(server.Config{
+			Engine:               agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("default")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "default-model"}),
+			Store:                store,
+			SessionEngine:        factory,
+			DefaultResolvedModel: server.ResolvedModel{ProviderID: "default", ModelID: "default-model", ContextWindow: 128_000},
+			ResolveContextWindow: func(p, m string) int64 {
+				if p == provider && m == model {
+					return resolvedWindow
+				}
+				return 128_000
+			},
+		})
+		if err != nil {
+			t.Fatalf("new service: %v", err)
+		}
+		return svc
+	}
+
+	svcA := newService()
+	created, err := svcA.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: provider, ModelID: model})
+	if err != nil {
+		t.Fatalf("CreateSessionWithProvider: %v", err)
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("create factory calls = %d, want 1", factoryCalls)
+	}
+
+	factoryCalls = 0
+	svcB := newService()
+	resp, err := server.NewHarnessServer(svcB).GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatalf("GetSession after restart: %v", err)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("read-only GetSession rebuilt the engine %d times, want 0", factoryCalls)
+	}
+	rm := resp.GetSession().GetResolvedModel()
+	if rm.GetProviderId() != provider || rm.GetModelId() != model || rm.GetContextWindow() != window {
+		t.Fatalf("cold gRPC resolved_model = %+v, want %s/%s/%d", rm, provider, model, window)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+string(created.ID), nil)
+	req.SetPathValue("id", string(created.ID))
+	recorder := httptest.NewRecorder()
+	server.NewHTTPHandler(svcB).ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("HTTP GetSession status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	var httpResp struct {
+		ResolvedModel resolvedModelBody `json:"resolved_model"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&httpResp); err != nil {
+		t.Fatalf("decode HTTP GetSession: %v", err)
+	}
+	if got := httpResp.ResolvedModel; got != (resolvedModelBody{ProviderID: provider, ModelID: model, ContextWindow: window}) {
+		t.Fatalf("cold HTTP resolved_model = %+v, want %s/%s/%d", got, provider, model, window)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("read-only HTTP GetSession rebuilt the engine %d times, want 0", factoryCalls)
+	}
+
+	if got := drainAndFinish(t, svcB, created.ID, mustStart(t, svcB, created.ID, "resume")); got != "ok" {
+		t.Fatalf("post-restart prompt reply = %q, want ok", got)
+	}
+	if factoryCalls != 1 || builtWindow != int(window) {
+		t.Fatalf("rehydrated engine: factory calls=%d context window=%d, want 1/%d", factoryCalls, builtWindow, window)
+	}
+	if got := svcB.ResolvedModel(created.ID); got.ProviderID != provider || got.ModelID != model || got.ContextWindow != window {
+		t.Fatalf("active-engine resolved model = %+v, want %s/%s/%d", got, provider, model, window)
+	}
+
+	resolvedWindow = 0
+	factoryCalls = 0
+	svcC := newService()
+	coldHarness := server.NewHarnessServer(svcC)
+	provisional, err := coldHarness.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatalf("provisional GetSession: %v", err)
+	}
+	if got := provisional.GetSession().GetResolvedModel(); got.GetProviderId() != provider || got.GetModelId() != model || got.GetContextWindow() != 0 {
+		t.Fatalf("provisional cold resolved_model = %+v, want %s/%s/0", got, provider, model)
+	}
+	resolvedWindow = window
+	healed, err := coldHarness.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatalf("healed GetSession: %v", err)
+	}
+	if got := healed.GetSession().GetResolvedModel(); got.GetContextWindow() != window {
+		t.Fatalf("healed cold context window = %d, want %d", got.GetContextWindow(), window)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("cold provisional/healed reads rebuilt the engine %d times, want 0", factoryCalls)
+	}
+}
+
 // TestGRPCGetSessionEchoesResolvedModel proves the gRPC GetSession handler threads
-// Service.ResolvedModel(sess.ID) into the Session snapshot (toProtoSession), not a
-// zero ResolvedModel. Uses an explicit selector so the per-session resolved value is
+// the session-aware resolved projection into the Session snapshot (toProtoSession),
+// not a zero ResolvedModel. Uses an explicit selector so the per-session resolved value is
 // distinct from the default — a handler dropping it would echo zero and fail.
 func TestGRPCGetSessionEchoesResolvedModel(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-default", ContextWindow: 128000}

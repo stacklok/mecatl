@@ -62,7 +62,7 @@ func TestRecordTitleSourcePromptSkipsNonPendingWithoutAllocation(t *testing.T) {
 
 func TestSessionTitleGeneration_Scenario5_RecordsTokenUsage(t *testing.T) {
 	s := newTestSession(Limits{})
-	mainUsage := s.Usage
+	mainUsage := s.UsageFor(UsageKindMain)
 
 	s.RecordTokenUsage(UsageKindSessionTitle, " openrouter\n", " model \t", Usage{InputTokens: 11, OutputTokens: 7})
 	s.RecordTokenUsage(UsageKindSessionTitle, "anthropic", "haiku", Usage{InputTokens: 3, OutputTokens: 5})
@@ -78,16 +78,16 @@ func TestSessionTitleGeneration_Scenario5_RecordsTokenUsage(t *testing.T) {
 	if got := s.TokenUsageSnapshot()[UsageKindSessionTitle]; got.Total != want || got.Models["openrouter/model"] != (Usage{InputTokens: 11, OutputTokens: 7}) {
 		t.Fatalf("external projection mutation changed canonical usage: %#v", got)
 	}
-	if s.Usage != mainUsage {
-		t.Fatalf("main Usage = %#v, want unchanged %#v", s.Usage, mainUsage)
+	if s.UsageFor(UsageKindMain) != mainUsage {
+		t.Fatalf("main Usage = %#v, want unchanged %#v", s.UsageFor(UsageKindMain), mainUsage)
 	}
 }
 
 func TestADR_0284_TitleUsageDoesNotSpendRunBudget(t *testing.T) {
 	s := newTestSession(Limits{MaxTurns: 1})
-	before := s.Usage
+	before := s.UsageFor(UsageKindMain)
 	s.RecordTokenUsage(UsageKindSessionTitle, "", "", Usage{InputTokens: 500, OutputTokens: 500})
-	if got := s.Usage; got != before {
+	if got := s.UsageFor(UsageKindMain); got != before {
 		t.Fatalf("Usage = %#v, want main budget unchanged %#v", got, before)
 	}
 }

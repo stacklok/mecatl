@@ -223,7 +223,7 @@ func TestSDKServerEnablers_Scenario5_StaleControlOverHTTPIsTyped(t *testing.T) {
 	defer func() { drainRun(t, second); svc.FinishRun(sess.ID, second) }()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
-		srv.URL+"/v1/sessions/"+string(sess.ID)+"/cancel",
+		srv.URL+"/v1/sessions/"+string(sess.ID)+"/controls/cancel",
 		strings.NewReader(`{"expected_run_id":"`+staleID+`"}`))
 	if err != nil {
 		t.Fatalf("new request: %v", err)

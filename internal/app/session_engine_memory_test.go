@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -144,7 +145,7 @@ func TestSelectorSessionMemoryPromptHasMatchingTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("memory.New: %v", err)
 	}
-	if err := memStore.Remember(ctx, "build/test-runner", "Run the suite with `task test`."); err != nil {
+	if _, err := memStore.Remember(ctx, tool.MemoryEntry{Key: "build/test-runner", Value: "Run the suite with `task test`."}, tool.MemoryCurrent{}); err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
 

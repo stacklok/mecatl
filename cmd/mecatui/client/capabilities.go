@@ -19,9 +19,8 @@ type Capabilities struct {
 	Skills             bool
 	Teams              bool
 	Agents             bool
-	// Bash reports availability of the canonical Shell tool. Its historical
-	// spelling is retained for compatibility with the established wire/Go API.
-	Bash bool
+	// Shell reports availability of the canonical Shell tool.
+	Shell bool
 	// Soul / UserModel report whether the server has a soul source / user-model store
 	// wired. They gate the /soul and /usermodel read-only inspection panels.
 	Soul      bool
@@ -57,7 +56,6 @@ type Capabilities struct {
 	LearningProposals bool
 	LearnedSkills     bool
 	StorageHealth     bool
-	StorageMigration  bool
 	StorageCleanup    bool
 	// ManualDream is nil when an older server does not expose the capability object.
 	// A non-nil value keeps /dream discoverable even when both targets are unavailable,
@@ -114,7 +112,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Skills:              c.GetSkills(),
 		Teams:               c.GetTeams(),
 		Agents:              c.GetAgents(),
-		Bash:                c.GetBash(),
+		Shell:               c.GetShell(),
 		Soul:                c.GetSoul(),
 		UserModel:           c.GetUserModel(),
 		ModelSelection:      c.GetModelSelection(),
@@ -127,7 +125,6 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		LearningProposals:   c.GetLearningProposals(),
 		LearnedSkills:       c.GetLearnedSkills(),
 		StorageHealth:       c.GetStorageHealth(),
-		StorageMigration:    c.GetStorageMigration(),
 		StorageCleanup:      c.GetStorageCleanup(),
 		ManualDream:         manualDreamCapabilitiesFrom(c.GetManualDream()),
 		Steer:               c.GetSteer(),
