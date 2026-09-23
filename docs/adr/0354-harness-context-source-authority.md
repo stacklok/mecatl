@@ -1,6 +1,6 @@
 # ADR 0354 - Harness context source authority is independent of execution
 
-- Status: Proposed; composition configuration, interface compatibility, and restart policy remain under review
+- Status: Proposed; ready for human Plan / Interface review
 - Date: 2026-09-23
 - Scope: project instructions, commands, rules, skills, agent definitions, source admission, and deployment composition
 - Supersedes: none
@@ -60,23 +60,42 @@ The operator can permit a repository-specific skill to replace an organization d
 a deployment command over a same-name repository command, combine instruction contributions,
 or disable repository context without disabling repository execution.
 
-The composition contract identifies enabled sources and their ordering, collision keys for named
-entries, permitted overrides, and combination/replacement/exclusion rules for each content kind.
-It does not impose one generic deep-merge algorithm on instruction fragments, rule contributions,
-commands, skills, and agent definitions. Given the same configuration and source observations,
-resolution must be deterministic; transport, storage location, and discovery timing do not choose
-a winner. Listing and consumption apply the same resolution rules. Freshness remains a separate
-source contract, so live updates between calls can legitimately change their results.
+The composition contract uses trusted deployment-registered source IDs and an operator-only policy.
+For each of the five closed content kinds, that policy names a highest-precedence-first source order,
+`combine` or `replace` mode, exact exclusions, and permitted exact-name overrides. Source IDs are
+validated composition identities, not paths, endpoints, or values supplied by source content. Each
+registration supplies a trusted provenance policy: homogeneous sources stamp one fixed existing tier,
+while a trusted mixed compatibility adapter may preserve only adapter-produced per-entry tiers from a
+validated allowed set. Remote drivers are fixed to the driver tier and cannot promote a payload claim;
+root project instructions remain project-tier, and project admission runs before resolution. Unknown,
+duplicate, disabled, and kind-incompatible references fail startup. A project settings file
+cannot register a source or set this policy, even after project trust is granted.
 
-Resolution retains the contributing source provenance and effective admission constraints.
-Content cannot raise its own priority or claim a more privileged source tier. Overriding a prompt
-template or instruction rule cannot override a governance permission deny, grant execution
-capabilities, or expand a child's allowed tools. The operator's composition policy is separate
-from the content it resolves.
+Instructions are ordered contributions without entry names. `combine` appends their messages by
+source order; `replace` selects the first nonempty post-exclusion contribution. Commands, rules,
+skills, and agent definitions use their existing case-sensitive logical `Name` as the collision key.
+In `combine`, normal resolution chooses the first source. When a named override's winner is present,
+resolution removes only present candidates explicitly named in `replaces`, then chooses the first
+configured candidate among the winner and every non-replaced source. An earlier non-replaced source
+therefore still blocks the winner. If the winner is absent, normal order applies. Exclusions remove one
+named contribution from one source. Duplicate, unknown, self-replacing, and structurally no-op
+declarations fail startup. In `replace`, the first nonempty source supplies the complete kind.
+Resolution never recursively merges command bodies, rule fields, skill bundles or assets, or agent
+definitions.
 
-The exact composition configuration and collision/combination schemas remain an explicit human
-review item in the interface plan. The existing command chain supplies a compatibility default,
-not a complete specification for multiple sources of every content kind.
+Given the same policy and one stable source observation, resolution is deterministic. Transport,
+storage location, and discovery timing do not choose a winner. Listing and consumption use the same
+visible-name set and winner algorithm; conformance rejects a listed name without a retrievable body or
+a retrieved name absent from that stable listing. Freshness remains a separate source contract, so a
+live update between separate List and Expand calls can legitimately change the next observation; no
+cross-call transaction snapshot is implied. Existing source validators and per-entry caps run before
+resolution; existing consumer aggregate limits run afterward.
+
+Resolution retains the contributing source provenance and effective admission constraints. Content
+cannot raise its own priority or claim a more privileged source tier. An override changes content
+selection only. It cannot override a governance permission deny, grant execution capabilities,
+change hooks or credentials, or expand a child's allowed tools. The operator's composition policy
+is separate from the content it resolves.
 
 ### Reuse existing consumer contracts
 
@@ -84,11 +103,12 @@ Keep `CommandSource`, `RulesSource`, `SkillSource`, and `AgentDefSource`. The ex
 `InstructionAssembler` is also an injection seam for project instruction providers; independence
 does not by itself require another project-instruction interface.
 
-The draft [interface contract](../acceptance/harness-context.md#interface-contract) proposes
-removing the per-call execution workspace from instruction assembly and command listing/expansion.
-File-backed implementations bind their source namespace explicitly at construction. Composition
-continues to translate source contents into the existing prompt, catalog, and specialist-engine
-inputs. Public API transition treatment requires human review before implementation.
+The [interface contract](../acceptance/harness-context.md#interface-contract) makes the public
+prompt interfaces workspace-free. Instruction assembly, command expansion, and command listing no
+longer accept an execution workspace per call. `RootAssembler` and `DirCommandExpander` instead bind
+their source `tool.Workspace` at construction. This is an intentional exported-engine break: the
+implementation updates API snapshots and the engine changelog without a compatibility-adapter
+window.
 
 A root-file adapter preserves AGENTS.md-first, CLAUDE.md-fallback behavior, including empty-file
 fallback and genuine read errors. It introduces no ancestor traversal or new body limits.
@@ -107,9 +127,13 @@ No-FS describes execution capability, not the storage used by a logical context 
 not prohibit an admitted source from reading host files. Conversely, an adapter explicitly bound
 to unavailable execution files still depends on that backend and follows its source error policy.
 
-Command listing authorizes the session and resolves the configured source chain. It does not
-require an unrelated VM or Redis execution backend to be available. Actual runs separately admit
-the execution capabilities they need.
+Command listing first loads and owner-authorizes the session, then binds from its authoritative stored
+owner and profile; it does not reattach an unrelated execution backend. Build owns a concurrency-safe
+per-session binding cache: first creation is single-flight, failed creation is retryable, reuse verifies
+principal/profile consistency, and retirement is idempotent and waits for in-flight borrowers before
+cleanup. Actual session teardown retires the binding, and Build shutdown closes all remaining bindings.
+An explicitly execution-file-backed source may still authorize and bind that source backend. Actual
+runs separately admit the execution capabilities they need.
 
 Keep existing command precedence as the compatibility default and preserve established miss and
 fail-soft behavior within an explicitly configured composition. A missing optional source can
@@ -121,22 +145,35 @@ restrictions. Context inheritance does not copy a parent's broader tool catalog.
 not create file-mutation evidence in the execution `ReadLedger`, even when the backing files are
 shared.
 
-## Decisions still requiring approval
+## Restart and reconfiguration
 
-Source independence does not automatically require a new durable `HarnessContextRef`, storage
-schema, or binding protocol. Preserving exact source authority across deployment reconfiguration
-is a separate decision from consuming explicit sources in one process.
+Harness context is deployment-controlled and intentionally rebound after process restart. `app.Build`
+compiles the current operator policy and process-scoped registrations once. A registration is either
+process-scoped or principal-scoped. Process sharing is allowed only for a caller-neutral,
+concurrency-safe adapter. A principal-scoped registration binds the owned session's principal and
+profile and cannot share its source, snapshot, live lookup, or cache with another principal. Snapshot
+sources bind once for the current Build or principal binding; command sources remain live only inside
+that binding. Build-owned resources close from `Built.Close`, and principal/session resources close
+when their binding retires or Build shuts down. The implementation inventories every long-lived
+connection, cache, and binding in ADR 0027.
 
-The [Human decisions](../acceptance/harness-context.md#human-decisions) section keeps three choices
-open: the exact per-kind composition configuration and resolution schema, public API transition
-treatment, and restart/reconfiguration authority. If exact durable binding is selected, the
-contract must specify identity, principal/tenant scope, current
-revocation checks, storage, and legacy migration before implementation. A binding protocol should
-live beside its actual consumer rather than widen `engine/port` without an engine consumer.
+Existing sessions and scheduled fires create fresh bindings from the current composition and current
+authorization after restart, so an operator configuration change can change the context seen by a
+resumed conversation. Per-call code does not accidentally rebuild snapshot sources.
 
-This proposal authorizes neither automatic adoption nor rejection of existing sessions and
-schedules. It also does not freeze old trust grants across restart. The default selection or
-migration policy cannot be improvised by either downstream integration.
+This decision adds no durable `HarnessContextRef`, source selector, event, or snapshot field. Existing
+sessions and schedules require no migration and are not rejected because they predate this contract.
+Stored execution placement never supplies a fallback context binding. Rebinding owner-authorizes the
+session or schedule under current policy; it cannot preserve a revoked source grant. The existing
+local/system-principal behavior remains valid when an unauthenticated local deployment has no external
+principal.
+
+The compatibility default constructs explicit source bindings from existing settings. The configured
+startup project source may share files with execution, but composition binds it independently rather
+than discovering it from the session `Environment`. Existing commands retain directory, skill,
+driver, then MCP precedence. Existing rules, skills, and agent definitions retain their current
+admission, ordering, caps, and failure contracts. An explicit `harness_context` policy replaces that
+synthesized policy with operator-registered source IDs.
 
 ## Consequences and delivery
 
@@ -146,8 +183,11 @@ the exact execution backend, and source reads retain their own admission and fre
 
 The model defines the domain; implementation and approval status belong in the acceptance plan
 and this ADR's metadata. The dependency stack is model/contract, then shared implementation,
-followed by MicroVM PR #580 and the Redis #1811 sibling integration. Shared acceptance uses
-offline reference adapters; real backend qualification belongs to the integration that owns it.
+followed by MicroVM PR #580 and the Redis #1811 sibling integration. The operator has narrowly
+authorized the shared implementation to start as a draft stacked PR from the exact proposed-docs
+commit before plan merge. That exception does not make this ADR accepted, authorize either merge,
+or relax contract-drift stops and human merge gates. Shared acceptance uses offline reference
+adapters; real backend qualification belongs to the integration that owns it.
 
 Any implementation adding long-lived connections, caches, or bindings must record their owner,
 cleanup, and restart behavior in ADR 0027's inventories. This model-only PR adds no such runtime

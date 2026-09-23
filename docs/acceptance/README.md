@@ -165,8 +165,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Mecatui typed scrollback model](mecatui-typed-scrollback-model.md) — replaces the main scrollback's broad mutable block union with a sealed, typed client-local state model whose transitions own stable identity and revisioning while the root UI retains event projection, rendering, cache, frame, and viewport ownership. Status: proposed.
 - [Harness context source authority](harness-context.md) — deployment-configured project
   instructions and customizations independent of execution, with API, file, and explicitly
-  shared execution-file sources. Status: draft; interface compatibility and restart policy
-  remain open. No runtime behavior is shipped by the plan.
+  shared execution-file sources. Status: proposed; exact operator policy, clean prompt-API break,
+  and current-policy restart rebinding are ready for human Plan / Interface review. No runtime
+  behavior is shipped by the plan.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only
