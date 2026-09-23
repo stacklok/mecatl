@@ -235162,6 +235162,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790172891559,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c9170514776286aa093284e0e24a3d93ae605f0",
+          "message": "fix: preserve workspace adapter during command discovery (#1799)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-23T16:27:44+02:00",
+          "tree_id": "a19dcb5f567a0c31b56fbd0087ca5dd042d49651",
+          "url": "https://github.com/stacklok/mecatl/commit/0c9170514776286aa093284e0e24a3d93ae605f0"
+        },
+        "date": 1790174329341,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -341537,6 +341571,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790174326359,
+  "lastUpdate": 1790174330800,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
