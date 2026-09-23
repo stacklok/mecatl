@@ -862,7 +862,7 @@ func readHostBootID() (string, error) {
 
 func processExecutableIdentity(pid int) (string, uint64, uint64, error) {
 	path := filepath.Join("/proc", strconv.Itoa(pid), "exe")
-	file, err := os.Open(path) // #nosec G304 -- fixed procfs executable reference for a validated PID.
+	file, err := os.Open(path) // #nosec G304,G703 -- PID is an integer formatted as one decimal procfs path component.
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -912,7 +912,7 @@ func executableIdentity(path string) (string, string, uint64, uint64, error) {
 }
 
 func rawProcessStartTime(pid int) (string, error) {
-	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat")) // #nosec G703 -- PID is an integer formatted as one decimal procfs path component.
 	if err != nil {
 		return "", err
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/environment/microvm/worktree"
 	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -36,6 +37,47 @@ import (
 )
 
 const microVME2EPolicy = "microvm-production-e2e-v1"
+
+func dailyHarnessProbe(hostCanary, managerConfig string) string {
+	return fmt.Sprintf(`fail() { echo "probe failed: $1" >&2; exit 1; }
+test "$(id -u)" = 65532 || fail workload-uid
+test ! -e %q || fail host-canary-visible
+test ! -e %q || fail manager-config-visible
+if cat /etc/mecatl/guest-agent.json >/dev/null 2>&1; then fail guest-agent-config-readable; fi
+shared_objects=%q
+test -d "$shared_objects" || fail shared-object-store-missing
+test -r "$shared_objects" || fail shared-object-store-unreadable
+if touch "$shared_objects/mecatl-write-forbidden" 2>/dev/null; then
+  rm -f "$shared_objects/mecatl-write-forbidden"
+  fail shared-object-store-writable
+fi
+private_objects=$(git rev-parse --git-path objects) || fail private-object-path
+case "$private_objects" in "$shared_objects") fail private-object-store-aliases-shared-export ;; esac
+touch "$private_objects/mecatl-private-write" || fail private-object-store-unwritable
+rm "$private_objects/mecatl-private-write" || fail private-object-cleanup
+mkdir -p "$HOME/private" "${XDG_CACHE_HOME:-$HOME/.cache}/mecatl" || fail private-directory-create
+printf private > "$HOME/private/proof" || fail home-write
+printf cache > "${XDG_CACHE_HOME:-$HOME/.cache}/mecatl/proof" || fail cache-write
+cat tracked.txt || fail source-read
+printf harness-change > journey.txt || fail workspace-write`, hostCanary, managerConfig, worktree.GuestObjectStore)
+}
+
+func TestDailyHarnessProbeSeparatesSharedAndPrivateObjectStores(t *testing.T) {
+	probe := dailyHarnessProbe("/host/canary", "/host/manager-config")
+	for _, required := range []string{
+		`shared_objects="` + worktree.GuestObjectStore + `"`,
+		`touch "$shared_objects/mecatl-write-forbidden"`,
+		`private_objects=$(git rev-parse --git-path objects)`,
+		`touch "$private_objects/mecatl-private-write"`,
+	} {
+		if !strings.Contains(probe, required) {
+			t.Fatalf("daily harness probe omits %q", required)
+		}
+	}
+	if strings.Contains(probe, `touch "$(git rev-parse --git-path objects)/mecatl-write-forbidden"`) {
+		t.Fatal("daily harness probe tests the writable private object store as the read-only export")
+	}
+}
 
 func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	switch {
@@ -87,7 +129,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 		mockllm.ToolCallTurn(session.NewToolCall("daily-read", "Read", json.RawMessage(`{"path":"tracked.txt"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("daily-write", "Write", json.RawMessage(`{"path":"written-by-tool.txt","content":"filesystem-write"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("forbidden-read", "Read", json.RawMessage(fmt.Sprintf(`{"path":%q}`, hostCanary)))),
-		mockllm.ToolCallTurn(session.NewToolCall("daily-bash", "Shell", json.RawMessage(fmt.Sprintf(`{"command":%q}`, fmt.Sprintf("test \"$(id -u)\" = 65532 && test ! -e %q && test ! -e %q && test ! -e /etc/mecatl/guest-agent.json && if touch \"$(git rev-parse --git-path objects)/mecatl-write-forbidden\"; then exit 1; fi && mkdir -p \"$HOME/private\" \"${XDG_CACHE_HOME:-$HOME/.cache}/mecatl\" && printf private > \"$HOME/private/proof\" && printf cache > \"${XDG_CACHE_HOME:-$HOME/.cache}/mecatl/proof\" && cat tracked.txt && printf harness-change > journey.txt", hostCanary, paths.ConfigFile))))),
+		mockllm.ToolCallTurn(session.NewToolCall("daily-bash", "Shell", json.RawMessage(fmt.Sprintf(`{"command":%q}`, dailyHarnessProbe(hostCanary, paths.ConfigFile))))),
 		mockllm.TextTurn("done"),
 	)
 	built, err := app.Build(ctx, app.Config{
