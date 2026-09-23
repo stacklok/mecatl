@@ -236474,6 +236474,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790176671543,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c2c4e1ae47ca12eb7aa86d6d756d152019a2c5f6",
+          "message": "docs: retire the readiness tracker and completed mecak8s plan (#1812)\n\nCo-authored-by: GPT-6-Astra <noreply@openai.com>",
+          "timestamp": "2026-09-23T19:10:06+03:00",
+          "tree_id": "ab2ca0c1980fa5fdba4d67fbba068353a0eb5714",
+          "url": "https://github.com/stacklok/mecatl/commit/c2c4e1ae47ca12eb7aa86d6d756d152019a2c5f6"
+        },
+        "date": 1790180445288,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -343461,6 +343495,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790180442433,
+  "lastUpdate": 1790180446102,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
