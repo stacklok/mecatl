@@ -8,7 +8,7 @@ sidebar_position: 2
 
 This is the detailed operator and wire reference. For the client-integration
 entry point, event lifecycle, and HTTP/SSE comparison, start with
-[Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
+[Drive via gRPC / HTTP](/operating/grpc-http.md).
 
 For generated RPC signatures, streaming directions, messages, enums, fields,
 and protobuf comments, see the
@@ -567,5 +567,5 @@ a non-loopback server (use `--tls`). See
 ## Related information
 
 - [HTTP/SSE API reference](./http-sse-api.md)
-- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
+- [Drive via gRPC / HTTP](/operating/grpc-http.md)
 - [Work in the TUI](/mecatui/using-the-tui.md)

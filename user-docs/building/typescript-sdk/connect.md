@@ -108,7 +108,7 @@ the browser-facing HTTP and SSE client; it does not include a BFF server.
 
 For local browser development, an operator can configure the daemon's exact CORS
 origins. See
-[Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md) for
+[Drive Mecatl through gRPC or HTTP](/operating/grpc-http.md) for
 listener and transport configuration.
 
 ## Read timestamps and durations over HTTP
@@ -158,6 +158,6 @@ The status vocabulary is `connecting`, `online`, `reconnecting`, `offline`,
 
 ## Related information
 
-- [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md)
+- [Drive Mecatl through gRPC or HTTP](/operating/grpc-http.md)
 - [HTTP and SSE API reference](/reference/http-sse-api.md)
 - [gRPC API reference](/reference/grpc-api.md)

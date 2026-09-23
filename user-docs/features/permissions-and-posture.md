@@ -17,8 +17,8 @@ Configure two independent safety controls:
 Permissions always apply. Guardrails require an operator-configured checker
 model.
 
-For evaluator, authority-set, and custom-policy contracts, see
-[Permissions and guardrails for builders](/building/what-you-get/permissions.md).
+For a custom authorization implementation, see
+[PermissionPolicy](/building/extension-points/permission-policy.md).
 
 ## Availability
 
@@ -183,6 +183,27 @@ Use `--import-claude-permissions` to import supported rules from Claude Code
 `settings.json`. The import is lossy and fail-safe: unsupported or ambiguous
 rules are dropped or demoted to approval rather than widening access.
 
+## Delegated authority
+
+Each child receives an authority set that can only narrow the parent's
+capabilities. The child runtime posture, an operator-owned specialist ceiling,
+and call-level restrictions can remove capabilities. A child cannot regain a
+capability omitted by its parent.
+
+An agent definition's `tools:` and `disallowedTools:` fields narrow that
+specialist. Definitions from an explicit operator `--agents-dir` can establish
+a durable ceiling; project and user definitions remain subject to the parent's
+authority.
+
+`mecated` uses the `local` authority evaluator by default. The opt-in `cedar`
+evaluator can add denials based on operator-owned policy, but it cannot grant a
+missing capability. The explicit `noop` evaluator is intended for local or demo
+deployments. A bound session without its configured evaluator fails closed.
+
+MCP authority applies to the addressed tool, such as
+`mcp__github__list_pull_requests`, rather than granting access to an entire MCP
+server.
+
 ## Project trust
 
 Project trust controls whether Mecatl admits project-provided authority:
@@ -228,21 +249,34 @@ release delivers the same held result without rerunning side effects. For
 conversation visibility and success diagnostics, see
 [client debug surfaces](/mecatui/troubleshooting.md#enable-client-debug-surfaces).
 
+|Mode|Behavior|
+|-|-|
+|`block`|For action reviews, stops or asks before execution. For inbound reviews, withholds the result until release.|
+|`advisory`|Reports a finding without changing the tool call or result.|
+
+The default rules cover Shell, local mutation and read tools, web, MCP, and
+delegation tools. A confidently read-only Shell command skips action review,
+but its result remains covered. An explicit rules list replaces the default
+set. Exact tool-name matches take precedence over prefix matches and the `*`
+wildcard.
+
+A result review runs after the tool, so it cannot undo the operation. An
+enforcing result review holds the result before the client, model, or session
+history receives it. Releasing it delivers the same result without rerunning
+the tool or its side effects.
+
 Guardrail configuration is operator-tier only. A project repository cannot
 weaken or disable the operator's checker. Checker outage is fail-closed by
 default and is displayed as an operational failure, not an unsafe finding;
-operators may explicitly choose continue-with-warning. Sanitization and
-checker-authored replacement actions are not supported.
-
-See the [guardrails reference](/building/what-you-get/permissions.md) for
-matchers, modes, and checker failure handling.
+operators may explicitly choose continue-with-warning. Checker-authored
+replacement actions are not supported.
 
 ## Limitations
 
 - `strict` preserves the built-in read-allow and mutate-ask floor.
 - `auto` and `yolo` preserve denies and configured asks.
 - Headless server deployments can leave main-session asks waiting for a client.
-  [`mecatequi` cancels its one-shot run](/building/deployment/mecatequi.md#headless-posture-and-permission-asks)
+  [`mecatequi` cancels its one-shot run](/operating/mecatequi.md#headless-posture-and-permission-asks)
   when an ask surfaces. Headless child asks use the fail-safe child path instead
   of waiting for a client.
 - Project files are untrusted by default. Do not enable project trust for a
@@ -256,8 +290,8 @@ matchers, modes, and checker failure handling.
 
 ## Next steps
 
-- [Permissions and guardrails](/building/what-you-get/permissions.md) for the
-  detailed rule-resolution and approval reference.
+- [PermissionPolicy](/building/extension-points/permission-policy.md) to replace
+  the supplied permission policy in an embedding.
 - [Project instructions and rules](./project-instructions-and-rules.md) for
   project-ingestion behavior.
 - [Execution environments](./execution-environments.md) for workspace and shell

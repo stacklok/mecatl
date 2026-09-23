@@ -108,7 +108,7 @@ and template rendering into the same `settings.yaml` shape, and
 turns into a `DCRConfig`-bearing `authserver.OAuth2UpstreamRunConfig` with an
 empty `ClientID` — never both. See
 [ADR 0314](../adr/0314-mcp-broker-dcr-client.md) and the existing
-`preregistered`/`cimd` precedent in `user-docs/building/deployment/mecak8s.md`.
+`preregistered`/`cimd` precedent in `user-docs/operating/mecak8s.md`.
 
 **Acceptance:**
 - AC1.1: `permconfig` strictly decodes a `dcr` client declaration (a single
@@ -137,7 +137,7 @@ empty `ClientID` — never both. See
   OIDC configuration and fail only later at construction.
   - verify: `TestADR_0314_DCRRequiresExplicitOAuth2Upstream`
 - AC1.5: `user-docs/reference/configuration.md` documents the `dcr` client shape
-  after `task docs` regeneration, and `user-docs/building/deployment/mecak8s.md` carries one
+  after `task docs` regeneration, and `user-docs/operating/mecak8s.md` carries one
   worked `dcr` example alongside the existing `preregistered`/CIMD examples.
   - verify: inspection — generated-doc + prose-example presence is not a
     behavioral assertion `task ac-trace` can name a Go test for

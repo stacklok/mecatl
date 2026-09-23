@@ -155,7 +155,7 @@ session-scoped MCP servers from clients. Session-scoped connections close with
 the session; global connections close with the application.
 
 For connection options, authentication, resources, prompts, and failure
-behavior, see [MCP client](/building/what-you-get/mcp-client.md).
+behavior, see [MCP client](/features/mcp-client.md).
 
 ## Provide skills
 
@@ -248,6 +248,6 @@ this port to send structured tool audit data to another system.
 
 ## Next steps
 
-- [Understand tool dispatch](/building/what-you-get/agent-loop.md).
-- [Configure MCP servers](/building/what-you-get/mcp-client.md).
+- [Understand tool dispatch](/features/agent-loop.md).
+- [Configure MCP servers](/features/mcp-client.md).
 - [Implement lifecycle hooks](hook-runner.md).

@@ -66,7 +66,7 @@ The gRPC `HarnessService` provides the primary streaming interface:
   own picker.
 
 Use gRPC for generated protocol bindings and bidirectional streaming. See
-[Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
+[Drive via gRPC / HTTP](/operating/grpc-http.md).
 
 ### HTTP/SSE
 
@@ -77,7 +77,7 @@ for streamed runs.
 
 Use HTTP/SSE for browsers and clients without generated gRPC bindings. HTTP and
 gRPC share the same session lifecycle, authorization, approvals, and events. See
-[Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and the
+[Drive via gRPC / HTTP](/operating/grpc-http.md) and the
 [HTTP/SSE API reference](/reference/http-sse-api.md) for endpoint details.
 
 ## Session states and continuation
@@ -116,5 +116,5 @@ live run based only on a persisted snapshot.
 - [Session continuity](./session-continuity.md) for storage, recovery, and
   maintenance.
 - [Use mecatui](/mecatui/index.md) for the interactive terminal workflow.
-- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for client
+- [Drive via gRPC / HTTP](/operating/grpc-http.md) for client
   integrations.

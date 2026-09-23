@@ -137,7 +137,7 @@ func main() {
 
 `eng.Run` returns immediately while the loop runs in the background. Consume
 `run.Events()` until the channel closes. See
-[The agent loop](/building/what-you-get/agent-loop.md) for the full event
+[The agent loop](/features/agent-loop.md) for the full event
 taxonomy and permission flow.
 
 ## Ports and configuration
@@ -268,14 +268,14 @@ verdict atomically—result release cannot use the legacy approval shortcut.
 
 ## What's next
 
-- [The agent loop](/building/what-you-get/agent-loop.md) — event taxonomy,
+- [The agent loop](/features/agent-loop.md) — event taxonomy,
   permission pause/resume, compaction, and terminal states.
-- [Permissions & guardrails](/building/what-you-get/permissions.md) — how to
+- [Permissions & guardrails](/features/permissions-and-posture.md) — how to
   configure rules, posture, and the model-backed guardrail layer.
 - [API stability](/building/api-stability.md) — what's guaranteed not to break
   in the engine module you just imported, and how a breaking change is
   classified and surfaced.
-- [Run mecated standalone](mecated.md) — if you want the composition done for
+- [Run mecated standalone](/operating/mecated.md) — if you want the composition done for
   you (auth, TLS, gRPC, Prometheus).
-- [Cloud-native k8s with mecak8s](mecak8s.md) — stateless Kubernetes deployment
+- [Cloud-native k8s with mecak8s](/operating/mecak8s.md) — stateless Kubernetes deployment
   backed by Redis and k8s leases.

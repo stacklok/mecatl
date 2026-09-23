@@ -51,7 +51,7 @@ extraArgs: []
 # declares its protected tool catalogue statically (name/description/
 # inputSchema/readOnly per entry): declared tools are admitted into the
 # session's catalogue immediately, with the credential itself deferred to the
-# model's first attempt to call one — see user-docs/building/deployment/mecak8s.md for a worked
+# model's first attempt to call one — see user-docs/operating/mecak8s.md for a worked
 # GitHub example of both.
 mcp:
   broker:
@@ -99,7 +99,7 @@ skills:
 # see mcp.broker.callbackURL above. The Deployment also renders strategy.type:
 # Recreate instead of RollingUpdate in that mode, so a rollout fully retires the
 # old incarnation before starting the new one (planned downtime, not zero-downtime
-# — see user-docs/building/deployment/mecak8s.md).
+# — see user-docs/operating/mecak8s.md).
 replicaCount: 2
 mockProvider: false
 

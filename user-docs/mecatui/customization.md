@@ -42,5 +42,5 @@ examples, the input reference, StatusML syntax, and safety limits.
 ## Next steps
 
 - [Connect to a server](./remote-servers.md) to use a remote deployment.
-- [Run `mecated` standalone](/building/deployment/mecated.md) to configure the
+- [Run `mecated` standalone](/operating/mecated.md) to configure the
   server itself.
