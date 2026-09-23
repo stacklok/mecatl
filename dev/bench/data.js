@@ -256442,6 +256442,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790145425204,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d303c771bb21408fd085e05ca91d90eeeefe6e6a",
+          "message": "fix(mecatui): fall back to a per-process diagnostics log when the shared one is held (#1781)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T09:33:44+03:00",
+          "tree_id": "b7db1d248470c9a8f0880579542f193e307e2980",
+          "url": "https://github.com/stacklok/mecatl/commit/d303c771bb21408fd085e05ca91d90eeeefe6e6a"
+        },
+        "date": 1790146108614,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3280.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 73.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1152,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -336280,6 +336319,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790146105879,
+  "lastUpdate": 1790146109898,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
