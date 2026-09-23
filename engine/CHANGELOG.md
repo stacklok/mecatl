@@ -30,6 +30,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
   Added (minor).
 
+- **Purpose-attributed auxiliary token usage foundation** — adds
+  `session.AuxiliaryUsage` with owned-copy merging and the recognized
+  `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
+  `parallel_judge` usage-kind constants. Canonical ledgers preserve non-empty
+  opaque kinds for forward-compatible persistence; only the separate router
+  bucket joins main usage in the internal `MaxRunTokens` spend bound. Added
+  (minor).
+
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
   snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).

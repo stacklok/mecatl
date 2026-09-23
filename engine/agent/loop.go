@@ -2406,12 +2406,13 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	}
 }
 
-// budgetExhausted reports whether lifetime main usage accrued since this Run's
-// immutable baseline has crossed the effective loop-level token ceiling
-// (Deps.MaxRunTokens folded with the run's tighten-only RunRequest override). A
-// non-positive effective ceiling (the default) disables the budget and always
-// returns false. Ordinary runs have a zero baseline; only the package-private
-// team-lead synthesis path captures the current main total.
+// budgetExhausted reports whether lifetime budget usage has crossed the effective
+// loop-level token ceiling (Deps.MaxRunTokens folded with the run's tighten-only
+// RunRequest override). Callers supply main plus the separate router bucket; the
+// immutable baseline offsets main only, so internal continuation allowances never
+// erase router spend. A non-positive effective ceiling (the default) disables the
+// budget and always returns false. Ordinary runs have a zero baseline; only the
+// package-private team-lead synthesis path captures the current main total.
 func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	ceiling := e.effectiveMaxRunTokens(r)
 	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
@@ -2457,7 +2458,8 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
-	if e.budgetExhausted(r, sess.UsageFor(session.UsageKindMain)) {
+	budgetUsage := sess.UsageFor(session.UsageKindMain).Add(sess.UsageFor(session.UsageKindRouter))
+	if e.budgetExhausted(r, budgetUsage) {
 		if _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
 			e.deferFailedStepRetry(ctx, r, sess, session.StopBudget, lastText, total)
 		} else {
