@@ -62,7 +62,7 @@ connected deployment does not enable:
 
 - **Chats**: sessions with streamed runs, image attachments, permission
   approvals, steering, and model and reasoning-effort selection.
-- **Scheduled**: [scheduled tasks](/features/scheduled-tasks.md) with a cron
+- **Scheduled**: [scheduled tasks](/features/sessions/scheduled-tasks.md) with a cron
   builder and fire history, when the deployment enables scheduling.
 - **Skills**: configured and learned skills, learning proposals, and session
   reflection, when the deployment enables them.
@@ -170,7 +170,7 @@ covers the spawn and mock runtime modes and the `task studio:*` commands.
   connects to.
 - [Configure a deployment](./settings.md) to enable the capabilities Studio
   shows.
-- [Permissions and posture](/features/permissions-and-posture.md) to understand
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md) to understand
   the approvals Studio surfaces in a chat.
 
 ## Troubleshooting
