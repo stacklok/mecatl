@@ -76,6 +76,26 @@ func TestADR_0350_Scenario5_DecisionEvidence(t *testing.T) {
 		t.Fatalf("target rejection evidence = reason=%q decision=%+v", finalReason, rejected)
 	}
 
+	// A real delegation whose routed target factory rejects the candidate must
+	// advertise the inherited model as actual and keep the capable candidate only
+	// in decision evidence.
+	rejectingTool := NewSubagentTool(markerEngine("inherited-model"), WithSubagentEngineFactory(func(string) (*Engine, bool) {
+		return nil, false
+	})).(*SubagentTool)
+	var rejectedStart *session.SubagentPayload
+	_, err := rejectingTool.ExecuteWithParent(t.Context(), session.NewToolCall("factory-reject", "Subagent", json.RawMessage(`{"prompt":"deep work"}`)), memEnv("/ws"), func(ev session.Event) {
+		if ev.Type == session.EvSubagentStart {
+			rejectedStart = ev.Subagent
+		}
+	}, parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: hit.category, model: hit.model, ok: true, decision: cloneRoutingDecision(hit.decision)}
+	}})
+	if err != nil || rejectedStart == nil || rejectedStart.Model != "inherited-model" || rejectedStart.RoutedModel != "" ||
+		rejectedStart.RoutingReason != session.RoutingReasonTargetUnavailable || rejectedStart.RoutingDecision == nil ||
+		rejectedStart.RoutingDecision.CandidateModel != "capable" || rejectedStart.RoutingDecision.Outcome != "fallback" {
+		t.Fatalf("factory-rejection projection = %+v, err=%v", rejectedStart, err)
+	}
+
 	// A configured router with a nil Route skips safely and does not increment the breaker.
 	nilRouter := &SubagentModelRouter{Backend: "llm", ClassifierModel: "classifier"}
 	nilBreaker := &modelRouterBreaker{max: 3, consecutiveMiss: 1}
@@ -123,7 +143,7 @@ func TestADR_0350_Scenario5_DecisionEvidence(t *testing.T) {
 		},
 	}
 	var subStart *session.SubagentPayload
-	_, err := routerTool().ExecuteWithParent(t.Context(),
+	_, err = routerTool().ExecuteWithParent(t.Context(),
 		session.NewToolCall("decision-sub", "Subagent", json.RawMessage(`{"prompt":"review"}`)),
 		memEnv("/ws"), func(ev session.Event) {
 			if ev.Type == session.EvSubagentStart {

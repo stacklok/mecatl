@@ -225,9 +225,7 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 			rows := make([]delegationRow, 0, len(p.Roster))
 			for _, m := range p.Roster {
 				n, proven := childFields(string(m.MemberSessionID), m.MemberIncarnation, nodes, root)
-				if !proven || n.Kind != session.SessionKindTeamMember || n.Edge != delegationTeam ||
-					n.Relationship.ParentSessionID != root.ID || n.Relationship.ParentIncarnation != root.Incarnation() ||
-					n.Relationship.TeamID != p.TeamID || n.Relationship.MemberName != m.Name {
+				if !proven || !validTeamMemberNode(n, root, p.ParentCallID, p.TeamID, m.Name) {
 					continue
 				}
 				rows = append(rows, delegationRow{
@@ -241,7 +239,8 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 			return rows
 		}
 		n, proven := childFields(p.MemberSessionID, p.MemberIncarnation, nodes, root)
-		if !proven || ev.Type != session.EvTeamMember || n.Kind != session.SessionKindTeamMember || n.Edge != delegationTeam || n.Relationship.TeamID != p.TeamID || n.Relationship.MemberName != p.Member {
+		if !proven || ev.Type != session.EvTeamMember || !parentToolCallExists(root, p.ParentCallID, "Team") ||
+			!validTeamMemberNode(n, root, p.ParentCallID, p.TeamID, p.Member) {
 			return nil
 		}
 		base := delegationRow{Type: delegationTeam, Event: ev.Type, CallID: safeLine(p.ParentCallID), ScopeHandle: n.Handle, Retention: n.State, Conclusion: c, ParentResultError: e, Member: safeLine(p.Member), Stop: p.Stop, Cause: safeLine(p.Cause)}
@@ -254,6 +253,12 @@ func projectDelegationEvent(ev session.Event, nodes map[string]lineageNode, resu
 		return []delegationRow{base}
 	}
 	return nil
+}
+
+func validTeamMemberNode(n lineageNode, root *session.Session, callID, teamID, member string) bool {
+	return n.Kind == session.SessionKindTeamMember && n.Edge == delegationTeam &&
+		n.Relationship.ParentSessionID == root.ID && n.Relationship.ParentIncarnation == root.Incarnation() &&
+		string(n.Relationship.CallID) == callID && n.Relationship.TeamID == teamID && n.Relationship.MemberName == member
 }
 
 func parentToolCallExists(root *session.Session, callID, toolName string) bool {

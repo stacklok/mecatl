@@ -1539,7 +1539,8 @@ kill-switch) + the mecatequi router kill-switch subtest.
 
 **Jev router backend (ADR 0350).** `models.router.backend` is a strict operator-only
 `llm|jev` choice and defaults to `llm`. The nested `jev` block carries the fixed service
-model (default `jev-1.13.0`), optional base URL, and finite `[0,1]` confidence threshold.
+model (default `jev-1.13.0`), optional base URL, finite `[0,1]` confidence threshold,
+and complete rendered-input byte bound (default 16384, accepted range 1..65536).
 Schema validation always runs. Active-backend validation runs later in `prepareJevRouter`,
 after the taxonomy and kill-switch fold: inactive routing constructs no client and skips
 credentials, endpoint checks, and backend-selection conflicts. Active Jev requires
@@ -1563,10 +1564,14 @@ The adapter sends one fixed Choice question and validates the exact offered choi
 only adapter-local typed statuses; composition projects them to canonical engine-owned miss
 codes before the callback. It enforces a 10-second queue wait, a 10-second request
 deadline, no retries or redirects, a 1 MiB response limit, HTTPS except loopback HTTP,
-64 KiB of measured input text, and at most 255 categories. `TYPESAFE_API_KEY` is in both
+a configurable complete rendered-input limit that defaults to 16384 bytes under an
+immutable 64 KiB adapter ceiling, and at most 255 categories. The byte accounting includes
+the task state, selected model, fixed question identifier, complete rendered instructions
+(including the quoted default-category hint), and every category name and description.
+`TYPESAFE_API_KEY` is in both
 envscrub exact sets, so command-environment inheritance cannot restore it. The four
 command roots acquire it through `cliconfig.ResolvedCredentials`; it has no YAML or flag
-form. Guards are the twelve `TestADR_0350_*` tests across the adapter, composition, and
+form. Guards are the `TestADR_0350_*` proofs across the adapter, composition, and
 configuration packages.
 
 Every configured-router decision is copied onto the existing delegation start

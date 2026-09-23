@@ -9,10 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
@@ -48,6 +54,15 @@ func (failedEventLog) Read(context.Context, session.SessionID) iter.Seq2[session
 	return func(func(session.Event, error) bool) {}
 }
 
+type readFailedEventLog struct{}
+
+func (readFailedEventLog) Append(context.Context, session.SessionID, session.Event) error { return nil }
+func (readFailedEventLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event, error] {
+	return func(yield func(session.Event, error) bool) {
+		yield(session.Event{}, errors.New("injected read failure"))
+	}
+}
+
 type observedLog struct {
 	*memstore.EventLog
 	reads []session.SessionID
@@ -79,6 +94,34 @@ func publicFixture(t *testing.T) (*observedStore, *session.Session, *session.Ses
 		}
 	}
 	return &observedStore{Store: base}, root, child, grandchild
+}
+
+func stampTeamCall(t *testing.T, member *session.Session, callID session.ToolCallID) {
+	t.Helper()
+	rel := member.Relationship
+	rel.CallID = callID
+	if err := member.RestoreSessionMetadata(session.SessionKindTeamMember, rel); err != nil {
+		t.Fatalf("stamp team call: %v", err)
+	}
+}
+
+func recordCompletedToolCall(t *testing.T, root *session.Session, callID, toolName string) {
+	t.Helper()
+	if err := root.RecordUserPrompt("run tool", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall(session.ToolCallID(callID), toolName, nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.RecordToolResults([]session.ToolResult{session.NewToolResult(session.ToolCallID(callID), "done")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Complete(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func inspect(t *testing.T, inspector tool.Tool, args string) session.ToolResult {
@@ -292,10 +335,16 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	if err := root.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall("team-call", "Team", nil)})); err != nil {
+	if err := root.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{
+		session.NewToolCall("team-call", "Team", nil),
+		session.NewToolCall("team-other", "Team", nil),
+	})); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.RecordToolResults([]session.ToolResult{session.NewToolResult("team-call", "done")}); err != nil {
+	if err := root.RecordToolResults([]session.ToolResult{
+		session.NewToolResult("team-call", "done"),
+		session.NewToolResult("team-other", "done"),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := root.Complete(); err != nil {
@@ -313,6 +362,7 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stampTeamCall(t, member, "team-call")
 	for _, current := range []*session.Session{root, sub, parallel, member} {
 		current.Owner = root.Owner.Clone()
 		if err := store.Save(t.Context(), current); err != nil {
@@ -367,9 +417,36 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	if got := len(evidence(t, historical)["rows"].([]any)); got != 1 {
 		t.Fatalf("historical roster without exact identity joined by tuple: %s", historical.Content)
 	}
+
+	legacyMember, err := session.NewTeamMember("legacy-team-member", session.ModeDefault, env, session.Limits{}, time.Unix(13, 0), "team-1", "legacy", root.ID, root.Incarnation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyMember.Owner = root.Owner.Clone()
+	if err := store.Save(t.Context(), legacyMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(t.Context(), legacyMember.ID); err != nil {
+		t.Fatalf("historical member without call id did not load: %v", err)
+	}
+	legacyLog := memstore.NewEventLog()
+	if err := legacyLog.Append(t.Context(), root.ID, session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
+		ParentCallID: "team-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "legacy", MemberSessionID: legacyMember.ID, MemberIncarnation: legacyMember.Incarnation()}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(evidence(t, inspect(t, sessiondebug.New(root.ID, store, legacyLog), `{"view":"delegation"}`))["rows"].([]any)); got != 0 {
+		t.Fatalf("historical relationship without call id correlated: %d rows", got)
+	}
+
 	wrongCallLog := memstore.NewEventLog()
 	if err := wrongCallLog.Append(t.Context(), root.ID, session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{
-		ParentCallID: "not-a-parent-call", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer", MemberSessionID: member.ID, MemberIncarnation: member.Incarnation()}},
+		ParentCallID: "team-other", TeamID: "team-1", Roster: []session.TeamMemberSpec{{Name: "reviewer", MemberSessionID: member.ID, MemberIncarnation: member.Incarnation()}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrongCallLog.Append(t.Context(), root.ID, session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{
+		ParentCallID: "team-other", TeamID: "team-1", Member: "reviewer", MemberSessionID: string(member.ID), MemberIncarnation: member.Incarnation(), InnerKind: session.EvTurnEnd,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -387,6 +464,10 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	failedEvidence := inspect(t, sessiondebug.New(root.ID, store, failed), `{"view":"delegation"}`)
 	if strings.Contains(failedEvidence.Content, "routing_decision") || !strings.Contains(failedEvidence.Content, `"rows":[]`) {
 		t.Fatalf("failed append was inferred or fabricated: %s", failedEvidence.Content)
+	}
+	readFailure := inspect(t, sessiondebug.New(root.ID, store, readFailedEventLog{}), `{"view":"delegation"}`)
+	if strings.Contains(readFailure.Content, "routing_decision") || !strings.Contains(readFailure.Content, `"rows":[]`) || !strings.Contains(readFailure.Content, "event log read failed") {
+		t.Fatalf("failed log history was inferred or fabricated: %s", readFailure.Content)
 	}
 
 	// A second retained incarnation with the same team/member labels cannot capture
@@ -436,8 +517,104 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 }
 
+func TestADR_0350_Scenario6_TwoRealTeamCallsCannotSubstituteCorrelation(t *testing.T) {
+	store := memstore.New()
+	providers := map[string]*mockllm.Provider{
+		"lead": mockllm.New(
+			mockllm.TextTurn("working A"), mockllm.TextTurn("report A"),
+			mockllm.TextTurn("working B"), mockllm.TextTurn("report B"),
+		),
+	}
+	factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+		catalog := tool.NewCatalog()
+		for _, memberTool := range agent.MemberTools(tm, spec.Name, nil) {
+			catalog.MustRegister(memberTool)
+		}
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
+			LLM: providers[spec.Name], Catalog: catalog,
+			Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "member-model",
+		})}
+	}
+	teamTool := agent.NewTeamTool(factory,
+		agent.WithTeamToolStore(store),
+		agent.WithTeamToolReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
+	)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(teamTool)
+	parent := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("team-a", "Team", json.RawMessage(`{"goal":"A","members":[{"name":"lead","role":"lead A"}]}`))),
+			mockllm.ToolCallTurn(session.NewToolCall("team-b", "Team", json.RawMessage(`{"goal":"B","members":[{"name":"lead","role":"lead B"}]}`))),
+			mockllm.TextTurn("done"),
+		),
+		Catalog: catalog, Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "parent-model",
+	})
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}
+	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)
+	root := session.New("two-teams", session.ModeDefault, ref, session.Limits{}, time.Unix(20, 0))
+	root.Owner = &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
+
+	var starts = map[string]session.Event{}
+	var memberA session.Event
+	for ev := range parent.Run(t.Context(), root, env, agent.RunRequest{Text: "run A then B"}).Events() {
+		if ev.Type == session.EvTeamStart && ev.Team != nil {
+			starts[ev.Team.ParentCallID] = ev
+		}
+		if ev.Type == session.EvTeamMember && ev.Team != nil && ev.Team.ParentCallID == "team-a" && memberA.Team == nil {
+			memberA = ev
+		}
+	}
+	if starts["team-a"].Team == nil || starts["team-b"].Team == nil || memberA.Team == nil {
+		t.Fatalf("real Team events missing: starts=%v memberA=%+v", starts, memberA.Team)
+	}
+	if err := store.Save(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	genuine := memstore.NewEventLog()
+	if err := genuine.Append(t.Context(), root.ID, starts["team-a"]); err != nil {
+		t.Fatal(err)
+	}
+	if err := genuine.Append(t.Context(), root.ID, starts["team-b"]); err != nil {
+		t.Fatal(err)
+	}
+	rows := evidence(t, inspect(t, sessiondebug.New(root.ID, store, genuine), `{"view":"delegation"}`))["rows"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("genuine Team calls did not both correlate: %#v", rows)
+	}
+
+	substitutedStart := starts["team-a"]
+	substitutedStart.Team = cloneTeamPayloadForTest(starts["team-a"].Team)
+	substitutedStart.Team.ParentCallID = "team-b"
+	substitutedMember := memberA
+	substitutedMember.Team = cloneTeamPayloadForTest(memberA.Team)
+	substitutedMember.Team.ParentCallID = "team-b"
+	for name, ev := range map[string]session.Event{"roster": substitutedStart, "member": substitutedMember} {
+		t.Run(name, func(t *testing.T) {
+			log := memstore.NewEventLog()
+			if err := log.Append(t.Context(), root.ID, ev); err != nil {
+				t.Fatal(err)
+			}
+			got := evidence(t, inspect(t, sessiondebug.New(root.ID, store, log), `{"view":"delegation"}`))["rows"].([]any)
+			if len(got) != 0 {
+				t.Fatalf("call B captured call A %s evidence: %#v", name, got)
+			}
+		})
+	}
+}
+
+func cloneTeamPayloadForTest(in *session.TeamPayload) *session.TeamPayload {
+	out := *in
+	out.Roster = append([]session.TeamMemberSpec(nil), in.Roster...)
+	return &out
+}
+
 func TestInspectSessionLineageIsolation_ParallelAndTeamEvidenceJoinExactLifetimes(t *testing.T) {
 	store, root, _, _ := publicFixture(t)
+	recordCompletedToolCall(t, root, "team-call", "Team")
+	if err := store.Save(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
 	parallel, err := session.NewParallelBranch("parallel-child", session.ModeDefault, root.EnvironmentRef, session.Limits{}, time.Unix(4, 0), root.ID, root.Incarnation(), "parallel-call", 2)
 	if err != nil {
 		t.Fatal(err)
@@ -446,6 +623,7 @@ func TestInspectSessionLineageIsolation_ParallelAndTeamEvidenceJoinExactLifetime
 	if err != nil {
 		t.Fatal(err)
 	}
+	stampTeamCall(t, member, "team-call")
 	for _, child := range []*session.Session{parallel, member} {
 		child.Owner = root.Owner.Clone()
 		if err := store.Save(t.Context(), child); err != nil {

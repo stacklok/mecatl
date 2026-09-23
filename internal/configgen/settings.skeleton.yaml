@@ -365,6 +365,10 @@
 #       # MinimumConfidence makes a valid lower-confidence answer an ordinary routing
 #       # miss. Zero disables filtering; values must be finite and in [0,1].
 #       minimum-confidence: 0.5
+#       # MaximumInputBytes bounds the complete rendered textual request before SDK
+#       # marshalling. Omission defaults to 16384; explicit values must be integers in
+#       # [1,65536].
+#       maximum-input-bytes: 16384
 #     # ClassifierSlot names the model slot the CLASSIFIER itself runs on (the tiny, cheap
 #     # one-turn classification call). Empty falls through to the `router` slot's default
 #     # tier (cheap) — the classifier is housekeeping, not the routed work.

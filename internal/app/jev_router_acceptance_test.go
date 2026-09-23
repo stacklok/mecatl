@@ -172,6 +172,7 @@ type jevBuildProvider struct {
 	classifierCalls atomic.Int32
 	callSerial      atomic.Int32
 	subagentArgs    []byte
+	parentDelegated chan struct{}
 }
 
 func (*jevBuildProvider) Capabilities() port.ProviderCapabilities { return port.ProviderCapabilities{} }
@@ -183,6 +184,9 @@ func (p *jevBuildProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 		p.classifierCalls.Add(1)
 		chunks = []port.Chunk{mockllm.TextChunk(`{"category":"large"}`), mockllm.DoneChunk(session.StopEndTurn)}
 	case requestHasTool(req, "Subagent") && !requestHasToolResult(req):
+		if p.parentDelegated != nil {
+			p.parentDelegated <- struct{}{}
+		}
 		id := fmt.Sprintf("delegate-%d", p.callSerial.Add(1))
 		args := p.subagentArgs
 		if len(args) == 0 {
@@ -314,6 +318,112 @@ func TestADR_0350_Scenario3_CompositionParity(t *testing.T) {
 			t.Fatalf("child model[%d] = %q, want local alias target resolved-model", i, model)
 		}
 	}
+}
+
+func TestADR_0350_Scenario4_BuildConfiguredRequestLimit(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(validJevResponse("small")))
+	}))
+	t.Cleanup(srv.Close)
+	provider := &jevBuildProvider{}
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
+		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, Model: "inherited-model",
+		RouterBackend: "jev", RouterJevBaseURL: srv.URL, RouterJevMaximumInputBytes: 1,
+		TypesafeAPIKey: "secret", RouterCategories: []permconfig.RouterCategory{
+			{Name: "small", Description: "small task", Model: "routed-model"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	created, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRun(t.Context(), created.ID, "delegate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, starts := drainRunWithSubagentStart(run)
+	if calls.Load() != 0 || len(starts) != 1 || starts[0].RoutingReason != agent.RouterMissInputOverLimit || starts[0].Model != "inherited-model" {
+		t.Fatalf("configured input limit: calls=%d starts=%+v", calls.Load(), starts)
+	}
+}
+
+func TestADR_0350_Scenario4_BuildSharedCapacity(t *testing.T) {
+	entered := make(chan struct{}, 9)
+	release := make(chan struct{}, 9)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte(validJevResponse("small")))
+	}))
+	t.Cleanup(srv.Close)
+	provider := &jevBuildProvider{parentDelegated: make(chan struct{}, 9)}
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
+		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, Model: "parent-model",
+		RouterBackend: "jev", RouterJevBaseURL: srv.URL, TypesafeAPIKey: "secret",
+		RouterCategories: []permconfig.RouterCategory{{Name: "small", Description: "small task", Model: "routed-model"}},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	sessions := make([]*session.Session, 0, 9)
+	for i := 0; i < 8; i++ {
+		created, createErr := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		sessions = append(sessions, created)
+	}
+	selected, err := built.Service.CreateSessionWithProvider(t.Context(), session.ModeDefault, defaultLimits(), serveradapter.ProviderSelector{ProviderID: providerMock, ModelID: "selected-parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions = append(sessions, selected)
+
+	results := make(chan error, len(sessions))
+	for _, created := range sessions {
+		go func() {
+			run, runErr := built.Service.StartRun(t.Context(), created.ID, "delegate")
+			if runErr == nil && drainRun(run) != "parent done" {
+				runErr = fmt.Errorf("unexpected terminal text")
+			}
+			results <- runErr
+		}()
+	}
+	for range sessions {
+		<-provider.parentDelegated
+	}
+	for i := 0; i < 8; i++ {
+		<-entered
+	}
+	select {
+	case <-entered:
+		t.Fatal("ninth Jev request entered before shared capacity was released")
+	default:
+	}
+	release <- struct{}{}
+	<-entered
+	for i := 0; i < 8; i++ {
+		release <- struct{}{}
+	}
+	for range sessions {
+		if runErr := <-results; runErr != nil {
+			t.Fatal(runErr)
+		}
+	}
+}
+
+func validJevResponse(choice string) string {
+	return fmt.Sprintf(`{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":%q,"probabilities":{%q:1},"confidence":1}},"usage":{"input_tokens":1,"output_tokens":1}}`, choice, choice)
 }
 
 func TestJevLowConfidenceCandidateSurvivesRealDelegation(t *testing.T) {

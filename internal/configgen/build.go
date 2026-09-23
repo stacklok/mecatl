@@ -433,6 +433,9 @@ func modelsSubtree(docs Docs) *Subtree {
 						case "minimum-confidence":
 							jf.Default = "0"
 							jf.ExampleValue = "0.5"
+						case "maximum-input-bytes":
+							jf.Default = "16384"
+							jf.ExampleValue = "16384"
 						}
 					}
 				case "categories":

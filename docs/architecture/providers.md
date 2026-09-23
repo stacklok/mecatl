@@ -575,8 +575,10 @@ Active Jev requires the environment-only `TYPESAFE_API_KEY`. Its defaults are
 model `jev-1.13.0` and no confidence filter. A configured confidence threshold
 makes lower-confidence choices ordinary misses. Requests queue for at most 10
 seconds, run with a 10-second request deadline and no SDK retries, carry at most
-64 KiB of measured text and 255 categories, and accept at most 1 MiB of response
-data. HTTPS is required except for loopback HTTP endpoints, and redirects are
+the operator-configured `maximum-input-bytes` of measured text and 255 categories,
+and accept at most 1 MiB of response data. The input limit defaults to 16384 bytes,
+accepts values from 1 through 65536, and remains capped at 64 KiB in the adapter.
+HTTPS is required except for loopback HTTP endpoints, and redirects are
 disabled. These transport bounds do not bound arbitrary CPU time in SDK JSON
 processing. Every failure remains fail-soft. The adapter returns only a small
 adapter-local typed status; composition maps it to the engine-owned common outcomes

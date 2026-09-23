@@ -379,11 +379,10 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	if budget > 0 {
 		opts = append(opts, WithTeamTokenBudget(budget))
 	}
-	// Thread the parent's caps so an unresolved member permission ask is surfaced to the
-	// human (interactive parent) or auto-denied with the accurate message (headless). The
-	// member askIDs are child-namespaced (team-<teamID>-<member>), so the parent router
-	// routes a verdict back without a wire change.
-	opts = append(opts, withParentCaps(caps))
+	// Thread the parent's caps and exact Team call so an unresolved member permission
+	// ask can surface and each member's durable relationship is correlated before it
+	// is registered, persisted, or projected.
+	opts = append(opts, withParentCaps(caps), withParentTeamCall(call.ID))
 	sup := NewSupervisor(tm, env, factory, opts...)
 
 	roster := teamRoster(args.Members)

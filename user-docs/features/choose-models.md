@@ -224,6 +224,7 @@ models:
     backend: jev
     jev:
       minimum-confidence: 0.5
+      maximum-input-bytes: 16384
     default-category: medium
     categories:
       - name: large
@@ -251,8 +252,10 @@ Jev uses model `jev-1.13.0` by default. `minimum-confidence: 0` accepts every
 valid choice; a higher value from `0` through `1` makes a lower-confidence
 choice fall back to the inherited model. The optional `base-url` must use HTTPS,
 except for loopback HTTP development endpoints. Jev routing accepts up to 255
-categories and 64 KiB of measured request text. It does not truncate an
-over-limit task or taxonomy. Router observability uses the same backend-neutral
+categories. `maximum-input-bytes` defaults to 16384 and accepts an integer from
+1 through 65536. Mecatl measures the complete rendered request text against this
+limit and never permits more than 64 KiB. It does not truncate an over-limit task,
+instructions, or taxonomy. Router observability uses the same backend-neutral
 outcomes for both classifiers: `classifier-error`, `bad-verdict`, `unknown-category`,
 `low-confidence`, `input-over-limit`, `capacity-timeout`, `cancelled`, and `timeout`.
 In particular, a deadline is reported as `timeout`; `cancelled` means caller cancellation.

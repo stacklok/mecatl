@@ -15,9 +15,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
-  snapshots on Subagent, Parallel, and Team-member start payloads. Team roster entries
-  also carry trusted log-only `MemberSessionID` and `MemberIncarnation` correlation for
-  exact retained-lifetime debugger joins. Added (minor).
+  snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).
 
 - **Backend-neutral router outcomes** — adds `agent.RouterMissTimeout`,
   `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and
@@ -242,6 +240,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Exact Team parent-call correlation** — Team-tool member relationships now
+  populate the existing `session.SessionRelationship.CallID`; validation permits
+  that optional value only with a valid parent lifetime. The exported
+  `session.NewTeamMember` signature and relationship shape are unchanged, and
+  historical relationships without a call ID remain loadable but uncorrelated.
+  Older engine binaries may reject newly populated Team-member relationships because
+  their validation forbade this existing field for that kind. Changed (breaking,
+  pre-v1 minor).
 
 - **Delegated-model router callback** — changes `agent.Deps.SubagentModelRouter`
   from the callback tuple to `*agent.SubagentModelRouter`, preserving configured

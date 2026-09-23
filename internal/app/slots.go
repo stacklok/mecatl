@@ -654,6 +654,7 @@ func foldOperatorModelRouter(cfg Config) Config {
 		cfg.RouterJevModel = strings.TrimSpace(router.Jev.Model)
 		cfg.RouterJevBaseURL = strings.TrimSpace(router.Jev.BaseURL)
 		cfg.RouterJevMinimumConfidence = router.Jev.MinimumConfidence
+		cfg.RouterJevMaximumInputBytes = router.Jev.MaximumInputBytes
 	}
 	// Disabled: OR the YAML kill-switch with the CLI one (either disables) — ADR 0042,
 	// mirroring foldOperatorGuardrails.
@@ -710,6 +711,7 @@ func prepareJevRouter(cfg *Config) error {
 			APIKey: cfg.TypesafeAPIKey, Model: cfg.RouterJevModel,
 			BaseURL: cfg.RouterJevBaseURL, DefaultCategory: cfg.RouterDefaultCategory,
 			MinimumConfidence: cfg.RouterJevMinimumConfidence,
+			MaximumInputBytes: cfg.RouterJevMaximumInputBytes,
 		})
 		if err != nil {
 			return fmt.Errorf("configure Jev model router: %w", err)
@@ -831,9 +833,17 @@ func logModelRouterFacts(cfg Config) {
 	args := []any{"categories", len(cfg.RouterCategories), "backend", backend, "classifier", classifier,
 		"category_mappings", routerCategoryMappings(cfg.RouterCategories)}
 	if backend == routerBackendJev {
-		args = append(args, "minimum_confidence", cfg.RouterJevMinimumConfidence)
+		args = append(args, "minimum_confidence", cfg.RouterJevMinimumConfidence,
+			"maximum_input_bytes", configuredJevMaximumInputBytes(cfg.RouterJevMaximumInputBytes))
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, message, args...)
+}
+
+func configuredJevMaximumInputBytes(value int) int {
+	if value == 0 {
+		return jevrouter.DefaultMaximumInputBytes
+	}
+	return value
 }
 
 func routerCategoryMappings(categories []permconfig.RouterCategory) []string {

@@ -57,8 +57,8 @@ func TestADR_0350_Scenario2_DefaultCategoryHint(t *testing.T) {
 		}
 	}
 
-	expanded := classifierInstructions(strings.Repeat("\"", maxTextBytes))
-	if len(expanded) <= maxTextBytes {
+	expanded := classifierInstructions(strings.Repeat("\"", DefaultMaximumInputBytes))
+	if len(expanded) <= DefaultMaximumInputBytes {
 		t.Fatalf("quoted hint expansion was not reflected in rendered instruction size: %d", len(expanded))
 	}
 }

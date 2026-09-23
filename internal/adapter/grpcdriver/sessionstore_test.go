@@ -505,3 +505,27 @@ func TestDeleteToleratesDriverNotFound(t *testing.T) {
 		t.Errorf("Delete mapping a driver NOT_FOUND = %v, want nil (idempotent success)", err)
 	}
 }
+
+func TestTeamMemberRelationshipCallIDRoundTripsDriver(t *testing.T) {
+	st := newWiredSessionStore(t)
+	parentIncarnation := session.NewIncarnationID()
+	member, err := session.NewTeamMember("team-member", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}, session.Limits{}, time.Unix(1, 0), "team", "reviewer", "parent", parentIncarnation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := member.Relationship
+	rel.CallID = "team-call"
+	if err := member.RestoreSessionMetadata(session.SessionKindTeamMember, rel); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save(t.Context(), member); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Load(t.Context(), member.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Relationship != rel {
+		t.Fatalf("relationship = %+v, want %+v", got.Relationship, rel)
+	}
+}

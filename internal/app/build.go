@@ -733,6 +733,9 @@ type Config struct {
 	RouterJevBaseURL string
 	// RouterJevMinimumConfidence makes lower-confidence choices abstain when non-zero.
 	RouterJevMinimumConfidence float64
+	// RouterJevMaximumInputBytes bounds the complete rendered textual request.
+	// Zero uses the adapter default of 16384 bytes.
+	RouterJevMaximumInputBytes int
 	// TypesafeAPIKey is the host-provided TYPESAFE_API_KEY credential.
 	TypesafeAPIKey               string
 	routerClassifierSlotAuthored bool

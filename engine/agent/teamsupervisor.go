@@ -321,7 +321,11 @@ type Supervisor struct {
 	budgetTripped bool
 	idPrefix      string
 	teamID        string
-	hooks         port.HookRunner
+	// parentCallID is populated only for a Team-tool supervisor. It binds every
+	// persisted member relationship to the exact parent Team call whose events
+	// advertise that member; directly-driven teams leave it empty.
+	parentCallID session.ToolCallID
+	hooks        port.HookRunner
 
 	// goal is the team's top-level objective, rendered as the TRUSTED top-level
 	// instruction into every member's round-0 turn and into the lead's synthesis
@@ -669,6 +673,16 @@ func withParentCaps(caps parentCaps) SupervisorOption {
 	return func(s *Supervisor) { s.caps = caps }
 }
 
+// withParentTeamCall binds Team-tool member sessions to the exact parent call.
+// It is intentionally private: direct RunTeam supervisors have no parent call.
+func withParentTeamCall(callID session.ToolCallID) SupervisorOption {
+	return func(s *Supervisor) {
+		if s.caps.parentSessionID != "" && s.caps.parentIncarnation.Valid() {
+			s.parentCallID = callID
+		}
+	}
+}
+
 // WithMemberLiveness injects the maintenance exclusion used for team-member
 // sessions. Run acquires it for every member before scheduling begins and
 // cleanupAll releases each hold after the between-round and synthesis lifecycle
@@ -854,6 +868,11 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
 	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
+	if err == nil && s.parentCallID != "" {
+		rel := sess.Relationship
+		rel.CallID = s.parentCallID
+		err = sess.RestoreSessionMetadata(session.SessionKindTeamMember, rel)
+	}
 	if err != nil {
 		if cleanup != nil {
 			_ = cleanup()

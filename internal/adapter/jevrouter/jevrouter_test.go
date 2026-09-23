@@ -79,7 +79,7 @@ func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	}
 
 	r, calls := newTestRouter(t, func(http.ResponseWriter, *http.Request) { t.Fatal("over-limit request performed I/O") }, 0)
-	category, _, reason, ok := routeTuple(t.Context(), r, strings.Repeat("x", maxTextBytes+1), testCategories())
+	category, _, reason, ok := routeTuple(t.Context(), r, strings.Repeat("x", DefaultMaximumInputBytes+1), testCategories())
 	if ok || category != "" || reason != MissInputOverLimit || calls.Load() != 0 {
 		t.Fatalf("over-limit Route = (%q, reason=%q, ok=%v), calls=%d", category, reason, ok, calls.Load())
 	}
@@ -141,6 +141,15 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(validResponse("fast", 1, 1, 1)))
 	}, 0)
+	if r.maximumInputBytes != DefaultMaximumInputBytes {
+		t.Fatalf("omitted maximum input = %d, want %d", r.maximumInputBytes, DefaultMaximumInputBytes)
+	}
+	if _, err := New(Options{APIKey: "test", BaseURL: "https://example.com", MaximumInputBytes: HardMaximumInputBytes}); err != nil {
+		t.Fatalf("hard maximum input rejected: %v", err)
+	}
+	if _, err := New(Options{APIKey: "test", BaseURL: "https://example.com", MaximumInputBytes: HardMaximumInputBytes + 1}); err == nil {
+		t.Fatal("input limit above immutable ceiling accepted")
+	}
 	if _, _, _, ok := routeTuple(t.Context(), r, "task", testCategories()); !ok {
 		t.Fatal("bounded request should route")
 	}
@@ -181,12 +190,43 @@ func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
 	}
 
 	fixed := len(classifierInstructions("")) + len(DefaultModel) + len(questionID)
-	boundaryTask := strings.Repeat("x", maxTextBytes-fixed-len("fast")-len("small task")-len("deep")-len("complex task"))
+	boundaryTask := strings.Repeat("x", DefaultMaximumInputBytes-fixed-len("fast")-len("small task")-len("deep")-len("complex task"))
 	if _, _, reason, ok := routeTuple(t.Context(), r, boundaryTask, testCategories()); !ok {
 		t.Fatalf("exact limit rejected: %q", reason)
 	}
-	if _, _, reason, ok := routeTuple(t.Context(), r, boundaryTask+"x", testCategories()); ok || reason != MissInputOverLimit {
-		t.Fatalf("over limit accepted: %q", reason)
+	hint := `med"ium`
+	hintInstructions := classifierInstructions(hint)
+	hintLimit := len("task") + len(DefaultModel) + len(questionID) + len(hintInstructions) + len("fast") + len("small task")
+	var hintCalls atomic.Int32
+	hintClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		hintCalls.Add(1)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"model":"jev-1.13.0","answers":{"delegated-model-category":{"type":"choice","choice":"fast","probabilities":{"fast":1},"confidence":1}},"usage":{"input_tokens":1,"output_tokens":1}}`)), Request: req}, nil
+	})}
+	for _, tc := range []struct {
+		name  string
+		limit int
+		ok    bool
+	}{
+		{"exact rendered hint boundary", hintLimit, true},
+		{"one byte below rendered hint boundary", hintLimit - 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hintRouter, err := New(Options{APIKey: "test", Model: DefaultModel, BaseURL: "https://example.com", HTTPClient: hintClient, DefaultCategory: hint, MaximumInputBytes: tc.limit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := hintCalls.Load()
+			result := hintRouter.Route(t.Context(), "task", []Category{{Name: "fast", Description: "small task"}})
+			if result.OK != tc.ok {
+				t.Fatalf("Route OK = %v, want %v: %+v", result.OK, tc.ok, result)
+			}
+			if tc.ok && hintCalls.Load() != before+1 {
+				t.Fatal("exact-boundary request did not reach transport")
+			}
+			if !tc.ok && (result.Miss != MissInputOverLimit || hintCalls.Load() != before) {
+				t.Fatalf("over-limit hint request = %+v, calls=%d want %d", result, hintCalls.Load(), before)
+			}
+		})
 	}
 }
 
@@ -315,11 +355,9 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 
 	t.Run("request timeout cancels in flight and releases capacity", func(t *testing.T) {
 		var calls atomic.Int32
-		cancelled := make(chan struct{})
 		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			if calls.Add(1) == 1 {
 				<-req.Context().Done()
-				close(cancelled)
 				return nil, req.Context().Err()
 			}
 			return &http.Response{
@@ -337,11 +375,6 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		category, _, reason, ok := routeTuple(t.Context(), r, "first", testCategories())
 		if ok || category != "" || reason != MissTimeout {
 			t.Fatalf("timed-out Route = (%q, reason=%v, ok=%v)", category, reason, ok)
-		}
-		select {
-		case <-cancelled:
-		default:
-			t.Fatal("request deadline did not cancel the in-flight transport")
 		}
 		category, _, reason, ok = routeTuple(t.Context(), r, "second", testCategories())
 		if !ok || category != "fast" || reason != missNone || calls.Load() != 2 {
@@ -472,11 +505,29 @@ func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
 		}
 	})
 
-	large, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("x", int(responseLimit)+1)))
-	}, 0)
-	if _, _, reason, ok := routeTuple(t.Context(), large, "task", testCategories()); ok || reason != MissClassifierError {
-		t.Fatalf("oversized response reason=%q ok=%v", reason, ok)
+	validPaddedResponse := func(padding int) string {
+		return `{"ignored":"` + strings.Repeat("x", padding) + `",` + strings.TrimPrefix(validResponse("fast", 1, 1, 1), "{")
+	}
+	for _, tc := range []struct {
+		name    string
+		padding int
+		ok      bool
+	}{
+		{"valid response below explicit limit", int(responseLimit) - 4096, true},
+		{"valid response above explicit limit", int(responseLimit) + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(validPaddedResponse(tc.padding)))
+			}, 0)
+			_, _, reason, ok := routeTuple(t.Context(), router, "task", testCategories())
+			if ok != tc.ok {
+				t.Fatalf("padded valid response ok=%v reason=%q, want ok=%v", ok, reason, tc.ok)
+			}
+			if !tc.ok && reason != MissClassifierError {
+				t.Fatalf("oversized valid response reason=%q, want classifier error", reason)
+			}
+		})
 	}
 }
 

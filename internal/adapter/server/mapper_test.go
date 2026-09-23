@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"strings"
@@ -13,12 +14,19 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
+	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
 
 func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
@@ -99,6 +107,75 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	recorder.Close()
 	if len(failedLog.attempts) != 2 || len(failedLog.recorded) != 1 || failedLog.recorded[0].Type != session.EvResult || diag.warnings != 1 {
 		t.Fatalf("append failure changed warn-and-continue behavior: attempts=%d recorded=%+v warnings=%d", len(failedLog.attempts), failedLog.recorded, diag.warnings)
+	}
+}
+
+func TestADR_0350_Scenario6_RealProducerRelayReloadDebugger(t *testing.T) {
+	store := memstore.New()
+	log := memstore.NewEventLog()
+	child := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(mockllm.TextTurn("child done")), Catalog: tool.NewCatalog(),
+		Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "capable-model",
+	})
+	subagent := agent.NewSubagentTool(child,
+		agent.WithSubagentStore(store),
+		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
+		agent.WithSubagentEngineFactory(func(model string) (*agent.Engine, bool) {
+			if model != "capable-model" {
+				return nil, false
+			}
+			return child, true
+		}),
+	)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(subagent)
+	confidence, minimum := 0.9, 0.5
+	parent := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("route-call", "Subagent", json.RawMessage(`{"prompt":"deep review"}`))),
+			mockllm.TextTurn("parent done"),
+		),
+		Catalog: catalog, Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "inherited-model",
+		SubagentModelRouter: &agent.SubagentModelRouter{
+			Backend: "jev", ClassifierModel: "jev-1.13.0", MinimumConfidence: &minimum,
+			Route: func(context.Context, string) agent.ModelRouteResult {
+				return agent.ModelRouteResult{Category: "deep", Model: "capable-model", OK: true, Confidence: &confidence}
+			},
+		},
+	})
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}
+	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)
+	root := session.New("routing-e2e", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	root.Owner = &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
+	run := parent.Run(t.Context(), root, env, agent.RunRequest{Text: "delegate"})
+	recorder := NewRunEventRecorder(t.Context(), recorderService(log, port.NopDiagnostics{}), root.ID)
+	var produced *session.RoutingDecision
+	var eventTypes []session.EventType
+	var toolResult string
+	for ev := range run.Events() {
+		eventTypes = append(eventTypes, ev.Type)
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
+			toolResult = ev.ToolResult.Content
+		}
+		if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+			produced = ev.Subagent.RoutingDecision
+		}
+		recorder.Observe(ev)
+	}
+	recorder.Close()
+	if produced == nil || produced.CandidateModel != "capable-model" || produced.Outcome != "routed" {
+		t.Fatalf("real producer decision = %+v, events=%v, tool_result=%q", produced, eventTypes, toolResult)
+	}
+	if err := store.Save(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	inspector := sessiondebug.New(root.ID, store, log)
+	result, err := inspector.Execute(t.Context(), session.NewToolCall("inspect", sessiondebug.ToolName, json.RawMessage(`{"view":"delegation"}`)), tool.Environment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || !strings.Contains(result.Content, `"candidate_model":"capable-model"`) || !strings.Contains(result.Content, `"actual_model":"capable-model"`) {
+		t.Fatalf("producer -> relay -> log -> reload -> debugger chain = %+v", result)
 	}
 }
 

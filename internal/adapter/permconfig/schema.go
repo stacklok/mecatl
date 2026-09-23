@@ -1573,18 +1573,36 @@ type JevRouterSection struct {
 	// MinimumConfidence makes a valid lower-confidence answer an ordinary routing miss.
 	// Zero disables filtering; values must be finite and in [0,1].
 	MinimumConfidence float64 `yaml:"minimum-confidence"`
+	// MaximumInputBytes bounds the complete rendered textual request before SDK marshalling.
+	// Omission defaults to 16384; explicit values must be integers in [1,65536].
+	MaximumInputBytes int `yaml:"maximum-input-bytes"`
 }
 
-// UnmarshalYAML applies Jev defaults and rejects unknown keys or invalid confidence.
+// UnmarshalYAML applies Jev defaults and rejects unknown keys or invalid values.
 func (j *JevRouterSection) UnmarshalYAML(node ast.Node) error {
 	j.Model = "jev-1.13.0"
+	j.MaximumInputBytes = 16384
+	if mapping, ok := permconfigMapping(node); ok {
+		for _, entry := range mapping.Values {
+			key, stringKey := permconfigMappingKey(entry.Key)
+			if stringKey && key == "maximum-input-bytes" {
+				if _, integer := entry.Value.(*ast.IntegerNode); !integer {
+					return fmt.Errorf("models.router.jev.maximum-input-bytes: must be an integer")
+				}
+			}
+		}
+	}
 	if err := decodeStrictMapping(node, "models.router.jev", map[string]any{
 		"model": &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
+		"maximum-input-bytes": &j.MaximumInputBytes,
 	}); err != nil {
 		return err
 	}
 	if math.IsNaN(j.MinimumConfidence) || math.IsInf(j.MinimumConfidence, 0) || j.MinimumConfidence < 0 || j.MinimumConfidence > 1 {
 		return fmt.Errorf("models.router.jev.minimum-confidence: must be finite and between 0 and 1")
+	}
+	if j.MaximumInputBytes < 1 || j.MaximumInputBytes > 65536 {
+		return fmt.Errorf("models.router.jev.maximum-input-bytes: must be between 1 and 65536")
 	}
 	return nil
 }

@@ -216,6 +216,11 @@ func TestADR_0350_Scenario1_OperatorAuthority(t *testing.T) {
 models:
   allowlist:
     - gpt-4o-mini
+  router:
+    disabled: true
+    backend: jev
+    jev:
+      maximum-input-bytes: 1
 `
 	const projectRouter = `
 models:
@@ -223,6 +228,7 @@ models:
     backend: jev
     jev:
       base-url: https://jev.example.com
+      maximum-input-bytes: 65536
     categories:
       - name: small
         description: x
@@ -238,6 +244,10 @@ models:
 	proj := r.ProjectModelBindings(ws)
 	if proj != nil && proj.Router != nil {
 		t.Fatal("a project-tier models.router must NEVER be honoured (operator-tier only)")
+	}
+	operator := r.OperatorModelPolicy()
+	if operator == nil || operator.Router == nil || operator.Router.Jev == nil || operator.Router.Jev.MaximumInputBytes != 1 {
+		t.Fatalf("project router altered operator maximum-input-bytes: %+v", operator)
 	}
 	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.router") {
 		t.Fatalf("expected a router-strip WARN; got:\n%s", log)
