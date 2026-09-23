@@ -31,6 +31,25 @@
       "enabled": false
     },
     {
+      "description": "Node and Deno versions in workflows are deliberate: SDK engine floors (Node 22, Deno 2.9.3) and exact publish-toolchain pins",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["uses-with"],
+      "matchDepNames": ["node", "deno"],
+      "enabled": false
+    },
+    {
+      "description": "stacklok/modelith is pinned past its latest tag (# post-v0.4.0), so it cannot be resolved; re-enable after repinning to a tagged release",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["stacklok/modelith"],
+      "enabled": false
+    },
+    {
+      "description": "Runner image upgrades change the build environment; request them from the Dependency Dashboard",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["github-runner"],
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "Wait before adopting new npm releases (supply-chain hygiene)",
       "matchDatasources": ["npm"],
       "minimumReleaseAge": "3 days"
@@ -38,7 +57,7 @@
     {
       "description": "Group routine Go module updates not covered by a more specific group",
       "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "go dependencies"
     },
     {
