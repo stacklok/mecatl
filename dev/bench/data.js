@@ -257176,6 +257176,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790146744916,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f54c85c6d31b8443ac5c3c958f0f9a4328d56f17",
+          "message": "fix(osfs): cancel no-match Glob and Grep traversal (#1723)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T10:23:45+03:00",
+          "tree_id": "b7865d00bfdcd8d5c138016047c555a4cf30fb6d",
+          "url": "https://github.com/stacklok/mecatl/commit/f54c85c6d31b8443ac5c3c958f0f9a4328d56f17"
+        },
+        "date": 1790148905851,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -337242,6 +337281,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790148902720,
+  "lastUpdate": 1790148906993,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
