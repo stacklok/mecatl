@@ -15,7 +15,10 @@ func TestRunInDirUsesDescriptorAndPassesArgumentsOpaquely(t *testing.T) {
 	if err != nil {
 		t.Skip("python3 unavailable")
 	}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
 	bin := filepath.Join(root, "bin")
 	bound := filepath.Join(root, "bound")
 	if err := os.MkdirAll(bin, 0o700); err != nil {

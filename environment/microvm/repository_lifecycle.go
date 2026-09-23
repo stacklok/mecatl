@@ -795,8 +795,21 @@ func (r *RepositoryVMRegistry) openIdentityDirectory(identity validatedRepositor
 	return &repositoryDirectory{file: current, path: currentPath}, nil
 }
 
+func openRepositoryLock(directory *repositoryDirectory) (int, error) {
+	flags := unix.O_RDWR | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	fd, err := openatOpaque(int(directory.file.Fd()), "registry.lock", flags, 0)
+	if err == nil || !errors.Is(err, unix.ENOENT) {
+		return fd, err
+	}
+	fd, err = openatOpaque(int(directory.file.Fd()), "registry.lock", flags|unix.O_CREAT|unix.O_EXCL, 0o600)
+	if errors.Is(err, unix.EEXIST) {
+		return openatOpaque(int(directory.file.Fd()), "registry.lock", flags, 0)
+	}
+	return fd, err
+}
+
 func (*RepositoryVMRegistry) withIdentityLock(ctx context.Context, directory *repositoryDirectory, fn func() error) error {
-	fd, err := openatOpaque(int(directory.file.Fd()), "registry.lock", unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	fd, err := openRepositoryLock(directory)
 	if err != nil {
 		return fmt.Errorf("open repository generation lock without symlinks: %w", err)
 	}
