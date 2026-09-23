@@ -71,7 +71,9 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 		data, readErr := os.ReadFile(pathsFile)
 		if readErr == nil {
 			paths = strings.Split(strings.TrimSpace(string(data)), "\n")
-			break
+			if len(paths) == 2 && paths[0] != "" && paths[1] != "" {
+				break
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -84,8 +86,19 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	if strings.Contains(command, paths[0]) {
 		t.Fatalf("shell text contains injected lease temporary path %q", paths[0])
 	}
-	if data, readErr := os.ReadFile(filepath.Join(root, "secret-status")); readErr != nil || string(data) != "unset" {
-		t.Fatalf("managed overlay restored scrubbed credential-shaped variable: %q, %v", data, readErr)
+	secretStatusPath := filepath.Join(root, "secret-status")
+	var secretStatus []byte
+	var readErr error
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		secretStatus, readErr = os.ReadFile(secretStatusPath)
+		if readErr == nil && len(secretStatus) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if readErr != nil || string(secretStatus) != "unset" {
+		t.Fatalf("managed overlay restored scrubbed credential-shaped variable: %q, %v", secretStatus, readErr)
 	}
 	manifest, readErr := os.ReadFile(filepath.Join(filepath.Dir(paths[0]), "manifest.json"))
 	if readErr != nil {
