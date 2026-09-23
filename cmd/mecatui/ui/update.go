@@ -17,6 +17,7 @@ import (
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -2035,7 +2036,7 @@ func (m Model) hasDoubleEscapeDraft() bool {
 // gets Escape first. Only the focused, plain idle composer can use the gesture.
 func (m Model) doubleEscapeEligible() bool {
 	return m.keyboardEventTypes && m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
-		!m.sel.active && !m.prompt.HasSelection() && !m.palette.open && !m.mention.open &&
+		!m.sel.active && !m.prompt.HasSelection() && !m.paletteVisible() && !m.mention.open &&
 		m.queuePaused == "" && !bodyOwnerOpen(m)
 }
 
@@ -2801,7 +2802,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Let the palette claim its navigation and completion keys while running. A
 	// selected builtin dispatches locally; a workspace row completes into the
 	// textarea. Esc stays with the layered cancel path below.
-	if m.palette.open && !key.Matches(msg, m.keys.Cancel) {
+	if m.paletteVisible() && !key.Matches(msg, m.keys.Cancel) {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
@@ -3105,7 +3106,7 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 // content — so it appears the moment the input becomes "/…" and tracks the
 // typed prefix.
 func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.palette.open {
+	if m.paletteVisible() {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
@@ -3231,19 +3232,28 @@ func (m Model) onIdleSubmit() (tea.Model, tea.Cmd) {
 // enter/tab over a BUILT-IN row, which runs the built-in directly (it may issue
 // a command, e.g. opening an overlay).
 func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	switch msg.String() {
-	case keyMenuUp:
+	if !m.paletteVisible() {
+		return m, nil, false
+	}
+	switch {
+	case key.Matches(msg, m.keys.Up):
 		m.paletteMoveUp()
 		return m, nil, true
-	case keyMenuDown:
+	case key.Matches(msg, m.keys.Down):
 		m.paletteMoveDown()
 		return m, nil, true
-	case keyMenuTab, keyMenuEnter:
+	case key.Matches(msg, m.keys.ScrollU):
+		m.palette.list.Move(bounded.PageUp)
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollD):
+		m.palette.list.Move(bounded.PageDown)
+		return m, nil, true
+	case msg.String() == keyMenuTab || msg.String() == keyMenuEnter:
 		if mm, cmd, ran := m.dispatchSelectedBuiltin(); ran {
 			return mm, cmd, true
 		}
 		return m.paletteComplete(), nil, true
-	case keyMenuDismiss:
+	case msg.String() == keyMenuDismiss:
 		return m.paletteDismiss(), nil, true
 	}
 	return m, nil, false
@@ -3276,10 +3286,10 @@ func (m Model) onMentionKey(msg tea.KeyPressMsg) (Model, bool) {
 // dispatches the equivalent canonical bare command. Non-builtin workspace rows
 // return ran=false so the caller can complete them into the model-facing input.
 func (m Model) dispatchSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
-	if !m.palette.open || m.palette.cursor >= len(m.palette.filtered) {
+	row := m.palette.selected()
+	if !m.palette.open || row.Name == "" {
 		return m, nil, false
 	}
-	row := m.palette.filtered[m.palette.cursor]
 	if !row.Builtin {
 		return m, nil, false
 	}

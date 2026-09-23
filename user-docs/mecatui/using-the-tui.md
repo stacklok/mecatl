@@ -135,7 +135,14 @@ conversation.
 ## Browse available capabilities
 
 Open the slash-command palette with `/`. `mecatui` shows only the panels and
-commands supported by the connected server.
+commands supported by the connected server. Use `↑` and `↓` to move one command
+at a time, then press `tab` or `enter` to choose it. Descriptions wrap within the
+palette, and the above and below indicators report hidden rows. `pgup` and `pgdn`
+show each segment of a selected command whose description is taller than the
+palette before moving to another command. The remappable actions are `ScrollU`
+and `ScrollD`, bound to `pgup` and `pgdn` by default. The palette keeps at most
+eight command rows visible and hides when the terminal has no room for a command
+row.
 
 |Task|Open in `mecatui`|More information|
 |-|-|-|

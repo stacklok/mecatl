@@ -740,7 +740,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		// derived palette state too. This path serves both idle and running input.
 		m.palette.open = false
 		m.palette.filtered = nil
-		m.palette.cursor = 0
+		m.palette.syncList()
 		m.prompt.Reset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true

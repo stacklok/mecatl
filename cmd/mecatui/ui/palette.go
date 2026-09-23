@@ -1,14 +1,17 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // maxPaletteRows caps how many command rows the palette shows at once so a large
@@ -51,8 +54,44 @@ type paletteState struct {
 	// filtered is the subset matching the current "/<prefix>" token, recomputed on
 	// each input change.
 	filtered []client.Command
-	// cursor is the selected row within filtered (clamped to its bounds).
-	cursor int
+	// list is pointer-owned so Bubble Tea Model copies retain one selection and
+	// viewport anchor. The palette owns command activation; bounded.List owns only
+	// physical layout and selection.
+	list *bounded.List
+}
+
+func (st *paletteState) syncList() {
+	if st.list == nil {
+		st.list = new(bounded.List)
+	}
+	items := make([]bounded.ListItem, 0, len(st.filtered))
+	for _, command := range st.filtered {
+		kind := "workspace:"
+		if command.Builtin {
+			kind = "builtin:"
+		}
+		text := terminaltext.Sanitize("/" + command.Name)
+		if description := terminaltext.Sanitize(command.Description); description != "" {
+			text += "  " + description
+		}
+		items = append(items, bounded.ListItem{ID: kind + strings.ToLower(command.Name), Text: text})
+	}
+	st.list.SetItems(items)
+}
+
+func (st paletteState) selected() client.Command {
+	if st.list == nil || len(st.filtered) == 0 {
+		return client.Command{}
+	}
+	index := st.list.Cursor()
+	if index < 0 || index >= len(st.filtered) {
+		return client.Command{}
+	}
+	return st.filtered[index]
+}
+
+func (m Model) paletteVisible() bool {
+	return m.palette.open && (m.palette.list == nil || m.palette.list.Valid())
 }
 
 // commandPrefix reports whether s is a command line and, if so, returns the
@@ -142,7 +181,7 @@ func (m Model) syncPalette() (Model, tea.Cmd) {
 		m.palette.open = false
 		m.palette.dismissed = false
 		m.palette.filtered = nil
-		m.palette.cursor = 0
+		m.palette.syncList()
 		return m, nil
 	}
 
@@ -163,10 +202,8 @@ func (m Model) syncPalette() (Model, tea.Cmd) {
 
 	merged := mergeCommands(m.builtinRows(), m.palette.commands)
 	m.palette.filtered = filterCommands(merged, prefix)
+	m.palette.syncList()
 	m.palette.open = len(m.palette.filtered) > 0
-	if m.palette.cursor >= len(m.palette.filtered) {
-		m.palette.cursor = 0
-	}
 	return m, fetch
 }
 
@@ -187,17 +224,17 @@ func filterCommands(cmds []client.Command, prefix string) []client.Command {
 	return out
 }
 
-// paletteMoveUp moves the selection up one row (no wrap), clamped to the top.
+// paletteMoveUp moves the selection up one logical command (no wrap).
 func (m *Model) paletteMoveUp() {
-	if m.palette.cursor > 0 {
-		m.palette.cursor--
+	if m.palette.list != nil {
+		m.palette.list.Move(bounded.LineUp)
 	}
 }
 
-// paletteMoveDown moves the selection down one row (no wrap), clamped to the last.
+// paletteMoveDown moves the selection down one logical command (no wrap).
 func (m *Model) paletteMoveDown() {
-	if m.palette.cursor < len(m.palette.filtered)-1 {
-		m.palette.cursor++
+	if m.palette.list != nil {
+		m.palette.list.Move(bounded.LineDown)
 	}
 }
 
@@ -205,16 +242,16 @@ func (m *Model) paletteMoveDown() {
 // (ready for args), closes the palette, and leaves the cursor after the trailing
 // space. It is a no-op when the palette has no selectable rows.
 func (m Model) paletteComplete() Model {
-	if !m.palette.open || m.palette.cursor >= len(m.palette.filtered) {
+	selected := m.palette.selected()
+	if !m.palette.open || selected.Name == "" {
 		return m
 	}
-	name := m.palette.filtered[m.palette.cursor].Name
-	m.prompt.Rewrite("/" + name + " ")
+	m.prompt.Rewrite("/" + selected.Name + " ")
 	// Completing leaves command mode (a trailing space follows the name), so the
 	// palette closes; settle the derived state without re-fetching.
 	m.palette.open = false
 	m.palette.filtered = nil
-	m.palette.cursor = 0
+	m.palette.syncList()
 	return m
 }
 
@@ -226,52 +263,51 @@ func (m Model) paletteDismiss() Model {
 	return m
 }
 
-// renderPalette draws the command dropdown as a bordered card. The selected row
-// is highlighted; descriptions are dim. All server-derived strings are
-// terminal-sanitized. The list windows to maxPaletteRows around the selection so
-// a large set never overruns the input.
-//
-// When the palette is NOT showing rows but the input IS a command line ("/…"),
-// it renders a single neutral muted note instead of "". Built-ins always exist,
-// so the only way to reach this note is a typed prefix matching neither a
-// built-in nor a workspace command (e.g. "/zzz"); the note reads "no matching
-// command". It returns "" only when the input is not a command line at all.
+// renderPalette draws the command dropdown with the normal maximum body.
 func renderPalette(th theme.Theme, st paletteState, caps client.Capabilities, input string, width int) string {
+	return renderPaletteSized(th, st, caps, input, width, maxPaletteRows)
+}
+
+// renderPaletteSized draws the command dropdown as a bordered card. bodyRows is
+// the complete physical-row budget for command rows and overflow indicators.
+func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilities, input string, width, bodyRows int) string {
+	cardStyle := th.Style("askCard")
+	contentWidth := width - cardStyle.GetHorizontalFrameSize()
+	st.syncList()
+	if bodyRows <= 0 || contentWidth < 3 {
+		st.list.SetGeometry(contentWidth, 0, 1, bounded.Wrap)
+		return ""
+	}
 	if !st.open || len(st.filtered) == 0 {
+		st.list.SetGeometry(contentWidth, 0, 1, bounded.Wrap)
 		if note := paletteEmptyNote(th, st, caps, input); note != "" {
-			card := th.Style("askCard").Render(note)
-			if width > 0 {
-				return lipgloss.NewStyle().MaxWidth(width).Render(card)
-			}
-			return card
+			return lipgloss.NewStyle().MaxWidth(width).Render(cardStyle.Render(ansi.Cut(note, 0, contentWidth)))
 		}
 		return ""
 	}
-	start, end := scrollWindow(st.cursor, len(st.filtered), maxPaletteRows)
 
-	var b strings.Builder
-	b.WriteString(th.Style("muted").Render("commands") + "\n")
-	for i := start; i < end; i++ {
-		c := st.filtered[i]
-		name := terminaltext.Sanitize("/" + c.Name)
-		desc := terminaltext.Sanitize(c.Description)
-		row := name
-		if desc != "" {
-			row += "  " + th.Style("muted").Render(desc)
-		}
-		if i == st.cursor {
-			b.WriteString(th.Style("askButtonActive").Render("› "+row) + "\n")
-		} else {
-			b.WriteString(th.Style("toolArgs").Render("  "+row) + "\n")
-		}
+	st.list.SetGeometry(contentWidth, bodyRows, 1, bounded.Wrap)
+	if !st.list.Valid() {
+		return ""
 	}
-	b.WriteString(th.Style("muted").Render("↑/↓ select · tab/enter complete · esc dismiss"))
+	view := st.list.ViewWithIndicators(bodyRows, st.list.RevealPending())
+	if len(view.Rows) == 0 {
+		return ""
+	}
 
-	card := th.Style("askCard").Render(b.String())
-	if width > 0 {
-		return lipgloss.NewStyle().MaxWidth(width).Render(card)
+	lines := []string{th.Style("muted").Render(ansi.Cut("commands", 0, contentWidth))}
+	if view.Above > 0 {
+		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↑ +%d above", view.Above), 0, contentWidth)))
 	}
-	return card
+	for _, row := range view.Rows {
+		presentation := presentListRow(row, th.Style("spinner"), th.Style("toolArgs"))
+		lines = append(lines, presentation.Style.Render(presentation.Text))
+	}
+	if view.Below > 0 {
+		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↓ +%d below", view.Below), 0, contentWidth)))
+	}
+	lines = append(lines, th.Style("muted").Render(ansi.Cut("↑/↓ select · pgup/pgdn page · tab/enter complete · esc dismiss", 0, contentWidth)))
+	return lipgloss.NewStyle().MaxWidth(width).Render(cardStyle.Render(strings.Join(lines, "\n")))
 }
 
 // paletteEmptyNote returns the one-line neutral note shown when the input is a
