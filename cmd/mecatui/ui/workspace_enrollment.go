@@ -250,6 +250,12 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 			// deadline outcome. Leave it silent and prevent a queued poll re-arm.
 			m.enrollment.presentationDelivered = false
 			return m, nil
+		case isWorkspaceEnrollmentCollision(msg.err.Error()):
+			_, notice, statusMsg := terminalWorkspaceEnrollmentNotice(client.WorkspaceEnrollmentFailed)
+			m.enrollment = workspaceEnrollmentState{Status: client.WorkspaceEnrollmentFailed, controlGen: m.enrollment.controlGen}
+			m.workspaceEnrollmentNotice = notice
+			m.statusMsg = statusMsg
+			return m, nil
 		default:
 			m.enrollment.err = oneLine(terminaltext.Sanitize(msg.err.Error()))
 			m.workspaceEnrollmentNotice = m.enrollment.err
@@ -358,6 +364,13 @@ func friendlyWorkspaceEnrollmentRejection(raw string) string {
 		return "workspace tools aren't connected — run /tools-connect before sending a prompt to enable protected tools"
 	}
 	return raw
+}
+
+func isWorkspaceEnrollmentCollision(raw string) bool {
+	return (strings.Contains(raw, "workspace tool ") &&
+		strings.Contains(raw, "conflicts with an existing registration") ||
+		strings.Contains(raw, "workspace enrollment registration collision")) &&
+		strings.Contains(raw, "correct the broker configuration and retry")
 }
 
 func isWorkspaceEnrollmentRejection(raw string) bool {

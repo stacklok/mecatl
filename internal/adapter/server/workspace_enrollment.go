@@ -44,26 +44,7 @@ func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session
 
 	pending, exists := sess.PendingWorkspaceEnrollment()
 	if !exists {
-		if len(sess.Conversation.Messages) != 0 {
-			if err := enroller.ResetWorkspaceEnrollment(ctx); err != nil {
-				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: reset workspace enrollment", ErrFailedPrecondition)
-			}
-			s.withdrawBrokerEngine(id)
-		}
-		presentation, beginErr := enroller.BeginWorkspaceEnrollment(ctx)
-		if beginErr != nil || !presentation.Valid() {
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
-		}
-		pending = pendingEnrollment(presentation.Ref)
-		if err := sess.BeginWorkspaceEnrollment(pending); err != nil {
-			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
-		}
-		if err := s.saveSession(ctx, sess); err != nil {
-			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
-			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
-		}
-		return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
+		return s.beginWorkspaceEnrollment(ctx, id, sess, enroller)
 	}
 
 	expectedRef := enrollmentRef(pending)
@@ -85,12 +66,23 @@ func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session
 	release()
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+	_, err = s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, toolNames, true)
+	if err != nil {
 		s.withdrawBrokerEngine(sess.ID)
+		var collision *WorkspaceEnrollmentCollisionError
+		if errors.As(err, &collision) {
+			if _, settleErr := s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentFailed); settleErr != nil {
+				return WorkspaceEnrollmentProjection{}, settleErr
+			}
+			return WorkspaceEnrollmentProjection{}, collision
+		}
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
 		s.withdrawBrokerEngine(sess.ID)
+		if _, settleErr := s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentFailed); settleErr != nil {
+			return WorkspaceEnrollmentProjection{}, settleErr
+		}
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
@@ -98,6 +90,29 @@ func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
+}
+
+func (s *Service) beginWorkspaceEnrollment(ctx context.Context, id session.SessionID, sess *session.Session, enroller brokercontract.WorkspaceEnrollmentAttachment) (WorkspaceEnrollmentProjection, error) {
+	if len(sess.Conversation.Messages) != 0 {
+		if err := enroller.ResetWorkspaceEnrollment(ctx); err != nil {
+			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: reset workspace enrollment", ErrFailedPrecondition)
+		}
+		s.withdrawBrokerEngine(id)
+	}
+	presentation, err := enroller.BeginWorkspaceEnrollment(ctx)
+	if err != nil || !presentation.Valid() {
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: begin workspace enrollment", ErrFailedPrecondition)
+	}
+	pending := pendingEnrollment(presentation.Ref)
+	if err := sess.BeginWorkspaceEnrollment(pending); err != nil {
+		cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
+	}
+	if err := s.saveSession(ctx, sess); err != nil {
+		cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
+	}
+	return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
 }
 
 func (s *Service) recordObservedWorkspaceEnrollment(ctx context.Context, sess *session.Session, pending session.PendingWorkspaceEnrollment, result brokercontract.WorkspaceEnrollmentResult) (WorkspaceEnrollmentProjection, error) {
@@ -206,6 +221,9 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return nil, nil, nil, ErrNotFound
+	}
+	if _, present := sess.WorkspaceEnrollmentBrokerKeys(); !present {
+		return sess, nil, nil, fmt.Errorf("%w: workspace enrollment provenance is unavailable; create a fresh session", ErrFailedPrecondition)
 	}
 	if sess.State == session.StateCompleted {
 		if err := sess.Reopen(); err != nil {

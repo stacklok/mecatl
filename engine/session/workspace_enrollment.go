@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"sort"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -117,9 +118,39 @@ func ValidWorkspaceEnrollmentToolNames(names []string) bool {
 	return true
 }
 
-// CompleteWorkspaceEnrollment atomically replaces the complete tool set after
-// the exact pending enrollment has produced a verified catalogue. Authority is
-// cloned from the aggregate so callers cannot supply or alter any non-tool axis.
+// WorkspaceEnrollmentBrokerKeys returns an independent copy of the exact broker
+// registration-key ledger and whether that provenance is present. Absent
+// provenance is unrepaired legacy state, not a known empty ledger.
+func (s *Session) WorkspaceEnrollmentBrokerKeys() ([]string, bool) {
+	return append([]string(nil), s.workspaceEnrollmentBrokerKeys...), s.workspaceEnrollmentBrokerKeysPresent
+}
+
+// RestoreWorkspaceEnrollmentBrokerKeys restores copied workspace-enrollment
+// provenance exactly once during root creation, snapshot restore, or successor
+// construction. A present empty ledger is valid; absent provenance must have no
+// keys.
+func (s *Session) RestoreWorkspaceEnrollmentBrokerKeys(keys []string, present bool) error {
+	if s.workspaceEnrollmentBrokerKeysRestored {
+		return fmt.Errorf("%w: workspace enrollment broker keys already restored", ErrIllegalTransition)
+	}
+	if s.State != StateIdle || s.pending != nil || s.pendingAuthorization != nil || s.pendingWorkspaceEnrollment != nil {
+		return fmt.Errorf("%w: restore workspace enrollment broker keys requires an idle session", ErrIllegalTransition)
+	}
+	if (!present && len(keys) != 0) || !ValidWorkspaceEnrollmentToolNames(keys) {
+		return fmt.Errorf("%w: invalid workspace enrollment broker-key ledger", ErrIllegalTransition)
+	}
+	s.workspaceEnrollmentBrokerKeys = append([]string(nil), keys...)
+	s.workspaceEnrollmentBrokerKeysPresent = present
+	s.workspaceEnrollmentBrokerKeysRestored = true
+	return nil
+}
+
+// CompleteWorkspaceEnrollment atomically replaces only the prior broker
+// registration-key bundle after the exact pending enrollment has produced a
+// verified catalogue. Authority is cloned from the aggregate so callers cannot
+// supply or alter any non-tool axis. Previously recorded broker keys absent from
+// carried authority remain excluded; keys newly introduced by this bundle remain
+// eligible for authority.
 func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error {
 	if s.pendingWorkspaceEnrollment == nil ||
 		s.pendingWorkspaceEnrollment.ID != pending.ID ||
@@ -130,15 +161,77 @@ func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment
 	if s.State != StateIdle || s.Conversation == nil {
 		return fmt.Errorf("%w: workspace enrollment requires an idle session", ErrIllegalTransition)
 	}
-	if !s.authorityBound || !ValidWorkspaceEnrollmentToolNames(exactTools) {
+	if !s.authorityBound || !s.workspaceEnrollmentBrokerKeysPresent || !ValidWorkspaceEnrollmentToolNames(exactTools) {
 		return fmt.Errorf("%w: invalid workspace enrollment tool set", ErrIllegalTransition)
 	}
 
-	exact := s.Authority.Clone()
-	exact.CapabilitySet.Tools = append([]string(nil), exactTools...)
-	s.Authority = exact
+	completedAuthority, ledger, err := completeWorkspaceEnrollmentAuthority(
+		s.Authority, s.workspaceEnrollmentBrokerKeys, exactTools,
+	)
+	if err != nil {
+		return err
+	}
+	s.Authority = completedAuthority
+	s.workspaceEnrollmentBrokerKeys = ledger
+	s.workspaceEnrollmentBrokerKeysPresent = true
 	s.pendingWorkspaceEnrollment = nil
 	return nil
+}
+
+func completeWorkspaceEnrollmentAuthority(
+	authority Authority, priorBrokerKeys, exactTools []string,
+) (Authority, []string, error) {
+	priorBroker := make(map[string]struct{}, len(priorBrokerKeys))
+	for _, name := range priorBrokerKeys {
+		priorBroker[name] = struct{}{}
+	}
+	priorAuthority := make(map[string]struct{}, len(authority.CapabilitySet.Tools))
+	for _, name := range authority.CapabilitySet.Tools {
+		priorAuthority[name] = struct{}{}
+	}
+	excluded := make(map[string]struct{}, len(priorBroker))
+	for name := range priorBroker {
+		if _, included := priorAuthority[name]; !included {
+			excluded[name] = struct{}{}
+		}
+	}
+
+	completed := authority.Clone()
+	replacement := make([]string, 0, len(completed.CapabilitySet.Tools)+len(exactTools))
+	replacementSet := make(map[string]struct{}, len(completed.CapabilitySet.Tools)+len(exactTools))
+	for _, name := range completed.CapabilitySet.Tools {
+		if _, broker := priorBroker[name]; !broker {
+			replacement = append(replacement, name)
+			replacementSet[name] = struct{}{}
+		}
+	}
+	for _, name := range exactTools {
+		if _, excluded := excluded[name]; !excluded {
+			if _, alreadyPresent := replacementSet[name]; !alreadyPresent {
+				replacement = append(replacement, name)
+				replacementSet[name] = struct{}{}
+			}
+		}
+	}
+	ledger := append([]string(nil), exactTools...)
+	ledgerSet := make(map[string]struct{}, len(exactTools))
+	for _, name := range exactTools {
+		ledgerSet[name] = struct{}{}
+	}
+	appendedExcluded := make([]string, 0, len(excluded))
+	for name := range excluded {
+		if _, included := ledgerSet[name]; !included {
+			appendedExcluded = append(appendedExcluded, name)
+		}
+	}
+	sort.Strings(appendedExcluded)
+	ledger = append(ledger, appendedExcluded...)
+	if !ValidWorkspaceEnrollmentToolNames(ledger) {
+		return Authority{}, nil, fmt.Errorf("%w: invalid workspace enrollment broker-key ledger", ErrIllegalTransition)
+	}
+
+	completed.CapabilitySet.Tools = replacement
+	return completed, ledger, nil
 }
 
 // AbortWorkspaceEnrollment clears only the enrollment whose exact identifier

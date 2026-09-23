@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +59,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory(t *testing.T)
 		t.Fatal("broker attachment does not expose query wrapper")
 	}
 	tools = append(tools, queryAttachment.CallMcpWithQueryTool())
-	result, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "/workspace", session.ModeDefault, tools)
+	result, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "/workspace", session.ModeDefault, tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory(t *testing.T)
 	if count != 1 {
 		t.Fatalf("model received %d query wrappers", count)
 	}
-	empty, err := factory(t.Context(), server.ProviderSelector{}, nil, server.ProfileDefault, "/workspace", session.ModeDefault, nil)
+	empty, err := factory(t.Context(), server.ProviderSelector{}, nil, server.ProfileDefault, "/workspace", session.ModeDefault, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +166,54 @@ func TestCallMcpWithQueryBrokerSupport_BrokerOnlyServiceRegistration(t *testing.
 			}
 		})
 	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario1_PreservesConfiguredBrokerDeny(t *testing.T) {
+	const brokerTool = "mcp__calendar__list"
+	var calls atomic.Int32
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("broker-call", brokerTool, json.RawMessage(`{}`))),
+		mockllm.TextTurn("done"),
+	)
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace:         t.TempDir(),
+		MockProvider:      provider,
+		NoSoul:            true,
+		PermissionConfigs: []string{writeOperatorSettingsFile(t, "permissions:\n  deny:\n    - "+brokerTool+"\n")},
+		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{
+			Routes: []permconfig.MCPServerProfile{{Name: "calendar", Auth: permconfig.MCPAuthProfile{Mode: "none"}}},
+		}),
+		MCPBrokerDiscovered: []mcpbroker.ToolDefinition{{
+			Backend: "calendar", Name: brokerTool, Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true,
+		}},
+		MCPBrokerCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+			calls.Add(1)
+			return session.NewToolResult("broker-call", "unexpected execution"), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "use the calendar")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	defer built.Service.FinishRun(sess.ID, run)
+	for event := range run.Events() {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.IsError {
+			if got := calls.Load(); got != 0 {
+				t.Fatalf("configured deny executed broker tool %d times", got)
+			}
+			return
+		}
+	}
+	t.Fatal("configured permissions.deny did not reject the broker tool")
 }
 
 func TestBuiltMountsFixedMCPBrokerHandlerBundle(t *testing.T) {
