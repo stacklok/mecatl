@@ -46,26 +46,35 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 	if d == nil || d.Daemon == nil || d.Repository == nil || listener == nil {
 		return errors.New("repository microvmd server is not configured")
 	}
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	go func() {
+		select {
+		case <-d.Daemon.shutdown:
+			cancelServe()
+		case <-serveCtx.Done():
+		}
+	}()
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(serveCtx), 10*time.Second)
 		defer cancel()
 		retErr = errors.Join(retErr, d.Repository.Runtime.Shutdown(shutdownCtx))
 	}()
 	go func() {
-		<-ctx.Done()
+		<-serveCtx.Done()
 		_ = listener.Close()
 	}()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+			if serveCtx.Err() != nil {
+				return serveCtx.Err()
 			}
 			return err
 		}
 		go func() {
 			defer func() { _ = conn.Close() }()
-			if err := d.Daemon.ServeConn(ctx, conn); err != nil && d.observer != nil {
+			if err := d.Daemon.ServeConn(serveCtx, conn); err != nil && d.observer != nil {
 				d.observer.LifecycleRequestFailed(err)
 			}
 		}()

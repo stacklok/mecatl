@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	microvmclient "github.com/stacklok/mecatl/internal/adapter/microvm"
@@ -117,6 +118,105 @@ func TestDefaultPathsBoundsDerivedRepositoryNetworkSocket(t *testing.T) {
 	if paths.RuntimeDir == filepath.Join("/dev/shm/daily-1234567", "mecatl-microvm") {
 		t.Fatalf("overlong XDG runtime directory was accepted: %q", paths.RuntimeDir)
 	}
+}
+
+func TestLockManagerRetriesOnlyEINTR(t *testing.T) {
+	var lockCalls, unlockCalls int
+	flock := func(_ int, how int) error {
+		switch how {
+		case syscall.LOCK_EX:
+			lockCalls++
+			if lockCalls == 1 {
+				return syscall.EINTR
+			}
+		case syscall.LOCK_UN:
+			unlockCalls++
+			if unlockCalls == 1 {
+				return syscall.EINTR
+			}
+		}
+		return nil
+	}
+	unlock, err := lockManagerWithFlock(t.TempDir(), flock)
+	if err != nil {
+		t.Fatalf("lockManager: %v", err)
+	}
+	unlock()
+	if lockCalls != 2 || unlockCalls != 2 {
+		t.Fatalf("flock calls: lock=%d unlock=%d, want 2 each", lockCalls, unlockCalls)
+	}
+
+	want := syscall.EBADF
+	calls := 0
+	flock = func(int, int) error {
+		calls++
+		return want
+	}
+	if err := flockRetryEINTR(flock, 1, syscall.LOCK_EX); !errors.Is(err, want) || calls != 1 {
+		t.Fatalf("non-EINTR error = %v after %d calls, want %v after one call", err, calls, want)
+	}
+}
+
+func TestRefuseSymlinkAncestorsIsBoundedByPrivateRoot(t *testing.T) {
+	t.Run("ambient symlink above root is allowed", func(t *testing.T) {
+		base := t.TempDir()
+		realAmbient := filepath.Join(base, "private", "var")
+		if err := os.MkdirAll(realAmbient, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		ambient := filepath.Join(base, "var")
+		if err := os.Symlink(realAmbient, ambient); err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Join(ambient, "manager")
+		if err := secureMkdirAll(root, root); err != nil {
+			t.Fatalf("create private root below ambient symlink: %v", err)
+		}
+		if err := secureMkdirAll(root, filepath.Join(root, "nested", "leaf")); err != nil {
+			t.Fatalf("create below private root: %v", err)
+		}
+	})
+
+	t.Run("root and descendants reject symlinks", func(t *testing.T) {
+		base := t.TempDir()
+		realRoot := filepath.Join(base, "real-root")
+		if err := os.Mkdir(realRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		rootLink := filepath.Join(base, "root-link")
+		if err := os.Symlink(realRoot, rootLink); err != nil {
+			t.Fatal(err)
+		}
+		if err := refuseSymlinkAncestors(rootLink, filepath.Join(rootLink, "leaf")); err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("symlink root error = %v", err)
+		}
+
+		root := t.TempDir()
+		elsewhere := t.TempDir()
+		inside := filepath.Join(root, "inside")
+		if err := os.Symlink(elsewhere, inside); err != nil {
+			t.Fatal(err)
+		}
+		if err := refuseSymlinkAncestors(root, filepath.Join(inside, "leaf")); err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("symlink descendant error = %v", err)
+		}
+	})
+
+	t.Run("normalization stays confined", func(t *testing.T) {
+		root := t.TempDir()
+		if err := refuseSymlinkAncestors(root+string(filepath.Separator), filepath.Join(root, "nested", "..", "leaf")); err != nil {
+			t.Fatalf("clean absolute path: %v", err)
+		}
+		for _, tc := range []struct{ root, path string }{
+			{"", root},
+			{root, "relative"},
+			{root, filepath.Join(filepath.Dir(root), "outside")},
+		} {
+			if err := refuseSymlinkAncestors(tc.root, tc.path); err == nil {
+				t.Fatalf("accepted root=%q path=%q", tc.root, tc.path)
+			}
+		}
+	})
 }
 
 func TestEnsureReadyTreatsDesiredGuestEgressAsAuthoritative(t *testing.T) {
@@ -606,7 +706,7 @@ func (f *fakeOps) Preflight(context.Context, Paths) error {
 	}
 	return f.stageError("preflight")
 }
-func (f *fakeOps) Download(context.Context, Release, string) (string, error) {
+func (f *fakeOps) Download(context.Context, Release, string, string) (string, error) {
 	f.calls = append(f.calls, "download")
 	return "/bundle/manifest.json", f.stageError("download")
 }
@@ -614,7 +714,7 @@ func (f *fakeOps) Verify(context.Context, Release, string) error {
 	f.calls = append(f.calls, "verify")
 	return f.stageError("verify")
 }
-func (f *fakeOps) Install(_ context.Context, _ string, installRoot string) (InstalledArtifacts, error) {
+func (f *fakeOps) Install(_ context.Context, _, _ string, installRoot string) (InstalledArtifacts, error) {
 	f.calls = append(f.calls, "install")
 	if err := f.stageError("install"); err != nil {
 		return InstalledArtifacts{}, err

@@ -371,6 +371,26 @@ func (c *Client) DaemonInfo(ctx context.Context) (DaemonInfo, error) {
 	return info, nil
 }
 
+// ShutdownDaemon asks the exact authenticated daemon identity to stop gracefully.
+// It is an internal manager operation, not a placement or user administration API.
+func (c *Client) ShutdownDaemon(ctx context.Context, expected DaemonInfo) error {
+	if expected.ProtocolVersion != protocolVersion || expected.ReleaseIdentity == "" || expected.BinaryIdentity == "" || expected.ConfigDigest == "" || expected.PolicyRevision == "" || len(expected.Profiles) == 0 || expected.Socket != c.endpoint {
+		return errors.New("microvmd shutdown identity is incomplete or mismatched")
+	}
+	payload, err := json.Marshal(expected)
+	if err != nil {
+		return fmt.Errorf("encode microvmd shutdown identity: %w", err)
+	}
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "shutdown", Payload: payload})
+	if err != nil {
+		return err
+	}
+	if response.Binding != (binding{}) || response.Created != nil || response.Stream != nil || len(response.Payload) != 0 {
+		return errors.New("microvmd returned malformed shutdown acknowledgement")
+	}
+	return nil
+}
+
 // LifecycleMetrics is the bounded operator snapshot exposed by microvmd. The
 // root adapter projects only counters needed by host-side operational checks.
 type LifecycleMetrics struct {

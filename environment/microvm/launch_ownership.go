@@ -17,7 +17,7 @@ var (
 	ErrLaunchReceiptPending = errors.New("microvm launch receipt is pending")
 )
 
-// LaunchOwnershipConfig configures the concrete Linux runner launch owner.
+// LaunchOwnershipConfig configures the concrete host runner launch owner.
 type LaunchOwnershipConfig struct {
 	Root         string
 	LauncherPath string

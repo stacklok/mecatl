@@ -64,6 +64,10 @@ func captureForkBaseOnce(ctx context.Context, parent string) (string, error) {
 }
 
 func mergeRepositoryWorktrees(ctx context.Context, parentPath, childPath, base string) error {
+	return mergeRepositoryWorktreesWithOwnership(ctx, parentPath, childPath, base, prepareRepositoryOwnership)
+}
+
+func mergeRepositoryWorktreesWithOwnership(ctx context.Context, parentPath, childPath, base string, prepare repositoryOwnershipPreparer) error {
 	if parentPath == "" || childPath == "" || base == "" || parentPath == childPath {
 		return ErrInvalidFork
 	}
@@ -94,6 +98,9 @@ func mergeRepositoryWorktrees(ctx context.Context, parentPath, childPath, base s
 	}
 	if _, err := gitexec.Run(ctx, parentPath, patch, "apply", "--binary", "-"); err != nil {
 		return fmt.Errorf("apply microvm child patch: %w", err)
+	}
+	if err := prepare(ctx, parentPath, "."); err != nil {
+		return fmt.Errorf("refresh guest ownership after patch already applied: %w", err)
 	}
 	return nil
 }

@@ -55,9 +55,11 @@ type managedProcessRecord struct {
 // DefaultOperations implements the real local OS, release, installer, and
 // daemon boundary.
 type DefaultOperations struct {
-	HTTPClient   *http.Client
-	GOOS, GOARCH string
-	usernsProbe  func(context.Context) error
+	HTTPClient         *http.Client
+	GOOS, GOARCH       string
+	usernsProbe        func(context.Context) error
+	darwinVersionProbe func(context.Context) (string, error)
+	darwinHVFProbe     func(context.Context) (string, error)
 }
 
 func (o *DefaultOperations) platform() (string, string) {
@@ -76,7 +78,7 @@ func (o *DefaultOperations) platform() (string, string) {
 func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 	goos, goarch := o.platform()
 	if !supportedPlatform(goos, goarch) {
-		return fmt.Errorf("%w: microvm-local supports Linux amd64 with KVM only; use host-local on this host", ErrUnsupportedPlatform)
+		return fmt.Errorf("%w: microvm-local supports Linux amd64 with KVM or Darwin arm64 with macOS 15+ Hypervisor.framework; use host-local on this host", ErrUnsupportedPlatform)
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return errors.New("git is required for microVM worktrees")
@@ -98,19 +100,33 @@ func (o *DefaultOperations) Preflight(ctx context.Context, _ Paths) error {
 		}
 		return file.Close()
 	}
-	version, err := scrubbedCommand(exec.CommandContext(ctx, "sw_vers", "-productVersion")).Output()
-	if err != nil || darwinMajor(strings.TrimSpace(string(version))) < 15 {
+	versionProbe := o.darwinVersionProbe
+	if versionProbe == nil {
+		versionProbe = func(ctx context.Context) (string, error) {
+			output, err := scrubbedCommand(exec.CommandContext(ctx, "sw_vers", "-productVersion")).Output()
+			return strings.TrimSpace(string(output)), err
+		}
+	}
+	version, err := versionProbe(ctx)
+	if err != nil || darwinMajor(version) < 15 {
 		return errors.New("microVMs require Apple Silicon macOS 15 or newer")
 	}
-	output, err := scrubbedCommand(exec.CommandContext(ctx, "sysctl", "-n", "kern.hv_support")).Output()
-	if err != nil || strings.TrimSpace(string(output)) != "1" {
+	hvfProbe := o.darwinHVFProbe
+	if hvfProbe == nil {
+		hvfProbe = func(ctx context.Context) (string, error) {
+			output, err := scrubbedCommand(exec.CommandContext(ctx, "sysctl", "-n", "kern.hv_support")).Output()
+			return strings.TrimSpace(string(output)), err
+		}
+	}
+	output, err := hvfProbe(ctx)
+	if err != nil || output != "1" {
 		return errors.New("hypervisor.framework is unavailable to the current user")
 	}
 	return nil
 }
 
 func supportedPlatform(goos, goarch string) bool {
-	return goos == "linux" && goarch == "amd64"
+	return (goos == "linux" && goarch == "amd64") || (goos == "darwin" && goarch == "arm64")
 }
 
 func darwinMajor(version string) int {
@@ -119,14 +135,14 @@ func darwinMajor(version string) int {
 }
 
 // Download obtains, digest-verifies, and safely extracts one release bundle.
-func (o *DefaultOperations) Download(ctx context.Context, release Release, destination string) (string, error) { //nolint:gocyclo // explicit fail-closed download transaction
+func (o *DefaultOperations) Download(ctx context.Context, release Release, root, destination string) (string, error) { //nolint:gocyclo // explicit fail-closed download transaction
 	if release.bundlePath == "" {
 		u, err := url.Parse(release.URL)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
 			return "", errors.New("release URL must be an absolute HTTPS URL without userinfo or fragment")
 		}
 	}
-	if err := secureMkdirAll(destination); err != nil {
+	if err := secureMkdirAll(root, destination); err != nil {
 		return "", err
 	}
 	archivePath := filepath.Join(destination, "release.tar.gz")
@@ -213,10 +229,10 @@ func (o *DefaultOperations) Download(ctx context.Context, release Release, desti
 	if err := os.RemoveAll(unpacked); err != nil {
 		return "", err
 	}
-	if err := secureMkdirAll(unpacked); err != nil {
+	if err := secureMkdirAll(root, unpacked); err != nil {
 		return "", err
 	}
-	if err := extractReleaseBundle(archivePath, unpacked); err != nil {
+	if err := extractReleaseBundle(root, archivePath, unpacked); err != nil {
 		_ = os.RemoveAll(unpacked)
 		return "", err
 	}
@@ -229,7 +245,7 @@ func (o *DefaultOperations) Download(ctx context.Context, release Release, desti
 	return manifest, nil
 }
 
-func extractReleaseBundle(archivePath, destination string) error { //nolint:gocyclo // archive safety checks remain explicit
+func extractReleaseBundle(root, archivePath, destination string) error { //nolint:gocyclo // archive safety checks remain explicit
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -264,14 +280,14 @@ func extractReleaseBundle(archivePath, destination string) error { //nolint:gocy
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := secureMkdirAll(target); err != nil {
+			if err := secureMkdirAll(root, target); err != nil {
 				return err
 			}
 		case tar.TypeReg:
 			if header.Mode < 0 || header.Mode > 0o777 {
 				return fmt.Errorf("invalid release bundle mode for %s", header.Name)
 			}
-			if err := secureMkdirAll(filepath.Dir(target)); err != nil {
+			if err := secureMkdirAll(root, filepath.Dir(target)); err != nil {
 				return err
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, os.FileMode(header.Mode)&0o700) // #nosec G115 -- bounded to Unix permission bits above.
@@ -313,13 +329,13 @@ func (*DefaultOperations) Verify(_ context.Context, release Release, manifest st
 }
 
 // Install executes the installer from the verified bundle.
-func (o *DefaultOperations) Install(ctx context.Context, manifest, installRoot string) (InstalledArtifacts, error) {
+func (o *DefaultOperations) Install(ctx context.Context, manifest, root, installRoot string) (InstalledArtifacts, error) {
 	installerData, err := readBundleInstaller(manifest)
 	if err != nil {
 		return InstalledArtifacts{}, err
 	}
 	installer := filepath.Join(filepath.Dir(manifest), ".bundle-installer")
-	if err := atomicWriteMode(installer, installerData, 0o700); err != nil {
+	if err := atomicWriteMode(root, installer, installerData, 0o700); err != nil {
 		return InstalledArtifacts{}, fmt.Errorf("materialize verified installer: %w", err)
 	}
 	cmd := scrubbedCommand(exec.CommandContext(ctx, installer, manifest, installRoot)) // #nosec G204 -- executable and each argument are distinct verified paths.
@@ -340,7 +356,7 @@ func (o *DefaultOperations) Install(ctx context.Context, manifest, installRoot s
 	goos, goarch := o.platform()
 	source := filepath.Join(filepath.Dir(manifest), "mecatl-microvmd-"+goos+"-"+goarch)
 	target := filepath.Join(filepath.Dir(installRoot), "bin", "mecatl-microvmd")
-	if err := copyVerifiedExecutable(source, target); err != nil {
+	if err := copyVerifiedExecutable(root, source, target); err != nil {
 		return InstalledArtifacts{}, fmt.Errorf("install verified microvmd binary: %w", err)
 	}
 	return installed, nil
@@ -385,7 +401,7 @@ func readBundleInstaller(manifest string) ([]byte, error) {
 	return nil, errors.New("verified release bundle omitted its installer")
 }
 
-func copyVerifiedExecutable(source, target string) error {
+func copyVerifiedExecutable(root, source, target string) error {
 	info, err := os.Lstat(source)
 	if err != nil {
 		return err
@@ -393,7 +409,7 @@ func copyVerifiedExecutable(source, target string) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 256<<20 {
 		return errors.New("verified microvmd binary is not a bounded regular file")
 	}
-	if err := secureMkdirAll(filepath.Dir(target)); err != nil {
+	if err := secureMkdirAll(root, filepath.Dir(target)); err != nil {
 		return err
 	}
 	in, err := os.Open(source)
@@ -479,7 +495,7 @@ func (*DefaultOperations) Start(_ context.Context, paths Paths) error {
 		return err
 	}
 	pid := []byte(strconv.Itoa(cmd.Process.Pid) + "\n")
-	if err := atomicWrite(filepath.Join(paths.StateDir, "microvmd.pid"), pid); err != nil {
+	if err := atomicWrite(paths.StateDir, filepath.Join(paths.StateDir, "microvmd.pid"), pid); err != nil {
 		_ = cmd.Process.Kill()
 		_ = log.Close()
 		return err
@@ -502,7 +518,7 @@ func (*DefaultOperations) Start(_ context.Context, paths Paths) error {
 		_ = log.Close()
 		return err
 	}
-	if err := atomicWrite(filepath.Join(paths.StateDir, "microvmd.process.json"), append(record, '\n')); err != nil {
+	if err := atomicWrite(paths.StateDir, filepath.Join(paths.StateDir, "microvmd.process.json"), append(record, '\n')); err != nil {
 		_ = cmd.Process.Kill()
 		_ = log.Close()
 		return err
@@ -559,45 +575,16 @@ func (o *DefaultOperations) Doctor(ctx context.Context, paths Paths) (string, er
 	return string(output), nil
 }
 
-// Stop signals only the manager-recorded daemon process.
+// Stop gracefully stops only the exact manager-owned daemon.
 func (*DefaultOperations) Stop(ctx context.Context, paths Paths) error {
-	data, err := os.ReadFile(filepath.Join(paths.StateDir, "microvmd.pid"))
-	if errors.Is(err, fs.ErrNotExist) {
+	ctx, cancel := managedStopContext(ctx)
+	defer cancel()
+	requested, err := requestManagedStop(ctx, paths)
+	if err != nil {
+		return err
+	}
+	if !requested {
 		return nil
-	}
-	if err != nil {
-		return err
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 1 {
-		return errors.New("invalid managed microvmd pid")
-	}
-	if err := validateOwnerSocket(paths.Socket); err != nil {
-		return fmt.Errorf("refusing to signal recorded daemon without its owner-only socket: %w", err)
-	}
-	recordData, err := os.ReadFile(filepath.Join(paths.StateDir, "microvmd.process.json"))
-	if err != nil {
-		return fmt.Errorf("managed microvmd process identity is unavailable; use the user service manager and do not signal the recorded PID: %w", err)
-	}
-	var record managedProcessRecord
-	if err := json.Unmarshal(recordData, &record); err != nil || record.Schema != managedProcessSchema || record.PID != pid {
-		return errors.New("managed microvmd process identity is invalid; use the user service manager and do not signal the recorded PID")
-	}
-	handle, err := openManagedProcess(pid)
-	if err != nil {
-		return fmt.Errorf("open exact managed microvmd process: %w", err)
-	}
-	defer func() { _ = handle.close() }()
-	if err := validateManagedProcess(record, paths); err != nil {
-		return err
-	}
-	if err := handle.signal(); err != nil {
-		return err
-	}
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
 	}
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()

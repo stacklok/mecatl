@@ -219,9 +219,9 @@ type DaemonInfo = microvmclient.DaemonInfo
 // implementation; tests can keep the complete manager journey offline.
 type Operations interface {
 	Preflight(context.Context, Paths) error
-	Download(context.Context, Release, string) (string, error)
+	Download(ctx context.Context, release Release, root, destination string) (string, error)
 	Verify(context.Context, Release, string) error
-	Install(context.Context, string, string) (InstalledArtifacts, error)
+	Install(ctx context.Context, manifest, root, installRoot string) (InstalledArtifacts, error)
 	Running(context.Context, Paths) (bool, error)
 	DaemonInfo(context.Context, Paths) (DaemonInfo, error)
 	Start(context.Context, Paths) error
@@ -327,7 +327,7 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 			return "", readinessError(StageDaemon, errors.New("unconfigured microvmd has existing repository runtime state; refusing to overwrite or delete it"))
 		}
 		ReportReadinessStage(ctx, StageDownload)
-		manifest, err := m.ops.Download(ctx, request.Release, filepath.Join(m.paths.DataDir, "download"))
+		manifest, err := m.ops.Download(ctx, request.Release, m.paths.DataDir, filepath.Join(m.paths.DataDir, "download"))
 		if err != nil {
 			return "", readinessError(StageDownload, fmt.Errorf("download release bundle: %w", err))
 		}
@@ -336,7 +336,7 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 			return "", readinessError(StageVerify, fmt.Errorf("verify release bundle: %w", err))
 		}
 		ReportReadinessStage(ctx, StageInstall)
-		installed, err := m.ops.Install(ctx, manifest, filepath.Join(m.paths.DataDir, "verified"))
+		installed, err := m.ops.Install(ctx, manifest, m.paths.DataDir, filepath.Join(m.paths.DataDir, "verified"))
 		if err != nil {
 			return "", readinessError(StageInstall, fmt.Errorf("install verified release bundle: %w", err))
 		}
@@ -344,7 +344,7 @@ func (m *Manager) EnsureReady(ctx context.Context, request ReadyRequest) (string
 			return "", readinessError(StageInstall, err)
 		}
 		if len(request.Policy.publicKey) != 0 {
-			if err := atomicWrite(request.Policy.PublicKey, request.Policy.publicKey); err != nil {
+			if err := atomicWrite(m.paths.DataDir, request.Policy.PublicKey, request.Policy.publicKey); err != nil {
 				return "", readinessError(StageInstall, fmt.Errorf("materialize local microVM release public key: %w", err))
 			}
 		}
@@ -664,7 +664,7 @@ func (m *Manager) Doctor(ctx context.Context) (string, error) {
 	}
 
 	if errors.Is(preflightErr, ErrUnsupportedPlatform) {
-		_, _ = fmt.Fprintln(&report, "next: microvm-local is supported only on Linux amd64 with KVM; use host-local on this host")
+		_, _ = fmt.Fprintln(&report, "next: microvm-local is supported only on Linux amd64 with KVM or Darwin arm64 with macOS 15+ Hypervisor.framework; use host-local on this host")
 	} else if preflightErr != nil {
 		_, _ = fmt.Fprintln(&report, "next: fix the failed host prerequisite, then rerun doctor")
 	} else if !configured && !running && runningErr == nil {
@@ -871,7 +871,7 @@ func writeDaemonConfig(path string, paths Paths, release Release, policy Policy,
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, append(data, '\n'))
+	return atomicWrite(filepath.Dir(paths.ConfigFile), path, append(data, '\n'))
 }
 
 func expectedDaemonInfo(paths Paths) (DaemonInfo, error) {
@@ -925,10 +925,14 @@ func preparePaths(paths Paths) error {
 	if err := validatePaths(paths); err != nil {
 		return err
 	}
-	for _, dir := range []string{paths.StateDir, paths.RuntimeDir, paths.DataDir, filepath.Dir(paths.ConfigFile), filepath.Dir(paths.DaemonBinary)} {
-		if err := secureMkdirAll(dir); err != nil {
+	// Establish each manager-private root before creating children beneath it.
+	for _, root := range []string{paths.StateDir, paths.RuntimeDir, paths.DataDir, filepath.Dir(paths.ConfigFile)} {
+		if err := secureMkdirAll(root, root); err != nil {
 			return err
 		}
+	}
+	if err := secureMkdirAll(paths.DataDir, filepath.Dir(paths.DaemonBinary)); err != nil {
+		return err
 	}
 	for _, file := range []string{paths.ConfigFile, paths.UserSettings} {
 		if err := refuseSymlink(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -951,6 +955,10 @@ func validatePaths(paths Paths) error {
 }
 
 func lockManager(stateDir string) (func(), error) {
+	return lockManagerWithFlock(stateDir, syscall.Flock)
+}
+
+func lockManagerWithFlock(stateDir string, flock func(int, int) error) (func(), error) {
 	info, err := os.Lstat(stateDir)
 	if err != nil {
 		return nil, err
@@ -962,18 +970,36 @@ func lockManager(stateDir string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockRetryEINTR(flock, int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		_ = lock.Close()
 		return nil, err
 	}
 	return func() {
-		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = flockRetryEINTR(flock, int(lock.Fd()), syscall.LOCK_UN)
 		_ = lock.Close()
 	}, nil
 }
 
-func secureMkdirAll(path string) error {
-	if err := refuseSymlinkAncestors(path); err != nil {
+func flockRetryEINTR(flock func(int, int) error, fd, how int) error {
+	for {
+		err := flock(fd, how)
+		if !errors.Is(err, syscall.EINTR) {
+			return err
+		}
+	}
+}
+
+func secureMkdirAll(root, path string) error {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if err := refuseSymlinkAncestors(root, path); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(root); err == nil {
+		if err := validatePrivateDir(root); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
@@ -982,6 +1008,10 @@ func secureMkdirAll(path string) error {
 	if err := os.Chmod(path, 0o700); err != nil { // #nosec G302 -- this is an owner-only directory, not a file.
 		return err
 	}
+	return validatePrivateDir(path)
+}
+
+func validatePrivateDir(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -992,24 +1022,38 @@ func secureMkdirAll(path string) error {
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Getuid() {
 		return fmt.Errorf("refusing directory not owned by current user: %s", path)
 	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("refusing directory not private to current user: %s", path)
+	}
 	return nil
 }
 
-func refuseSymlinkAncestors(path string) error {
+// refuseSymlinkAncestors checks the manager-owned range from root through path.
+// Host ancestors above root are intentionally outside this check: on macOS,
+// ordinary roots below /var or /tmp otherwise fail because those host paths are
+// symlinks. root itself remains checked and must be a private directory before
+// callers create or write any descendants.
+func refuseSymlinkAncestors(root, path string) error {
+	if root == "" || path == "" || !filepath.IsAbs(root) || !filepath.IsAbs(path) {
+		return errors.New("microVM manager root and path must be absolute")
+	}
+	root = filepath.Clean(root)
 	clean := filepath.Clean(path)
-	for current := clean; current != filepath.Dir(current); current = filepath.Dir(current) {
+	if !pathWithin(root, clean) {
+		return fmt.Errorf("refusing path %s outside its root %s", clean, root)
+	}
+	for current := clean; ; current = filepath.Dir(current) {
 		info, err := os.Lstat(current)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing symlink path %s", current)
 		}
+		if current == root {
+			return nil
+		}
 	}
-	return nil
 }
 
 func refuseSymlink(path string) error {
@@ -1023,15 +1067,15 @@ func refuseSymlink(path string) error {
 	return nil
 }
 
-func atomicWrite(path string, data []byte) error {
-	return atomicWriteMode(path, data, 0o600)
+func atomicWrite(root, path string, data []byte) error {
+	return atomicWriteMode(root, path, data, 0o600)
 }
 
-func atomicWriteMode(path string, data []byte, mode fs.FileMode) error {
-	if err := refuseSymlinkAncestors(path); err != nil {
+func atomicWriteMode(root, path string, data []byte, mode fs.FileMode) error {
+	if err := refuseSymlinkAncestors(root, path); err != nil {
 		return err
 	}
-	if err := secureMkdirAll(filepath.Dir(path)); err != nil {
+	if err := secureMkdirAll(root, filepath.Dir(path)); err != nil {
 		return err
 	}
 	if err := refuseSymlink(path); err != nil && !errors.Is(err, fs.ErrNotExist) {

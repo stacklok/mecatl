@@ -50,6 +50,9 @@ const (
 	LifecycleInventory LifecycleOperation = "inventory"
 	// LifecycleChildDelete force-cleans an exact delegated child generation.
 	LifecycleChildDelete LifecycleOperation = "child-delete"
+	// lifecycleShutdown asks the authenticated owner to stop this daemon. It is
+	// manager-private and deliberately absent from public lifecycle clients.
+	lifecycleShutdown LifecycleOperation = "shutdown"
 )
 
 var errLifecycleProtocol = errors.New("invalid microvmd lifecycle protocol request")
@@ -223,6 +226,8 @@ type Daemon struct {
 	repositoryMu          sync.Mutex
 	repositoryBindings    map[string]repositoryDaemonBinding
 	inventoryKey          [sha256.Size]byte
+	shutdown              chan struct{}
+	shutdownOnce          sync.Once
 }
 
 // NewDaemon constructs the fail-closed local lifecycle service.
@@ -235,6 +240,7 @@ func NewDaemon(cfg DaemonConfig) (*Daemon, error) {
 		repositoryAttachments: cfg.RepositoryAttachments, repositoryProvisioner: cfg.RepositoryProvisioner,
 		repositoryStartupErr: cfg.RepositoryStartupError,
 		repositoryBindings:   make(map[string]repositoryDaemonBinding),
+		shutdown:             make(chan struct{}),
 	}
 	if _, err := rand.Read(daemon.inventoryKey[:]); err != nil {
 		return nil, fmt.Errorf("initialize microvmd inventory pagination: %w", err)
@@ -292,6 +298,9 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	if response.Err != nil {
 		return newLifecycleServeError(request.Operation, response.ErrorCode, response.Err)
 	}
+	if request.Operation == lifecycleShutdown {
+		d.shutdownOnce.Do(func() { close(d.shutdown) })
+	}
 	return nil
 }
 
@@ -345,6 +354,11 @@ func (d *Daemon) handleStandardRequest(ctx context.Context, request LifecycleReq
 			break
 		}
 		response.Payload, err = json.Marshal(d.info)
+	case lifecycleShutdown:
+		var expected DaemonInfo
+		if request.Binding != (control.Binding{}) || request.Provision != nil || len(request.Payload) == 0 || json.Unmarshal(request.Payload, &expected) != nil || !expected.Equal(d.info) {
+			err = errLifecycleProtocol
+		}
 	case LifecycleMetrics:
 		if d.observer == nil || request.Binding != (control.Binding{}) || request.Provision != nil {
 			err = errLifecycleProtocol

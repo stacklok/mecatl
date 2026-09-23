@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package microvmmanager
 
@@ -27,7 +27,13 @@ func daemonOwnershipHeld(stateDir string) (bool, error) {
 	if !ok || uid < 0 || uint64(uid) > uint64(^uint32(0)) || stat.Uid != uint32(uid) { // #nosec G115 -- range checked above.
 		return false, errors.New("microvmd service ownership is not owned by the current user")
 	}
-	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	for {
+		err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return true, nil
 		}

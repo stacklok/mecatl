@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package main
 
@@ -39,6 +39,9 @@ func acquireDaemonOwnership(stateDir string) (*daemonOwnership, error) {
 				return nil, errors.New("microvmd service ownership is not a private owner-controlled regular file")
 			}
 			return &daemonOwnership{file: file}, nil
+		}
+		if errors.Is(err, syscall.EINTR) {
+			continue
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			_ = file.Close()

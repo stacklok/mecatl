@@ -17,7 +17,10 @@ func platformProcessStartIdentity(ctx context.Context, pid int) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	if info.Proc.P_pid != int32(pid) {
+	if pid <= 0 || uint64(pid) > uint64(^uint32(0)>>1) {
+		return "", ErrEnvironmentUnavailable
+	}
+	if info.Proc.P_pid != int32(pid) { // #nosec G115 -- range checked above.
 		return "", ErrEnvironmentUnavailable
 	}
 	started := info.Proc.P_starttime

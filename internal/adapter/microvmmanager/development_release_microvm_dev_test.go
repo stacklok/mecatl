@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -99,7 +100,7 @@ func TestDevelopmentReleaseDescriptorIsStrictAndLocal(t *testing.T) {
 }
 
 func TestDevelopmentReleaseInputsRemainBoundAfterPathReplacement(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	bundle := filepath.Join(root, "release.tar.gz")
 	writeDevelopmentBundle(t, bundle)
 	key := filepath.Join(root, "publisher.pub")
@@ -119,7 +120,7 @@ func TestDevelopmentReleaseInputsRemainBoundAfterPathReplacement(t *testing.T) {
 	writeOwnerOnly(t, key, []byte("replacement key"))
 
 	ops := &DefaultOperations{GOOS: "linux", GOARCH: "amd64"}
-	manifest, err := ops.Download(context.Background(), request.Release, filepath.Join(root, "download"))
+	manifest, err := ops.Download(context.Background(), request.Release, root, filepath.Join(root, "download"))
 	if err != nil {
 		t.Fatalf("download bound bundle: %v", err)
 	}
@@ -168,13 +169,13 @@ func TestDevelopmentReleaseDescriptorSymlinkIsRejected(t *testing.T) {
 }
 
 func TestDevelopmentReleaseDownloadNeverUsesHTTP(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	bundle := filepath.Join(root, "release.tar.gz")
 	writeDevelopmentBundle(t, bundle)
 	transport := &rejectHTTPTransport{}
 	ops := &DefaultOperations{HTTPClient: &http.Client{Transport: transport}, GOOS: "linux", GOARCH: "amd64"}
 	release := Release{bundlePath: bundle, SHA256: fileDigest(t, bundle)}
-	manifest, err := ops.Download(context.Background(), release, filepath.Join(root, "download"))
+	manifest, err := ops.Download(context.Background(), release, root, filepath.Join(root, "download"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,8 +262,8 @@ func TestPreparedDevelopmentReleaseBundleIsImportable(t *testing.T) {
 	}
 
 	ops := &DefaultOperations{GOOS: "linux", GOARCH: "amd64"}
-	root := t.TempDir()
-	manifest, err := ops.Download(context.Background(), request.Release, filepath.Join(root, "download"))
+	root := privateTempDir(t)
+	manifest, err := ops.Download(context.Background(), request.Release, root, filepath.Join(root, "download"))
 	if err != nil {
 		t.Fatalf("import prepared development bundle: %v", err)
 	}
@@ -272,7 +273,7 @@ func TestPreparedDevelopmentReleaseBundleIsImportable(t *testing.T) {
 	if err := ops.Verify(context.Background(), request.Release, manifest); err != nil {
 		t.Fatalf("verify prepared development bundle: %v", err)
 	}
-	installed, err := ops.Install(context.Background(), manifest, filepath.Join(root, "installed", "verified"))
+	installed, err := ops.Install(context.Background(), manifest, root, filepath.Join(root, "installed", "verified"))
 	if err != nil {
 		t.Fatalf("install prepared development bundle: %v", err)
 	}
@@ -295,7 +296,7 @@ func TestPreparedDevelopmentReleaseBundleIsImportable(t *testing.T) {
 func validDevelopmentDescriptor(t *testing.T, bundle, key string) []byte {
 	t.Helper()
 	value := DevelopmentReleaseDescriptor{
-		Schema: DevelopmentReleaseSchema, Platform: "linux-amd64", SourceBuildIdentity: "source-test",
+		Schema: DevelopmentReleaseSchema, Platform: runtime.GOOS + "-" + runtime.GOARCH, SourceBuildIdentity: "source-test",
 		BundlePath: bundle, BundleSHA256: fileDigest(t, bundle), PublicKeyPath: key,
 		PublicKeyIdentity: "sha256:" + fileDigest(t, key), PolicyRevision: "development-test",
 	}
@@ -315,7 +316,8 @@ func writeDevelopmentBundle(t *testing.T, path string) {
 	gz := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(gz)
 	body := []byte(`{"schema":"mecatl-microvm-release/v2"}`)
-	if err := tarWriter.WriteHeader(&tar.Header{Name: "microvm-release-linux-amd64.json", Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+	manifestName := "microvm-release-" + runtime.GOOS + "-" + runtime.GOARCH + ".json"
+	if err := tarWriter.WriteHeader(&tar.Header{Name: manifestName, Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tarWriter.Write(body); err != nil {

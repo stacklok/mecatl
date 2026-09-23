@@ -1,27 +1,20 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package microvmmanager
 
 import (
+	"context"
 	"errors"
-	"os"
-	"syscall"
+	"time"
 )
 
-type managedProcessHandle struct {
-	process *os.Process
-}
-
-func openManagedProcess(pid int) (managedProcessHandle, error) {
-	process, err := os.FindProcess(pid)
-	return managedProcessHandle{process: process}, err
-}
-
-func (h managedProcessHandle) signal() error {
-	if err := h.process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return err
+func managedStopContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
 	}
-	return nil
+	return context.WithTimeout(ctx, 10*time.Second)
 }
 
-func (managedProcessHandle) close() error { return nil }
+func requestManagedStop(context.Context, Paths) (bool, error) {
+	return false, errors.New("managed daemon stop is unsupported on this platform")
+}

@@ -43,13 +43,41 @@ func TestDefaultOperationsPreflightInvokesAndPropagatesUserNamespaceProbe(t *tes
 }
 
 func TestMicroVMLivePlatformBoundary(t *testing.T) {
-	if !supportedPlatform("linux", "amd64") {
-		t.Fatal("Linux amd64 live platform was rejected")
+	for _, platform := range [][2]string{{"linux", "amd64"}, {"darwin", "arm64"}} {
+		if !supportedPlatform(platform[0], platform[1]) {
+			t.Fatalf("supported live platform rejected: %s/%s", platform[0], platform[1])
+		}
 	}
-	for _, platform := range [][2]string{{"linux", "arm64"}, {"darwin", "arm64"}, {"windows", "amd64"}} {
+	for _, platform := range [][2]string{{"linux", "arm64"}, {"darwin", "amd64"}, {"windows", "amd64"}} {
 		if supportedPlatform(platform[0], platform[1]) {
 			t.Fatalf("unsupported live platform accepted: %s/%s", platform[0], platform[1])
 		}
+	}
+}
+
+func TestDarwinPreflightRequiresMacOS15AndHVF(t *testing.T) {
+	tests := []struct {
+		name, version, hvf string
+		wantErr            string
+	}{
+		{name: "supported", version: "15.0", hvf: "1"},
+		{name: "old macOS", version: "14.7", hvf: "1", wantErr: "macOS 15"},
+		{name: "HVF unavailable", version: "15.1", hvf: "0", wantErr: "hypervisor.framework"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &DefaultOperations{GOOS: "darwin", GOARCH: "arm64",
+				darwinVersionProbe: func(context.Context) (string, error) { return tc.version, nil },
+				darwinHVFProbe:     func(context.Context) (string, error) { return tc.hvf, nil },
+			}
+			err := o.Preflight(t.Context(), Paths{})
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("Preflight() error = %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("Preflight() error = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -235,14 +263,32 @@ func TestDefaultOperationsStartScrubsDaemonEnvironmentAndDetachesFromRequest(t *
 	}
 }
 
+func TestSecureMkdirAllRejectsExistingPublicRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := secureMkdirAll(root, filepath.Join(root, "child")); err == nil || !strings.Contains(err.Error(), "not private") {
+		t.Fatalf("secureMkdirAll error = %v, want existing public root rejection", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("root mode = %o, want unchanged 755", got)
+	}
+}
+
 func TestMicroVMUserBootstrap_Scenario7_DownloadVerifiesBeforeExtraction(t *testing.T) {
 	bundle := releaseBundle(t, "microvm-release-linux-amd64.json", []byte(`{"schema":"mecatl-microvm-release/v2"}`))
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(bundle) }))
 	defer srv.Close()
 	digest := fmt.Sprintf("%x", sha256.Sum256(bundle))
 	ops := &DefaultOperations{HTTPClient: srv.Client(), GOOS: "linux", GOARCH: "amd64"}
-	dest := filepath.Join(t.TempDir(), "download")
-	manifest, err := ops.Download(context.Background(), Release{URL: srv.URL, SHA256: digest}, dest)
+	destRoot := privateTempDir(t)
+	dest := filepath.Join(destRoot, "download")
+	manifest, err := ops.Download(context.Background(), Release{URL: srv.URL, SHA256: digest}, destRoot, dest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,8 +299,9 @@ func TestMicroVMUserBootstrap_Scenario7_DownloadVerifiesBeforeExtraction(t *test
 		t.Fatalf("manifest was not safely extracted: %s", manifest)
 	}
 
-	badDest := filepath.Join(t.TempDir(), "bad")
-	if _, err := ops.Download(context.Background(), Release{URL: srv.URL, SHA256: strings.Repeat("0", 64)}, badDest); err == nil {
+	badRoot := privateTempDir(t)
+	badDest := filepath.Join(badRoot, "bad")
+	if _, err := ops.Download(context.Background(), Release{URL: srv.URL, SHA256: strings.Repeat("0", 64)}, badRoot, badDest); err == nil {
 		t.Fatal("digest mismatch was accepted")
 	}
 	if _, err := os.Stat(filepath.Join(badDest, "unpacked")); !os.IsNotExist(err) {
@@ -263,7 +310,7 @@ func TestMicroVMUserBootstrap_Scenario7_DownloadVerifiesBeforeExtraction(t *test
 }
 
 func TestMicroVMFirstRunRepair_InstallerComesFromVerifiedBundle(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	bundle := filepath.Join(root, "unpacked")
 	if err := os.MkdirAll(bundle, 0o700); err != nil {
 		t.Fatal(err)
@@ -285,7 +332,7 @@ func TestMicroVMFirstRunRepair_InstallerComesFromVerifiedBundle(t *testing.T) {
 	if err := os.MkdirAll(installRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	installed, err := (&DefaultOperations{}).Install(context.Background(), manifest, installRoot)
+	installed, err := (&DefaultOperations{}).Install(context.Background(), manifest, root, installRoot)
 	if err != nil {
 		t.Fatalf("Install with verified bundled installer: %v", err)
 	}
@@ -311,14 +358,15 @@ func TestMicroVMUserBootstrap_Scenario8_BundleSymlinkIsRejected(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(bundle) }))
 	defer srv.Close()
 	ops := &DefaultOperations{HTTPClient: srv.Client(), GOOS: "linux", GOARCH: "amd64"}
-	_, err := ops.Download(context.Background(), Release{URL: srv.URL, SHA256: fmt.Sprintf("%x", sha256.Sum256(bundle))}, filepath.Join(t.TempDir(), "download"))
+	downloadRoot := privateTempDir(t)
+	_, err := ops.Download(context.Background(), Release{URL: srv.URL, SHA256: fmt.Sprintf("%x", sha256.Sum256(bundle))}, downloadRoot, filepath.Join(downloadRoot, "download"))
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("error = %v, want symlink refusal", err)
 	}
 }
 
 func TestMicroVMUsabilityRepair_Scenario2_InstallerComesFromVerifiedBundle(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	assets := filepath.Join(root, "unpacked")
 	if err := os.MkdirAll(assets, 0o700); err != nil {
 		t.Fatal(err)
@@ -337,12 +385,21 @@ func TestMicroVMUsabilityRepair_Scenario2_InstallerComesFromVerifiedBundle(t *te
 
 	installRoot := filepath.Join(root, "install", "artifacts")
 	ops := &DefaultOperations{GOOS: "linux", GOARCH: "amd64"}
-	if _, err := ops.Install(context.Background(), manifest, installRoot); err != nil {
+	if _, err := ops.Install(context.Background(), manifest, root, installRoot); err != nil {
 		t.Fatalf("install with packaged bundle member: %v", err)
 	}
 	if _, err := os.Stat(packagedMarker); err != nil {
 		t.Fatalf("packaged installer did not execute: %v", err)
 	}
+}
+
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func writeInstallerFixture(t *testing.T, path, marker string) {

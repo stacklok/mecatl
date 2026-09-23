@@ -35,8 +35,9 @@ type DevelopmentReleaseDescriptor struct {
 // ReadyRequestFromDevelopmentDescriptor validates local bootstrap inputs before
 // returning the same readiness request consumed by the production manager.
 func ReadyRequestFromDevelopmentDescriptor(path, sourceBuildIdentity string, egress ...GuestEgressSelection) (ReadyRequest, error) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return ReadyRequest{}, errors.New("microVM development releases require linux-amd64")
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		return ReadyRequest{}, fmt.Errorf("microVM development releases are unsupported on %s", platform)
 	}
 	data, err := readOwnerOnlyRegular(path, 1<<20)
 	if err != nil {
@@ -51,7 +52,7 @@ func ReadyRequestFromDevelopmentDescriptor(path, sourceBuildIdentity string, egr
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return ReadyRequest{}, errors.New("microVM development release descriptor must contain exactly one JSON object")
 	}
-	if descriptor.Schema != DevelopmentReleaseSchema || descriptor.Platform != "linux-amd64" || descriptor.SourceBuildIdentity == "" || descriptor.PolicyRevision == "" {
+	if descriptor.Schema != DevelopmentReleaseSchema || descriptor.Platform != platform || descriptor.SourceBuildIdentity == "" || descriptor.PolicyRevision == "" {
 		return ReadyRequest{}, errors.New("microVM development release descriptor identity is invalid")
 	}
 	if descriptor.SourceBuildIdentity != sourceBuildIdentity {
