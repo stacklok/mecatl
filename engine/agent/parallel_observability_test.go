@@ -377,7 +377,7 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// missReason, EMPTY on a routed hit — never the branch prompt or the
 		// classifier's reasoning. Same gauntlet-#7 footing as RoutedCategory/Model.
 		"RoutingReason": true,
-		// RoutingDecision (ADR 0350) is sanitized bounded classifier metadata only.
+		// RoutingDecision (ADR 0352) is sanitized bounded classifier metadata only.
 		"RoutingDecision": true,
 		// Model (issue #112 / ADR 0035) is the concrete MODEL id this branch ACTUALLY ran
 		// on, regardless of how it was chosen — bare metadata, never branch content.

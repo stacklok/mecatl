@@ -574,7 +574,7 @@ func TestRoutingReasonPayloadEventSafeAllowlist(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
+func TestADR_0352_Scenario4_CanonicalOutcomeProjection(t *testing.T) {
 	canonical := []string{
 		RouterMissDegenerateInput,
 		RouterMissClassifierError,

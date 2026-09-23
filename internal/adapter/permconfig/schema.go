@@ -1514,7 +1514,7 @@ func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0350):
+// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0352):
 // the semantic delegated-model taxonomy and its explicitly selected classifier backend.
 // Composition maps the backend's exact category choice through the same local
 // category-to-model alias machinery.

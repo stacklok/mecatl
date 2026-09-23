@@ -52,7 +52,7 @@ func jevRouterConfig(t *testing.T, srv *httptest.Server) Config {
 	return cfg
 }
 
-func TestADR_0350_Scenario1_BackendSelection(t *testing.T) {
+func TestADR_0352_Scenario1_BackendSelection(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"category":"large"}`))
 	llmCfg := routerTaxonomyCfg()
 	llmFn := buildModelRouterTask(llmCfg, regForTest(llm, providerAnthropic, llmCfg.Model), llm, providerAnthropic, llmCfg.Model)
@@ -85,7 +85,7 @@ func configWithRouterYAML(t *testing.T, body string) Config {
 	return Config{Model: "session-model", UseMock: true, NoSoul: true, Workspace: t.TempDir(), UserModelDir: t.TempDir(), permResolver: permconfig.New(permconfig.Options{ExplicitFiles: []string{path}})}
 }
 
-func TestADR_0350_Scenario1_ValidationAndDisabledPrecedence(t *testing.T) {
+func TestADR_0352_Scenario1_ValidationAndDisabledPrecedence(t *testing.T) {
 	active := func(extra string) string {
 		return "models:\n  router:\n    backend: jev\n" + extra + "    categories:\n      - name: small\n        description: small\n        model: gpt-5-mini\n"
 	}
@@ -242,7 +242,7 @@ func (p *jevBuildProvider) models() []string {
 	return append([]string(nil), p.childModels...)
 }
 
-func TestADR_0350_Scenario3_CompositionParity(t *testing.T) {
+func TestADR_0352_Scenario3_CompositionParity(t *testing.T) {
 	buildSource, err := os.ReadFile("build.go")
 	if err != nil {
 		t.Fatalf("read composition source: %v", err)
@@ -320,7 +320,7 @@ func TestADR_0350_Scenario3_CompositionParity(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario4_BuildConfiguredRequestLimit(t *testing.T) {
+func TestADR_0352_Scenario4_BuildConfiguredRequestLimit(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -354,7 +354,7 @@ func TestADR_0350_Scenario4_BuildConfiguredRequestLimit(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario4_BuildSharedCapacity(t *testing.T) {
+func TestADR_0352_Scenario4_BuildSharedCapacity(t *testing.T) {
 	entered := make(chan struct{}, 9)
 	release := make(chan struct{}, 9)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -510,7 +510,7 @@ func applyJevRouting(cfg *Config, srv *httptest.Server) {
 	cfg.RouterDefaultCategory = ""
 }
 
-func TestADR_0350_Scenario2_ExistingRoutingSemantics(t *testing.T) {
+func TestADR_0352_Scenario2_ExistingRoutingSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		args       []byte
@@ -631,7 +631,7 @@ func assertModelsContain(t *testing.T, models []string, wants ...string) {
 	}
 }
 
-func TestADR_0350_Scenario2_DefaultCategoryHint(t *testing.T) {
+func TestADR_0352_Scenario2_DefaultCategoryHint(t *testing.T) {
 	var request port.LLMRequest
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) {
 		request = got
@@ -658,7 +658,7 @@ func TestADR_0350_Scenario2_DefaultCategoryHint(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
+func TestADR_0352_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		kind jevrouter.MissKind
 		want string
@@ -831,7 +831,7 @@ func TestADR_0350_Scenario2_BackendNeutralOutcomes(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario4_SecretAndContentRedaction(t *testing.T) {
+func TestADR_0352_Scenario4_SecretAndContentRedaction(t *testing.T) {
 	if _, ok := envscrub.DenyExact["TYPESAFE_API_KEY"]; !ok {
 		t.Fatal("TYPESAFE_API_KEY missing from exact scrub set")
 	}

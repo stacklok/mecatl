@@ -57,7 +57,7 @@ func TestTeamMemberSpecHasNoContentFields(t *testing.T) {
 		// EMPTY on a routed hit — never the member's role/prompt or classifier output.
 		"RoutingReason":   "routing miss/gate reason label (bare metadata, empty on a hit)",
 		"RoutingDecision": "sanitized bounded classifier decision metadata",
-		// ADR 0350: trusted log-only exact lifetime correlation for the retained debugger
+		// ADR 0352: trusted log-only exact lifetime correlation for the retained debugger
 		// join. Neither field is projected to protobuf, HTTP, SDK, UI, or debugger JSON.
 		"MemberSessionID":   "private member session id correlation",
 		"MemberIncarnation": "private member incarnation correlation",

@@ -10,10 +10,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// TestADR_0350_Scenario7_UserJourney pins AC7.1 from the Jev router plan: the
+// TestADR_0352_Scenario7_UserJourney pins AC7.1 from the Jev router plan: the
 // compact fallback cue, expanded card, and all three F6 family details preserve
 // actual-model authority and optional-number presence from real client events.
-func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
+func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	confidence, threshold := 0.42, 0.50
 	decision := &client.RoutingDecision{
 		Backend:           "jev",
@@ -150,6 +150,14 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 70})
 	m = mm.(Model)
 	conversationView := stripANSIstr(m.View().Content)
+	if got, want := len(m.conv.blocks), 3; got != want {
+		t.Fatalf("Parallel lifecycle created an inline conversation block: got %d blocks, want %d", got, want)
+	}
+	for i := range m.conv.blocks {
+		if m.conv.blocks[i].toolID == "parallel-call" {
+			t.Fatal("Parallel lifecycle created a new inline routing card")
+		}
+	}
 	if !strings.Contains(conversationView, "model: gpt-6-astra") {
 		t.Errorf("conversation View omitted the accepted Subagent actual model:\n%s", conversationView)
 	}

@@ -322,7 +322,7 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 		// miss string), EMPTY on a routed hit — never the task prompt or classifier
 		// output. Same gauntlet-#7 footing as RoutedCategory/Model.
 		"RoutingReason": true,
-		// RoutingDecision (ADR 0350) is sanitized bounded classifier metadata only;
+		// RoutingDecision (ADR 0352) is sanitized bounded classifier metadata only;
 		// it contains no task, criteria, response body, or dynamic error text.
 		"RoutingDecision": true,
 		"ToolName":        true, "IsError": true, "ToolCount": true,

@@ -1533,11 +1533,11 @@ empty/kill-switch OFF) + `TestFoldOperatorModelRouterDropsMalformed` +
 `TestFoldOperatorModelRouterFoldsDisabled` + `TestLogModelRouterFacts` (silent/DISABLED/ACTIVE)
 + `TestRouterClassifierRunsOnSlotModel` + `TestRouterRoutesChildToClassifiedModelE2E` (asserts the
 parent→classifier→child→parent request POSITIONS) + `TestRouterOffIsByteIdenticalE2E`; `permconfig`
-`TestOperatorRouterParsed` + `TestOperatorRouterDisabledParsed` + `TestADR_0350_Scenario1_OperatorAuthority`
+`TestOperatorRouterParsed` + `TestOperatorRouterDisabledParsed` + `TestADR_0352_Scenario1_OperatorAuthority`
 + `TestRouterStrictUnknownKeyRejected`; flag parse `TestParseFlagsSubagentModelRouter` (mecated,
 kill-switch) + the mecatequi router kill-switch subtest.
 
-**Jev router backend (ADR 0350).** `models.router.backend` is a strict operator-only
+**Jev router backend (ADR 0352).** `models.router.backend` is a strict operator-only
 `llm|jev` choice and defaults to `llm`. The nested `jev` block carries the fixed service
 model (default `jev-1.13.0`), optional base URL, finite `[0,1]` confidence threshold,
 and complete rendered-input byte bound (default 16384, accepted range 1..65536).
@@ -1571,7 +1571,7 @@ the task state, selected model, fixed question identifier, complete rendered ins
 `TYPESAFE_API_KEY` is in both
 envscrub exact sets, so command-environment inheritance cannot restore it. The four
 command roots acquire it through `cliconfig.ResolvedCredentials`; it has no YAML or flag
-form. Guards are the `TestADR_0350_*` proofs across the adapter, composition, and
+form. Guards are the `TestADR_0352_*` proofs across the adapter, composition, and
 configuration packages.
 
 Every configured-router decision is copied onto the existing delegation start

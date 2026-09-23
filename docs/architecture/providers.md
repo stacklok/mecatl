@@ -560,7 +560,7 @@ enables nor disables — the router stays governed by the taxonomy). A project-t
 `router` model slot (default `cheap` tier; an operator `classifier-slot`
 overrides) as a tiny one-turn call.
 
-**Jev backend (ADR 0350).** An operator can instead set `backend: jev`. Composition
+**Jev backend (ADR 0352).** An operator can instead set `backend: jev`. Composition
 constructs one `internal/adapter/jevrouter` Typesafe client and one eight-slot
 semaphore per Build, then shares them across the shared and per-session engine
 paths. Jev receives the delegated task as System One state and one fixed Choice

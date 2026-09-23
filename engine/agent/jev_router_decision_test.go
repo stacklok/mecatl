@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-func TestADR_0350_Scenario5_DecisionEvidence(t *testing.T) {
+func TestADR_0352_Scenario5_DecisionEvidence(t *testing.T) {
 	confidence := 0.7
 	minimum := 0.8
 	router := &SubagentModelRouter{

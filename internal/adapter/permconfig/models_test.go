@@ -204,11 +204,11 @@ models:
 	}
 }
 
-// TestADR_0350_Scenario1_OperatorAuthority pins that a project-tier models.router: is
+// TestADR_0352_Scenario1_OperatorAuthority pins that a project-tier models.router: is
 // OPERATOR-TIER ONLY — stripped with a WARN, never honoured. The operator allowlist is
 // present (so the project block is otherwise opt-in eligible and trusted), proving the
 // router strip is its OWN gate, not a side effect of the opt-in.
-func TestADR_0350_Scenario1_OperatorAuthority(t *testing.T) {
+func TestADR_0352_Scenario1_OperatorAuthority(t *testing.T) {
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)
 

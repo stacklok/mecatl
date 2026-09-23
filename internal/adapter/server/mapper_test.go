@@ -29,7 +29,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
 
-func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
+func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
 	zero := 0.0
 	decision := &session.RoutingDecision{
 		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
@@ -110,7 +110,7 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario6_RealProducerRelayReloadDebugger(t *testing.T) {
+func TestADR_0352_Scenario6_RealProducerRelayReloadDebugger(t *testing.T) {
 	store := memstore.New()
 	log := memstore.NewEventLog()
 	child := agent.NewEngine(agent.Deps{

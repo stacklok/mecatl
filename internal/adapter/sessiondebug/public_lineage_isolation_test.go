@@ -324,7 +324,7 @@ func TestInspectSessionLineageIsolation_BackwardProofDepthBoundary(t *testing.T)
 	}
 }
 
-func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
+func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
 	store := memstore.New()
 	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}
 	root := session.New("routing-root", session.ModeDefault, env, session.Limits{}, time.Unix(10, 0))
@@ -517,7 +517,7 @@ func TestADR_0350_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario6_TwoRealTeamCallsCannotSubstituteCorrelation(t *testing.T) {
+func TestADR_0352_Scenario6_TwoRealTeamCallsCannotSubstituteCorrelation(t *testing.T) {
 	store := memstore.New()
 	providers := map[string]*mockllm.Provider{
 		"lead": mockllm.New(

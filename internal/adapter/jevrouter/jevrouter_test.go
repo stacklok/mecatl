@@ -57,7 +57,7 @@ func routeTuple(ctx context.Context, router *Router, task string, categories []C
 	return category, result.Usage, result.Miss, result.OK
 }
 
-func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
+func TestADR_0352_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	tests := []struct {
 		name, response string
 		wantReason     MissKind
@@ -85,7 +85,7 @@ func TestADR_0350_Scenario2_InvalidResponseFallsBack(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario2_LowConfidenceAbstains(t *testing.T) {
+func TestADR_0352_Scenario2_LowConfidenceAbstains(t *testing.T) {
 	r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(validResponse("fast", 0.49, 3, 4)))
 	}, 0.5)
@@ -98,7 +98,7 @@ func TestADR_0350_Scenario2_LowConfidenceAbstains(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario3_HitUsage(t *testing.T) {
+func TestADR_0352_Scenario3_HitUsage(t *testing.T) {
 	r, _ := newTestRouter(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(validResponse("deep", 0.9, 11, 7)))
 	}, 0)
@@ -111,7 +111,7 @@ func TestADR_0350_Scenario3_HitUsage(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario3_ErrorUsage(t *testing.T) {
+func TestADR_0352_Scenario3_ErrorUsage(t *testing.T) {
 	for _, tc := range []struct {
 		name, response        string
 		wantInput, wantOutput int
@@ -133,7 +133,7 @@ func TestADR_0350_Scenario3_ErrorUsage(t *testing.T) {
 	}
 }
 
-func TestADR_0350_Scenario4_RequestLimits(t *testing.T) {
+func TestADR_0352_Scenario4_RequestLimits(t *testing.T) {
 	var body map[string]any
 	r, calls := newTestRouter(t, func(w http.ResponseWriter, req *http.Request) {
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -250,7 +250,7 @@ func (b *cancelOnEOFBody) Read(p []byte) (int, error) {
 
 func (*cancelOnEOFBody) Close() error { return nil }
 
-func TestADR_0350_Scenario4_BoundedTransport(t *testing.T) {
+func TestADR_0352_Scenario4_BoundedTransport(t *testing.T) {
 	bounds := defaultBounds()
 	if bounds.maxConcurrent != 8 || bounds.queueTimeout != 10*time.Second || bounds.requestTimeout != 10*time.Second || responseLimit != 1<<20 {
 		t.Fatalf("transport bounds drifted: %+v response=%d", bounds, responseLimit)

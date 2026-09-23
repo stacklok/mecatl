@@ -82,7 +82,7 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 	}
 }
 
-func TestADR_0350_TeamMemberCallRelationshipRoundTrip(t *testing.T) {
+func TestADR_0352_TeamMemberCallRelationshipRoundTrip(t *testing.T) {
 	t.Parallel()
 	parentIncarnation := session.NewIncarnationID()
 	member, err := session.NewTeamMember("member", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "v1"}, session.Limits{}, time.Unix(1, 0), "team", "reviewer", "parent", parentIncarnation)

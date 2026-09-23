@@ -126,7 +126,7 @@ type teamLane struct {
 	// routingReason names WHY the router did not classify this member (issue #397 /
 	// ADR 0083); "" on a routed hit. BARE metadata — never member content.
 	routingReason string
-	// routingDecision is the configured router's immutable start snapshot (ADR 0350).
+	// routingDecision is the configured router's immutable start snapshot (ADR 0352).
 	// Nil preserves historical events without reconstructing evidence.
 	routingDecision *client.RoutingDecision
 	// model is the concrete model id the member's engine ACTUALLY runs on (issue #112 /

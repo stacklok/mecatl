@@ -11,9 +11,9 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// TestADR_0350_Scenario2_ExistingRoutingSemantics pins that selecting a different
+// TestADR_0352_Scenario2_ExistingRoutingSemantics pins that selecting a different
 // composition backend does not alter any consumer of the existing routeTask callback.
-func TestADR_0350_Scenario2_ExistingRoutingSemantics(t *testing.T) {
+func TestADR_0352_Scenario2_ExistingRoutingSemantics(t *testing.T) {
 	t.Run("plain Subagent", TestRunRouteTaskRoutesPlainDelegation)
 	t.Run("explicit per-call model", TestRunExplicitModelBeatsRouter)
 	t.Run("fork", TestRunForkDoesNotRoute)
