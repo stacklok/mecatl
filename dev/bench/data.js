@@ -262314,6 +262314,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790180449017,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "50267fff034ff652d39f598a9c32e57bf4bb00fb",
+          "message": "feat(mecatui): unify bounded scrolling and cursor selection (#1615)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T09:12:45-07:00",
+          "tree_id": "e8286e7d431f03426d0d51a691a29a762f9dcb45",
+          "url": "https://github.com/stacklok/mecatl/commit/50267fff034ff652d39f598a9c32e57bf4bb00fb"
+        },
+        "date": 1790181121565,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3291,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 84.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -343976,6 +344015,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790181118146,
+  "lastUpdate": 1790181122417,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
