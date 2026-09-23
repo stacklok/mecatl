@@ -8,7 +8,7 @@
 **Delivery:** Split. Durable persistence and exported engine accounting interfaces require independent human contract review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1216](https://github.com/stacklok/mecatl/issues/1216).
-**Plan PR:** pending
+**Plan PR:** [#1793](https://github.com/stacklok/mecatl/pull/1793)
 **Approved baseline:** absent until approved
 
 Extend the canonical `Session.tokenUsage` ledger from title generation to every reachable,
