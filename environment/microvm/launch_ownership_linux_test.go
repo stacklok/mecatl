@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,7 +20,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const launchOwnerHelperEnv = "GO_TEST_LAUNCH_OWNER_HELPER"
+const (
+	launchOwnerHelperEnv       = "GO_TEST_LAUNCH_OWNER_HELPER"
+	launchOwnerHelperParentEnv = "GO_TEST_LAUNCH_OWNER_PARENT_PID"
+	launchOwnerHelperReadyEnv  = "GO_TEST_LAUNCH_OWNER_READY"
+	launchOwnerMutantEnv       = "GO_TEST_LAUNCH_OWNER_MUTANT"
+	launchOwnerMutantStateEnv  = "GO_TEST_LAUNCH_OWNER_MUTANT_STATE"
+)
 
 func TestMain(m *testing.M) {
 	if handled, err := RunLaunchOwnerChild(os.Args[1:]); handled {
@@ -30,6 +37,23 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv(launchOwnerHelperEnv) == "runner" && len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "{") {
+		parentPID, err := strconv.Atoi(os.Getenv(launchOwnerHelperParentEnv))
+		if err != nil || parentPID <= 0 {
+			_, _ = fmt.Fprintln(os.Stderr, "runner started without test parent identity")
+			os.Exit(92)
+		}
+		if err := unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(unix.SIGKILL), 0, 0, 0); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "runner could not arm parent-death signal:", err)
+			os.Exit(92)
+		}
+		if os.Getppid() != parentPID {
+			_, _ = fmt.Fprintln(os.Stderr, "runner test parent exited before parent-death signal was armed")
+			os.Exit(92)
+		}
+		if err := os.WriteFile(os.Getenv(launchOwnerHelperReadyEnv), []byte("ready\n"), 0o600); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "runner could not publish test readiness:", err)
+			os.Exit(92)
+		}
 		var lockStat unix.Stat_t
 		if err := unix.Fstat(childLockFD, &lockStat); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, "runner started without ownership lock descriptor:", err)
@@ -69,7 +93,99 @@ func testRunnerConfig(t *testing.T) runner.Config {
 		t.Fatal(err)
 	}
 	t.Setenv(launchOwnerHelperEnv, "runner")
+	t.Setenv(launchOwnerHelperParentEnv, strconv.Itoa(os.Getpid()))
+	t.Setenv(launchOwnerHelperReadyEnv, filepath.Join(t.TempDir(), "ready"))
 	return runner.Config{RunnerPath: executable, VMLogPath: filepath.Join(t.TempDir(), "runner.log")}
+}
+
+type testOwnedRunner struct {
+	process *ownedRunnerProcess
+	pidfd   int
+}
+
+func spawnTestOwnedRunner(t *testing.T, ownership *LaunchOwnership, environmentID string, cfg runner.Config) *ownedRunnerProcess {
+	t.Helper()
+	handle, err := ownership.Spawner(environmentID).Spawn(context.Background(), cfg)
+	if err != nil {
+		log, _ := os.ReadFile(cfg.VMLogPath)
+		t.Fatalf("%v; launcher log: %s", err, log)
+	}
+	process, ok := handle.(*ownedRunnerProcess)
+	if !ok {
+		t.Fatalf("spawned handle type = %T, want *ownedRunnerProcess", handle)
+	}
+	fixture := &testOwnedRunner{process: process, pidfd: -1}
+	t.Cleanup(func() { fixture.cleanup(t) })
+
+	ready := os.Getenv(launchOwnerHelperReadyEnv)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect test-owned runner readiness: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for test-owned runner readiness")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	fixture.pidfd, err = unix.PidfdOpen(process.pid, 0)
+	if err != nil {
+		t.Fatalf("open pidfd for test-owned runner: %v", err)
+	}
+	startTime, err := rawProcessStartTime(process.pid)
+	if err != nil || startTime != process.startTime {
+		t.Fatalf("test-owned runner start identity = %q, %v; want %q", startTime, err, process.startTime)
+	}
+	digest, device, inode, err := processExecutableIdentity(process.pid)
+	if err != nil || digest != process.runnerDigest || device != process.runnerDevice || inode != process.runnerInode {
+		t.Fatalf("test-owned runner executable identity = %q/%d/%d, %v; want %q/%d/%d", digest, device, inode, err, process.runnerDigest, process.runnerDevice, process.runnerInode)
+	}
+	return process
+}
+
+func (f *testOwnedRunner) cleanup(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stopErr := f.process.Stop(ctx)
+	if f.pidfd < 0 {
+		if stopErr != nil {
+			t.Errorf("stop test-owned runner without pidfd fallback: %v", stopErr)
+		}
+		return
+	}
+	defer func() {
+		if err := unix.Close(f.pidfd); err != nil {
+			t.Errorf("close test-owned runner pidfd: %v", err)
+		}
+	}()
+
+	exited, waitErr := waitPidfd(ctx, f.pidfd, 20*time.Millisecond)
+	if waitErr == nil && !exited {
+		waitErr = signalAndWaitPidfd(ctx, f.pidfd, time.Second, time.Second)
+	}
+	if waitErr != nil {
+		t.Errorf("terminate test-owned runner (Stop error: %v): %v", stopErr, waitErr)
+		return
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, err := rawProcessStartTime(f.process.pid)
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		if err != nil {
+			t.Errorf("verify test-owned runner reaping: %v", err)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("test-owned runner %d exited but was not reaped (Stop error: %v)", f.process.pid, stopErr)
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func testLaunchIntent(t *testing.T, ownership *LaunchOwnership, environmentID string, cfg runner.Config) launchIntent {
@@ -228,12 +344,7 @@ func TestLaunchOwnershipPartialReceiptRemainsPending(t *testing.T) {
 func TestLaunchOwnershipPersistsReceiptAndKeepsLockAcrossExec(t *testing.T) {
 	ownership := newTestLaunchOwnership(t)
 	cfg := testRunnerConfig(t)
-	handle, err := ownership.Spawner("repository-one").Spawn(context.Background(), cfg)
-	if err != nil {
-		log, _ := os.ReadFile(cfg.VMLogPath)
-		t.Fatalf("%v; launcher log: %s", err, log)
-	}
-	t.Cleanup(func() { _ = handle.Stop(context.Background()) })
+	handle := spawnTestOwnedRunner(t, ownership, "repository-one", cfg)
 
 	receipt := waitOnlyReceipt(t, ownership, "repository-one")
 	if receipt.PID != handle.PID() || receipt.StartTime == "" || receipt.LaunchID == "" {
@@ -247,10 +358,7 @@ func TestLaunchOwnershipPersistsReceiptAndKeepsLockAcrossExec(t *testing.T) {
 
 func TestLaunchOwnershipReconcileTerminatesOnlyExactOwnedRunner(t *testing.T) {
 	ownership := newTestLaunchOwnership(t)
-	handle, err := ownership.Spawner("repository-two").Spawn(context.Background(), testRunnerConfig(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := spawnTestOwnedRunner(t, ownership, "repository-two", testRunnerConfig(t))
 	receipt := waitOnlyReceipt(t, ownership, "repository-two")
 
 	result, err := ownership.Reconcile(context.Background(), "repository-two")
@@ -271,11 +379,7 @@ func TestLaunchOwnershipReconcileTerminatesOnlyExactOwnedRunner(t *testing.T) {
 
 func TestLaunchOwnershipIdentityMismatchIsUntouched(t *testing.T) {
 	ownership := newTestLaunchOwnership(t)
-	handle, err := ownership.Spawner("repository-three").Spawn(context.Background(), testRunnerConfig(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = handle.Stop(context.Background()) }()
+	handle := spawnTestOwnedRunner(t, ownership, "repository-three", testRunnerConfig(t))
 	receipt := waitOnlyReceipt(t, ownership, "repository-three")
 	replaceReceipt(t, ownership, "repository-three", receipt.LaunchID, func(value *LaunchReceipt) {
 		value.StartTime = "1"
@@ -284,7 +388,7 @@ func TestLaunchOwnershipIdentityMismatchIsUntouched(t *testing.T) {
 		*value = receipt
 	})
 
-	_, err = ownership.Reconcile(context.Background(), "repository-three")
+	_, err := ownership.Reconcile(context.Background(), "repository-three")
 	if !errors.Is(err, ErrLaunchOwnershipUncertain) {
 		t.Fatalf("reconcile error = %v, want ErrLaunchOwnershipUncertain", err)
 	}
@@ -295,10 +399,7 @@ func TestLaunchOwnershipIdentityMismatchIsUntouched(t *testing.T) {
 
 func TestLaunchOwnershipFreeLockRecoversAcrossBootIDChange(t *testing.T) {
 	ownership := newTestLaunchOwnership(t)
-	handle, err := ownership.Spawner("repository-four").Spawn(context.Background(), testRunnerConfig(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := spawnTestOwnedRunner(t, ownership, "repository-four", testRunnerConfig(t))
 	_ = waitOnlyReceipt(t, ownership, "repository-four")
 	if err := handle.Stop(context.Background()); err != nil {
 		t.Fatal(err)
@@ -440,10 +541,7 @@ func TestLaunchOwnershipRepeatedAttemptsLeaveNoLiveOwner(t *testing.T) {
 	ownership := newTestLaunchOwnership(t)
 	const environmentID = "repository-repeated"
 	for range 3 {
-		handle, err := ownership.Spawner(environmentID).Spawn(context.Background(), testRunnerConfig(t))
-		if err != nil {
-			t.Fatal(err)
-		}
+		handle := spawnTestOwnedRunner(t, ownership, environmentID, testRunnerConfig(t))
 		if err := handle.Stop(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -454,5 +552,90 @@ func TestLaunchOwnershipRepeatedAttemptsLeaveNoLiveOwner(t *testing.T) {
 	}
 	if result.Dead != 3 || result.Terminated != 0 {
 		t.Fatalf("reconcile result = %+v", result)
+	}
+}
+
+type testOwnedRunnerState struct {
+	PID       int    `json:"pid"`
+	StartTime string `json:"start_time"`
+}
+
+func TestLaunchOwnershipFixtureCleanupMutant(t *testing.T) {
+	mode := os.Getenv(launchOwnerMutantEnv)
+	if mode == "" {
+		t.Skip("fixture lifecycle subprocess only")
+	}
+	ownership := newTestLaunchOwnership(t)
+	process := spawnTestOwnedRunner(t, ownership, "fixture-lifecycle-"+mode, testRunnerConfig(t))
+	receipt := waitOnlyReceipt(t, ownership, "fixture-lifecycle-"+mode)
+	replaceReceipt(t, ownership, "fixture-lifecycle-"+mode, receipt.LaunchID, func(value *LaunchReceipt) {
+		value.StartTime = "corrupt-test-receipt"
+	})
+	state, err := json.Marshal(testOwnedRunnerState{PID: process.pid, StartTime: process.startTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv(launchOwnerMutantStateEnv), state, 0o600); err != nil { // #nosec G306 -- private test fixture.
+		t.Fatal(err)
+	}
+	switch mode {
+	case "success":
+		return
+	case "failure":
+		t.Fatal("intentional fixture failure")
+	case "parent-exit":
+		os.Exit(23)
+	default:
+		t.Fatalf("unknown fixture lifecycle mode %q", mode)
+	}
+}
+
+func TestLaunchOwnershipFixtureLifecycleLeavesNoHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		exitCode int
+	}{{"success", 0}, {"failure", 1}, {"parent-exit", 23}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			statePath := filepath.Join(t.TempDir(), "runner.json")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestLaunchOwnershipFixtureCleanupMutant$") // #nosec G204 -- current test executable and fixed arguments.
+			cmd.Env = []string{
+				launchOwnerMutantEnv + "=" + tc.mode,
+				launchOwnerMutantStateEnv + "=" + statePath,
+				"GORACE=atexit_sleep_ms=0",
+			}
+			output, err := cmd.CombinedOutput()
+			if tc.exitCode == 0 {
+				if err != nil {
+					t.Fatalf("mutant exited with %v: %s", err, output)
+				}
+			} else {
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != tc.exitCode {
+					t.Fatalf("mutant exit = %v, want %d: %s", err, tc.exitCode, output)
+				}
+			}
+			data, err := os.ReadFile(statePath) // #nosec G304 -- exact private test fixture path.
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state testOwnedRunnerState
+			if err := json.Unmarshal(data, &state); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				startTime, identityErr := rawProcessStartTime(state.PID)
+				if errors.Is(identityErr, os.ErrNotExist) || (identityErr == nil && startTime != state.StartTime) {
+					break
+				}
+				if identityErr != nil {
+					t.Fatalf("inspect fixture helper %d: %v", state.PID, identityErr)
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("fixture helper %d/%s survived %s mutant", state.PID, state.StartTime, tc.mode)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
 	}
 }

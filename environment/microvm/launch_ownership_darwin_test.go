@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,7 +21,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const launchOwnerHelperEnv = "GO_TEST_LAUNCH_OWNER_HELPER"
+const (
+	launchOwnerHelperEnv     = "GO_TEST_LAUNCH_OWNER_HELPER"
+	launchOwnerTestParentEnv = "GO_TEST_LAUNCH_OWNER_PARENT_PID"
+	launchOwnerTestReadyEnv  = "GO_TEST_LAUNCH_OWNER_READY"
+)
 
 func TestMain(m *testing.M) {
 	if handled, err := RunLaunchOwnerChild(os.Args[1:]); handled {
@@ -31,10 +36,14 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if mode := os.Getenv(launchOwnerHelperEnv); (mode == "runner" || mode == "ignore-term" || mode == "exit-7" || mode == "signal-term") && len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "{") {
+		if err := watchDarwinTestParent(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(92)
+		}
 		if mode == "ignore-term" {
 			signal.Ignore(syscall.SIGTERM)
 		}
-		if ready := os.Getenv("GO_TEST_LAUNCH_OWNER_READY"); ready != "" {
+		if ready := os.Getenv(launchOwnerTestReadyEnv); ready != "" {
 			if err := os.WriteFile(ready, []byte("ready\n"), 0o600); err != nil {
 				os.Exit(92)
 			}
@@ -48,6 +57,33 @@ func TestMain(m *testing.M) {
 		select {}
 	}
 	os.Exit(m.Run())
+}
+
+func watchDarwinTestParent() error {
+	parentPID, err := strconv.Atoi(os.Getenv(launchOwnerTestParentEnv))
+	if err != nil || parentPID <= 0 {
+		return errors.New("runner started without test parent identity")
+	}
+	queue, err := unix.Kqueue()
+	if err != nil {
+		return fmt.Errorf("create test parent watcher: %w", err)
+	}
+	change := []unix.Kevent_t{{Ident: uint64(parentPID), Filter: unix.EVFILT_PROC, Flags: unix.EV_ADD | unix.EV_ENABLE | unix.EV_ONESHOT, Fflags: unix.NOTE_EXIT}}
+	if _, err := unix.Kevent(queue, change, nil, nil); err != nil {
+		_ = unix.Close(queue)
+		return fmt.Errorf("watch test parent: %w", err)
+	}
+	if err := unix.Kill(parentPID, 0); err != nil {
+		_ = unix.Close(queue)
+		return errors.New("test parent exited before watcher was armed")
+	}
+	go func() {
+		events := make([]unix.Kevent_t, 1)
+		_, _ = unix.Kevent(queue, nil, events, nil)
+		_ = unix.Close(queue)
+		os.Exit(93)
+	}()
+	return nil
 }
 
 func newDarwinTestLaunchOwnership(t *testing.T) *LaunchOwnership {
@@ -78,24 +114,62 @@ func darwinTestRunnerConfigMode(t *testing.T, mode string) runner.Config {
 		t.Fatal(err)
 	}
 	t.Setenv(launchOwnerHelperEnv, mode)
+	t.Setenv(launchOwnerTestParentEnv, strconv.Itoa(os.Getpid()))
 	return runner.Config{RunnerPath: executable, VMLogPath: filepath.Join(t.TempDir(), "runner.log")}
 }
 
 func darwinTestProcessEnv(mode, ready string) []string {
-	env := []string{launchOwnerHelperEnv + "=" + mode, "GORACE=atexit_sleep_ms=0"}
+	env := []string{launchOwnerHelperEnv + "=" + mode, launchOwnerTestParentEnv + "=" + strconv.Itoa(os.Getpid()), "GORACE=atexit_sleep_ms=0"}
 	if ready != "" {
-		env = append(env, "GO_TEST_LAUNCH_OWNER_READY="+ready)
+		env = append(env, launchOwnerTestReadyEnv+"="+ready)
 	}
 	return env
 }
 
-func TestDarwinLaunchOwnerSupervisorStopsDirectRunner(t *testing.T) {
-	ownership := newDarwinTestLaunchOwnership(t)
-	handle, err := ownership.spawn(t.Context(), "env-stop", darwinTestRunnerConfig(t))
+func spawnDarwinTestRunner(t *testing.T, ownership *LaunchOwnership, environmentID string, cfg runner.Config) *ownedRunnerProcess {
+	t.Helper()
+	handle, err := ownership.spawn(t.Context(), environmentID, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	process := handle.(*ownedRunnerProcess)
+	t.Cleanup(func() {
+		if !process.IsAlive() {
+			return
+		}
+		if err := stopDarwinTestRunner(process); err != nil {
+			t.Errorf("stop test-owned Darwin runner: %v", err)
+		}
+	})
+	return process
+}
+
+func stopDarwinTestRunner(process *ownedRunnerProcess) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stopErr := process.Stop(ctx)
+	if !process.IsAlive() {
+		return nil
+	}
+	startTime, err := platformProcessStartIdentity(ctx, process.pid)
+	if err != nil || startTime != process.startTime {
+		return fmt.Errorf("refuse fallback signal after Stop error %v: runner identity = %q, %v", stopErr, startTime, err)
+	}
+	if err := unix.Kill(process.pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+		return fmt.Errorf("fallback SIGKILL after Stop error %v: %w", stopErr, err)
+	}
+	for process.IsAlive() {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("wait for fallback SIGKILL after Stop error %v: %w", stopErr, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
+}
+
+func TestDarwinLaunchOwnerSupervisorStopsDirectRunner(t *testing.T) {
+	ownership := newDarwinTestLaunchOwnership(t)
+	process := spawnDarwinTestRunner(t, ownership, "env-stop", darwinTestRunnerConfig(t))
 	if process.PID() <= 0 || process.PID() == process.supervisor.Pid {
 		t.Fatalf("receipt PID = %d, supervisor PID = %d", process.PID(), process.supervisor.Pid)
 	}
@@ -135,10 +209,7 @@ func TestDarwinLaunchOwnerSupervisorStopsDirectRunner(t *testing.T) {
 func TestDarwinLaunchOwnerSupervisorEscalatedStopSucceeds(t *testing.T) {
 	ownership := newDarwinTestLaunchOwnership(t)
 	ownership.termTimeout = 50 * time.Millisecond
-	handle, err := ownership.spawn(t.Context(), "env-stop-kill", darwinTestRunnerConfigMode(t, "ignore-term"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := spawnDarwinTestRunner(t, ownership, "env-stop-kill", darwinTestRunnerConfigMode(t, "ignore-term"))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if err := handle.Stop(ctx); err != nil {
@@ -149,16 +220,42 @@ func TestDarwinLaunchOwnerSupervisorEscalatedStopSucceeds(t *testing.T) {
 	}
 }
 
+type darwinTestCommand struct {
+	cmd   *exec.Cmd
+	taken bool
+}
+
+func startDarwinTestCommand(t *testing.T, cmd *exec.Cmd) *darwinTestCommand {
+	t.Helper()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	owned := &darwinTestCommand{cmd: cmd}
+	t.Cleanup(func() {
+		if owned.taken {
+			return
+		}
+		_ = owned.cmd.Process.Kill()
+		if _, err := owned.cmd.Process.Wait(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("reap test-owned Darwin helper: %v", err)
+		}
+	})
+	return owned
+}
+
+func (c *darwinTestCommand) take() *exec.Cmd {
+	c.taken = true
+	return c.cmd
+}
+
 func TestDarwinDirectChildStopEscalatesAfterIgnoredTERM(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], `{}`)
 	cmd.Env = darwinTestProcessEnv("ignore-term", ready)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	owned := startDarwinTestCommand(t, cmd)
 	waitForTestFile(t, ready)
 	started := time.Now()
-	result, err := ownDirectChild(cmd, nil, 50*time.Millisecond, time.Second, true)
+	result, err := ownDirectChild(owned.take(), nil, 50*time.Millisecond, time.Second, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,13 +287,11 @@ func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], `{}`)
 	cmd.Env = darwinTestProcessEnv("runner", ready)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	owned := startDarwinTestCommand(t, cmd)
 	waitForTestFile(t, ready)
 	eof := make(chan struct{})
 	close(eof)
-	result, err := ownDirectChild(cmd, eof, time.Second, time.Second, false)
+	result, err := ownDirectChild(owned.take(), eof, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,10 +306,8 @@ func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
 func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
 	cmd := exec.Command(os.Args[0], `{}`)
 	cmd.Env = darwinTestProcessEnv("exit-7", "")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	result, err := ownDirectChild(cmd, nil, time.Second, time.Second, false)
+	owned := startDarwinTestCommand(t, cmd)
+	result, err := ownDirectChild(owned.take(), nil, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,10 +325,8 @@ func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
 func TestDarwinDirectChildNaturalSignalIsPreserved(t *testing.T) {
 	cmd := exec.Command(os.Args[0], `{}`)
 	cmd.Env = darwinTestProcessEnv("signal-term", "")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	result, err := ownDirectChild(cmd, nil, time.Second, time.Second, false)
+	owned := startDarwinTestCommand(t, cmd)
+	result, err := ownDirectChild(owned.take(), nil, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,11 +348,7 @@ func TestDarwinDirectChildRejectsGoManagedPipes(t *testing.T) {
 
 func TestDarwinKilledSupervisorLeavesRunnerLockHeld(t *testing.T) {
 	ownership := newDarwinTestLaunchOwnership(t)
-	handle, err := ownership.spawn(t.Context(), "env-supervisor-killed", darwinTestRunnerConfig(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	process := handle.(*ownedRunnerProcess)
+	process := spawnDarwinTestRunner(t, ownership, "env-supervisor-killed", darwinTestRunnerConfig(t))
 	if err := process.supervisor.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +367,7 @@ func TestDarwinKilledSupervisorLeavesRunnerLockHeld(t *testing.T) {
 	if _, err := ownership.Reconcile(t.Context(), process.environmentID); !errors.Is(err, ErrLaunchOwnershipUncertain) {
 		t.Fatalf("Reconcile() error = %v, want ownership uncertainty", err)
 	}
-	if err := unix.Kill(process.pid, unix.SIGKILL); err != nil {
+	if err := stopDarwinTestRunner(process); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -378,10 +465,7 @@ func TestDarwinReceiptPublicationFailureStopsRunnerAndReleasesLock(t *testing.T)
 
 func TestDarwinRunnerStopIsIdempotent(t *testing.T) {
 	ownership := newDarwinTestLaunchOwnership(t)
-	handle, err := ownership.spawn(t.Context(), "env-stop-twice", darwinTestRunnerConfig(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := spawnDarwinTestRunner(t, ownership, "env-stop-twice", darwinTestRunnerConfig(t))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if err := handle.Stop(ctx); err != nil {
