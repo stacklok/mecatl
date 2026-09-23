@@ -264883,6 +264883,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790197955631,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c4ff4761e36b9dcea74c9234788287ad1caff6e",
+          "message": "Switches to best-practices renovate config (#1826)\n\nSigned-off-by: Chris Burns <29541485+ChrisJBurns@users.noreply.github.com>",
+          "timestamp": "2026-09-23T22:24:06+01:00",
+          "tree_id": "2381fdc78e082fae1e79ca4d9b445d3706e6aadd",
+          "url": "https://github.com/stacklok/mecatl/commit/6c4ff4761e36b9dcea74c9234788287ad1caff6e"
+        },
+        "date": 1790199341728,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3320,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -347343,6 +347382,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790199338896,
+  "lastUpdate": 1790199343030,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
