@@ -40,7 +40,7 @@ The presentation boundary must be functional rather than receive mutable `block`
 - AC1.3: Each render-visible block mutation advances that block's conversation-owned content revision through one mutation gateway. The renderer compares that revision with one explicit shared render-context key containing width, expanded state, theme/palette generation, visible-hint/keymap generation, and rendering dialect; a changed content or context member re-prepares output, while a settled matching entry performs no snapshot, preparation, or hash work.
   - verify: `TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksContentAndContext`
 - AC1.4: The card-preparation package owns neither cache storage/lifetime nor transcript/block identity, selection, viewport, or Bubble Tea state; it imports only the mecatui UI/theme/client dependency closure and no engine, host `internal`, or protobuf package.
-  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_CardsPackageDependencyBoundary`
+  - verify: `TestMecatuiFunctionalConversationCards_Scenario1_BlocksPackageDependencyBoundary`
 
 ### Scenario 2 — one functional path for structured conversation cards
 
