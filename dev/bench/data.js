@@ -258277,6 +258277,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790150720834,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "501e5a08b1b145259158124d65a049c6814887ea",
+          "message": "docs: clarify environment, workspace, and command runner binding (#1795)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T13:19:39+03:00",
+          "tree_id": "0c778477bde0f1c574966728a463f58ece7d87e7",
+          "url": "https://github.com/stacklok/mecatl/commit/501e5a08b1b145259158124d65a049c6814887ea"
+        },
+        "date": 1790159476936,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3330,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 122,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -338685,6 +338724,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790159473862,
+  "lastUpdate": 1790159478366,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
