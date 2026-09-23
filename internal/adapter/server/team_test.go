@@ -317,12 +317,12 @@ func (f *teamCountingForker) Fork(_ context.Context, parent tool.Environment, _ 
 	f.mu.Lock()
 	f.forks++
 	f.mu.Unlock()
-	return parent, sync.OnceValue(func() error {
+	return parent, func() error {
 		f.mu.Lock()
 		f.cleanups++
 		f.mu.Unlock()
 		return nil
-	}), "", nil
+	}, "", nil
 }
 
 func (f *teamCountingForker) counts() (int, int) {
