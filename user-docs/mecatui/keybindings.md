@@ -37,7 +37,6 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 | `pgup` / `pgdn` | Scroll the conversation. |
 | `home` / `end` | Jump to the top or bottom; `end` resumes auto-follow. |
 | `/` | Open the slash-command palette. |
-| Slash-command palette controls | `↑` / `↓` select the previous or next command. `pgup` / `pgdn` (`ScrollU` / `ScrollD`) page through the selected command's wrapped description before moving to another command. `tab` / `enter` choose the command. Command names are bold; muted descriptions show `│` on continuation lines and each command uses at most three lines. While idle, `esc` hides the palette until you leave command input; during a run, `esc` cancels the run. Above and below indicators report hidden physical rows. |
 | `ctrl+c` twice on an empty prompt | Quit safely. |
 | `/quit` (or `/exit`) | Quit immediately and cancel an active run. `/quit` appears in the slash palette; `/exit` is a dispatch-only alias. |
 | `ctrl+z` | Suspend to the shell; use `fg` to return. |

@@ -43,8 +43,8 @@ When a prompt contains a single-line slash-command token, the palette projects i
   - verify: `TestMecatuiSlashPaletteBoundedList_Scenario1_StandardRowPresentation`
 - AC1.4: While idle, typing still edits and filters the prompt; Tab or Enter still dispatches an eligible built-in or completes a workspace command; and Escape still hides the palette until command mode is left. While a run streams, the palette continues to own Up, Down, `ScrollU`, `ScrollD`, Tab, and Enter, but Escape remains the run-cancel action rather than dismissing the palette. When short geometry suppresses the palette card, it claims none of those navigation, completion, or dismissal keys and ordinary phase/prompt handling receives them. Command discovery still runs at most once per session; no Home, End, mouse, or click interaction is claimed by the palette.
   - verify: `TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership`
-- AC1.5: The owning Mecatui guidance explains the palette's implemented selection, overflow, and `ScrollU`/`ScrollD` behavior without claiming unsupported jump or pointer controls.
-  - verify: inspection — update `user-docs/mecatui/using-the-tui.md` and `user-docs/mecatui/keybindings.md` in the implementation PR, then pass `task docs` and `task site:build`.
+- AC1.5: The owning Mecatui guidance remains concise: it directs operators to `/` for the palette without duplicating its live navigation hint, styling, truncation, or overflow presentation.
+  - verify: inspection — verify `user-docs/mecatui/using-the-tui.md` and `user-docs/mecatui/keybindings.md` retain only durable user guidance, then pass `task docs`.
 
 ## Out of scope
 
