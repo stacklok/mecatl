@@ -265250,6 +265250,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790199341728,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "danbarr@users.noreply.github.com",
+            "name": "Dan Barr",
+            "username": "danbarr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33bee74457e4acf4694515a4d108d189bbb929de",
+          "message": "chore(website): prepare for TypeScript 7 and tune Renovate (#1829)\n\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-23T17:34:43-04:00",
+          "tree_id": "0294d5d5b33889733ec0a323fe68e535f0ef5117",
+          "url": "https://github.com/stacklok/mecatl/commit/33bee74457e4acf4694515a4d108d189bbb929de"
+        },
+        "date": 1790200047215,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3320,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -347824,6 +347863,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790200044359,
+  "lastUpdate": 1790200048310,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
