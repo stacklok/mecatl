@@ -261580,6 +261580,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790175973696,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33a3747d9008691d4d51a872c9e82c050c43fafa",
+          "message": "docs: retire implementation notes and trim agent instructions (#1807)\n\nCo-authored-by: GPT-6-Astra <noreply@openai.com>",
+          "timestamp": "2026-09-23T18:03:59+03:00",
+          "tree_id": "83e73c13a8450d72438e8f700320b199bd3f4793",
+          "url": "https://github.com/stacklok/mecatl/commit/33a3747d9008691d4d51a872c9e82c050c43fafa"
+        },
+        "date": 1790176675913,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 115,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -343014,6 +343053,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790176672704,
+  "lastUpdate": 1790176677068,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
