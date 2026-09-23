@@ -233194,6 +233194,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790150716974,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "501e5a08b1b145259158124d65a049c6814887ea",
+          "message": "docs: clarify environment, workspace, and command runner binding (#1795)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T13:19:39+03:00",
+          "tree_id": "0c778477bde0f1c574966728a463f58ece7d87e7",
+          "url": "https://github.com/stacklok/mecatl/commit/501e5a08b1b145259158124d65a049c6814887ea"
+        },
+        "date": 1790159472410,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -338651,6 +338685,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790159469209,
+  "lastUpdate": 1790159473862,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
