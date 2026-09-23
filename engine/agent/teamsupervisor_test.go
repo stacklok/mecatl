@@ -975,6 +975,41 @@ func singleMember(t *testing.T, out agent.TeamOutcome) agent.MemberOutcome {
 	return out.Members[0]
 }
 
+func TestSupervisorCloseIsConcurrentAndIdempotent(t *testing.T) {
+	tm := team.New("t")
+	var mu sync.Mutex
+	closed := 0
+	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
+		b := catalogFactory(t, tm)(spec, "")
+		b.Close = func() error {
+			mu.Lock()
+			closed++
+			mu.Unlock()
+			return nil
+		}
+		return b
+	}
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory)
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "ro", InitialPrompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() { defer wg.Done(); sup.Close() }()
+	}
+	wg.Wait()
+	mu.Lock()
+	got := closed
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("member Close calls = %d, want 1", got)
+	}
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "late"}); !errors.Is(err, agent.ErrSupervisorClosed) {
+		t.Fatalf("AddMember after Close = %v, want ErrSupervisorClosed", err)
+	}
+}
+
 func TestSupervisorRunsMemberCloseOnCleanup(t *testing.T) {
 	tm := team.New("t")
 	var closed int

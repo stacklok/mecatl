@@ -79,6 +79,28 @@ func (s *refreshStore) saveCount() int {
 	return s.saves
 }
 
+func TestMCPRefreshLoadFailuresAreSanitized(t *testing.T) {
+	const private = "decode failed at /private/store/session.json"
+	diag := &recordingDiagnostics{}
+	store := loadFailingStore{err: port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, errors.New(private))}
+	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Store: store})
+	svc, err := newPlacementTestService(server.Config{
+		Engine: eng, Store: store, OwnershipEnforced: true, Diagnostics: diag,
+		MCPRefresh: func(context.Context) (server.MCPRefreshSnapshot, error) { return server.MCPRefreshSnapshot{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "owner"})
+	_, err = svc.RefreshMcpSources(ctx, "session")
+	if !errors.Is(err, server.ErrInternal) || strings.Contains(err.Error(), private) {
+		t.Fatalf("RefreshMcpSources error = %q, want sanitized internal error", err)
+	}
+	if !diag.contains("snapshot") {
+		t.Fatalf("private diagnostic classification missing: %+v", diag.entries)
+	}
+}
+
 func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testing.T) {
 	owner := &session.Principal{Issuer: "https://issuer.example.com", Subject: "alice"}
 	ownerCtx := session.WithPrincipal(context.Background(), owner)

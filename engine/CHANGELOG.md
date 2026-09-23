@@ -19,6 +19,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   that retain optional interfaces for compatibility can now report negotiated
   false capabilities without consumers selecting unusable operations. Added (minor).
 
+- **Idempotent team-supervisor teardown** — adds `agent.Supervisor.Close`, a concurrent-safe, repeatable lifecycle endpoint that cancels an active run, waits for it to settle, and releases enrolled member resources exactly once. `AddMember` after run start or close returns `agent.ErrSupervisorClosed`. Added (minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,

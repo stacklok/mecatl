@@ -37,6 +37,21 @@ func runtimeTestCandidate(revision uint64, names ...string) *mcpReconcileCandida
 	return &mcpReconcileCandidate{generation: revision, tools: tools}
 }
 
+func TestMCPOperationRevisionDistinguishesPinnedEmptyRuntime(t *testing.T) {
+	runtimes := newMCPRuntimeSet(nil)
+	ctx, release, err := runtimes.pin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if revision, pinned := mcpOperationRevision(ctx); revision != 0 || !pinned {
+		t.Fatalf("pinned empty revision = (%d, %v), want (0, true)", revision, pinned)
+	}
+	if revision, pinned := mcpOperationRevision(t.Context()); revision != 0 || pinned {
+		t.Fatalf("unpinned revision = (%d, %v), want (0, false)", revision, pinned)
+	}
+}
+
 func TestMCPSourceReconciliation_Scenario2_AllOrNothingPublication(t *testing.T) {
 	var retries atomic.Int32
 	runtimes := newMCPRuntimeSet(func() { retries.Add(1) })
@@ -286,7 +301,7 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	}
 	svc, err := newTestServerService(server.Config{
 		Engine: initial, Store: store, SessionEngine: factory,
-		SharedEngineRevision: 1, OperationPin: runRuntimes.pin, OperationRevision: mcpRuntimeRevision,
+		SharedEngineRevision: 1, OperationPin: runRuntimes.pin, OperationRevision: mcpOperationRevision,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +375,7 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	teamServerCfg.Store = teamStore
 	teamServerCfg.SharedEngineRoot = teamCfg.Workspace
 	teamServerCfg.OperationPin = teamRuntimes.pin
-	teamServerCfg.OperationRevision = mcpRuntimeRevision
+	teamServerCfg.OperationRevision = mcpOperationRevision
 	teamServerCfg.RootAuthority = func(kind session.SessionKind) session.Authority {
 		return mintRuntimeRootAuthority(teamAssets.rootCatalog, teamRuntimes, kind)
 	}

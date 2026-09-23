@@ -2011,6 +2011,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
+	if assets.buildRuntimeRelease != nil {
+		defer assets.buildRuntimeRelease()
+	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
 	reservations := newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
 		cfg.diag().Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
@@ -2214,21 +2217,16 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			return assets.mcpRuntimes.pin(ctx)
 		},
-		OperationRevision: func(ctx context.Context) uint64 {
-			if revision := mcpRuntimeRevision(ctx); revision != 0 {
-				return revision
+		OperationRevision: func(ctx context.Context) (uint64, bool) {
+			if candidate := mcpRuntimeCandidate(ctx); candidate != nil {
+				return candidate.generation, true
 			}
 			if assets.mcpRuntimes != nil {
-				return assets.mcpRuntimes.currentRevision()
+				return assets.mcpRuntimes.currentRevision(), false
 			}
-			return 0
+			return 0, false
 		},
-		SharedEngineRevision: func() uint64 {
-			if assets.mcpRuntimes == nil {
-				return 0
-			}
-			return assets.mcpRuntimes.currentRevision()
-		}(),
+		SharedEngineRevision:                assets.sharedEngineRevision,
 		Store:                               store,
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
 		SessionLoadFailureMetric:            cfg.SessionLoadFailureMetricsEmitter,
@@ -5485,7 +5483,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	// buildSubagentTool can (a) pull a REFERENCED main server's tools out of this manager
 	// and (b) connect their own INLINE servers. mainMgr is nil when no main servers are
 	// configured (reference entries then resolve to a clear "unknown server" diagnostic).
-	mainMgr, mcpProvider, mcpInventory, mcpRuntimes, mcpReconciler, mcpClose := connectMCP(ctx, cfg)
+	mainMgr, mcpProvider, mcpInventory, mcpRuntimes, mcpReconciler, sharedEngineRevision, buildRuntimeRelease, mcpClose := connectMCP(ctx, cfg)
 
 	// Per-project memory store: opt-in via MemoryStoreURL (a remote gRPC driver;
 	// Phase B) or MemoryDir (the flocked reference adapter, opened ONCE here —
@@ -5707,25 +5705,27 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	}
 
 	assets := catalogAssets{
-		globalMgr:        mainMgr,
-		mcpRuntimes:      mcpRuntimes,
-		mcpReconciler:    mcpReconciler,
-		agentReg:         agentReg,
-		memStore:         memStore,
-		userModelStore:   userModelStore,
-		memoryDream:      memoryDream,
-		userModelDream:   userModelDream,
-		skills:           seam.metas,
-		skillSource:      seam.source,
-		skillIndex:       seam.index,
-		liveSkills:       liveSkills,
-		learnedSkills:    learnedSkills,
-		skillPublication: skillPublication,
-		skillPartition:   skillPartition,
-		skillOwner:       skillOwner,
-		forkReaper:       forkReaper,
-		autoMerger:       autoMerger,
-		modelInventory:   newResolvedModelInventory(modelSnapshot(reg)),
+		globalMgr:            mainMgr,
+		mcpRuntimes:          mcpRuntimes,
+		mcpReconciler:        mcpReconciler,
+		sharedEngineRevision: sharedEngineRevision,
+		buildRuntimeRelease:  buildRuntimeRelease,
+		agentReg:             agentReg,
+		memStore:             memStore,
+		userModelStore:       userModelStore,
+		memoryDream:          memoryDream,
+		userModelDream:       userModelDream,
+		skills:               seam.metas,
+		skillSource:          seam.source,
+		skillIndex:           seam.index,
+		liveSkills:           liveSkills,
+		learnedSkills:        learnedSkills,
+		skillPublication:     skillPublication,
+		skillPartition:       skillPartition,
+		skillOwner:           skillOwner,
+		forkReaper:           forkReaper,
+		autoMerger:           autoMerger,
+		modelInventory:       newResolvedModelInventory(modelSnapshot(reg)),
 		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME
@@ -5832,12 +5832,12 @@ func mcpResolveOptions(cfg Config) mcpsource.ResolveOptions {
 // the concrete *mcp.Manager (nil when no servers connect) so the per-agent-def
 // wiring can pull a REFERENCED main server's tools out of it; the same value is
 // the mcp.Provider used for resources/prompts.
-func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, *mcpRuntimeSet, *mcpSourceReconciler, func()) {
+func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, *mcpRuntimeSet, *mcpSourceReconciler, uint64, func(), func()) {
 	opts := mcpResolveOptions(cfg)
 	if len(opts.StaticServers) == 0 && !opts.ToolHiveEnabled {
 		_, inventory, _ := mcpsource.Resolve(ctx, mcpsource.ResolveSources(opts))
 		cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)", "toolhive", false, "static", 0)
-		return nil, nil, inventory, nil, nil, func() {}
+		return nil, nil, inventory, nil, nil, 0, func() {}, func() {}
 	}
 	runtimes := newMCPRuntimeSet(nil)
 	reconciler := newMCPSourceReconciler(mcpReconcilerOptions{
@@ -5848,14 +5848,23 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 	})
 	runtimes.setRetry(reconciler.invalidate)
 	result, err := reconciler.Reconcile(ctx)
+	pinnedCtx, buildRelease, pinErr := runtimes.pin(ctx)
+	if pinErr != nil {
+		reconciler.Close()
+		runtimes.close()
+		return nil, nil, result.inventory, nil, nil, 0, func() {}, func() {}
+	}
+	buildCandidate := mcpRuntimeCandidate(pinnedCtx)
+	buildRevision := buildCandidate.generation
 	for _, diagnostic := range result.diagnostics {
 		cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", diagnostic)
 	}
 	closeRuntime := sync.OnceFunc(func() {
+		buildRelease()
 		reconciler.Close()
 		runtimes.close()
 	})
-	if err != nil || result.candidate == nil || len(result.candidate.configs) == 0 {
+	if err != nil || buildCandidate == nil || len(buildCandidate.configs) == 0 {
 		if err != nil {
 			logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, err)
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP manager construction failed; continuing without MCP tools", "reason", "unavailable")
@@ -5863,11 +5872,11 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 			cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)",
 				"toolhive", cfg.ToolHiveEnabled, "static", len(cfg.MCPServers))
 		}
-		return nil, runtimes, result.inventory, runtimes, reconciler, closeRuntime
+		return nil, runtimes, result.inventory, runtimes, reconciler, buildRevision, buildRelease, closeRuntime
 	}
-	mgr := result.candidate.manager
-	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(result.candidate.configs), "tools", len(mgr.Tools()))
-	return mgr, runtimes, result.inventory, runtimes, reconciler, closeRuntime
+	mgr := buildCandidate.manager
+	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(buildCandidate.configs), "tools", len(mgr.Tools()))
+	return mgr, runtimes, result.inventory, runtimes, reconciler, buildRevision, buildRelease, closeRuntime
 }
 
 func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, err error) {

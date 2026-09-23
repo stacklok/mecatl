@@ -214,6 +214,14 @@ func mcpRuntimeRevision(ctx context.Context) uint64 {
 	return candidate.generation
 }
 
+func mcpOperationRevision(ctx context.Context) (uint64, bool) {
+	candidate := mcpRuntimeCandidate(ctx)
+	if candidate == nil {
+		return 0, false
+	}
+	return candidate.generation, true
+}
+
 func pinCatalogAssets(ctx context.Context, assets catalogAssets) (context.Context, catalogAssets, uint64, func(), error) {
 	if assets.mcpRuntimes == nil {
 		return ctx, assets, 0, func() {}, nil

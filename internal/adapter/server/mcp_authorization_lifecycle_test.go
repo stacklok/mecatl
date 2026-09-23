@@ -1519,16 +1519,17 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 	current.Store(7)
 	type revisionKey struct{}
 	f.svc.cfg.SharedEngineRevision = 7
-	f.svc.cfg.OperationRevision = func(ctx context.Context) uint64 {
+	f.svc.cfg.OperationRevision = func(ctx context.Context) (uint64, bool) {
 		if pinned, ok := ctx.Value(revisionKey{}).(uint64); ok {
-			return pinned
+			return pinned, true
 		}
-		return current.Load()
+		return current.Load(), false
 	}
 	var builds atomic.Int32
 	build := func(ctx context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
 		builds.Add(1)
-		return SessionEngineResult{Engine: f.svc.cfg.Engine, BuiltForMode: mode, RuntimeRevision: f.svc.cfg.OperationRevision(ctx), Close: func() error { return nil }}, nil
+		revision, _ := f.svc.cfg.OperationRevision(ctx)
+		return SessionEngineResult{Engine: f.svc.cfg.Engine, BuiltForMode: mode, RuntimeRevision: revision, Close: func() error { return nil }}, nil
 	}
 	f.svc.cfg.SessionEngine = build
 	f.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {

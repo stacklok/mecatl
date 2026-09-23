@@ -141,7 +141,7 @@ func (h *entryRuntimeHarness) service() *server.Service {
 	svc, err := newTestServerService(server.Config{
 		Engine: h.shared, Store: h.store, SessionEngine: h.factory,
 		SharedEngineRoot: h.cfg.Workspace, SharedEngineRevision: 1,
-		OperationPin: h.runtimes.pin, OperationRevision: mcpRuntimeRevision, MCPProvider: h.runtimes,
+		OperationPin: h.runtimes.pin, OperationRevision: mcpOperationRevision, MCPProvider: h.runtimes,
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: names, FileSystem: true, RemainingDelegationDepth: 2}, Provenance: "test", DefinitionIdentity: "test"}
 		},

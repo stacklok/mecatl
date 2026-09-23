@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -34,6 +36,8 @@ var ErrTeamNotRunning = errors.New("server: team is not running")
 // at Config.MaxTeams. It bounds the leak from teams created but never cleaned up.
 // It maps to codes.ResourceExhausted.
 var ErrTooManyTeams = errors.New("server: too many live teams")
+
+const abandonedTeamMemberCleanupTimeout = 5 * time.Second
 
 // teamPhase is a team's lifecycle phase in the registry, guarded by Service.mu. A
 // team is created on CreateTeam, transitions through starting while RunTeam
@@ -221,7 +225,7 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 
 func (s *Service) declareInitialRoster(t *team.Team, teamID string, members []agent.MemberSpec) error {
 	for _, spec := range members {
-		if spec.Name == "" {
+		if strings.TrimSpace(spec.Name) == "" {
 			return fmt.Errorf("%w: %v", ErrInvalidArgument, agent.ErrMemberNameRequired)
 		}
 		if spec.Mutating && s.cfg.Forker == nil {
@@ -237,16 +241,34 @@ func (s *Service) declareInitialRoster(t *team.Team, teamID string, members []ag
 	return nil
 }
 
-func (s *Service) deleteAbandonedMembers(ctx context.Context, ids []session.SessionID) {
+func (s *Service) memberStartupRollbackStore() (port.PrunableStore, error) {
+	if s.cfg.Store == nil {
+		return nil, nil
+	}
+	if _, creates := s.cfg.Store.(port.SessionCreator); !creates {
+		return nil, nil
+	}
 	prunable, ok := s.cfg.Store.(port.PrunableStore)
 	if !ok {
+		return nil, fmt.Errorf("%w: team member store cannot roll back partial enrollment", ErrFailedPrecondition)
+	}
+	if support, ok := s.cfg.Store.(port.SessionDeleteSupport); ok && !support.SupportsSessionDelete() {
+		return nil, fmt.Errorf("%w: team member store cannot roll back partial enrollment", ErrFailedPrecondition)
+	}
+	return prunable, nil
+}
+
+func (s *Service) deleteAbandonedMembers(ctx context.Context, ids []session.SessionID, prunable port.PrunableStore) {
+	if prunable == nil {
 		return
 	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), abandonedTeamMemberCleanupTimeout)
+	defer cancel()
 	for _, id := range ids {
 		if !s.mutationLeaseHeld(id) {
 			continue
 		}
-		if err := s.deleteSessionFamily(ctx, id, prunable); err != nil && !errors.Is(err, port.ErrSessionNotFound) {
+		if err := s.deleteSessionFamily(cleanupCtx, id, prunable); err != nil && !errors.Is(err, port.ErrSessionNotFound) {
 			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "abandoned team member snapshot could not be deleted; left for retention", "session", string(id), "err", err.Error())
 		}
 	}
@@ -288,7 +310,7 @@ func (s *Service) SpawnTeammate(ctx context.Context, teamID string, spec agent.M
 	if started {
 		return team.Member{}, fmt.Errorf("%w: cannot spawn into a team that has started", ErrTeamRunning)
 	}
-	if spec.Name == "" {
+	if strings.TrimSpace(spec.Name) == "" {
 		return team.Member{}, fmt.Errorf("%w: %v", ErrInvalidArgument, agent.ErrMemberNameRequired)
 	}
 	if spec.Mutating && s.cfg.Forker == nil {
@@ -457,11 +479,13 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 	sup := agent.NewSupervisor(t, ts.env, factory, opts...)
 	for _, spec := range ts.specs {
 		if err := sup.AddMember(ctx, spec); err != nil {
+			sup.Close()
 			return nil, nil, classifyAddMemberErr(err)
 		}
 	}
 	for _, message := range ts.messages {
 		if err := t.Send(message.from, message.to, message.body); err != nil {
+			sup.Close()
 			return nil, nil, fmt.Errorf("%w: restore team declaration message: %v", ErrInternal, err)
 		}
 	}
@@ -492,10 +516,22 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	// cleanup from observing a running phase before the supervisor is published.
 	ts.run.Lock()
 	s.mu.Lock()
+	registered := s.teams[teamID]
+	if registered != ts || !s.ownsResource(ctx, ts.owner) {
+		s.mu.Unlock()
+		ts.run.Unlock()
+		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrTeamNotFound, teamID)
+	}
 	if ts.phase != teamCreated {
 		s.mu.Unlock()
 		ts.run.Unlock()
 		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrTeamRunning, teamID)
+	}
+	rollbackStore, rollbackErr := s.memberStartupRollbackStore()
+	if rollbackErr != nil {
+		s.mu.Unlock()
+		ts.run.Unlock()
+		return agent.TeamOutcome{}, rollbackErr
 	}
 	ts.phase = teamStarting
 	s.mu.Unlock()
@@ -533,7 +569,7 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 
 	runtimeTeam, runtimeSupervisor, err := s.buildTeamForOperation(ctx, teamID, ts)
 	if err != nil {
-		s.deleteAbandonedMembers(ctx, leased)
+		s.deleteAbandonedMembers(ctx, leased, rollbackStore)
 		for _, acquired := range leased {
 			s.releaseLease(acquired)
 		}

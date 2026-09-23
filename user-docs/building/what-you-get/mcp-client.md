@@ -195,10 +195,18 @@ conversation.
 
 A name that disappears is unavailable but remains in the session's durable name
 authority. If the exact name returns, the existing grant applies again. A refresh
-response reports the runtime revision considered by that request and whether its
-reconciliation cycle or authority union changed anything. Inspect
-`ListMcpSources` for the cached revision, stale, and reconciliation status; the
-status call does not probe upstream servers.
+response reports the runtime revision pinned for that operation, which may no
+longer be the latest revision when the response arrives, and whether that
+operation's reconciliation cycle or authority union changed anything. Inspect
+`ListMcpSources` for the cached current revision, source diagnostics, stale, and
+reconciliation status; the status call does not probe upstream servers.
+
+Refresh failures use generic client messages. Inspect `ListMcpSources` to decide
+whether reconciliation is stale or still running, then retry after the reported
+condition clears. A save or transport failure can be ambiguous once persistence
+starts: retry the same refresh. The stable union is idempotent, so a retry either
+confirms the committed names or applies the still-missing names without removing
+existing authority.
 
 ## Authentication and credentials
 

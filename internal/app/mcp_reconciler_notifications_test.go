@@ -114,8 +114,8 @@ func TestMCPReconcilerNotificationStormCooldown(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("notification successor did not arm a cooldown")
 		}
-		if timer.delay <= 0 || timer.delay > maxMCPPollInterval {
-			t.Fatalf("unbounded cooldown: %v", timer.delay)
+		if timer.delay != minMCPReconcileCooldown {
+			t.Fatalf("cooldown = %v, want exactly %v", timer.delay, minMCPReconcileCooldown)
 		}
 		select {
 		case <-timers:

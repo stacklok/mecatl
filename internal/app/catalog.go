@@ -77,22 +77,24 @@ type catalogAssets struct {
 	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
 	// Catalog copies select the operation-pinned manager before assembly; cached
 	// engines retain only the returned revision tag.
-	mcpRuntimes      *mcpRuntimeSet
-	mcpReconciler    *mcpSourceReconciler
-	agentReg         *agents.Registry
-	memStore         tool.MemoryStore
-	userModelStore   tool.MemoryStore
-	memoryDream      *dream.Consolidator
-	userModelDream   *dream.Consolidator
-	skills           []tool.SkillMeta
-	skillSource      tool.SkillSource
-	skillIndex       skillIndex
-	liveSkills       *coreskillfs.AtomicCatalog
-	learnedSkills    learning.SkillRepository
-	skillPublication *learnedSkillPublication
-	skillPartition   learning.SkillPartition
-	skillOwner       string
-	forkReaper       *agent.LRUForkReaper
+	mcpRuntimes          *mcpRuntimeSet
+	mcpReconciler        *mcpSourceReconciler
+	sharedEngineRevision uint64
+	buildRuntimeRelease  func()
+	agentReg             *agents.Registry
+	memStore             tool.MemoryStore
+	userModelStore       tool.MemoryStore
+	memoryDream          *dream.Consolidator
+	userModelDream       *dream.Consolidator
+	skills               []tool.SkillMeta
+	skillSource          tool.SkillSource
+	skillIndex           skillIndex
+	liveSkills           *coreskillfs.AtomicCatalog
+	learnedSkills        learning.SkillRepository
+	skillPublication     *learnedSkillPublication
+	skillPartition       learning.SkillPartition
+	skillOwner           string
+	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
 	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a

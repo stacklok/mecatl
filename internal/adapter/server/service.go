@@ -600,7 +600,7 @@ type Config struct {
 	OperationPin func(context.Context) (context.Context, func(), error)
 	// OperationRevision reads the revision carried by OperationPin. Shared and
 	// cached engines are rebuilt before use when their tag differs.
-	OperationRevision func(context.Context) uint64
+	OperationRevision func(context.Context) (uint64, bool)
 	// SharedEngineRevision tags Engine's build-time direct-MCP generation.
 	SharedEngineRevision uint64
 
@@ -3781,6 +3781,18 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	return nil
 }
 
+func (s *Service) logManagementLoadFailure(ctx context.Context, id session.SessionID, err error) {
+	if s.cfg.OwnershipEnforced {
+		class := port.ClassifySessionLoadFailure(err)
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "management session load failed", "class", class.String(), "ownership", "enforced")
+		if s.cfg.SessionLoadFailureMetric != nil {
+			s.cfg.SessionLoadFailureMetric(class)
+		}
+		return
+	}
+	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "management session load failed", "session", string(id), "err", err.Error())
+}
+
 // managementOwnershipPreflight keeps foreign callers out of caller-selected
 // per-session coordination. It deliberately checks ownership only and returns no
 // aggregate: managementTarget must reload and reauthorize under runEntryMu before
@@ -3798,7 +3810,8 @@ func (s *Service) managementOwnershipPreflight(ctx context.Context, id session.S
 			}
 			return false, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return false, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+		s.logManagementLoadFailure(ctx, id, err)
+		return false, fmt.Errorf("%w: session could not be loaded", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		if concealAbsence {
@@ -3821,7 +3834,8 @@ func (s *Service) managementSession(ctx context.Context, id session.SessionID, c
 			}
 			return nil, false, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return nil, false, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+		s.logManagementLoadFailure(ctx, id, err)
+		return nil, false, fmt.Errorf("%w: session could not be loaded", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		if concealAbsence {
@@ -5520,7 +5534,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	desiredRuntimeRevision := s.cfg.SharedEngineRevision
 	if s.cfg.OperationRevision != nil {
-		if revision := s.cfg.OperationRevision(ctx); revision != 0 || desiredRuntimeRevision == 0 {
+		if revision, pinned := s.cfg.OperationRevision(ctx); pinned || revision != 0 || desiredRuntimeRevision == 0 {
 			desiredRuntimeRevision = revision
 		}
 	}

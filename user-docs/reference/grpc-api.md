@@ -225,6 +225,16 @@ should hide the action. Calling an old server's unknown method returns
 |`RefreshMcpSources`|unary|reconcile direct MCP for an eligible owned root and return the request-pinned revision plus request-local changed result|
 |`ListToolHiveGroups`|unary|the distinct ToolHive groups in the resolved inventory (no live ToolHive call)|
 
+`RefreshMcpSources` accepts only an owned ordinary root in `idle` or `completed`
+state with no local active run or broker binding. An unchanged runtime and
+already-complete authority union is a no-op with no write; additions are a stable
+union. The returned revision belongs to the operation pin and need not be the
+latest publication when delivery completes. Cancellation before save prevents
+the authority mutation. Once save starts, cancellation or a storage error can
+leave the result ambiguous; clients should inspect `ListMcpSources` and retry the
+same idempotent refresh. Public load, reconciliation, and persistence errors are
+generic and do not contain backend details.
+
 **Manual dream review.** Read `CreateSessionResponse.capabilities.manual_dream`
 to discover generation and decision availability independently for project
 memory and the user model. Generation sends the selected bounded
@@ -267,10 +277,14 @@ provider/model identity.
 
 `CreateTeam` and pre-run `SpawnTeammate` validate and record roster declarations;
 they do not create member engines, workspaces, or durable member sessions. `RunTeam`
-constructs those resources under its runtime pin and persists members as they run.
-Factory or workspace-fork failures therefore surface from `RunTeam`. A startup
-failure retains the declarations and queued messages so the caller can retry
-`RunTeam`.
+constructs those resources under its operation-pinned runtime, which is not
+necessarily the latest revision when the stream completes, and persists members
+as they run. A configured member store that supports atomic member creation must
+also support session deletion so partial startup can be rolled back; otherwise
+`RunTeam` fails before member enrollment. Factory or workspace-fork failures
+surface from `RunTeam`. A startup failure closes constructed member resources,
+removes snapshots while its mutation lease remains held, releases leases, and
+retains declarations and queued messages so the caller can retry `RunTeam`.
 
 ### The `Converse` flow
 

@@ -237,24 +237,75 @@ func TestDeclaredTeamMembersAdvertiseCanonicalSessionIDsBeforeRun(t *testing.T) 
 	}
 }
 
+type creatorOnlyTeamStore struct {
+	inner   *memstore.Store
+	creates int
+}
+
+func (s *creatorOnlyTeamStore) Save(ctx context.Context, sess *session.Session) error {
+	return s.inner.Save(ctx, sess)
+}
+func (s *creatorOnlyTeamStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	return s.inner.Load(ctx, id)
+}
+func (s *creatorOnlyTeamStore) Create(ctx context.Context, sess *session.Session) error {
+	s.creates++
+	return s.inner.Create(ctx, sess)
+}
+
+func TestRunTeamRejectsCreatorStoreWithoutRollbackBeforeEnrollment(t *testing.T) {
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	store := &creatorOnlyTeamStore{inner: memstore.New()}
+	builds := 0
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
+		Store:  store,
+		MemberEngine: func(*team.Team, agent.MemberSpec, string) agent.MemberBuild {
+			builds++
+			return agent.MemberBuild{}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := svc.CreateTeamOnDefaultPlacement(t.Context(), "team", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.creates = 0
+	if _, err := svc.RunTeam(t.Context(), id, nil); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("RunTeam = %v, want ErrFailedPrecondition", err)
+	}
+	if builds != 0 || store.creates != 0 {
+		t.Fatalf("startup side effects: builds=%d creates=%d", builds, store.creates)
+	}
+}
+
 func TestRunTeamConstructionFailureRetainsDeclarationsForRetry(t *testing.T) {
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	store := memstore.New()
+	var requestsMu sync.Mutex
 	var requests []port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		requestsMu.Lock()
 		requests = append(requests, req)
-	})}, mockllm.TextTurn("done"))
+		requestsMu.Unlock()
+	})}, mockllm.TextTurn("done"), mockllm.TextTurn("done"), mockllm.TextTurn("report"))
 	builds := 0
+	closes := 0
 	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
 		builds++
-		if builds == 1 {
+		if builds == 2 {
 			return agent.MemberBuild{}
 		}
 		cat := tool.NewCatalog()
 		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
-		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: cat, Policy: allow, Model: "mock"})}
+		return agent.MemberBuild{
+			Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: cat, Policy: allow, Model: "mock"}),
+			Close:  func() error { closes++; return nil },
+		}
 	}
 	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
@@ -263,7 +314,11 @@ func TestRunTeamConstructionFailureRetainsDeclarationsForRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	teamID, _, err := svc.CreateTeamOnDefaultPlacement(t.Context(), "retry", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}})
+	members := []agent.MemberSpec{
+		{Name: "lead", Lead: true, InitialPrompt: "work"},
+		{Name: "worker", InitialPrompt: "help"},
+	}
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(t.Context(), "retry", "goal", 0, members)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,13 +328,20 @@ func TestRunTeamConstructionFailureRetainsDeclarationsForRetry(t *testing.T) {
 	if _, err := svc.RunTeam(t.Context(), teamID, func(agent.TeamEvent) {}); !errors.Is(err, server.ErrInternal) {
 		t.Fatalf("first RunTeam = %v, want construction ErrInternal", err)
 	}
-	if _, err := store.Load(t.Context(), agent.MemberSessionID(teamID, "lead")); !errors.Is(err, port.ErrSessionNotFound) {
-		t.Fatalf("failed startup persisted a member: %v", err)
+	for _, spec := range members {
+		if _, err := store.Load(t.Context(), agent.MemberSessionID(teamID, spec.Name)); !errors.Is(err, port.ErrSessionNotFound) {
+			t.Fatalf("failed startup persisted member %q: %v", spec.Name, err)
+		}
+	}
+	if closes != 1 {
+		t.Fatalf("failed startup member close count = %d, want 1", closes)
 	}
 	if _, err := svc.RunTeam(t.Context(), teamID, func(agent.TeamEvent) {}); err != nil {
 		t.Fatalf("retry RunTeam: %v", err)
 	}
 	foundMessage := false
+	requestsMu.Lock()
+	defer requestsMu.Unlock()
 	for _, request := range requests {
 		for _, message := range request.Messages {
 			foundMessage = foundMessage || strings.Contains(message.Text, "preserved message")
