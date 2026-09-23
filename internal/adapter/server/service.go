@@ -389,9 +389,10 @@ type Config struct {
 	// Commands lists the available slash commands for a workspace, backing the
 	// ListCommands RPC (the client's in-input command palette). It is the
 	// composition-injected discovery seam: the composition root (internal/app)
-	// closes over the SAME command expander it builds for the run path and the
-	// workspace factory, so the palette offers exactly the commands a "/<cmd>"
-	// prompt would expand. Optional and nil-safe: when nil (command expansion
+	// closes over the SAME command expander it builds for the run path and receives
+	// the exact authorized workspace reattached for the session, so the palette
+	// offers exactly the commands a "/<cmd>" prompt would expand. Optional and
+	// nil-safe: when nil (command expansion
 	// disabled, or no expander enumerates), ListCommands returns an empty list.
 	// It is read-only and called per request (discovery is cheap file scanning).
 	Commands CommandLister
@@ -8321,15 +8322,15 @@ type Command struct {
 	Description string
 }
 
-// CommandLister enumerates the slash commands available under a workspace root.
-// It is the composition-injected discovery seam backing ListCommands: the
-// composition root supplies an implementation that closes over the run-path
-// command expander and the workspace factory, so the palette and the run path
+// CommandLister enumerates the slash commands available through an exact,
+// already-authorized workspace. It is the composition-injected discovery seam
+// backing ListCommands: the composition root supplies an implementation that
+// closes over the run-path command expander, so the palette and the run path
 // agree on which commands exist. It is read-only.
 type CommandLister interface {
-	// List returns the commands discovered under root, de-duplicated by name and
+	// List returns the commands discovered through ws, de-duplicated by name and
 	// name-sorted, or an error on a genuine discovery fault.
-	List(ctx context.Context, root string) ([]Command, error)
+	List(ctx context.Context, ws tool.Workspace) ([]Command, error)
 }
 
 // --- Worktree discovery (provider-private) -----------------------------------

@@ -4640,9 +4640,9 @@ func buildCommandExpander(cfg Config, mcpProvider mcp.Provider) prompt.CommandEx
 // engine consumes on the run path — so the palette enumerates exactly the
 // commands a "/<cmd>" prompt would expand. It returns nil (RPC yields an empty
 // list) when the expander cannot enumerate, i.e. it is the NoopExpander (commands
-// disabled) or does not implement prompt.CommandLister. After Service authorizes
-// and exactly reattaches the owned session, this lister opens a fresh osfs Workspace
-// at that provider-verified private root so discovery reflects current command files.
+// disabled) or does not implement prompt.CommandLister. Service supplies the exact
+// workspace returned by the authorized placement reattachment, so local, virtual,
+// and remote placements all discover through their own adapter.
 func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandLister {
 	exp := buildCommandExpander(cfg, mcpProvider)
 	lister, ok := exp.(prompt.CommandLister)
@@ -4654,11 +4654,7 @@ func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandList
 		// palette stays empty without a per-request workspace open.
 		return nil
 	}
-	return commandListerFunc(func(ctx context.Context, root string) ([]server.Command, error) {
-		ws, err := osfs.NewWorkspace(root)
-		if err != nil {
-			return nil, fmt.Errorf("open workspace %q: %w", root, err)
-		}
+	return commandListerFunc(func(ctx context.Context, ws tool.Workspace) ([]server.Command, error) {
 		cmds, err := lister.List(ctx, ws)
 		if err != nil {
 			return nil, err
@@ -4673,11 +4669,11 @@ func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandList
 
 // commandListerFunc adapts a function to the server.CommandLister interface, the
 // same lightweight-adapter idiom mcpSourceProber uses for its prober closure.
-type commandListerFunc func(ctx context.Context, root string) ([]server.Command, error)
+type commandListerFunc func(ctx context.Context, ws tool.Workspace) ([]server.Command, error)
 
 // List implements server.CommandLister.
-func (f commandListerFunc) List(ctx context.Context, root string) ([]server.Command, error) {
-	return f(ctx, root)
+func (f commandListerFunc) List(ctx context.Context, ws tool.Workspace) ([]server.Command, error) {
+	return f(ctx, ws)
 }
 
 // buildDirCommandExpander returns the file-backed slash-command expander, or nil

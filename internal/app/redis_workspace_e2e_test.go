@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +13,87 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+func TestRedisWorkspaceSlashCommandDiscoveryUsesReattachedWorkspace(t *testing.T) {
+	mr := miniredis.RunT(t)
+	built, err := buildIsolated(t, t.Context(), Config{
+		RedisURL:            mr.Addr(),
+		RedisAllowPlaintext: true,
+		RedisFilesystem:     true,
+		EnableCommands:      true,
+		UseMock:             true,
+		NoSoul:              true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "command-owner", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(t.Context(), principal)
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list := func() (int, *mecatlv1.ListCommandsResponse) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/commands?session_id="+string(sess.ID), nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		server.NewHTTPHandler(built.Service).ServeHTTP(rec, req)
+		var body mecatlv1.ListCommandsResponse
+		if rec.Code == http.StatusOK {
+			if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+				t.Fatalf("decode ListCommands response: %v", err)
+			}
+		}
+		return rec.Code, &body
+	}
+
+	// Missing command directories are a normal empty discovery result, including
+	// on a virtual workspace whose Root is not a pod-local filesystem path.
+	if status, got := list(); status != http.StatusOK || len(got.GetCommands()) != 0 {
+		t.Fatalf("empty Redis command discovery = status %d, commands %+v; want 200 and empty", status, got.GetCommands())
+	}
+
+	storage, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	ws, err := storage.OpenWorkspace(ctx, redisPrincipalScope(principal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		".mecatl/commands/zeta.md":  "---\ndescription: native zeta\n---\nNative zeta body",
+		".claude/commands/alpha.md": "---\ndescription: alpha\n---\nAlpha body",
+		".claude/commands/zeta.md":  "---\ndescription: shadowed zeta\n---\nShadowed body",
+	} {
+		if _, err := ws.CreateFile(ctx, path, []byte(body)); err != nil {
+			t.Fatalf("create %s: %v", path, err)
+		}
+	}
+
+	status, got := list()
+	if status != http.StatusOK {
+		t.Fatalf("Redis command discovery status = %d, want 200", status)
+	}
+	commands := got.GetCommands()
+	if len(commands) != 2 || commands[0].GetName() != "alpha" || commands[1].GetName() != "zeta" {
+		t.Fatalf("Redis commands = %+v, want sorted [alpha zeta]", commands)
+	}
+	if commands[1].GetDescription() != "native zeta" {
+		t.Fatalf("zeta description = %q, want higher-precedence .mecatl command", commands[1].GetDescription())
+	}
+}
 
 func TestRedisWorkspaceBuiltEngineExercisesAllFileToolsAcrossSamePrincipalSessions(t *testing.T) {
 	mr := miniredis.RunT(t)
