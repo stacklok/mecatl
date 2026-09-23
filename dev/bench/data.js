@@ -261947,6 +261947,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790176675913,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c2c4e1ae47ca12eb7aa86d6d756d152019a2c5f6",
+          "message": "docs: retire the readiness tracker and completed mecak8s plan (#1812)\n\nCo-authored-by: GPT-6-Astra <noreply@openai.com>",
+          "timestamp": "2026-09-23T19:10:06+03:00",
+          "tree_id": "ab2ca0c1980fa5fdba4d67fbba068353a0eb5714",
+          "url": "https://github.com/stacklok/mecatl/commit/c2c4e1ae47ca12eb7aa86d6d756d152019a2c5f6"
+        },
+        "date": 1790180449017,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3291,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 84,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -343495,6 +343534,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790180446102,
+  "lastUpdate": 1790180450404,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
