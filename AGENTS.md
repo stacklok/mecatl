@@ -1,7 +1,7 @@
 # AGENTS.md: Mecatl
 
-Coding-agent instructions for this Go agent harness. `CLAUDE.md` is a symlink;
-edit this file, never the symlink. Use the [reader map](docs/READING.md) for
+Coding-agent instructions for this harness, built in Go 1.27. `CLAUDE.md` is a
+symlink; edit this file, never the symlink. Use the [reader map](docs/READING.md) for
 subsystem documentation, not a full-repository reading pass.
 
 ## Working conventions
