@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — establishes one publication owner and provider-local readiness, retry, and freshness rules across composition, run admission, and inventory projections.
-**Decision record:** [ADR 0351](../adr/0351-provider-scoped-model-discovery.md)
+**Decision record:** [ADR 0353](../adr/0353-provider-scoped-model-discovery.md)
 **Phase:** Discovery ownership and context-safe run admission
 **Status:** draft, 2026-09-23. Policy recommendations await the decisions below.
 **Delivery:** Split. Review the discovery and admission contract before implementation.
@@ -316,8 +316,8 @@ retryable admission condition rather than a transcript failure.
 
 1. Every scenario has its offline proof, including deterministic race/cancellation coverage under `-race`; `task ac-trace-strict` resolves every proof when the plan becomes `landed`.
 2. The ownership migration is complete in the implementation PR, with no parallel settlement, retry, outcome, or inventory writer left on the Build path.
-3. `task lint`, `task test`, `task api:check`, `task docs`, and `go run ./cmd/mecademo` pass. The engine API snapshots stay unchanged.
-4. Update the living provider/context architecture and IMPLEMENTATION-NOTES; update ADR 0027's resource inventory and fidelity ledger for the discovery owner and retained UI submission when they actually exist. Record shipped/deferred scope only in PRODUCTION-READINESS. Preserve accepted ADR 0342 decision text.
+3. `task lint`, `task test`, `task test:race`, `task api:check`, `task docs`, and `go run ./cmd/mecademo` pass. The engine API snapshots stay unchanged.
+4. Update the living [provider architecture](../architecture/providers.md) and [context and compaction guide](../architecture/context-and-compaction.md); update ADR 0027's resource inventory and fidelity ledger for the discovery owner and retained UI submission when they actually exist. Record shipped/deferred scope only in PRODUCTION-READINESS. Preserve accepted ADR 0342 decision text.
 5. In the implementation PR, update the owning [model-selection guide](https://mecatl.dev/docs/features/choose-models) (`user-docs/features/choose-models.md`) and [deployment guidance](https://mecatl.dev/docs/building/deployment/mecated) (`user-docs/building/deployment/mecated.md`) for first-demand/retry behavior and safe recovery, following `user-docs/_README.md`; run `task site:build`. This plan PR publishes no changed runtime instructions.
 6. The implementation PR links the approved Plan / Interface PR and commit, reports interface conformance, and has no unwaived ship blockers from `/panel-review`.
 
