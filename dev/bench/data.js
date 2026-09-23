@@ -231226,6 +231226,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790125307372,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "494c99049a39cd77f1006df7422e8aad236642f2",
+          "message": "fix(mecatui): clear answered approval notifications (#1782)\n\nCo-authored-by: OpenAI Codex <noreply@openai.com>",
+          "timestamp": "2026-09-23T09:25:56+03:00",
+          "tree_id": "4b979d4dc7cb2e24b6b630a075a5ff568444c8c6",
+          "url": "https://github.com/stacklok/mecatl/commit/494c99049a39cd77f1006df7422e8aad236642f2"
+        },
+        "date": 1790145421443,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -335765,6 +335799,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790145418804,
+  "lastUpdate": 1790145422202,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
