@@ -468,8 +468,21 @@ The committed concise examples under `sdk/typescript/examples/` self-import only
 four exported entry points. A dedicated no-emit project runs after the package build, so no source
 path alias can hide an export/example drift. It covers remote and local Node/Bun use, callback
 tools, Deno remote and local use, browser+BFF guidance, permissions, durable attachment, teams,
-schedules, and plan resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
+schedules, plan resolution, session lifecycle, capability discovery, MCP workspace enrollment,
+and MCP authorization. The offline SDK e2e gate also compiles and executes the four latter
+workflow entry points against controlled daemon or protocol fixtures. The browser BFF is
+explicitly a deployment shape, not SDK server code. The larger
 Slack bot remains a separate pnpm project and has its own package-export typecheck CI leg.
+
+The test-only [high-level RPC inventory](../sdk/typescript/test/high-level-surface.test.ts)
+classifies every public `HarnessService` and `ScheduleService` descriptor by the public SDK
+operation that invokes it. `StreamSessionEvents` and `StreamSessionLive` have individual raw-only
+rationales: durable `Session.activity()` and `attach()` instead use `WatchSessionEvents`. This
+coverage guard checks handwritten invocation paths separately from the raw transport catalog.
+The [TUI builtin inventory](../cmd/mecatui/ui/sdk_high_level_parity_test.go) classifies all
+actual builtin declarations by reusable SDK outcome or application, operator, and debug
+ownership. These inventories are verification data; the SDK and `mecatui` remain independent
+clients and share no command registry.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
 client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the
