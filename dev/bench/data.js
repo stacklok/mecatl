@@ -233522,6 +233522,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790159472410,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ca993a6ea1b648e8e18a102b6810da5dea8c494f",
+          "message": "fix: preserve native gateway discovery during background refresh (#1798)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T13:55:37+03:00",
+          "tree_id": "80cf5c3cd3ca1b414ff724a14a557c6c129b27ae",
+          "url": "https://github.com/stacklok/mecatl/commit/ca993a6ea1b648e8e18a102b6810da5dea8c494f"
+        },
+        "date": 1790161632012,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -339132,6 +339166,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790161629302,
+  "lastUpdate": 1790161632986,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
