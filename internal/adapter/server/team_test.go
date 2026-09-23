@@ -281,6 +281,56 @@ func TestRunTeamRejectsCreatorStoreWithoutRollbackBeforeEnrollment(t *testing.T)
 	}
 }
 
+type teamRollbackStore struct {
+	*memstore.Store
+	mu               sync.Mutex
+	deleteContextErr []error
+	deleted          []session.SessionID
+}
+
+func (s *teamRollbackStore) Delete(ctx context.Context, id session.SessionID) error {
+	s.mu.Lock()
+	s.deleteContextErr = append(s.deleteContextErr, ctx.Err())
+	s.deleted = append(s.deleted, id)
+	s.mu.Unlock()
+	return s.Store.Delete(ctx, id)
+}
+
+func (s *teamRollbackStore) deletion(id session.SessionID) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, deleted := range s.deleted {
+		if deleted == id {
+			return true, s.deleteContextErr[i]
+		}
+	}
+	return false, nil
+}
+
+type teamCountingForker struct {
+	mu       sync.Mutex
+	forks    int
+	cleanups int
+}
+
+func (f *teamCountingForker) Fork(_ context.Context, parent tool.Environment, _ string) (tool.Environment, func() error, string, error) {
+	f.mu.Lock()
+	f.forks++
+	f.mu.Unlock()
+	return parent, sync.OnceValue(func() error {
+		f.mu.Lock()
+		f.cleanups++
+		f.mu.Unlock()
+		return nil
+	}), "", nil
+}
+
+func (f *teamCountingForker) counts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.forks, f.cleanups
+}
+
 func TestRunTeamConstructionFailureRetainsDeclarationsForRetry(t *testing.T) {
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	store := memstore.New()
@@ -349,6 +399,154 @@ func TestRunTeamConstructionFailureRetainsDeclarationsForRetry(t *testing.T) {
 	}
 	if !foundMessage {
 		t.Fatalf("retry lost queued declaration message: %+v", requests)
+	}
+}
+
+type teamLossLease struct {
+	mu       sync.Mutex
+	lostID   session.SessionID
+	lost     chan struct{}
+	lostOnce sync.Once
+	releases map[session.SessionID]int
+}
+
+func (l *teamLossLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+func (l *teamLossLease) Renew(_ context.Context, lease port.Lease) (port.Lease, error) {
+	if lease.SessionID == l.lostID {
+		l.lostOnce.Do(func() { close(l.lost) })
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	return lease, nil
+}
+
+func (l *teamLossLease) Release(_ context.Context, lease port.Lease) error {
+	l.mu.Lock()
+	l.releases[lease.SessionID]++
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *teamLossLease) releaseCount(id session.SessionID) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.releases[id]
+}
+
+func TestRunTeamCancelledPartialStartupRollsBackWithDetachedContext(t *testing.T) {
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	store := &teamRollbackStore{Store: memstore.New()}
+	forker := &teamCountingForker{}
+	ctx, cancel := context.WithCancel(t.Context())
+	builds := 0
+	closes := 0
+	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+		builds++
+		if builds == 2 {
+			cancel()
+			return agent.MemberBuild{}
+		}
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		return agent.MemberBuild{
+			Engine:          agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: cat, Policy: allow, Model: "mock"}),
+			IsolateReadOnly: true,
+			Close: func() error {
+				closes++
+				return nil
+			},
+		}
+	}
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
+		Store:  store, MemberEngine: memberEngine, ReadOnlyForker: forker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "rollback", "goal", 0, []agent.MemberSpec{
+		{Name: "lead", Lead: true}, {Name: "worker"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunTeam(ctx, teamID, nil); !errors.Is(err, server.ErrInternal) {
+		t.Fatalf("RunTeam = %v, want ErrInternal", err)
+	}
+	leadID := agent.MemberSessionID(teamID, "lead")
+	if deleted, contextErr := store.deletion(leadID); !deleted || contextErr != nil {
+		t.Fatalf("lead rollback deletion = %v with context error %v, want detached live context", deleted, contextErr)
+	}
+	if _, err := store.Load(context.Background(), leadID); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("rolled-back lead persisted: %v", err)
+	}
+	if closes != 1 {
+		t.Fatalf("member Close calls = %d, want 1", closes)
+	}
+	if forks, cleanups := forker.counts(); forks != 1 || cleanups != 1 {
+		t.Fatalf("fork/cleanup calls = %d/%d, want 1/1", forks, cleanups)
+	}
+}
+
+func TestRunTeamLeaseLossPreservesPersistedMember(t *testing.T) {
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	store := &teamRollbackStore{Store: memstore.New()}
+	lease := &teamLossLease{lost: make(chan struct{}), releases: make(map[session.SessionID]int)}
+	builds := 0
+	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+		builds++
+		if builds == 2 {
+			<-lease.lost
+			return agent.MemberBuild{}
+		}
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: cat, Policy: allow, Model: "mock"})}
+	}
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
+		Store:  store, MemberEngine: memberEngine, SessionLease: lease, LeaseOwner: "test",
+		LeaseTTL: time.Hour, LeaseRenewInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(t.Context(), "lease-loss", "goal", 0, []agent.MemberSpec{
+		{Name: "lead", Lead: true}, {Name: "worker"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leadID := agent.MemberSessionID(teamID, "lead")
+	workerID := agent.MemberSessionID(teamID, "worker")
+	lease.lostID = leadID
+	if _, err := svc.RunTeam(t.Context(), teamID, nil); !errors.Is(err, server.ErrInternal) {
+		t.Fatalf("RunTeam = %v, want ErrInternal", err)
+	}
+	if deleted, _ := store.deletion(leadID); deleted {
+		t.Fatal("lease-lost member was deleted without mutation authority")
+	}
+	if _, err := store.Load(t.Context(), leadID); err != nil {
+		t.Fatalf("lease-lost member snapshot was not preserved: %v", err)
+	}
+	if got := lease.releaseCount(leadID); got != 1 {
+		t.Fatalf("lost lead lease releases = %d, want 1", got)
+	}
+	if got := lease.releaseCount(workerID); got != 1 {
+		t.Fatalf("worker lease releases after failed cleanup = %d, want 1", got)
+	}
+	if err := svc.CleanupTeam(t.Context(), teamID); err != nil {
+		t.Fatalf("CleanupTeam: %v", err)
+	}
+	if got := lease.releaseCount(leadID); got != 1 {
+		t.Fatalf("cleanup double-released lost lead lease: %d", got)
 	}
 }
 

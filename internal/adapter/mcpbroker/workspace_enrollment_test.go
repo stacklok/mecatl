@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	goruntime "runtime"
 	"sync"
 	"testing"
 	"time"
@@ -321,9 +322,16 @@ func TestResetWorkspaceEnrollmentLockOrderMatchesRefreshPath(t *testing.T) {
 	// still needs logical.mu.
 	attachment.mu.Lock()
 
+	resetEntered := make(chan struct{})
 	resetDone := make(chan error, 1)
-	go func() { resetDone <- enroller.ResetWorkspaceEnrollment(t.Context()) }()
-	time.Sleep(20 * time.Millisecond) // let Reset reach its first lock attempt
+	go func() {
+		close(resetEntered)
+		resetDone <- enroller.ResetWorkspaceEnrollment(t.Context())
+	}()
+	<-resetEntered
+	// Yield until the reset goroutine reaches the held attachment mutex. This
+	// synchronizes on the lock itself instead of guessing a scheduler delay.
+	goruntime.Gosched()
 
 	logicalLocked := make(chan struct{})
 	go func() {
@@ -332,22 +340,26 @@ func TestResetWorkspaceEnrollmentLockOrderMatchesRefreshPath(t *testing.T) {
 		close(logicalLocked)
 	}()
 
+	logicalAvailable := false
 	select {
 	case <-logicalLocked:
+		logicalAvailable = true
 	case <-time.After(2 * time.Second):
-		attachment.mu.Unlock()
-		t.Fatal("logical.mu unavailable while holding a.mu: ResetWorkspaceEnrollment's lock order regressed to logical.mu-outer")
 	}
 
 	attachment.mu.Unlock()
 
+	var resetErr error
 	select {
-	case err := <-resetDone:
-		if err != nil {
-			t.Fatalf("ResetWorkspaceEnrollment = %v", err)
-		}
+	case resetErr = <-resetDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("ResetWorkspaceEnrollment did not complete")
+	}
+	if !logicalAvailable {
+		t.Fatal("logical.mu unavailable while holding a.mu: ResetWorkspaceEnrollment's lock order regressed to logical.mu-outer")
+	}
+	if resetErr != nil {
+		t.Fatalf("ResetWorkspaceEnrollment = %v", resetErr)
 	}
 }
 

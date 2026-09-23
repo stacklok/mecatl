@@ -52,6 +52,41 @@ func TestMCPOperationRevisionDistinguishesPinnedEmptyRuntime(t *testing.T) {
 	}
 }
 
+func TestPinnedEmptyRuntimeRebuildsNonzeroSharedEngine(t *testing.T) {
+	runtimes := newMCPRuntimeSet(nil)
+	defer runtimes.close()
+	provider := mockllm.New(mockllm.TextTurn("done"))
+	engine := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(defaultRules(), nil), Model: "mock"})
+	store := memstore.New()
+	var factoryCalls atomic.Int32
+	svc, err := newTestServerService(server.Config{
+		Engine: engine, Store: store, SharedEngineRevision: 9,
+		OperationPin: runtimes.pin, OperationRevision: mcpOperationRevision,
+		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
+			factoryCalls.Add(1)
+			return server.SessionEngineResult{Engine: engine, RuntimeRevision: 0}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRunContent(t.Context(), sess.ID, "go", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	if got := factoryCalls.Load(); got != 1 {
+		t.Fatalf("session engine factory calls = %d, want 1 for pinned revision 0 against shared revision 9", got)
+	}
+}
+
 func TestMCPSourceReconciliation_Scenario2_AllOrNothingPublication(t *testing.T) {
 	var retries atomic.Int32
 	runtimes := newMCPRuntimeSet(func() { retries.Add(1) })

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -185,7 +186,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
 			sources: []mcpsource.Source{th}, toolHive: true,
 			after: func(d time.Duration) <-chan time.Time {
-				if d == minMCPReconcileCooldown {
+				if d == time.Second {
 					return time.After(d)
 				}
 				if d < minMCPPollInterval || d > maxMCPPollInterval {
@@ -292,6 +293,91 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 			return r.current != nil && r.current.generation != firstGeneration && len(r.current.tools) == 2 && len(r.current.resources) == 1 && len(r.current.prompts) == 1
 		})
 	})
+}
+
+func TestDeferredRuntimeDrainAutomaticallyReconcilesAndPublishes(t *testing.T) {
+	source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "svc", URL: "http://svc-0.invalid/mcp"}}}
+	cooldowns := make(chan chan time.Time, 16)
+	runtimes := newMCPRuntimeSet(nil)
+	var builds atomic.Int64
+	r := newMCPSourceReconciler(mcpReconcilerOptions{
+		sources: []mcpsource.Source{source},
+		after: func(d time.Duration) <-chan time.Time {
+			if d != time.Second {
+				t.Errorf("reconcile cooldown = %v, want 1s", d)
+			}
+			ch := make(chan time.Time, 1)
+			cooldowns <- ch
+			return ch
+		},
+		build: func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
+			return candidateFromConfigs(configs, uint64(builds.Add(1))), nil
+		},
+		publish: runtimes.publish,
+	})
+	runtimes.setRetry(r.invalidate)
+	pins := make([]func(), 0, maxMCPRetainedRuntimes+1)
+	t.Cleanup(func() {
+		for _, release := range pins {
+			release()
+		}
+		r.Close()
+		runtimes.close()
+	})
+
+	reconcile := func(first bool) mcpReconcileResult {
+		t.Helper()
+		done := make(chan struct {
+			result mcpReconcileResult
+			err    error
+		}, 1)
+		go func() {
+			result, err := r.Reconcile(t.Context())
+			done <- struct {
+				result mcpReconcileResult
+				err    error
+			}{result, err}
+		}()
+		if !first {
+			(<-cooldowns) <- time.Unix(1, 0)
+		}
+		got := <-done
+		if got.err != nil {
+			t.Fatalf("Reconcile: %v", got.err)
+		}
+		return got.result
+	}
+
+	current := reconcile(true).candidate
+	for i := 0; i < maxMCPRetainedRuntimes; i++ {
+		_, release, err := runtimes.pin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		pins = append(pins, release)
+		source.set([]mcp.ServerConfig{{Name: "svc", URL: fmt.Sprintf("http://svc-%d.invalid/mcp", i+1)}}, nil)
+		current = reconcile(false).candidate
+	}
+	_, releaseCurrent, err := runtimes.pin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins = append(pins, releaseCurrent)
+	source.set([]mcp.ServerConfig{{Name: "svc", URL: "http://deferred.invalid/mcp"}}, nil)
+	deferred := reconcile(false)
+	if !deferred.stale || runtimes.currentRevision() != current.generation {
+		t.Fatalf("deferred publication = stale %v revision %d, want stale at %d", deferred.stale, runtimes.currentRevision(), current.generation)
+	}
+
+	pins[0]()
+	(<-cooldowns) <- time.Unix(2, 0)
+	eventuallyReconcile(t, func() bool { return runtimes.currentRevision() > current.generation })
+	if got := runtimes.currentRevision(); got != uint64(builds.Load()) {
+		t.Fatalf("automatic successor revision = %d, builds = %d", got, builds.Load())
+	}
+	for _, release := range pins[1:] {
+		release()
+	}
 }
 
 func TestADR_0350_ReconciliationBoundsConsentAndShutdown(t *testing.T) {

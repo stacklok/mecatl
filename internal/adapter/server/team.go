@@ -492,6 +492,31 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 	return t, sup, nil
 }
 
+func (s *Service) claimTeamStart(ctx context.Context, teamID string, ts *teamState) (port.PrunableStore, error) {
+	ts.run.Lock()
+	s.mu.Lock()
+	registered := s.teams[teamID]
+	if registered != ts || !s.ownsResource(ctx, ts.owner) {
+		s.mu.Unlock()
+		ts.run.Unlock()
+		return nil, fmt.Errorf("%w: %q", ErrTeamNotFound, teamID)
+	}
+	if ts.phase != teamCreated {
+		s.mu.Unlock()
+		ts.run.Unlock()
+		return nil, fmt.Errorf("%w: %q", ErrTeamRunning, teamID)
+	}
+	rollbackStore, err := s.memberStartupRollbackStore()
+	if err != nil {
+		s.mu.Unlock()
+		ts.run.Unlock()
+		return nil, err
+	}
+	ts.phase = teamStarting
+	s.mu.Unlock()
+	return rollbackStore, nil
+}
+
 // RunTeam drives the team to quiescence, invoking sink for every member event,
 // and returns the outcome. It blocks for the team's lifetime; the gRPC handler
 // runs it on the request goroutine and forwards events to the stream.
@@ -514,27 +539,10 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	}
 	// Claim startup under the per-team lock. teamStarting keeps cancellation and
 	// cleanup from observing a running phase before the supervisor is published.
-	ts.run.Lock()
-	s.mu.Lock()
-	registered := s.teams[teamID]
-	if registered != ts || !s.ownsResource(ctx, ts.owner) {
-		s.mu.Unlock()
-		ts.run.Unlock()
-		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrTeamNotFound, teamID)
+	rollbackStore, err := s.claimTeamStart(ctx, teamID, ts)
+	if err != nil {
+		return agent.TeamOutcome{}, err
 	}
-	if ts.phase != teamCreated {
-		s.mu.Unlock()
-		ts.run.Unlock()
-		return agent.TeamOutcome{}, fmt.Errorf("%w: %q", ErrTeamRunning, teamID)
-	}
-	rollbackStore, rollbackErr := s.memberStartupRollbackStore()
-	if rollbackErr != nil {
-		s.mu.Unlock()
-		ts.run.Unlock()
-		return agent.TeamOutcome{}, rollbackErr
-	}
-	ts.phase = teamStarting
-	s.mu.Unlock()
 
 	restoreCreated := func() {
 		s.mu.Lock()
