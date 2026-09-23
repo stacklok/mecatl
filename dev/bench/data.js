@@ -259745,6 +259745,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790169980243,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "405d46d15c71326214496dbd1e3fd296638e81a1",
+          "message": "fix: honor read posture for external ListDir paths (#1804)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T16:46:45+03:00",
+          "tree_id": "3d0ce42ebd9c2f2fafa37b5c92d7d6a84f98f6ad",
+          "url": "https://github.com/stacklok/mecatl/commit/405d46d15c71326214496dbd1e3fd296638e81a1"
+        },
+        "date": 1790171895004,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3316,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -340609,6 +340648,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790171891914,
+  "lastUpdate": 1790171896123,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
