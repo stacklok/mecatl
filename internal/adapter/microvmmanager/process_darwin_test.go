@@ -84,8 +84,7 @@ func TestDarwinStopUsesAuthenticatedControlWithoutPIDSignal(t *testing.T) {
 			}
 			_ = conn.Close()
 		}
-		_ = listener.Close()
-		serverErr <- os.Remove(paths.Socket)
+		serverErr <- listener.Close()
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
