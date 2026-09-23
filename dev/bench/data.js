@@ -264516,6 +264516,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790197289763,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "466aff22abbf1343db6374583ddc5b6b016f8f20",
+          "message": "feat(mecatui): bound slash command palette (#1820)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T13:50:42-07:00",
+          "tree_id": "bad9be127d86afddb8eef701cb2f32c6bb40a6ba",
+          "url": "https://github.com/stacklok/mecatl/commit/466aff22abbf1343db6374583ddc5b6b016f8f20"
+        },
+        "date": 1790197955631,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3300.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 94.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -346862,6 +346901,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790197952202,
+  "lastUpdate": 1790197957195,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
